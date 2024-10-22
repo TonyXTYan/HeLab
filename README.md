@@ -17,3 +17,11 @@ https://github.com/adareau/HAL
 random useful links:
 https://www.pythonguis.com/faq/built-in-qicons-pyqt/
 https://github.com/niklashenning/pytablericons  https://tabler.io/icons https://github.com/tabler/tabler-icons
+
+
+
+# TODO
+
+- [ ] Add auto scan button 
+- [ ] Add cancel recursive scan button
+  - [ ] probably should lock the tree view while scanning
