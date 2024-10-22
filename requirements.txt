@@ -1,1 +1,15 @@
-PySide6
+mypy
+pyright
+cachetools
+types-cachetools
+PyQt6
+PyQt6-Qt6
+PyQt6_sip
+pyqt6rc
+pytablericons
+pytest
+pytest-cov
+pytest-qt
+pytest-xdist
+pympler
+pyinstaller

@@ -1,0 +1,7 @@
+/
+/Applications/PyCharm.app/Contents/plugins/python-ce/helpers/coverage_runner
+/Applications/PyCharm.app/Contents/plugins/python-ce/helpers/coverage_runner
+/opt/miniconda3/envs/py312qt/lib/python312.zip
+/opt/miniconda3/envs/py312qt/lib/python3.12
+/opt/miniconda3/envs/py312qt/lib/python3.12/lib-dynload
+/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/venv/lib/python3.12/site-packages
