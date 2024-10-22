@@ -1,0 +1,91 @@
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [ "*" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }} py3.${{ matrix.python3-version }}
+    runs-on: ${{ matrix.os }}-latest
+    continue-on-error: true  
+    strategy:
+      matrix:
+        os: [ubuntu, macos, windows]
+        # os: [macos, windows]
+        # There are super weird bugs about PyQt and various other dependency issues in ubuntu. I give up on ubuntu for now.
+        # os: [macos-latest, windows-latest] 
+        # python-version: ["3.11", "3.12"]
+        python3-version: ["9", "10", "11", "12", "13"]
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+    - uses: actions/checkout@v4
+
+    # - name: Cache pip
+    #   uses: actions/cache@v4
+    #   with:
+    #     path: ~/.cache/pip
+    #     key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+    #     restore-keys: |
+    #       ${{ runner.os }}-pip-
+
+    # Install system dependencies for Ubuntu
+    - name: Install dependencies on Ubuntu
+      if: matrix.os == 'ubuntu'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libegl1 \
+          libxcb-icccm4 \
+          libxcb-image0 \
+          libxcb-keysyms1 \
+          libxcb-randr0 \
+          libxcb-render-util0 \
+          libxcb-shape0 \
+          libxcb-xinerama0 \
+          libxcb-xkb1 \
+          xvfb \
+          x11-utils \
+          libopengl0
+
+    # For macOS, run a no-op command
+    - name: Install dependencies on macOS
+      if: matrix.os == 'macos'
+      run: |
+        echo "No dependencies to install on macOS."
+
+    # For Windows, run a no-op command
+    - name: Install dependencies on Windows
+      if: matrix.os == 'windows'
+      run: |
+        echo "No dependencies to install on Windows."
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.${{ matrix.python3-version }}
+        cache: 'pip'
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.${{ matrix.python3-version }}
+        cache: 'pip'
+
+    - run: | 
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -e .
+        pip install pytest
+
+    - name: Verify dependencies
+      run: |
+        pip list
+
+    - name: Run Tests
+      run: |
+        pytest -v
