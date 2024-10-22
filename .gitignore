@@ -76,3 +76,8 @@ CMakeLists.txt.user*
 .qtcreator
 env
 HELIUM.pyproject*
+build
+dist
+helium.egg-info
+helium_lab.egg-info
+helab/resources/gitignore
