@@ -42,7 +42,7 @@ import time
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-STATUS_DATA_ROLE = Qt.ItemDataRole.UserRole + 1
+# STATUS_DATA_ROLE = Qt.ItemDataRole.UserRole + 1 # I don't this is doing anything?
 
 # Define WorkerSignals to communicate between threads
 class WorkerSignals(QObject):
@@ -79,17 +79,11 @@ class CustomFileSystemModel(QFileSystemModel):
     COLUMN_STATUS_NUMBER = 4
     COLUMN_STATUS_ICON = 5
     COLUMN_RIGHTFILL = 6
-    # STATUS_DATA_ROLE = Qt.ItemDataRole.UserRole + 1
-
-    # status_updated = pyqtSignal(str, str, int)  # file_path, status, count
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Cache the standard icons
         style = QApplication.style()
-        # self.icon_ok = style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton)
-        # self.icon_warning = style.standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
-        # self.icon_critical = style.standardIcon(QStyle.StandardPixmap.SP_MessageBoxCritical)
         def tablerIcon(icon, color, size=128):
             return QIcon(
                 TablerIcons
@@ -113,6 +107,10 @@ class CustomFileSystemModel(QFileSystemModel):
             'loading': self.icon_loading,
             'nothing': self.icon_nothing
         }
+        self.icon_database = tablerIcon(OutlineIcon.DATABASE, '#000000')
+        self.icon_report = tablerIcon(OutlineIcon.REPORT_ANALYTICS, '#000000')
+
+
         # # Initialize the cache
         # self.status_cache = {}
         # Initialize the cache with a maximum size to prevent unlimited growth
@@ -142,64 +140,12 @@ class CustomFileSystemModel(QFileSystemModel):
         column = index.column()
         file_info = self.fileInfo(index)
 
-        # logging.debug(f"Cached status: {asizeof.asizeof(self.status_cache) / 1000} KB")
         if column == self.COLUMN_DATE_MODIFIED:
             if role == Qt.ItemDataRole.DisplayRole:
                 date_time = file_info.lastModified()
                 return date_time.toString("yyyy-MM-dd HH:mm:ss")
             else:
                 return None
-        # elif column == self.COLUMN_STATUS_NUMBER:
-        #     if role == Qt.ItemDataRole.DisplayRole:
-        #         status, count = self.get_status(file_info.absoluteFilePath())
-        #         return str(count)
-        #     elif role == Qt.ItemDataRole.TextAlignmentRole:
-        #         return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        #     else:
-        #         return None
-        # elif column == self.COLUMN_STATUS_NUMBER:
-        #     if role == Qt.ItemDataRole.DisplayRole:
-        #         # Try to retrieve the cached status from the index's data
-        #         status_data = super().data(index, STATUS_DATA_ROLE)
-        #         # logging.debug(status_data)
-        #         # print(status_data)
-        #         if status_data is None:
-        #             # Compute and set the status data
-        #             status, count = self.get_status(file_info.absoluteFilePath())
-        #             # Store the status data in the model
-        #             self.setData(index, (status, count), STATUS_DATA_ROLE)
-        #             # print(status, count)
-        #             # print(index.data(STATUS_DATA_ROLE))
-        #             # print(super().data(index, STATUS_DATA_ROLE))
-        #         # else:
-        #             _, count = status_data
-        #         return str(count)
-        #     # elif role == Qt.ItemDataRole.TextAlignmentRole:
-        #     #     return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        #     else:
-        #         return None
-        # elif column == self.COLUMN_STATUS_ICON:
-        #     # if role == Qt.ItemDataRole.DecorationRole:
-        #     #     status, _ = self.get_status(file_info.absoluteFilePath())
-        #     #     icon = self.status_icons.get(status)
-        #     #     return icon
-        #     # else:
-        #     #     return None
-        #     if role == Qt.ItemDataRole.DecorationRole:
-        #         status_data = index.data(STATUS_DATA_ROLE)
-        #         if status_data is None:
-        #             # Compute and store the status data
-        #             status, count = self.get_status(file_info.absoluteFilePath())
-        #             self.setData(index, (status, count), STATUS_DATA_ROLE)
-        #         else:
-        #             # logging.debug(status_data)
-        #             status, _ = status_data
-        #         icon = self.status_icons.get(status)
-        #         return icon
-        #     elif role == STATUS_DATA_ROLE:
-        #         return super().data(index, role)
-        #     else:
-        #         return None
         elif column == self.COLUMN_STATUS_NUMBER:
             if role == Qt.ItemDataRole.DisplayRole:
                 # print(index, file_info.absoluteFilePath())
@@ -218,6 +164,8 @@ class CustomFileSystemModel(QFileSystemModel):
                 status, _ = self.get_status(file_info.absoluteFilePath())
                 icon = self.status_icons.get(status)
                 return icon
+            elif role == Qt.ItemDataRole.TextAlignmentRole:
+                return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
             else:
                 return None
         elif column == self.COLUMN_RIGHTFILL:
@@ -233,59 +181,12 @@ class CustomFileSystemModel(QFileSystemModel):
         if orientation == Qt.Orientation.Horizontal:
             if role == Qt.ItemDataRole.DisplayRole:
                 if section == self.COLUMN_STATUS_NUMBER:
-                    return "Number"
+                    return "Counts"
                 elif section == self.COLUMN_STATUS_ICON:
                     return "Status"
         return super().headerData(section, orientation, role)
 
     def get_status(self, folder_path):
-        # ok_num = self.get_ok_num(file_or_folder_path)
-        # warning_num = self.get_warning_num(file_or_folder_path)
-        # critical_num = self.get_critical_num(file_or_folder_path)
-        # if critical_num > 0:
-        #     return ('critical', critical_num)
-        # elif warning_num > 0:
-        #     return ('warning', warning_num)
-        # else:
-        #     return ('ok', ok_num)
-
-        # statuses = ['ok', 'warning', 'critical', 'loading']
-        # status = random.choice(statuses)
-        # count = random.randint(10**(length := random.randint(0, 5)), 10**(length + 1) - 1)
-        # return (status, count)
-
-
-        # # Check if the status is already cached
-        # if file_or_folder_path in self.status_cache:
-        #     return self.status_cache[file_or_folder_path]
-
-        # # Attempt to retrieve the status from the cache
-        # status_data = self.status_cache.get(file_or_folder_path)
-        # if status_data is not None:
-        #     return status_data
-        # else:
-        #     # # Simulate the costly computation
-        #     # statuses = ['ok', 'warning', 'critical', 'loading']
-        #     # status = random.choice(statuses)
-        #     # count = random.randint(10 ** (length := random.randint(0, 5)), 10 ** (length + 1) - 1)
-        #     # result = (status, count)
-        #     # # Store the result in the cache
-        #     # self.status_cache[file_or_folder_path] = result
-        #     # return result
-        #
-        #     # Set status to 'loading' in cache
-        #     self.status_cache[file_or_folder_path] = ('loading', 0)
-        #     # Emit dataChanged to update the view with 'loading' status
-        #     index = self.index(file_or_folder_path)
-        #     if index.isValid():
-        #         self.dataChanged.emit(index, index, [Qt.ItemDataRole.DecorationRole, Qt.ItemDataRole.DisplayRole])
-        #     # Create and start the worker
-        #     worker = Worker(file_or_folder_path)
-        #     worker.signals.finished.connect(self.on_status_computed)
-        #     self.thread_pool.start(worker)
-        #     return ('loading', 0)
-        #
-
         # logging.debug(f"Getting status for: {folder_path}")
         # Check if the status is already cached
         status_data = self.status_cache.get(folder_path)
@@ -316,14 +217,6 @@ class CustomFileSystemModel(QFileSystemModel):
             self.thread_pool.start(worker)
             return ('loading', 0)
 
-    # def on_status_computed(self, file_path, status, count):
-    #     logging.debug(f"Status computed for {file_path}: {status}, {count}")
-    #     # Update the cache with the computed status
-    #     self.status_cache[file_path] = (status, count)
-    #     # Emit dataChanged to refresh the view
-    #     index = self.index(file_path)
-    #     if index.isValid():
-    #         self.dataChanged.emit(index, index, [Qt.ItemDataRole.DecorationRole, Qt.ItemDataRole.DisplayRole])
     def on_status_computed(self, file_path, status, count):
         logging.debug(f"Status computed for: {file_path}: {status}, {count}, Cached: {asizeof.asizeof(self.status_cache) / 1000} KB")
         # Update the cache with the computed status
@@ -389,25 +282,6 @@ class CustomFileSystemModel(QFileSystemModel):
         keys_to_remove = [key for key in self.status_cache if key.startswith(directory_path)]
         for key in keys_to_remove:
             del self.status_cache[key]
-
-
-    # def get_ok_num(self, file_or_folder_path):
-    #     # Placeholder function to compute ok_num
-    #     return 9999 + len(file_or_folder_path)  # For testing purposes
-    #
-    # def get_warning_num(self, file_or_folder_path):
-    #     # Placeholder function to compute warn_num
-    #     # Replace with actual computation
-    #     return random.randint(0, 1000)  # For testing purposes
-    #
-    # def get_critical_num(self, file_or_folder_path):
-    #     # Placeholder function to compute critical_num
-    #     # Replace with actual computation
-    #     return file_or_folder_path.count('a')  # For testing purposes
-
-
-
-
 
 
 class CenteredIconDelegate(QStyledItemDelegate):
@@ -577,27 +451,6 @@ class FileSystemView(QWidget):
         else:
             self.back_button.setEnabled(True)
 
-    # def contextMenuEvent(self, event):
-    #     index = self.tree.indexAt(event.pos())
-    #     if not index.isValid():
-    #         return
-    #
-    #     # # **Added Line: Select the item under the cursor**
-    #     # self.tree.selectionModel().setCurrentIndex(index, QItemSelectionModel.SelectionFlag.ClearAndSelect)
-    #
-    #     folder_info = self.model.fileInfo(index)
-    #     menu = QMenu(self)
-    #     logging.debug(f"Context menu for: {folder_info.absoluteFilePath()}")
-    #
-    #     action1 = QAction("QAction 1", self)
-    #     action1.triggered.connect(lambda: self.context_menu_action_1(folder_info))
-    #     menu.addAction(action1)
-    #
-    #     action2 = QAction("QAction 2", self)
-    #     action2.triggered.connect(lambda: self.context_menu_action_2(folder_info))
-    #     menu.addAction(action2)
-    #
-    #     menu.exec(event.globalPos())
 
     def show_context_menu(self, position):
         # Map the position to the tree view's viewport
@@ -618,18 +471,18 @@ class FileSystemView(QWidget):
         # **Create and populate the context menu**
         menu = QMenu(self)
 
-        action1 = QAction("Recalculate Status", self)
-        action1.triggered.connect(lambda: self.context_menu_action_1(file_info))
-        menu.addAction(action1)
+        action_recalc_status = QAction("Recalculate Status", self)
+        action_recalc_status.triggered.connect(lambda: self.context_menu_action_recalc_status(file_info))
+        menu.addAction(action_recalc_status)
 
-        action2 = QAction("Recursively Recalculate Status", self)
-        action2.triggered.connect(lambda: self.context_menu_action_2(file_info))
-        menu.addAction(action2)
+        action_recursive_calc_status = QAction("Recursively Recalculate Status", self)
+        action_recursive_calc_status.triggered.connect(lambda: self.context_menu_action_recursive_calc_status(file_info))
+        menu.addAction(action_recursive_calc_status)
 
         # **Display the context menu at the cursor's global position**
         menu.exec(self.tree.viewport().mapToGlobal(position))
 
-    def context_menu_action_1(self, folder_info):
+    def context_menu_action_recalc_status(self, folder_info):
         logging.debug(f"QAction 1: {folder_info.absoluteFilePath()}")
         # Invalidate the cached status
         self.model.status_cache.pop(folder_info.absoluteFilePath(), None)
@@ -638,7 +491,7 @@ class FileSystemView(QWidget):
 
     # def context_menu_action_2(self, folder_info):
     #     logging.debug(f"QAction 2: {folder_info.absoluteFilePath()}")
-    def context_menu_action_2(self, folder_info):
+    def context_menu_action_recursive_calc_status(self, folder_info):
     # WARNING: THIS METHOD IS REALLY SHIT
         file_path = folder_info.absoluteFilePath()
         if not folder_info.isDir():
