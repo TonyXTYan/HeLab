@@ -1,10 +1,14 @@
 import sys
 import os
+
+from PIL.ImageDraw import Outline
 from PyQt6.QtWidgets import (
     QApplication,
     QWidget,
     QTreeView,
+    QLabel,
     QVBoxLayout,
+    QHBoxLayout,
     QStyledItemDelegate,
     QStyle,
     QStyleOptionViewItem,
@@ -19,10 +23,14 @@ from PyQt6.QtCore import (
     QRect,
     QSize,
     QTimer,
+    QEvent,
     QObject,
     pyqtSignal,
     QRunnable,
-    QThreadPool, QThread,QItemSelectionModel,
+    QThreadPool,
+    QThread,
+    QItemSelectionModel,
+    QPoint,
 )
 from PyQt6.QtGui import (
     QFileSystemModel,
@@ -46,8 +54,8 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 
 # Define WorkerSignals to communicate between threads
 class WorkerSignals(QObject):
-    finished = pyqtSignal(str, str, int)  # file_path, status, count
-
+    # finished = pyqtSignal(str, str, int)  # file_path, status, count
+    finished = pyqtSignal(str, str, int, list)  # file_path, status, count, extra_icons
 # Define the Worker class
 class Worker(QRunnable):
     def __init__(self, file_path):
@@ -66,9 +74,19 @@ class Worker(QRunnable):
         # count = random.randint(1, 100)
         count = random.randint(10**(length := random.randint(0, 5)), 10**(length + 1) - 1)
 
+        # Determine extra icons based on status and count
+        # extra_icons = []
+        # if count > 50:
+        #     extra_icons.append('database')  # Represented by 'icon_database'
+        # if count % 2 == 0:
+        #     extra_icons.append('report')  # Represented by 'icon_report'
+        # if status == 'critical':
+        #     extra_icons.append('ram')  # Represented by 'icon_ram'
+        extra_icons = sorted(random.sample(CustomFileSystemModel.STATUS_ICONS_EXTRA_NAME, random.randint(0, 4)),key=CustomFileSystemModel.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get)
 
-        logging.debug(f"Worker finished for: {self.file_path} with status: {status}, count: {count}")
-        self.signals.finished.emit(self.file_path, status, count)
+
+        logging.debug(f"Worker finished for: {self.file_path} with status: {status}, count: {count}, extra icons: {extra_icons}")
+        self.signals.finished.emit(self.file_path, status, count, extra_icons)
 
 
 class CustomFileSystemModel(QFileSystemModel):
@@ -79,6 +97,16 @@ class CustomFileSystemModel(QFileSystemModel):
     COLUMN_STATUS_NUMBER = 4
     COLUMN_STATUS_ICON = 5
     COLUMN_RIGHTFILL = 6
+    STATUS_EXTRA_ICONS_ROLE = Qt.ItemDataRole.UserRole + 1
+
+    STATUS_ICONS_NAME = ['ok', 'warning', 'critical', 'loading', 'nothing']
+    STATUS_ICONS_EXTRA_NAME = ['database', 'report', 'chart3d', 'ram']
+    STATUS_ICONS_EXTRA_NAME_SORT_KEY = {
+        'database': 1,
+        'report': 4,
+        'chart3d': 3,
+        'ram': 2
+    }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -97,7 +125,7 @@ class CustomFileSystemModel(QFileSystemModel):
         self.icon_ok = tablerIcon(OutlineIcon.CIRCLE_CHECK, '#00bb39')
         self.icon_critical = tablerIcon(OutlineIcon.XBOX_X, '#e50000')
         self.icon_warning = tablerIcon(OutlineIcon.ALERT_CIRCLE, '#f8c350')
-        self.icon_loading = tablerIcon(OutlineIcon.LOADER, '#000000')
+        self.icon_loading = tablerIcon(OutlineIcon.LOADER, '#000000')   #TODO: replace this with PERCENTAGE
         self.icon_live = tablerIcon(OutlineIcon.LIVE_PHOTO, '#000000')
         self.icon_nothing = tablerIcon(FilledIcon.POINT, '#bbbbbb')
         self.status_icons = {
@@ -107,9 +135,18 @@ class CustomFileSystemModel(QFileSystemModel):
             'loading': self.icon_loading,
             'nothing': self.icon_nothing
         }
-        self.icon_database = tablerIcon(OutlineIcon.DATABASE, '#000000')
-        self.icon_report = tablerIcon(OutlineIcon.REPORT_ANALYTICS, '#000000')
+        self.icon_database = tablerIcon(OutlineIcon.DATABASE, '#444444')
+        self.icon_report = tablerIcon(OutlineIcon.REPORT_ANALYTICS, '#444444')
+        self.icon_chart3d = tablerIcon(OutlineIcon.CHART_SCATTER_3D, '#444444')
+        self.icon_ram = tablerIcon(OutlineIcon.CONTAINER, '#444444')
 
+        # Map icon keys to QIcons for easy retrieval
+        self.status_icons_extra = {
+            'database': self.icon_database,
+            'report': self.icon_report,
+            'chart3d': self.icon_chart3d,
+            'ram': self.icon_ram
+        }
 
         # # Initialize the cache
         # self.status_cache = {}
@@ -149,7 +186,7 @@ class CustomFileSystemModel(QFileSystemModel):
         elif column == self.COLUMN_STATUS_NUMBER:
             if role == Qt.ItemDataRole.DisplayRole:
                 # print(index, file_info.absoluteFilePath())
-                status, count = self.get_status(file_info.absoluteFilePath())
+                status, count,_ = self.get_status(file_info.absoluteFilePath())
                 if status == 'loading':
                     return '...'
                 elif status == 'nothing':
@@ -161,9 +198,23 @@ class CustomFileSystemModel(QFileSystemModel):
                 return None
         elif column == self.COLUMN_STATUS_ICON:
             if role == Qt.ItemDataRole.DecorationRole:
-                status, _ = self.get_status(file_info.absoluteFilePath())
+                status,_,_  = self.get_status(file_info.absoluteFilePath())
                 icon = self.status_icons.get(status)
                 return icon
+            elif role == self.STATUS_EXTRA_ICONS_ROLE:
+                # # Example logic to determine which extra icons to show
+                # status, count = self.get_status(file_info.absoluteFilePath())
+                # extra_icons = []
+                # if count > 50:
+                #     extra_icons.append(self.icon_database)
+                # if count % 2 == 0:
+                #     extra_icons.append(self.icon_report)
+                # if status == 'critical':
+                #     extra_icons.append(self.icon_ram)
+                # return extra_icons
+                # Retrieve extra icons from the cache
+                _, _, extra_icons = self.get_status(file_info.absoluteFilePath())
+                return [self.status_icons_extra.get(icon_key) for icon_key in extra_icons]
             elif role == Qt.ItemDataRole.TextAlignmentRole:
                 return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
             else:
@@ -194,8 +245,8 @@ class CustomFileSystemModel(QFileSystemModel):
             return status_data
         else:
             logging.debug(f"Status not cached for: {folder_path}")
-            # Set status to 'loading' in cache
-            self.status_cache[folder_path] = ('loading', 0)
+            # Set status to 'loading' in cache with empty extra_icons
+            self.status_cache[folder_path] = ('loading', 0, [])
             # Emit dataChanged to update the view with 'loading' status
             index = self.index(folder_path, self.COLUMN_STATUS_NUMBER)
             if index.isValid():
@@ -215,12 +266,12 @@ class CustomFileSystemModel(QFileSystemModel):
             worker = Worker(folder_path)
             worker.signals.finished.connect(self.on_status_computed)
             self.thread_pool.start(worker)
-            return ('loading', 0)
+            return ('loading', 0, [])
 
-    def on_status_computed(self, file_path, status, count):
+    def on_status_computed(self, file_path, status, count, extra_icons):
         logging.debug(f"Status computed for: {file_path}: {status}, {count}, Cached: {asizeof.asizeof(self.status_cache) / 1000} KB")
-        # Update the cache with the computed status
-        self.status_cache[file_path] = (status, count)
+        # Update the cache with the computed status and extra icons
+        self.status_cache[file_path] = (status, count, extra_icons)
 
         # Retrieve QModelIndex for Status Number and Status Icon columns
         status_number_index = self.index(file_path, self.COLUMN_STATUS_NUMBER)
@@ -291,26 +342,193 @@ class CenteredIconDelegate(QStyledItemDelegate):
         option.icon = QIcon()
 
     def paint(self, painter, option, index):
-        # Call the base class paint method (which won't draw the icon now)
-        super().paint(painter, option, index)
-        # Draw your centered icon
-        icon = index.data(Qt.ItemDataRole.DecorationRole)
-        if icon:
-            rect = option.rect
-            icon_size = icon.actualSize(option.decorationSize)
-            x = rect.left() + (rect.width() - icon_size.width()) // 2
-            y = rect.top() + (rect.height() - icon_size.height()) // 2
-            icon.paint(painter, QRect(x, y, icon_size.width(), icon_size.height()))
-        # If no icon, nothing else to do
+        # Paint the base item (text, etc.) without the default decoration
+        option_copy = QStyleOptionViewItem(option)
+        option_copy.decorationSize = QSize(0, 0)  # Prevent default decoration
+        super().paint(painter, option_copy, index)
+
+        # Retrieve the main status icon
+        status_icon = index.data(Qt.ItemDataRole.DecorationRole)
+        # Retrieve the extra icons
+        extra_icons = index.data(CustomFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
+        rect = option.rect
+        x = rect.left() + 5  # Some padding from the left
+        y = rect.top() + (rect.height() - option.decorationSize.height()) // 2
+
+        # Draw the status icon
+        if status_icon:
+            icon_size = option.decorationSize
+            status_icon.paint(painter, QRect(x, y, icon_size.width(), icon_size.height()))
+            x += icon_size.width() + 2  # Spacing between icons
+
+        # Draw the extra icons
+        if extra_icons:
+            for icon in extra_icons:
+                if icon:
+                    icon_size = option.decorationSize
+                    icon.paint(painter, QRect(x, y, icon_size.width(), icon_size.height()))
+                    x += icon_size.width() + 2  # Spacing between icons
 
     def sizeHint(self, option, index):
-        # Ensure the size hint accommodates the icon
-        size = super().sizeHint(option, index)
-        icon = index.data(Qt.ItemDataRole.DecorationRole)
-        if icon:
-            icon_size = icon.actualSize(option.decorationSize)
-            size.setHeight(max(size.height(), icon_size.height()))
-        return size
+        # Ensure the size hint accommodates all icons
+        base_size = super().sizeHint(option, index)
+        status_icon = index.data(Qt.ItemDataRole.DecorationRole)
+        extra_icons = index.data(CustomFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
+        total_width = base_size.width()
+        if status_icon:
+            total_width += option.decorationSize.width() + 4  # Status icon and spacing
+        if extra_icons:
+            total_width += len(extra_icons) * (option.decorationSize.width() + 4)  # Extra icons and spacing
+        return QSize(total_width, base_size.height())
+
+
+class IconPopup(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.Popup)
+        # Update window flags to include WindowStaysOnTopHint and remove FramelessWindowHint
+        self.setWindowFlags(
+            Qt.WindowType.Popup |
+            Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+        layout = QVBoxLayout()
+        # Reduce the margins and spacing to minimize padding
+        layout.setContentsMargins(8, 6, 8, 2)  # left, top, right, bottom
+        layout.setSpacing(4)  # space between widgets
+
+        self.label = QLabel("Detailed Info")
+        self.button1 = QPushButton("Action 1")
+        self.button2 = QPushButton("Action 2")
+
+        # Connect buttons to placeholder functions
+        self.button1.clicked.connect(self.action1)
+        self.button2.clicked.connect(self.action2)
+
+        layout.addWidget(self.label)
+
+        button_layout = QHBoxLayout()
+        # Remove margins and reduce spacing between buttons
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(2)
+
+        button_layout.addWidget(self.button1)
+        button_layout.addWidget(self.button2)
+
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+
+    def set_info(self, info_text):
+        self.label.setText(info_text)
+
+    # Placeholder function for Action 1
+    def action1(self):
+        logging.DEBUG("Action 1 triggered")
+        # You can replace the print statement with actual functionality later
+
+    # Placeholder function for Action 2
+    def action2(self):
+        logging.DEBUG("Action 2 triggered")
+        # You can replace the print statement with actual functionality later
+
+class IconHoverTreeView(QTreeView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self.popup = IconPopup()
+        self.popup.setParent(None)  # Make it a top-level window
+        self.popup.installEventFilter(self)
+        self.current_hover_index = QModelIndex()
+        self.popup_visible = False
+
+        # Timer to delay hiding the popup
+        self.hover_timer = QTimer()
+        self.hover_timer.setSingleShot(True)
+        self.hover_timer.timeout.connect(self.hide_popup)
+
+        self.popup.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj == self.popup:
+            if event.type() == QEvent.Type.Enter:
+                # Stop the hide timer when cursor enters the popup
+                self.hover_timer.stop()
+            elif event.type() == QEvent.Type.Leave:
+                # Start the hide timer when cursor leaves the popup
+                self.hover_timer.start(500)  # Delay hiding by 300ms
+        return super().eventFilter(obj, event)
+
+    def mouseMoveEvent(self, event):
+        pos = event.pos()
+        index = self.indexAt(pos)
+        if index.isValid() and index.column() == CustomFileSystemModel.COLUMN_STATUS_ICON:
+            # Determine if the mouse is over the icon area
+            rect = self.visualRect(index)
+            icon_size = self.iconSize()
+            padding = 5  # Adjust based on your delegate's padding
+            status_icon_rect = QRect(
+                rect.left() + padding,
+                rect.top() + (rect.height() - icon_size.height()) // 2,
+                icon_size.width(),
+                icon_size.height()
+            )
+            extra_icons = index.data(CustomFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
+            extra_icon_rects = []
+            if extra_icons:
+                x_offset = status_icon_rect.right() + 2  # 2px spacing between icons
+                for _ in extra_icons:
+                    extra_rect = QRect(
+                        x_offset,
+                        rect.top() + (rect.height() - icon_size.height()) // 2,
+                        icon_size.width(),
+                        icon_size.height()
+                    )
+                    extra_icon_rects.append(extra_rect)
+                    x_offset += icon_size.width() + 2
+
+            # Check if the mouse is within any icon rect
+            over_icon = False
+            if status_icon_rect.contains(event.pos()):
+                over_icon = True
+            else:
+                for extra_rect in extra_icon_rects:
+                    if extra_rect.contains(event.pos()):
+                        over_icon = True
+                        break
+
+            if over_icon:
+                if index != self.current_hover_index:
+                    self.current_hover_index = index
+                    self.show_popup(event.globalPosition().toPoint(), index)
+            else:
+                self.hover_timer.start(300)  # Delay hiding by 300ms
+        else:
+            self.hover_timer.start(300)  # Delay hiding by 300ms
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        self.hover_timer.start(300)  # Delay hiding by 300ms
+        super().leaveEvent(event)
+
+    def show_popup(self, global_pos, index):
+        if not index.isValid():
+            return
+        # Get data from the model
+        file_path = self.model().filePath(index)
+        status, count, extra_icons = self.model().get_status(file_path)
+        info_text = f"Path: {file_path}\nStatus: {status}\nCount: {count}\nExtra Icons: {', '.join(extra_icons) if extra_icons else 'None'}"
+        self.popup.set_info(info_text)
+        # Position the popup near the cursor
+        # self.popup.move(global_pos + QPoint(10, 10))  # Slight offset
+        self.popup.move(global_pos + QPoint(0, 0))  # Slight offset
+        self.popup.show()
+        self.popup_visible = True
+
+    def hide_popup(self):
+        if self.popup_visible:
+            self.popup.hide()
+            self.popup_visible = False
+            self.current_hover_index = QModelIndex()
 
 
 
@@ -329,7 +547,8 @@ class FileSystemView(QWidget):
         # self.model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
         self.model.setFilter(QDir.Filter.Dirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
 
-        self.tree = QTreeView()
+        # self.tree = QTreeView()
+        self.tree = IconHoverTreeView()
         self.tree.setModel(self.model)
         self.tree.setRootIndex(self.model.index(dir_path))
         self.tree.setColumnWidth(CustomFileSystemModel.COLUMN_NAME, 250)
