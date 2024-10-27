@@ -50,18 +50,18 @@ import time
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# STATUS_DATA_ROLE = Qt.ItemDataRole.UserRole + 1 # I don't this is doing anything?
+# STATUS_DATA_ROLE = Qt.ItemDataRole.UserRole + 1 # I don't think this is doing anything?
 
 # Define WorkerSignals to communicate between threads
-class WorkerSignals(QObject):
+class StatusWorkerSignals(QObject):
     # finished = pyqtSignal(str, str, int)  # file_path, status, count
     finished = pyqtSignal(str, str, int, list)  # file_path, status, count, extra_icons
 # Define the Worker class
-class Worker(QRunnable):
+class StatusWorker(QRunnable):
     def __init__(self, file_path):
         super().__init__()
         self.file_path = file_path
-        self.signals = WorkerSignals()
+        self.signals = StatusWorkerSignals()
 
     def run(self):
         logging.debug(f"Worker started  for: {self.file_path}")
@@ -82,11 +82,28 @@ class Worker(QRunnable):
         #     extra_icons.append('report')  # Represented by 'icon_report'
         # if status == 'critical':
         #     extra_icons.append('ram')  # Represented by 'icon_ram'
-        extra_icons = sorted(random.sample(CustomFileSystemModel.STATUS_ICONS_EXTRA_NAME, random.randint(0, 4)),key=CustomFileSystemModel.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get)
+        extra_icons = sorted(random.sample(CustomFileSystemModel.STATUS_ICONS_EXTRA_NAME, random.randint(0, 4)), key=CustomFileSystemModel.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get)
 
 
         logging.debug(f"Worker finished for: {self.file_path} with status: {status}, count: {count}, extra icons: {extra_icons}")
         self.signals.finished.emit(self.file_path, status, count, extra_icons)
+
+class RecursiveStatusWorkerSignals(QObject):
+    finished = pyqtSignal(list)  # list of directory paths
+
+class RecursiveStatusWorker(QRunnable):
+    def __init__(self, root_path):
+        super().__init__()
+        self.root_path = root_path
+        self.signals = RecursiveStatusWorkerSignals()
+
+    def run(self):
+        directory_list = [self.root_path]
+        for root, dirs, _ in os.walk(self.root_path):
+            for dir_name in dirs:
+                dir_path = os.path.join(root, dir_name)
+                directory_list.append(dir_path)
+        self.signals.finished.emit(directory_list)
 
 
 class CustomFileSystemModel(QFileSystemModel):
@@ -100,12 +117,13 @@ class CustomFileSystemModel(QFileSystemModel):
     STATUS_EXTRA_ICONS_ROLE = Qt.ItemDataRole.UserRole + 1
 
     STATUS_ICONS_NAME = ['ok', 'warning', 'critical', 'loading', 'nothing']
-    STATUS_ICONS_EXTRA_NAME = ['database', 'report', 'chart3d', 'ram']
+    STATUS_ICONS_EXTRA_NAME = ['database', 'report', 'chart3d', 'ram', 'live']
     STATUS_ICONS_EXTRA_NAME_SORT_KEY = {
-        'database': 1,
-        'report': 4,
-        'chart3d': 3,
-        'ram': 2
+        'database': 10,
+        'report': 31,
+        'chart3d': 30,
+        'ram': 11,
+        'live': 0,
     }
 
     def __init__(self, *args, **kwargs):
@@ -145,7 +163,8 @@ class CustomFileSystemModel(QFileSystemModel):
             'database': self.icon_database,
             'report': self.icon_report,
             'chart3d': self.icon_chart3d,
-            'ram': self.icon_ram
+            'ram': self.icon_ram,
+            'live': self.icon_live
         }
 
         # # Initialize the cache
@@ -165,7 +184,7 @@ class CustomFileSystemModel(QFileSystemModel):
         # Connect signals to cache invalidation methods
         self.directoryLoaded.connect(self.on_directory_loaded)
         self.fileRenamed.connect(self.on_file_renamed)
-        # self.dataChanged.connect(self.on_data_changed)
+        self.dataChanged.connect(self.on_data_changed)
         self.modelReset.connect(self.on_model_reset)
 
     def columnCount(self, parent=QModelIndex()):
@@ -186,7 +205,7 @@ class CustomFileSystemModel(QFileSystemModel):
         elif column == self.COLUMN_STATUS_NUMBER:
             if role == Qt.ItemDataRole.DisplayRole:
                 # print(index, file_info.absoluteFilePath())
-                status, count,_ = self.get_status(file_info.absoluteFilePath())
+                status, count, _ = self.fetch_status(file_info.absoluteFilePath())
                 if status == 'loading':
                     return '...'
                 elif status == 'nothing':
@@ -198,7 +217,7 @@ class CustomFileSystemModel(QFileSystemModel):
                 return None
         elif column == self.COLUMN_STATUS_ICON:
             if role == Qt.ItemDataRole.DecorationRole:
-                status,_,_  = self.get_status(file_info.absoluteFilePath())
+                status, _, _  = self.fetch_status(file_info.absoluteFilePath())
                 icon = self.status_icons.get(status)
                 return icon
             elif role == self.STATUS_EXTRA_ICONS_ROLE:
@@ -213,7 +232,7 @@ class CustomFileSystemModel(QFileSystemModel):
                 #     extra_icons.append(self.icon_ram)
                 # return extra_icons
                 # Retrieve extra icons from the cache
-                _, _, extra_icons = self.get_status(file_info.absoluteFilePath())
+                _, _, extra_icons = self.fetch_status(file_info.absoluteFilePath())
                 return [self.status_icons_extra.get(icon_key) for icon_key in extra_icons]
             elif role == Qt.ItemDataRole.TextAlignmentRole:
                 return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
@@ -237,7 +256,7 @@ class CustomFileSystemModel(QFileSystemModel):
                     return "Status"
         return super().headerData(section, orientation, role)
 
-    def get_status(self, folder_path):
+    def fetch_status(self, folder_path):
         # logging.debug(f"Getting status for: {folder_path}")
         # Check if the status is already cached
         status_data = self.status_cache.get(folder_path)
@@ -263,12 +282,12 @@ class CustomFileSystemModel(QFileSystemModel):
                     [Qt.ItemDataRole.DecorationRole]
                 )
             # Create and start the worker
-            worker = Worker(folder_path)
-            worker.signals.finished.connect(self.on_status_computed)
+            worker = StatusWorker(folder_path)
+            worker.signals.finished.connect(self.handle_status_computed)
             self.thread_pool.start(worker)
             return ('loading', 0, [])
 
-    def on_status_computed(self, file_path, status, count, extra_icons):
+    def handle_status_computed(self, file_path, status, count, extra_icons):
         logging.debug(f"Status computed for: {file_path}: {status}, {count}, Cached: {asizeof.asizeof(self.status_cache) / 1000} KB")
         # Update the cache with the computed status and extra icons
         self.status_cache[file_path] = (status, count, extra_icons)
@@ -320,8 +339,24 @@ class CustomFileSystemModel(QFileSystemModel):
 
     # def on_data_changed(self, path):
     #     # Invalidate the cache entry for the changed file
-    #     self.status_cache.pop(path, None)
-    #     logging.debug(f"(POP)Data changed for: {path}")
+    #     # self.status_cache.pop(path, None)
+    #     # logging.debug(f"(POP)Data changed for: {path}")
+    #     logging.debug(f"Data changed for: {path}")
+    def on_data_changed(self, topLeft, bottomRight, roles):
+        """
+        Handles the dataChanged signal by logging the file paths of the changed items.
+
+        Parameters:
+            topLeft (QModelIndex): The top-left index of the changed data.
+            bottomRight (QModelIndex): The bottom-right index of the changed data.
+            roles (List[int]): The roles that were changed.
+        """
+        # Iterate through the changed rows
+        for row in range(topLeft.row(), bottomRight.row() + 1):
+            for column in range(topLeft.column(), bottomRight.column() + 1):
+                index = self.index(row, column, topLeft.parent())
+                file_path = self.filePath(index)
+                logging.debug(f"Data changed for: {file_path}")
 
     def on_model_reset(self):
         # Clear the entire cache
@@ -335,7 +370,7 @@ class CustomFileSystemModel(QFileSystemModel):
             del self.status_cache[key]
 
 
-class CenteredIconDelegate(QStyledItemDelegate):
+class StatusIconDelegate(QStyledItemDelegate):
     def initStyleOption(self, option, index):
         super().initStyleOption(option, index)
         # Clear the icon to prevent the default drawing
@@ -382,7 +417,7 @@ class CenteredIconDelegate(QStyledItemDelegate):
         return QSize(total_width, base_size.height())
 
 
-class IconPopup(QWidget):
+class StatusHoverIconInfo(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Popup)
         # Update window flags to include WindowStaysOnTopHint and remove FramelessWindowHint
@@ -390,7 +425,7 @@ class IconPopup(QWidget):
             Qt.WindowType.Popup |
             Qt.WindowType.WindowStaysOnTopHint
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        # self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
         layout = QVBoxLayout()
         # Reduce the margins and spacing to minimize padding
@@ -423,19 +458,19 @@ class IconPopup(QWidget):
 
     # Placeholder function for Action 1
     def action1(self):
-        logging.DEBUG("Action 1 triggered")
+        logging.debug("Action 1 triggered")
         # You can replace the print statement with actual functionality later
 
     # Placeholder function for Action 2
     def action2(self):
-        logging.DEBUG("Action 2 triggered")
+        logging.debug("Action 2 triggered")
         # You can replace the print statement with actual functionality later
 
-class IconHoverTreeView(QTreeView):
+class StatusTreeView(QTreeView):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMouseTracking(True)
-        self.popup = IconPopup()
+        self.popup = StatusHoverIconInfo()
         self.popup.setParent(None)  # Make it a top-level window
         self.popup.installEventFilter(self)
         self.current_hover_index = QModelIndex()
@@ -455,7 +490,7 @@ class IconHoverTreeView(QTreeView):
                 self.hover_timer.stop()
             elif event.type() == QEvent.Type.Leave:
                 # Start the hide timer when cursor leaves the popup
-                self.hover_timer.start(500)  # Delay hiding by 300ms
+                self.hover_timer.start(500)  # Delay hiding by 500 ms
         return super().eventFilter(obj, event)
 
     def mouseMoveEvent(self, event):
@@ -515,25 +550,33 @@ class IconHoverTreeView(QTreeView):
             return
         # Get data from the model
         file_path = self.model().filePath(index)
-        status, count, extra_icons = self.model().get_status(file_path)
+        # status, count, extra_icons = self.model().get_status(file_path)
+        status, count, extra_icons = self.model().fetch_status(file_path)
         info_text = f"Path: {file_path}\nStatus: {status}\nCount: {count}\nExtra Icons: {', '.join(extra_icons) if extra_icons else 'None'}"
         self.popup.set_info(info_text)
         # Position the popup near the cursor
         # self.popup.move(global_pos + QPoint(10, 10))  # Slight offset
-        self.popup.move(global_pos + QPoint(0, 0))  # Slight offset
+        self.popup.move(global_pos - QPoint(1, 1))  # Slight offset
         self.popup.show()
         self.popup_visible = True
 
     def hide_popup(self):
-        if self.popup_visible:
-            self.popup.hide()
+        if self.popup_visible and self.popup is not None:
+            try:
+                self.popup.hide()
+            except RuntimeError:
+                logging.error("Attempted to hide a deleted popup")
+            # self.popup.hide()
             self.popup_visible = False
             self.current_hover_index = QModelIndex()
 
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.hide_popup()
 
 
-class FileSystemView(QWidget):
-    def __init__(self, dir_path, target_path, columns_to_show=None):
+class FolderExplorer(QWidget):
+    def __init__(self, dir_path, target_path, view_path, columns_to_show=None):
         super().__init__()
         appWidth = 800
         appHeight = 800
@@ -547,10 +590,16 @@ class FileSystemView(QWidget):
         # self.model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
         self.model.setFilter(QDir.Filter.Dirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
 
+        # Initialize view_path
+        self.dir_path = dir_path  # System root path
+        self.target_path = target_path  # Path to auto-expand upon opening
+        self.view_path = view_path  # Current root path of the view
+
         # self.tree = QTreeView()
-        self.tree = IconHoverTreeView()
+        self.tree = StatusTreeView()
         self.tree.setModel(self.model)
-        self.tree.setRootIndex(self.model.index(dir_path))
+        # self.tree.setRootIndex(self.model.index(dir_path))
+        self.tree.setRootIndex(self.model.index(self.view_path))
         self.tree.setColumnWidth(CustomFileSystemModel.COLUMN_NAME, 250)
         self.tree.setColumnWidth(CustomFileSystemModel.COLUMN_DATE_MODIFIED, 160)
         self.tree.setColumnWidth(CustomFileSystemModel.COLUMN_STATUS_NUMBER, 80)
@@ -562,7 +611,7 @@ class FileSystemView(QWidget):
         self.tree.setSortingEnabled(True)
 
         # Set the custom delegate for the icon column
-        icon_delegate = CenteredIconDelegate(self.tree)
+        icon_delegate = StatusIconDelegate(self.tree)
         self.tree.setItemDelegateForColumn(CustomFileSystemModel.COLUMN_STATUS_ICON, icon_delegate)
 
         # Control which columns to show
@@ -606,7 +655,7 @@ class FileSystemView(QWidget):
 
         # Automatically expand the view to the desired path
         # QTimer.singleShot(1000, lambda: self.expand_to_path(target_path))
-        self.expand_to_path(target_path)
+        self.expand_to_path(self.target_path)
 
         # **Added Lines: Set context menu policy and connect the signal**
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -620,6 +669,10 @@ class FileSystemView(QWidget):
             logging.debug(f"Selected file path: {file_path}")
 
     def expand_to_path(self, path):
+        # Ensure that the path to expand is under the current view_path
+        if not os.path.commonpath([self.view_path, path]) == os.path.abspath(self.view_path):
+            logging.warning(f"Path {path} is not under the current view path {self.view_path}.")
+            return
         index = self.model.index(path)
         if not index.isValid():
             logging.warning(f"Invalid path: {path}")
@@ -640,15 +693,17 @@ class FileSystemView(QWidget):
         # self.tree.scrollTo(index, QTreeView.ScrollHint.PositionAtCenter)
         self.tree.scrollTo(index, QTreeView.ScrollHint.EnsureVisible)
         # QTimer.singleShot(1000, lambda: self.tree.scrollTo(index, QTreeView.ScrollHint.EnsureVisible))
-
         # self.tree.setFocus()
+        logging.debug(f"Expanded to path: {path}")
 
     def on_double_click(self, index):
         file_info = self.model.fileInfo(index)
         if file_info.isDir():
             logging.debug(f"Double-clicked directory: {file_info.absoluteFilePath()}")
-            # Set this directory as the new root
-            self.tree.setRootIndex(index)
+            # Set this directory as the new root (view path)
+            # self.tree.setRootIndex(index)
+            self.view_path = file_info.absoluteFilePath()
+            self.tree.setRootIndex(self.model.index(self.view_path))
             # Update the back button enabled state
             self.update_back_button_state()
 
@@ -658,14 +713,25 @@ class FileSystemView(QWidget):
         if parent_index.isValid():
             self.tree.setRootIndex(parent_index)
         else:
-            # If no parent, set to the model's root
+            # If no parent, set to the model's root (view path)
             self.tree.setRootIndex(self.model.index(self.model.rootPath()))
         # Update the back button enabled state
         self.update_back_button_state()
+        # if self.view_path != self.dir_path:
+        #     self.view_path = self.dir_path
+        #     self.tree.setRootIndex(self.model.index(self.view_path))
+        #     # Update the back button enabled state
+        #     self.update_back_button_state()
+        #     logging.debug(f"Back button clicked. Set view_path to dirPath: {self.view_path}")
 
     def update_back_button_state(self):
-        current_root_index = self.tree.rootIndex()
-        if current_root_index == self.model.index(self.model.rootPath()):
+        # current_root_index = self.tree.rootIndex()
+        # # current_root_index = QDir.rootPath()  # Start from the root directory
+        # if current_root_index == self.model.index(self.model.rootPath()):
+        #     self.back_button.setEnabled(False)
+        # else:
+        #     self.back_button.setEnabled(True)
+        if self.view_path == self.dir_path:
             self.back_button.setEnabled(False)
         else:
             self.back_button.setEnabled(True)
@@ -706,7 +772,7 @@ class FileSystemView(QWidget):
         # Invalidate the cached status
         self.model.status_cache.pop(folder_info.absoluteFilePath(), None)
         # Trigger a fresh status computation
-        self.model.get_status(folder_info.absoluteFilePath())
+        self.model.fetch_status(folder_info.absoluteFilePath())
 
     # def context_menu_action_2(self, folder_info):
     #     logging.debug(f"QAction 2: {folder_info.absoluteFilePath()}")
@@ -717,14 +783,41 @@ class FileSystemView(QWidget):
             logging.debug(f"Selected item is not a directory: {file_path}")
             return
         logging.debug(f"Recursively recalculating status for: {file_path}")
-        for root, dirs, _ in os.walk(file_path):
-            for dir_name in dirs:
-                dir_path = os.path.join(root, dir_name)
+        # for root, dirs, _ in os.walk(file_path):
+        #     for dir_name in dirs:
+        #         dir_path = os.path.join(root, dir_name)
+        #         logging.debug(f"Recalculating status for: {dir_path}")
+        #         # Invalidate the cached status for the directory
+        #         self.model.status_cache.pop(dir_path, None)
+        #         # Trigger a fresh status computation for the directory
+        #         self.model.fetch_status(dir_path)
+        # Create a worker to perform os.walk
+        worker = RecursiveStatusWorker(file_path)
+        worker.signals.finished.connect(self.process_recursive_status)
+        self.model.thread_pool.start(worker)
+
+    def process_recursive_status(self, directory_list):
+        logging.debug(f"Processing {len(directory_list)} directories for status recalculation")
+        self.directory_iterator = iter(directory_list)
+        self.process_next_directories()
+
+    def process_next_directories(self):
+        # Process a batch of directories
+        batch_size = 100  # Adjust as needed
+        count = 0
+        try:
+            while count < batch_size:
+                dir_path = next(self.directory_iterator)
                 logging.debug(f"Recalculating status for: {dir_path}")
-                # Invalidate the cached status for the directory
                 self.model.status_cache.pop(dir_path, None)
-                # Trigger a fresh status computation for the directory
-                self.model.get_status(dir_path)
+                self.model.fetch_status(dir_path)
+                count += 1
+        except StopIteration:
+            # No more directories
+            logging.debug("Finished processing directories for status recalculation")
+            return
+        # Schedule next batch
+        QTimer.singleShot(0, self.process_next_directories)
 
 
 if __name__ == '__main__':
@@ -734,8 +827,23 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     app.setFont(font)
 
-    dirPath = r''  # Replace with your directory path
-    target_path = r'/Users/tonyyan/Downloads'  # Replace with the path you want to view
+    dirPath = QDir.rootPath()  # Start from the root directory
+    # dirPath = r''  # Replace with your directory path
+    # target_path = r'/Users/tonyyan/Downloads'  # Replace with the path you want to view
+    # dirPath = r''
+    target_path = r'/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/_He_BEC_data_root_copy'
+    # target_path = r'/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity'
+    # view_path = r'/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/_He_BEC_data_root_copy'
+    view_path = r'/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity'
+
+    logging.debug(f"Root path: {dirPath}")
+    logging.debug(f"Target path: {target_path}")
+    # Validate that target_path is under dirPath
+    if not os.path.commonpath([dirPath, target_path]) == os.path.abspath(dirPath):
+        logging.warning(
+            f"Target path {target_path} is not under the root path {dirPath}. Adjusting dirPath accordingly.")
+        dirPath = os.path.dirname(target_path)
+
 
     # Specify columns to show; show Name, Date Modified, Number, and Status Icon columns
     columns_to_show = [
@@ -745,6 +853,8 @@ if __name__ == '__main__':
         CustomFileSystemModel.COLUMN_STATUS_ICON,
         CustomFileSystemModel.COLUMN_RIGHTFILL
     ]
-    demo = FileSystemView(dirPath, target_path, columns_to_show)
+    demo = FolderExplorer(dirPath, target_path, view_path, columns_to_show)
     demo.show()
+    # demo.open_view_path(view_path)
+
     sys.exit(app.exec())
