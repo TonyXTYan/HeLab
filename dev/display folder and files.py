@@ -56,15 +56,20 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 class StatusWorkerSignals(QObject):
     # finished = pyqtSignal(str, str, int)  # file_path, status, count
     finished = pyqtSignal(str, str, int, list)  # file_path, status, count, extra_icons
-# Define the Worker class
+# Define the Worker class with cancellation support
 class StatusWorker(QRunnable):
     def __init__(self, file_path):
         super().__init__()
         self.file_path = file_path
         self.signals = StatusWorkerSignals()
+        self._is_canceled = False
 
     def run(self):
-        logging.debug(f"Worker started  for: {self.file_path}")
+        logging.debug(f"Worker started for: {self.file_path}")
+        if self._is_canceled:
+            logging.debug(f"Worker canceled for: {self.file_path}")
+            return
+
         # Simulate a long-running computation
         time.sleep(random.uniform(0.2, 0.5))  # Simulate computation delay
 
@@ -88,6 +93,9 @@ class StatusWorker(QRunnable):
         logging.debug(f"Worker finished for: {self.file_path} with status: {status}, count: {count}, extra icons: {extra_icons}")
         self.signals.finished.emit(self.file_path, status, count, extra_icons)
 
+    def cancel(self):
+        self._is_canceled = True
+
 class RecursiveStatusWorkerSignals(QObject):
     finished = pyqtSignal(list)  # list of directory paths
 
@@ -96,14 +104,30 @@ class RecursiveStatusWorker(QRunnable):
         super().__init__()
         self.root_path = root_path
         self.signals = RecursiveStatusWorkerSignals()
+        self._is_cancelled = False
 
     def run(self):
+        logging.debug(f"Recursive Worker started for: {self.root_path}")
         directory_list = [self.root_path]
-        for root, dirs, _ in os.walk(self.root_path):
-            for dir_name in dirs:
-                dir_path = os.path.join(root, dir_name)
-                directory_list.append(dir_path)
+        try:
+            for root, dirs, _ in os.walk(self.root_path):
+                if self._is_cancelled:
+                    logging.debug(f"Recursive worker cancelled: {self.root_path}")
+                    return
+                for dir_name in dirs:
+                    if self._is_cancelled:
+                        logging.debug(f"Recursive worker cancelled during walk: {self.root_path}")
+                        return
+                    dir_path = os.path.join(root, dir_name)
+                    directory_list.append(dir_path)
+        except Exception as e:
+            logging.error(f"Error in RecursiveStatusWorker: {e}")
+            return
         self.signals.finished.emit(directory_list)
+        logging.debug(f"Recursive worker finished for: {self.root_path}")
+
+    def cancel(self):
+        self._is_cancelled = True
 
 
 class CustomFileSystemModel(QFileSystemModel):
@@ -177,6 +201,9 @@ class CustomFileSystemModel(QFileSystemModel):
         self.thread_pool.setMaxThreadCount(8)
         self.thread_pool.setThreadPriority(QThread.Priority.LowPriority)
         logging.debug(f"Multithreading with maximum {self.thread_pool.maxThreadCount()} threads")
+
+        # Initialize a set to keep track of running workers
+        self.running_workers = {}
 
         # # Connect the status_updated signal to a slot
         # self.status_updated.connect(self.on_status_updated)
@@ -263,6 +290,11 @@ class CustomFileSystemModel(QFileSystemModel):
         if status_data is not None:
             return status_data
         else:
+            # Check if a worker is already running for this folder_path
+            if folder_path in self.running_workers:
+                logging.debug(f"Worker already running for: {folder_path}")
+                return self.status_cache.get(folder_path, ('loading', 0, []))
+
             logging.debug(f"Status not cached for: {folder_path}")
             # Set status to 'loading' in cache with empty extra_icons
             self.status_cache[folder_path] = ('loading', 0, [])
@@ -285,6 +317,8 @@ class CustomFileSystemModel(QFileSystemModel):
             worker = StatusWorker(folder_path)
             worker.signals.finished.connect(self.handle_status_computed)
             self.thread_pool.start(worker)
+            # self.running_workers.add(worker)
+            self.running_workers[folder_path] = worker
             return ('loading', 0, [])
 
     def handle_status_computed(self, file_path, status, count, extra_icons):
@@ -311,7 +345,11 @@ class CustomFileSystemModel(QFileSystemModel):
                 status_icon_index,
                 [Qt.ItemDataRole.DecorationRole]
             )
-
+        # self.running_workers.discard(self.sender())
+        # Remove the worker from the running_workers dictionary
+        if file_path in self.running_workers:
+            del self.running_workers[file_path]
+            logging.debug(f"Worker removed from running_workers for: {file_path}")
 
     def on_directory_loaded(self, path):
         # Invalidate cache entries for the loaded directory
@@ -368,6 +406,19 @@ class CustomFileSystemModel(QFileSystemModel):
         keys_to_remove = [key for key in self.status_cache if key.startswith(directory_path)]
         for key in keys_to_remove:
             del self.status_cache[key]
+
+    def stop_all_scans(self):
+        logging.debug("Stopping all scans...")
+        # Iterate through all running workers and cancel them
+        for file_path, worker in list(self.running_workers.items()):
+            worker.cancel()
+            # self.running_workers.remove(worker)
+            del self.running_workers[file_path]
+            logging.debug(f"Worker canceled for: {file_path}")
+        # Optionally, clear the thread pool's queue if possible
+        # Note: QThreadPool does not provide a direct method to clear pending tasks
+        # So, we rely on workers to check for cancellation
+        logging.debug("All scans have been requested to stop.")
 
 
 class StatusIconDelegate(QStyledItemDelegate):
@@ -635,12 +686,25 @@ class FolderExplorer(QWidget):
         # self.tree.setColumnWidth(CustomFileSystemModel.COLUMN_STATUS_ICON, 60)
         # self.tree.setColumnWidth(CustomFileSystemModel.COLUMN_RIGHTFILL, 0)
 
+        # Create a horizontal layout for buttons
+        button_layout = QHBoxLayout()
         # Create a back button
         self.back_button = QPushButton('Back')
         self.back_button.clicked.connect(self.on_back_button_clicked)
+        button_layout.addWidget(self.back_button)
+
+        # Create the "Stop all scans" button
+        self.stop_button = QPushButton('Stop all scans')
+        self.stop_button.clicked.connect(self.on_stop_button_clicked)
+        button_layout.addWidget(self.stop_button)
+
+        # Add stretch to push buttons to the left
+        button_layout.addStretch()
+
 
         layout = QVBoxLayout()
-        layout.addWidget(self.back_button)
+        # layout.addWidget(self.back_button)
+        layout.addLayout(button_layout)
         layout.addWidget(self.tree)
         self.setLayout(layout)
 
@@ -701,9 +765,9 @@ class FolderExplorer(QWidget):
         if file_info.isDir():
             logging.debug(f"Double-clicked directory: {file_info.absoluteFilePath()}")
             # Set this directory as the new root (view path)
-            # self.tree.setRootIndex(index)
-            self.view_path = file_info.absoluteFilePath()
-            self.tree.setRootIndex(self.model.index(self.view_path))
+            self.tree.setRootIndex(index)
+            # self.view_path = file_info.absoluteFilePath()
+            # self.tree.setRootIndex(self.model.index(self.view_path))
             # Update the back button enabled state
             self.update_back_button_state()
 
@@ -818,6 +882,10 @@ class FolderExplorer(QWidget):
             return
         # Schedule next batch
         QTimer.singleShot(0, self.process_next_directories)
+
+    def on_stop_button_clicked(self):
+        logging.debug("Stop all scans button clicked.")
+        self.model.stop_all_scans()
 
 
 if __name__ == '__main__':
