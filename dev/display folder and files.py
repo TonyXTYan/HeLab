@@ -203,7 +203,8 @@ class CustomFileSystemModel(QFileSystemModel):
         logging.debug(f"Multithreading with maximum {self.thread_pool.maxThreadCount()} threads")
 
         # Initialize a set to keep track of running workers
-        self.running_workers = {}
+        self.running_workers_status = {}
+        self.running_workers_recursive = {}
 
         # # Connect the status_updated signal to a slot
         # self.status_updated.connect(self.on_status_updated)
@@ -291,7 +292,7 @@ class CustomFileSystemModel(QFileSystemModel):
             return status_data
         else:
             # Check if a worker is already running for this folder_path
-            if folder_path in self.running_workers:
+            if folder_path in self.running_workers_status:
                 logging.debug(f"Worker already running for: {folder_path}")
                 return self.status_cache.get(folder_path, ('loading', 0, []))
 
@@ -318,7 +319,7 @@ class CustomFileSystemModel(QFileSystemModel):
             worker.signals.finished.connect(self.handle_status_computed)
             self.thread_pool.start(worker)
             # self.running_workers.add(worker)
-            self.running_workers[folder_path] = worker
+            self.running_workers_status[folder_path] = worker
             return ('loading', 0, [])
 
     def handle_status_computed(self, file_path, status, count, extra_icons):
@@ -347,8 +348,8 @@ class CustomFileSystemModel(QFileSystemModel):
             )
         # self.running_workers.discard(self.sender())
         # Remove the worker from the running_workers dictionary
-        if file_path in self.running_workers:
-            del self.running_workers[file_path]
+        if file_path in self.running_workers_status:
+            del self.running_workers_status[file_path]
             logging.debug(f"Worker removed from running_workers for: {file_path}")
 
     def on_directory_loaded(self, path):
@@ -410,16 +411,69 @@ class CustomFileSystemModel(QFileSystemModel):
     def stop_all_scans(self):
         logging.debug("Stopping all scans...")
         # Iterate through all running workers and cancel them
-        for file_path, worker in list(self.running_workers.items()):
+        for file_path, worker in list(self.running_workers_status.items()):
             worker.cancel()
             # self.running_workers.remove(worker)
-            del self.running_workers[file_path]
+            del self.running_workers_status[file_path]
             logging.debug(f"Worker canceled for: {file_path}")
+        # Cancel all RecursiveStatusWorker instances
+        # for worker in list(self.running_workers_recursive):
+        for folder_path, worker in list(self.running_workers_recursive.items()):
+            worker.cancel()
+            # self.running_workers_recursive.remove(worker)
+            del self.running_workers_recursive[folder_path]
+            logging.debug(f"Cancelled RecursiveStatusWorker for: {worker.root_path}")
+
         # Optionally, clear the thread pool's queue if possible
         # Note: QThreadPool does not provide a direct method to clear pending tasks
         # So, we rely on workers to check for cancellation
         logging.debug("All scans have been requested to stop.")
 
+    def start_recursive_status_worker(self, root_path):
+        # Create and start a RecursiveStatusWorker
+        worker = RecursiveStatusWorker(root_path)
+        worker.signals.finished.connect(self.process_recursive_status)
+        self.thread_pool.start(worker)
+        # Track the RecursiveStatusWorker
+        self.running_workers_recursive[root_path] = worker
+        logging.debug(f"Started RecursiveStatusWorker for: {root_path}")
+
+    def process_recursive_status(self, directory_list):
+        logging.debug(f"Processing {len(directory_list)} directories for status recalculation")
+        self.directory_iterator = iter(directory_list)
+        self.process_next_directories()
+
+        # After processing is done, remove all workers
+        # Note: RecursiveStatusWorker does not have a direct reference here
+        # So, we assume it's already removed from running_workers_recursive when canceled
+
+    def process_next_directories(self):
+        # Process a batch of directories
+        batch_size = 100  # Adjust as needed
+        count = 0
+        try:
+            while count < batch_size:
+                dir_path = next(self.directory_iterator)
+                logging.debug(f"Recalculating status for: {dir_path}")
+                self.status_cache.pop(dir_path, None)
+                self.fetch_status(dir_path)
+                count += 1
+        except StopIteration:
+            # No more directories
+            logging.debug("Finished processing directories for status recalculation")
+            return
+        # Schedule next batch
+        QTimer.singleShot(0, self.process_next_directories)
+        # THIS IS BUGGY, MIGHT NEED REWRITE?!
+
+    def context_menu_action_recursive_calc_status(self, folder_info):
+        file_path = folder_info.absoluteFilePath()
+        if not folder_info.isDir():
+            logging.debug(f"Selected item is not a directory: {file_path}")
+            return
+        logging.debug(f"Recursively recalculating status for: {file_path}")
+        # Start the recursive status worker
+        self.start_recursive_status_worker(file_path)
 
 class StatusIconDelegate(QStyledItemDelegate):
     def initStyleOption(self, option, index):
@@ -832,7 +886,7 @@ class FolderExplorer(QWidget):
         menu.exec(self.tree.viewport().mapToGlobal(position))
 
     def context_menu_action_recalc_status(self, folder_info):
-        logging.debug(f"QAction 1: {folder_info.absoluteFilePath()}")
+        logging.debug(f"Recalculate Status for : {folder_info.absoluteFilePath()}")
         # Invalidate the cached status
         self.model.status_cache.pop(folder_info.absoluteFilePath(), None)
         # Trigger a fresh status computation
@@ -856,32 +910,35 @@ class FolderExplorer(QWidget):
         #         # Trigger a fresh status computation for the directory
         #         self.model.fetch_status(dir_path)
         # Create a worker to perform os.walk
-        worker = RecursiveStatusWorker(file_path)
-        worker.signals.finished.connect(self.process_recursive_status)
-        self.model.thread_pool.start(worker)
+        # worker = RecursiveStatusWorker(file_path)
+        # worker.signals.finished.connect(self.process_recursive_status)
+        # self.model.thread_pool.start(worker)
 
-    def process_recursive_status(self, directory_list):
-        logging.debug(f"Processing {len(directory_list)} directories for status recalculation")
-        self.directory_iterator = iter(directory_list)
-        self.process_next_directories()
+        # Start the recursive status worker
+        self.model.start_recursive_status_worker(file_path)
 
-    def process_next_directories(self):
-        # Process a batch of directories
-        batch_size = 100  # Adjust as needed
-        count = 0
-        try:
-            while count < batch_size:
-                dir_path = next(self.directory_iterator)
-                logging.debug(f"Recalculating status for: {dir_path}")
-                self.model.status_cache.pop(dir_path, None)
-                self.model.fetch_status(dir_path)
-                count += 1
-        except StopIteration:
-            # No more directories
-            logging.debug("Finished processing directories for status recalculation")
-            return
-        # Schedule next batch
-        QTimer.singleShot(0, self.process_next_directories)
+    # def process_recursive_status(self, directory_list):
+    #     logging.debug(f"Processing {len(directory_list)} directories for status recalculation")
+    #     self.directory_iterator = iter(directory_list)
+    #     self.process_next_directories()
+    #
+    # def process_next_directories(self):
+    #     # Process a batch of directories
+    #     batch_size = 100  # Adjust as needed
+    #     count = 0
+    #     try:
+    #         while count < batch_size:
+    #             dir_path = next(self.directory_iterator)
+    #             logging.debug(f"Recalculating status for: {dir_path}")
+    #             self.model.status_cache.pop(dir_path, None)
+    #             self.model.fetch_status(dir_path)
+    #             count += 1
+    #     except StopIteration:
+    #         # No more directories
+    #         logging.debug("Finished processing directories for status recalculation")
+    #         return
+    #     # Schedule next batch
+    #     QTimer.singleShot(0, self.process_next_directories)
 
     def on_stop_button_clicked(self):
         logging.debug("Stop all scans button clicked.")
