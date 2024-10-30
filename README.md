@@ -23,9 +23,24 @@ https://github.com/niklashenning/pytablericons  https://tabler.io/icons https://
 # TODO
 
 - [ ] Add auto scan button 
-- [ ] Add cancel recursive scan button
+
+- [x] Add cancel recursive scan button
   - [ ] probably should lock the tree view while scanning
+  - [ ] variable recursive scan depth
+  
 - [ ] nothing folder should be ligher gray, and hidden folder with data is black 
+
+- [ ] typing
+
+- [ ] unit tests
+
+    - [ ] some test experiment data
+
+- [ ] auto build? maybe?
+
+- [ ] cache github actions
+
+    
 
 
 
