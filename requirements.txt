@@ -5,3 +5,4 @@ PyQt6_sip
 pyqt6rc
 pytablericons
 pytest
+pympler
