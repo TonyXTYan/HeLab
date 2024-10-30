@@ -1,10 +1,13 @@
 # tests/test_icons.py
+import os
+import sys
 
 import pytest
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 from pytablericons import OutlineIcon
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from helium.resources.icons import tablerIcon, StatusIcons
 
 @pytest.fixture(scope="module", autouse=True)
