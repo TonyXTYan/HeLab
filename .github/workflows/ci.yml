@@ -39,7 +39,7 @@ jobs:
       run: |
 #        pytest tests/test_icons.py
 #        pytest tests/test_main.py
-        pytest
+        pytest tests
 
 #    - name: Install pytest-xdist
 #      run: |
