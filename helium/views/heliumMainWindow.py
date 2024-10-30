@@ -2,7 +2,7 @@ import logging
 import os
 
 from PyQt6.QtCore import Qt, QDir
-from PyQt6.QtGui import QAction, QIcon
+from PyQt6.QtGui import QAction, QIcon, QPalette, QColor
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QTabWidget, QSplitter, \
     QLabel, QToolBar, QStyle
 from pytablericons import TablerIcons, OutlineIcon
@@ -16,7 +16,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle('HELIUM')
-        self.resize(1400, 900)
+        self.resize(1800, 1000)
 
         # Create Menubar
         self.menu_bar = self.menuBar()
@@ -213,6 +213,19 @@ class MainWindow(QMainWindow):
         # Create the main horizontal splitter
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self.setCentralWidget(splitter)
+        splitter.setStyleSheet("""
+            QSplitter::handle {
+                background: #aaaaaa;
+            },
+            QSplitter::handle:horizontal {
+                width: 3px;
+            },
+        """)
+
+        # Create a palette and set the color for the splitter handle
+        # palette = QPalette()
+        # palette.setColor(QPalette.ColorRole.Window, QColor('#aaaaaa'))
+        # splitter.setPalette(palette)
 
         # Left panel
         left_panel = QWidget()

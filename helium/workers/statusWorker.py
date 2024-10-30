@@ -15,13 +15,13 @@ class StatusWorkerSignals(QObject):
     finished = pyqtSignal(str, str, int, list)  # file_path, status, count, extra_icons
 # Define the Worker class with cancellation support
 class StatusWorker(QRunnable):
-    def __init__(self, file_path):
+    def __init__(self, file_path: str):
         super().__init__()
         self.file_path = file_path
         self.signals = StatusWorkerSignals()
         self._is_canceled = False
 
-    def run(self):
+    def run(self) -> None:
         logging.debug(f"Worker started for: {self.file_path}")
         if self._is_canceled:
             logging.debug(f"Worker canceled for: {self.file_path}")

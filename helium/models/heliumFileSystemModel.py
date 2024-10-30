@@ -1,16 +1,19 @@
 import logging
 import os
 
-from PyQt6.QtCore import Qt, QThreadPool, QThread, QModelIndex
+from PyQt6.QtCore import Qt, QThreadPool, QThread, QModelIndex, QTimer
 from PyQt6.QtGui import QFileSystemModel, QIcon, QColor
 from PyQt6.QtWidgets import QApplication
 from cachetools import LRUCache
 from pympler import asizeof
 from pytablericons import TablerIcons, OutlineIcon, FilledIcon
+
+from helium.workers.recursiveStatusWorker import RecursiveStatusWorker
 # from helium.utils.loggingSetup import setup_logging
 
 from helium.workers.statusWorker import StatusWorker
-from helium.resources.icons import tablerIcon
+from helium.resources.icons import tablerIcon, StatusIcons
+
 
 class CustomFileSystemModel(QFileSystemModel):
     COLUMN_NAME = 0
@@ -27,32 +30,32 @@ class CustomFileSystemModel(QFileSystemModel):
         # Cache the standard icons
         style = QApplication.style()
 
-        self.icon_ok = tablerIcon(OutlineIcon.CIRCLE_CHECK, '#00bb39')
-        self.icon_critical = tablerIcon(OutlineIcon.XBOX_X, '#e50000')
-        self.icon_warning = tablerIcon(OutlineIcon.ALERT_CIRCLE, '#f8c350')
-        self.icon_loading = tablerIcon(OutlineIcon.LOADER, '#000000')   #TODO: replace this with PERCENTAGE
-        self.icon_live = tablerIcon(OutlineIcon.LIVE_PHOTO, '#000000')
-        self.icon_nothing = tablerIcon(FilledIcon.POINT, '#bbbbbb')
-        self.status_icons = {
-            'ok': self.icon_ok,
-            'warning': self.icon_warning,
-            'critical': self.icon_critical,
-            'loading': self.icon_loading,
-            'nothing': self.icon_nothing
-        }
-        self.icon_database = tablerIcon(OutlineIcon.DATABASE, '#444444')
-        self.icon_report = tablerIcon(OutlineIcon.REPORT_ANALYTICS, '#444444')
-        self.icon_chart3d = tablerIcon(OutlineIcon.CHART_SCATTER_3D, '#444444')
-        self.icon_ram = tablerIcon(OutlineIcon.CONTAINER, '#444444')
+        # self.icon_ok = tablerIcon(OutlineIcon.CIRCLE_CHECK, '#00bb39')
+        # self.icon_critical = tablerIcon(OutlineIcon.XBOX_X, '#e50000')
+        # self.icon_warning = tablerIcon(OutlineIcon.ALERT_CIRCLE, '#f8c350')
+        # self.icon_loading = tablerIcon(OutlineIcon.LOADER, '#000000')   #TODO: replace this with PERCENTAGE
+        # self.icon_live = tablerIcon(OutlineIcon.LIVE_PHOTO, '#000000')
+        # self.icon_nothing = tablerIcon(FilledIcon.POINT, '#bbbbbb')
+        # self.status_icons = {
+        #     'ok': StatusIcons.ICON_OK,
+        #     'warning': self.icon_warning,
+        #     'critical': self.icon_critical,
+        #     'loading': self.icon_loading,
+        #     'nothing': self.icon_nothing
+        # }
+        # self.icon_database = tablerIcon(OutlineIcon.DATABASE, '#444444')
+        # self.icon_report = tablerIcon(OutlineIcon.REPORT_ANALYTICS, '#444444')
+        # self.icon_chart3d = tablerIcon(OutlineIcon.CHART_SCATTER_3D, '#444444')
+        # self.icon_ram = tablerIcon(OutlineIcon.CONTAINER, '#444444')
 
         # Map icon keys to QIcons for easy retrieval
-        self.status_icons_extra = {
-            'database': self.icon_database,
-            'report': self.icon_report,
-            'chart3d': self.icon_chart3d,
-            'ram': self.icon_ram,
-            'live': self.icon_live
-        }
+        # self.status_icons_extra = {
+        #     'database': self.icon_database,
+        #     'report': self.icon_report,
+        #     'chart3d': self.icon_chart3d,
+        #     'ram': self.icon_ram,
+        #     'live': self.icon_live
+        # }
 
         # # Initialize the cache
         # Initialize the cache with a maximum size to prevent unlimited growth
@@ -108,12 +111,14 @@ class CustomFileSystemModel(QFileSystemModel):
         elif column == self.COLUMN_STATUS_ICON:
             if role == Qt.ItemDataRole.DecorationRole:
                 status, _, _  = self.fetch_status(file_info.absoluteFilePath())
-                icon = self.status_icons.get(status)
+                # icon = self.status_icons.get(status)
+                icon = StatusIcons.ICONS_STATUS.get(status)
                 return icon
             elif role == self.STATUS_EXTRA_ICONS_ROLE:
                 # Retrieve extra icons from the cache
                 _, _, extra_icons = self.fetch_status(file_info.absoluteFilePath())
-                return [self.status_icons_extra.get(icon_key) for icon_key in extra_icons]
+                # return [self.status_icons_extra.get(icon_key) for icon_key in extra_icons]
+                return [StatusIcons.ICONS_EXTRA.get(icon_key) for icon_key in extra_icons]
             elif role == Qt.ItemDataRole.TextAlignmentRole:
                 return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
             else:
