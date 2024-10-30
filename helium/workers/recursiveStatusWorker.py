@@ -3,7 +3,7 @@ import random
 import time
 
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable
-from setuptools import logging
+import logging
 
 # from helium.models.heliumFileSystemModel import CustomFileSystemModel
 
