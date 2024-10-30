@@ -50,11 +50,8 @@ import time
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# STATUS_DATA_ROLE = Qt.ItemDataRole.UserRole + 1 # I don't think this is doing anything?
-
 # Define WorkerSignals to communicate between threads
 class StatusWorkerSignals(QObject):
-    # finished = pyqtSignal(str, str, int)  # file_path, status, count
     finished = pyqtSignal(str, str, int, list)  # file_path, status, count, extra_icons
 # Define the Worker class with cancellation support
 class StatusWorker(QRunnable):
@@ -79,16 +76,7 @@ class StatusWorker(QRunnable):
         # count = random.randint(1, 100)
         count = random.randint(10**(length := random.randint(0, 5)), 10**(length + 1) - 1)
 
-        # Determine extra icons based on status and count
-        # extra_icons = []
-        # if count > 50:
-        #     extra_icons.append('database')  # Represented by 'icon_database'
-        # if count % 2 == 0:
-        #     extra_icons.append('report')  # Represented by 'icon_report'
-        # if status == 'critical':
-        #     extra_icons.append('ram')  # Represented by 'icon_ram'
         extra_icons = sorted(random.sample(CustomFileSystemModel.STATUS_ICONS_EXTRA_NAME, random.randint(0, 4)), key=CustomFileSystemModel.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get)
-
 
         logging.debug(f"Worker finished for: {self.file_path} with status: {status}, count: {count}, extra icons: {extra_icons}")
         self.signals.finished.emit(self.file_path, status, count, extra_icons)
@@ -192,7 +180,6 @@ class CustomFileSystemModel(QFileSystemModel):
         }
 
         # # Initialize the cache
-        # self.status_cache = {}
         # Initialize the cache with a maximum size to prevent unlimited growth
         self.status_cache = LRUCache(maxsize=10000)  # Store up to 10000 entries
 
@@ -249,16 +236,6 @@ class CustomFileSystemModel(QFileSystemModel):
                 icon = self.status_icons.get(status)
                 return icon
             elif role == self.STATUS_EXTRA_ICONS_ROLE:
-                # # Example logic to determine which extra icons to show
-                # status, count = self.get_status(file_info.absoluteFilePath())
-                # extra_icons = []
-                # if count > 50:
-                #     extra_icons.append(self.icon_database)
-                # if count % 2 == 0:
-                #     extra_icons.append(self.icon_report)
-                # if status == 'critical':
-                #     extra_icons.append(self.icon_ram)
-                # return extra_icons
                 # Retrieve extra icons from the cache
                 _, _, extra_icons = self.fetch_status(file_info.absoluteFilePath())
                 return [self.status_icons_extra.get(icon_key) for icon_key in extra_icons]
@@ -366,21 +343,6 @@ class CustomFileSystemModel(QFileSystemModel):
         # Optionally, recompute the status for the new path
         # self.get_status(new_path)
 
-    # def on_data_changed(self, topLeft, bottomRight, roles):
-    #     # UNTESTED!
-    #     # If a file's data changes, invalidate its cache entry
-    #     if Qt.ItemDataRole.DisplayRole in roles or Qt.ItemDataRole.DecorationRole in roles:
-    #         for row in range(topLeft.row(), bottomRight.row() + 1):
-    #             index = self.index(row, self.COLUMN_NAME, topLeft.parent())
-    #             file_path = self.filePath(index)
-    #             self.status_cache.pop(file_path, None)
-    #             self.get_status(file_path)
-
-    # def on_data_changed(self, path):
-    #     # Invalidate the cache entry for the changed file
-    #     # self.status_cache.pop(path, None)
-    #     # logging.debug(f"(POP)Data changed for: {path}")
-    #     logging.debug(f"Data changed for: {path}")
     def on_data_changed(self, topLeft, bottomRight, roles):
         """
         Handles the dataChanged signal by logging the file paths of the changed items.
@@ -835,20 +797,9 @@ class FolderExplorer(QWidget):
             self.tree.setRootIndex(self.model.index(self.model.rootPath()))
         # Update the back button enabled state
         self.update_back_button_state()
-        # if self.view_path != self.dir_path:
-        #     self.view_path = self.dir_path
-        #     self.tree.setRootIndex(self.model.index(self.view_path))
-        #     # Update the back button enabled state
-        #     self.update_back_button_state()
-        #     logging.debug(f"Back button clicked. Set view_path to dirPath: {self.view_path}")
+
 
     def update_back_button_state(self):
-        # current_root_index = self.tree.rootIndex()
-        # # current_root_index = QDir.rootPath()  # Start from the root directory
-        # if current_root_index == self.model.index(self.model.rootPath()):
-        #     self.back_button.setEnabled(False)
-        # else:
-        #     self.back_button.setEnabled(True)
         if self.view_path == self.dir_path:
             self.back_button.setEnabled(False)
         else:
@@ -892,8 +843,6 @@ class FolderExplorer(QWidget):
         # Trigger a fresh status computation
         self.model.fetch_status(folder_info.absoluteFilePath())
 
-    # def context_menu_action_2(self, folder_info):
-    #     logging.debug(f"QAction 2: {folder_info.absoluteFilePath()}")
     def context_menu_action_recursive_calc_status(self, folder_info):
     # WARNING: THIS METHOD IS REALLY SHIT
         file_path = folder_info.absoluteFilePath()
@@ -901,44 +850,8 @@ class FolderExplorer(QWidget):
             logging.debug(f"Selected item is not a directory: {file_path}")
             return
         logging.debug(f"Recursively recalculating status for: {file_path}")
-        # for root, dirs, _ in os.walk(file_path):
-        #     for dir_name in dirs:
-        #         dir_path = os.path.join(root, dir_name)
-        #         logging.debug(f"Recalculating status for: {dir_path}")
-        #         # Invalidate the cached status for the directory
-        #         self.model.status_cache.pop(dir_path, None)
-        #         # Trigger a fresh status computation for the directory
-        #         self.model.fetch_status(dir_path)
-        # Create a worker to perform os.walk
-        # worker = RecursiveStatusWorker(file_path)
-        # worker.signals.finished.connect(self.process_recursive_status)
-        # self.model.thread_pool.start(worker)
-
-        # Start the recursive status worker
         self.model.start_recursive_status_worker(file_path)
 
-    # def process_recursive_status(self, directory_list):
-    #     logging.debug(f"Processing {len(directory_list)} directories for status recalculation")
-    #     self.directory_iterator = iter(directory_list)
-    #     self.process_next_directories()
-    #
-    # def process_next_directories(self):
-    #     # Process a batch of directories
-    #     batch_size = 100  # Adjust as needed
-    #     count = 0
-    #     try:
-    #         while count < batch_size:
-    #             dir_path = next(self.directory_iterator)
-    #             logging.debug(f"Recalculating status for: {dir_path}")
-    #             self.model.status_cache.pop(dir_path, None)
-    #             self.model.fetch_status(dir_path)
-    #             count += 1
-    #     except StopIteration:
-    #         # No more directories
-    #         logging.debug("Finished processing directories for status recalculation")
-    #         return
-    #     # Schedule next batch
-    #     QTimer.singleShot(0, self.process_next_directories)
 
     def on_stop_button_clicked(self):
         logging.debug("Stop all scans button clicked.")
@@ -953,13 +866,10 @@ if __name__ == '__main__':
     app.setFont(font)
 
     dirPath = QDir.rootPath()  # Start from the root directory
-    # dirPath = r''  # Replace with your directory path
-    # target_path = r'/Users/tonyyan/Downloads'  # Replace with the path you want to view
-    # dirPath = r''
-    target_path = r'/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/_He_BEC_data_root_copy'
-    # target_path = r'/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity'
-    # view_path = r'/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/_He_BEC_data_root_copy'
-    view_path = r'/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity'
+    # target_path = r'/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/_He_BEC_data_root_copy'
+    # view_path = r'/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity'
+    view_path = dirPath
+    target_path = r'/Volumes/tonyNVME Gold/dld output'
 
     logging.debug(f"Root path: {dirPath}")
     logging.debug(f"Target path: {target_path}")
