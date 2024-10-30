@@ -4,6 +4,9 @@ import time
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable
 import logging
 
+from helium.resources.icons import StatusIcons
+
+
 # from helium.models.heliumFileSystemModel import CustomFileSystemModel
 
 
@@ -33,8 +36,8 @@ class StatusWorker(QRunnable):
         # count = random.randint(1, 100)
         count = random.randint(10**(length := random.randint(0, 5)), 10**(length + 1) - 1)
 
-        # extra_icons = sorted(random.sample(CustomFileSystemModel.STATUS_ICONS_EXTRA_NAME, random.randint(0, 4)), key=CustomFileSystemModel.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get)
-        extra_icons = []
+        extra_icons = sorted(random.sample(StatusIcons.STATUS_ICONS_EXTRA_NAME, random.randint(0, 4)), key=StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get)
+        # extra_icons = []
 
         logging.debug(f"Worker finished for: {self.file_path} with status: {status}, count: {count}, extra icons: {extra_icons}")
         self.signals.finished.emit(self.file_path, status, count, extra_icons)

@@ -13,11 +13,11 @@ from helium.views.statusTreeView import StatusTreeView
 class FolderExplorer(QWidget):
     def __init__(self, dir_path, target_path, view_path, columns_to_show=None, parent=None):
         super().__init__(parent)
-        appWidth = 800
-        appHeight = 800
+        # appWidth = 800
+        # appHeight = 800
 
-        self.setWindowTitle('File System Viewer')
-        self.setGeometry(300, 300, appWidth, appHeight)
+        # self.setWindowTitle('File System Viewer')
+        # self.setGeometry(300, 300, appWidth, appHeight)
 
         self.model = CustomFileSystemModel()
         self.model.setRootPath(dir_path)
@@ -32,6 +32,7 @@ class FolderExplorer(QWidget):
 
         # self.tree = QTreeView()
         self.tree = StatusTreeView()
+        self.tree.setContentsMargins(0, 0, 0, 0)
         self.tree.setModel(self.model)
         # self.tree.setRootIndex(self.model.index(dir_path))
         self.tree.setRootIndex(self.model.index(self.view_path))
@@ -87,6 +88,8 @@ class FolderExplorer(QWidget):
 
 
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         # layout.addWidget(self.back_button)
         layout.addLayout(button_layout)
         layout.addWidget(self.tree)

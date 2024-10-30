@@ -10,7 +10,7 @@ from pytablericons import TablerIcons, OutlineIcon, FilledIcon
 # from helium.utils.loggingSetup import setup_logging
 
 from helium.workers.statusWorker import StatusWorker
-
+from helium.resources.icons import tablerIcon
 
 class CustomFileSystemModel(QFileSystemModel):
     COLUMN_NAME = 0
@@ -22,30 +22,11 @@ class CustomFileSystemModel(QFileSystemModel):
     COLUMN_RIGHTFILL = 6
     STATUS_EXTRA_ICONS_ROLE = Qt.ItemDataRole.UserRole + 1
 
-    STATUS_ICONS_NAME = ['ok', 'warning', 'critical', 'loading', 'nothing']
-    STATUS_ICONS_EXTRA_NAME = ['database', 'report', 'chart3d', 'ram', 'live']
-    STATUS_ICONS_EXTRA_NAME_SORT_KEY = {
-        'database': 10,
-        'report': 31,
-        'chart3d': 30,
-        'ram': 11,
-        'live': 0,
-    }
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Cache the standard icons
         style = QApplication.style()
-        def tablerIcon(icon, color, size=128):
-            return QIcon(
-                TablerIcons
-                .load(icon, color=color)
-                .toqpixmap()
-                .scaled(size, size,
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation
-                )
-            )
+
         self.icon_ok = tablerIcon(OutlineIcon.CIRCLE_CHECK, '#00bb39')
         self.icon_critical = tablerIcon(OutlineIcon.XBOX_X, '#e50000')
         self.icon_warning = tablerIcon(OutlineIcon.ALERT_CIRCLE, '#f8c350')
