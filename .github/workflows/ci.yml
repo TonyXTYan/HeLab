@@ -35,15 +35,16 @@ jobs:
       run: |
         pip list
 
-#    - name: Run Tests
-#      run: |
+    - name: Run Tests
+      run: |
 #        pytest tests/test_icons.py
 #        pytest tests/test_main.py
+        pytest
 
-    - name: Install pytest-xdist
-      run: |
-        pip install pytest-xdist
-
-    - name: Run Tests in Parallel
-      run: |
-        pytest -n auto tests/
+#    - name: Install pytest-xdist
+#      run: |
+#        pip install pytest-xdist
+#
+#    - name: Run Tests in Parallel
+#      run: |
+#        pytest -n auto tests/
