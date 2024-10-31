@@ -72,6 +72,7 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           tag: ${{ github.ref_name }}
           name: "Release ${{ github.ref_name }}"
+          body: "Automated Release ${{ github.ref_name }}"
           draft: true
           prerelease: true
           artifacts: |
