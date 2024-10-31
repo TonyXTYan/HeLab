@@ -19,3 +19,4 @@ def test_main_window_creation(app):
     main_window = MainWindow()
     assert main_window is not None
     assert main_window.isVisible() == False
+

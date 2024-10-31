@@ -38,6 +38,8 @@ https://github.com/niklashenning/pytablericons  https://tabler.io/icons https://
 
 - [ ] auto build? maybe?
 
+- [ ] cache github actions
+
     
 
 
