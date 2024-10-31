@@ -1,0 +1,271 @@
+# .github/workflows/sh-cicd.yml
+name: CI CD
+
+on:
+  push:
+    branches: [ "*" ]
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  test:
+    # name: Test on ${{ matrix.os }} - Python ${{ matrix.python-version }}
+    name: Test on ${{ matrix.os }} py3.${{ matrix.python3-version }}
+    runs-on: ${{ matrix.os }}-latest
+    # continue-on-error: true  # Allow continue to build even if tests fail
+    continue-on-error: ${{ matrix.python3-version != '12' }}
+    strategy:
+      matrix:
+        os: [macos, windows, ubuntu]
+        # os: [macos, windows]
+        python3-version: ["10", "11", "12", "13"]
+    env:
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # - name: Cache pip
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: ~/.cache/pip
+      #     key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}-py${{ matrix.python-version }}
+
+      # Install system dependencies for Ubuntu
+      - name: Install dependencies on Ubuntu
+        if: matrix.os == 'ubuntu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1 \
+            xvfb \
+            x11-utils \
+            libopengl0
+
+      # For macOS, run a no-op command
+      - name: Install dependencies on macOS
+        if: matrix.os == 'macos'
+        run: |
+          echo "No dependencies to install on macOS."
+
+      # For Windows, run a no-op command
+      - name: Install dependencies on Windows
+        if: matrix.os == 'windows'
+        run: |
+          echo "No dependencies to install on Windows."
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.${{ matrix.python3-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # pip install --force-reinstall -r requirements.txt
+          pip install -e .
+
+      - name: Run Tests
+        run: |
+          pytest -v --cache-clear --cov=helab --junit-xml=pytest-report.xml
+      
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}-py3${{ matrix.python3-version }}
+          path: pytest-report.xml
+
+      - name: Check Python 3.12 Test Results
+        if: matrix.python3-version == '12' && failure()
+        run: exit 1
+
+  build:
+    # name: Build on ${{ matrix.os }} - Python ${{ matrix.python-version }}
+    # needs: test # speed up parallel jobs
+    name: Build on ${{ matrix.os }} py3.${{ matrix.python3-version }}
+    # continue-on-error: true 
+    continue-on-error: ${{ matrix.python3-version != '12' }}
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      matrix:
+        os: [macos, windows, ubuntu]
+        # os: [macos, windows]
+        python3-version: ["11", "12", "13"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # - name: Cache pip
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: ~/.cache/pip
+      #     key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}-py${{ matrix.python-version }}
+
+      # For macOS, run a no-op command
+      - name: Install dependencies on macOS
+        if: matrix.os == 'macos'
+        run: |
+          echo "No dependencies to install on macOS."
+
+      # For Windows, run a no-op command
+      - name: Install dependencies on Windows
+        if: matrix.os == 'windows'
+        run: |
+          echo "No dependencies to install on Windows."
+
+      # Install system dependencies for Ubuntu
+      - name: Install dependencies on Ubuntu
+        if: matrix.os == 'ubuntu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1 \
+            xvfb \
+            x11-utils \
+            libopengl0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.${{ matrix.python3-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # pip install --force-reinstall -r requirements.txt
+          pip install -e .
+
+      - name: Build with PyInstaller
+        run: |
+          pip install pyinstaller
+          pyinstaller HeLab.spec --clean -y
+
+      - name: Archive build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.os }}-py3${{ matrix.python3-version }}
+          # name: build-${{ matrix.os }}-py${{ format('{0}', matrix.python-version) | replace('.','') }}
+          # name: build-${{ matrix.os }}-py${{ replace(matrix.python-version, '.', '') }}
+          # name: build-${{ matrix.os }}-py${{ join(split(matrix.python-version, '.'), '') }}
+          path: |
+            dist/
+          retention-days: 1
+      - name: Check Python 3.12 Test Results
+        if: matrix.python3-version == '12' && failure()
+        run: exit 1
+
+  release:
+    name: Create Release on Tag
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-macos-py312
+          path: dist/macos
+
+      - name: Download Windows Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-windows-py312
+          path: dist/windows
+
+      - name: Download Ubuntu Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-ubuntu-py312
+          path: dist/ubuntu
+
+      - name: Compress macOS Build Artifact
+        run: |
+          cd dist/macos
+          zip -r -9 HeLab-macos.zip HeLab.app HeLab
+
+      - name: Compress Windows Build Artifact
+        run: |
+          cd dist/windows
+          zip -r -9 HeLab-windows.zip HeLab.exe
+          
+      - name: Compress Ubuntu Build Artifact
+        run: |
+          cd dist/ubuntu
+          zip -r -9 HeLab-ubuntu.zip HeLab
+
+      - name: Prepare Release Body
+        # if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          RELEASE_BODY="## Release ${{ github.ref_name }}
+
+          **Date:** $(date +'%Y-%m-%d %H:%M')
+
+          **Commit:** [${{ github.sha }}](${{ github.event.repository.url }}/commit/${{ github.sha }})
+
+          **Workflow Run:** [View Details](${{ github.event.repository.url }}/actions/runs/${{ github.run_id }})
+
+          ### Build Artifacts
+
+          - **macOS ARM64** build (Python 3.12)
+          - **Windows Intel64** build (Python 3.12)
+          - **Ubuntu Intel64** build (Python 3.12)
+          
+          **Note:** This is an automated release. Please verify builds before production use."
+          
+          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
+          echo "$RELEASE_BODY" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          
+          echo "Release body preview:"
+          echo "$RELEASE_BODY"
+
+      - name: Create Release and Upload Assets on Tag
+        if: github.ref_type == 'tag'
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          tag: ${{ github.ref_name }}
+          name: "Automated Release ${{ github.ref_name }}"
+          body: ${{ env.RELEASE_BODY }}
+          draft: true
+          prerelease: true
+          artifacts: |
+            dist/macos/HeLab-macos.zip
+            dist/windows/HeLab-windows.zip
+            dist/ubuntu/HeLab-ubuntu.zip
+
+      # - name: Create Release and Upload Assets on Tag 2
+      #   if: startsWith(github.ref, 'refs/tags/')
+      #   uses: ncipollo/release-action@v1
+      #   with:
+      #     token: ${{ secrets.PAT_TOKEN }}
+      #     tag: ${{ github.ref_name }}
+      #     name: "Automated Release ${{ github.ref_name }}"
+      #     body: ${{ env.RELEASE_BODY }}
+      #     draft: true
+      #     prerelease: true
+      #     artifacts: |
+      #       dist/macos/HeLab-macos.zip
+      #       dist/windows/HeLab-windows.zip
+      #       dist/ubuntu/HeLab-ubuntu.zip

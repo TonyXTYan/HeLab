@@ -1,0 +1,80 @@
+# .github/workflows/sh-cd.yml
+name: Self Hosted CD
+
+on:
+  push:
+    branches: [ "*" ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      matrix:
+        os: [macos14-arm64, win10-intel64]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          # python-version: '3.12'
+          # cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller HeLab.spec --clean -y
+
+      - name: Archive build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.os }}
+          path: |
+            dist/HeLab.app/**/*
+            dist/HeLab.exe
+            dist/HeLab
+
+  release:
+    needs: build
+    runs-on: macos14-arm64
+    steps:
+      - name: Download macOS Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-macos14-arm64
+          path: dist/macos
+
+      - name: Download Windows Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-win10-intel64
+          path: dist/windows
+
+      - name: Compress macOS Build Artifact
+        run: |
+          cd dist/macos
+          zip -r HeLab-macos.zip HeLab.app HeLab
+
+      # - name: Create Release and Upload Assets
+      #   uses: ncipollo/release-action@v1
+      #   with:
+      #     token: ${{ secrets.PAT_TOKEN }}
+      #     tag: ${{ github.ref_name }}
+      #     name: "Automated Release ${{ github.ref_name }}"
+      #     body: "This is an automatically generated CI/CD packaged release. The executables below have not been manually tested. **Please proceed with caution**"
+      #     draft: true
+      #     prerelease: true
+      #     artifacts: |
+      #       dist/macos/HeLab-macos.zip
+      #       dist/windows/HeLab.exe
