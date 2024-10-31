@@ -6,9 +6,9 @@ from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu
 
-from helium.models.heliumFileSystemModel import CustomFileSystemModel
-from helium.views.statusIconDelegate import StatusIconDelegate
-from helium.views.statusTreeView import StatusTreeView
+from helab.models.heliumFileSystemModel import CustomFileSystemModel
+from helab.views.statusIconDelegate import StatusIconDelegate
+from helab.views.statusTreeView import StatusTreeView
 
 
 class FolderExplorer(QWidget):

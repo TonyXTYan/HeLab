@@ -4,10 +4,10 @@ import time
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable
 import logging
 
-from helium.resources.icons import StatusIcons
+from helab.resources.icons import StatusIcons
 
 
-# from helium.models.heliumFileSystemModel import CustomFileSystemModel
+# from helab.models.heliumFileSystemModel import CustomFileSystemModel
 
 
 # Define WorkerSignals to communicate between threads
