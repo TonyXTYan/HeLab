@@ -13,11 +13,8 @@ from helab.views.heliumMainWindow import MainWindow
 def app():
     app = QApplication.instance()
     if not app:
-        app = QApplication(sys.argv)
-    # StatusIcons.initialise_icons()
-    yield app
-    if app:
-        app.quit()
+        app = QApplication([])
+    return app
 
 def test_main_window_creation(app):
     main_window = MainWindow()

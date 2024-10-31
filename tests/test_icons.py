@@ -14,11 +14,9 @@ from helab.resources.icons import tablerIcon, StatusIcons
 def app():
     app = QApplication.instance()
     if not app:
-        app = QApplication(sys.argv)
+        app = QApplication([])
     StatusIcons.initialise_icons()
-    yield app
-    if app:
-        app.quit()
+    return app
 
 def test_tabler_icon():
     icon = tablerIcon(OutlineIcon.ABC, '#00bb39', size=128)
