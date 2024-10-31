@@ -6,3 +6,4 @@ pyqt6rc
 pytablericons
 pytest
 pympler
+pyinstaller
