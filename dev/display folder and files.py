@@ -87,7 +87,7 @@ class StatusWorker(QRunnable):
 class RecursiveStatusWorkerSignals(QObject):
     finished = pyqtSignal(list)  # list of directory paths
 
-class RecursiveStatusWorker(QRunnable):
+class StatusDeepWorker(QRunnable):
     def __init__(self, root_path):
         super().__init__()
         self.root_path = root_path
@@ -109,7 +109,7 @@ class RecursiveStatusWorker(QRunnable):
                     dir_path = os.path.join(root, dir_name)
                     directory_list.append(dir_path)
         except Exception as e:
-            logging.error(f"Error in RecursiveStatusWorker: {e}")
+            logging.error(f"Error in StatusDeepWorker: {e}")
             return
         self.signals.finished.emit(directory_list)
         logging.debug(f"Recursive worker finished for: {self.root_path}")
@@ -378,13 +378,13 @@ class CustomFileSystemModel(QFileSystemModel):
             # self.running_workers.remove(worker)
             del self.running_workers_status[file_path]
             logging.debug(f"Worker canceled for: {file_path}")
-        # Cancel all RecursiveStatusWorker instances
-        # for worker in list(self.running_workers_recursive):
+        # Cancel all StatusDeepWorker instances
+        # for worker in list(self.running_workers_deep):
         for folder_path, worker in list(self.running_workers_recursive.items()):
             worker.cancel()
-            # self.running_workers_recursive.remove(worker)
+            # self.running_workers_deep.remove(worker)
             del self.running_workers_recursive[folder_path]
-            logging.debug(f"Cancelled RecursiveStatusWorker for: {worker.root_path}")
+            logging.debug(f"Cancelled StatusDeepWorker for: {worker.root_path}")
 
         # Optionally, clear the thread pool's queue if possible
         # Note: QThreadPool does not provide a direct method to clear pending tasks
@@ -392,13 +392,13 @@ class CustomFileSystemModel(QFileSystemModel):
         logging.debug("All scans have been requested to stop.")
 
     def start_recursive_status_worker(self, root_path):
-        # Create and start a RecursiveStatusWorker
+        # Create and start a StatusDeepWorker
         worker = RecursiveStatusWorker(root_path)
         worker.signals.finished.connect(self.process_recursive_status)
         self.thread_pool.start(worker)
-        # Track the RecursiveStatusWorker
+        # Track the StatusDeepWorker
         self.running_workers_recursive[root_path] = worker
-        logging.debug(f"Started RecursiveStatusWorker for: {root_path}")
+        logging.debug(f"Started StatusDeepWorker for: {root_path}")
 
     def process_recursive_status(self, directory_list):
         logging.debug(f"Processing {len(directory_list)} directories for status recalculation")
@@ -406,8 +406,8 @@ class CustomFileSystemModel(QFileSystemModel):
         self.process_next_directories()
 
         # After processing is done, remove all workers
-        # Note: RecursiveStatusWorker does not have a direct reference here
-        # So, we assume it's already removed from running_workers_recursive when canceled
+        # Note: StatusDeepWorker does not have a direct reference here
+        # So, we assume it's already removed from running_workers_deep when canceled
 
     def process_next_directories(self):
         # Process a batch of directories
