@@ -3,7 +3,7 @@ import logging
 from PyQt6.QtCore import Qt, QModelIndex, QTimer, QEvent, QRect, QPoint
 from PyQt6.QtWidgets import QTreeView, QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout
 
-from helium.models.heliumFileSystemModel import CustomFileSystemModel
+from helab.models.heliumFileSystemModel import CustomFileSystemModel
 
 
 class StatusHoverIconInfo(QWidget):

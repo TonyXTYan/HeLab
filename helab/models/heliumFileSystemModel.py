@@ -9,11 +9,11 @@ from cachetools import LRUCache
 from pympler import asizeof
 from pytablericons import TablerIcons, OutlineIcon, FilledIcon
 
-from helium.workers.statusDeepWorker import StatusDeepWorker
-# from helium.utils.loggingSetup import setup_logging
+from helab.workers.statusDeepWorker import StatusDeepWorker
+# from helab.utils.loggingSetup import setup_logging
 
-from helium.workers.statusWorker import StatusWorker
-from helium.resources.icons import tablerIcon, StatusIcons
+from helab.workers.statusWorker import StatusWorker
+from helab.resources.icons import tablerIcon, StatusIcons
 
 
 class CustomFileSystemModel(QFileSystemModel):

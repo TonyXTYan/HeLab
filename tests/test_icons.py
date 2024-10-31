@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import QApplication
 from pytablericons import OutlineIcon
 
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from helium.resources.icons import tablerIcon, StatusIcons
+from helab.resources.icons import tablerIcon, StatusIcons
 
 @pytest.fixture(scope="module", autouse=True)
 def app():

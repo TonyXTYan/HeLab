@@ -25,8 +25,8 @@ https://www.pythonguis.com/faq/built-in-qicons-pyqt/
 https://github.com/niklashenning/pytablericons  https://tabler.io/icons https://github.com/tabler/tabler-icons
 
 ```bash
-pyinstaller HELIUM.spec --clean
-pyinstaller --onefile --windowed --name HELIUM helium/main.py
+pyinstaller HeLab.spec --clean
+pyinstaller --onefile --windowed --name HELIUM helab/main.py
 ```
 
 

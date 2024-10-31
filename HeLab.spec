@@ -42,7 +42,7 @@ APP_COMMIT_HASH = get_git_commit_hash()
 
 
 a = Analysis(
-    ['helium/main.py'],
+    ['helab/main.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -62,7 +62,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='HELIUM',
+    name='HeLab',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -78,9 +78,9 @@ exe = EXE(
 )
 app = BUNDLE(
     exe,
-    name='HELIUM.app',
-    icon='helium/resources/Beatunes.icns',
-    bundle_identifier='au.edu.anu.helium-bec-lab',
+    name='HeLab.app',
+    icon='helab/resources/Beatunes.icns',
+    bundle_identifier='au.edu.anu.he-bec-lab',
     info_plist={
         'CFBundleShortVersionString': APP_VERSION,
         'CFBundleVersion': APP_COMMIT_HASH,

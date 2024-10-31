@@ -7,8 +7,8 @@ from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWid
     QLabel, QToolBar, QStyle
 from pytablericons import TablerIcons, OutlineIcon
 
-from helium.models.heliumFileSystemModel import CustomFileSystemModel
-from helium.views.folderExplorer import FolderExplorer
+from helab.models.heliumFileSystemModel import CustomFileSystemModel
+from helab.views.folderExplorer import FolderExplorer
 
 
 class MainWindow(QMainWindow):
