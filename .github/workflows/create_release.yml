@@ -5,11 +5,11 @@ name: Create Release
 on:
   push:
     tags:
-      - '**'
+      - 'v*.*.*'
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
