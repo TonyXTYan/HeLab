@@ -349,10 +349,15 @@ class MainWindow(QMainWindow):
         logging.debug(f"Root path: {dirPath}")
         logging.debug(f"Target path: {target_path}")
         # Validate that target_path is under dirPath
-        if not os.path.commonpath([dirPath, target_path]) == os.path.abspath(dirPath):
-            logging.warning(
-                f"Target path {target_path} is not under the root path {dirPath}. Adjusting dirPath accordingly.")
-            dirPath = os.path.dirname(target_path)
+        try: 
+            if not os.path.commonpath([dirPath, target_path]) == os.path.abspath(dirPath):
+                logging.warning(
+                    f"Target path {target_path} is not under the root path {dirPath}. Adjusting dirPath accordingly.")
+                dirPath = os.path.dirname(target_path)
+        except ValueError as e:
+            logging.error(f"Error validating target path: {e}")
+            dirPath = QDir.rootPath()
+            target_path = QDir.rootPath()
 
         # Specify columns to show; show Name, Date Modified, Number, and Status Icon columns
         columns_to_show = [
