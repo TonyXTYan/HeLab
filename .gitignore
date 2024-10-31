@@ -79,3 +79,8 @@ HELIUM.pyproject*
 build
 dist
 helium.egg-info
+helium_lab.egg-info
+helab/resources/gitignore
+
+Icon?
+helab.egg-info

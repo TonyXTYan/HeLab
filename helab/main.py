@@ -5,9 +5,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication
 
-from helium.resources.icons import StatusIcons
-from helium.utils.loggingSetup import setup_logging
-from helium.views.heliumMainWindow import MainWindow
+from helab.resources.icons import StatusIcons
+from helab.utils.loggingSetup import setup_logging
+from helab.views.heliumMainWindow import MainWindow
 
 
 if __name__ == "__main__":

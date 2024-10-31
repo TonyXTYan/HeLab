@@ -1,0 +1,56 @@
+# .github/workflows/sh-ci.yml
+name: Self Hosted CI
+
+on:
+  push:
+    branches: [ "*" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      matrix:
+        # os: [macos14-arm64, win10-intel64]
+        os: [win10-intel64]
+        # python-version: ["3.11", "3.12"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies on macOS
+      if: matrix.os == 'macos14-arm64'
+      run: |
+        echo "No dependencies to install on macOS."
+
+    - name: Install dependencies on Windows
+      if: matrix.os == 'win10-intel64'
+      run: |
+        echo "No dependencies to install on Windows."
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        # cache: 'pip'
+
+    - run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -e .
+        pip install pytest
+
+    - name: Verify dependencies
+      run: |
+        pip list
+
+    - name: Run Tests
+      run: |
+        pytest -v
+
+    - name: Fail if Python 3.12 failed
+      if: matrix.python-version == '3.12' && failure()
+      run: exit 1
