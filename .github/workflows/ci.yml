@@ -30,6 +30,31 @@ jobs:
     #     restore-keys: |
     #       ${{ runner.os }}-pip-
 
+    # Install system dependencies for Ubuntu
+    - name: Install dependencies on Ubuntu
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libegl1 libglib2.0-0 libsm6 libxrender1 libxext6
+
+    # For macOS, ensure necessary dependencies are installed
+    - name: Install dependencies on macOS
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew update
+        brew install qt
+
+    # For Windows, ensure necessary dependencies are installed
+    - name: Install dependencies on Windows
+      if: matrix.os == 'windows-latest'
+      run: |
+        choco install qt --installargs 'ADD_CMAKE_TO_PATH=System'
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
 
     - name: Set up Python
       uses: actions/setup-python@v5
