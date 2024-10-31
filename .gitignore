@@ -78,3 +78,4 @@ env
 HELIUM.pyproject*
 build
 dist
+helium.egg-info
