@@ -14,8 +14,9 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        # os: [macos-latest, windows-latest]
+        # os: [ubuntu-latest, macos-latest, windows-latest]
+        # There are super weird bugs about PyQt and various other dependency issues.
+        os: [macos-latest, windows-latest]
         python-version: ["3.11", "3.12"]
         # python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
@@ -73,4 +74,4 @@ jobs:
 
     - name: Run Tests
       run: |
-        pytest
+        pytest -v

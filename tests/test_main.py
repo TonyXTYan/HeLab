@@ -11,9 +11,13 @@ from helium.views.heliumMainWindow import MainWindow
 
 @pytest.fixture
 def app():
-    app = QApplication(sys.argv)
+    app = QApplication.instance()
+    if not app:
+        app = QApplication(sys.argv)
+    # StatusIcons.initialise_icons()
     yield app
-    app.quit()
+    if app:
+        app.quit()
 
 def test_main_window_creation(app):
     main_window = MainWindow()

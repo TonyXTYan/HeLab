@@ -12,10 +12,13 @@ from helium.resources.icons import tablerIcon, StatusIcons
 
 @pytest.fixture(scope="module", autouse=True)
 def app():
-    app = QApplication([])
+    app = QApplication.instance()
+    if not app:
+        app = QApplication(sys.argv)
     StatusIcons.initialise_icons()
-    yield
-    app.quit()
+    yield app
+    if app:
+        app.quit()
 
 def test_tabler_icon():
     icon = tablerIcon(OutlineIcon.ABC, '#00bb39', size=128)
