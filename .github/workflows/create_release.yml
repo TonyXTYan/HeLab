@@ -1,5 +1,3 @@
-# FILE: CREATE_RELEASE.YML
-
 name: Create Release
 
 on:
@@ -68,43 +66,15 @@ jobs:
           cd dist/macos
           zip -r HELIUM-macos.zip HELIUM.app
 
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+      - name: Create Release and Upload Assets
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: ${{ github.ref_name }}
-          release_name: "Release ${{ github.ref_name }}"
-          draft: false
-          prerelease: false
-
-      - name: Upload Release Asset - Ubuntu
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dist/ubuntu/HELIUM
-          asset_name: HELIUM-linux
-          asset_content_type: application/octet-stream
-
-      - name: Upload Release Asset - macOS
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dist/macos/HELIUM-macos.zip
-          asset_name: HELIUM-macos.zip
-          asset_content_type: application/zip
-
-      - name: Upload Release Asset - Windows
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dist/windows/HELIUM.exe
-          asset_name: HELIUM-windows.exe
-          asset_content_type: application/octet-stream
+          token: ${{ secrets.PAT_TOKEN }}
+          tag: ${{ github.ref_name }}
+          name: "Release ${{ github.ref_name }}"
+          draft: true
+          prerelease: true
+          artifacts: |
+            dist/ubuntu/HELIUM
+            dist/macos/HELIUM-macos.zip
+            dist/windows/HELIUM.exe
