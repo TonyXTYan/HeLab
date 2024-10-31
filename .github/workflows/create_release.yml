@@ -65,6 +65,11 @@ jobs:
           name: build-windows-latest
           path: dist/windows
 
+      - name: Compress macOS Build Artifact
+        run: |
+          cd dist/macos
+          zip -r HELIUM-macos.zip HELIUM.app
+
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
@@ -92,9 +97,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dist/macos/HELIUM.app
-          asset_name: HELIUM-macos
-          asset_content_type: application/octet-stream
+          asset_path: dist/macos/HELIUM-macos.zip
+          asset_name: HELIUM-macos.zip
+          asset_content_type: application/zip
 
       - name: Upload Release Asset - Windows
         uses: actions/upload-release-asset@v1
