@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 
 from PyQt6.QtCore import Qt, QThreadPool, QThread, QModelIndex, QTimer
 from PyQt6.QtGui import QFileSystemModel, QIcon, QColor
@@ -8,7 +9,7 @@ from cachetools import LRUCache
 from pympler import asizeof
 from pytablericons import TablerIcons, OutlineIcon, FilledIcon
 
-from helium.workers.recursiveStatusWorker import RecursiveStatusWorker
+from helium.workers.statusDeepWorker import StatusDeepWorker
 # from helium.utils.loggingSetup import setup_logging
 
 from helium.workers.statusWorker import StatusWorker
@@ -69,7 +70,7 @@ class CustomFileSystemModel(QFileSystemModel):
 
         # Initialize a set to keep track of running workers
         self.running_workers_status = {}
-        self.running_workers_recursive = {}
+        self.running_workers_deep = {}
 
         # # Connect the status_updated signal to a slot
         # self.status_updated.connect(self.on_status_updated)
@@ -258,36 +259,36 @@ class CustomFileSystemModel(QFileSystemModel):
             # self.running_workers.remove(worker)
             del self.running_workers_status[file_path]
             logging.debug(f"Worker canceled for: {file_path}")
-        # Cancel all RecursiveStatusWorker instances
-        # for worker in list(self.running_workers_recursive):
-        for folder_path, worker in list(self.running_workers_recursive.items()):
+        # Cancel all StatusDeepWorker instances
+        # for worker in list(self.running_workers_deep):
+        for folder_path, worker in list(self.running_workers_deep.items()):
             worker.cancel()
-            # self.running_workers_recursive.remove(worker)
-            del self.running_workers_recursive[folder_path]
-            logging.debug(f"Cancelled RecursiveStatusWorker for: {worker.root_path}")
+            # self.running_workers_deep.remove(worker)
+            del self.running_workers_deep[folder_path]
+            logging.debug(f"Cancelled StatusDeepWorker for: {worker.root_path}")
 
         # Optionally, clear the thread pool's queue if possible
         # Note: QThreadPool does not provide a direct method to clear pending tasks
         # So, we rely on workers to check for cancellation
         logging.debug("All scans have been requested to stop.")
 
-    def start_recursive_status_worker(self, root_path):
-        # Create and start a RecursiveStatusWorker
-        worker = RecursiveStatusWorker(root_path)
-        worker.signals.finished.connect(self.process_recursive_status)
+    def start_deep_status_worker(self, root_path: str, max_depth: int = sys.maxsize):
+        # Create and start a StatusDeepWorker
+        worker = StatusDeepWorker(root_path, max_depth)
+        worker.signals.finished.connect(self.process_deep_status)
         self.thread_pool.start(worker)
-        # Track the RecursiveStatusWorker
-        self.running_workers_recursive[root_path] = worker
-        logging.debug(f"Started RecursiveStatusWorker for: {root_path}")
+        # Track the StatusDeepWorker
+        self.running_workers_deep[root_path] = worker
+        logging.debug(f"Started StatusDeepWorker for: {root_path}")
 
-    def process_recursive_status(self, directory_list):
+    def process_deep_status(self, directory_list):
         logging.debug(f"Processing {len(directory_list)} directories for status recalculation")
         self.directory_iterator = iter(directory_list)
         self.process_next_directories()
 
         # After processing is done, remove all workers
-        # Note: RecursiveStatusWorker does not have a direct reference here
-        # So, we assume it's already removed from running_workers_recursive when canceled
+        # Note: StatusDeepWorker does not have a direct reference here
+        # So, we assume it's already removed from running_workers_deep when canceled
 
     def process_next_directories(self):
         # Process a batch of directories
@@ -308,11 +309,11 @@ class CustomFileSystemModel(QFileSystemModel):
         QTimer.singleShot(0, self.process_next_directories)
         # THIS IS BUGGY, MIGHT NEED REWRITE?!
 
-    def context_menu_action_recursive_calc_status(self, folder_info):
+    def context_menu_action_deep_calc_status(self, folder_info):
         file_path = folder_info.absoluteFilePath()
         if not folder_info.isDir():
             logging.debug(f"Selected item is not a directory: {file_path}")
             return
-        logging.debug(f"Recursively recalculating status for: {file_path}")
-        # Start the recursive status worker
-        self.start_recursive_status_worker(file_path)
+        logging.debug(f"Deep recalculating status for: {file_path}")
+        # Start the deep status worker
+        self.start_deep_status_worker(file_path)
