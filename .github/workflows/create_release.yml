@@ -68,7 +68,7 @@ jobs:
           cd dist/macos
           zip -r HELIUM-macos.zip HELIUM.app
 
-       - name: Create Release
+      - name: Create Release
         id: create_release
         uses: actions/create-release@v1
         env:
