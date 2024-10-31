@@ -1,23 +1,21 @@
-name: Create Release
+# FILE: CREATE_RELEASE.YML
 
-permissions:
-  contents: write
+name: Create Release
 
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - '**'
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -38,7 +36,7 @@ jobs:
 
       - name: Archive build artifacts
         if: success()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.os }}
           path: dist/
@@ -48,19 +46,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download Ubuntu Build Artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: build-ubuntu-latest
           path: dist/ubuntu
 
       - name: Download macOS Build Artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: build-macos-latest
           path: dist/macos
 
       - name: Download Windows Build Artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: build-windows-latest
           path: dist/windows
@@ -75,7 +73,7 @@ jobs:
         with:
           tag: ${{ github.ref_name }}
           name: "Release ${{ github.ref_name }}"
-          assets: |
+          artifacts: |
             dist/ubuntu/HELIUM
             dist/macos/HELIUM-macos.zip
             dist/windows/HELIUM.exe
