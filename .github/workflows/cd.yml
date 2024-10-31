@@ -1,0 +1,81 @@
+name: CD
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller HELIUM.spec --clean -y
+
+      - name: Archive build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.os }}
+          path: dist/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Ubuntu Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-ubuntu-latest
+          path: dist/ubuntu
+
+      - name: Download macOS Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-macos-latest
+          path: dist/macos
+
+      - name: Download Windows Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-windows-latest
+          path: dist/windows
+
+      - name: Compress macOS Build Artifact
+        run: |
+          cd dist/macos
+          zip -r HELIUM-macos.zip HELIUM.app
+
+      - name: Create Release and Upload Assets
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          tag: ${{ github.ref_name }}
+          name: "Automated Release ${{ github.ref_name }}"
+          body: "This is an automatically generated CI/CD packaged release. The executables below have not beed manually tested. **Please proceed with caution**"
+          draft: true
+          prerelease: true
+          artifacts: |
+            dist/ubuntu/HELIUM
+            dist/macos/HELIUM-macos.zip
+            dist/windows/HELIUM.exe

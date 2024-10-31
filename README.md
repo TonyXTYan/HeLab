@@ -1,7 +1,10 @@
 # HELIUM
 **H**elium **E**xperiment **L**ab **I**nformation **U**nified **M**anager
 
+[![python](https://img.shields.io/badge/Python-3.12-blue.svg?style=flat&logo=python&logoColor=white)](https://docs.python.org/3/whatsnew/3.12.html)
+[![pyqt6](https://img.shields.io/badge/PyQt6-blue.svg?style=flat&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/static/Docs/PyQt6/introduction.html)
 [![CI](https://github.com/TonyXTYan/HELIUM/actions/workflows/ci.yml/badge.svg)](https://github.com/TonyXTYan/HELIUM/actions/workflows/ci.yml)
+[![Create Release](https://github.com/TonyXTYan/HELIUM/actions/workflows/cd.yml/badge.svg)](https://github.com/TonyXTYan/HELIUM/actions/workflows/cd.yml)
 
 
 using Python3.12 for its new typing features
