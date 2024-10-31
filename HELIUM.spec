@@ -79,8 +79,8 @@ exe = EXE(
 app = BUNDLE(
     exe,
     name='HELIUM.app',
-    icon=None,
-    bundle_identifier=None,
+    icon='helium/resources/Beatunes.icns',
+    bundle_identifier='au.edu.anu.helium-bec-lab',
     info_plist={
         'CFBundleShortVersionString': APP_VERSION,
         'CFBundleVersion': APP_COMMIT_HASH,
