@@ -40,7 +40,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller HELIUM.spec --clean -y
+          pyinstaller HeLab.spec --clean -y
 
       - name: Archive build artifacts
         if: success()
@@ -74,7 +74,7 @@ jobs:
       - name: Compress macOS Build Artifact
         run: |
           cd dist/macos
-          zip -r HELIUM-macos.zip HELIUM.app
+          zip -r HeLab-macos.zip HeLab.app
 
       - name: Create Release and Upload Assets
         uses: ncipollo/release-action@v1
@@ -86,6 +86,6 @@ jobs:
           draft: true
           prerelease: true
           artifacts: |
-            # dist/ubuntu/HELIUM
-            dist/macos/HELIUM-macos.zip
-            dist/windows/HELIUM.exe
+            # dist/ubuntu/HeLab
+            dist/macos/HeLab-macos.zip
+            dist/windows/HeLab.exe

@@ -79,7 +79,7 @@ exe = EXE(
 app = BUNDLE(
     exe,
     name='HeLab.app',
-    icon='helab/resources/Beatunes.icns',
+    icon='helab/resources/ai-icon.icns',
     bundle_identifier='au.edu.anu.he-bec-lab',
     info_plist={
         'CFBundleShortVersionString': APP_VERSION,
