@@ -4,7 +4,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="helium-lab",
+    name="helab",
     version="0.0.1",
     author="Tony Yan",
     author_email="tony.yan@anu.edu.au",
@@ -24,7 +24,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "helium=helium.main:main",
+            "helab=helab.main:main",
         ],
     },
     classifiers=[
