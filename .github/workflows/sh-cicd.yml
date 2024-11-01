@@ -74,14 +74,9 @@ jobs:
             dist/HeLab
 
   release:
-    name: Create Release
-    needs:
-      - build-windows-py3.12
-      - build-macos-py3.12
+    name: Dry Run Release
+    needs: build
     runs-on: macos14-arm64
-    if: |
-      needs.build-windows-py3.12.result == 'success' &&
-      needs.build-macos-py3.12.result == 'success'
     steps:
       - name: Download macOS Build Artifact
         uses: actions/download-artifact@v4
@@ -105,21 +100,21 @@ jobs:
           cd dist/windows
           zip -r HeLab-windows.zip HeLab.exe
 
-      - name: Create Release and Upload Assets
-        uses: ncipollo/release-action@v1
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
-          tag: ${{ github.ref_name }}
-          name: "Automated Release ${{ github.ref_name }}"
-          body: |
-            ## Automated Release ${{ github.ref_name }}
+      # - name: Create Release and Upload Assets
+      #   uses: ncipollo/release-action@v1
+      #   with:
+      #     token: ${{ secrets.PAT_TOKEN }}
+      #     tag: ${{ github.ref_name }}
+      #     name: "Automated Release ${{ github.ref_name }}"
+      #     body: |
+      #       ## Automated Release ${{ github.ref_name }}
             
-            - macOS ARM64 build (Python 3.12)
-            - Windows Intel64 build (Python 3.12)
+      #       - macOS ARM64 build (Python 3.12)
+      #       - Windows Intel64 build (Python 3.12)
             
-            **Note:** This is an automated release. Please verify builds before production use.
-          draft: true
-          prerelease: true
-          artifacts: |
-            dist/macos/HeLab-macos.zip
-            dist/windows/HeLab-windows.zip
+      #       **Note:** This is an automated release. Please verify builds before production use.
+      #     draft: true
+      #     prerelease: true
+      #     artifacts: |
+      #       dist/macos/HeLab-macos.zip
+      #       dist/windows/HeLab-windows.zip
