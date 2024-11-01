@@ -15,11 +15,11 @@ setup(
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
-        "PyQt6==6.7.1",
-        "PySide6==6.8.0.1",
-        "pytablericons==1.0.1",
-        "pygame==2.6.1",
-        "Pympler==1.1",
+        "PyQt6>=6.7.1",
+        "PySide6>=6.8.0.1",
+        "pytablericons>=1.0.1",
+        "pygame>=2.6.1",
+        "Pympler>=1.1",
         # Add other dependencies from requirements-pip.txt
     ],
     entry_points={
