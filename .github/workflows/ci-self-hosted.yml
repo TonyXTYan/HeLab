@@ -10,6 +10,8 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    env:
+      HOME: ${{ runner.temp }}
     strategy:
       matrix:
         os: [osx-arm64, win-64]
@@ -27,11 +29,6 @@ jobs:
       if: matrix.os == 'win-64'
       run: |
         echo "No dependencies to install on Windows."
-
-    - name: Install tar on macOS
-      if: matrix.os == 'osx-arm64'
-      run: |
-        brew install tar
 
     - name: Set up Python
       uses: actions/setup-python@v5
