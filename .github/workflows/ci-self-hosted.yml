@@ -28,6 +28,11 @@ jobs:
       run: |
         echo "No dependencies to install on Windows."
 
+    - name: Install tar on macOS
+      if: matrix.os == 'osx-arm64'
+      run: |
+        brew install tar
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
