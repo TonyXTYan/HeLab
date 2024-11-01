@@ -106,3 +106,4 @@ https://github.com/TonyXTYan/HeLab/settings/actions/runners/new
 
 
 
+- [ ] Code validation check in pipeline
