@@ -73,6 +73,9 @@ pyinstaller HeLab.spec --clean -y
 pyinstaller --onefile --windowed --name HELIUM helab/main.py
 ```
 
+https://github.com/TonyXTYan/HeLab/settings/actions/runners/new
+
+`macos14-arm64`, `win10-intel64`
 
 
 
