@@ -10,6 +10,8 @@
 
 [![python](https://img.shields.io/badge/python-3.12-blue.svg?style=flat&logo=python&logoColor=white)](https://docs.python.org/3/whatsnew/3.12.html)
 [![pyqt6](https://img.shields.io/badge/pyqt6-blue.svg?style=flat&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/static/Docs/PyQt6/introduction.html)
+
+[![latest release](https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=Latest%20Release&)](https://github.com/TonyXTYan/HeLab/releases/latest)
 [![tests](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/ci.yml?label=tests&logo=github&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/cd.yml?label=release&logo=github&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml)
 [![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-ci.yml?label=dev%20CI&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/sh-ci.yml)
@@ -22,7 +24,6 @@
 [//]: # ([![Latest Stable Release]&#40;https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=latest%20stable%20release&#41;]&#40;https://github.com/TonyXTYan/HeLab/releases/latest&#41;)
 [//]: # ([![Latest Pre-release]&#40;https://img.shields.io/github/v/release/TonyXTYan/HeLab?include_prereleases&label=latest%20pre-release&#41;]&#40;https://github.com/TonyXTYan/HeLab/releases&#41;)
 
-[![latest release](https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=Latest%20Release&)](https://github.com/TonyXTYan/HeLab/releases/latest)
 
 [![license](https://img.shields.io/github/license/TonyXTYan/HeLab?color=blue)]()
 [![gitHub issues](https://img.shields.io/github/issues/TonyXTYan/HeLab?&logo=github&logoColor=white)](https://github.com/TonyXTYan/HeLab/issues)
