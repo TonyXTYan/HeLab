@@ -1,4 +1,4 @@
-# .github/workflows/cd-self-hosted.yml
+# .github/workflows/sh-cd.yml
 name: Self Hosted CD
 
 on:

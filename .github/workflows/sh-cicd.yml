@@ -1,0 +1,97 @@
+# .github/workflows/sh-cicd.yml
+name: Self Hosted CD
+
+on:
+  push:
+    branches: [ "*" ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true  # Allow continue to build even if tests fail
+    strategy:
+      # fail-fast: false  # Continue running other jobs even if one fails
+      matrix:
+        os: [macos14-arm64, win10-intel64]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Run Tests
+        run: |
+          pytest -v
+
+      - name: Build with PyInstaller
+        if: ${{ success() }}  # Only build if tests passed
+        run: |
+          pip install pyinstaller
+          pyinstaller HeLab.spec --clean -y
+
+      - name: Archive build artifacts
+        if: ${{ success() }}  # Only archive if build succeeded
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            dist/HeLab.app/**/*
+            dist/HeLab.exe
+            dist/HeLab
+
+  release:
+    needs: build
+    runs-on: macos14-arm64
+    steps:
+      - name: Download macOS Build Artifact (Python 3.12)
+        uses: actions/download-artifact@v4
+        with:
+          name: build-macos14-arm64-py3.12
+          path: dist/macos
+
+      - name: Download Windows Build Artifact (Python 3.12)
+        uses: actions/download-artifact@v4
+        with:
+          name: build-win10-intel64-py3.12
+          path: dist/windows
+
+      - name: Compress macOS Build Artifact
+        run: |
+          cd dist/macos
+          zip -r HeLab-macos.zip HeLab.app HeLab
+
+      - name: Compress Windows Build Artifact
+        run: |
+          cd dist/windows
+          zip -r HeLab-windows.zip HeLab.exe
+
+    #   Uncomment and configure the following steps to create a release
+      - name: Create Release and Upload Assets
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          tag: ${{ github.ref_name }}
+          name: "Automated Release ${{ github.ref_name }}"
+          body: |
+            ## Automated Release ${{ github.ref_name }}
+            
+            - macOS ARM64 build (Python 3.12)
+            - Windows Intel64 build (Python 3.12)
+            
+            **Note:** This is an automated release. Please verify builds before production use.
+          draft: true
+          prerelease: true
+          artifacts: |
+            dist/macos/HeLab-macos.zip
+            dist/windows/HeLab-windows.zip

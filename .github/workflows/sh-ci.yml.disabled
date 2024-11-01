@@ -1,3 +1,4 @@
+# .github/workflows/sh-ci.yml
 name: Self Hosted CI
 
 on:
