@@ -14,12 +14,6 @@ jobs:
         os: [osx-arm64, win-64]
         python-version: ["3.11", "3.12"]
 
-    # Set environment variables for directories with write permissions
-    env:
-      RUNNER_TOOL_CACHE: /Users/tonyyan/actions-runner/_work/_tool
-      AGENT_TOOLSDIRECTORY: /Users/tonyyan/actions-runner/_work/_tool
-      RUNNER_TEMP: /Users/tonyyan/actions-runner/_work/_temp
-
     steps:
     - uses: actions/checkout@v4
 
