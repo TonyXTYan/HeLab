@@ -16,6 +16,7 @@
 [![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/cd.yml?label=release&logo=github&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml)
 [![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-ci.yml?label=dev%20CI&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/sh-ci.yml)
 [![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-cd.yml?label=dev%20CD&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/sh-cd.yml)
+[![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-cicd.yml?label=dev%20CI%20CD&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/sh-cicd.yml)
 
 [//]: # ([![CI]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/ci.yml/badge.svg&#41;]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/ci.yml&#41;)
 [//]: # ([![CD]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml/badge.svg&#41;]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml&#41;)
