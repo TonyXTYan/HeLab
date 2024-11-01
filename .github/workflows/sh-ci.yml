@@ -13,7 +13,8 @@ jobs:
     continue-on-error: true
     strategy:
       matrix:
-        os: [macos14-arm64, win10-intel64]
+        # os: [macos14-arm64, win10-intel64]
+        os: [win10-intel64]
         # python-version: ["3.11", "3.12"]
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
