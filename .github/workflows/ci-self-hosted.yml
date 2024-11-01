@@ -10,8 +10,6 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-    env:
-      HOME: ${{ runner.temp }}
     strategy:
       matrix:
         os: [osx-arm64, win-64]
