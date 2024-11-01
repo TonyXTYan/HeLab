@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    name: Test on ${{ matrix.os }} - Python ${{ matrix.python-version }}
+    # name: Test on ${{ matrix.os }} - Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
     continue-on-error: true  # Allow continue to build even if tests fail
     strategy:
@@ -23,6 +23,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
@@ -35,8 +36,8 @@ jobs:
           pytest -v
 
   build:
-    name: Build on ${{ matrix.os }} - Python ${{ matrix.python-version }}
-    needs: test
+    # name: Build on ${{ matrix.os }} - Python ${{ matrix.python-version }}
+    # needs: test
     continue-on-error: true 
     runs-on: ${{ matrix.os }}
     strategy:
@@ -52,6 +53,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
@@ -74,8 +76,8 @@ jobs:
             dist/HeLab
 
   release:
-    name: Dry Run Release
-    needs: build
+    name: Make Release (Dry Run)
+    needs: [test, build]
     runs-on: macos14-arm64
     steps:
       - name: Download macOS Build Artifact
