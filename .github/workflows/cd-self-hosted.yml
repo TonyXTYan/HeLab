@@ -1,5 +1,5 @@
 # .github/workflows/cd-self-hosted.yml
-name: CD
+name: CD Self Hosted
 
 on:
   push:
@@ -10,7 +10,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [self-hosted-macos-arm, self-hosted-windows-x86]
+        os: [TY-MB-A2485, RSPE-064759]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

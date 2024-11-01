@@ -12,19 +12,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [self-hosted-macos-arm, self-hosted-windows-x86]
+        os: [TY-MB-A2485, RSPE-064759]
         python-version: ["3.11", "3.12"]
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Install dependencies on macOS
-      if: matrix.os == 'self-hosted-macos-arm'
+      if: matrix.os == 'TY-MB-A2485'
       run: |
         echo "No dependencies to install on macOS."
 
     - name: Install dependencies on Windows
-      if: matrix.os == 'self-hosted-windows-x86'
+      if: matrix.os == 'RSPE-064759'
       run: |
         echo "No dependencies to install on Windows."
 
