@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    continue-on-error: true
     strategy:
       matrix:
         os: [osx-arm64, win-64]
@@ -37,7 +38,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.os }}
-          path: dist/
+          path: |
+            dist/HeLab.app/**/*
+            dist/HeLab.exe
+            dist/HeLab
 
   release:
     needs: build
