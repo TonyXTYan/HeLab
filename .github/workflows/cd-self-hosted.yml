@@ -10,7 +10,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [TY-MB-A2485, RSPE-064759]
+        os: [osx-arm64, win-64]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
