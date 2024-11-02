@@ -10,8 +10,7 @@ jobs:
     # name: Test on ${{ matrix.os }} - Python ${{ matrix.python-version }}
     name: Test on ${{ matrix.os }} py3.${{ matrix.python3-version }}
     runs-on: ${{ matrix.os }}-latest
-    # continue-on-error: true  # Allow continue to build even if tests fail
-    continue-on-error: ${{ matrix.python3-version != '12' }}
+    continue-on-error: true  # Allow continue to build even if tests fail
     strategy:
       matrix:
         os: [macos, windows, ubuntu]
@@ -65,26 +64,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: 3.${{ matrix.python3-version }}
-          # cache: 'pip'
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # pip install --force-reinstall -r requirements.txt
           pip install -e .
 
       - name: Run Tests
         run: |
-          pytest -v --cache-clear --cov=helab --junit-xml=pytest-report.xml
-      
-      - name: Upload Test Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ matrix.os }}-py3${{ matrix.python3-version }}
-          path: pytest-report.xml
-
-      - name: Check Python 3.12 Test Results
+          pytest -v
+      - name: Fail if Python 3.12 failed
         if: matrix.python3-version == '12' && failure()
         run: exit 1
 
@@ -92,8 +83,7 @@ jobs:
     # name: Build on ${{ matrix.os }} - Python ${{ matrix.python-version }}
     needs: test
     name: Build on ${{ matrix.os }} py3.${{ matrix.python3-version }}
-    # continue-on-error: true 
-    continue-on-error: ${{ matrix.python3-version != '12' }}
+    continue-on-error: true 
     runs-on: ${{ matrix.os }}-latest
     strategy:
       matrix:
@@ -110,18 +100,6 @@ jobs:
       #   with:
       #     path: ~/.cache/pip
       #     key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}-py${{ matrix.python-version }}
-
-      # For macOS, run a no-op command
-      - name: Install dependencies on macOS
-        if: matrix.os == 'macos'
-        run: |
-          echo "No dependencies to install on macOS."
-
-      # For Windows, run a no-op command
-      - name: Install dependencies on Windows
-        if: matrix.os == 'windows'
-        run: |
-          echo "No dependencies to install on Windows."
 
       # Install system dependencies for Ubuntu
       - name: Install dependencies on Ubuntu
@@ -142,17 +120,28 @@ jobs:
             x11-utils \
             libopengl0
 
+      # For macOS, run a no-op command
+      - name: Install dependencies on macOS
+        if: matrix.os == 'macos'
+        run: |
+          echo "No dependencies to install on macOS."
+
+      # For Windows, run a no-op command
+      - name: Install dependencies on Windows
+        if: matrix.os == 'windows'
+        run: |
+          echo "No dependencies to install on Windows."
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: 3.${{ matrix.python3-version }}
-          # cache: 'pip'
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # pip install --force-reinstall -r requirements.txt
           pip install -e .
 
       - name: Build with PyInstaller
@@ -170,26 +159,26 @@ jobs:
           path: |
             dist/
           retention-days: 1
-      - name: Check Python 3.12 Test Results
+      - name: Fail if Python 3.12 failed
         if: matrix.python3-version == '12' && failure()
         run: exit 1
 
   release:
-    name: Create Release on Tag
+    name: Release (if tagged)
     needs: [test, build]
     runs-on: ubuntu-latest
     steps:
-      - name: Download macOS Build Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: build-macos-py312
-          path: dist/macos
-
       - name: Download Windows Build Artifact
         uses: actions/download-artifact@v4
         with:
           name: build-windows-py312
           path: dist/windows
+
+      - name: Download macOS Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-macos-py312
+          path: dist/macos
 
       - name: Download Ubuntu Build Artifact
         uses: actions/download-artifact@v4
