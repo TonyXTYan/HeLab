@@ -16,6 +16,8 @@ jobs:
         os: [macos, windows, ubuntu]
         # os: [macos, windows]
         python3-version: ["9", "10", "11", "12", "13"]
+    env:
+      QT_QPA_PLATFORM: offscreen
 
     steps:
       - name: Checkout code
@@ -26,6 +28,37 @@ jobs:
       #   with:
       #     path: ~/.cache/pip
       #     key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}-py${{ matrix.python-version }}
+
+      # Install system dependencies for Ubuntu
+      - name: Install dependencies on Ubuntu
+        if: matrix.os == 'ubuntu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1 \
+            xvfb \
+            x11-utils \
+            libopengl0
+
+      # For macOS, run a no-op command
+      - name: Install dependencies on macOS
+        if: matrix.os == 'macos'
+        run: |
+          echo "No dependencies to install on macOS."
+
+      # For Windows, run a no-op command
+      - name: Install dependencies on Windows
+        if: matrix.os == 'windows'
+        run: |
+          echo "No dependencies to install on Windows."
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -64,6 +97,37 @@ jobs:
       #   with:
       #     path: ~/.cache/pip
       #     key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}-py${{ matrix.python-version }}
+
+      # Install system dependencies for Ubuntu
+      - name: Install dependencies on Ubuntu
+        if: matrix.os == 'ubuntu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1 \
+            xvfb \
+            x11-utils \
+            libopengl0
+
+      # For macOS, run a no-op command
+      - name: Install dependencies on macOS
+        if: matrix.os == 'macos'
+        run: |
+          echo "No dependencies to install on macOS."
+
+      # For Windows, run a no-op command
+      - name: Install dependencies on Windows
+        if: matrix.os == 'windows'
+        run: |
+          echo "No dependencies to install on Windows."
 
       - name: Set up Python
         uses: actions/setup-python@v5
