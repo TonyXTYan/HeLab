@@ -164,9 +164,9 @@ jobs:
         run: exit 1
 
   release:
-    name: Make GitHub Release
+    name: Release if tagged
     needs: [test, build]
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Download Windows Build Artifact
         uses: actions/download-artifact@v4
@@ -201,6 +201,28 @@ jobs:
           cd dist/ubuntu
           zip -r -9 HeLab-ubuntu.zip HeLab
 
+      - name: Prepare Release Body
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          RELEASE_BODY="## Automated Release ${{ github.ref_name }} $(date +'%Y-%m-%d %H:%M')
+
+          Commit: ${{ github.sha }}
+
+          Workflow run: ${{ github.event.repository.url }}/actions/runs/${{ github.run_id }}
+
+          - macOS ARM64 build (Python 3.12)
+          - Windows Intel64 build (Python 3.12)
+          - Ubuntu Intel64 build (Python 3.12)
+          
+          **Note:** This is an automated release. Please verify builds before production use."
+          
+          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
+          echo "$RELEASE_BODY" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          
+          echo "Release body preview:"
+          echo "$RELEASE_BODY"
+
       - name: Create Release and Upload Assets
         if: startsWith(github.ref, 'refs/tags/')
         uses: ncipollo/release-action@v1
@@ -208,14 +230,7 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           tag: ${{ github.ref_name }}
           name: "Automated Release ${{ github.ref_name }}"
-          body: |
-            ## Automated Release ${{ github.ref_name }}
-            
-            - macOS ARM64 build (Python 3.12)
-            - Windows Intel64 build (Python 3.12)
-            - Ubuntu Intel64 build (Python 3.12)
-            
-            **Note:** This is an automated release. Please verify builds before production use.
+          body: ${{ env.RELEASE_BODY }}
           draft: true
           prerelease: true
           artifacts: |
