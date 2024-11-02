@@ -8,18 +8,20 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
-
-    runs-on: ${{ matrix.os }}
-
+  test:
+    name: Test on ${{ matrix.os }} py3.${{ matrix.python3-version }}
+    runs-on: ${{ matrix.os }}-latest
+    continue-on-error: true  
     strategy:
       matrix:
-        # os: [ubuntu-latest, macos-latest, windows-latest]
-        # There are super weird bugs about PyQt and various other dependency issues. I give up on ubuntu for now.
-        os: [macos-latest, windows-latest]
-        python-version: ["3.11", "3.12"]
-        # python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-
+        os: [ubuntu, macos, windows]
+        # os: [macos, windows]
+        # There are super weird bugs about PyQt and various other dependency issues in ubuntu. I give up on ubuntu for now.
+        # os: [macos-latest, windows-latest] 
+        # python-version: ["3.11", "3.12"]
+        python3-version: ["9", "10", "11", "12", "13"]
+    env:
+      QT_QPA_PLATFORM: offscreen
     steps:
     - uses: actions/checkout@v4
 
@@ -33,33 +35,45 @@ jobs:
 
     # Install system dependencies for Ubuntu
     - name: Install dependencies on Ubuntu
-      if: matrix.os == 'ubuntu-latest'
+      if: matrix.os == 'ubuntu'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libegl1 libglib2.0-0 libsm6 libxrender1 libxext6
+        sudo apt-get install -y \
+          libegl1 \
+          libxcb-icccm4 \
+          libxcb-image0 \
+          libxcb-keysyms1 \
+          libxcb-randr0 \
+          libxcb-render-util0 \
+          libxcb-shape0 \
+          libxcb-xinerama0 \
+          libxcb-xkb1 \
+          xvfb \
+          x11-utils \
+          libopengl0
 
     # For macOS, run a no-op command
     - name: Install dependencies on macOS
-      if: matrix.os == 'macos-latest'
+      if: matrix.os == 'macos'
       run: |
         echo "No dependencies to install on macOS."
 
     # For Windows, run a no-op command
     - name: Install dependencies on Windows
-      if: matrix.os == 'windows-latest'
+      if: matrix.os == 'windows'
       run: |
         echo "No dependencies to install on Windows."
 
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: 3.${{ matrix.python3-version }}
         cache: 'pip'
 
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: 3.${{ matrix.python3-version }}
         cache: 'pip'
 
     - run: | 
