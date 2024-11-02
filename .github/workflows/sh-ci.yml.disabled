@@ -50,3 +50,7 @@ jobs:
     - name: Run Tests
       run: |
         pytest -v
+
+    - name: Fail if Python 3.12 failed
+      if: matrix.python-version == '3.12' && failure()
+      run: exit 1

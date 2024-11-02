@@ -2,8 +2,8 @@
 name: CI
 
 on:
-  # push:
-  #   branches: [ "*" ]
+  push:
+    branches: [ "*" ]
   pull_request:
     branches: [ main ]
 
@@ -11,14 +11,14 @@ jobs:
   build:
 
     runs-on: ${{ matrix.os }}
-
+    continue-on-error: true  
     strategy:
       matrix:
-        # os: [ubuntu-latest, macos-latest, windows-latest]
-        # There are super weird bugs about PyQt and various other dependency issues. I give up on ubuntu for now.
-        os: [macos-latest, windows-latest]
-        python-version: ["3.11", "3.12"]
-        # python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # There are super weird bugs about PyQt and various other dependency issues in ubuntu. I give up on ubuntu for now.
+        # os: [macos-latest, windows-latest] 
+        # python-version: ["3.11", "3.12"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
     steps:
     - uses: actions/checkout@v4
