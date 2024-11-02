@@ -37,20 +37,21 @@ jobs:
     - name: Install dependencies on Ubuntu
       if: matrix.os == 'ubuntu'
       run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libegl1 \
-          libxcb-icccm4 \
-          libxcb-image0 \
-          libxcb-keysyms1 \
-          libxcb-randr0 \
-          libxcb-render-util0 \
-          libxcb-shape0 \
-          libxcb-xinerama0 \
-          libxcb-xkb1 \
-          xvfb \
-          x11-utils \
-          libopengl0
+        echo "No dependencies to install on macOS."
+        # sudo apt-get update
+        # sudo apt-get install -y \
+        #   libegl1 \
+        #   libxcb-icccm4 \
+        #   libxcb-image0 \
+        #   libxcb-keysyms1 \
+        #   libxcb-randr0 \
+        #   libxcb-render-util0 \
+        #   libxcb-shape0 \
+        #   libxcb-xinerama0 \
+        #   libxcb-xkb1 \
+        #   xvfb \
+        #   x11-utils \
+        #   libopengl0
 
     # For macOS, run a no-op command
     - name: Install dependencies on macOS
