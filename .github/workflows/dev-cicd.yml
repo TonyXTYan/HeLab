@@ -164,7 +164,7 @@ jobs:
         run: exit 1
 
   release:
-    name: Release if tagged
+    name: Release (if tagged)
     needs: [test, build]
     runs-on: ubuntu-latest
     steps:
@@ -202,17 +202,21 @@ jobs:
           zip -r -9 HeLab-ubuntu.zip HeLab
 
       - name: Prepare Release Body
-        if: startsWith(github.ref, 'refs/tags/')
+        # if: startsWith(github.ref, 'refs/tags/')
         run: |
-          RELEASE_BODY="## Automated Release ${{ github.ref_name }} $(date +'%Y-%m-%d %H:%M')
+          RELEASE_BODY="## Release ${{ github.ref_name }}
 
-          Commit: ${{ github.sha }}
+          **Date:** $(date +'%Y-%m-%d %H:%M')
 
-          Workflow run: ${{ github.event.repository.url }}/actions/runs/${{ github.run_id }}
+          **Commit:** [${{ github.sha }}](${{ github.event.repository.url }}/commit/${{ github.sha }})
 
-          - macOS ARM64 build (Python 3.12)
-          - Windows Intel64 build (Python 3.12)
-          - Ubuntu Intel64 build (Python 3.12)
+          **Workflow Run:** [View Details](${{ github.event.repository.url }}/actions/runs/${{ github.run_id }})
+
+          ### Build Artifacts
+
+          - **macOS ARM64** build (Python 3.12)
+          - **Windows Intel64** build (Python 3.12)
+          - **Ubuntu Intel64** build (Python 3.12)
           
           **Note:** This is an automated release. Please verify builds before production use."
           
