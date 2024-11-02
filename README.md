@@ -33,8 +33,8 @@
 
 
 [![license](https://img.shields.io/github/license/TonyXTYan/HeLab?color=blue)]()
-[![gitHub issues](https://img.shields.io/github/issues/TonyXTYan/HeLab?&logo=github&logoColor=white)](https://github.com/TonyXTYan/HeLab/issues)
-
+[![github issues](https://img.shields.io/github/issues/TonyXTYan/HeLab?&logo=github&logoColor=white)](https://github.com/TonyXTYan/HeLab/issues)
+[![github pull requests](https://img.shields.io/github/issues-pr/TonyXTYan/HeLab?&logo=github&logoColor=white)](https://github.com/TonyXTYan/HeLab/pulls)
 
 here are some more random badges because they look cool
 
