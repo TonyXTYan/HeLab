@@ -76,7 +76,14 @@ jobs:
 
       - name: Run Tests
         run: |
-          pytest -v
+          pytest -v --cache-clear --cov=helab --junitxml=pytest-report.xml
+      
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}-py3${{ matrix.python3-version }}
+          path: pytest-report.xml
+
       - name: Check Python 3.12 Test Results
         if: matrix.python3-version == '12' && failure()
         run: exit 1
