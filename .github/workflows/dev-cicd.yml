@@ -5,8 +5,8 @@ on:
   push:
     branches: [ "*" ]
 
-jobs:
-  test:
+jobs: 
+  test: ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  
     # name: Test on ${{ matrix.os }} - Python ${{ matrix.python-version }}
     name: Test on ${{ matrix.os }} py3.${{ matrix.python3-version }}
     runs-on: ${{ matrix.os }}-latest
@@ -73,13 +73,28 @@ jobs:
           pip install -e .
 
       - name: Run Tests
+        id: run_tests
         run: |
-          pytest -v
+          pytest -v --cache-clear --log-cli-level=DEBUG
+
+      - name: Save Test Result
+        if: matrix.python3-version == '12'
+        run: |
+          echo "${{ steps.run_tests.outcome }}" > test-py312-status.txt
+        shell: bash
+
+      - name: Upload Test Status Artifact
+        if: matrix.python3-version == '12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-py312-status
+          path: test-py312-status.txt
+      
       - name: Check Python 3.12 Test Results
         if: matrix.python3-version == '12' && failure()
         run: exit 1
 
-  build:
+  build: ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  
     # name: Build on ${{ matrix.os }} - Python ${{ matrix.python-version }}
     needs: test
     name: Build on ${{ matrix.os }} py3.${{ matrix.python3-version }}
@@ -145,6 +160,7 @@ jobs:
           pip install -e .
 
       - name: Build with PyInstaller
+        id: build_pyinstaller
         run: |
           pip install pyinstaller
           pyinstaller HeLab.spec --clean -y
@@ -159,11 +175,24 @@ jobs:
           path: |
             dist/
           retention-days: 1
+
+      - name: Save Build Result
+        if: matrix.python3-version == '12'
+        run: |
+          echo "${{ steps.build_pyinstaller.outcome }}" > build-py312-status.txt
+        shell: bash
+
+      - name: Upload Build Status Artifact
+        if: matrix.python3-version == '12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-py312-status
+          path: build-py312-status.txt
       - name: Check Python 3.12 Test Results
         if: matrix.python3-version == '12' && failure()
         run: exit 1
 
-  release:
+  release: ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  ##  
     name: Create Release on Tag
     needs: [test, build]
     runs-on: ubuntu-latest
@@ -226,7 +255,7 @@ jobs:
           
           echo "Release body preview:"
           echo "$RELEASE_BODY"
-
+      
       - name: Create Release and Upload Assets
         if: startsWith(github.ref, 'refs/tags/')
         uses: ncipollo/release-action@v1
@@ -241,3 +270,28 @@ jobs:
             dist/macos/HeLab-macos.zip
             dist/windows/HeLab-windows.zip
             dist/ubuntu/HeLab-ubuntu.zip
+
+      - name: Download Test Status Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: test-py312-status
+          path: test_status
+
+      - name: Download Build Status Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-py312-status
+          path: test_status
+
+      - name: Check Test and Build Status
+        run: |
+          TEST_STATUS=$(cat test-py312-status.txt)
+          BUILD_STATUS=$(cat build-py312-status.txt)
+          echo "Test status: $TEST_STATUS"
+          echo "Build status: $BUILD_STATUS"
+          if [ "$TEST_STATUS" != "success" ] || [ "$BUILD_STATUS" != "success" ]; then
+            echo "Python 3.12 test or build failed. Failing workflow."
+            exit 1
+          fi
+        shell: bash
+

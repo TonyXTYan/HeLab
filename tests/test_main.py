@@ -32,6 +32,13 @@ class TestMainWindow(unittest.TestCase):
         if not cls.app:
             cls.app = QApplication([])
 
+    def setUp(self):
+        self.main_window = MainWindow()
+
+    def tearDown(self):
+        self.main_window.close()
+        self.main_window = None
+
     def test_main_window_creation(self):
         main_window = MainWindow()
         self.assertIsNotNone(main_window)

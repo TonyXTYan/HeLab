@@ -17,6 +17,12 @@ class TestIcons(unittest.TestCase):
             cls.app = QApplication([])
         StatusIcons.initialise_icons()
 
+    @classmethod
+    def tearDownClass(cls):
+        if cls.app:
+            cls.app.quit()
+            cls.app = None
+
     def test_tabler_icon(self):
         icon = tablerIcon(OutlineIcon.ABC, '#00bb39', size=128)
         self.assertIsInstance(icon, QIcon)
