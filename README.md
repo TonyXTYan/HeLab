@@ -14,9 +14,10 @@
 [![latest release](https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=Latest%20Release&)](https://github.com/TonyXTYan/HeLab/releases/latest)
 [![tests](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/ci.yml?label=tests&logo=github&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/cd.yml?label=release&logo=github&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml)
-[![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-ci.yml?label=dev%20CI&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/sh-ci.yml)
-[![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-cd.yml?label=dev%20CD&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/sh-cd.yml)
-[![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-cicd.yml?label=dev%20CI%20CD&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/sh-cicd.yml)
+[![dev](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/dev-cicd.yml?label=dev%20CI%20CD&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/dev-cicd.yml)
+<!-- [![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-ci.yml?label=SH%20dev%20CI&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/sh-ci.yml)
+[![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-cd.yml?label=SH%20dev%20CD&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/sh-cd.yml)
+[![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-cicd.yml?label=SH%20dev%20CI%20CD&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/sh-cicd.yml) -->
 
 [//]: # ([![CI]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/ci.yml/badge.svg&#41;]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/ci.yml&#41;)
 [//]: # ([![CD]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml/badge.svg&#41;]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml&#41;)

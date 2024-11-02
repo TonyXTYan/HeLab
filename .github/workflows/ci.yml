@@ -2,8 +2,8 @@
 name: CI
 
 on:
-  push:
-    branches: [ "*" ]
+  # push:
+  #   branches: [ "*" ]
   pull_request:
     branches: [ main ]
 
@@ -15,10 +15,13 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu, macos, windows]
+        # os: [macos, windows]
         # There are super weird bugs about PyQt and various other dependency issues in ubuntu. I give up on ubuntu for now.
         # os: [macos-latest, windows-latest] 
         # python-version: ["3.11", "3.12"]
         python3-version: ["9", "10", "11", "12", "13"]
+    env:
+      QT_QPA_PLATFORM: offscreen
     steps:
     - uses: actions/checkout@v4
 
