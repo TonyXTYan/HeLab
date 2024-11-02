@@ -76,7 +76,7 @@ jobs:
 
       - name: Run Tests
         run: |
-          pytest -v --cache-clear --cov=helab --junitxml=pytest-report.xml
+          pytest -v --cache-clear --cov=helab --junit-xml=pytest-report.xml
       
       - name: Upload Test Results
         uses: actions/upload-artifact@v4

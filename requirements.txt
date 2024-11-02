@@ -5,6 +5,7 @@ PyQt6_sip
 pyqt6rc
 pytablericons
 pytest
+pytest-cov
 pytest-qt
 pympler
 pyinstaller
