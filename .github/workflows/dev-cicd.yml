@@ -10,7 +10,8 @@ jobs:
     # name: Test on ${{ matrix.os }} - Python ${{ matrix.python-version }}
     name: Test on ${{ matrix.os }} py3.${{ matrix.python3-version }}
     runs-on: ${{ matrix.os }}-latest
-    continue-on-error: true  # Allow continue to build even if tests fail
+    # continue-on-error: true  # Allow continue to build even if tests fail
+    continue-on-error: ${{ matrix.python3-version != '12' }}
     strategy:
       matrix:
         os: [macos, windows, ubuntu]
@@ -83,7 +84,8 @@ jobs:
     # name: Build on ${{ matrix.os }} - Python ${{ matrix.python-version }}
     needs: test
     name: Build on ${{ matrix.os }} py3.${{ matrix.python3-version }}
-    continue-on-error: true 
+    # continue-on-error: true 
+    continue-on-error: ${{ matrix.python3-version != '12' }}
     runs-on: ${{ matrix.os }}-latest
     strategy:
       matrix:
@@ -100,6 +102,18 @@ jobs:
       #   with:
       #     path: ~/.cache/pip
       #     key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}-py${{ matrix.python-version }}
+
+      # For macOS, run a no-op command
+      - name: Install dependencies on macOS
+        if: matrix.os == 'macos'
+        run: |
+          echo "No dependencies to install on macOS."
+
+      # For Windows, run a no-op command
+      - name: Install dependencies on Windows
+        if: matrix.os == 'windows'
+        run: |
+          echo "No dependencies to install on Windows."
 
       # Install system dependencies for Ubuntu
       - name: Install dependencies on Ubuntu
@@ -119,18 +133,6 @@ jobs:
             xvfb \
             x11-utils \
             libopengl0
-
-      # For macOS, run a no-op command
-      - name: Install dependencies on macOS
-        if: matrix.os == 'macos'
-        run: |
-          echo "No dependencies to install on macOS."
-
-      # For Windows, run a no-op command
-      - name: Install dependencies on Windows
-        if: matrix.os == 'windows'
-        run: |
-          echo "No dependencies to install on Windows."
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -168,17 +170,17 @@ jobs:
     needs: [test, build]
     runs-on: ubuntu-latest
     steps:
-      - name: Download Windows Build Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: build-windows-py312
-          path: dist/windows
-
       - name: Download macOS Build Artifact
         uses: actions/download-artifact@v4
         with:
           name: build-macos-py312
           path: dist/macos
+
+      - name: Download Windows Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-windows-py312
+          path: dist/windows
 
       - name: Download Ubuntu Build Artifact
         uses: actions/download-artifact@v4

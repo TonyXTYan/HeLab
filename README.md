@@ -38,11 +38,11 @@
 
 here are some more random badges because they look cool
 
-![nvidia](https://img.shields.io/badge/nvidia-76B908.svg?logo=nvidia&logoColor=white)
 ![apple](https://img.shields.io/badge/apple-000000.svg?logo=apple&logoColor=white) 
 ![arm](https://img.shields.io/badge/arm-0091BD.svg?logo=arm&logoColor=white)
-![dell](https://img.shields.io/badge/dell-007DB8?logo=dell&logoColor=white)
+![nvidia](https://img.shields.io/badge/nvidia-76B908.svg?logo=nvidia&logoColor=white)
 ![intel](https://img.shields.io/badge/intel-0071C5?logo=intel&logoColor=white)
+![dell](https://img.shields.io/badge/dell-007DB8?logo=dell&logoColor=white)
 ![gitHub actions](https://img.shields.io/badge/github%20actions-181717.svg?logo=githubactions&logoColor=white)
 ![pandas](https://img.shields.io/badge/pandas-150458.svg?logo=pandas&logoColor=white)
 ![numpy](https://img.shields.io/badge/numpy-013243.svg?logo=numpy&logoColor=white)
@@ -95,6 +95,11 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+```PowerShell
+.\venv\Scripts\activate
+```
+
+```bash
 
 
 
