@@ -8,11 +8,12 @@ on:
 jobs:
   test:
     # name: Test on ${{ matrix.os }} - Python ${{ matrix.python-version }}
-    runs-on: ${{ matrix.os }}
+    name: Test on ${{ matrix.os }} py3.${{ matrix.python3-version }}
+    runs-on: ${{ matrix.os }}-latest
     continue-on-error: true  # Allow continue to build even if tests fail
     strategy:
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        os: [macos, windows, ubuntu]
         python3-version: ["9", "10", "11", "12", "13"]
 
     steps:
@@ -44,11 +45,12 @@ jobs:
   build:
     # name: Build on ${{ matrix.os }} - Python ${{ matrix.python-version }}
     # needs: test
+    name: Build on ${{ matrix.os }} py3.${{ matrix.python3-version }}
     continue-on-error: true 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}-latest
     strategy:
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        os: [macos, windows, ubuntu]
         python3-version: ["9", "10", "11", "12", "13"]
 
     steps:
@@ -97,19 +99,19 @@ jobs:
       - name: Download Windows Build Artifact
         uses: actions/download-artifact@v4
         with:
-          name: build-windows-latest-py312
+          name: build-windows-py312
           path: dist/windows
 
       - name: Download macOS Build Artifact
         uses: actions/download-artifact@v4
         with:
-          name: build-macos-latest-py312
+          name: build-macos-py312
           path: dist/macos
 
       - name: Download Ubuntu Build Artifact
         uses: actions/download-artifact@v4
         with:
-          name: build-ubuntu-latest-py312
+          name: build-ubuntu-py312
           path: dist/ubuntu
 
       - name: Compress macOS Build Artifact
