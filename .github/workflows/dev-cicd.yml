@@ -16,7 +16,7 @@ jobs:
       matrix:
         os: [macos, windows, ubuntu]
         # os: [macos, windows]
-        python3-version: ["9", "10", "11", "12", "13"]
+        python3-version: ["10", "11", "12", "13"]
     env:
       QT_QPA_PLATFORM: offscreen
 
@@ -59,7 +59,8 @@ jobs:
       - name: Install dependencies on Windows
         if: matrix.os == 'windows'
         run: |
-          echo "No dependencies to install on Windows."
+          choco install microsoft-visual-cpp-build-tools --quiet --no-progress
+          refreshenv
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -72,16 +73,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -e .
-
-      - name: Fix shitty windows path problems
-        if: matrix.os == 'windows'
-        run: |
-          PYQT6_PATH=$(python -c "import PyQt6, pathlib; print(pathlib.Path(PyQt6.__file__).parent)")
-          QT_BIN_PATH="$PYQT6_PATH/Qt6/bin"
-          echo "QT_BIN_PATH is $QT_BIN_PATH"
-          echo "PYTHONPATH is $PYTHONPATH"
-          echo "Adding Qt bin directory to PATH"
-          echo "$QT_BIN_PATH" >> $GITHUB_PATH
 
       - name: Run Tests
         run: |
