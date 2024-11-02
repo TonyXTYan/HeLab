@@ -83,3 +83,4 @@ helium_lab.egg-info
 helab/resources/gitignore
 
 Icon?
+helab.egg-info

@@ -75,7 +75,7 @@ jobs:
       - name: Run Tests
         run: |
           pytest -v
-      - name: Fail if Python 3.12 failed
+      - name: Check Python 3.12 Test Results
         if: matrix.python3-version == '12' && failure()
         run: exit 1
 
@@ -159,12 +159,12 @@ jobs:
           path: |
             dist/
           retention-days: 1
-      - name: Fail if Python 3.12 failed
+      - name: Check Python 3.12 Test Results
         if: matrix.python3-version == '12' && failure()
         run: exit 1
 
   release:
-    name: Release (if tagged)
+    name: Create Release on Tag
     needs: [test, build]
     runs-on: ubuntu-latest
     steps:
