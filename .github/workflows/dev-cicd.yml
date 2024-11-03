@@ -3,9 +3,8 @@ name: CI CD
 
 on:
   push:
-    branches: [ "*" ]
-    tags:
-      - 'v*.*.*'
+    branches: "*" 
+    tags: 'v*.*.*'
 
 jobs:
   test:

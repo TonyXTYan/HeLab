@@ -10,7 +10,8 @@ from pytablericons import OutlineIcon
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from helab.resources.icons import tablerIcon, StatusIcons
 
-@pytest.fixture(scope="module", autouse=True)
+# @pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="session", autouse=True)
 def app():
     app = QApplication.instance()
     if not app:

@@ -49,7 +49,7 @@ here are some more random badges because they look cool
 ![numba](https://img.shields.io/badge/numba-00A3E0.svg?logo=numba&logoColor=white)
 ![scipy](https://img.shields.io/badge/scipy-8CAAE6.svg?logo=scipy&logoColor=white)
 ![conda](https://img.shields.io/badge/conda-44Ab33.svg?logo=anaconda&logoColor=white)
-![pip](https://img.shields.io/badge/pip-3775A9.svg?logo=pypi&logoColor=white)
+![pip](https://img.shields.io/badge/pip-3775A9.svg?logo=pypi&logoColor=white
 ![pycharm](https://img.shields.io/badge/pycharm-000000?logo=pycharm&logoColor=white)
 
 ![arxiv](https://img.shields.io/badge/arxiv-B31B1B?logo=arxiv&logoColor=white)
