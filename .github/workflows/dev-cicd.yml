@@ -69,14 +69,20 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
+        shell: bash
         run: |
+          python -m venv venv
+          source venv/bin/activate
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           # pip install --force-reinstall -r requirements.txt
           pip install -e .
 
       - name: Run Tests
+        shell: bash
         run: |
+          python -m venv venv
+          source venv/bin/activate
           pytest -v --cache-clear --cov=helab --junit-xml=pytest-report.xml
       
       - name: Upload Test Results
@@ -152,6 +158,8 @@ jobs:
       - name: Install dependencies 
         shell: bash
         run: |
+          python -m venv venv
+          source venv/bin/activate
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           # pip install --force-reinstall -r requirements.txt
@@ -160,6 +168,8 @@ jobs:
       - name: Build with PyInstaller
         shell: bash
         run: |
+          python -m venv venv
+          source venv/bin/activate
           pyinstaller HeLab.spec --clean -y
 
       - name: Archive build artifacts
