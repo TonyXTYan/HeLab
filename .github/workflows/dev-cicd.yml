@@ -72,8 +72,8 @@ jobs:
         shell: bash
         run: |
           python -m venv venv
-          if [ $RUNNER_OS == 'Windows' ]; then
-            . .\venv\Scripts\activate
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
           else
             source venv/bin/activate
           fi
@@ -85,9 +85,8 @@ jobs:
       - name: Run Tests
         shell: bash
         run: |
-          python -m venv venv
-          if [ $RUNNER_OS == 'Windows' ]; then
-            . .\venv\Scripts\activate
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
           else
             source venv/bin/activate
           fi
@@ -167,8 +166,8 @@ jobs:
         shell: bash
         run: |
           python -m venv venv
-          if [ $RUNNER_OS == 'Windows' ]; then
-            . .\venv\Scripts\activate
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
           else
             source venv/bin/activate
           fi
@@ -180,9 +179,8 @@ jobs:
       - name: Build with PyInstaller
         shell: bash
         run: |
-          python -m venv venv
-          if [ $RUNNER_OS == 'Windows' ]; then
-            . .\venv\Scripts\activate
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
           else
             source venv/bin/activate
           fi
@@ -295,3 +293,4 @@ jobs:
       #       dist/macos/HeLab-macos.zip
       #       dist/windows/HeLab-windows.zip
       #       dist/ubuntu/HeLab-ubuntu.zip
+
