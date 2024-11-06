@@ -83,6 +83,11 @@ jobs:
 
       - name: Run Tests
         run: |
+          if [ $RUNNER_OS == 'Windows' ]; then
+            .\venv\Scripts\activate
+          else
+            source venv/bin/activate
+          fi
           pytest -v --cache-clear --cov=helab --junit-xml=pytest-report.xml
       
       - name: Upload Test Results
@@ -170,7 +175,11 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pip install pyinstaller
+          if [ $RUNNER_OS == 'Windows' ]; then
+            .\venv\Scripts\activate
+          else
+            source venv/bin/activate
+          fi
           pyinstaller HeLab.spec --clean -y
 
       - name: Archive build artifacts
