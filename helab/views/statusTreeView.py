@@ -3,7 +3,7 @@ import logging
 from PyQt6.QtCore import Qt, QModelIndex, QTimer, QEvent, QRect, QPoint
 from PyQt6.QtWidgets import QTreeView, QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout
 
-from helab.models.helabFileSystemModel import CustomFileSystemModel
+from helab.models.helabFileSystemModel import helabFileSystemModel
 
 
 class StatusHoverIconInfo(QWidget):
@@ -86,7 +86,7 @@ class StatusTreeView(QTreeView):
     def mouseMoveEvent(self, event):
         pos = event.pos()
         index = self.indexAt(pos)
-        if index.isValid() and index.column() == CustomFileSystemModel.COLUMN_STATUS_ICON:
+        if index.isValid() and index.column() == helabFileSystemModel.COLUMN_STATUS_ICON:
             # Determine if the mouse is over the icon area
             rect = self.visualRect(index)
             icon_size = self.iconSize()
@@ -97,7 +97,7 @@ class StatusTreeView(QTreeView):
                 icon_size.width(),
                 icon_size.height()
             )
-            extra_icons = index.data(CustomFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
+            extra_icons = index.data(helabFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
             extra_icon_rects = []
             if extra_icons:
                 x_offset = status_icon_rect.right() + 2  # 2px spacing between icons

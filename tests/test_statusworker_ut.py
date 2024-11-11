@@ -21,14 +21,15 @@ class TestStatusWorker(unittest.TestCase):
         # del cls.app
         # del cls.threadpool
         try:
-            QTest.qWait(2000)  # Wait to process events
+            QTest.qWait(100)  # Wait to process events
             # QThreadPool.globalInstance().deleteLater()
             # QThreadPool.globalInstance().clear()
-            QThreadPool.globalInstance().waitForDone()
+            # QThreadPool.globalInstance().waitForDone()
+            while not QThreadPool.globalInstance().activeThreadCount() == 0: QTest.qWait(10)
             cls.app.quit()
             del cls.app
             # del cls.threadpool
-            QTest.qWait(500)
+            QTest.qWait(100)
         except Exception:
             pass
 

@@ -19,7 +19,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setFont(font)
-
+    # app.setStyleSheet("QWidget { background-color: #fafafa; }")
 
     IconsInitUtil.initialise_icons()
 

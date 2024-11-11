@@ -3,7 +3,9 @@ import os
 import sys
 import unittest
 
+from PyQt6.QtCore import QThreadPool
 from PyQt6.QtGui import QIcon
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 from pytablericons import OutlineIcon
 
@@ -21,6 +23,7 @@ class TestIcons(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         if cls.app:
+            while not QThreadPool.globalInstance().activeThreadCount() == 0: QTest.qWait(10)
             cls.app.quit()
             cls.app = None
 

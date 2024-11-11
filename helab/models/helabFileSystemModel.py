@@ -16,7 +16,7 @@ from helab.workers.statusWorker import StatusWorker
 from helab.resources.icons import tablerIcon, StatusIcons
 
 
-class CustomFileSystemModel(QFileSystemModel):
+class helabFileSystemModel(QFileSystemModel):
     COLUMN_NAME = 0
     COLUMN_SIZE = 1
     COLUMN_TYPE = 2
@@ -26,52 +26,30 @@ class CustomFileSystemModel(QFileSystemModel):
     COLUMN_RIGHTFILL = 6
     STATUS_EXTRA_ICONS_ROLE = Qt.ItemDataRole.UserRole + 1
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, status_cache, thread_pool, running_workers_status, running_workers_deep, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Cache the standard icons
-        style = QApplication.style()
+        # style = QApplication.style()
 
-        # self.icon_ok = tablerIcon(OutlineIcon.CIRCLE_CHECK, '#00bb39')
-        # self.icon_critical = tablerIcon(OutlineIcon.XBOX_X, '#e50000')
-        # self.icon_warning = tablerIcon(OutlineIcon.ALERT_CIRCLE, '#f8c350')
-        # self.icon_loading = tablerIcon(OutlineIcon.LOADER, '#000000')   #TODO: replace this with PERCENTAGE
-        # self.icon_live = tablerIcon(OutlineIcon.LIVE_PHOTO, '#000000')
-        # self.icon_nothing = tablerIcon(FilledIcon.POINT, '#bbbbbb')
-        # self.status_icons = {
-        #     'ok': StatusIcons.ICON_OK,
-        #     'warning': self.icon_warning,
-        #     'critical': self.icon_critical,
-        #     'loading': self.icon_loading,
-        #     'nothing': self.icon_nothing
-        # }
-        # self.icon_database = tablerIcon(OutlineIcon.DATABASE, '#444444')
-        # self.icon_report = tablerIcon(OutlineIcon.REPORT_ANALYTICS, '#444444')
-        # self.icon_chart3d = tablerIcon(OutlineIcon.CHART_SCATTER_3D, '#444444')
-        # self.icon_ram = tablerIcon(OutlineIcon.CONTAINER, '#444444')
+        self.status_cache = status_cache
+        self.thread_pool = thread_pool
+        self.running_workers_status = running_workers_status
+        self.running_workers_deep = running_workers_deep
 
-        # Map icon keys to QIcons for easy retrieval
-        # self.status_icons_extra = {
-        #     'database': self.icon_database,
-        #     'report': self.icon_report,
-        #     'chart3d': self.icon_chart3d,
-        #     'ram': self.icon_ram,
-        #     'live': self.icon_live
-        # }
 
-        # # Initialize the cache
         # Initialize the cache with a maximum size to prevent unlimited growth
-        self.status_cache = LRUCache(maxsize=10000)  # Store up to 10000 entries
+        # self.status_cache = LRUCache(maxsize=10000)  # Store up to 10000 entries
 
         # Initialize the thread pool
         # self.thread_pool = QThreadPool()        # Might need to move this to a global queue system
-        self.thread_pool = QThreadPool.globalInstance()
-        self.thread_pool.setMaxThreadCount(8)
-        self.thread_pool.setThreadPriority(QThread.Priority.LowPriority)
+        # self.thread_pool = QThreadPool.globalInstance()
+        # self.thread_pool.setMaxThreadCount(8)
+        # self.thread_pool.setThreadPriority(QThread.Priority.LowPriority)
         logging.debug(f"Multithreading with maximum {self.thread_pool.maxThreadCount()} threads")
 
         # Initialize a set to keep track of running workers
-        self.running_workers_status = {}
-        self.running_workers_deep = {}
+        # self.running_workers_status = {}
+        # self.running_workers_deep = {}
 
         # # Connect the status_updated signal to a slot
         # self.status_updated.connect(self.on_status_updated)
@@ -318,3 +296,8 @@ class CustomFileSystemModel(QFileSystemModel):
         logging.debug(f"Deep recalculating status for: {file_path}")
         # Start the deep status worker
         self.start_deep_status_worker(file_path)
+
+    def refresh(self):
+        self.beginResetModel()
+        self.endResetModel()
+        logging.info("helabFileSystemModel has been refreshed.")

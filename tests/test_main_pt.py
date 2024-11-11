@@ -39,27 +39,31 @@ def app():
 
 def test_main_window_creation(app):
     main_window = MainWindow()
-    QTest.qWait(QTEST_WAIT_MS)  # Wait for 100ms to process events
-    QThreadPool.globalInstance().waitForDone()
+    # QTest.qWait(QTEST_WAIT_MS)  # Wait for 100ms to process events
+    # QThreadPool.globalInstance().waitForDone()
+    while not QThreadPool.globalInstance().activeThreadCount() == 0: QTest.qWait(10)
     assert main_window is not None
     assert main_window.isVisible() == False
 
 def test_main_window_title(app):
     main_window = MainWindow()
-    QThreadPool.globalInstance().waitForDone()
-    QTest.qWait(QTEST_WAIT_MS_SHORT)
+    # QThreadPool.globalInstance().waitForDone()
+    # QTest.qWait(QTEST_WAIT_MS_SHORT)
+    while not QThreadPool.globalInstance().activeThreadCount() == 0: QTest.qWait(10)
     assert main_window.windowTitle() == "HeLab"
 
 def test_main_window_size(app):
     main_window = MainWindow()
-    QThreadPool.globalInstance().waitForDone()
-    QTest.qWait(QTEST_WAIT_MS_SHORT)
+    # QThreadPool.globalInstance().waitForDone()
+    # QTest.qWait(QTEST_WAIT_MS_SHORT)
+    while not QThreadPool.globalInstance().activeThreadCount() == 0: QTest.qWait(10)
     assert main_window.size().width() == MainWindow.DEFAULT_WIDTH
     assert main_window.size().height() == MainWindow.DEFAULT_HEIGHT
 
 def test_main_window_initial_state(app):
     main_window = MainWindow()
-    QThreadPool.globalInstance().waitForDone()
-    QTest.qWait(QTEST_WAIT_MS_SHORT)
+    # QThreadPool.globalInstance().waitForDone()
+    # QTest.qWait(QTEST_WAIT_MS_SHORT)
+    while not QThreadPool.globalInstance().activeThreadCount() == 0: QTest.qWait(10)
     assert main_window.isMaximized() == False
     assert main_window.isMinimized() == False
