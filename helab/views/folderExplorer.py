@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 
-from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt
+from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu
 
@@ -12,6 +12,8 @@ from helab.views.statusTreeView import StatusTreeView
 
 
 class FolderExplorer(QWidget):
+    rootPathChanged = pyqtSignal(str)
+
     def __init__(self, dir_path, target_path, view_path, columns_to_show=None, parent=None):
         super().__init__(parent)
         # appWidth = 800
@@ -20,16 +22,19 @@ class FolderExplorer(QWidget):
         # self.setWindowTitle('File System Viewer')
         # self.setGeometry(300, 300, appWidth, appHeight)
 
+        # Initialize view_path
+        self.dir_path = dir_path  # System root path
+        self.target_path = target_path  # Path to auto-expand upon opening
+        self.view_path = view_path  # Current root path of the view
+        self.columns_to_show = columns_to_show
+
         self.model = CustomFileSystemModel()
         self.model.setRootPath(dir_path)
         self.model.setReadOnly(True)
         # self.model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
         self.model.setFilter(QDir.Filter.Dirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
+        # self.rootPathChanged.emit(self.dir_path)
 
-        # Initialize view_path
-        self.dir_path = dir_path  # System root path
-        self.target_path = target_path  # Path to auto-expand upon opening
-        self.view_path = view_path  # Current root path of the view
 
         # self.tree = QTreeView()
         self.tree = StatusTreeView()
@@ -51,12 +56,13 @@ class FolderExplorer(QWidget):
         icon_delegate = StatusIconDelegate(self.tree)
         self.tree.setItemDelegateForColumn(CustomFileSystemModel.COLUMN_STATUS_ICON, icon_delegate)
 
-        # Control which columns to show
+        # Control which columns to show, #TODO: move this to updatable columns to show
         if columns_to_show is not None:
             total_columns = self.model.columnCount()
             for col in range(total_columns):
                 if col not in columns_to_show:
                     self.tree.setColumnHidden(col, True)
+
 
         header = self.tree.header()
         # Make the first column auto-resizable
@@ -113,6 +119,9 @@ class FolderExplorer(QWidget):
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
 
+        # self.rootPathChanged.emit(self.dir_path)
+        self.emit_root_path_changed()
+
 
     def on_selection_changed(self, selected, deselected):
         indexes = self.tree.selectionModel().selectedRows()
@@ -158,8 +167,13 @@ class FolderExplorer(QWidget):
             # self.tree.setRootIndex(self.model.index(self.view_path))
             # Update the back button enabled state
             self.update_back_button_state()
+            # self.rootPathChanged.emit(file_info.absoluteFilePath())
+            self.emit_root_path_changed()
+            # logging.debug(f"Double click {index = }, path = {file_info.absoluteFilePath()}")
 
     def on_back_button_clicked(self):
+        # Get the parent index of the current root index
+        logging.debug(f"Back button clicked. Current root path: {self.view_path}")
         current_root_index = self.tree.rootIndex()
         parent_index = current_root_index.parent()
         if parent_index.isValid():
@@ -169,6 +183,12 @@ class FolderExplorer(QWidget):
             self.tree.setRootIndex(self.model.index(self.model.rootPath()))
         # Update the back button enabled state
         self.update_back_button_state()
+        # self.rootPathChanged.emit(self.model.filePath(self.tree.rootIndex()))
+        self.emit_root_path_changed()
+        logging.debug(f"Back button clicked. New root path: {self.model.filePath(self.tree.rootIndex())}")
+
+    def emit_root_path_changed(self):
+        self.rootPathChanged.emit(self.model.filePath(self.tree.rootIndex()))
 
 
     def update_back_button_state(self):

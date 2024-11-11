@@ -9,7 +9,7 @@
 <!-- **H**elium **E**xperiment **L**ab **I**nformation **U**nified **M**anager -->
 
 [![python](https://img.shields.io/badge/python-3.12-blue.svg?style=flat&logo=python&logoColor=white)](https://docs.python.org/3/whatsnew/3.12.html)
-[![pyqt6](https://img.shields.io/badge/pyqt6-blue.svg?style=flat&logo=qt&logoColor=white&color=gray)](https://www.riverbankcomputing.com/static/Docs/PyQt6/introduction.html)
+[![pyqt6](https://img.shields.io/badge/pyqt-6-blue.svg?style=flat&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/static/Docs/PyQt6/introduction.html)
 
 [![latest release](https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=latest%20release&)](https://github.com/TonyXTYan/HeLab/releases/latest)
 [![cicd](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/dev-cicd.yml?label=ci%20cd&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/dev-cicd.yml)
@@ -54,20 +54,20 @@ here are some more random badges because they look cool
 
 ---
 
-using Python3.12 for its new typing features
-maybe it would also work on Python 3.11? See CI run [here](https://github.com/TonyXTYan/HELIUM/actions/runs/11605700722)
+I'm targeting Python3.12 for its new typing features. As of now this builds on python 3.11, 3.12 and 3.13. I'll try to maintain compatibility with 3.12 and 3.13 but might use newer features and drop support for lower python versions. For more information about which python version are supported, see the CI runs [here](https://github.com/TonyXTYan/HeLab/actions)
+<!-- maybe it would also work on Python 3.11? See CI run [here](https://github.com/TonyXTYan/HELIUM/actions/runs/11605700722) -->
 
 
 
-comparison with 
-https://pypi.org/project/argos/ 
-https://github.com/adareau/HAL
+Comparison with 
+- https://pypi.org/project/argos/ 
+- https://github.com/adareau/HAL
 
 
-
-random useful links:
-https://www.pythonguis.com/faq/built-in-qicons-pyqt/
-https://github.com/niklashenning/pytablericons  https://tabler.io/icons https://github.com/tabler/tabler-icons
+--- 
+random useful notes:
+- https://www.pythonguis.com/faq/built-in-qicons-pyqt/
+- https://github.com/niklashenning/pytablericons  https://tabler.io/icons https://github.com/tabler/tabler-icons
 
 ```bash
 pyinstaller HeLab.spec --clean
@@ -75,10 +75,24 @@ pyinstaller HeLab.spec --clean -y
 pyinstaller --onefile --windowed --name HELIUM helab/main.py
 ```
 
-https://github.com/TonyXTYan/HeLab/settings/actions/runners/new
 
-`macos14-arm64`, `win10-intel64`
+## ~~Setting up self hosted runners~~
+~~Setup link: https://github.com/TonyXTYan/HeLab/settings/actions/runners/new~~
 
+~~Runner labels: `macos14-arm64`, `win10-intel64`.~~
+
+Na, aparenlty github action is free for public repos, and much easier to setup parallel jobs.
+
+
+
+## Other random scripts
+
+
+```bash
+python -m venv venv
+source venv/bin/activate # for unix
+venv\Scripts\activate # for windows
+```
 
 ```bash
 pip install -r requirements.txt

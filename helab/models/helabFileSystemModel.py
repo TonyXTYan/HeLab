@@ -63,7 +63,8 @@ class CustomFileSystemModel(QFileSystemModel):
         self.status_cache = LRUCache(maxsize=10000)  # Store up to 10000 entries
 
         # Initialize the thread pool
-        self.thread_pool = QThreadPool()        # Might need to move this to a global queue system
+        # self.thread_pool = QThreadPool()        # Might need to move this to a global queue system
+        self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(8)
         self.thread_pool.setThreadPriority(QThread.Priority.LowPriority)
         logging.debug(f"Multithreading with maximum {self.thread_pool.maxThreadCount()} threads")

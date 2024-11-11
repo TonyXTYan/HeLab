@@ -58,12 +58,37 @@ class StatusIcons:
 class ToolIcons:
     @staticmethod
     def initialise_icons() -> None:
-        ToolIcons.ICON_PLUS = tablerIcon(OutlineIcon.SQUARE_ROUNDED_PLUS, '#000000')
+        ToolIcons.ICON_PLUS = tablerIcon(OutlineIcon.LIBRARY_PLUS, '#000000')
+        ToolIcons.ICON_MINUS = tablerIcon(OutlineIcon.LIBRARY_MINUS, '#000000')
+        ToolIcons.ICON_TAB_PLUS = tablerIcon(OutlineIcon.BROWSER_PLUS, '#000000')
+        ToolIcons.ICON_TAB_MINUS = tablerIcon(OutlineIcon.BROWSER_X, '#000000')
+        ToolIcons.ICON_STACK2 = tablerIcon(OutlineIcon.STACK, '#000000')
+        ToolIcons.ICON_STACK3 = tablerIcon(OutlineIcon.STACK_2, '#000000')
+        ToolIcons.ICON_STACK4 = tablerIcon(OutlineIcon.STACK_3, '#000000')
 
+        ToolIcons.ICON_SETTING = tablerIcon(OutlineIcon.SETTINGS, '#000000')
 
+        ToolIcons.ICON_REFRESH = tablerIcon(OutlineIcon.REFRESH, '#000000')
+
+        ToolIcons.ICON_FOLDER_UP = tablerIcon(OutlineIcon.FOLDER_UP, '#000000')
+
+        ToolIcons.ICON_LEFT_COLLAPSE = tablerIcon(OutlineIcon.LAYOUT_SIDEBAR_LEFT_COLLAPSE, '#000000')
+        ToolIcons.ICON_LEFT_EXPAND = tablerIcon(OutlineIcon.LAYOUT_SIDEBAR_LEFT_EXPAND, '#000000')
+
+        ToolIcons.ICON_BOTTOM_COLLAPSE = tablerIcon(OutlineIcon.LAYOUT_BOTTOMBAR_COLLAPSE, '#000000')
+        ToolIcons.ICON_BOTTOM_EXPAND = tablerIcon(OutlineIcon.LAYOUT_BOTTOMBAR_EXPAND, '#000000')
+        ToolIcons.ICON_BOTTOM_INACTIVE = tablerIcon(OutlineIcon.LAYOUT_BOTTOMBAR_INACTIVE, '#000000')
+
+class PercentageIcon:
+    @staticmethod
+    def initialise_icons() -> None:
+        # THIS IS NOT THE INTENDED PERCENTAGE ICON
+        # NEED PYTABLERICONS TO UPDATE
+        PercentageIcon.ICON_10 = tablerIcon(OutlineIcon.PERCENTAGE, '#000000')
 
 class IconsInitUtil:
     @staticmethod
     def initialise_icons() -> None:
         StatusIcons.initialise_icons()
         ToolIcons.initialise_icons()
+        PercentageIcon.initialise_icons()

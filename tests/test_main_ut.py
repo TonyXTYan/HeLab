@@ -1,50 +1,51 @@
-# tests/test_main.py
-import pytest
-# from PyQt6.QtWidgets import QApplication
-import sys
-import os
+import unittest
+
+from PyQt6.QtCore import QThreadPool
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication
 
 from helab.resources.icons import IconsInitUtil
-# Add the root directory to the Python path
-# sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from helab.views.helabMainWindow import MainWindow
 
-
-# @pytest.fixture
-# def app():
-#     app = QApplication.instance()
-#     if not app:
-#         app = QApplication([])
-#     return app
-#
-# def test_main_window_creation(app):
-#     main_window = MainWindow()
-#     assert main_window is not None
-#     assert main_window.isVisible() == False
-
-import unittest
-from PyQt6.QtWidgets import QApplication
-from helab.views.helabMainWindow import MainWindow
 
 class TestMainWindow(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = QApplication.instance()
-        if not cls.app:
-            cls.app = QApplication([])
-        IconsInitUtil.initialise_icons()
+        # IconsInitUtil.initialise_icons()
+        cls.app = QApplication([])
 
     def setUp(self):
+        IconsInitUtil.initialise_icons()
         self.main_window = MainWindow()
+        # QThreadPool.globalInstance().waitForDone()
+        self.main_window.show()
 
     def tearDown(self):
+        QTest.qWait(500)
+        QThreadPool.globalInstance().waitForDone()
         self.main_window.close()
-        self.main_window = None
 
-    def test_main_window_creation(self):
-        main_window = MainWindow()
-        self.assertIsNotNone(main_window)
-        self.assertFalse(main_window.isVisible())
+    def test_window_title(self):
+        self.assertEqual(self.main_window.windowTitle(), 'HeLab')
+        # QThreadPool.globalInstance().waitForDone()
+
+    def test_default_size(self):
+        self.assertEqual(self.main_window.width(), MainWindow.DEFAULT_WIDTH)
+        self.assertEqual(self.main_window.height(), MainWindow.DEFAULT_HEIGHT)
+        # QThreadPool.globalInstance().waitForDone()
+
+    def test_menus_created(self):
+        menus = self.main_window.menu_bar.actions()
+        menu_titles = [menu.text() for menu in menus]
+        self.assertIn('File', menu_titles)
+        # QThreadPool.globalInstance().waitForDone()
+
+    def test_central_widget_setup(self):
+        self.assertIsNotNone(self.main_window.splitter)
+        self.assertIsNotNone(self.main_window.left_panel)
+        self.assertIsNotNone(self.main_window.middle_mainwindow)
+        self.assertIsNotNone(self.main_window.right_panel)
+        # QThreadPool.globalInstance().waitForDone()
 
 if __name__ == '__main__':
     unittest.main()

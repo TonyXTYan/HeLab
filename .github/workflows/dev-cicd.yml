@@ -17,7 +17,7 @@ jobs:
       matrix:
         os: [macos, windows, ubuntu]
         # os: [macos, windows]
-        python3-version: ["10", "11", "12", "13"]
+        python3-version: ["9", "10", "11", "12", "13"]
     env:
       QT_QPA_PLATFORM: offscreen
 
@@ -90,7 +90,7 @@ jobs:
           else
             source venv/bin/activate
           fi
-          pytest -n 4 -v --cache-clear --cov=helab --junit-xml=pytest-report.xml
+          pytest -n 8 -v --cache-clear --cov=helab --junit-xml=pytest-report.xml
       
       - name: Upload Test Results
         uses: actions/upload-artifact@v4
