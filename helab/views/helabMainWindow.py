@@ -1,7 +1,7 @@
 import logging
 import os
 
-from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QThreadPool
+from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QThreadPool, QSettings
 from PyQt6.QtGui import QAction, QIcon, QPalette, QColor, QPixmap, QTransform
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QTabWidget, QSplitter, \
     QLabel, QToolBar, QStyle, QSizePolicy, QToolTip, QApplication, QStyleFactory, QFileDialog
@@ -436,3 +436,12 @@ class MainWindow(QMainWindow):
             self.action_tab_folder_up.setEnabled(current_folder_explorer.back_button_enabled)
         else:
             self.action_tab_folder_up.setEnabled(False)
+
+
+    def closeEvent(self, event):
+        # Save settings
+        # settings = QSettings("ANU", "HeLab")
+        # settings.setValue("geometry", self.saveGeometry())
+        # settings.setValue("windowState", self.saveState())
+        # super().closeEvent(event)
+        pass 
