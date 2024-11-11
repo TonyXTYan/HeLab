@@ -17,7 +17,9 @@ if __name__ == "__main__":
     font = QFont("SF Mono")
 
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
     app.setFont(font)
+
 
     IconsInitUtil.initialise_icons()
 
