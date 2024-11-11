@@ -84,6 +84,9 @@ app = BUNDLE(
     info_plist={
         'CFBundleShortVersionString': APP_VERSION,
         'CFBundleVersion': APP_COMMIT_HASH,
+        'CFBundleName': 'HeLab',
+        'CFBundleDisplayName': 'HeLab',
+        'CFBundleExecutable': 'HeLab',
         'NSHumanReadableCopyright': 'Tony Xintong Yan © 2024',
     },
 )
