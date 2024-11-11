@@ -48,12 +48,12 @@ class SettingsDialog(QDialog):
         self.load_settings()
 
     def load_settings(self):
-        settings = QSettings("YourCompany", "YourApp")
+        settings = QSettings("ANU", "HeLab")
         self.example_checkbox.setChecked(settings.value("example_checkbox", False, type=bool))
         self.example_text.setText(settings.value("example_text", "", type=str))
 
     def save_settings(self):
-        settings = QSettings("YourCompany", "YourApp")
+        settings = QSettings("ANU", "HeLab")
         settings.setValue("example_checkbox", self.example_checkbox.isChecked())
         settings.setValue("example_text", self.example_text.text())
         self.accept()

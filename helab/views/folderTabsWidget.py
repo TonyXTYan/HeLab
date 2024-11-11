@@ -39,7 +39,7 @@ class FolderTabWidget(QTabWidget):
             ''
         ]
 
-        target_path = next((path for path in target_paths if os.path.exists(path)), None)
+        target_path = next((path for path in target_paths if os.path.exists(path)), '')
 
         try:
             if not os.path.commonpath([dirPath, target_path]) == os.path.abspath(dirPath):
