@@ -54,3 +54,16 @@ class StatusIcons:
             'ram': StatusIcons.ICON_RAM,
             'live': StatusIcons.ICON_LIVE,
         }
+
+class ToolIcons:
+    @staticmethod
+    def initialise_icons() -> None:
+        ToolIcons.ICON_PLUS = tablerIcon(OutlineIcon.SQUARE_ROUNDED_PLUS, '#000000')
+
+
+
+class IconsInitUtil:
+    @staticmethod
+    def initialise_icons() -> None:
+        StatusIcons.initialise_icons()
+        ToolIcons.initialise_icons()

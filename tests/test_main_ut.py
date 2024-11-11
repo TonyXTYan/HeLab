@@ -4,9 +4,10 @@ import pytest
 import sys
 import os
 
+from helab.resources.icons import IconsInitUtil
 # Add the root directory to the Python path
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from helab.views.heliumMainWindow import MainWindow
+from helab.views.helabMainWindow import MainWindow
 
 
 # @pytest.fixture
@@ -23,7 +24,7 @@ from helab.views.heliumMainWindow import MainWindow
 
 import unittest
 from PyQt6.QtWidgets import QApplication
-from helab.views.heliumMainWindow import MainWindow
+from helab.views.helabMainWindow import MainWindow
 
 class TestMainWindow(unittest.TestCase):
     @classmethod
@@ -31,6 +32,7 @@ class TestMainWindow(unittest.TestCase):
         cls.app = QApplication.instance()
         if not cls.app:
             cls.app = QApplication([])
+        IconsInitUtil.initialise_icons()
 
     def setUp(self):
         self.main_window = MainWindow()

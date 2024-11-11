@@ -1,35 +1,28 @@
 # $\text{HeLab}$
-## $\textbf{H}\text{elium } \textbf{E}\text{xperiment } \textbf{L}\text{ab } \textbf{A}\text{nalysis } \textbf{B}\text{oard}$
+## $\textbf{H}\text{elium}$ $\textbf{E}\text{xperiment}$ $\textbf{L}\text{ab}$ $\textbf{A}\text{nalysis}$ $\textbf{B}\text{oard}$
 
 ---
 
 
-[//]: # (## **H**elium **E**xperiment **L**ab **A**nalysis **B**oard)
+<!-- ## **H**elium **E**xperiment **L**ab **A**nalysis **B**oard -->
 
-[//]: # (**H**elium **E**xperiment **L**ab **I**nformation **U**nified **M**anager)
+<!-- **H**elium **E**xperiment **L**ab **I**nformation **U**nified **M**anager -->
 
 [![python](https://img.shields.io/badge/python-3.12-blue.svg?style=flat&logo=python&logoColor=white)](https://docs.python.org/3/whatsnew/3.12.html)
-[![pyqt6](https://img.shields.io/badge/pyqt6-blue.svg?style=flat&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/static/Docs/PyQt6/introduction.html)
+[![pyqt6](https://img.shields.io/badge/pyqt6-blue.svg?style=flat&logo=qt&logoColor=white&color=gray)](https://www.riverbankcomputing.com/static/Docs/PyQt6/introduction.html)
 
 [![latest release](https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=latest%20release&)](https://github.com/TonyXTYan/HeLab/releases/latest)
 [![cicd](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/dev-cicd.yml?label=ci%20cd&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/dev-cicd.yml)
 
-[//]: # ([![tests]&#40;https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/ci.yml?label=tests&logo=github&logoColor=white&#41;]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/ci.yml&#41;)
-
-[//]: # ([![release]&#40;https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/cd.yml?label=release&logo=github&logoColor=white&#41;]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml&#41;)
-
-[//]: # ([![release]&#40;https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-ci.yml?label=SH%20dev%20CI&logo=githubactions&logoColor=white&#41;]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/sh-ci.yml&#41;)
-
-[//]: # ([![release]&#40;https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-cd.yml?label=SH%20dev%20CD&logo=githubactions&logoColor=white&#41;]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/sh-cd.yml&#41;)
-
-[//]: # ([![release]&#40;https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-cicd.yml?label=SH%20dev%20CI%20CD&logo=githubactions&logoColor=white&#41;]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/sh-cicd.yml&#41;)
-
-[//]: # ([![CI]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/ci.yml/badge.svg&#41;]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/ci.yml&#41;)
-[//]: # ([![CD]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml/badge.svg&#41;]&#40;https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml&#41;)
-
-
-[//]: # ([![Latest Stable Release]&#40;https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=latest%20stable%20release&#41;]&#40;https://github.com/TonyXTYan/HeLab/releases/latest&#41;)
-[//]: # ([![Latest Pre-release]&#40;https://img.shields.io/github/v/release/TonyXTYan/HeLab?include_prereleases&label=latest%20pre-release&#41;]&#40;https://github.com/TonyXTYan/HeLab/releases&#41;)
+<!-- [![tests](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/ci.yml?label=tests&logo=github&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/ci.yml) -->
+<!-- [![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/cd.yml?label=release&logo=github&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml) -->
+<!-- [![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-ci.yml?label=SH%20dev%20CI&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/sh-ci.yml) -->
+<!-- [![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-cd.yml?label=SH%20dev%20CD&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/sh-cd.yml) -->
+<!-- [![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/sh-cicd.yml?label=SH%20dev%20CI%20CD&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/sh-cicd.yml) -->
+<!-- [![CI](https://github.com/TonyXTYan/HeLab/actions/workflows/ci.yml/badge.svg)](https://github.com/TonyXTYan/HeLab/actions/workflows/ci.yml) -->
+<!-- [![CD](https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml/badge.svg)](https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml) -->
+<!-- [![Latest Stable Release](https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=latest%20stable%20release)](https://github.com/TonyXTYan/HeLab/releases/latest) -->
+<!-- [![Latest Pre-release](https://img.shields.io/github/v/release/TonyXTYan/HeLab?include_prereleases&label=latest%20pre-release)](https://github.com/TonyXTYan/HeLab/releases) -->
 
 
 [![license](https://img.shields.io/github/license/TonyXTYan/HeLab?color=blue)]()
@@ -57,7 +50,7 @@ here are some more random badges because they look cool
 ![orcid](https://img.shields.io/badge/orcid-a6ce39?logo=orcid&logoColor=white)
 
 
-[//]: # (![Windows]&#40;https://img.shields.io/badge/Windows-0078D6?logo=microsoft&logoColor=white&#41;)
+<!-- ![Windows](https://img.shields.io/badge/Windows-0078D6?logo=microsoft&logoColor=white) -->
 
 ---
 

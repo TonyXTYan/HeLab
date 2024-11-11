@@ -6,7 +6,7 @@ from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu
 
-from helab.models.heliumFileSystemModel import CustomFileSystemModel
+from helab.models.helabFileSystemModel import CustomFileSystemModel
 from helab.views.statusIconDelegate import StatusIconDelegate
 from helab.views.statusTreeView import StatusTreeView
 
@@ -91,8 +91,8 @@ class FolderExplorer(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        # layout.addWidget(self.back_button)
-        layout.addLayout(button_layout)
+        # layout.addWidget(self.back_button)    # Disabled back and stop buttons, going to move this to the main window
+        # layout.addLayout(button_layout)
         layout.addWidget(self.tree)
         self.setLayout(layout)
 

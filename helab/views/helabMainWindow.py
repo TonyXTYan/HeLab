@@ -7,7 +7,8 @@ from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWid
     QLabel, QToolBar, QStyle
 from pytablericons import TablerIcons, OutlineIcon
 
-from helab.models.heliumFileSystemModel import CustomFileSystemModel
+from helab.models.helabFileSystemModel import CustomFileSystemModel
+from helab.resources.icons import ToolIcons
 from helab.views.folderExplorer import FolderExplorer
 
 
@@ -15,7 +16,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle('HELIUM')
+        self.setWindowTitle('HeLab')
         self.resize(1800, 1000)
 
         # Create Menubar
@@ -235,31 +236,32 @@ class MainWindow(QMainWindow):
         # Create and add the toolbar to the left panel
         toolbar = QToolBar("Main Toolbar", self)
         toolbar.setContentsMargins(0, 0, 0, 0)
-        random_icon = QIcon(
-            TablerIcons.load(OutlineIcon.SQUARE_ROUNDED_PLUS, color='000000')
-            .toqpixmap()
-            .scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        )
-        action_new = QAction(random_icon, "New", self)
+        # random_icon = QIcon(
+        #     TablerIcons.load(OutlineIcon.SQUARE_ROUNDED_PLUS, color='000000')
+        #     .toqpixmap()
+        #     .scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        # )
+        action_new = QAction(ToolIcons.ICON_PLUS, "New", self)
         action_open = QAction("Open", self)
         action_new.setToolTip("This thing is for...")
+        action_open.setToolTip("to be implemented")
         toolbar.addAction(action_new)
         toolbar.addAction(action_open)
-        toolbar.setStyleSheet("""
-            QToolBar {
-                background: #e5e5e5;
-                border: none;
-                spacing: 5px;
-            }
-            QToolButton {
-                background: none;
-                border: none;
-                padding: 5px;
-            }
-            QToolButton:hover {
-                background: #d4d4d4;
-            }
-        """)
+        # toolbar.setStyleSheet("""
+        #     QToolBar {
+        #         background: #e5e5e5;
+        #         border: none;
+        #         spacing: 5px;
+        #     }
+        #     QToolButton {
+        #         background: none;
+        #         border: none;
+        #         padding: 5px;
+        #     }
+        #     QToolButton:hover {
+        #         background: #d4d4d4;
+        #     }
+        # """)
         left_layout.addWidget(toolbar)
 
         # Create the tab widget and add it to the left panel

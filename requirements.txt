@@ -7,5 +7,6 @@ pytablericons
 pytest
 pytest-cov
 pytest-qt
+pytest-xdist
 pympler
 pyinstaller
