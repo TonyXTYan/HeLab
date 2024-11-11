@@ -21,12 +21,26 @@ class FolderTabWidget(QTabWidget):
         self.thread_pool = QThreadPool.globalInstance()
         self.running_workers_status = {}
         self.running_workers_deep = {}
+        self.tab_back_button_enabled = False
+
+        self.currentChanged.connect(self.on_current_tab_changed)
 
     def add_new_folder_explorer_tab(self):
         # Create a new FolderExplorer instance
         dirPath = QDir.rootPath()
         view_path = dirPath
-        target_path = r'/Volumes/tonyNVME Gold/dld output'
+        # target_path = r'/Volumes/tonyNVME Gold/dld output'
+
+        target_paths = [
+            '/Volumes/tonyNVME Gold/dld output',
+            '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab',
+            'C:\\Users\\XinTong\\Documents',
+            'O:\\'
+            ''
+        ]
+
+        target_path = next((path for path in target_paths if os.path.exists(path)), None)
+
         try:
             if not os.path.commonpath([dirPath, target_path]) == os.path.abspath(dirPath):
                 logging.warning(
@@ -50,6 +64,8 @@ class FolderTabWidget(QTabWidget):
         folder_explorer.rootPathChanged.connect(lambda path, idx=index: self.update_folder_explorer_tab_title(path, idx))
         folder_explorer.emit_root_path_changed()
 
+        self.setCurrentIndex(index)
+
         # Add the FolderExplorer as a new tab
         # self.tab_widget.addTab(folder_explorer, 'File Explorer')
 
@@ -66,6 +82,8 @@ class FolderTabWidget(QTabWidget):
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.on_back_button_clicked()
+            self.tab_back_button_enabled = current_folder_explorer.back_button_enabled
+
 
     def clear_status_cache(self):
         self.status_cache.clear()
@@ -83,3 +101,10 @@ class FolderTabWidget(QTabWidget):
             logging.info("Current FolderExplorer tab has been refreshed.")
         else:
             logging.warning("Current tab is not a FolderExplorer instance.")
+
+    def on_current_tab_changed(self, index):
+        logging.debug(f"(TabWidget) Current tab changed to index {index}")
+        # current_folder_explorer = self.currentWidget()
+        # if isinstance(current_folder_explorer, FolderExplorer):
+        #     current_folder_explorer.update_back_button_state()
+        #     self.tab_back_button_enabled = current_folder_explorer.back_button_enabled

@@ -56,6 +56,7 @@ class FolderExplorer(QWidget):
         self.tree.setIconSize(QSize(16, 16))
         self.tree.setUniformRowHeights(True)
         self.tree.setSortingEnabled(True)
+        self.back_button_enabled = False
 
         # Set the custom delegate for the icon column
         icon_delegate = StatusIconDelegate(self.tree)
@@ -115,6 +116,7 @@ class FolderExplorer(QWidget):
 
         # Update back button state
         self.update_back_button_state()
+        self.back_button_enabled = False
 
         # Automatically expand the view to the desired path
         # QTimer.singleShot(1000, lambda: self.expand_to_path(target_path))
@@ -192,15 +194,21 @@ class FolderExplorer(QWidget):
         self.emit_root_path_changed()
         logging.debug(f"Back button clicked. New root path: {self.model.filePath(self.tree.rootIndex())}")
 
+    def update_back_button_state(self):
+        logging.debug(f"Updating back button state. {self.view_path = }, {self.dir_path = }, {self.target_path = }")
+        # There's some very fucked up logic here that I don't understand
+        logging.debug(f"{self.tree.rootIndex() == self.model.index(self.dir_path) = }")
+        # if self.view_path == self.dir_path:
+        if self.tree.rootIndex() == self.model.index(self.dir_path):
+            self.back_button.setEnabled(False)
+            self.back_button_enabled = False
+        else:
+            self.back_button.setEnabled(True)
+            self.back_button_enabled = True
+
     def emit_root_path_changed(self):
         self.rootPathChanged.emit(self.model.filePath(self.tree.rootIndex()))
 
-
-    def update_back_button_state(self):
-        if self.view_path == self.dir_path:
-            self.back_button.setEnabled(False)
-        else:
-            self.back_button.setEnabled(True)
 
 
     def show_context_menu(self, position):
@@ -320,3 +328,14 @@ class FolderExplorer(QWidget):
         self.tree.setRootIndex(self.model.index(self.view_path))
         self.expand_to_path(self.target_path)
         logging.debug("FolderExplorer refreshed successfully.")
+
+    def open_to_path(self, path):
+        """
+        Open the FolderExplorer to the specified path.
+        """
+        self.model.refresh()
+        self.view_path = path
+        self.tree.setRootIndex(self.model.index(path))
+        self.expand_to_path(path)
+        self.emit_root_path_changed()
+        logging.debug(f"Opened FolderExplorer to path: {path}")

@@ -66,7 +66,7 @@ class ToolIcons:
         ToolIcons.ICON_STACK3 = tablerIcon(OutlineIcon.STACK_2, '#000000')
         ToolIcons.ICON_STACK4 = tablerIcon(OutlineIcon.STACK_3, '#000000')
 
-        ToolIcons.ICON_SETTING = tablerIcon(OutlineIcon.SETTINGS, '#000000')
+        ToolIcons.ICON_SETTINGS = tablerIcon(OutlineIcon.SETTINGS, '#000000')
 
         ToolIcons.ICON_REFRESH = tablerIcon(OutlineIcon.REFRESH, '#000000')
 
