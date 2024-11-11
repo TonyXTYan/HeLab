@@ -8,7 +8,8 @@ from PyQt6.QtWidgets import QApplication
 from pytablericons import OutlineIcon
 
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from helab.resources.icons import tablerIcon, StatusIcons
+from helab.resources.icons import tablerIcon, StatusIcons, ToolIcons, IconsInitUtil
+
 
 # @pytest.fixture(scope="module", autouse=True)
 @pytest.fixture(scope="session", autouse=True)
@@ -16,7 +17,7 @@ def app():
     app = QApplication.instance()
     if not app:
         app = QApplication([])
-    StatusIcons.initialise_icons()
+    IconsInitUtil.initialise_icons()
     return app
 
 def test_tabler_icon():

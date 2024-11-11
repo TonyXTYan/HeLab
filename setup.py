@@ -11,7 +11,7 @@ setup(
     description="HELIUM Experiment Lab Information Unified Manager",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/TonyXTYan/HELIUM",
+    url="https://github.com/TonyXTYan/HeLab",
     packages=find_packages(),
     include_package_data=True,
     install_requires=[

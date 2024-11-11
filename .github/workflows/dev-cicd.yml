@@ -90,7 +90,7 @@ jobs:
           else
             source venv/bin/activate
           fi
-          pytest -v --cache-clear --cov=helab --junit-xml=pytest-report.xml
+          pytest -n 4 -v --cache-clear --cov=helab --junit-xml=pytest-report.xml
       
       - name: Upload Test Results
         uses: actions/upload-artifact@v4
@@ -243,7 +243,7 @@ jobs:
         run: |
           RELEASE_BODY="## Release ${{ github.ref_name }}
 
-          **Date:** $(date +'%Y-%m-%d %H:%M')
+          **Date:** $(date +'%Y-%m-%d %H:%M') UTC
 
           **Commit:** [${{ github.sha }}](${{ github.event.repository.url }}/commit/${{ github.sha }})
 

@@ -7,7 +7,8 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 from pytablericons import OutlineIcon
 
-from helab.resources.icons import tablerIcon, StatusIcons
+from helab.resources.icons import tablerIcon, StatusIcons, ToolIcons, IconsInitUtil
+
 
 class TestIcons(unittest.TestCase):
     @classmethod
@@ -15,7 +16,7 @@ class TestIcons(unittest.TestCase):
         cls.app = QApplication.instance()
         if not cls.app:
             cls.app = QApplication([])
-        StatusIcons.initialise_icons()
+        IconsInitUtil.initialise_icons()
 
     @classmethod
     def tearDownClass(cls):

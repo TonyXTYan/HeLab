@@ -7,7 +7,7 @@ import logging
 from helab.resources.icons import StatusIcons
 
 
-# from helab.models.heliumFileSystemModel import CustomFileSystemModel
+# from helab.models.helabFileSystemModel import CustomFileSystemModel
 
 
 # Define WorkerSignals to communicate between threads

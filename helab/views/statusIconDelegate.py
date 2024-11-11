@@ -2,7 +2,7 @@ from PyQt6.QtCore import Qt, QSize, QRect
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 
-from helab.models.heliumFileSystemModel import CustomFileSystemModel
+from helab.models.helabFileSystemModel import CustomFileSystemModel
 
 
 class StatusIconDelegate(QStyledItemDelegate):
