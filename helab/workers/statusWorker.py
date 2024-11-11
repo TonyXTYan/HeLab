@@ -9,7 +9,7 @@ from PyQt6.QtTest import QTest
 from helab.resources.icons import StatusIcons
 
 
-# from helab.models.helabFileSystemModel import CustomFileSystemModel
+# from helab.models.helabFileSystemModel import helabFileSystemModel
 
 
 # Define WorkerSignals to communicate between threads
@@ -32,7 +32,7 @@ class StatusWorker(QRunnable):
             return
 
         # Simulate a long-running computation
-        QTest.qWait(random.randint(100, 300))  # Simulate computation delay
+        QTest.qWait(random.randint(300, 500))  # Simulate computation delay
         # time.sleep(random.uniform(0.2, 0.5))  # Simulate computation delay
         # QTimer.singleShot(random.randint(200, 500), self._compute_status)
 

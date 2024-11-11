@@ -6,7 +6,7 @@ from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu
 
-from helab.models.helabFileSystemModel import CustomFileSystemModel
+from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.views.statusIconDelegate import StatusIconDelegate
 from helab.views.statusTreeView import StatusTreeView
 
@@ -14,7 +14,7 @@ from helab.views.statusTreeView import StatusTreeView
 class FolderExplorer(QWidget):
     rootPathChanged = pyqtSignal(str)
 
-    def __init__(self, dir_path, target_path, view_path, columns_to_show=None, parent=None):
+    def __init__(self, dir_path, target_path, view_path, columns_to_show=None, status_cache=None, thread_pool=None, running_workers_status={}, running_workers_deep={}, parent=None):
         super().__init__(parent)
         # appWidth = 800
         # appHeight = 800
@@ -28,7 +28,12 @@ class FolderExplorer(QWidget):
         self.view_path = view_path  # Current root path of the view
         self.columns_to_show = columns_to_show
 
-        self.model = CustomFileSystemModel()
+        self.status_cache = status_cache
+        self.thread_pool = thread_pool
+        self.running_workers_status = running_workers_status
+        self.running_workers_deep = running_workers_deep
+
+        self.model = helabFileSystemModel(status_cache, thread_pool, running_workers_status, running_workers_deep)
         self.model.setRootPath(dir_path)
         self.model.setReadOnly(True)
         # self.model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
@@ -42,11 +47,11 @@ class FolderExplorer(QWidget):
         self.tree.setModel(self.model)
         # self.tree.setRootIndex(self.model.index(dir_path))
         self.tree.setRootIndex(self.model.index(self.view_path))
-        self.tree.setColumnWidth(CustomFileSystemModel.COLUMN_NAME, 250)
-        self.tree.setColumnWidth(CustomFileSystemModel.COLUMN_DATE_MODIFIED, 160)
-        self.tree.setColumnWidth(CustomFileSystemModel.COLUMN_STATUS_NUMBER, 80)
-        self.tree.setColumnWidth(CustomFileSystemModel.COLUMN_STATUS_ICON, 60)
-        self.tree.setColumnWidth(CustomFileSystemModel.COLUMN_RIGHTFILL, 0)
+        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_NAME, 250)
+        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_DATE_MODIFIED, 160)
+        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_STATUS_NUMBER, 80)
+        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_STATUS_ICON, 60)
+        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_RIGHTFILL, 0)
         self.tree.setAlternatingRowColors(True)
         self.tree.setIconSize(QSize(16, 16))
         self.tree.setUniformRowHeights(True)
@@ -54,7 +59,7 @@ class FolderExplorer(QWidget):
 
         # Set the custom delegate for the icon column
         icon_delegate = StatusIconDelegate(self.tree)
-        self.tree.setItemDelegateForColumn(CustomFileSystemModel.COLUMN_STATUS_ICON, icon_delegate)
+        self.tree.setItemDelegateForColumn(helabFileSystemModel.COLUMN_STATUS_ICON, icon_delegate)
 
         # Control which columns to show, #TODO: move this to updatable columns to show
         if columns_to_show is not None:
@@ -66,17 +71,17 @@ class FolderExplorer(QWidget):
 
         header = self.tree.header()
         # Make the first column auto-resizable
-        header.setSectionResizeMode(CustomFileSystemModel.COLUMN_NAME, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(CustomFileSystemModel.COLUMN_NAME, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(helabFileSystemModel.COLUMN_NAME, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(helabFileSystemModel.COLUMN_NAME, QHeaderView.ResizeMode.Interactive)
         # Other columns resize to contents
-        header.setSectionResizeMode(CustomFileSystemModel.COLUMN_SIZE, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(CustomFileSystemModel.COLUMN_TYPE, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(CustomFileSystemModel.COLUMN_DATE_MODIFIED, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(CustomFileSystemModel.COLUMN_STATUS_NUMBER, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(CustomFileSystemModel.COLUMN_STATUS_ICON, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(CustomFileSystemModel.COLUMN_RIGHTFILL, QHeaderView.ResizeMode.ResizeToContents)
-        # self.tree.setColumnWidth(CustomFileSystemModel.COLUMN_STATUS_ICON, 60)
-        # self.tree.setColumnWidth(CustomFileSystemModel.COLUMN_RIGHTFILL, 0)
+        header.setSectionResizeMode(helabFileSystemModel.COLUMN_SIZE, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(helabFileSystemModel.COLUMN_TYPE, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(helabFileSystemModel.COLUMN_DATE_MODIFIED, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(helabFileSystemModel.COLUMN_STATUS_NUMBER, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(helabFileSystemModel.COLUMN_STATUS_ICON, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(helabFileSystemModel.COLUMN_RIGHTFILL, QHeaderView.ResizeMode.ResizeToContents)
+        # self.tree.setColumnWidth(helabFileSystemModel.COLUMN_STATUS_ICON, 60)
+        # self.tree.setColumnWidth(helabFileSystemModel.COLUMN_RIGHTFILL, 0)
 
         # Create a horizontal layout for buttons
         button_layout = QHBoxLayout()
@@ -293,3 +298,25 @@ class FolderExplorer(QWidget):
     def on_stop_button_clicked(self):
         logging.debug("Stop all scans button clicked.")
         self.model.stop_all_scans()
+
+    def refresh(self):
+        """
+        Refresh the FolderExplorer while maintaining dir_path, target_path, and view_path.
+        """
+
+        # Really should use dataEmit change? rather than making a new model every time
+
+        logging.debug("Refreshing FolderExplorer.")
+        # Reinitialize the model with the current paths
+        # self.model = helabFileSystemModel(
+        #     self.status_cache,
+        #     self.thread_pool,
+        #     self.running_workers_status,
+        #     self.running_workers_deep
+        # )
+        self.model.refresh()
+        self.tree.setModel(self.model)
+        self.model.setRootPath(self.dir_path)
+        self.tree.setRootIndex(self.model.index(self.view_path))
+        self.expand_to_path(self.target_path)
+        logging.debug("FolderExplorer refreshed successfully.")

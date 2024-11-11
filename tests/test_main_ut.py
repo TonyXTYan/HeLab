@@ -22,7 +22,8 @@ class TestMainWindow(unittest.TestCase):
 
     def tearDown(self):
         QTest.qWait(500)
-        QThreadPool.globalInstance().waitForDone()
+        # QThreadPool.globalInstance().waitForDone()
+        while not QThreadPool.globalInstance().activeThreadCount() == 0: QTest.qWait(10)
         self.main_window.close()
 
     def test_window_title(self):

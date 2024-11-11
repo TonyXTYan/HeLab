@@ -2,7 +2,7 @@ from PyQt6.QtCore import Qt, QSize, QRect
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 
-from helab.models.helabFileSystemModel import CustomFileSystemModel
+from helab.models.helabFileSystemModel import helabFileSystemModel
 
 
 class StatusIconDelegate(QStyledItemDelegate):
@@ -20,7 +20,7 @@ class StatusIconDelegate(QStyledItemDelegate):
         # Retrieve the main status icon
         status_icon = index.data(Qt.ItemDataRole.DecorationRole)
         # Retrieve the extra icons
-        extra_icons = index.data(CustomFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
+        extra_icons = index.data(helabFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
         rect = option.rect
         x = rect.left() + 5  # Some padding from the left
         y = rect.top() + (rect.height() - option.decorationSize.height()) // 2
@@ -43,7 +43,7 @@ class StatusIconDelegate(QStyledItemDelegate):
         # Ensure the size hint accommodates all icons
         base_size = super().sizeHint(option, index)
         status_icon = index.data(Qt.ItemDataRole.DecorationRole)
-        extra_icons = index.data(CustomFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
+        extra_icons = index.data(helabFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
         total_width = base_size.width()
         if status_icon:
             total_width += option.decorationSize.width() + 4  # Status icon and spacing
