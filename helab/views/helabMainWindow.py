@@ -34,7 +34,8 @@ class MainWindow(QMainWindow):
         self.setup_central_widgets()
 
         # Create Left Panel (File Tree View)
-        self.setup_file_tree_view()
+        # self.setup_file_tree_view()
+        self.add_new_folder_explorer_tab()
 
     def create_menus(self):
         # Add menus and actions
@@ -475,7 +476,7 @@ class MainWindow(QMainWindow):
         else:
             self.central_placeholder.show()
 
-    def setup_file_tree_view(self):
+    def setup_file_tree_view_depreciated(self):
         # Create the FolderExplorer widget
         # self.folder_explorer = FolderExplorer(...)
         dirPath = QDir.rootPath()  # Start from the root directory
@@ -528,6 +529,15 @@ class MainWindow(QMainWindow):
         dirPath = QDir.rootPath()
         view_path = dirPath
         target_path = r'/Volumes/tonyNVME Gold/dld output'
+        try:
+            if not os.path.commonpath([dirPath, target_path]) == os.path.abspath(dirPath):
+                logging.warning(
+                    f"Target path {target_path} is not under the root path {dirPath}. Adjusting dirPath accordingly.")
+                dirPath = os.path.dirname(target_path)
+        except ValueError as e:
+            logging.error(f"Error validating target path: {e}")
+            dirPath = QDir.rootPath()
+            target_path = QDir.rootPath()
 
         columns_to_show = [
             CustomFileSystemModel.COLUMN_NAME,
