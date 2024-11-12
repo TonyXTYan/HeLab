@@ -99,21 +99,21 @@ jobs:
           name: test-results-${{ matrix.os }}-py3${{ matrix.python3-version }}
           path: pytest-report.xml
 
-      - name: Check Python 3.12 Test Results
-        if: matrix.python3-version == '12' && failure()
-        run: exit 1
 
       - name: Run test with code coverage report
         if: matrix.python3-version == '12' && matrix.os == 'macos'
         run: |  
-          pytest --cov --cov-report=xml --ignore=tests/test_typing.py
-      
+          pytest --cov=. --cov-report=xml --ignore=tests/test_typing.py
+
       - name: Upload Code Coverage Report
         if: matrix.python3-version == '12' && matrix.os == 'macos'
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-        
+
+      - name: Check Python 3.12 Test Results
+        if: matrix.python3-version == '12' && failure()
+        run: exit 1
 
   build:
     # name: Build on ${{ matrix.os }} - Python ${{ matrix.python-version }}
