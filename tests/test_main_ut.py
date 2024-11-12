@@ -12,7 +12,7 @@ from helab.views.helabMainWindow import MainWindow
 
 
 class TestMainWindow(unittest.TestCase):
-    app: QCoreApplication
+    app: QCoreApplication | QApplication | None
     thread_pool: QThreadPool
 
     @classmethod
@@ -27,7 +27,8 @@ class TestMainWindow(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        cls.app.quit()
+        if isinstance(cls.app, QApplication):
+            cls.app.quit()
         # QThreadPool.globalInstance().waitFor
         while cls.thread_pool.activeThreadCount() > 0: time.sleep(0.05)
         return
@@ -46,7 +47,9 @@ class TestMainWindow(unittest.TestCase):
             # self.main_window.close()
             # QThreadPool.globalInstance().waitForDone()
             while self.thread_pool.activeThreadCount() > 0: time.sleep(0.05)
-            self.app.quit()
+            # self.app.quit()
+            if isinstance(self.app, QApplication):
+                self.app.quit()
             time.sleep(0.5)
             # self.main_window.close()
         except Exception as e:

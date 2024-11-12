@@ -84,3 +84,5 @@ helab/resources/gitignore
 
 Icon?
 helab.egg-info
+coverage.xml
+.coverage
