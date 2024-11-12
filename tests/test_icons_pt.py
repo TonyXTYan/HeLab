@@ -3,6 +3,7 @@ import os
 import sys
 
 import pytest
+from PyQt6.QtCore import QCoreApplication
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 from pytablericons import OutlineIcon
@@ -13,19 +14,19 @@ from helab.resources.icons import tablerIcon, StatusIcons, ToolIcons, IconsInitU
 
 # @pytest.fixture(scope="module", autouse=True)
 @pytest.fixture(scope="session", autouse=True)
-def app():
+def app() -> QCoreApplication:
     app = QApplication.instance()
     if not app:
         app = QApplication([])
     IconsInitUtil.initialise_icons()
     return app
 
-def test_tabler_icon():
+def test_tabler_icon() -> None:
     icon = tablerIcon(OutlineIcon.ABC, '#00bb39', size=128)
     assert isinstance(icon, QIcon)
 
 
-def test_status_icons_initialisation():
+def test_status_icons_initialisation() -> None:
     try:
         assert StatusIcons.ICONS_STATUS is not None
         for icon_name in StatusIcons.ICONS_STATUS:

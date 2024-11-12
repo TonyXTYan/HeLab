@@ -32,8 +32,8 @@ class StatusWorker(QRunnable):
             return
 
         # Simulate a long-running computation
-        QTest.qWait(random.randint(300, 500))  # Simulate computation delay
-        # time.sleep(random.uniform(0.2, 0.5))  # Simulate computation delay
+        # QTest.qWait(int(random.randint(300, 500)))  # Simulate computation delay
+        time.sleep(random.uniform(0.2, 0.4))  # Simulate computation delay
         # QTimer.singleShot(random.randint(200, 500), self._compute_status)
 
         # Replace the following with your actual status computation logic
@@ -42,13 +42,16 @@ class StatusWorker(QRunnable):
         # count = random.randint(1, 100)
         count = random.randint(10**(length := random.randint(0, 5)), 10**(length + 1) - 1)
 
-        extra_icons = sorted(random.sample(StatusIcons.STATUS_ICONS_EXTRA_NAME, random.randint(0, 4)), key=StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get)
+        extra_icons = sorted(
+            random.sample(StatusIcons.STATUS_ICONS_EXTRA_NAME, random.randint(0, 4)),
+            key=lambda x: StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get(x,0)
+        )
         # extra_icons = []
 
         logging.debug(f"Worker finished for: {self.file_path} with status: {status}, count: {count}, extra icons: {extra_icons}")
         self.signals.finished.emit(self.file_path, status, count, extra_icons)
 
-    def cancel(self):
+    def cancel(self) -> None:
         self._is_canceled = True
 
     # def _compute_status(self):

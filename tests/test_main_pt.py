@@ -1,4 +1,7 @@
 # tests/test_main.py
+import time
+from typing import Generator, cast
+
 import pytest
 from PyQt6.QtCore import QCoreApplication, QThreadPool
 from PyQt6.QtTest import QTest
@@ -25,11 +28,25 @@ QTEST_WAIT_MS_SHORT = 3000
 #     # return app
 #     QCoreApplication.quit()
 
+def setup_thread_pool() -> QThreadPool:
+    thread_pool_helper = QThreadPool.globalInstance()
+    if thread_pool_helper is None:
+        thread_pool_helper = QThreadPool()
+    thread_pool: QThreadPool = thread_pool_helper
+    return thread_pool
+
+def wait_thread_pool_complete(thread_pool: QThreadPool) -> None:
+    time.sleep(0.05)
+    while not thread_pool.activeThreadCount() == 0: time.sleep(0.005)
+    time.sleep(0.05)
+
 @pytest.fixture
-def app():
+def app() -> Generator[QApplication, None, None]:
     app = QApplication.instance()
     if not app:
         app = QApplication([])
+    else:
+        app = cast(QApplication, app)
     IconsInitUtil.initialise_icons()
     try:
         yield app
@@ -37,33 +54,40 @@ def app():
         app.processEvents()  # Process remaining events
         QCoreApplication.quit()
 
-def test_main_window_creation(app):
+def test_main_window_creation(app: QApplication) -> None:
+    thread_pool = setup_thread_pool()
     main_window = MainWindow()
     # QTest.qWait(QTEST_WAIT_MS)  # Wait for 100ms to process events
     # QThreadPool.globalInstance().waitForDone()
-    while not QThreadPool.globalInstance().activeThreadCount() == 0: QTest.qWait(10)
+    wait_thread_pool_complete(thread_pool)
     assert main_window is not None
     assert main_window.isVisible() == False
 
-def test_main_window_title(app):
+
+
+
+def test_main_window_title(app: QApplication) -> None:
+    thread_pool = setup_thread_pool()
     main_window = MainWindow()
     # QThreadPool.globalInstance().waitForDone()
     # QTest.qWait(QTEST_WAIT_MS_SHORT)
-    while not QThreadPool.globalInstance().activeThreadCount() == 0: QTest.qWait(10)
+    wait_thread_pool_complete(thread_pool)
     assert main_window.windowTitle() == "HeLab"
 
-def test_main_window_size(app):
+def test_main_window_size(app: QApplication) -> None:
+    thread_pool = setup_thread_pool()
     main_window = MainWindow()
     # QThreadPool.globalInstance().waitForDone()
     # QTest.qWait(QTEST_WAIT_MS_SHORT)
-    while not QThreadPool.globalInstance().activeThreadCount() == 0: QTest.qWait(10)
+    wait_thread_pool_complete(thread_pool)
     assert main_window.size().width() == MainWindow.DEFAULT_WIDTH
     assert main_window.size().height() == MainWindow.DEFAULT_HEIGHT
 
-def test_main_window_initial_state(app):
+def test_main_window_initial_state(app : QApplication) -> None:
+    thread_pool = setup_thread_pool()
     main_window = MainWindow()
     # QThreadPool.globalInstance().waitForDone()
     # QTest.qWait(QTEST_WAIT_MS_SHORT)
-    while not QThreadPool.globalInstance().activeThreadCount() == 0: QTest.qWait(10)
+    wait_thread_pool_complete(thread_pool)
     assert main_window.isMaximized() == False
     assert main_window.isMinimized() == False

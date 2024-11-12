@@ -1,20 +1,34 @@
 import logging
 import os
 import sys
+from typing import Optional, Dict, List, Tuple
 
-from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal, QThreadPool, QModelIndex, QItemSelection, \
+    QPoint, QFileInfo
+from PyQt6.QtGui import QAction, QFontInfo
 from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu
+from cachetools import LRUCache
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.views.statusIconDelegate import StatusIconDelegate
 from helab.views.statusTreeView import StatusTreeView
+from helab.workers.statusDeepWorker import StatusDeepWorker
+from helab.workers.statusWorker import StatusWorker
 
 
 class FolderExplorer(QWidget):
     rootPathChanged = pyqtSignal(str)
 
-    def __init__(self, dir_path, target_path, view_path, columns_to_show=None, status_cache=None, thread_pool=None, running_workers_status={}, running_workers_deep={}, parent=None):
+    def __init__(self,
+                 dir_path: str,
+                 target_path: str,
+                 view_path: str,
+                 columns_to_show: List[int],
+                 status_cache: LRUCache[str, Tuple[str, int, List[str]]],
+                 thread_pool: QThreadPool,
+                 running_workers_status: Dict[str, StatusWorker],
+                 running_workers_deep: Dict[str, StatusDeepWorker],
+                 parent: QWidget | None = None) -> None:
         super().__init__(parent)
         # appWidth = 800
         # appHeight = 800
@@ -72,6 +86,11 @@ class FolderExplorer(QWidget):
 
         header = self.tree.header()
         # Make the first column auto-resizable
+        if header is None:
+            logging.fatal("FolderExplorer.__init__ encountered None self.tree.header()")
+            logging.fatal(f"{self.tree = }")
+            return
+
         header.setSectionResizeMode(helabFileSystemModel.COLUMN_NAME, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(helabFileSystemModel.COLUMN_NAME, QHeaderView.ResizeMode.Interactive)
         # Other columns resize to contents
@@ -84,7 +103,7 @@ class FolderExplorer(QWidget):
         # self.tree.setColumnWidth(helabFileSystemModel.COLUMN_STATUS_ICON, 60)
         # self.tree.setColumnWidth(helabFileSystemModel.COLUMN_RIGHTFILL, 0)
 
-        # Create a horizontal layout for buttons
+        # Create a horizontal main_layout for buttons
         button_layout = QHBoxLayout()
         # Create a back button
         self.back_button = QPushButton('Back')
@@ -103,13 +122,15 @@ class FolderExplorer(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        # layout.addWidget(self.back_button)    # Disabled back and stop buttons, going to move this to the main window
-        # layout.addLayout(button_layout)
+        # main_layout.addWidget(self.back_button)    # Disabled back and stop buttons, going to move this to the main window
+        # main_layout.addLayout(button_layout)
         layout.addWidget(self.tree)
         self.setLayout(layout)
 
+        selection_model = self.get_selection_model()
+
         # Connect the selectionChanged signal to the slot
-        self.tree.selectionModel().selectionChanged.connect(self.on_selection_changed)
+        selection_model.selectionChanged.connect(self.on_selection_changed)
 
         # Connect the double-click signal to open directories
         self.tree.doubleClicked.connect(self.on_double_click)
@@ -130,13 +151,14 @@ class FolderExplorer(QWidget):
         self.emit_root_path_changed()
 
 
-    def on_selection_changed(self, selected, deselected):
-        indexes = self.tree.selectionModel().selectedRows()
+    def on_selection_changed(self, selected: QItemSelection, deselected: QItemSelection) -> None:
+        selection_model = self.get_selection_model()
+        indexes = selection_model.selectedRows()
         for index in indexes:
             file_path = self.model.filePath(index)
             logging.debug(f"Selected file path: {file_path}")
 
-    def expand_to_path(self, path):
+    def expand_to_path(self, path: str) -> None:
         # Ensure that the path to expand is under the current view_path
         if not os.path.commonpath([self.view_path, path]) == os.path.abspath(self.view_path):
             logging.warning(f"Path {path} is not under the current view path {self.view_path}.")
@@ -164,7 +186,7 @@ class FolderExplorer(QWidget):
         # self.tree.setFocus()
         logging.debug(f"Expanded to path: {path}")
 
-    def on_double_click(self, index):
+    def on_double_click(self, index: QModelIndex) -> None:
         file_info = self.model.fileInfo(index)
         if file_info.isDir():
             logging.debug(f"Double-clicked directory: {file_info.absoluteFilePath()}")
@@ -178,7 +200,7 @@ class FolderExplorer(QWidget):
             self.emit_root_path_changed()
             # logging.debug(f"Double click {index = }, path = {file_info.absoluteFilePath()}")
 
-    def on_back_button_clicked(self):
+    def on_back_button_clicked(self) -> None:
         # Get the parent index of the current root index
         logging.debug(f"Back button clicked. Current root path: {self.view_path}")
         current_root_index = self.tree.rootIndex()
@@ -194,7 +216,7 @@ class FolderExplorer(QWidget):
         self.emit_root_path_changed()
         logging.debug(f"Back button clicked. New root path: {self.model.filePath(self.tree.rootIndex())}")
 
-    def update_back_button_state(self):
+    def update_back_button_state(self) -> None:
         logging.debug(f"Updating back button state. {self.view_path = }, {self.dir_path = }, {self.target_path = }")
         # There's some very fucked up logic here that I don't understand
         logging.debug(f"{self.tree.rootIndex() == self.model.index(self.dir_path) = }")
@@ -206,20 +228,39 @@ class FolderExplorer(QWidget):
             self.back_button.setEnabled(True)
             self.back_button_enabled = True
 
-    def emit_root_path_changed(self):
+    def emit_root_path_changed(self) -> None:
         self.rootPathChanged.emit(self.model.filePath(self.tree.rootIndex()))
 
 
+    def get_selection_model(self) -> QItemSelectionModel:
+        logging.debug(f"CALLED ON THIS METHOD (get_selection_model) IS FUCKING DANGEROUS")
+        selection_model = self.tree.selectionModel()
+        if selection_model is None:
+            logging.fatal("FolderExplorer.__init__ encountered None self.tree.selectionModel()")
+            logging.fatal(f"{self.tree = }")
+            sys.exit(1)
+        if not hasattr(selection_model, "selectionChanged"):
+            logging.fatal("FolderExplorer.__init__ encountered selectionModel without selectionChanged signal")
+            logging.fatal(f"{ selection_model = }")
+            sys.exit(1)
+        if not hasattr(selection_model, "select"):
+            logging.fatal("FolderExplorer.__init__ encountered selectionModel without select method")
+            logging.fatal(f"{ selection_model = }")
+            sys.exit(1)
+        return selection_model
 
-    def show_context_menu(self, position):
+
+    def show_context_menu(self, position: QPoint) -> None:
         # Map the position to the tree view's viewport
         index = self.tree.indexAt(position)
         if not index.isValid():
             return
 
+        selection_model = self.get_selection_model()
+
         # **Select the item under the cursor**
         self.tree.setCurrentIndex(index)
-        self.tree.selectionModel().select(
+        selection_model.select(
             index,
             QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Select
         )
@@ -283,16 +324,18 @@ class FolderExplorer(QWidget):
 
 
         # **Display the context menu at the cursor's global position**
-        menu.exec(self.tree.viewport().mapToGlobal(position))
+        viewport = self.tree.viewport()
+        if viewport is None: return
+        menu.exec(viewport.mapToGlobal(position))
 
-    def context_menu_action_recalc_status(self, folder_info):
+    def context_menu_action_recalc_status(self, folder_info: QFileInfo) -> None:
         logging.debug(f"Recalculate Status for : {folder_info.absoluteFilePath()}")
         # Invalidate the cached status
         self.model.status_cache.pop(folder_info.absoluteFilePath(), None)
         # Trigger a fresh status computation
         self.model.fetch_status(folder_info.absoluteFilePath())
 
-    def context_menu_action_deep_calc_status(self, folder_info, max_depth=sys.maxsize, use_cache: bool=False):
+    def context_menu_action_deep_calc_status(self, folder_info: QFileInfo, max_depth: int = sys.maxsize, use_cache: bool = False) -> None:
     # WARNING: THIS METHOD IS REALLY SHIT
         if use_cache: logging.warning("Fill blank is not implemented")
         file_path = folder_info.absoluteFilePath()
@@ -303,11 +346,11 @@ class FolderExplorer(QWidget):
         self.model.start_deep_status_worker(file_path, max_depth)
 
 
-    def on_stop_button_clicked(self):
+    def on_stop_button_clicked(self) -> None:
         logging.debug("Stop all scans button clicked.")
         self.model.stop_all_scans()
 
-    def refresh(self):
+    def refresh(self) -> None:
         """
         Refresh the FolderExplorer while maintaining dir_path, target_path, and view_path.
         """
@@ -329,7 +372,7 @@ class FolderExplorer(QWidget):
         self.expand_to_path(self.target_path)
         logging.debug("FolderExplorer refreshed successfully.")
 
-    def open_to_path(self, path):
+    def open_to_path(self, path: str) -> None:
         """
         Open the FolderExplorer to the specified path.
         """

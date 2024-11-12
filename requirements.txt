@@ -1,4 +1,7 @@
+mypy
+pyright
 cachetools
+types-cachetools
 PyQt6
 PyQt6-Qt6
 PyQt6_sip

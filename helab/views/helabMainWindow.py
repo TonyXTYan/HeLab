@@ -1,8 +1,9 @@
 import logging
 import os
+import sys
 
-from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QThreadPool, QSettings
-from PyQt6.QtGui import QAction, QIcon, QPalette, QColor, QPixmap, QTransform
+from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QThreadPool, QSettings, QEvent
+from PyQt6.QtGui import QAction, QIcon, QPalette, QColor, QPixmap, QTransform, QCloseEvent
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QTabWidget, QSplitter, \
     QLabel, QToolBar, QStyle, QSizePolicy, QToolTip, QApplication, QStyleFactory, QFileDialog
 from pytablericons import TablerIcons, OutlineIcon
@@ -18,7 +19,7 @@ class MainWindow(QMainWindow):
     DEFAULT_WIDTH = 1800
     DEFAULT_HEIGHT = 1000
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
         self.setWindowTitle('HeLab')
@@ -29,7 +30,11 @@ class MainWindow(QMainWindow):
         self.setup_central_widgets()
 
         # Create Menubar
-        self.menu_bar = self.menuBar()
+        menubar = self.menuBar()
+        if menubar is None:
+            logging.fatal("QMainWindow.menuBar() returned None.")
+            sys.exit(1)
+        self.menu_bar: QMenuBar = menubar
         self.create_menus()
 
         # Create Status Bar
@@ -53,8 +58,11 @@ class MainWindow(QMainWindow):
         # self.status_icon = QLabel()
         # self.status_bar.addPermanentWidget(self.status_icon)
 
-    def update_thread_status(self):
+    def update_thread_status(self) -> None:
         thread_pool = QThreadPool.globalInstance()
+        if thread_pool is None:
+            logging.error("QThreadPool.globalInstance() returned None.")
+            return
         active_threads = thread_pool.activeThreadCount()
         # self.status_bar.showMessage(f"{active_threads}, {QThreadPool.globalInstance().stackSize()}, {len(self.tab_widget.running_workers_status)}")
         queue_depth = len(self.tab_widget.running_workers_status) + len(self.tab_widget.running_workers_deep)
@@ -72,39 +80,45 @@ class MainWindow(QMainWindow):
             # self.status_bar.setPixmap(self.status_icon_checked)
             self.action_tab_cancel.setEnabled(False)
 
-    def create_menus(self):
+    def create_menus(self) -> None:
         # Add menus and actions
         file_menu = self.menu_bar.addMenu('File')
-        # Create actions
-        open_action = QAction(' Open', self)
-        open_action.triggered.connect(self.open_folder_path_dialog)
-        exit_action = QAction(' Quit', self)
-        exit_action.triggered.connect(self.close)
-        menu_action_settings = QAction(' Settings...', self)
-        menu_action_settings.triggered.connect(self.show_settings_dialog)
+        if file_menu is not None:
+            # Create actions
+            open_action = QAction(' Open', self)
+            open_action.triggered.connect(self.open_folder_path_dialog)
+            exit_action = QAction(' Quit', self)
+            exit_action.triggered.connect(self.close)
+            menu_action_settings = QAction(' Settings...', self)
+            menu_action_settings.triggered.connect(self.show_settings_dialog)
 
 
-        file_menu.addAction(open_action)
-        file_menu.addAction(menu_action_settings)
-        file_menu.addSeparator()
-        file_menu.addAction(exit_action)
+            file_menu.addAction(open_action)
+            file_menu.addAction(menu_action_settings)
+            file_menu.addSeparator()
+            file_menu.addAction(exit_action)
+        else :
+            logging.error("file_menu is None")
 
 
         debug_menu = self.menu_bar.addMenu('Debug')
-        debug_action_1 = QAction('Debug Action 1', self)
-        debug_action_1.triggered.connect(self.tab_widget.clear_status_cache)
-        debug_action_2 = QAction('Debug Action 2', self)
+        if debug_menu is not None:
+            debug_action_1 = QAction('Debug Action 1', self)
+            debug_action_1.triggered.connect(self.tab_widget.clear_status_cache)
+            debug_action_2 = QAction('Debug Action 2', self)
 
-        debug_menu.addAction(debug_action_1)
-        debug_menu.addSeparator()
-        debug_menu.addAction(debug_action_2)
+            debug_menu.addAction(debug_action_1)
+            debug_menu.addSeparator()
+            debug_menu.addAction(debug_action_2)
+        else:
+            logging.error("debug_menu is None")
 
-    def show_settings_dialog(self):
+    def show_settings_dialog(self) -> None:
         # pass
         settings_dialog = SettingsDialog(self)
         settings_dialog.exec()
 
-    def open_folder_path_dialog(self):
+    def open_folder_path_dialog(self) -> None:
         options = QFileDialog.Option.ShowDirsOnly
         folder_path = QFileDialog.getExistingDirectory(self, "Select Folder", "", options=options)
         if folder_path:
@@ -116,7 +130,7 @@ class MainWindow(QMainWindow):
             if isinstance(current_tab, FolderExplorer):
                 current_tab.open_to_path(folder_path)
 
-    def setup_central_widgets(self):
+    def setup_central_widgets(self) -> None:
         # Create the main horizontal splitter
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.setCentralWidget(self.splitter)
@@ -359,7 +373,7 @@ class MainWindow(QMainWindow):
         # Initial check to set placeholder visibility
         self.update_placeholder_visibility()
 
-    def update_placeholder_visibility(self, *args):
+    def update_placeholder_visibility(self) -> None:
         # Check if any dock widgets are visible
         any_visible = any(dock_widget.isVisible() for dock_widget in self.dock_widgets)
         if any_visible:
@@ -368,7 +382,7 @@ class MainWindow(QMainWindow):
             self.central_placeholder.show()
 
 
-    def toggle_left_panel(self, checked):
+    def toggle_left_panel(self, checked: bool) -> None:
         if checked:
             # self.splitter.setSizes([self.left_panel_width, self.splitter.sizes()[1], self.splitter.sizes()[2]])
             self.splitter.setSizes([
@@ -396,7 +410,7 @@ class MainWindow(QMainWindow):
             else:
                 self.sidebar_toolbar.actions()[-1].setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
 
-    def toggle_bottom_panel(self, checked):
+    def toggle_bottom_panel(self, checked: bool) -> None:
         if checked:
             self.bottom_panel.setVisible(True)
             self.sidebar_toolbar.actions()[-1].setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
@@ -407,29 +421,29 @@ class MainWindow(QMainWindow):
             else:
                 self.sidebar_toolbar.actions()[-1].setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
 
-    # def enterEvent(self, event):
+    # def enterEvent(self, a0):
     #     # Display the tooltip immediately when mouse enters the widget area
-    #     QToolTip.showText(event.globalPosition().toPoint(), self.toolTip(), self, self.rect())
-    #     super().enterEvent(event)
+    #     QToolTip.showText(a0.globalPosition().toPoint(), self.toolTip(), self, self.rect())
+    #     super().enterEvent(a0)
 
-    def on_back_button_clicked(self):
+    def on_back_button_clicked(self) -> None:
         self.tab_widget.on_back_button_clicked()
         self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
 
-    def on_current_tab_changed(self, index):
+    def on_current_tab_changed(self, index: int) -> None:
         # self.tab_widget.on_current_tab_changed(index)
         logging.debug(f"(MainWindow) Current tab changed to index {index}")
         # self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
         self.update_tool_enabled_state()
 
-    def add_new_folder_explorer_tab(self):
+    def add_new_folder_explorer_tab(self) -> None:
         self.tab_widget.add_new_folder_explorer_tab()
         self.update_tool_enabled_state()
         current_folder_explorer = self.tab_widget.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.rootPathChanged.connect(self.update_tool_enabled_state)
 
-    def update_tool_enabled_state(self):
+    def update_tool_enabled_state(self) -> None:
         current_folder_explorer = self.tab_widget.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.update_back_button_state()
@@ -438,10 +452,10 @@ class MainWindow(QMainWindow):
             self.action_tab_folder_up.setEnabled(False)
 
 
-    def closeEvent(self, event):
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         # Save settings
         # settings = QSettings("ANU", "HeLab")
         # settings.setValue("geometry", self.saveGeometry())
         # settings.setValue("windowState", self.saveState())
-        # super().closeEvent(event)
-        pass 
+        # super().closeEvent(a0)
+        pass
