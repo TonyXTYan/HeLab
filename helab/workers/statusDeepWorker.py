@@ -48,5 +48,5 @@ class StatusDeepWorker(QRunnable):
         self.signals.finished.emit(directory_list)
         logging.debug(f"Deep worker finished for: {self.root_path}")
 
-    def cancel(self):
+    def cancel(self) -> None:
         self._is_cancelled = True

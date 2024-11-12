@@ -1,19 +1,30 @@
 from enum import IntEnum, Enum
+from typing import Dict
+
+from PIL.ImageQt import ImageQt
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QPixmap, QImage
 from pytablericons import TablerIcons, OutlineIcon, FilledIcon
 
 
-def tablerIcon(icon: OutlineIcon, color: str, size: int=128) -> QIcon: 
-    return QIcon(
-        TablerIcons
-        .load(icon, color=color)
-        .toqpixmap()
-        .scaled(size, size,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-                )
-    )
+# def tablerIcon_old(icon: OutlineIcon | FilledIcon, color: str, size: int=128) -> QIcon:
+#     return QIcon(
+#         TablerIcons
+#         .load(icon, color=color)
+#         .toqpixmap()
+#         .scaled(size, size,
+#                 Qt.AspectRatioMode.KeepAspectRatio,
+#                 Qt.TransformationMode.SmoothTransformation
+#                 )
+#     )
+
+def tablerIcon(icon: OutlineIcon | FilledIcon, color: str, size: int=128) -> QIcon:
+    image = TablerIcons.load(icon, color=color)
+    pixmap = QPixmap.fromImage(ImageQt(image))
+    pixmap = pixmap.scaled(size, size,
+                           Qt.AspectRatioMode.KeepAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+    return QIcon(pixmap)
 
 
 class StatusIcons:
@@ -26,6 +37,19 @@ class StatusIcons:
         'ram': 11,
         'live': 0,
     }
+    ICON_OK = QIcon()
+    ICON_CRITICAL = QIcon()
+    ICON_WARNING = QIcon()
+    ICON_LOADING = QIcon()
+    ICON_LIVE = QIcon()
+    ICON_NOTHING = QIcon()
+    ICONS_STATUS: Dict[str, QIcon] = {}
+    ICON_DATABASE = QIcon()
+    ICON_REPORT = QIcon()
+    ICON_CHART3D = QIcon()
+    ICON_RAM = QIcon()
+    ICONS_EXTRA: Dict[str, QIcon] = {}
+
 
     # ICON_OK = tablerIcon(OutlineIcon.CIRCLE_CHECK, '#00bb39')
     @staticmethod
@@ -56,6 +80,24 @@ class StatusIcons:
         }
 
 class ToolIcons:
+    ICON_PLUS = QIcon()
+    ICON_MINUS = QIcon()
+    ICON_TAB_PLUS = QIcon()
+    ICON_TAB_MINUS = QIcon()
+    ICON_STACK2 = QIcon()
+    ICON_STACK3 = QIcon()
+    ICON_STACK4 = QIcon()
+    ICON_SETTINGS = QIcon()
+    ICON_REFRESH = QIcon()
+    ICON_FOLDER_UP = QIcon()
+    ICON_LEFT_COLLAPSE = QIcon()
+    ICON_LEFT_EXPAND = QIcon()
+    ICON_BOTTOM_COLLAPSE = QIcon()
+    ICON_BOTTOM_EXPAND = QIcon()
+    ICON_BOTTOM_INACTIVE = QIcon()
+    ICON_ZOOM_CANCEL = QIcon()
+
+
     @staticmethod
     def initialise_icons() -> None:
         ToolIcons.ICON_PLUS = tablerIcon(OutlineIcon.LIBRARY_PLUS, '#000000')
@@ -82,6 +124,8 @@ class ToolIcons:
         ToolIcons.ICON_ZOOM_CANCEL = tablerIcon(OutlineIcon.ZOOM_CANCEL, '#000000')
 
 class PercentageIcon:
+    ICON_10 = QIcon()
+
     @staticmethod
     def initialise_icons() -> None:
         # THIS IS NOT THE INTENDED PERCENTAGE ICON

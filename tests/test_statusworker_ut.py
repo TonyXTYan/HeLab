@@ -1,42 +1,47 @@
 # tests/test_status_worker.py:
-
+import time
 import unittest
 from PyQt6.QtCore import QCoreApplication, QThreadPool
 from PyQt6.QtTest import QSignalSpy, QTest
 from helab.workers.statusWorker import StatusWorker
 
 class TestStatusWorker(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QCoreApplication([])
-        cls.threadpool = QThreadPool.globalInstance()
-        # cls.threadpool = QThreadPool()
-        cls.threadpool.setMaxThreadCount(4)
-        QThreadPool.globalInstance().waitForDone()
+    app: QCoreApplication
+    threadpool: QThreadPool
 
     @classmethod
-    def tearDownClass(cls):
+    def setUpClass(cls) -> None:
+        cls.app = QCoreApplication([])
+        thread_pool = QThreadPool.globalInstance()
+        cls.threadpool = thread_pool if thread_pool is not None else QThreadPool()
+        # cls.threadpool = QThreadPool()
+        cls.threadpool.setMaxThreadCount(4)
+        cls.threadpool.waitForDone()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
         # QTest.qWait(100)  # Wait for 100ms to process events
         # cls.app.quit()
         # del cls.app
         # del cls.threadpool
         try:
-            QTest.qWait(100)  # Wait to process events
+            # QTest.qWait(100)  # Wait to process events
+            time.sleep(0.05)
             # QThreadPool.globalInstance().deleteLater()
             # QThreadPool.globalInstance().clear()
             # QThreadPool.globalInstance().waitForDone()
-            while not QThreadPool.globalInstance().activeThreadCount() == 0: QTest.qWait(10)
+            while not cls.threadpool.activeThreadCount() == 0: time.sleep(0.05)
             cls.app.quit()
             del cls.app
             # del cls.threadpool
-            QTest.qWait(100)
+            time.sleep(0.05)
         except Exception:
             pass
 
-    def test_worker_emits_finished_signal(self):
+    def test_worker_emits_finished_signal(self) -> None:
         worker = StatusWorker("/")
         spy = QSignalSpy(worker.signals.finished)
-        QThreadPool.globalInstance().waitForDone()
+        self.threadpool.waitForDone()
         self.threadpool.start(worker)
 
         if not spy.wait(1000):  # wait for up to this many ms
@@ -49,11 +54,11 @@ class TestStatusWorker(unittest.TestCase):
         self.assertIsInstance(args[2], int)
         self.assertIsInstance(args[3], list)
 
-    def test_worker_can_be_canceled(self):
+    def test_worker_can_be_canceled(self) -> None:
         worker = StatusWorker("test_file.txt")
         worker.cancel()
         spy = QSignalSpy(worker.signals.finished)
-        QThreadPool.globalInstance().waitForDone()
+        self.threadpool.waitForDone()
         self.threadpool.start(worker)
 
         self.app.processEvents()

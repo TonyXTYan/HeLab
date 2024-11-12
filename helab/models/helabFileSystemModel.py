@@ -1,8 +1,9 @@
 import logging
 import os
 import sys
+from typing import Dict, Tuple, List
 
-from PyQt6.QtCore import Qt, QThreadPool, QThread, QModelIndex, QTimer
+from PyQt6.QtCore import Qt, QThreadPool, QThread, QModelIndex, QTimer, QObject
 from PyQt6.QtGui import QFileSystemModel, QIcon, QColor
 from PyQt6.QtWidgets import QApplication
 from cachetools import LRUCache
@@ -26,7 +27,13 @@ class helabFileSystemModel(QFileSystemModel):
     COLUMN_RIGHTFILL = 6
     STATUS_EXTRA_ICONS_ROLE = Qt.ItemDataRole.UserRole + 1
 
-    def __init__(self, status_cache, thread_pool, running_workers_status, running_workers_deep, *args, **kwargs):
+    def __init__(self,
+                 status_cache: LRUCache[str, Tuple[str, int, List[str]]],
+                 thread_pool: QThreadPool,
+                 running_workers_status: Dict[str, StatusWorker],
+                 running_workers_deep: Dict[str, StatusDeepWorker],
+                 *args: QObject | None, **kwargs: QObject | None
+                 ) -> None:
         super().__init__(*args, **kwargs)
         # Cache the standard icons
         # style = QApplication.style()
@@ -60,10 +67,10 @@ class helabFileSystemModel(QFileSystemModel):
         self.dataChanged.connect(self.on_data_changed)
         self.modelReset.connect(self.on_model_reset)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return super().columnCount(parent) + 3  # Add three extra columns
 
-    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
         if not index.isValid():
             return None
         column = index.column()
@@ -112,7 +119,7 @@ class helabFileSystemModel(QFileSystemModel):
                     return QColor(Qt.GlobalColor.gray)
             return super().data(index, role)
 
-    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> object:
         if orientation == Qt.Orientation.Horizontal:
             if role == Qt.ItemDataRole.DisplayRole:
                 if section == self.COLUMN_STATUS_NUMBER:
@@ -121,7 +128,7 @@ class helabFileSystemModel(QFileSystemModel):
                     return "Status"
         return super().headerData(section, orientation, role)
 
-    def fetch_status(self, folder_path):
+    def fetch_status(self, folder_path: str) -> Tuple[str, int, List[str]]:
         # logging.debug(f"Getting status for: {folder_path}")
         # Check if the status is already cached
         status_data = self.status_cache.get(folder_path)
@@ -159,8 +166,10 @@ class helabFileSystemModel(QFileSystemModel):
             self.running_workers_status[folder_path] = worker
             return ('loading', 0, [])
 
-    def handle_status_computed(self, file_path, status, count, extra_icons):
-        logging.debug(f"Status computed for: {file_path}: {status}, {count}, Cached: {asizeof.asizeof(self.status_cache) / 1000} KB")
+    def handle_status_computed(self, file_path: str, status: str, count: int, extra_icons: List[str]) -> None:
+        # logging.debug(f"Status computed for: {file_path}: {status}, {count}, Cached: {asizeof.asizeof(self.status_cache) / 1000} KB")
+        size_in_kb: int = asizeof.asizeof(self.status_cache) // 1000  # type: ignore
+        logging.debug(f"Status computed for: {file_path}: {status}, {count}, Cached: {size_in_kb} KB")
         # Update the cache with the computed status and extra icons
         self.status_cache[file_path] = (status, count, extra_icons)
 
@@ -189,12 +198,12 @@ class helabFileSystemModel(QFileSystemModel):
             del self.running_workers_status[file_path]
             logging.debug(f"Worker removed from running_workers for: {file_path}")
 
-    def on_directory_loaded(self, path):
+    def on_directory_loaded(self, path: str) -> None:
         # Invalidate cache entries for the loaded directory
         # self.invalidate_cache_for_directory(path)
         logging.debug(f"Directory loaded: {path} \t ditch cache??")
 
-    def on_file_renamed(self, path, old_name, new_name):
+    def on_file_renamed(self, path: str, old_name: str, new_name: str) -> None:
         # Remove the old path from the cache
         old_path = os.path.join(path, old_name)
         new_path = os.path.join(path, new_name)
@@ -203,7 +212,7 @@ class helabFileSystemModel(QFileSystemModel):
         # Optionally, recompute the status for the new path
         # self.get_status(new_path)
 
-    def on_data_changed(self, topLeft, bottomRight, roles):
+    def on_data_changed(self, topLeft: QModelIndex, bottomRight: QModelIndex, roles: List[int]) -> None:
         """
         Handles the dataChanged signal by logging the file paths of the changed items.
 
@@ -219,18 +228,18 @@ class helabFileSystemModel(QFileSystemModel):
                 file_path = self.filePath(index)
                 logging.debug(f"Data changed for: {file_path}")
 
-    def on_model_reset(self):
+    def on_model_reset(self) -> None:
         # Clear the entire cache
         self.status_cache.clear()
         logging.debug(f"(CLEAR) Model reset")
 
-    def invalidate_cache_for_directory(self, directory_path):
+    def invalidate_cache_for_directory(self, directory_path: str) -> None:
         # Remove all cached entries under the given directory
         keys_to_remove = [key for key in self.status_cache if key.startswith(directory_path)]
         for key in keys_to_remove:
             del self.status_cache[key]
 
-    def stop_all_scans(self):
+    def stop_all_scans(self) -> None:
         logging.debug("Stopping all scans...")
         # Iterate through all running workers and cancel them
         for file_path, worker in list(self.running_workers_status.items()):
@@ -238,20 +247,21 @@ class helabFileSystemModel(QFileSystemModel):
             # self.running_workers.remove(worker)
             del self.running_workers_status[file_path]
             logging.debug(f"Worker canceled for: {file_path}")
+
         # Cancel all StatusDeepWorker instances
         # for worker in list(self.running_workers_deep):
-        for folder_path, worker in list(self.running_workers_deep.items()):
-            worker.cancel()
+        for folder_path, workerD in list(self.running_workers_deep.items()):
+            workerD.cancel()
             # self.running_workers_deep.remove(worker)
             del self.running_workers_deep[folder_path]
-            logging.debug(f"Cancelled StatusDeepWorker for: {worker.root_path}")
+            logging.debug(f"Cancelled StatusDeepWorker for: {workerD.root_path}")
 
         # Optionally, clear the thread pool's queue if possible
         # Note: QThreadPool does not provide a direct method to clear pending tasks
         # So, we rely on workers to check for cancellation
         logging.debug("All scans have been requested to stop.")
 
-    def start_deep_status_worker(self, root_path: str, max_depth: int = sys.maxsize):
+    def start_deep_status_worker(self, root_path: str, max_depth: int = sys.maxsize) -> None:
         # Create and start a StatusDeepWorker
         worker = StatusDeepWorker(root_path, max_depth)
         worker.signals.finished.connect(self.process_deep_status)
@@ -260,7 +270,7 @@ class helabFileSystemModel(QFileSystemModel):
         self.running_workers_deep[root_path] = worker
         logging.debug(f"Started StatusDeepWorker for: {root_path}")
 
-    def process_deep_status(self, directory_list):
+    def process_deep_status(self, directory_list: List[str]) -> None:
         logging.debug(f"Processing {len(directory_list)} directories for status recalculation")
         self.directory_iterator = iter(directory_list)
         self.process_next_directories()
@@ -269,7 +279,7 @@ class helabFileSystemModel(QFileSystemModel):
         # Note: StatusDeepWorker does not have a direct reference here
         # So, we assume it's already removed from running_workers_deep when canceled
 
-    def process_next_directories(self):
+    def process_next_directories(self) -> None:
         # Process a batch of directories
         batch_size = 100  # Adjust as needed
         count = 0
@@ -288,16 +298,19 @@ class helabFileSystemModel(QFileSystemModel):
         QTimer.singleShot(0, self.process_next_directories)
         # THIS IS BUGGY, MIGHT NEED REWRITE?!
 
-    def context_menu_action_deep_calc_status(self, folder_info):
-        file_path = folder_info.absoluteFilePath()
-        if not folder_info.isDir():
+    def context_menu_action_deep_calc_status(self, folder_info: QModelIndex) -> None:
+        # file_path = folder_info.absoluteFilePath()
+        # file_path = self.filePath(folder_info)
+        file_info = self.fileInfo(folder_info)
+        file_path = file_info.absoluteFilePath()
+        if not file_info.isDir():
             logging.debug(f"Selected item is not a directory: {file_path}")
             return
         logging.debug(f"Deep recalculating status for: {file_path}")
         # Start the deep status worker
         self.start_deep_status_worker(file_path)
 
-    def refresh(self):
+    def refresh(self) -> None:
         self.beginResetModel()
         self.endResetModel()
         logging.info("helabFileSystemModel has been refreshed.")

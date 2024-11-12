@@ -1,31 +1,39 @@
 # tabWidget.py
 import logging
 import os
+import sys
+from typing import Tuple, List, Dict
 
 from PyQt6.QtCore import QDir, QThreadPool, Qt
-from PyQt6.QtWidgets import QTabWidget
+from PyQt6.QtWidgets import QTabWidget, QWidget
 from cachetools import LRUCache
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.views.folderExplorer import FolderExplorer
+from helab.workers.statusDeepWorker import StatusDeepWorker
+from helab.workers.statusWorker import StatusWorker
 
 
 class FolderTabWidget(QTabWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setTabsClosable(True)
         self.tabCloseRequested.connect(self.removeTab)
 
         # Initialize shared resources
-        self.status_cache = LRUCache(maxsize=10000)
-        self.thread_pool = QThreadPool.globalInstance()
-        self.running_workers_status = {}
-        self.running_workers_deep = {}
+        self.status_cache: LRUCache[str, Tuple[str, int, List[str]]] = LRUCache(maxsize=10000)
+        thread_pool = QThreadPool.globalInstance()
+        if thread_pool is None:
+            logging.fatal("QThreadPool.globalInstance() returned None. Exiting.")
+            sys.exit(1)
+        self.thread_pool: QThreadPool = thread_pool
+        self.running_workers_status: Dict[str, StatusWorker] = {}
+        self.running_workers_deep: Dict[str, StatusDeepWorker] = {}
         self.tab_back_button_enabled = False
 
         self.currentChanged.connect(self.on_current_tab_changed)
 
-    def add_new_folder_explorer_tab(self):
+    def add_new_folder_explorer_tab(self) -> None:
         # Create a new FolderExplorer instance
         dirPath = QDir.rootPath()
         view_path = dirPath
@@ -69,7 +77,7 @@ class FolderTabWidget(QTabWidget):
         # Add the FolderExplorer as a new tab
         # self.tab_widget.addTab(folder_explorer, 'File Explorer')
 
-    def update_folder_explorer_tab_title(self, path, index):
+    def update_folder_explorer_tab_title(self, path: str, index: int) -> None:
         logging.debug(f"Updating tab title for index {index} to {path}")
         # self.tab_widget.setTabText(index, os.path.basename(path))
         if path == "/":
@@ -77,7 +85,7 @@ class FolderTabWidget(QTabWidget):
         else:
             self.setTabText(index, os.path.basename(path))
 
-    def on_back_button_clicked(self):
+    def on_back_button_clicked(self) -> None:
         # Get the current folder explorer
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
@@ -85,7 +93,7 @@ class FolderTabWidget(QTabWidget):
             self.tab_back_button_enabled = current_folder_explorer.back_button_enabled
 
 
-    def clear_status_cache(self):
+    def clear_status_cache(self) -> None:
         self.status_cache.clear()
         self.running_workers_status.clear()
         self.running_workers_deep.clear()
@@ -94,7 +102,7 @@ class FolderTabWidget(QTabWidget):
         self.refresh_current_folder_explorer()
 
 
-    def refresh_current_folder_explorer(self):
+    def refresh_current_folder_explorer(self) -> None:
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.refresh()
@@ -102,7 +110,7 @@ class FolderTabWidget(QTabWidget):
         else:
             logging.warning("Current tab is not a FolderExplorer instance.")
 
-    def on_current_tab_changed(self, index):
+    def on_current_tab_changed(self, index: int) -> None:
         logging.debug(f"(TabWidget) Current tab changed to index {index}")
         # current_folder_explorer = self.currentWidget()
         # if isinstance(current_folder_explorer, FolderExplorer):
