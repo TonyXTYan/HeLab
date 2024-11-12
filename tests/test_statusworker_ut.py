@@ -31,21 +31,23 @@ class TestStatusWorker(unittest.TestCase):
             # QThreadPool.globalInstance().clear()
             # QThreadPool.globalInstance().waitForDone()
             while not cls.threadpool.activeThreadCount() == 0: time.sleep(0.05)
-            cls.app.quit()
-            del cls.app
+            time.sleep(0.5)
+            # cls.app.quit()
+            # del cls.app
             # del cls.threadpool
-            time.sleep(0.05)
+            # time.sleep(0.05)
         except Exception:
             pass
 
     def test_worker_emits_finished_signal(self) -> None:
         worker = StatusWorker("/")
         spy = QSignalSpy(worker.signals.finished)
-        self.threadpool.waitForDone()
         self.threadpool.start(worker)
 
         if not spy.wait(1000):  # wait for up to this many ms
             self.fail("Timeout waiting for finished signal")
+
+        while not self.threadpool.activeThreadCount() == 0: time.sleep(0.05)
 
         self.assertEqual(len(spy), 1)
         args = spy[0]
@@ -58,8 +60,8 @@ class TestStatusWorker(unittest.TestCase):
         worker = StatusWorker("test_file.txt")
         worker.cancel()
         spy = QSignalSpy(worker.signals.finished)
-        self.threadpool.waitForDone()
         self.threadpool.start(worker)
+        while not self.threadpool.activeThreadCount() == 0: time.sleep(0.05)
 
         self.app.processEvents()
         self.assertFalse(spy.wait(1000))  # wait for up to 1 second

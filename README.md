@@ -13,6 +13,11 @@
 
 [![latest release](https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=latest%20release&)](https://github.com/TonyXTYan/HeLab/releases/latest)
 [![cicd](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/dev-cicd.yml?label=ci%20cd&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/dev-cicd.yml)
+[![codecov](https://codecov.io/github/TonyXTYan/HeLab/graph/badge.svg?token=0MN7A91LDZ)](https://codecov.io/github/TonyXTYan/HeLab)
+
+
+<!-- ![Gitlab Code Coverage](https://img.shields.io/gitlab/pipeline-coverage/github.com%2FTonyXTYan%2FHeLab) -->
+
 
 <!-- [![tests](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/ci.yml?label=tests&logo=github&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/ci.yml) -->
 <!-- [![release](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/cd.yml?label=release&logo=github&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/cd.yml) -->
@@ -44,6 +49,9 @@ here are some more random badges because they look cool
 ![conda](https://img.shields.io/badge/conda-44Ab33.svg?logo=anaconda&logoColor=white)
 ![pip](https://img.shields.io/badge/pip-3775A9.svg?logo=pypi&logoColor=white)
 ![pycharm](https://img.shields.io/badge/pycharm-000000?logo=pycharm&logoColor=white)
+![mypy](https://img.shields.io/badge/mypy-000000.svg?logo=mypy&logoColor=white)
+![pyright](https://img.shields.io/badge/pyright-000000.svg?logo=pyright&logoColor=white)
+
 
 ![arxiv](https://img.shields.io/badge/arxiv-B31B1B?logo=arxiv&logoColor=white)
 ![google scholar](https://img.shields.io/badge/google%20scholar-4285F4?logo=googlescholar&logoColor=white)

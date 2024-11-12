@@ -1,11 +1,12 @@
 # tabWidget.py
+import gc
 import logging
 import os
 import sys
 from typing import Tuple, List, Dict
 
 from PyQt6.QtCore import QDir, QThreadPool, Qt
-from PyQt6.QtWidgets import QTabWidget, QWidget
+from PyQt6.QtWidgets import QTabWidget, QWidget, QMessageBox
 from cachetools import LRUCache
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
@@ -110,9 +111,40 @@ class FolderTabWidget(QTabWidget):
         else:
             logging.warning("Current tab is not a FolderExplorer instance.")
 
+    def rescan_current_folder_explorer(self) -> None:
+        current_folder_explorer = self.currentWidget()
+        if isinstance(current_folder_explorer, FolderExplorer):
+            current_folder_explorer.rescan()
+            logging.info("Current FolderExplorer tab has been rescanned.")
+        else:
+            logging.warning("Current tab is not a FolderExplorer instance.")
+
     def on_current_tab_changed(self, index: int) -> None:
         logging.debug(f"(TabWidget) Current tab changed to index {index}")
         # current_folder_explorer = self.currentWidget()
         # if isinstance(current_folder_explorer, FolderExplorer):
         #     current_folder_explorer.update_back_button_state()
         #     self.tab_back_button_enabled = current_folder_explorer.back_button_enabled
+
+
+    def removeTab(self, index: int) -> None:
+        # Remove the tab
+        # self.widget(index).close_cleanup
+        logging.debug(f"Removing tab at index {index}")
+        current_folder_explorer = self.widget(index)
+        queue_depth = len(self.running_workers_status) + len(self.running_workers_deep)
+        if queue_depth > 0:
+            QMessageBox.warning(self, "Please wait for background taks to finish",
+                                "There are ongoing background tasks. Please wait for them to complete or cancel them before closing the tab.",
+                                QMessageBox.StandardButton.Ok)
+            return
+        if isinstance(current_folder_explorer, FolderExplorer):
+            # if current_folder_explorer.is_running_status_worker():
+            #     logging.debug(f"Stopping status worker for tab at index {index}")
+            #     current_folder_explorer.stop_status_worker()
+            #     return
+            current_folder_explorer.on_stop_button_clicked()
+            current_folder_explorer.close_cleanup()
+            current_folder_explorer.deleteLater()
+        super().removeTab(index)
+        # gc.collect()
