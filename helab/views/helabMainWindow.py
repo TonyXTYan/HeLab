@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
             # self.status_icon_loading_angle = (self.status_icon_loading_angle + 10) % 360
             self.status_bar.showMessage(f"Working: {active_threads}, Queued: {queue_depth}")
             self.action_tab_cancel.setEnabled(True)
+
         else:
             self.status_bar.showMessage(f"Threads Ready")
             # self.status_bar.setPixmap(self.status_icon_checked)
@@ -103,9 +104,10 @@ class MainWindow(QMainWindow):
 
         debug_menu = self.menu_bar.addMenu('Debug')
         if debug_menu is not None:
-            debug_action_1 = QAction('Debug Action 1', self)
+            debug_action_1 = QAction('Clear Status Cache', self)
             debug_action_1.triggered.connect(self.tab_widget.clear_status_cache)
-            debug_action_2 = QAction('Debug Action 2', self)
+            debug_action_2 = QAction('Draw a line', self)
+            debug_action_2.triggered.connect(lambda: logging.debug("="*80))
 
             debug_menu.addAction(debug_action_1)
             debug_menu.addSeparator()
@@ -184,12 +186,15 @@ class MainWindow(QMainWindow):
         self.action_tab_new = QAction(ToolIcons.ICON_PLUS, "New Tab", self)
         self.action_tab_folder_up = QAction(ToolIcons.ICON_FOLDER_UP, "Up Dir", self)
         self.action_tab_refresh = QAction(ToolIcons.ICON_REFRESH, "Refresh", self)
+        self.action_tab_rescan = QAction(ToolIcons.ICON_ZOOM_REPLACE, "Rescan", self)
         self.action_tab_cancel = QAction(ToolIcons.ICON_ZOOM_CANCEL, "Cancel", self)
 
-        self.action_tab_new.setToolTip("This thing is for...")
-        self.action_tab_new.setWhatsThis("What's this? r") # literally don't know where this will show up memm
-        self.action_tab_refresh.setToolTip("to be implemented") # TODO: this should only affect the current tab
-        self.action_tab_folder_up.setToolTip("to be implemented") # TODO: this should only affect the current tab (?)
+        self.action_tab_new.setToolTip("New Tab")
+        self.action_tab_new.setWhatsThis("New Tab??? plz let me know if you see this text") # literally don't know where this will show up memm
+        self.action_tab_refresh.setToolTip("Refresh file list view")
+        self.action_tab_folder_up.setToolTip("Going back up a directory level")
+        self.action_tab_rescan.setToolTip("Rescan the current directory")
+        self.action_tab_cancel.setToolTip("Cancel background tasks")
 
         # action_tab_new.triggered.connect(self.add_new_folder_explorer_tab)
         # action_tab_folder_up.triggered.connect(self.on_back_button_clicked)
@@ -227,6 +232,7 @@ class MainWindow(QMainWindow):
         self.sidebar_toolbar.addAction(self.action_tab_new)
         self.sidebar_toolbar.addAction(self.action_tab_folder_up)
         self.sidebar_toolbar.addAction(self.action_tab_refresh)
+        self.sidebar_toolbar.addAction(self.action_tab_rescan)
         self.sidebar_toolbar.addAction(self.action_tab_cancel)
 
         # Create the tab widget and add it to the left panel
@@ -243,6 +249,7 @@ class MainWindow(QMainWindow):
         self.action_tab_folder_up.triggered.connect(self.on_back_button_clicked)
         self.action_tab_refresh.triggered.connect(self.tab_widget.refresh_current_folder_explorer)
         self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
+        self.action_tab_rescan.triggered.connect(self.tab_widget.rescan_current_folder_explorer)
 
         self.sidebar_toolbar.addSeparator()
 
@@ -453,6 +460,8 @@ class MainWindow(QMainWindow):
 
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
+        logging.debug("MainWindow closeEvent")
+
         # Save settings
         # settings = QSettings("ANU", "HeLab")
         # settings.setValue("geometry", self.saveGeometry())

@@ -27,6 +27,9 @@ class helabFileSystemModel(QFileSystemModel):
     COLUMN_RIGHTFILL = 6
     STATUS_EXTRA_ICONS_ROLE = Qt.ItemDataRole.UserRole + 1
 
+    running_workers_status: Dict[str, StatusWorker]
+    running_workers_deep: Dict[str, StatusDeepWorker]
+
     def __init__(self,
                  status_cache: LRUCache[str, Tuple[str, int, List[str]]],
                  thread_pool: QThreadPool,
@@ -133,7 +136,18 @@ class helabFileSystemModel(QFileSystemModel):
         # Check if the status is already cached
         status_data = self.status_cache.get(folder_path)
         if status_data is not None:
-            return status_data
+            if status_data[0] == 'loading':
+                # logging.debug(f"Status is loading for: {folder_path}")
+                # return status_data
+                # if folder_path in self.running_workers_status and self.running_workers_status[folder_path] is not None:
+                        # logging.debug(f"Worker still running for: {folder_path}")
+                if folder_path in self.running_workers_status:
+                    return status_data
+                else:
+                    del self.status_cache[folder_path]
+                    return self.fetch_status(folder_path)
+            else:
+                return status_data
         else:
             # Check if a worker is already running for this folder_path
             if folder_path in self.running_workers_status:
@@ -246,6 +260,8 @@ class helabFileSystemModel(QFileSystemModel):
             worker.cancel()
             # self.running_workers.remove(worker)
             del self.running_workers_status[file_path]
+            # self.status_cache.pop(file_path, None)
+            # del self.status_cache[file_path]
             logging.debug(f"Worker canceled for: {file_path}")
 
         # Cancel all StatusDeepWorker instances
@@ -254,7 +270,11 @@ class helabFileSystemModel(QFileSystemModel):
             workerD.cancel()
             # self.running_workers_deep.remove(worker)
             del self.running_workers_deep[folder_path]
+            # del self.status_cache[folder_path]
             logging.debug(f"Cancelled StatusDeepWorker for: {workerD.root_path}")
+
+        # self.running_workers_status = {}
+        # self.running_workers_deep = {}
 
         # Optionally, clear the thread pool's queue if possible
         # Note: QThreadPool does not provide a direct method to clear pending tasks
@@ -311,6 +331,7 @@ class helabFileSystemModel(QFileSystemModel):
         self.start_deep_status_worker(file_path)
 
     def refresh(self) -> None:
-        self.beginResetModel()
-        self.endResetModel()
+        # self.beginResetModel()
+        # self.endResetModel()
+        self.directoryLoaded.emit(self.rootPath())
         logging.info("helabFileSystemModel has been refreshed.")

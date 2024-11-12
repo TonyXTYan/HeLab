@@ -356,6 +356,7 @@ class FolderExplorer(QWidget):
         """
 
         # Really should use dataEmit change? rather than making a new model every time
+        # Also status_cache should be restored
 
         logging.debug("Refreshing FolderExplorer.")
         # Reinitialize the model with the current paths
@@ -372,6 +373,12 @@ class FolderExplorer(QWidget):
         self.expand_to_path(self.target_path)
         logging.debug("FolderExplorer refreshed successfully.")
 
+    def rescan(self) -> None:
+
+        # TODO later
+        return
+
+
     def open_to_path(self, path: str) -> None:
         """
         Open the FolderExplorer to the specified path.
@@ -382,3 +389,9 @@ class FolderExplorer(QWidget):
         self.expand_to_path(path)
         self.emit_root_path_changed()
         logging.debug(f"Opened FolderExplorer to path: {path}")
+
+    def close_cleanup(self) -> None:
+        # self.model.clearItemData()
+        self.model.deleteLater()
+        self.deleteLater()
+        logging.debug("FolderExplorer closed and cleaned up.")

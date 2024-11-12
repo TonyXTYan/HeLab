@@ -96,6 +96,8 @@ class ToolIcons:
     ICON_BOTTOM_EXPAND = QIcon()
     ICON_BOTTOM_INACTIVE = QIcon()
     ICON_ZOOM_CANCEL = QIcon()
+    ICON_ZOOM_SCAN = QIcon()
+    ICON_ZOOM_REPLACE = QIcon()
 
 
     @staticmethod
@@ -110,7 +112,7 @@ class ToolIcons:
 
         ToolIcons.ICON_SETTINGS = tablerIcon(OutlineIcon.SETTINGS, '#000000')
 
-        ToolIcons.ICON_REFRESH = tablerIcon(OutlineIcon.REFRESH, '#000000')
+        ToolIcons.ICON_REFRESH = tablerIcon(OutlineIcon.RELOAD, '#000000')
 
         ToolIcons.ICON_FOLDER_UP = tablerIcon(OutlineIcon.FOLDER_UP, '#000000')
 
@@ -122,6 +124,8 @@ class ToolIcons:
         ToolIcons.ICON_BOTTOM_INACTIVE = tablerIcon(OutlineIcon.LAYOUT_BOTTOMBAR_INACTIVE, '#000000')
 
         ToolIcons.ICON_ZOOM_CANCEL = tablerIcon(OutlineIcon.ZOOM_CANCEL, '#000000')
+        ToolIcons.ICON_ZOOM_SCAN = tablerIcon(OutlineIcon.ZOOM_SCAN, '#000000')
+        ToolIcons.ICON_ZOOM_REPLACE = tablerIcon(OutlineIcon.ZOOM_REPLACE, '#000000')
 
 class PercentageIcon:
     ICON_10 = QIcon()
