@@ -13,7 +13,11 @@
 
 [![latest release](https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=latest%20release&)](https://github.com/TonyXTYan/HeLab/releases/latest)
 [![cicd](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/dev-cicd.yml?label=ci%20cd&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/dev-cicd.yml)
-[![codecov](https://codecov.io/github/TonyXTYan/HeLab/graph/badge.svg?token=0MN7A91LDZ)](https://codecov.io/github/TonyXTYan/HeLab)
+![Codecov](https://img.shields.io/codecov/c/github/TonyXTYan/HeLab?token=0MN7A91LDZ&logo=codecov&logoColor=white)
+![Codecov](https://img.shields.io/codecov/c/github/TonyXTYan/HeLab/branch/dev?token=0MN7A91LDZ&label=dev%20coverage&logo=codecov&logoColor=white)
+<!-- [![codecov](https://codecov.io/github/TonyXTYan/HeLab/graph/badge.svg?token=0MN7A91LDZ)](https://codecov.io/github/TonyXTYan/HeLab) -->
+<!-- [![codecov](https://codecov.io/github/TonyXTYan/HeLab/branch/dev/graph/badge.svg?token=0MN7A91LDZ)](https://codecov.io/github/TonyXTYan/HeLab) -->
+
 
 
 <!-- ![Gitlab Code Coverage](https://img.shields.io/gitlab/pipeline-coverage/github.com%2FTonyXTYan%2FHeLab) -->

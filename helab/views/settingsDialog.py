@@ -1,4 +1,5 @@
 # settingsDialog.py
+import logging
 from typing import Optional
 
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QLineEdit, QLabel, QTabWidget, QWidget
@@ -53,9 +54,11 @@ class SettingsDialog(QDialog):
         settings = QSettings("ANU", "HeLab")
         self.example_checkbox.setChecked(settings.value("example_checkbox", False, type=bool))
         self.example_text.setText(settings.value("example_text", "", type=str))
+        logging.debug("Settings loaded")
 
     def save_settings(self) -> None:
         settings = QSettings("ANU", "HeLab")
         settings.setValue("example_checkbox", self.example_checkbox.isChecked())
         settings.setValue("example_text", self.example_text.text())
         self.accept()
+        logging.debug("Settings saved")

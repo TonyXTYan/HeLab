@@ -104,7 +104,7 @@ jobs:
         if: matrix.python3-version == '12' && matrix.os == 'macos'
         run: |  
           source venv/bin/activate
-          pytest --cov=. --cov-report=xml --ignore=tests/test_typing.py
+          pytest --cov=. --cov-report=xml --cov-report=term --ignore=tests/test_typing.py
 
       - name: Upload Code Coverage Report
         if: matrix.python3-version == '12' && matrix.os == 'macos'
