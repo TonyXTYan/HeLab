@@ -12,7 +12,7 @@ from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.resources.icons import ToolIcons
 from helab.views.folderExplorer import FolderExplorer
 from helab.views.folderTabsWidget import FolderTabWidget
-from helab.views.settomgsDialog import SettingsDialog
+from helab.views.settingsDialog import SettingsDialog
 
 
 class MainWindow(QMainWindow):
