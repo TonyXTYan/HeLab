@@ -1,13 +1,14 @@
 import logging
 
-from PyQt6.QtCore import Qt, QModelIndex, QTimer, QEvent, QRect, QPoint
+from PyQt6.QtCore import Qt, QModelIndex, QTimer, QEvent, QRect, QPoint, QObject
+from PyQt6.QtGui import QMouseEvent, QFocusEvent
 from PyQt6.QtWidgets import QTreeView, QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout
 
-from helab.models.heliumFileSystemModel import CustomFileSystemModel
+from helab.models.helabFileSystemModel import helabFileSystemModel
 
 
 class StatusHoverIconInfo(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, Qt.WindowType.Popup)
         # Update window flags to include WindowStaysOnTopHint and remove FramelessWindowHint
         self.setWindowFlags(
@@ -42,22 +43,22 @@ class StatusHoverIconInfo(QWidget):
         layout.addLayout(button_layout)
         self.setLayout(layout)
 
-    def set_info(self, info_text):
+    def set_info(self, info_text: str) -> None:
         self.label.setText(info_text)
 
     # Placeholder function for Action 1
-    def action1(self):
+    def action1(self) -> None:
         logging.debug("Action 1 triggered")
         # You can replace the print statement with actual functionality later
 
     # Placeholder function for Action 2
-    def action2(self):
+    def action2(self) -> None:
         logging.debug("Action 2 triggered")
         # You can replace the print statement with actual functionality later
 
 
 class StatusTreeView(QTreeView):
-    def __init__(self, parent=None):
+    def __init__(self, parent: QTreeView | None = None) -> None:
         super().__init__(parent)
         self.setMouseTracking(True)
         self.popup = StatusHoverIconInfo()
@@ -73,20 +74,22 @@ class StatusTreeView(QTreeView):
 
         self.popup.installEventFilter(self)
 
-    def eventFilter(self, obj, event):
-        if obj == self.popup:
+    def eventFilter(self, object: QObject | None, event: QEvent | None) -> bool:
+        if event is None: return False
+        if object == self.popup:
             if event.type() == QEvent.Type.Enter:
                 # Stop the hide timer when cursor enters the popup
                 self.hover_timer.stop()
             elif event.type() == QEvent.Type.Leave:
                 # Start the hide timer when cursor leaves the popup
                 self.hover_timer.start(500)  # Delay hiding by 500 ms
-        return super().eventFilter(obj, event)
+        return super().eventFilter(object, event)
 
-    def mouseMoveEvent(self, event):
+    def mouseMoveEvent(self, event: QMouseEvent | None) -> None:
+        if event is None: return
         pos = event.pos()
         index = self.indexAt(pos)
-        if index.isValid() and index.column() == CustomFileSystemModel.COLUMN_STATUS_ICON:
+        if index.isValid() and index.column() == helabFileSystemModel.COLUMN_STATUS_ICON:
             # Determine if the mouse is over the icon area
             rect = self.visualRect(index)
             icon_size = self.iconSize()
@@ -97,7 +100,7 @@ class StatusTreeView(QTreeView):
                 icon_size.width(),
                 icon_size.height()
             )
-            extra_icons = index.data(CustomFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
+            extra_icons = index.data(helabFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
             extra_icon_rects = []
             if extra_icons:
                 x_offset = status_icon_rect.right() + 2  # 2px spacing between icons
@@ -131,17 +134,25 @@ class StatusTreeView(QTreeView):
             self.hover_timer.start(300)  # Delay hiding by 300ms
         super().mouseMoveEvent(event)
 
-    def leaveEvent(self, event):
+    def leaveEvent(self, a0: QEvent | None) -> None:
+        if a0 is None: return
         self.hover_timer.start(300)  # Delay hiding by 300ms
-        super().leaveEvent(event)
+        super().leaveEvent(a0)
 
-    def show_popup(self, global_pos, index):
+    def show_popup(self, global_pos: QPoint, index: QModelIndex) -> None:
         if not index.isValid():
             return
+        model = self.model()
+        if model is None or not hasattr(model, 'filePath') or not hasattr(model, 'fetch_status'):
+            logging.error("show_popup: model is bad")
+            return
+        if not isinstance(model, helabFileSystemModel):
+            logging.error("show_popup: model is not helabFileSystemModel")
+            return
         # Get data from the model
-        file_path = self.model().filePath(index)
+        file_path = model.filePath(index)
         # status, count, extra_icons = self.model().get_status(file_path)
-        status, count, extra_icons = self.model().fetch_status(file_path)
+        status, count, extra_icons = model.fetch_status(file_path)
         info_text = f"Path: {file_path}\nStatus: {status}\nCount: {count}\nExtra Icons: {', '.join(extra_icons) if extra_icons else 'None'}"
         self.popup.set_info(info_text)
         # Position the popup near the cursor
@@ -150,7 +161,7 @@ class StatusTreeView(QTreeView):
         self.popup.show()
         self.popup_visible = True
 
-    def hide_popup(self):
+    def hide_popup(self) -> None:
         if self.popup_visible and self.popup is not None:
             try:
                 self.popup.hide()
@@ -160,6 +171,7 @@ class StatusTreeView(QTreeView):
             self.popup_visible = False
             self.current_hover_index = QModelIndex()
 
-    def focusOutEvent(self, event):
-        super().focusOutEvent(event)
+    def focusOutEvent(self, e: QFocusEvent | None) -> None:
+        if e is None: return
+        super().focusOutEvent(e)
         self.hide_popup()

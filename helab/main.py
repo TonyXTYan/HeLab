@@ -5,9 +5,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication
 
-from helab.resources.icons import StatusIcons
+from helab.resources.icons import StatusIcons, ToolIcons, IconsInitUtil
 from helab.utils.loggingSetup import setup_logging
-from helab.views.heliumMainWindow import MainWindow
+from helab.views.helabMainWindow import MainWindow
 
 
 if __name__ == "__main__":
@@ -17,9 +17,11 @@ if __name__ == "__main__":
     font = QFont("SF Mono")
 
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
     app.setFont(font)
+    # app.setStyleSheet("QWidget { background-color: #fafafa; }")
 
-    StatusIcons.initialise_icons()  # This need to be after QGUIApplication creation
+    IconsInitUtil.initialise_icons()
 
     main_window = MainWindow()
     main_window.show()
