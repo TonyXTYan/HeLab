@@ -19,6 +19,7 @@ class FolderTabWidget(QTabWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setTabsClosable(True)
+        self.setMovable(True)
         self.tabCloseRequested.connect(self.removeTab)
 
         # Initialize shared resources
