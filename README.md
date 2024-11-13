@@ -9,12 +9,12 @@
 <!-- **H**elium **E**xperiment **L**ab **I**nformation **U**nified **M**anager -->
 
 [![python](https://img.shields.io/badge/python-3.12-blue.svg?style=flat&logo=python&logoColor=white)](https://docs.python.org/3/whatsnew/3.12.html)
-[![pyqt6](https://img.shields.io/badge/pyqt-6-blue.svg?style=flat&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/static/Docs/PyQt6/introduction.html)
+[![pyqt6](https://img.shields.io/badge/pyqt-6-000000.svg?style=flat&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/static/Docs/PyQt6/introduction.html)
 
-[![latest release](https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=latest%20release&)](https://github.com/TonyXTYan/HeLab/releases/latest)
+[![latest release](https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=latest%20release)](https://github.com/TonyXTYan/HeLab/releases/latest)
 [![cicd](https://img.shields.io/github/actions/workflow/status/TonyXTYan/HeLab/dev-cicd.yml?label=ci%20cd&logo=githubactions&logoColor=white)](https://github.com/TonyXTYan/HeLab/actions/workflows/dev-cicd.yml)
-![Codecov](https://img.shields.io/codecov/c/github/TonyXTYan/HeLab?token=0MN7A91LDZ&logo=codecov&logoColor=white)
-![Codecov](https://img.shields.io/codecov/c/github/TonyXTYan/HeLab/branch/dev?token=0MN7A91LDZ&label=dev%20coverage&logo=codecov&logoColor=white)
+[![Codecov](https://img.shields.io/codecov/c/github/TonyXTYan/HeLab?token=0MN7A91LDZ&logo=codecov&logoColor=white)](https://app.codecov.io/gh/TonyXTYan/HeLab/)
+[![Codecov](https://img.shields.io/codecov/c/github/TonyXTYan/HeLab/branch/dev?token=0MN7A91LDZ&label=dev%20coverage&logo=codecov&logoColor=white)](https://app.codecov.io/gh/TonyXTYan/HeLab/tree/dev)
 <!-- [![codecov](https://codecov.io/github/TonyXTYan/HeLab/graph/badge.svg?token=0MN7A91LDZ)](https://codecov.io/github/TonyXTYan/HeLab) -->
 <!-- [![codecov](https://codecov.io/github/TonyXTYan/HeLab/branch/dev/graph/badge.svg?token=0MN7A91LDZ)](https://codecov.io/github/TonyXTYan/HeLab) -->
 
@@ -40,26 +40,24 @@
 
 here are some more random badges because they look cool
 
-![apple](https://img.shields.io/badge/apple-000000.svg?logo=apple&logoColor=white) 
-![arm](https://img.shields.io/badge/arm-0091BD.svg?logo=arm&logoColor=white)
-![nvidia](https://img.shields.io/badge/nvidia-76B908.svg?logo=nvidia&logoColor=white)
-![intel](https://img.shields.io/badge/intel-0071C5?logo=intel&logoColor=white)
-![dell](https://img.shields.io/badge/dell-007DB8?logo=dell&logoColor=white)
-![gitHub actions](https://img.shields.io/badge/github%20actions-181717.svg?logo=githubactions&logoColor=white)
-![pandas](https://img.shields.io/badge/pandas-150458.svg?logo=pandas&logoColor=white)
-![numpy](https://img.shields.io/badge/numpy-013243.svg?logo=numpy&logoColor=white)
-![numba](https://img.shields.io/badge/numba-00A3E0.svg?logo=numba&logoColor=white)
-![scipy](https://img.shields.io/badge/scipy-8CAAE6.svg?logo=scipy&logoColor=white)
-![conda](https://img.shields.io/badge/conda-44Ab33.svg?logo=anaconda&logoColor=white)
-![pip](https://img.shields.io/badge/pip-3775A9.svg?logo=pypi&logoColor=white)
-![pycharm](https://img.shields.io/badge/pycharm-000000?logo=pycharm&logoColor=white)
-![mypy](https://img.shields.io/badge/mypy-000000.svg?logo=mypy&logoColor=white)
-![pyright](https://img.shields.io/badge/pyright-000000.svg?logo=pyright&logoColor=white)
+![apple](https://img.shields.io/badge/apple-f5f5f5.svg?logo=apple&logoColor=black) 
+![arm](https://img.shields.io/badge/arm-f5f5f5.svg?logo=arm&logoColor=black)
+![nvidia](https://img.shields.io/badge/nvidia-f5f5f5.svg?logo=nvidia&logoColor=black)
+![intel](https://img.shields.io/badge/intel-f5f5f5?logo=intel&logoColor=black)
+![dell](https://img.shields.io/badge/dell-f5f5f5?logo=dell&logoColor=black)
+![gitHub actions](https://img.shields.io/badge/github%20actions-f5f5f5.svg?logo=githubactions&logoColor=black)
+![pandas](https://img.shields.io/badge/pandas-f5f5f5.svg?logo=pandas&logoColor=black)
+![numpy](https://img.shields.io/badge/numpy-f5f5f5.svg?logo=numpy&logoColor=black)
+![numba](https://img.shields.io/badge/numba-f5f5f5.svg?logo=numba&logoColor=black)
+![scipy](https://img.shields.io/badge/scipy-f5f5f5.svg?logo=scipy&logoColor=black)
+![conda](https://img.shields.io/badge/conda-f5f5f5.svg?logo=anaconda&logoColor=black)
+![pip](https://img.shields.io/badge/pip-f5f5f5.svg?logo=pypi&logoColor=black)
+![pycharm](https://img.shields.io/badge/pycharm-f5f5f5?logo=pycharm&logoColor=black)
 
 
-![arxiv](https://img.shields.io/badge/arxiv-B31B1B?logo=arxiv&logoColor=white)
-![google scholar](https://img.shields.io/badge/google%20scholar-4285F4?logo=googlescholar&logoColor=white)
-![orcid](https://img.shields.io/badge/orcid-a6ce39?logo=orcid&logoColor=white)
+![arxiv](https://img.shields.io/badge/arxiv-f5f5f5?logo=arxiv&logoColor=black)
+![google scholar](https://img.shields.io/badge/google%20scholar-f5f5f5?logo=googlescholar&logoColor=black)
+![orcid](https://img.shields.io/badge/orcid-f5f5f5?logo=orcid&logoColor=black)
 
 
 <!-- ![Windows](https://img.shields.io/badge/Windows-0078D6?logo=microsoft&logoColor=white) -->
@@ -93,7 +91,7 @@ pyinstaller --onefile --windowed --name HELIUM helab/main.py
 
 ~~Runner labels: `macos14-arm64`, `win10-intel64`.~~
 
-Na, aparenlty github action is free for public repos, and much easier to setup parallel jobs.
+Na, apparently github action is free for public repos, also much easier to setup and faster parallel jobs.
 
 
 
@@ -118,6 +116,23 @@ pip install -e .
 .\venv\Scripts\activate
 ```
 
+
+## Dumps
+
+![mypy](https://img.shields.io/badge/mypy-f5f5f5.svg?logo=mypy&logoColor=black)
+![pyright](https://img.shields.io/badge/pyright-f5f5f5.svg?logo=pyright&logoColor=black)
+
+We use [mypy]() and [pyright]() to enforce strict typing for this package. 
+*everything should be typed*.
+
+
+```
+pytest
+```
+
+```
+pytest
+```
 
 
 
