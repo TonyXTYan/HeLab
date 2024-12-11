@@ -64,14 +64,25 @@ here are some more random badges because they look cool
 
 ---
 
+For 'downstairs' and 'upstairs' lab deployment (most stable version) use: https://github.com/HeBECANU/HeLab
+
+Development branch: (all sorts of bugs and features) see: https://github.com/TonyXTYan/HeLab 
+
+
+---
+
 I'm targeting Python3.12 for its new typing features. As of now this builds on python 3.11, 3.12 and 3.13. I'll try to maintain compatibility with 3.12 and 3.13 but might use newer features and drop support for lower python versions. For more information about which python version are supported, see the CI runs [here](https://github.com/TonyXTYan/HeLab/actions)
 <!-- maybe it would also work on Python 3.11? See CI run [here](https://github.com/TonyXTYan/HELIUM/actions/runs/11605700722) -->
 
 
 
-Comparison with 
+Comparison with existing software:
 - https://pypi.org/project/argos/ 
+  - wants datafiles to be in a single file (e.g. HDF5)
+  - doesn't allow different analysis plots, so not general enough for multiple purposes in one app.
 - https://github.com/adareau/HAL
+  - data need to be arranged in a particular format
+  - difficult to do multiple analysis in one app. 
 
 
 --- 
@@ -95,7 +106,7 @@ Na, apparently github action is free for public repos, also much easier to setup
 
 
 
-## Other random scripts
+## Notes of other random scripts
 
 
 ```bash
@@ -134,7 +145,7 @@ pytest
 pytest
 ```
 
-
+/Users/tonyyan/Library/Preferences/com.anu.HeLab.plist
 
 
 ---

@@ -9,8 +9,10 @@ class SettingsDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumSize(400, 300)
+        self.setMinimumSize(800, 400)
         self.main_layout = QVBoxLayout(self)
+        MLCM = 8 # Main Layout Contents Margin
+        self.main_layout.setContentsMargins(MLCM,MLCM,MLCM,MLCM)
 
         # Create tab widget
         self.tabs = QTabWidget()
@@ -30,12 +32,21 @@ class SettingsDialog(QDialog):
 
         self.tabs.addTab(self.general_tab, "General")
 
-        # Second tab
+
+        # Scripts Tab
+        self.scripts_tab = QWidget()
+        self.scripts_layout = QVBoxLayout(self.scripts_tab)
+        self.scripts_layout.addWidget(QLabel("Scripts Settings"))
+        self.tabs.addTab(self.scripts_tab, "Scripts")
+
+
+        # Placeholder tab
         self.placeholder_tab = QWidget()
         self.placeholder_layout = QVBoxLayout(self.placeholder_tab)
         self.placeholder_layout.addWidget(QLabel("Placeholder text for the second tab"))
 
         self.tabs.addTab(self.placeholder_tab, "Placeholder")
+
 
         # Buttons
         self.button_layout = QHBoxLayout()

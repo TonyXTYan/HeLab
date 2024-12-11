@@ -5,8 +5,8 @@ import os
 import sys
 from typing import Tuple, List, Dict
 
-from PyQt6.QtCore import QDir, QThreadPool, Qt
-from PyQt6.QtWidgets import QTabWidget, QWidget, QMessageBox
+from PyQt6.QtCore import QDir, QThreadPool, Qt, QSize
+from PyQt6.QtWidgets import QTabWidget, QWidget, QMessageBox, QTabBar
 from cachetools import LRUCache
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
@@ -21,6 +21,13 @@ class FolderTabWidget(QTabWidget):
         self.setTabsClosable(True)
         self.setMovable(True)
         self.tabCloseRequested.connect(self.removeTab)
+        self._tab_switching_enabled = True
+
+        self.setStyleSheet("""
+                    QTabBar::tab {
+                        height: 30px;  /* Set the desired height */
+                    }
+                """)
 
         # Initialize shared resources
         self.status_cache: LRUCache[str, Tuple[str, int, List[str]]] = LRUCache(maxsize=10000)
@@ -34,6 +41,33 @@ class FolderTabWidget(QTabWidget):
         self.tab_back_button_enabled = False
 
         self.currentChanged.connect(self.on_current_tab_changed)
+
+
+    def set_tab_switching_enable(self) -> None:
+        self._tab_switching_enabled = True
+        # self.setTabsClosable(True)
+        self.setMovable(True)
+        # self.setTabEnabled()
+        tab_bar = self.tabBar()
+        if tab_bar:
+            for index in range(self.count()):
+                if tab_bar:
+                    close_button = tab_bar.tabButton(index, QTabBar.ButtonPosition.RightSide)
+                    if close_button:
+                        close_button.setEnabled(True)  # Enable the close button
+            tab_bar.setEnabled(True)
+
+    def set_tab_switching_disable(self) -> None:
+        self._tab_switching_enabled = False
+        # self.setTabsClosable(False)
+        self.setMovable(False)
+        tab_bar = self.tabBar()
+        if tab_bar:
+            for index in range(self.count()):
+                close_button = tab_bar.tabButton(index, QTabBar.ButtonPosition.RightSide)
+                if close_button:
+                    close_button.setEnabled(False)  # Disable the close button
+            tab_bar.setEnabled(False)
 
     def add_new_folder_explorer_tab(self) -> None:
         # Create a new FolderExplorer instance
@@ -50,7 +84,7 @@ class FolderTabWidget(QTabWidget):
         ]
 
         target_path = next((path for path in target_paths if os.path.exists(path)), '')
-
+    
         try:
             if not os.path.commonpath([dirPath, target_path]) == os.path.abspath(dirPath):
                 logging.warning(
@@ -108,7 +142,7 @@ class FolderTabWidget(QTabWidget):
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.refresh()
-            logging.info("Current FolderExplorer tab has been refreshed.")
+            logging.debug("FolderTabWidget.refresh_current_folder_explorer() completed.")
         else:
             logging.warning("Current tab is not a FolderExplorer instance.")
 
@@ -116,12 +150,17 @@ class FolderTabWidget(QTabWidget):
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.rescan()
-            logging.info("Current FolderExplorer tab has been rescanned.")
+            logging.info("Current FolderExplorer tab rescan completed.")
         else:
             logging.warning("Current tab is not a FolderExplorer instance.")
 
     def on_current_tab_changed(self, index: int) -> None:
         logging.debug(f"(TabWidget) Current tab changed to index {index}")
+        current_folder_explorer = self.currentWidget()
+        if isinstance(current_folder_explorer, FolderExplorer):
+            logging.debug(f"Current tab dir_path: {current_folder_explorer.dir_path}, view_path: {current_folder_explorer.view_path}, target_path: {current_folder_explorer.target_path}")
+        else:
+            logging.warning("Current tab is not a FolderExplorer instance.")
         # current_folder_explorer = self.currentWidget()
         # if isinstance(current_folder_explorer, FolderExplorer):
         #     current_folder_explorer.update_back_button_state()

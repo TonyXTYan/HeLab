@@ -4,7 +4,7 @@ import sys
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable
 
 class StatusDeepWorkerSignals(QObject):
-    finished = pyqtSignal(list)  # list of directory paths
+    finished = pyqtSignal(str, list)  # list of directory paths
 
 class StatusDeepWorker(QRunnable):
     def __init__(self, root_path: str, max_depth: int = sys.maxsize):
@@ -45,7 +45,7 @@ class StatusDeepWorker(QRunnable):
         except Exception as e:
             logging.error(f"Error in StatusDeepWorker: {e}")
             return
-        self.signals.finished.emit(directory_list)
+        self.signals.finished.emit(self.root_path, directory_list)
         logging.debug(f"Deep worker finished for: {self.root_path}")
 
     def cancel(self) -> None:

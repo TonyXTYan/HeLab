@@ -13,3 +13,4 @@ pytest-qt
 pytest-xdist
 pympler
 pyinstaller
+psutil

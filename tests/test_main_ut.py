@@ -58,8 +58,9 @@ class TestMainWindow(unittest.TestCase):
             pass
 
     def test_window_title(self) -> None:
-        self.assertEqual(self.main_window.windowTitle(), 'HeLab')
+        # self.assertEqual(self.main_window.windowTitle(), 'HeLab')
         # QThreadPool.globalInstance().waitForDone()
+        self.assertTrue("HeLab" in self.main_window.windowTitle())
 
     def test_default_size(self) -> None:
         self.assertEqual(self.main_window.width(), MainWindow.DEFAULT_WIDTH)

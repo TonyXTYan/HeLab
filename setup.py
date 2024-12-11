@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="helab",
-    version="0.0.1",
+    version="0.0.3",
     author="Tony Yan",
     author_email="tony.yan@anu.edu.au",
     description="HELIUM Experiment Lab Information Unified Manager",

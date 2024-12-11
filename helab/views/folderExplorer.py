@@ -371,10 +371,10 @@ class FolderExplorer(QWidget):
         self.model.setRootPath(self.dir_path)
         self.tree.setRootIndex(self.model.index(self.view_path))
         self.expand_to_path(self.target_path)
-        logging.debug("FolderExplorer refreshed successfully.")
+        logging.debug("FolderExplorer.refresh() finished.")
 
     def rescan(self) -> None:
-
+        logging.debug(f"FolderExplorer.rescan() at path: {self.view_path}")
         # TODO later
         return
 

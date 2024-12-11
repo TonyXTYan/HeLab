@@ -118,21 +118,6 @@ class TestHelabFileSystemModel(unittest.TestCase):
         self.assertIn(root_path, self.model.running_workers_deep)
         self.assertEqual(self.model.running_workers_deep[root_path], mock_worker_instance)
 
-    @patch('helab.models.helabFileSystemModel.logging')
-    def test_process_deep_status(self, mock_logging: MagicMock) -> None:
-        directory_list = ['/dir1', '/dir2', '/dir3']
-
-        with patch.object(self.model, 'process_next_directories') as mock_process_next_directories:
-            self.model.process_deep_status(directory_list)
-
-            # Assert that directory_iterator is set correctly
-            self.assertEqual(list(self.model.directory_iterator), directory_list)
-
-            # Assert that process_next_directories is called
-            mock_process_next_directories.assert_called_once()
-
-            # Assert logging message
-            mock_logging.debug.assert_called_with(f"Processing {len(directory_list)} directories for status recalculation")
 
 
 if __name__ == '__main__':

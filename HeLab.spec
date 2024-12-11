@@ -33,7 +33,7 @@ def get_git_commit_hash():
             ['git', 'rev-parse', 'HEAD'],
             stderr=subprocess.STDOUT
         ).decode('utf-8').strip()
-        return commit_hash[:8]  # Return only the first 8 characters
+        return commit_hash[:6].upper()  # Return only the first 6 characters
     except Exception:
         return 'unknown'
 
@@ -69,7 +69,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

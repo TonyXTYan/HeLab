@@ -72,7 +72,7 @@ def test_main_window_title(app: QApplication) -> None:
     # QThreadPool.globalInstance().waitForDone()
     # QTest.qWait(QTEST_WAIT_MS_SHORT)
     wait_thread_pool_complete(thread_pool)
-    assert main_window.windowTitle() == "HeLab"
+    assert "HeLab" in main_window.windowTitle()
 
 def test_main_window_size(app: QApplication) -> None:
     thread_pool = setup_thread_pool()

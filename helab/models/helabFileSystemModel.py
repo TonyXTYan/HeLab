@@ -290,16 +290,17 @@ class helabFileSystemModel(QFileSystemModel):
         self.running_workers_deep[root_path] = worker
         logging.debug(f"Started StatusDeepWorker for: {root_path}")
 
-    def process_deep_status(self, directory_list: List[str]) -> None:
+    def process_deep_status(self, root_path: str, directory_list: List[str]) -> None:
         logging.debug(f"Processing {len(directory_list)} directories for status recalculation")
         self.directory_iterator = iter(directory_list)
-        self.process_next_directories()
+        self.process_next_directories(root_path)
 
         # After processing is done, remove all workers
         # Note: StatusDeepWorker does not have a direct reference here
         # So, we assume it's already removed from running_workers_deep when canceled
 
-    def process_next_directories(self) -> None:
+
+    def process_next_directories(self, root_path: str) -> None:
         # Process a batch of directories
         batch_size = 100  # Adjust as needed
         count = 0
@@ -312,10 +313,11 @@ class helabFileSystemModel(QFileSystemModel):
                 count += 1
         except StopIteration:
             # No more directories
+            del self.running_workers_deep[root_path]
             logging.debug("Finished processing directories for status recalculation")
             return
         # Schedule next batch
-        QTimer.singleShot(0, self.process_next_directories)
+        QTimer.singleShot(0, lambda: self.process_next_directories(root_path))
         # THIS IS BUGGY, MIGHT NEED REWRITE?!
 
     def context_menu_action_deep_calc_status(self, folder_info: QModelIndex) -> None:

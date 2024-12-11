@@ -92,6 +92,8 @@ class ToolIcons:
     ICON_FOLDER_UP = QIcon()
     ICON_LEFT_COLLAPSE = QIcon()
     ICON_LEFT_EXPAND = QIcon()
+    ICON_RIGHT_COLLAPSE = QIcon()
+    ICON_RIGHT_EXPAND = QIcon()
     ICON_BOTTOM_COLLAPSE = QIcon()
     ICON_BOTTOM_EXPAND = QIcon()
     ICON_BOTTOM_INACTIVE = QIcon()
@@ -118,6 +120,9 @@ class ToolIcons:
 
         ToolIcons.ICON_LEFT_COLLAPSE = tablerIcon(OutlineIcon.LAYOUT_SIDEBAR_LEFT_COLLAPSE, '#000000')
         ToolIcons.ICON_LEFT_EXPAND = tablerIcon(OutlineIcon.LAYOUT_SIDEBAR_LEFT_EXPAND, '#000000')
+        ToolIcons.ICON_RIGHT_COLLAPSE = tablerIcon(OutlineIcon.LAYOUT_SIDEBAR_RIGHT_COLLAPSE, '#000000')
+        ToolIcons.ICON_RIGHT_EXPAND = tablerIcon(OutlineIcon.LAYOUT_SIDEBAR_RIGHT_EXPAND, '#000000')
+
 
         ToolIcons.ICON_BOTTOM_COLLAPSE = tablerIcon(OutlineIcon.LAYOUT_BOTTOMBAR_COLLAPSE, '#000000')
         ToolIcons.ICON_BOTTOM_EXPAND = tablerIcon(OutlineIcon.LAYOUT_BOTTOMBAR_EXPAND, '#000000')
