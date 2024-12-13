@@ -1,5 +1,6 @@
 # settingsDialog.py
 import logging
+from re import S
 from typing import Optional
 
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QLineEdit, QLabel, QTabWidget, QWidget
@@ -16,6 +17,16 @@ class SettingsDialog(QDialog):
 
         # Create tab widget
         self.tabs = QTabWidget()
+        self.tabs.setTabsClosable(False)
+        self.tabs.setMovable(False)
+        self.tabs.setStyleSheet("""
+            QTabBar::tab {
+                width: 150px;
+            }""")
+
+        # tab_bar = self.tabs.tabBar()
+        # if tab_bar: tab_bar.setExpanding(True)
+        if (tab_bar := self.tabs.tabBar()): tab_bar.setExpanding(True)
         self.main_layout.addWidget(self.tabs)
 
         # First tab
@@ -33,11 +44,22 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self.general_tab, "General")
 
 
+        # TODO: default load folder
+
+
         # Scripts Tab
         self.scripts_tab = QWidget()
         self.scripts_layout = QVBoxLayout(self.scripts_tab)
         self.scripts_layout.addWidget(QLabel("Scripts Settings"))
         self.tabs.addTab(self.scripts_tab, "Scripts")
+
+
+        # Cache Tab
+        self.cache_tab = QWidget()
+        self.cache_layout = QVBoxLayout(self.cache_tab)
+        self.cache_layout.addWidget(QLabel("Cache Settings"))
+        self.tabs.addTab(self.cache_tab, "Cache")
+
 
 
         # Placeholder tab
@@ -60,6 +82,10 @@ class SettingsDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
 
         self.load_settings()
+
+        # self.main_layout.setStretch(0, 1)
+        # self.main_layout.setStretch(1, 0)
+
 
     def load_settings(self) -> None:
         settings = QSettings("ANU", "HeLab")

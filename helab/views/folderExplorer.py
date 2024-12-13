@@ -4,7 +4,7 @@ import sys
 from typing import Optional, Dict, List, Tuple
 
 from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal, QThreadPool, QModelIndex, QItemSelection, \
-    QPoint, QFileInfo
+    QPoint, QFileInfo, QTimer
 from PyQt6.QtGui import QAction, QFontInfo
 from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu
 from cachetools import LRUCache
@@ -142,6 +142,7 @@ class FolderExplorer(QWidget):
         # Automatically expand the view to the desired path
         # QTimer.singleShot(1000, lambda: self.expand_to_path(target_path))
         self.expand_to_path(self.target_path)
+        self.selected_path = self.target_path
 
         # **Added Lines: Set context menu policy and connect the signal**
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -149,7 +150,18 @@ class FolderExplorer(QWidget):
 
         # self.rootPathChanged.emit(self.dir_path)
         self.emit_root_path_changed()
+        # selection_model.emitSelectionChanged(selection_model.selection(), selection_model.selection())
+        # self.emit_selection_changed()
+        QTimer.singleShot(30, self.emit_selection_changed)
 
+    def emit_selection_changed(self) -> None:
+        selection_model = self.get_selection_model()
+        # selection_model.emitSelectionChanged(selection_model.selection(), selection_model.selection())
+        current_selection = selection_model.selection()
+        if not current_selection.isEmpty():
+            # Deselect and reselect to trigger the signal
+            selection_model.clearSelection()
+            selection_model.select(current_selection, QItemSelectionModel.SelectionFlag.Select)
 
     def on_selection_changed(self, selected: QItemSelection, deselected: QItemSelection) -> None:
         selection_model = self.get_selection_model()
@@ -157,6 +169,8 @@ class FolderExplorer(QWidget):
         for index in indexes:
             file_path = self.model.filePath(index)
             logging.debug(f"Selected file path: {file_path}")
+            self.selected_path = file_path
+
 
     def expand_to_path(self, path: str) -> None:
         # Ensure that the path to expand is under the current view_path
@@ -233,20 +247,23 @@ class FolderExplorer(QWidget):
 
 
     def get_selection_model(self) -> QItemSelectionModel:
-        logging.debug(f"CALLED ON THIS METHOD (get_selection_model) IS FUCKING DANGEROUS")
+        # logging.debug(f"CALLED ON THIS METHOD (get_selection_model) IS FUCKING DANGEROUS")
         selection_model = self.tree.selectionModel()
         if selection_model is None:
             logging.fatal("FolderExplorer.__init__ encountered None self.tree.selectionModel()")
             logging.fatal(f"{self.tree = }")
-            sys.exit(1)
+            # sys.exit(1)
+            raise RuntimeError("FolderExplorer.__init__ encountered None self.tree.selectionModel()")
         if not hasattr(selection_model, "selectionChanged"):
             logging.fatal("FolderExplorer.__init__ encountered selectionModel without selectionChanged signal")
             logging.fatal(f"{ selection_model = }")
-            sys.exit(1)
+            # sys.exit(1)
+            raise RuntimeError("FolderExplorer.__init__ encountered selectionModel without selectionChanged signal")
         if not hasattr(selection_model, "select"):
             logging.fatal("FolderExplorer.__init__ encountered selectionModel without select method")
             logging.fatal(f"{ selection_model = }")
-            sys.exit(1)
+            # sys.exit(1)
+            raise RuntimeError("FolderExplorer.__init__ encountered selectionModel without select method")
         return selection_model
 
 
@@ -374,8 +391,8 @@ class FolderExplorer(QWidget):
         logging.debug("FolderExplorer.refresh() finished.")
 
     def rescan(self) -> None:
-        logging.debug(f"FolderExplorer.rescan() at path: {self.view_path}")
-        # TODO later
+        logging.debug(f"FolderExplorer.rescan() view_path: {self.view_path} dir_path: {self.dir_path} target_path: {self.target_path}")
+
         return
 
 

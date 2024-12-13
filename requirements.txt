@@ -14,3 +14,4 @@ pytest-xdist
 pympler
 pyinstaller
 psutil
+coloredlogs

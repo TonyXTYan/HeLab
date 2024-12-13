@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 import psutil
-from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QThreadPool, QSettings, QEvent
+from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QThreadPool, QSettings, QEvent, QFileInfo, QItemSelection
 from PyQt6.QtGui import QAction, QIcon, QPalette, QColor, QPixmap, QTransform, QCloseEvent
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QTabWidget, QSplitter, \
     QLabel, QToolBar, QStyle, QSizePolicy, QToolTip, QApplication, QStyleFactory, QFileDialog
@@ -72,12 +72,14 @@ class MainWindow(QMainWindow):
         self.process = psutil.Process()
         self.setWindowIcon(QIcon("./helab/resources/icons/ai-icon.icns")) # this doesn't do anything on macos (?)
 
-        self.setWindowTitle(f"HeLab \t v{APP_VERSION} ({APP_COMMIT_HASH})")
+        self.setWindowTitle(f"HeLab    v{APP_VERSION} ({APP_COMMIT_HASH})")
         self.resize(self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
-        self.setMinimumSize(600, 340)
+        self.setMinimumSize(1000, 600)
 
         # Create Central Widget Area with Dock Widgets
-        self.setup_central_widgets()
+        self._setup_central_widgets()
+
+        self.status_bar = QStatusBar()
 
         # Create Menubar
         menubar = self.menuBar()
@@ -88,25 +90,21 @@ class MainWindow(QMainWindow):
         self.create_menus()
 
         # Create Status Bar
-        self.status_bar = QStatusBar()
+        self.status_bar.setStyleSheet("QStatusBar { border-top: 1px solid #d8d8d8; }")
         self.setStatusBar(self.status_bar)
-        self.status_bar_message_left = QLabel("Left Message")
+        self.status_bar_message_left = QLabel("Please wait...")
         self.status_bar.addWidget(self.status_bar_message_left)
         # self.status_bar_message_right = QLabel(f"v{APP_VERSION} ({APP_COMMIT_HASH})")
-        self.status_bar_message_right = QLabel("Right Message")
+        self.status_bar_message_right = QLabel("GUI initialising...")
         self.status_bar.addPermanentWidget(self.status_bar_message_right)
         self.status_bar_message_right.setToolTip("(App resource usage) / (system total resource usage)")
 
-        # Create Left Panel (File Tree View)
-        # self.setup_file_tree_view()
-        self.add_new_folder_explorer_tab()
-        # self.tab_widget.add_new_folder_explorer_tab()
-        self.tab_widget.currentChanged.connect(self.on_current_tab_changed)
+
 
         # Setup a timer to update the status bar with thread status
         self.status_timer_threadpool = QTimer(self)
         self.status_timer_threadpool.timeout.connect(self.update_status_bar_left)
-        self.status_timer_threadpool.start(200)  # Update every 300ms
+        self.status_timer_threadpool.start(200)  # Update every 200ms
 
 
         self.status_timer_cpu_ram = QTimer(self)
@@ -118,6 +116,21 @@ class MainWindow(QMainWindow):
         # self.status_icon_checked = QPixmap(TablerIcons.load(OutlineIcon.CIRCLE_CHECK, color='005500').toqpixmap().scaled(128, 128, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
         # self.status_icon = QLabel()
         # self.status_bar.addPermanentWidget(self.status_icon)
+
+        # self.update_status_bar_left()
+        # self.update_status_bar_right()
+
+        # Create Left Panel (File Tree View)
+        # self.setup_file_tree_view()
+        self.tab_widget.currentChanged.connect(self.on_current_tab_changed)
+        # self.tab_widget.add_new_folder_explorer_tab()
+        # self.add_new_folder_explorer_tab()
+        # Delay the execution of add_new_folder_explorer_tab until the GUI is loaded
+        QTimer.singleShot(10, self.add_new_folder_explorer_tab)
+        QTimer.singleShot(15, self.update_tool_enabled_state)
+        # QTimer.singleShot(20, self.on_folder_explorer_selection_changed)
+
+
 
     def update_status_bar_left(self) -> None:
         thread_pool = QThreadPool.globalInstance()
@@ -163,8 +176,8 @@ class MainWindow(QMainWindow):
     def create_menus(self) -> None:
         # Add menus and actions
         # 
-        file_menu = self.menu_bar.addMenu('File')
-        if file_menu is not None:
+        menu_file = self.menu_bar.addMenu('File')
+        if menu_file is not None:
             # Create actions
             open_action = QAction(' Open', self)
             open_action.triggered.connect(self.open_folder_path_dialog)
@@ -174,26 +187,54 @@ class MainWindow(QMainWindow):
             menu_action_settings.triggered.connect(self.show_settings_dialog)
 
 
-            file_menu.addAction(open_action)
-            file_menu.addAction(menu_action_settings)
-            file_menu.addSeparator()
-            file_menu.addAction(exit_action)
+            menu_file.addAction(open_action)
+            menu_file.addAction(menu_action_settings)
+            menu_file.addSeparator()
+            menu_file.addAction(exit_action)
         else :
-            logging.error("file_menu is None")
+            logging.error("menu_file is None")
+
+        menu_view = self.menu_bar.addMenu('View')
+        if menu_view is not None:
+            view_toggle_toolbar_left = QAction('Toggle Left Toolbar', self)
+            if (tv := self.sidebar_toolbar_left.toggleViewAction()): view_toggle_toolbar_left.triggered.connect(tv.trigger)
+            # view_toggle_toolbar_left.triggered.connect(self.sidebar_toolbar_left.toggleViewAction().trigger)
+            menu_view.addAction(view_toggle_toolbar_left)
+
+            view_toggle_toolbar_right = QAction('Toggle Right Toolbar', self)
+            if (tv := self.sidebar_toolbar_right.toggleViewAction()): view_toggle_toolbar_right.triggered.connect(tv.trigger)
+            # view_toggle_toolbar_right.triggered.connect(self.sidebar_toolbar_right.toggleViewAction().trigger)
+            menu_view.addAction(view_toggle_toolbar_right)
+
+            menu_view.addSeparator()
+
+            view_toggle_status_bar = QAction('Toggle Status Bar', self)
+            view_toggle_status_bar.triggered.connect(lambda: self.status_bar.setVisible(not self.status_bar.isVisible()))
+            menu_view.addAction(view_toggle_status_bar)
+
+            menu_view.addSeparator()
+
+            view_toggle_left_panel = QAction('Toggle Left Panel', self)
+            view_toggle_left_panel.triggered.connect(self.toggle_left_panel)
+            menu_view.addAction(view_toggle_left_panel)
+
+            view_toggle_right_panel = QAction('Toggle Right Panel', self)
+            view_toggle_right_panel.triggered.connect(self.toggle_right_panel)
+            menu_view.addAction(view_toggle_right_panel)
 
         
-        debug_menu = self.menu_bar.addMenu('Debug')
-        if debug_menu is not None:
+        menu_debug = self.menu_bar.addMenu('Debug')
+        if menu_debug is not None:
             debug_action_1 = QAction('Clear Status Cache', self)
             debug_action_1.triggered.connect(self.tab_widget.clear_status_cache)
             debug_action_2 = QAction('Draw a line in debug console', self)
             debug_action_2.triggered.connect(lambda: logging.debug("="*80))
 
-            debug_menu.addAction(debug_action_1)
-            debug_menu.addSeparator()
-            debug_menu.addAction(debug_action_2)
+            menu_debug.addAction(debug_action_1)
+            menu_debug.addSeparator()
+            menu_debug.addAction(debug_action_2)
         else:
-            logging.error("debug_menu is None")
+            logging.error("menu_debug is None")
             
 
     def show_settings_dialog(self) -> None:
@@ -213,7 +254,7 @@ class MainWindow(QMainWindow):
             if isinstance(current_tab, FolderExplorer):
                 current_tab.open_to_path(folder_path)
 
-    def setup_central_widgets(self) -> None:
+    def _setup_central_widgets(self) -> None:
         # Create the main horizontal splitter
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.setCentralWidget(self.splitter)
@@ -232,9 +273,34 @@ class MainWindow(QMainWindow):
             }
         """)
 
+        self._setup_left_toolbar()
+        self._setup_left_side()
+        self._setup_right_side()
+        self._setup_middle_area()
 
+
+        # Set the initial sizes of the panels
+        self.splitter.setSizes([
+            self.left_panel_width,
+            self.DEFAULT_WIDTH-self.left_panel_width-self.right_panel_width,
+            self.right_panel_width
+        ])
+
+
+        # Make the left and right panels collapsible
+        self.left_panel.setMinimumWidth(0)
+        self.right_panel.setMinimumWidth(0)
+
+        # Set stretch factors
+        self.splitter.setStretchFactor(0, 1)  # Left panel
+        self.splitter.setStretchFactor(1, 1)  # Middle area
+        self.splitter.setStretchFactor(2, 1)  # Right panel
+
+
+    def _setup_left_toolbar(self) -> None:
         # Add a toolbar with a toggle button for the left panel
         self.sidebar_toolbar_left = QToolBar("Sidebar Toolbar Left", self)
+
         self.sidebar_toolbar_left.setMovable(False)
         self.sidebar_toolbar_left.setIconSize(QSize(24, 24))
         self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self.sidebar_toolbar_left)
@@ -243,7 +309,6 @@ class MainWindow(QMainWindow):
         self.sidebar_toolbar_right.setMovable(False)
         self.addToolBar(Qt.ToolBarArea.RightToolBarArea, self.sidebar_toolbar_right)
 
-
         toggle_left_panel_action = QAction(ToolIcons.ICON_LEFT_COLLAPSE, "Toggle Left Panel", self)
         toggle_left_panel_action.setCheckable(True)
         toggle_left_panel_action.setChecked(True)
@@ -251,15 +316,14 @@ class MainWindow(QMainWindow):
         self.sidebar_toolbar_left.addAction(toggle_left_panel_action)
 
         # Left panel
-        left_panel = QWidget()
+        self.left_panel = QWidget()
         self.left_panel_width = 700  # Store the width of the left panel
-        left_layout = QVBoxLayout(left_panel)
+        left_layout = QVBoxLayout(self.left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         # Create a splitter to hold the tab_widget and panel_left_bottom
         self.left_splitter = QSplitter(Qt.Orientation.Vertical)
         left_layout.addWidget(self.left_splitter)
-        left_panel.setLayout(left_layout)
-
+        self.left_panel.setLayout(left_layout)
 
         # Create and add the toolbar to the left panel
         # toolbar = QToolBar("Main Toolbar", self)
@@ -277,7 +341,8 @@ class MainWindow(QMainWindow):
         self.action_tab_cancel = QAction(ToolIcons.ICON_ZOOM_CANCEL, "Cancel", self)
 
         self.action_tab_new.setToolTip("New Tab")
-        self.action_tab_new.setWhatsThis("New Tab??? plz let me know if you see this text") # literally don't know where this will show up memm
+        self.action_tab_new.setWhatsThis(
+            "New Tab??? plz let me know if you see this text")  # literally don't know where this will show up memm
         self.action_tab_refresh.setToolTip("Refresh file list view")
         self.action_tab_folder_up.setToolTip("Navigate up one directory")
         self.action_tab_rescan.setToolTip("Rescan the current directory")
@@ -285,8 +350,6 @@ class MainWindow(QMainWindow):
 
         # action_tab_new.triggered.connect(self.add_new_folder_explorer_tab)
         # action_tab_folder_up.triggered.connect(self.on_back_button_clicked)
-
-
 
         # toolbar.addAction(action_tab_new)
         # toolbar.addAction(action_tab_refresh)
@@ -302,6 +365,8 @@ class MainWindow(QMainWindow):
         self.sidebar_toolbar_left.addAction(self.action_tab_refresh)
         self.sidebar_toolbar_left.addAction(self.action_tab_rescan)
         self.sidebar_toolbar_left.addAction(self.action_tab_cancel)
+
+    def _setup_left_side(self) -> None:
 
         # Create the tab widget and add it to the left panel
         self.tab_widget = FolderTabWidget()
@@ -339,9 +404,24 @@ class MainWindow(QMainWindow):
         toggle_panel_left_bottom_action.setCheckable(True)
         toggle_panel_left_bottom_action.setChecked(True)
         self.sidebar_toolbar_left.addAction(toggle_panel_left_bottom_action)
+        toggle_panel_left_bottom_action.triggered.connect(self.toggle_left_bottom_panel)
 
+        # Create a panel below the tab_widget
+        self.panel_left_bottom = QWidget()
+        self.panel_layout_left_bottom = QVBoxLayout(self.panel_left_bottom)
+        self.panel_layout_left_bottom.setContentsMargins(0, 0, 0, 0)
+        self.panel_label_left_bottom = QLabel("Left Bottom Placeholder")
+        self.panel_label_left_bottom.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.panel_layout_left_bottom.addWidget(self.panel_label_left_bottom)
+        self.panel_left_bottom.setVisible(True)
 
+        # Add the bottom panel to the left_layout
+        # left_layout.addWidget(self.panel_left_bottom)
+        self.left_splitter.addWidget(self.panel_left_bottom)
+        self.left_splitter.setSizes([400, 100])
+        self.splitter.addWidget(self.left_panel)
 
+    def _setup_right_side(self) -> None:
         toggle_right_panel_action = QAction(ToolIcons.ICON_RIGHT_COLLAPSE, "Toggle Right Panel", self)
         toggle_right_panel_action.setCheckable(True)
         toggle_right_panel_action.setChecked(True)
@@ -351,68 +431,16 @@ class MainWindow(QMainWindow):
         spacer_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.sidebar_toolbar_right.addWidget(spacer_right)
 
-
-        # Create a panel below the tab_widget
-        self.panel_left_bottom = QWidget()
-        self.panel_layout_left_bottom = QVBoxLayout(self.panel_left_bottom)
-        self.panel_layout_left_bottom.setContentsMargins(0, 0, 0, 0)
-        self.panel_label_left_bottom = QLabel("Placeholder")
-        self.panel_label_left_bottom.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.panel_layout_left_bottom.addWidget(self.panel_label_left_bottom)
-        self.panel_left_bottom.setVisible(True)
-
-        # Add the bottom panel to the left_layout
-        # left_layout.addWidget(self.panel_left_bottom)
-        self.left_splitter.addWidget(self.panel_left_bottom)
-
-        # Connect the button to a function that toggles the visibility of the panel
-        toggle_panel_left_bottom_action.triggered.connect(self.toggle_left_bottom_panel)
-
-        self.left_splitter.setSizes([400, 100])
-
-
-        # Add the left panel to the splitter
-        self.splitter.addWidget(left_panel)
-
-        # Middle area (main content area)
-        middle_mainwindow = QMainWindow()
-        # Set a central widget for the middle main window
-        self.central_placeholder = QLabel("Main Content Area")
-        self.central_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        middle_mainwindow.setCentralWidget(self.central_placeholder)
-
-        # Add dock widgets to the middle main window
-        dock_widget1 = QDockWidget("Dock Widget 1", self)
-        dock_widget_placeholder_label_1 = QLabel("Content of Dock Widget 1")
-        dock_widget_placeholder_label_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dock_widget1.setWidget(dock_widget_placeholder_label_1)
-        middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget1)
-
-        dock_widget2 = QDockWidget("Dock Widget 2", self)
-        dock_widget_placeholder_label_2 = QLabel("Content of Dock Widget 2")
-        dock_widget_placeholder_label_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dock_widget2.setWidget(dock_widget_placeholder_label_2)
-        middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget2)
-
-        dock_widget3 = QDockWidget("Dock Widget 3", self)
-        dock_widget_placeholder_label_3 = QLabel("Content of Dock Widget 3")
-        dock_widget_placeholder_label_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dock_widget3.setWidget(dock_widget_placeholder_label_3)
-        middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget3)
-
-        # Add the middle main window to the splitter
-        self.splitter.addWidget(middle_mainwindow)
-
         # Right panel
-        right_panel = QWidget()
+        self.right_panel = QWidget()
         self.right_panel_width = 500
-        right_layout = QVBoxLayout(right_panel)
+        right_layout = QVBoxLayout(self.right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         # Placeholder content
         # right_layout.addWidget(QLabel("Right Panel Placeholder"))
         self.right_splitter = QSplitter(Qt.Orientation.Vertical)
         right_layout.addWidget(self.right_splitter)
-        right_panel.setLayout(right_layout)
+        self.right_panel.setLayout(right_layout)
 
         right_top_widget = QLabel("Right Top Placeholder")
         right_top_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -433,42 +461,46 @@ class MainWindow(QMainWindow):
         toggle_right_bottom_panel_action.triggered.connect(self.toggle_right_bottom_panel)
         self.sidebar_toolbar_right.addAction(toggle_right_bottom_panel_action)
 
-
-
-
         self.right_splitter.addWidget(right_top_widget)
         self.right_splitter.addWidget(self.panel_right_bottom)
         self.right_splitter.setSizes([400, 300])
 
-
         # Add the right panel to the splitter
-        self.splitter.addWidget(right_panel)
-
-        # Set the initial sizes of the panels
-        self.splitter.setSizes([
-            self.left_panel_width,
-            self.DEFAULT_WIDTH-self.left_panel_width-self.right_panel_width,
-            self.right_panel_width
-        ])
+        self.splitter.addWidget(self.right_panel)
 
 
-        # Make the left and right panels collapsible
-        left_panel.setMinimumWidth(0)
-        right_panel.setMinimumWidth(0)
+    def _setup_middle_area(self) -> None:
+        # Middle area (main content area)
+        self.middle_mainwindow = QMainWindow()
+        # Set a central widget for the middle main window
+        self.central_placeholder = QLabel("Main Content Area")
+        self.central_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.middle_mainwindow.setCentralWidget(self.central_placeholder)
 
-        # Set stretch factors
-        self.splitter.setStretchFactor(0, 1)  # Left panel
-        self.splitter.setStretchFactor(1, 1)  # Middle area
-        self.splitter.setStretchFactor(2, 1)  # Right panel
+        # Add dock widgets to the middle main window
+        dock_widget1 = QDockWidget("Dock Widget 1", self)
+        dock_widget_placeholder_label_1 = QLabel("Content of Dock Widget 1")
+        dock_widget_placeholder_label_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        dock_widget1.setWidget(dock_widget_placeholder_label_1)
+        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget1)
 
-        # Save references for later use
-        self.left_panel = left_panel
-        self.right_panel = right_panel
-        self.middle_mainwindow = middle_mainwindow
+        dock_widget2 = QDockWidget("Dock Widget 2", self)
+        dock_widget_placeholder_label_2 = QLabel("Content of Dock Widget 2")
+        dock_widget_placeholder_label_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        dock_widget2.setWidget(dock_widget_placeholder_label_2)
+        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget2)
+
+        dock_widget3 = QDockWidget("Dock Widget 3", self)
+        dock_widget_placeholder_label_3 = QLabel("Content of Dock Widget 3")
+        dock_widget_placeholder_label_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        dock_widget3.setWidget(dock_widget_placeholder_label_3)
+        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget3)
+
+        # Add the middle main window to the splitter
+        self.splitter.addWidget(self.middle_mainwindow)
 
         # Keep track of dock widgets
         self.dock_widgets = [dock_widget1, dock_widget2, dock_widget3]
-
 
         # Connect signals to check if dock widgets are closed
         for dock_widget in self.dock_widgets:
@@ -496,6 +528,7 @@ class MainWindow(QMainWindow):
 
         # Initial check to set placeholder visibility
         self.update_placeholder_visibility()
+
 
     def update_placeholder_visibility(self) -> None:
         # Check if any dock widgets are visible
@@ -584,6 +617,28 @@ class MainWindow(QMainWindow):
         logging.debug(f"(MainWindow) Current tab changed to index {index}")
         # self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
         self.update_tool_enabled_state()
+        current_folder_explorer = self.tab_widget.currentWidget()
+        if isinstance(current_folder_explorer, FolderExplorer):
+            # selection_model = current_folder_explorer.get_selection_model()
+            # Connect the selectionChanged signal to the slot
+            # selection_model.selectionChanged.connect(self.on_folder_explorer_selection_changed)
+            current_folder_explorer.emit_selection_changed()
+
+
+    def on_folder_explorer_selection_changed(self, selected: QItemSelection) -> None:
+        # Update the window title with the selected path
+        current_folder_explorer = self.tab_widget.currentWidget()
+        if isinstance(current_folder_explorer, FolderExplorer):
+            selected_path = current_folder_explorer.selected_path
+            file_info = QFileInfo(selected_path)
+            if file_info.isDir():
+                folder_name = file_info.fileName()
+                self.setWindowTitle(f"HeLab    v{APP_VERSION} ({APP_COMMIT_HASH})    Folder: {folder_name}")
+            else:
+                self.setWindowTitle(f"HeLab    v{APP_VERSION} ({APP_COMMIT_HASH})    Invalid Path (?)")
+                logging.warning(f"on_folder_explorer_selection_changed: not a directory: {selected_path}")
+        else:
+            self.setWindowTitle(f"HeLab    v{APP_VERSION} ({APP_COMMIT_HASH})    No Folder Selected")
 
     def add_new_folder_explorer_tab(self) -> None:
         self.tab_widget.add_new_folder_explorer_tab()
@@ -591,6 +646,8 @@ class MainWindow(QMainWindow):
         current_folder_explorer = self.tab_widget.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.rootPathChanged.connect(self.update_tool_enabled_state)
+            selection_model = current_folder_explorer.get_selection_model()
+            selection_model.selectionChanged.connect(self.on_folder_explorer_selection_changed)
 
     def update_tool_enabled_state(self) -> None:
         current_folder_explorer = self.tab_widget.currentWidget()
@@ -616,7 +673,7 @@ class MainWindow(QMainWindow):
 
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
-        logging.debug("MainWindow closeEvent")
+        logging.info("MainWindow closeEvent")
 
         # Save settings
         # settings = QSettings("ANU", "HeLab")

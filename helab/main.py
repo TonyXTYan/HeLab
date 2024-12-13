@@ -15,6 +15,12 @@ from helab.views.helabMainWindow import MainWindow, APP_VERSION, APP_COMMIT_HASH
 if __name__ == "__main__":
 
     setup_logging()
+    logging.debug("this is a debugging message")
+    logging.info("this is an informational message")
+    logging.warning("this is a warning message")
+    logging.error("this is an error message")
+    logging.critical("this is a critical message")
+
     logging.info(f"Starting HeLab v{APP_VERSION} ({APP_COMMIT_HASH})")
 
     # font_db = QFontDatabase()

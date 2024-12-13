@@ -75,8 +75,12 @@ class FolderTabWidget(QTabWidget):
         view_path = dirPath
         # target_path = r'/Volumes/tonyNVME Gold/dld output'
 
+
         target_paths = [
             '/Volumes/tonyNVME Gold/dld output',
+            '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - Testing MS Teams/2024_Momentum_Bells_V2 - 20241200',
+            '/Users/tonyyan/.cache/2024_Momentum_Bells_V2 - 20241200',
+            os.getcwd(),
             '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab',
             'C:\\Users\\XinTong\\Documents',
             'O:\\'
@@ -117,7 +121,7 @@ class FolderTabWidget(QTabWidget):
         logging.debug(f"Updating tab title for index {index} to {path}")
         # self.tab_widget.setTabText(index, os.path.basename(path))
         if path == "/":
-            self.setTabText(index, "Path /")
+            self.setTabText(index, "Root path")
         else:
             self.setTabText(index, os.path.basename(path))
 
@@ -150,7 +154,7 @@ class FolderTabWidget(QTabWidget):
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.rescan()
-            logging.info("Current FolderExplorer tab rescan completed.")
+            logging.info("FolderTabWidget.rescan_current_folder_explorer() returned.")
         else:
             logging.warning("Current tab is not a FolderExplorer instance.")
 
