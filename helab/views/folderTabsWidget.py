@@ -75,11 +75,11 @@ class FolderTabWidget(QTabWidget):
         view_path = dirPath
         # target_path = r'/Volumes/tonyNVME Gold/dld output'
 
-
         target_paths = [
             '/Volumes/tonyNVME Gold/dld output',
-            '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - Testing MS Teams/2024_Momentum_Bells_V2 - 20241200',
             '/Users/tonyyan/.cache/2024_Momentum_Bells_V2 - 20241200',
+            # '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - Testing MS Teams/2024_Momentum_Bells_V2 - 20241200',
+            # Don't use OneDrive it's shit (cause file system hangs)
             os.getcwd(),
             '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab',
             'C:\\Users\\XinTong\\Documents',

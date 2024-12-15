@@ -72,7 +72,7 @@ class MainWindow(QMainWindow):
         self.process = psutil.Process()
         self.setWindowIcon(QIcon("./helab/resources/icons/ai-icon.icns")) # this doesn't do anything on macos (?)
 
-        self.setWindowTitle(f"HeLab    v{APP_VERSION} ({APP_COMMIT_HASH})")
+        self.setWindowTitle(f"HeLab GUI Loading... v{APP_VERSION} ({APP_COMMIT_HASH})")
         self.resize(self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
         self.setMinimumSize(1000, 600)
 
@@ -94,11 +94,27 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.status_bar_message_left = QLabel("Please wait...")
         self.status_bar.addWidget(self.status_bar_message_left)
-        # self.status_bar_message_right = QLabel(f"v{APP_VERSION} ({APP_COMMIT_HASH})")
-        self.status_bar_message_right = QLabel("GUI initialising...")
+        self.status_bar_message_right = QLabel(f"HeLab GUI Loading... v{APP_VERSION} ({APP_COMMIT_HASH})")
+
+        # status_bar_left_spacer = QWidget()
+        # status_bar_left_spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        # self.status_bar.addWidget(status_bar_left_spacer)
+
+        # self.status_bar_message_middle = QLabel(f"HeLab v{APP_VERSION} ({APP_COMMIT_HASH})")
+        # self.status_bar_message_middle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # self.status_bar.addWidget(self.status_bar_message_middle)
+
+        # status_bar_right_spacer = QWidget()
+        # status_bar_right_spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        # self.status_bar.addWidget(status_bar_right_spacer)
+
+        # self.status_bar_message_right = QLabel("GUI initialising...")
         self.status_bar.addPermanentWidget(self.status_bar_message_right)
         self.status_bar_message_right.setToolTip("(App resource usage) / (system total resource usage)")
 
+        # self.status_bar_message_left.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        # self.status_bar_message_middle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        # self.status_bar_message_right.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
 
 
         # Setup a timer to update the status bar with thread status
@@ -275,8 +291,8 @@ class MainWindow(QMainWindow):
 
         self._setup_left_toolbar()
         self._setup_left_side()
-        self._setup_right_side()
         self._setup_middle_area()
+        self._setup_right_side()
 
 
         # Set the initial sizes of the panels
@@ -633,12 +649,12 @@ class MainWindow(QMainWindow):
             file_info = QFileInfo(selected_path)
             if file_info.isDir():
                 folder_name = file_info.fileName()
-                self.setWindowTitle(f"HeLab    v{APP_VERSION} ({APP_COMMIT_HASH})    Folder: {folder_name}")
+                self.setWindowTitle(f"HeLab    Folder: {folder_name}")
             else:
-                self.setWindowTitle(f"HeLab    v{APP_VERSION} ({APP_COMMIT_HASH})    Invalid Path (?)")
+                self.setWindowTitle(f"HeLab    Invalid Path (?)")
                 logging.warning(f"on_folder_explorer_selection_changed: not a directory: {selected_path}")
         else:
-            self.setWindowTitle(f"HeLab    v{APP_VERSION} ({APP_COMMIT_HASH})    No Folder Selected")
+            self.setWindowTitle(    f"HeLab    No Folder Selected")
 
     def add_new_folder_explorer_tab(self) -> None:
         self.tab_widget.add_new_folder_explorer_tab()

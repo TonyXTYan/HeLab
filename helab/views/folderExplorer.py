@@ -1,5 +1,7 @@
 import logging
 import os
+import platform
+import subprocess
 import sys
 from typing import Optional, Dict, List, Tuple
 
@@ -234,6 +236,7 @@ class FolderExplorer(QWidget):
         logging.debug(f"Updating back button state. {self.view_path = }, {self.dir_path = }, {self.target_path = }")
         # There's some very fucked up logic here that I don't understand
         logging.debug(f"{self.tree.rootIndex() == self.model.index(self.dir_path) = }")
+        logging.debug(f"rootIndex = {self.model.filePath(self.tree.rootIndex())}")
         # if self.view_path == self.dir_path:
         if self.tree.rootIndex() == self.model.index(self.dir_path):
             self.back_button.setEnabled(False)
@@ -287,6 +290,13 @@ class FolderExplorer(QWidget):
 
         # **Create and populate the context menu**
         menu = QMenu(self)
+
+
+        # Add the new action to open in file manager
+        action_open_in_file_manager = QAction("Open in File Manager", self)
+        action_open_in_file_manager.triggered.connect(lambda: self.open_in_file_manager(file_info))
+        menu.addAction(action_open_in_file_manager)
+
 
         action_recalc_status = QAction("Recalculate Status", self)
         action_recalc_status.triggered.connect(lambda: self.context_menu_action_recalc_status(file_info))
@@ -362,6 +372,16 @@ class FolderExplorer(QWidget):
         logging.debug(f"Deeply recalculating status for: {file_path} with {max_depth=}")
         self.model.start_deep_status_worker(file_path, max_depth)
 
+    def open_in_file_manager(self, folder_info: QFileInfo) -> None:
+        path = folder_info.absoluteFilePath()
+        if platform.system() == "Darwin":  # macOS
+            subprocess.run(["open", path])
+        elif platform.system() == "Windows":  # Windows
+            subprocess.run(["explorer", path])
+        elif platform.system() == "Linux":  # Unix/Linux
+            subprocess.run(["xdg-open", path])
+        else:
+            pass
 
     def on_stop_button_clicked(self) -> None:
         logging.debug("Stop all scans button clicked.")
