@@ -93,6 +93,8 @@ class helabFileSystemModel(QFileSystemModel):
                     return '...'
                 elif status == 'nothing':
                     return ''
+                elif status == 'missing':
+                    return ''
                 return str(count)
             elif role == Qt.ItemDataRole.TextAlignmentRole:
                 return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -309,7 +311,7 @@ class helabFileSystemModel(QFileSystemModel):
                 dir_path = next(self.directory_iterator)
                 logging.debug(f"Recalculating status for: {dir_path}")
                 self.status_cache.pop(dir_path, None)
-                self.fetch_status(dir_path)
+                self.fetch_status(dir_path)     #### THIS IS WHERE THE RECURSIVE STATUS RECALCULATION HAPPENS
                 count += 1
         except StopIteration:
             # No more directories

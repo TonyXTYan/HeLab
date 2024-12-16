@@ -154,7 +154,27 @@ class FolderExplorer(QWidget):
         self.emit_root_path_changed()
         # selection_model.emitSelectionChanged(selection_model.selection(), selection_model.selection())
         # self.emit_selection_changed()
+        # QTimer.singleShot(15, self._set_initial_rootIndex)
+        self._set_initial_rootIndex()
         QTimer.singleShot(30, self.emit_selection_changed)
+
+
+    def _set_initial_rootIndex(self) -> None:
+        # self.tree.setRootIndex(self.model.index(self.view_path))
+        # current_root_index = self.tree.rootIndex()
+        # current_view_index = self.model.index(self.view_path)
+        # currnet_index = self.model.index
+        index = self.model.index(self.target_path)
+        parent_index = index.parent()
+        logging.debug(f"_set_initial_rootIndex: index = {self.model.filePath(index)}, parent_index = {self.model.filePath(parent_index)}")
+        if parent_index.isValid():
+            self.tree.setRootIndex(parent_index)
+            logging.debug(f"_set_initial_rootIndex: {self.model.filePath(parent_index)}")
+        else:
+            # If no parent, set to the model's root (view path)
+            self.tree.setRootIndex(self.model.index(self.model.rootPath()))
+        self.update_back_button_state()
+        self.emit_root_path_changed()
 
     def emit_selection_changed(self) -> None:
         selection_model = self.get_selection_model()
@@ -228,7 +248,7 @@ class FolderExplorer(QWidget):
             self.tree.setRootIndex(self.model.index(self.model.rootPath()))
         # Update the back button enabled state
         self.update_back_button_state()
-        # self.rootPathChanged.emit(self.model.filePath(self.tree.rootIndex()))
+        # self.robotPathChanged.emit(self.model.filePath(self.tree.rootIndex()))
         self.emit_root_path_changed()
         logging.debug(f"Back button clicked. New root path: {self.model.filePath(self.tree.rootIndex())}")
 

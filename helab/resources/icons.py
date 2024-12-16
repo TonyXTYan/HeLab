@@ -28,7 +28,7 @@ def tablerIcon(icon: OutlineIcon | FilledIcon, color: str, size: int=128) -> QIc
 
 
 class StatusIcons:
-    STATUS_ICONS_NAME = ['ok', 'warning', 'critical', 'loading', 'nothing']
+    STATUS_ICONS_NAME = ['ok', 'warning', 'critical', 'loading', 'nothing', 'missing']
     STATUS_ICONS_EXTRA_NAME = ['database', 'report', 'chart3d', 'ram', 'live']
     STATUS_ICONS_EXTRA_NAME_SORT_KEY = {
         'database': 10,
@@ -43,6 +43,8 @@ class StatusIcons:
     ICON_LOADING = QIcon()
     ICON_LIVE = QIcon()
     ICON_NOTHING = QIcon()
+    ICON_MISSING = QIcon()
+
     ICONS_STATUS: Dict[str, QIcon] = {}
     ICON_DATABASE = QIcon()
     ICON_REPORT = QIcon()
@@ -60,12 +62,14 @@ class StatusIcons:
         StatusIcons.ICON_LOADING = tablerIcon(OutlineIcon.LOADER, '#000000')  # TODO: replace this with PERCENTAGE
         StatusIcons.ICON_LIVE = tablerIcon(OutlineIcon.LIVE_PHOTO, '#000000')
         StatusIcons.ICON_NOTHING = tablerIcon(FilledIcon.POINT, '#bbbbbb')
+        StatusIcons.ICON_MISSING = tablerIcon(OutlineIcon.ERROR_404, '#bbbbbb')
         StatusIcons.ICONS_STATUS = {
             'ok': StatusIcons.ICON_OK,
             'warning': StatusIcons.ICON_WARNING,
             'critical': StatusIcons.ICON_CRITICAL,
             'loading': StatusIcons.ICON_LOADING,
             'nothing': StatusIcons.ICON_NOTHING,
+            'missing': StatusIcons.ICON_MISSING,
         }
         StatusIcons.ICON_DATABASE = tablerIcon(OutlineIcon.DATABASE, '#444444')
         StatusIcons.ICON_REPORT = tablerIcon(OutlineIcon.REPORT_ANALYTICS, '#444444')

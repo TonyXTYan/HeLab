@@ -92,9 +92,9 @@ class MainWindow(QMainWindow):
         # Create Status Bar
         self.status_bar.setStyleSheet("QStatusBar { border-top: 1px solid #d8d8d8; }")
         self.setStatusBar(self.status_bar)
-        self.status_bar_message_left = QLabel("Please wait...")
+        self.status_bar_message_left = QLabel("...")
         self.status_bar.addWidget(self.status_bar_message_left)
-        self.status_bar_message_right = QLabel(f"HeLab GUI Loading... v{APP_VERSION} ({APP_COMMIT_HASH})")
+        self.status_bar_message_right = QLabel(f"Please wait. GUI loading... v{APP_VERSION} ({APP_COMMIT_HASH})")
 
         # status_bar_left_spacer = QWidget()
         # status_bar_left_spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
