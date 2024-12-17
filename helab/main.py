@@ -12,6 +12,8 @@ from helab.resources.icons import StatusIcons, ToolIcons, IconsInitUtil
 from helab.utils.loggingSetup import setup_logging
 from helab.views.helabMainWindow import MainWindow, APP_VERSION, APP_COMMIT_HASH
 
+
+
 if __name__ == "__main__":
 
     setup_logging()

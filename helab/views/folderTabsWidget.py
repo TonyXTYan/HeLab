@@ -7,10 +7,11 @@ from typing import Tuple, List, Dict
 
 from PyQt6.QtCore import QDir, QThreadPool, Qt, QSize
 from PyQt6.QtWidgets import QTabWidget, QWidget, QMessageBox, QTabBar
-from cachetools import LRUCache
+from cachetools import LRUCache, TTLCache
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.views.folderExplorer import FolderExplorer
+from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.statusDeepWorker import StatusDeepWorker
 from helab.workers.statusWorker import StatusWorker
 
@@ -31,6 +32,8 @@ class FolderTabWidget(QTabWidget):
 
         # Initialize shared resources
         self.status_cache: LRUCache[str, Tuple[str, int, List[str]]] = LRUCache(maxsize=10000)
+        self.hasChildren_cache: TTLCache[str, bool] = TTLCache(maxsize=100*1000, ttl=2*60)
+
         thread_pool = QThreadPool.globalInstance()
         if thread_pool is None:
             logging.fatal("QThreadPool.globalInstance() returned None. Exiting.")
@@ -38,6 +41,7 @@ class FolderTabWidget(QTabWidget):
         self.thread_pool: QThreadPool = thread_pool
         self.running_workers_status: Dict[str, StatusWorker] = {}
         self.running_workers_deep: Dict[str, StatusDeepWorker] = {}
+        self.running_workers_hasChildren: Dict[str, DirectoryCheckWorker] = {}
         self.tab_back_button_enabled = False
 
         self.currentChanged.connect(self.on_current_tab_changed)
@@ -106,7 +110,18 @@ class FolderTabWidget(QTabWidget):
             helabFileSystemModel.COLUMN_STATUS_ICON,
             helabFileSystemModel.COLUMN_RIGHTFILL
         ]
-        folder_explorer = FolderExplorer(dirPath, target_path, view_path, columns_to_show, status_cache=self.status_cache, thread_pool=self.thread_pool, running_workers_status=self.running_workers_status, running_workers_deep=self.running_workers_deep)
+        folder_explorer = FolderExplorer(
+            dir_path = dirPath,
+            target_path = target_path,
+            view_path = view_path,
+            columns_to_show = columns_to_show,
+            status_cache = self.status_cache,
+            hasChildren_cache = self.hasChildren_cache,
+            thread_pool = self.thread_pool,
+            running_workers_status = self.running_workers_status,
+            running_workers_deep = self.running_workers_deep,
+            running_workers_hasChildren = self.running_workers_hasChildren
+        )
         index = self.addTab(folder_explorer, 'File Explorer')
 
         folder_explorer.rootPathChanged.connect(lambda path, idx=index: self.update_folder_explorer_tab_title(path, idx))
@@ -137,6 +152,7 @@ class FolderTabWidget(QTabWidget):
         self.status_cache.clear()
         self.running_workers_status.clear()
         self.running_workers_deep.clear()
+        self.running_workers_hasChildren.clear()
 
         logging.info("Status cache cleared.")
         self.refresh_current_folder_explorer()
@@ -170,6 +186,13 @@ class FolderTabWidget(QTabWidget):
         #     current_folder_explorer.update_back_button_state()
         #     self.tab_back_button_enabled = current_folder_explorer.back_button_enabled
 
+    def on_stop_button_clicked(self) -> None:
+        current_folder_explorer = self.currentWidget()
+        if isinstance(current_folder_explorer, FolderExplorer):
+            current_folder_explorer.on_stop_button_clicked()
+            # self.tab_back_button_enabled = current_folder_explorer.back_button_enabled
+        else:
+            logging.warning("on_stop_button_clicked: Current tab is not a FolderExplorer instance.")
 
     def removeTab(self, index: int) -> None:
         # Remove the tab

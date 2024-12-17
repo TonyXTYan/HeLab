@@ -83,6 +83,7 @@ Comparison with existing software:
 - https://github.com/adareau/HAL
   - data need to be arranged in a particular format
   - difficult to do multiple analysis in one app. 
+  - GUI built from Qt Designer, instead of programmatically generated GUI (hard to debug and add features).
 
 
 --- 

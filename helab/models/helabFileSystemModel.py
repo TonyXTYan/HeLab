@@ -1,15 +1,19 @@
 import logging
 import os
 import sys
+
 from typing import Dict, Tuple, List
 
-from PyQt6.QtCore import Qt, QThreadPool, QThread, QModelIndex, QTimer, QObject
+import cachetools
+from PyQt6.QtCore import Qt, QThreadPool, QThread, QModelIndex, QTimer, QObject, QDir, pyqtSignal, QRunnable
 from PyQt6.QtGui import QFileSystemModel, QIcon, QColor
 from PyQt6.QtWidgets import QApplication
-from cachetools import LRUCache
+from cachetools import LRUCache, TTLCache
 from pympler import asizeof
 from pytablericons import TablerIcons, OutlineIcon, FilledIcon
 
+from helab.utils.osCached import os_isdir, os_listdir, os_listdir_cache, os_isdir_cache, os_scandir_cache
+from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.statusDeepWorker import StatusDeepWorker
 # from helab.utils.loggingSetup import setup_logging
 
@@ -30,11 +34,15 @@ class helabFileSystemModel(QFileSystemModel):
     running_workers_status: Dict[str, StatusWorker]
     running_workers_deep: Dict[str, StatusDeepWorker]
 
+    # CACHE_HAS_CHILDREN: TTLCache[str, bool] = TTLCache(maxsize=10*1000, ttl=30)
+
     def __init__(self,
                  status_cache: LRUCache[str, Tuple[str, int, List[str]]],
+                 hasChildren_cache: TTLCache[str, bool],
                  thread_pool: QThreadPool,
                  running_workers_status: Dict[str, StatusWorker],
                  running_workers_deep: Dict[str, StatusDeepWorker],
+                 running_workers_hasChildren: Dict[str, DirectoryCheckWorker],
                  *args: QObject | None, **kwargs: QObject | None
                  ) -> None:
         super().__init__(*args, **kwargs)
@@ -42,9 +50,11 @@ class helabFileSystemModel(QFileSystemModel):
         # style = QApplication.style()
 
         self.status_cache = status_cache
+        self.hasChildren_cache = hasChildren_cache
         self.thread_pool = thread_pool
         self.running_workers_status = running_workers_status
         self.running_workers_deep = running_workers_deep
+        self.running_workers_hasChildren = running_workers_hasChildren
 
 
         # Initialize the cache with a maximum size to prevent unlimited growth
@@ -177,7 +187,8 @@ class helabFileSystemModel(QFileSystemModel):
             # Create and start the worker
             worker = StatusWorker(folder_path)
             worker.signals.finished.connect(self.handle_status_computed)
-            self.thread_pool.start(worker)
+            # self.thread_pool.start(worker)
+            QTimer.singleShot(5, lambda: self.thread_pool.start(worker))
             # self.running_workers.add(worker)
             self.running_workers_status[folder_path] = worker
             return ('loading', 0, [])
@@ -275,6 +286,11 @@ class helabFileSystemModel(QFileSystemModel):
             # del self.status_cache[folder_path]
             logging.debug(f"Cancelled StatusDeepWorker for: {workerD.root_path}")
 
+        for folder_path, workerC in list(self.running_workers_hasChildren.items()):
+            workerC.cancel()
+            del self.running_workers_hasChildren[folder_path]
+            logging.debug(f"Cancelled DirectoryCheckWorker for: {workerC.dir_path}")
+
         # self.running_workers_status = {}
         # self.running_workers_deep = {}
 
@@ -339,3 +355,80 @@ class helabFileSystemModel(QFileSystemModel):
         # self.endResetModel()
         self.directoryLoaded.emit(self.rootPath())
         logging.info("helabFileSystemModel has been refreshed.")
+
+    # @cachetools.cached(CACHE_HAS_CHILDREN)
+    def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
+        if not parent.isValid():
+            return super().hasChildren(parent)
+        file_info = self.fileInfo(parent)
+        if not file_info.isDir():
+            return False
+        dir_path = file_info.absoluteFilePath()
+
+        cached_result = self.hasChildren_cache.get(dir_path)
+        if cached_result is not None:
+            return cached_result
+        else:
+            if dir_path in self.running_workers_hasChildren:
+                return False
+            else:
+                logging.debug(f"hasChildren new worker at: {dir_path}")
+                logging.debug(f"os_listdir_cache: {os_listdir_cache.currsize}, os_scandir_cache: {os_scandir_cache.currsize}, os_isdir_cache: {os_isdir_cache.currsize}, hasChildren_cache: {self.hasChildren_cache.currsize}")
+                worker = DirectoryCheckWorker(dir_path)
+                worker.signals.finished.connect(self.on_has_children_finished)
+                # self.thread_pool.start(worker)
+                QTimer.singleShot(10, lambda: self.thread_pool.start(worker))
+                self.running_workers_hasChildren[dir_path] = worker
+                return False
+
+
+
+
+        # directory = QDir(dir_path)
+        # directory.setFilter(QDir.Filter.Dirs | QDir.Filter.NoDotAndDotDot)
+        # return directory.exists() and directory.count() > 0  # '.' and '..''
+
+
+        # try:
+        #     return any(
+        #         # os.path.isdir(os.path.join(dir_path, entry))
+        #         # for entry in os.listdir(dir_path)
+        #         os_isdir(os.path.join(dir_path, entry))
+        #         for entry in os_listdir(dir_path)
+        #     )
+        # except Exception as e:
+        #     return False
+
+        # # Start the worker
+        # worker = DirectoryCheckWorker(dir_path)
+        # worker.signals.finished.connect(self.on_has_children_finished)
+        # threadpool = QThreadPool.globalInstance()
+        # threadpool.start(worker)
+        #
+        # return True  # Return False initially, update will be handled in on_has_children_finished
+        
+    # def on_has_children_finished(self, dir_path: str, has_children: bool):
+    #     index = self.index(dir_path)
+    #     if index.isValid():
+    #         # Notify the view that the data has changed
+    #         self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+    #         # Optionally, you can refresh the children if needed
+    #         if has_children:
+    #             self.fetchMore(index)
+
+    def on_has_children_finished(self, dir_path: str, has_children: bool) -> None:
+        # Update the cache with the computed result
+        self.hasChildren_cache[dir_path] = has_children
+        # Retrieve QModelIndex for the directory
+        index = self.index(dir_path)
+        # Emit dataChanged for the directory
+        if index.isValid():
+            self.dataChanged.emit(
+                index,
+                index,
+                [Qt.ItemDataRole.DisplayRole]
+            )
+        # Remove the worker from the running_workers_hasChildren dictionary
+        if dir_path in self.running_workers_hasChildren:
+            del self.running_workers_hasChildren[dir_path]
+            # logging.debug(f"Worker removed from running_workers_hasChildren for: {dir_path}")

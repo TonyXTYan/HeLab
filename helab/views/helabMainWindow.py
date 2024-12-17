@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 import psutil
-from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QThreadPool, QSettings, QEvent, QFileInfo, QItemSelection
+from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QThreadPool, QSettings, QEvent, QFileInfo, QItemSelection, QModelIndex
 from PyQt6.QtGui import QAction, QIcon, QPalette, QColor, QPixmap, QTransform, QCloseEvent
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QTabWidget, QSplitter, \
     QLabel, QToolBar, QStyle, QSizePolicy, QToolTip, QApplication, QStyleFactory, QFileDialog
@@ -16,6 +16,7 @@ from helab.resources.icons import ToolIcons
 from helab.views.folderExplorer import FolderExplorer
 from helab.views.folderTabsWidget import FolderTabWidget
 from helab.views.settingsDialog import SettingsDialog
+from helab.views.debugIcons import DebugIconsWindow
 
 # TOOLBAR_STYLESHEET_LR = """
 # QToolBar {
@@ -155,15 +156,16 @@ class MainWindow(QMainWindow):
             return
         active_threads = thread_pool.activeThreadCount()
         # self.status_bar.showMessage(f"{active_threads}, {QThreadPool.globalInstance().stackSize()}, {len(self.tab_widget.running_workers_status)}")
-        queue_depth = len(self.tab_widget.running_workers_status) + len(self.tab_widget.running_workers_deep)
-        if queue_depth > 0:
+        # queue_depth = len(self.tab_widget.running_workers_status) + len(self.tab_widget.running_workers_deep) + len(self.tab_widget.running_workers_hasChildren)
+        queue_depths = (len(self.tab_widget.running_workers_status), len(self.tab_widget.running_workers_deep), len(self.tab_widget.running_workers_hasChildren))
+        if sum(queue_depths) > 0:
             # transform = QTransform().rotate(self.status_icon_loading_angle)
             # center = self.status_icon_loading.rect().center()
             # transform = QTransform().translate(center.x(), center.y()).rotate(self.status_icon_loading_angle).translate(-center.x(), -center.y())
             # rotated_pixmap = self.status_icon_loading.transformed(transform)
             # self.status_icon.setPixmap(rotated_pixmap)
             # self.status_icon_loading_angle = (self.status_icon_loading_angle + 10) % 360
-            self.status_bar_message_left.setText(f"Working: {active_threads}, Queued: {queue_depth}")
+            self.status_bar_message_left.setText(f"Working: {active_threads}, Queued: {queue_depths}")
             self.action_tab_cancel.setEnabled(True)
             self.tab_widget.set_tab_switching_disable()
             self.set_tools_and_tabs_disable()
@@ -249,6 +251,12 @@ class MainWindow(QMainWindow):
             menu_debug.addAction(debug_action_1)
             menu_debug.addSeparator()
             menu_debug.addAction(debug_action_2)
+
+            menu_debug.addSeparator()
+
+            action_debug_icons = QAction("Show all Icons", self)
+            action_debug_icons.triggered.connect(self.show_debug_icons_window)
+            menu_debug.addAction(action_debug_icons)
         else:
             logging.error("menu_debug is None")
             
@@ -257,6 +265,10 @@ class MainWindow(QMainWindow):
         # pass
         settings_dialog = SettingsDialog(self)
         settings_dialog.exec()
+
+    def show_debug_icons_window(self) -> None:
+        self.debug_icons_window = DebugIconsWindow()
+        self.debug_icons_window.show()
 
     def open_folder_path_dialog(self) -> None:
         options = QFileDialog.Option.ShowDirsOnly
@@ -399,6 +411,7 @@ class MainWindow(QMainWindow):
         self.action_tab_refresh.triggered.connect(self.tab_widget.refresh_current_folder_explorer)
         self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
         self.action_tab_rescan.triggered.connect(self.tab_widget.rescan_current_folder_explorer)
+        self.action_tab_cancel.triggered.connect(self.tab_widget.on_stop_button_clicked)
 
         self.sidebar_toolbar_left.addSeparator()
 
@@ -685,6 +698,11 @@ class MainWindow(QMainWindow):
         self.action_tab_refresh.setEnabled(False)
         self.action_tab_rescan.setEnabled(False)
 
+    def connect_folder_explorer_signals(self, index: QModelIndex) -> None:
+        current_folder_explorer = self.tab_widget.currentWidget()
+        if isinstance(current_folder_explorer, FolderExplorer):
+            current_folder_explorer.itemExpandedSignal.connect(self.update_tool_enabled_state)
+            QTimer.singleShot(50, self.update_status_bar_left)
 
 
 

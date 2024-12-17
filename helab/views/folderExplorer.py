@@ -9,17 +9,19 @@ from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal, QThre
     QPoint, QFileInfo, QTimer
 from PyQt6.QtGui import QAction, QFontInfo
 from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu
-from cachetools import LRUCache
+from cachetools import LRUCache, TTLCache
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.views.statusIconDelegate import StatusIconDelegate
 from helab.views.statusTreeView import StatusTreeView
+from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.statusDeepWorker import StatusDeepWorker
 from helab.workers.statusWorker import StatusWorker
 
 
 class FolderExplorer(QWidget):
     rootPathChanged = pyqtSignal(str)
+    itemExpandedSignal = pyqtSignal(QModelIndex)
 
     def __init__(self,
                  dir_path: str,
@@ -27,9 +29,11 @@ class FolderExplorer(QWidget):
                  view_path: str,
                  columns_to_show: List[int],
                  status_cache: LRUCache[str, Tuple[str, int, List[str]]],
+                 hasChildren_cache: TTLCache[str, bool],
                  thread_pool: QThreadPool,
                  running_workers_status: Dict[str, StatusWorker],
                  running_workers_deep: Dict[str, StatusDeepWorker],
+                 running_workers_hasChildren: Dict[str, DirectoryCheckWorker],
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         # appWidth = 800
@@ -45,17 +49,25 @@ class FolderExplorer(QWidget):
         self.columns_to_show = columns_to_show
 
         self.status_cache = status_cache
+        self.hasChildren_cache = hasChildren_cache
         self.thread_pool = thread_pool
         self.running_workers_status = running_workers_status
         self.running_workers_deep = running_workers_deep
+        self.running_workers_hasChildren = running_workers_hasChildren
 
-        self.model = helabFileSystemModel(status_cache, thread_pool, running_workers_status, running_workers_deep)
+        self.model = helabFileSystemModel(
+            status_cache = status_cache,
+            hasChildren_cache = hasChildren_cache,
+            thread_pool = thread_pool,
+            running_workers_status = running_workers_status,
+            running_workers_deep = running_workers_deep,
+            running_workers_hasChildren = running_workers_hasChildren
+        )
         self.model.setRootPath(dir_path)
         self.model.setReadOnly(True)
         # self.model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
         self.model.setFilter(QDir.Filter.Dirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
         # self.rootPathChanged.emit(self.dir_path)
-
 
         # self.tree = QTreeView()
         self.tree = StatusTreeView()
@@ -73,6 +85,9 @@ class FolderExplorer(QWidget):
         self.tree.setUniformRowHeights(True)
         self.tree.setSortingEnabled(True)
         self.back_button_enabled = False
+        self.tree.itemExpandedSignal.connect(self.itemExpandedSignal.emit)
+        # self.tree.setStyle(OptionalBranchIconStyle())
+        # self.tree.setItemsExpandable(False)
 
         # Set the custom delegate for the icon column
         icon_delegate = StatusIconDelegate(self.tree)
@@ -231,6 +246,8 @@ class FolderExplorer(QWidget):
             # self.view_path = file_info.absoluteFilePath()
             # self.tree.setRootIndex(self.model.index(self.view_path))
             # Update the back button enabled state
+            self.target_path = file_info.absoluteFilePath()
+
             self.update_back_button_state()
             # self.rootPathChanged.emit(file_info.absoluteFilePath())
             self.emit_root_path_changed()
@@ -423,11 +440,14 @@ class FolderExplorer(QWidget):
         #     self.running_workers_status,
         #     self.running_workers_deep
         # )
+        current_root_index = self.tree.rootIndex()
         self.model.refresh()
         self.tree.setModel(self.model)
         self.model.setRootPath(self.dir_path)
-        self.tree.setRootIndex(self.model.index(self.view_path))
-        self.expand_to_path(self.target_path)
+        # self.tree.setRootIndex(self.model.index(self.view_path))
+        self.tree.setRootIndex(current_root_index)
+        # self.expand_to_path(self.target_path)
+        # self._set_initial_rootIndex()
         logging.debug("FolderExplorer.refresh() finished.")
 
     def rescan(self) -> None:

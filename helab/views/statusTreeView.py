@@ -1,10 +1,46 @@
 import logging
 
-from PyQt6.QtCore import Qt, QModelIndex, QTimer, QEvent, QRect, QPoint, QObject
-from PyQt6.QtGui import QMouseEvent, QFocusEvent
-from PyQt6.QtWidgets import QTreeView, QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout
+from PyQt6.QtCore import Qt, QModelIndex, QTimer, QEvent, QRect, QPoint, QObject, pyqtSignal, QDir, QFile, QFileInfo
+from PyQt6.QtGui import QMouseEvent, QFocusEvent, QPainter
+from PyQt6.QtWidgets import QTreeView, QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QProxyStyle, QStyle
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
+
+
+# class OptionalBranchIconStyle(QProxyStyle):
+#     def drawPrimitive(self, element, option, painter, widget: QWidget | None = None) -> None:
+#         # logging.debug(f"drawPrimitive: {element}")
+#         if element == QStyle.PrimitiveElement.PE_IndicatorBranch:
+#             index = option.index
+#             # logging.debug(f"drawPrimitive: {index}")
+#             model = widget.model()
+#             if index and model:
+#                 # logging.debug(f"drawPrimitive: {index.model = }")
+#                 if not self.index_has_subdirectories(index, model):
+#                     return  # Do not draw the branch icon if there are no subdirectories
+#         super().drawPrimitive(element, option, painter, widget)
+#
+#     def index_has_subdirectories(self, index: QModelIndex, model: helabFileSystemModel) -> bool:
+#         logging.debug(f"index_has_subdirectories: {index = }")
+#         logging.debug(f"index_has_subdirectories: {index.model() = }, {model = }")
+#         logging.debug(f"index_has_subdirectories: {model.filePath(index) = }")
+#         logging.debug(f"index_has_subdirectories: {model.fileInfo(index).filePath() = }")
+#         # model = index.model()
+#         # if not model:
+#         #     return False
+#         # file_info = model.fileInfo(index)
+#         # logging.debug(f"index_has_subdirectories: {file_info.absolutePath() = }")
+#         # logging.debug(f"index_has_subdirectories: file = {file_path}")
+#         # file_info = QFileInfo(file_path)
+#         # if file_info.isDir():
+#         # #     # logging.debug(f"index_has_subdirectories: {file_path.absoluteFilePath() = }")
+#         #     logging.debug(f"index_has_subdirectories: {file_info.absoluteFilePath() = }")
+#         # #     dir_path = file_path.absoluteFilePath()
+#         #     directory = QDir(file_info)
+#         # #     # Exclude '.' and '..' entries
+#         #     entry_list = directory.entryList(QDir.Filter.Dirs | QDir.Filter.NoDotAndDotDot)
+#         # #     return len(entry_list) > 0
+#         return False
 
 
 class StatusHoverIconInfo(QWidget):
@@ -58,6 +94,9 @@ class StatusHoverIconInfo(QWidget):
 
 
 class StatusTreeView(QTreeView):
+
+    itemExpandedSignal = pyqtSignal(QModelIndex)
+
     def __init__(self, parent: QTreeView | None = None) -> None:
         super().__init__(parent)
         self.setMouseTracking(True)
@@ -73,6 +112,8 @@ class StatusTreeView(QTreeView):
         self.hover_timer.timeout.connect(self.hide_popup)
 
         self.popup.installEventFilter(self)
+        self.expanded.connect(self.on_item_expanded)
+        # self.setStyle(OptionalBranchIconStyle())
 
     def eventFilter(self, object: QObject | None, event: QEvent | None) -> bool:
         if event is None: return False
@@ -175,3 +216,14 @@ class StatusTreeView(QTreeView):
         if e is None: return
         super().focusOutEvent(e)
         self.hide_popup()
+
+    def on_item_expanded(self, index: QModelIndex) -> None:
+        model = self.model()
+        if isinstance(model, helabFileSystemModel):
+            logging.debug(f"on_item_expanded: {model.filePath(index)}")
+        else:
+            logging.debug(f"on_item_expanded: invalid model {index}")
+        self.hide_popup()
+        self.itemExpandedSignal.emit(index)
+
+    

@@ -9,6 +9,7 @@ import logging
 from PyQt6.QtTest import QTest
 
 from helab.resources.icons import StatusIcons, IconsInitUtil
+from helab.utils.osCached import os_isdir, os_listdir, os_scandir
 
 
 # from helab.models.helabFileSystemModel import helabFileSystemModel
@@ -70,19 +71,28 @@ class StatusWorker(QRunnable):
         #   log_KeysightMatlab.txt    # Optional
         #   log_LabviewMatlab.txt     # Optional
 
-        # check if self.file_path is a directory
-        if not os.path.isdir(self.file_path):
-            logging.error(f"StatusWorker._run_helper_v1: {self.file_path} is not a directory")
-            self.signals.finished.emit(self.file_path, 'missing', -1, [])
-            return
 
         try:
+            # check if self.file_path is a directory
+            # if not os.path.isdir(self.file_path):
+            if not os_isdir(self.file_path):
+                logging.error(f"StatusWorker._run_helper_v1: {self.file_path} is not a directory")
+                self.signals.finished.emit(self.file_path, 'missing', -1, [])
+                return
+            # check if self.file_path contains any directory
+            # dirs = os.listdir(self.file_path)
+
             # list all files in the directory
             files = os.listdir(self.file_path)
+            # files = os_scandir(self.file_path)
             logging.debug(f"StatusWorker._run_helper_v1: files in {self.file_path}: counted {len(files)}")
 
         except PermissionError as e:
             logging.error(f"StatusWorker._run_helper_v1: PermissionError accessing {self.file_path}: {e}")
+            self.signals.finished.emit(self.file_path, 'missing', -1, [])
+            return
+        except Exception as e:
+            logging.error(f"StatusWorker._run_helper_v1: Error accessing {self.file_path}: {e}")
             self.signals.finished.emit(self.file_path, 'missing', -1, [])
             return
 
@@ -107,8 +117,11 @@ class StatusWorker(QRunnable):
             return
         elif d_files_len != d_txy_files_len:
             self.signals.finished.emit(self.file_path, 'warning', max(d_files_len, d_txy_files_len), [])
-        else:
+        elif d_files_len == d_txy_files_len:
             self.signals.finished.emit(self.file_path, 'ok', max(d_files_len, d_txy_files_len), [])
+        else:
+            self.signals.finished.emit(self.file_path, 'critical', max(d_files_len, d_txy_files_len), [])
+            logging.error(f"StatusWorker._run_helper_v1: unexpected condition for {self.file_path}")
         # self._run_helper_simulate()
         # return
 
