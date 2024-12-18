@@ -7,6 +7,7 @@ from helab.utils.constants import *
 import cachetools
 # import diskcache
 import threading
+import asyncio
 
 from cachetools import TTLCache
 
@@ -70,13 +71,19 @@ def os_isdir(path: str) -> bool:
 
 
 # Wrapper functions to run the cached functions in a separate thread
-def os_listdir_async(path: str) -> Future:
+def os_listdir_async(path: str) -> Future[List[str]]:
     return executor.submit(os_listdir, path)
 
-def os_scandir_async(path: str) -> Future:
-    return executor.submit(os_scandir, path)
+# async def os_scandir_async(path: str) -> Future:
+#     loop = asyncio.get_event_loop()
+#     return await loop.run_in_executor(executor, os_scandir, path)
+#     # return executor.submit(os_scandir, path)'
 
-def os_isdir_async(path: str) -> Future:
+def os_scandir_async(path: str) -> Future[Iterator[os.DirEntry[Any]]]:
+    return executor.submit(os_scandir, path)
+    # return executor.submit(os_scandir, path)'
+
+def os_isdir_async(path: str) -> Future[bool]:
     return executor.submit(os_isdir, path)
 
 

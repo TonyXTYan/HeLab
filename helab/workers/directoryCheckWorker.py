@@ -22,14 +22,15 @@ class DirectoryCheckWorker(QRunnable):
         if self._is_canceled: return
         # wtf = os_scandir(self.dir_path)
         try:
-            # result = any(
-            #     # os.path.isdir(os.path.join(self.dir_path, entry))
-            #     # for entry in os.listdir(self.dir_path)
-            #     os_isdir(os.path.join(self.dir_path, entry))
-            #     for entry in os_listdir(self.dir_path)
-            # )
+            result = any(   #TODO test this live
+                # os.path.isdir(os.path.join(self.dir_path, entry))
+                # for entry in os.listdir(self.dir_path)
+                os_isdir(os.path.join(self.dir_path, entry))
+                for entry in os_listdir(self.dir_path)
+                if not entry.endswith('.txt')
+            )
             # logging.debug(f"DirectoryCheckWorker started for: {self.dir_path}")
-            result = any(entity.is_dir() for entity in os_scandir(self.dir_path))
+            # result = any(entity.is_dir() for entity in os_scandir(self.dir_path))
             # future = os_scandir_async(self.dir_path)
             # result = any(entity.is_dir() for entity in future.result())
         except Exception as e:

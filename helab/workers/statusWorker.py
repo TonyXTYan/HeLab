@@ -84,11 +84,11 @@ class StatusWorker(QRunnable):
             # dirs = os.listdir(self.file_path)
 
             # list all files in the directory
-            # files = os.listdir(self.file_path)
+            files = os.listdir(self.file_path)
             # future = os_scandir_async(self.file_path)
             # files_scan = future.result()
-            files_scan = os_scandir(self.file_path)
-            files = [entry.name for entry in files_scan if entry.is_file()]
+            # files_scan = os_scandir(self.file_path)
+            # files = [entry.name for entry in files_scan if entry.is_file()]
             # with os_scandir(self.file_path) as it:
             #     files = [entry.name for entry in it if entry.is_file()]
             logging.debug(f"StatusWorker._run_helper_v1: files in {self.file_path}: counted {len(files)}")

@@ -192,7 +192,7 @@ class helabFileSystemModel(QFileSystemModel):
             worker.signals.finished.connect(self.handle_status_computed)
             # self.thread_pool.start(worker)
             worker.setAutoDelete(True)
-            QTimer.singleShot(5, lambda: self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value))
+            QTimer.singleShot(5, lambda: self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value)) # type: ignore[call-overload]
             # self.running_workers.add(worker)
             self.running_workers_status[folder_path] = worker
             return ('loading', 0, [])
@@ -387,14 +387,14 @@ class helabFileSystemModel(QFileSystemModel):
                 return False
             else:
                 logging.debug(f"hasChildren new worker at: {dir_path}")
-                logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {self.hasChildren_cache.currsize}")
+                logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {self.hasChildren_cache.currsize}") # type: ignore[attr-defined]
                 # logging.debug(f"os_listdir_cache: {os_listdir_cache.currsize}, os_scandir_cache: {os_scandir_cache.currsize}, os_isdir_cache: {os_isdir_cache.currsize}, hasChildren_cache: {self.hasChildren_cache.currsize}")
                 # logging.debug(f"os_listdir_cache: {os_listdir_cache.volume()}, os_scandir_cache: {os_scandir_cache.volume()}, os_isdir_cache: {os_isdir_cache.volume()}, hasChildren_cache: {self.hasChildren_cache.currsize}")
                 # logging.debug(f"hasChildren_cache: {self.hasChildren_cache.currsize}")
                 worker = DirectoryCheckWorker(dir_path)
                 worker.signals.finished.connect(self.on_has_children_finished)
                 worker.setAutoDelete(True)
-                self.thread_pool.start(worker, priority=QThread.Priority.HighPriority.value)
+                self.thread_pool.start(worker, priority=QThread.Priority.HighPriority.value) # type: ignore[call-overload]
                 # QTimer.singleShot(10, lambda: self.thread_pool.start(worker))
                 self.running_workers_hasChildren[dir_path] = worker
                 return False
@@ -452,4 +452,4 @@ class helabFileSystemModel(QFileSystemModel):
             # logging.debug(f"Worker removed from running_workers_hasChildren for: {dir_path}")
 
         logging.debug(f"on_has_children_finished for: {dir_path}: {has_children}")
-        logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {self.hasChildren_cache.currsize}")
+        logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {self.hasChildren_cache.currsize}") # type: ignore[attr-defined]

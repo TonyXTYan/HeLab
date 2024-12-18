@@ -17,8 +17,6 @@ from humanfriendly.terminal import message
 from numpy.f2py.crackfortran import include_paths
 
 from helab.resources.icons import ToolIcons
-from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density, fig_txy_3d, fig_shots_scan, \
-    fig_pulse_eff_fitted, fig_shots_transfer
 from helab.utils.constants import *
 from helab.views.folderExplorer import FolderExplorer
 from helab.views.folderTabsWidget import FolderTabWidget
@@ -502,25 +500,6 @@ class MainWindow(QMainWindow):
         self.middle_mainwindow.setCentralWidget(self.central_placeholder)
         self.dock_widgets: List[QDockWidget] = []
 
-        # # Add placeholder dock widgets to the middle main window
-        # dock_widget1 = QDockWidget("Dock Widget 1", self)
-        # dock_widget_placeholder_label_1 = QLabel("Content of Dock Widget 1")
-        # dock_widget_placeholder_label_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # dock_widget1.setWidget(dock_widget_placeholder_label_1)
-        # self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget1)
-        #
-        # dock_widget2 = QDockWidget("Dock Widget 2", self)
-        # dock_widget_placeholder_label_2 = QLabel("Content of Dock Widget 2")
-        # dock_widget_placeholder_label_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # dock_widget2.setWidget(dock_widget_placeholder_label_2)
-        # self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget2)
-        #
-        # dock_widget3 = QDockWidget("Dock Widget 3", self)
-        # dock_widget_placeholder_label_3 = QLabel("Content of Dock Widget 3")
-        # dock_widget_placeholder_label_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # dock_widget3.setWidget(dock_widget_placeholder_label_3)
-        # self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget3)
-
 
         # # txy_density_plot = fig_txt_density(self.current_tracking_folder_path)
         # txy_density_plot = fig_txt_density
@@ -580,12 +559,36 @@ class MainWindow(QMainWindow):
         # self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, txy_3d_dock_widget)
         # self.dock_widgets.append(txy_3d_dock_widget)
 
-        self._setup_legacy_plotly_to_dock_widget(fig_txt_density, "fig_txt_density")
-        self._setup_legacy_plotly_to_dock_widget(fig_txy_3d, "fig_txy_3d")
-        self._setup_legacy_plotly_to_dock_widget(fig_shots_scan, "fig_shots_scan")
-        self._setup_legacy_plotly_to_dock_widget(fig_shots_transfer, "fig_shots_transfer")
-        self._setup_legacy_plotly_to_dock_widget(fig_pulse_eff_fitted, "fig_pulse_eff_fitted")
+        try:
+            from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density, fig_txy_3d, fig_shots_scan, fig_pulse_eff_fitted, fig_shots_transfer
+            self._setup_legacy_plotly_to_dock_widget(fig_txt_density, "fig_txt_density")
+            self._setup_legacy_plotly_to_dock_widget(fig_txy_3d, "fig_txy_3d")
+            self._setup_legacy_plotly_to_dock_widget(fig_shots_scan, "fig_shots_scan")
+            self._setup_legacy_plotly_to_dock_widget(fig_shots_transfer, "fig_shots_transfer")
+            self._setup_legacy_plotly_to_dock_widget(fig_pulse_eff_fitted, "fig_pulse_eff_fitted")
+        except Exception as e:
+            logging.error(f"Failed to load legacy_plotly.scattering_proj_monitori_dld: {e}")
+            # Add placeholder dock widgets to the middle main window
+            dock_widget1 = QDockWidget("Dock Widget 1", self)
+            dock_widget_placeholder_label_1 = QLabel("Content of Dock Widget 1")
+            dock_widget_placeholder_label_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            dock_widget1.setWidget(dock_widget_placeholder_label_1)
+            self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget1)
+            self.dock_widgets.append(dock_widget1)
 
+            dock_widget2 = QDockWidget("Dock Widget 2", self)
+            dock_widget_placeholder_label_2 = QLabel("Content of Dock Widget 2")
+            dock_widget_placeholder_label_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            dock_widget2.setWidget(dock_widget_placeholder_label_2)
+            self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget2)
+            self.dock_widgets.append(dock_widget2)
+
+            dock_widget3 = QDockWidget("Dock Widget 3", self)
+            dock_widget_placeholder_label_3 = QLabel("Content of Dock Widget 3")
+            dock_widget_placeholder_label_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            dock_widget3.setWidget(dock_widget_placeholder_label_3)
+            self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget3)
+            self.dock_widgets.append(dock_widget3)
 
 
         # Add the middle main window to the splitter
