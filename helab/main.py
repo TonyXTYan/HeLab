@@ -9,8 +9,9 @@ from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication
 
 from helab.resources.icons import StatusIcons, ToolIcons, IconsInitUtil
+from helab.utils.constants import *
 from helab.utils.loggingSetup import setup_logging
-from helab.views.helabMainWindow import MainWindow, APP_VERSION, APP_COMMIT_HASH
+from helab.views.helabMainWindow import MainWindow
 
 
 

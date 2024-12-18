@@ -15,3 +15,12 @@ pympler
 pyinstaller
 psutil
 coloredlogs
+plotly
+dash
+numpy
+PyQt6-WebEngine
+kaleido
+matplotlib
+uncertainties
+pandas
+scipy

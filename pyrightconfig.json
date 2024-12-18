@@ -1,0 +1,5 @@
+{
+    "exclude": [
+        "helab/scripts/legacy_plotly"
+    ]
+}

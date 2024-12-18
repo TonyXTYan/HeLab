@@ -86,3 +86,4 @@ Icon?
 helab.egg-info
 coverage.xml
 .coverage
+helab_tempfiles

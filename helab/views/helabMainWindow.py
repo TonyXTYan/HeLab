@@ -1,61 +1,34 @@
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
+import tempfile
+import types
+from typing import List, Optional
 
 import psutil
-from PyQt6.QtCore import Qt, QDir, QSize, QTimer, QThreadPool, QSettings, QEvent, QFileInfo, QItemSelection, QModelIndex
-from PyQt6.QtGui import QAction, QIcon, QPalette, QColor, QPixmap, QTransform, QCloseEvent
-from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QTabWidget, QSplitter, \
-    QLabel, QToolBar, QStyle, QSizePolicy, QToolTip, QApplication, QStyleFactory, QFileDialog
-from pytablericons import TablerIcons, OutlineIcon
+from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl
+from PyQt6.QtGui import QAction, QIcon, QCloseEvent, QPixmap
+from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
+    QLabel, QToolBar, QSizePolicy, QFileDialog
+from numpy.f2py.crackfortran import include_paths
 
-from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.resources.icons import ToolIcons
+from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density, fig_txy_3d, fig_shots_scan, \
+    fig_pulse_eff_fitted, fig_shots_transfer
+from helab.utils.constants import *
 from helab.views.folderExplorer import FolderExplorer
 from helab.views.folderTabsWidget import FolderTabWidget
 from helab.views.settingsDialog import SettingsDialog
 from helab.views.debugIcons import DebugIconsWindow
 
-# TOOLBAR_STYLESHEET_LR = """
-# QToolBar {
-#     background: none;
-#     border: none;
-#     spacing: 5px;
-# }
-# """
-TOOLBAR_STYLESHEET_LR = """
-QToolBar {
-    spacing: 5px;
-    padding: 2px;
-}
-"""
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+# sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
+# from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density
+import plotly
 
-
-# Function to extract version from setup.py
-def get_version() -> str:
-    with open('setup.py', 'r', encoding='utf-8') as f:
-        content = f.read()
-        match = re.search(r'version\s*=\s*[\'"]([^\'"]+)[\'"]', content)
-        if match:
-            return match.group(1)
-    return '0.0.0'  # Default version if not found
-
-def get_git_commit_hash() -> str:
-    try:
-        commit_hash = subprocess.check_output(
-            ['git', 'rev-parse', 'HEAD'],
-            stderr=subprocess.STDOUT
-        ).decode('utf-8').strip()
-        return commit_hash[:6].upper()  # Return only the first 6 characters
-    except Exception:
-        return 'unknown'
-
-
-
-APP_VERSION = get_version()
-APP_COMMIT_HASH = get_git_commit_hash()
 
 
 
@@ -65,10 +38,17 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
+        logging.debug(f"Current directory is {CURRENT_WORKING_DIRECTORY}")
+        if not os.path.exists(TEMPFILES_DIR): os.makedirs(TEMPFILES_DIR)
 
+        self.current_tracking_folder_path = '/'
+        self.named_temp_files: List[tempfile._TemporaryFileWrapper[bytes]] = []
+
+
+        signal.signal(signal.SIGINT, self.handle_exit)
+        signal.signal(signal.SIGTERM, self.handle_exit)
 
         # current directory is
-        logging.debug(f"Current directory is {os.getcwd()}")
 
         self.process = psutil.Process()
         self.setWindowIcon(QIcon("./helab/resources/icons/ai-icon.icns")) # this doesn't do anything on macos (?)
@@ -144,8 +124,9 @@ class MainWindow(QMainWindow):
         # self.add_new_folder_explorer_tab()
         # Delay the execution of add_new_folder_explorer_tab until the GUI is loaded
         QTimer.singleShot(10, self.add_new_folder_explorer_tab)
-        QTimer.singleShot(15, self.update_tool_enabled_state)
+        QTimer.singleShot(50, self.update_tool_enabled_state)
         # QTimer.singleShot(20, self.on_folder_explorer_selection_changed)
+        QTimer.singleShot(100, self.action_tab_refresh.trigger)
 
 
 
@@ -286,20 +267,7 @@ class MainWindow(QMainWindow):
         # Create the main horizontal splitter
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.setCentralWidget(self.splitter)
-        self.splitter.setStyleSheet("""
-            QSplitter::handle {
-                background: #d8d8d8;  /* Light gray background for the handle */
-            }
-            QSplitter::handle:horizontal {
-                width: 4px;
-            }
-            QSplitter::handle:vertical {
-                height: 4px;
-            }
-            QSplitter::handle:hover {
-                background: #000000;  /* Darker gray when hovered */
-            }
-        """)
+        self.splitter.setStyleSheet(QSPLITTER_STYLESHEET)
 
         self._setup_left_toolbar()
         self._setup_left_side()
@@ -498,6 +466,25 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.right_panel)
 
 
+    # REVIEW: these can be moved somewhere else
+    # def plotly_to_dock_widget(self, plotly_fig: plotly.graph_objs.Figure, dock_widget_title: str) -> (tempfile.NamedTemporaryFile, QDockWidget):
+    def _setup_legacy_plotly_to_dock_widget(self, plotly_fig: plotly.graph_objs.Figure, dock_widget_title: str) -> None:
+        plotly_fig_html = plotly_fig.to_html()
+        plotly_view = QWebEngineView()
+        plotly_temp = tempfile.NamedTemporaryFile(prefix="plotly_", suffix='.html', dir=TEMPFILES_DIR)
+        self.named_temp_files.append(plotly_temp)
+        plotly_temp.write(plotly_fig_html.encode('utf-8'))
+        plotly_temp_html_filename = plotly_temp.name
+        logging.debug(f"plotly_to_dock_widget: title: {dock_widget_title}, tempfile: {plotly_temp_html_filename}")
+        plotly_view.load(QUrl.fromLocalFile(plotly_temp_html_filename))
+        plotly_dock_widget = QDockWidget(dock_widget_title, self)
+        plotly_dock_widget.setWidget(plotly_view)
+        # return plotly_temp, plotly_dock_widget
+        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, plotly_dock_widget)
+        self.dock_widgets.append(plotly_dock_widget)
+        # self.named_temp_files.append(plotly_temp)
+
+
     def _setup_middle_area(self) -> None:
         # Middle area (main content area)
         self.middle_mainwindow = QMainWindow()
@@ -505,55 +492,104 @@ class MainWindow(QMainWindow):
         self.central_placeholder = QLabel("Main Content Area")
         self.central_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.middle_mainwindow.setCentralWidget(self.central_placeholder)
+        self.dock_widgets: List[QDockWidget] = []
 
-        # Add dock widgets to the middle main window
-        dock_widget1 = QDockWidget("Dock Widget 1", self)
-        dock_widget_placeholder_label_1 = QLabel("Content of Dock Widget 1")
-        dock_widget_placeholder_label_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dock_widget1.setWidget(dock_widget_placeholder_label_1)
-        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget1)
+        # # Add placeholder dock widgets to the middle main window
+        # dock_widget1 = QDockWidget("Dock Widget 1", self)
+        # dock_widget_placeholder_label_1 = QLabel("Content of Dock Widget 1")
+        # dock_widget_placeholder_label_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # dock_widget1.setWidget(dock_widget_placeholder_label_1)
+        # self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget1)
+        #
+        # dock_widget2 = QDockWidget("Dock Widget 2", self)
+        # dock_widget_placeholder_label_2 = QLabel("Content of Dock Widget 2")
+        # dock_widget_placeholder_label_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # dock_widget2.setWidget(dock_widget_placeholder_label_2)
+        # self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget2)
+        #
+        # dock_widget3 = QDockWidget("Dock Widget 3", self)
+        # dock_widget_placeholder_label_3 = QLabel("Content of Dock Widget 3")
+        # dock_widget_placeholder_label_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # dock_widget3.setWidget(dock_widget_placeholder_label_3)
+        # self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget3)
 
-        dock_widget2 = QDockWidget("Dock Widget 2", self)
-        dock_widget_placeholder_label_2 = QLabel("Content of Dock Widget 2")
-        dock_widget_placeholder_label_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dock_widget2.setWidget(dock_widget_placeholder_label_2)
-        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget2)
 
-        dock_widget3 = QDockWidget("Dock Widget 3", self)
-        dock_widget_placeholder_label_3 = QLabel("Content of Dock Widget 3")
-        dock_widget_placeholder_label_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dock_widget3.setWidget(dock_widget_placeholder_label_3)
-        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget3)
+        # # txy_density_plot = fig_txt_density(self.current_tracking_folder_path)
+        # txy_density_plot = fig_txt_density
+        # # txy_density_html = txy_density_plot.to_html(include_plotlyjs='cdn')
+        # txy_density_html = txy_density_plot.to_html()
+        # # txy_density_html = plotly.io.to_html(txy_density_plot, include_plotlyjs='cdn')
+        # txy_density_view = QWebEngineView()
+        # # txy_density_view.setHtml(txy_density_html)
+        # # txy_density_view.setHtml("<h1>HELLO WORLD</h1>")
+        # # txy_density_view.load(QUrl("https://www.google.com"))
+        # # txy_density_view.load(QUrl("/Users/tonyyan/Documents/_ANU/_He_BEC_Group/He34_Scattering/Rabi_Oscillations/iframe_figures/figure_165.html"))
+        # # txy_density_view.load(QUrl("file:///Users/tonyyan/Documents/_ANU/_He_BEC_Group/He34_Scattering/Rabi_Oscillations/iframe_figures/figure_165.html"))    # THIS WORKS
+        # # txy_density_view.load(QUrl.fromLocalFile("/Users/tonyyan/Documents/_ANU/_He_BEC_Group/He34_Scattering/Rabi_Oscillations/iframe_figures/figure_165.html"))    # THIS WORKS
+        # # with tempfile.NamedTemporaryFile(delete=False, suffix='.html') as f:
+        # #     f.write(txy_density_html.encode('utf-8'))
+        # #     txy_density_temp_html_filename = f.name
+        #     # txy_density_plot.
+        # txy_density_temp = tempfile.NamedTemporaryFile(prefix="txy_density_", suffix='.html', dir=TEMPFILES_DIR)
+        # self.named_temp_files.append(txy_density_temp)
+        # txy_density_temp.write(txy_density_html.encode('utf-8'))
+        # txy_density_temp_html_filename = txy_density_temp.name
+        # logging.debug(f"txy_density_temp_html_filename = {txy_density_temp_html_filename}")
+        # txy_density_view.load(QUrl.fromLocalFile(txy_density_temp_html_filename))
+        # # txy_density_view.load(QUrl(f"file://{txy_density_temp_html_filename}"))
+        # # txy_density_view.load(QUrl.fromLocalFile("/var/folders/28/6kl95rk567xgr9h1r_nstsfm0000gn/T/tmp_jgyy9hc.html")) # Doesn't work
+        # txy_density_dock_widget = QDockWidget("fig_txt_density", self)
+        # txy_density_dock_widget.setWidget(txy_density_view)
+        # self.dock_widgets.append(txy_density_dock_widget)
+        #
+        # self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, txy_density_dock_widget)
+        #
+        # # txy_density_png = txy_density_plot.to_image(format="png")
+        # # # Create QLabel to display the PNG image
+        # # txy_density_image_label = QLabel()
+        # # txy_density_pixmap = QPixmap()
+        # # txy_density_pixmap.loadFromData(txy_density_png)
+        # # txy_density_image_label.setPixmap(txy_density_pixmap)
+        # # txy_density_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # # # Create QDockWidget for the PNG image
+        # # txy_density_image_dock_widget = QDockWidget("fig_txt_density Image", self)
+        # # txy_density_image_dock_widget.setWidget(txy_density_image_label)
+        # # self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,txy_density_image_dock_widget)
+        #
+        #
+        #
+        # txy_3d_plot = fig_txt_density
+        # txy_3d_html = txy_3d_plot.to_html()
+        # txy_3d_view = QWebEngineView()
+        # txy_3d_temp = tempfile.NamedTemporaryFile(prefix="txy_3d_", suffix='.html', dir=TEMPFILES_DIR)
+        # self.named_temp_files.append(txy_3d_temp)
+        # txy_3d_temp.write(txy_3d_html.encode('utf-8'))
+        # txy_3d_temp_html_filename = txy_3d_temp.name
+        # logging.debug(f"txy_3d_temp_html_filename = {txy_3d_temp_html_filename}")
+        # txy_3d_view.load(QUrl.fromLocalFile(txy_3d_temp_html_filename))
+        # txy_3d_dock_widget = QDockWidget("fig_txt_density 3D", self)
+        # txy_3d_dock_widget.setWidget(txy_3d_view)
+        # self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, txy_3d_dock_widget)
+        # self.dock_widgets.append(txy_3d_dock_widget)
+
+        self._setup_legacy_plotly_to_dock_widget(fig_txt_density, "fig_txt_density")
+        self._setup_legacy_plotly_to_dock_widget(fig_txy_3d, "fig_txy_3d")
+        self._setup_legacy_plotly_to_dock_widget(fig_shots_scan, "fig_shots_scan")
+        self._setup_legacy_plotly_to_dock_widget(fig_shots_transfer, "fig_shots_transfer")
+        self._setup_legacy_plotly_to_dock_widget(fig_pulse_eff_fitted, "fig_pulse_eff_fitted")
+
+
 
         # Add the middle main window to the splitter
         self.splitter.addWidget(self.middle_mainwindow)
 
         # Keep track of dock widgets
-        self.dock_widgets = [dock_widget1, dock_widget2, dock_widget3]
+        # self.dock_widgets = [dock_widget1, dock_widget2, dock_widget3, txy_density_dock_widget]
 
         # Connect signals to check if dock widgets are closed
         for dock_widget in self.dock_widgets:
             dock_widget.visibilityChanged.connect(self.update_placeholder_visibility)
-            dock_widget.setStyleSheet("""
-                    QDockWidget {
-                        background: #f0f0f0;  /* Light gray background */
-                        border: 0px solid #cccccc;  /* Light gray border */
-                    }
-                    QDockWidget::title {
-                        background: #e0e0e0;  /* Slightly darker gray for the title */
-                        padding: 2px;
-                    }
-                    QDockWidget::close-button, QDockWidget::float-button {
-                        border: none;
-                        background: transparent;
-                    }
-                    QDockWidget::close-button:hover, QDockWidget::float-button:hover {
-                        background: #d0d0d0;  /* Darker gray when hovered */
-                    }
-                    QDockWidget:hover {
-                        border: 1px solid #000000;  /* Black border when hovered */
-                    }
-                """)
+            dock_widget.setStyleSheet(QDOCKWIDGET_STYLESHEET)
 
         # Initial check to set placeholder visibility
         self.update_placeholder_visibility()
@@ -662,6 +698,7 @@ class MainWindow(QMainWindow):
             file_info = QFileInfo(selected_path)
             if file_info.isDir():
                 folder_name = file_info.fileName()
+                self.current_tracking_folder_path = selected_path
                 self.setWindowTitle(f"HeLab    Folder: {folder_name}")
             else:
                 self.setWindowTitle(f"HeLab    Invalid Path (?)")
@@ -709,14 +746,21 @@ class MainWindow(QMainWindow):
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         logging.info("MainWindow closeEvent")
 
+        for temp_file in self.named_temp_files:
+            temp_file.close()
+
         # Save settings
         # settings = QSettings("ANU", "HeLab")
         # settings.setValue("geometry", self.saveGeometry())
         # settings.setValue("windowState", self.saveState())
         # super().closeEvent(a0)
+
+        logging.info("MainWindow closeEvent done")
         pass
 
-
+    def handle_exit(self, signum: int, frame: Optional[types.FrameType]) -> None:
+        # self.closeEvent(None)
+        self.close()
 
 
 
