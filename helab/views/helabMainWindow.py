@@ -13,6 +13,7 @@ from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelecti
 from PyQt6.QtGui import QAction, QIcon, QCloseEvent, QPixmap
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QFileDialog
+from humanfriendly.terminal import message
 from numpy.f2py.crackfortran import include_paths
 
 from helab.resources.icons import ToolIcons
@@ -39,7 +40,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         logging.debug(f"Current directory is {CURRENT_WORKING_DIRECTORY}")
-        if not os.path.exists(TEMPFILES_DIR): os.makedirs(TEMPFILES_DIR)
+        if not os.path.exists(DIR_TEMPS): os.makedirs(DIR_TEMPS)
 
         self.current_tracking_folder_path = '/'
         self.named_temp_files: List[tempfile._TemporaryFileWrapper[bytes]] = []
@@ -150,6 +151,13 @@ class MainWindow(QMainWindow):
             self.action_tab_cancel.setEnabled(True)
             self.tab_widget.set_tab_switching_disable()
             self.set_tools_and_tabs_disable()
+
+            if sum(queue_depths) < 10:
+                working_paths =  list(self.tab_widget.running_workers_status.keys())
+                working_paths += list(self.tab_widget.running_workers_deep.keys())
+                working_paths += list(self.tab_widget.running_workers_hasChildren.keys())
+                message_string = f"Working on: {working_paths}"
+                logging.debug(message_string)
 
         else:
             self.status_bar_message_left.setText(f"Threads Pool Standby")
@@ -471,7 +479,7 @@ class MainWindow(QMainWindow):
     def _setup_legacy_plotly_to_dock_widget(self, plotly_fig: plotly.graph_objs.Figure, dock_widget_title: str) -> None:
         plotly_fig_html = plotly_fig.to_html()
         plotly_view = QWebEngineView()
-        plotly_temp = tempfile.NamedTemporaryFile(prefix="plotly_", suffix='.html', dir=TEMPFILES_DIR)
+        plotly_temp = tempfile.NamedTemporaryFile(prefix="plotly_", suffix='.html', dir=DIR_TEMPS)
         self.named_temp_files.append(plotly_temp)
         plotly_temp.write(plotly_fig_html.encode('utf-8'))
         plotly_temp_html_filename = plotly_temp.name

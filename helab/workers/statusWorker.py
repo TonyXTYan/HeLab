@@ -9,7 +9,7 @@ import logging
 from PyQt6.QtTest import QTest
 
 from helab.resources.icons import StatusIcons, IconsInitUtil
-from helab.utils.osCached import os_isdir, os_listdir, os_scandir
+from helab.utils.osCached import os_isdir, os_listdir, os_scandir, os_scandir_async
 
 
 # from helab.models.helabFileSystemModel import helabFileSystemModel
@@ -34,6 +34,7 @@ class StatusWorker(QRunnable):
         logging.debug(f"StatusWorker started for: {self.file_path}")
         if self._is_canceled:
             logging.debug(f"StatusWorker canceled for: {self.file_path}")
+            self.signals.finished.emit(self.file_path, 'canceled', -1, [])
             return
 
         # self._run_helper_simulate()
@@ -83,8 +84,13 @@ class StatusWorker(QRunnable):
             # dirs = os.listdir(self.file_path)
 
             # list all files in the directory
-            files = os.listdir(self.file_path)
-            # files = os_scandir(self.file_path)
+            # files = os.listdir(self.file_path)
+            # future = os_scandir_async(self.file_path)
+            # files_scan = future.result()
+            files_scan = os_scandir(self.file_path)
+            files = [entry.name for entry in files_scan if entry.is_file()]
+            # with os_scandir(self.file_path) as it:
+            #     files = [entry.name for entry in it if entry.is_file()]
             logging.debug(f"StatusWorker._run_helper_v1: files in {self.file_path}: counted {len(files)}")
 
         except PermissionError as e:
@@ -109,12 +115,14 @@ class StatusWorker(QRunnable):
 
         logging.debug(f"StatusWorker._run_helper_v1: d_files: {d_files_len}, d_txy_files: {d_txy_files_len}")
 
+        if self._is_canceled:
+            self.signals.finished.emit(self.file_path, 'canceled', -1, [])
+            return
+
         if d_files_len == 0 and d_txy_files_len == 0:
             self.signals.finished.emit(self.file_path, 'nothing', -1, [])
-            return
         elif d_files_len == 0 or d_txy_files_len == 0:
             self.signals.finished.emit(self.file_path, 'warning', max(d_files_len, d_txy_files_len), [])
-            return
         elif d_files_len != d_txy_files_len:
             self.signals.finished.emit(self.file_path, 'warning', max(d_files_len, d_txy_files_len), [])
         elif d_files_len == d_txy_files_len:

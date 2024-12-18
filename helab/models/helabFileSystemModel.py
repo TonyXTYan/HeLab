@@ -10,9 +10,12 @@ from PyQt6.QtGui import QFileSystemModel, QIcon, QColor
 from PyQt6.QtWidgets import QApplication
 from cachetools import LRUCache, TTLCache
 from pympler import asizeof
+from pympler.web import refresh
 from pytablericons import TablerIcons, OutlineIcon, FilledIcon
 
-from helab.utils.osCached import os_isdir, os_listdir, os_listdir_cache, os_isdir_cache, os_scandir_cache
+from helab.utils.osCached import os_isdir, os_listdir, os_listdir_cache, os_isdir_cache, os_scandir_cache, os_scandir, \
+    os_scandir_list
+# from helab.utils.osCached import os_isdir, os_listdir, os_scandir
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.statusDeepWorker import StatusDeepWorker
 # from helab.utils.loggingSetup import setup_logging
@@ -188,7 +191,8 @@ class helabFileSystemModel(QFileSystemModel):
             worker = StatusWorker(folder_path)
             worker.signals.finished.connect(self.handle_status_computed)
             # self.thread_pool.start(worker)
-            QTimer.singleShot(5, lambda: self.thread_pool.start(worker))
+            worker.setAutoDelete(True)
+            QTimer.singleShot(5, lambda: self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value))
             # self.running_workers.add(worker)
             self.running_workers_status[folder_path] = worker
             return ('loading', 0, [])
@@ -228,7 +232,15 @@ class helabFileSystemModel(QFileSystemModel):
     def on_directory_loaded(self, path: str) -> None:
         # Invalidate cache entries for the loaded directory
         # self.invalidate_cache_for_directory(path)
-        logging.debug(f"Directory loaded: {path} \t ditch cache??")
+        logging.debug(f"Directory loaded: {path} (POP)")
+        # QTimer.singleShot(10, lambda: self.status_cache.pop(path, None))
+        self.status_cache.pop(path, None)
+        # joblib_memory.cache(func=os_scandir).clear()
+        # joblib_memory.clear(warn=False, func=os_listdir, args=(path,))
+        # joblib_memory.clear
+        os_listdir_cache.pop(path, None)
+        os_scandir_cache.pop(path, None)
+        # os_isdir_cache.pop(path, None)
 
     def on_file_renamed(self, path: str, old_name: str, new_name: str) -> None:
         # Remove the old path from the cache
@@ -254,6 +266,8 @@ class helabFileSystemModel(QFileSystemModel):
                 index = self.index(row, column, topLeft.parent())
                 file_path = self.filePath(index)
                 logging.debug(f"Data changed for: {file_path}")
+
+        # self.refresh()
 
     def on_model_reset(self) -> None:
         # Clear the entire cache
@@ -354,7 +368,7 @@ class helabFileSystemModel(QFileSystemModel):
         # self.beginResetModel()
         # self.endResetModel()
         self.directoryLoaded.emit(self.rootPath())
-        logging.info("helabFileSystemModel has been refreshed.")
+        logging.debug("helabFileSystemModel has been refreshed.")
 
     # @cachetools.cached(CACHE_HAS_CHILDREN)
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
@@ -373,11 +387,15 @@ class helabFileSystemModel(QFileSystemModel):
                 return False
             else:
                 logging.debug(f"hasChildren new worker at: {dir_path}")
-                logging.debug(f"os_listdir_cache: {os_listdir_cache.currsize}, os_scandir_cache: {os_scandir_cache.currsize}, os_isdir_cache: {os_isdir_cache.currsize}, hasChildren_cache: {self.hasChildren_cache.currsize}")
+                logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {self.hasChildren_cache.currsize}")
+                # logging.debug(f"os_listdir_cache: {os_listdir_cache.currsize}, os_scandir_cache: {os_scandir_cache.currsize}, os_isdir_cache: {os_isdir_cache.currsize}, hasChildren_cache: {self.hasChildren_cache.currsize}")
+                # logging.debug(f"os_listdir_cache: {os_listdir_cache.volume()}, os_scandir_cache: {os_scandir_cache.volume()}, os_isdir_cache: {os_isdir_cache.volume()}, hasChildren_cache: {self.hasChildren_cache.currsize}")
+                # logging.debug(f"hasChildren_cache: {self.hasChildren_cache.currsize}")
                 worker = DirectoryCheckWorker(dir_path)
                 worker.signals.finished.connect(self.on_has_children_finished)
-                # self.thread_pool.start(worker)
-                QTimer.singleShot(10, lambda: self.thread_pool.start(worker))
+                worker.setAutoDelete(True)
+                self.thread_pool.start(worker, priority=QThread.Priority.HighPriority.value)
+                # QTimer.singleShot(10, lambda: self.thread_pool.start(worker))
                 self.running_workers_hasChildren[dir_path] = worker
                 return False
 
@@ -432,3 +450,6 @@ class helabFileSystemModel(QFileSystemModel):
         if dir_path in self.running_workers_hasChildren:
             del self.running_workers_hasChildren[dir_path]
             # logging.debug(f"Worker removed from running_workers_hasChildren for: {dir_path}")
+
+        logging.debug(f"on_has_children_finished for: {dir_path}: {has_children}")
+        logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {self.hasChildren_cache.currsize}")

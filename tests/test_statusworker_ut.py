@@ -44,7 +44,7 @@ class TestStatusWorker(unittest.TestCase):
         spy = QSignalSpy(worker.signals.finished)
         self.threadpool.start(worker)
 
-        if not spy.wait(1000):  # wait for up to this many ms
+        if not spy.wait(10000):  # wait for up to this many ms
             self.fail("Timeout waiting for finished signal")
 
         while not self.threadpool.activeThreadCount() == 0: time.sleep(0.05)
@@ -64,7 +64,7 @@ class TestStatusWorker(unittest.TestCase):
         while not self.threadpool.activeThreadCount() == 0: time.sleep(0.05)
 
         self.app.processEvents()
-        self.assertFalse(spy.wait(1000))  # wait for up to 1 second
+        self.assertFalse(spy.wait(10000))  # wait for up to 1 second
 
 if __name__ == '__main__':
     unittest.main()

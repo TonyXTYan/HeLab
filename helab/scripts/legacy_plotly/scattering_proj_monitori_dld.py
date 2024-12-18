@@ -125,7 +125,12 @@ phase = {str(round(self.popt[4], 5))} ± {str(round(self.pcov[4, 4] ** 0.5, 4))}
 
 # +
 # path_data_folder = '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - He_ BEC-DFG Lab Jumbo Archives/temp working data/20230913_bragg_beams_k=0,-1_Pulse_length_scan_4'
-path_data_folder = '/Volumes/tonyNVME Gold/dld output/20230913_bragg_beams_k=0,-1_Pulse_length_scan_3'
+path_data_folder_candadiate = [
+    '/Volumes/tonyNVME Gold/dld output/20230913_bragg_beams_k=0,-1_Pulse_length_scan_3',
+    'O:\\20230913_bragg_beams_k=0,-1_Pulse_length_scan_3',
+    ]
+path_data_folder = next((path for path in path_data_folder_candadiate if os.path.exists(path)), '')
+
 path_log_Keysight = path_data_folder + "/log_KeysightMatlab.txt"
 
 rangeTime = (1.85, 1.92)

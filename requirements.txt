@@ -24,3 +24,5 @@ matplotlib
 uncertainties
 pandas
 scipy
+joblib
+dogpile.cache

@@ -80,4 +80,6 @@ APP_VERSION = get_version()
 APP_COMMIT_HASH = get_git_commit_hash()
 
 CURRENT_WORKING_DIRECTORY = os.getcwd()
-TEMPFILES_DIR = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_tempfiles')
+DIR_TEMPS = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps')
+
+DIR_CACHES = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches')

@@ -87,3 +87,5 @@ helab.egg-info
 coverage.xml
 .coverage
 helab_tempfiles
+helab_caches
+helab_temps
