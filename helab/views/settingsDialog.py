@@ -5,6 +5,10 @@ from typing import Optional
 
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QLineEdit, QLabel, QTabWidget, QWidget
 from PyQt6.QtCore import QSettings
+from diskcache import FanoutCache
+
+from helab.utils.cachingSetup import *
+
 
 class SettingsDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -87,6 +91,51 @@ class SettingsDialog(QDialog):
         # self.main_layout.setStretch(1, 0)
 
 
+        # Cache Tab
+        self.cache_tab = QWidget()
+        self.cache_layout = QVBoxLayout(self.cache_tab)
+
+        self.caches = [
+            ('os_listdir_cache', os_listdir_cache),
+            ('os_scandir_cache', os_scandir_cache),
+            ('os_isdir_cache', os_isdir_cache),
+            ('status_cache', status_cache),
+            ('hasChildren_cache', hasChildren_cache),
+        ]
+
+        self.cache_widgets = []
+
+        for cache_name, cache in self.caches:
+            cache_widget = QWidget()
+            cache_layout = QHBoxLayout(cache_widget)
+
+            cache_label = QLabel(cache_name)
+            cache_layout.addWidget(cache_label)
+
+            cache_size_label = QLabel()
+            cache_layout.addWidget(cache_size_label)
+
+            clear_button = QPushButton("Clear Cache")
+            clear_button.clicked.connect(lambda _, c=cache: self.clear_cache(c))
+            cache_layout.addWidget(clear_button)
+
+            self.cache_widgets.append({
+                'cache_name': cache_name,
+                'cache': cache,
+                'size_label': cache_size_label,
+            })
+
+            self.cache_layout.addWidget(cache_widget)
+
+        clear_all_button = QPushButton("Clear All Caches")
+        clear_all_button.clicked.connect(self.clear_all_caches)
+        self.cache_layout.addWidget(clear_all_button)
+
+        self.tabs.addTab(self.cache_tab, "Cache")
+
+        self.update_cache_info()
+
+
     def load_settings(self) -> None:
         settings = QSettings("ANU", "HeLab")
         self.example_checkbox.setChecked(settings.value("example_checkbox", False, type=bool))
@@ -99,3 +148,19 @@ class SettingsDialog(QDialog):
         settings.setValue("example_text", self.example_text.text())
         self.accept()
         logging.debug("Settings saved")
+
+    def clear_cache(self, cache: FanoutCache) -> None:
+        cache.clear()
+        self.update_cache_info()
+
+    def clear_all_caches(self) -> None:
+        for cache_info in self.cache_widgets:
+            cache_info['cache'].clear()
+        self.update_cache_info()
+
+    def update_cache_info(self) -> None:
+        for cache_info in self.cache_widgets:
+            cache = cache_info['cache']
+            size_label = cache_info['size_label']
+            cache_size_MB = cache.volume() / 1000 / 1000  # MB
+            size_label.setText(f"Size: {cache_size_MB:<6.2f} MB")

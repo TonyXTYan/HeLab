@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QTabWidget, QWidget, QMessageBox, QTabBar
 from cachetools import LRUCache, TTLCache
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
+from helab.utils.cachingSetup import status_cache, hasChildren_cache
 from helab.views.folderExplorer import FolderExplorer
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.statusDeepWorker import StatusDeepWorker
@@ -31,8 +32,10 @@ class FolderTabWidget(QTabWidget):
                 """)
 
         # Initialize shared resources
-        self.status_cache: LRUCache[str, Tuple[str, int, List[str]]] = LRUCache(maxsize=10*1000)
-        self.hasChildren_cache: TTLCache[str, bool] = TTLCache(maxsize=100*1000, ttl=24*60*60)
+        # self.status_cache: LRUCache[str, Tuple[str, int, List[str]]] = LRUCache(maxsize=10*1000)
+        # self.hasChildren_cache: TTLCache[str, bool] = TTLCache(maxsize=100*1000, ttl=24*60*60)
+        self.status_cache = status_cache
+        self.hasChildren_cache = hasChildren_cache
 
         thread_pool = QThreadPool.globalInstance()
         if thread_pool is None:

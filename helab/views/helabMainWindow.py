@@ -17,9 +17,11 @@ from humanfriendly.terminal import message
 from numpy.f2py.crackfortran import include_paths
 
 from helab.resources.icons import ToolIcons
+from helab.utils.cachingSetup import status_cache, hasChildren_cache
 from helab.utils.constants import *
-from helab.utils.osCached import os_listdir_cache, os_scandir_cache, os_isdir_cache, os_listdir, os_scandir, os_isdir, \
-    os_scandir_list
+# from helab.utils.os_cached import , os_scandir_cache, os_isdir_cache, os_listdir, os_scandir, os_isdir, os_scandir_cache
+from helab.utils.os_cached import *
+from helab.utils.cachingSetup import *
 from helab.views.folderExplorer import FolderExplorer
 from helab.views.folderTabsWidget import FolderTabWidget
 from helab.views.settingsDialog import SettingsDialog
@@ -142,14 +144,18 @@ class MainWindow(QMainWindow):
         # queue_depth = len(self.tab_widget.running_workers_status) + len(self.tab_widget.running_workers_deep) + len(self.tab_widget.running_workers_hasChildren)
         queue_depths = (len(self.tab_widget.running_workers_status), len(self.tab_widget.running_workers_deep), len(self.tab_widget.running_workers_hasChildren))
 
-        def _cache_status_stirng() -> str:
-            cache_str = "Cache status:\n"
-            cache_str += f"  tab_widget.status_cache:      {len(self.tab_widget.status_cache)} items\n"
-            cache_str += f"  tab_widget.hasChildren_cache: {len(self.tab_widget.hasChildren_cache)} items\n"
-            cache_str += f"  os_listdir_cache: {os_listdir.cache_info()}\n"           # type: ignore[attr-defined]
-            cache_str += f"  os_scandir_cache: {os_scandir_list.cache_info()}\n"      # type: ignore[attr-defined]
-            cache_str += f"  os_isdir_cache:   {os_isdir.cache_info()}\n"             # type: ignore[attr-defined]
-            return cache_str
+        if not self.isActiveWindow():
+            QToolTip.hideText()
+
+        # def _cache_status_stirng_old_cachetools() -> str:
+        #     # return "TODO"
+        #     cache_str = "Cache status:\n"
+        #     cache_str += f"  tab_widget.status_cache:      {len(self.tab_widget.status_cache)} items\n"
+        #     cache_str += f"  tab_widget.hasChildren_cache: {len(self.tab_widget.hasChildren_cache)} items\n"
+        #     cache_str += f"  os_listdir_cache: {os_listdir.cache_info()}\n"           # type: ignore[attr-defined]
+        #     cache_str += f"  os_scandir_cache: {os_scandir_list.cache_info()}\n"      # type: ignore[attr-defined]
+        #     cache_str += f"  os_isdir_cache:   {os_isdir.cache_info()}\n"             # type: ignore[attr-defined]
+        #     return cache_str
 
         tooltip_string = "Threadpool status: "
         if sum(queue_depths) > 0:
@@ -217,7 +223,7 @@ class MainWindow(QMainWindow):
                 tooltip_string += "  running_workers_hasChildren is empty\n"
             tooltip_string += "\n"
 
-            tooltip_string += _cache_status_stirng()
+            tooltip_string += cache_status_stirng()
 
             self.status_bar_message_left.setToolTip(tooltip_string)
             # self.status_bar_message_left.installEventFilter(self)
@@ -230,18 +236,19 @@ class MainWindow(QMainWindow):
                     QPoint(40, -60 + self.status_bar_message_left.height() - round(tooltip_string_num_lines * 15) ) ),
                     tooltip_string,
                     self.status_bar_message_left)
-            if self.status_timer_threadpool_hang_counts >= 50:
-                # at least 50*0.2 = 10 seconds
-                logging.warning("Long compute time detected, GUI may be unresponsive")
-                logging.warning(f"Tooltip string: \n{tooltip_string}")
-
+            # if self.status_timer_threadpool_hang_counts >= 50:
+            #     # at least 50*0.2 = 10 seconds
+            #     logging.warning("Long compute time detected, GUI may be unresponsive")
+            #     logging.warning(f"Tooltip string: \n{tooltip_string}")
+            #
             else:
-                QToolTip.hideText()
+                # QToolTip.hideText()
+                pass
 
         else:
             tooltip_string += "all done\n"
             tooltip_string += "No active threads in threadpool\n"
-            tooltip_string += _cache_status_stirng()
+            tooltip_string += cache_status_stirng()
             self.status_bar_message_left.setToolTip(tooltip_string)
             self.status_bar_message_left.setText(f"Threads Pool Standby")
             # self.status_bar_message_left.setToolTip("No active threads in threadpool")
@@ -847,8 +854,22 @@ class MainWindow(QMainWindow):
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         logging.info("MainWindow closeEvent")
 
+        for workerS in self.tab_widget.running_workers_status.values():
+            workerS.cancel()
+        for workerD in self.tab_widget.running_workers_deep.values():
+            workerD.cancel()
+        for workerC in self.tab_widget.running_workers_hasChildren.values():
+            workerC.cancel()
+
         for temp_file in self.named_temp_files:
             temp_file.close()
+
+        for dock_widget in self.dock_widgets:
+            dock_widget.close()
+
+        os_listdir_cache.close()
+        os_scandir_cache.close()
+        os_isdir_cache.close()
 
         # Save settings
         # settings = QSettings("ANU", "HeLab")

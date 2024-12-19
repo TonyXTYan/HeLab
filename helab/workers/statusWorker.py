@@ -9,7 +9,7 @@ import logging
 from PyQt6.QtTest import QTest
 
 from helab.resources.icons import StatusIcons, IconsInitUtil
-from helab.utils.osCached import os_isdir, os_listdir, os_scandir, os_scandir_async
+from helab.utils.os_cached import os_isdir, os_listdir, os_scandir
 
 
 # from helab.models.helabFileSystemModel import helabFileSystemModel
@@ -82,6 +82,8 @@ class StatusWorker(QRunnable):
                 return
             # check if self.file_path contains any directory
             # dirs = os.listdir(self.file_path)
+
+            # just_for_the_sake_of_testing = os_scandir(self.file_path)
 
             # list all files in the directory
             files = os.listdir(self.file_path)

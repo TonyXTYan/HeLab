@@ -3,7 +3,7 @@ import os
 
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable
 
-from helab.utils.osCached import os_isdir, os_listdir, os_scandir, os_scandir_async
+from helab.utils.os_cached import os_isdir, os_listdir, os_scandir
 
 
 class WorkerSignals(QObject):
@@ -25,6 +25,9 @@ class DirectoryCheckWorker(QRunnable):
             entries = [entry for entry in os_listdir(self.dir_path) if not entry.endswith('.txt') and entry not in ['cache', 'out', 'output']]
             result = any(os_isdir(os.path.join(self.dir_path, entry)) for entry in entries)
             num_non_txt_paths = len(entries)
+
+            # just_for_the_sake_of_testing = os_scandir(self.dir_path)
+
             # result = any(   #TODO test this live
             #     # os.path.isdir(os.path.join(self.dir_path, entry))
             #     # for entry in os.listdir(self.dir_path)

@@ -83,3 +83,5 @@ CURRENT_WORKING_DIRECTORY = os.getcwd()
 DIR_TEMPS = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps')
 
 DIR_CACHES = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches')
+
+OS_DIR_CACHE_TTL = 24*60*60

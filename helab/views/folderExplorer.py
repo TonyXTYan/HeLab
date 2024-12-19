@@ -10,6 +10,7 @@ from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal, QThre
 from PyQt6.QtGui import QAction, QFontInfo
 from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu
 from cachetools import LRUCache, TTLCache
+from diskcache import FanoutCache
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.views.statusIconDelegate import StatusIconDelegate
@@ -28,8 +29,8 @@ class FolderExplorer(QWidget):
                  target_path: str,
                  view_path: str,
                  columns_to_show: List[int],
-                 status_cache: LRUCache[str, Tuple[str, int, List[str]]],
-                 hasChildren_cache: TTLCache[str, bool],
+                 status_cache: FanoutCache,
+                 hasChildren_cache: FanoutCache,
                  thread_pool: QThreadPool,
                  running_workers_status: Dict[str, StatusWorker],
                  running_workers_deep: Dict[str, StatusDeepWorker],
@@ -75,9 +76,9 @@ class FolderExplorer(QWidget):
         self.tree.setModel(self.model)
         # self.tree.setRootIndex(self.model.index(dir_path))
         self.tree.setRootIndex(self.model.index(self.view_path))
-        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_NAME, 250)
+        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_NAME, 270)
         self.tree.setColumnWidth(helabFileSystemModel.COLUMN_DATE_MODIFIED, 160)
-        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_STATUS_NUMBER, 80)
+        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_STATUS_NUMBER, 60)
         self.tree.setColumnWidth(helabFileSystemModel.COLUMN_STATUS_ICON, 60)
         self.tree.setColumnWidth(helabFileSystemModel.COLUMN_RIGHTFILL, 0)
         self.tree.setAlternatingRowColors(True)

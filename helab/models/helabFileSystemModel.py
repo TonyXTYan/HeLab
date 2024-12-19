@@ -2,19 +2,20 @@ import logging
 import os
 import sys
 
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, cast, Optional
 
 import cachetools
 from PyQt6.QtCore import Qt, QThreadPool, QThread, QModelIndex, QTimer, QObject, QDir, pyqtSignal, QRunnable
 from PyQt6.QtGui import QFileSystemModel, QIcon, QColor
 from PyQt6.QtWidgets import QApplication
 from cachetools import LRUCache, TTLCache
+from diskcache import FanoutCache
 from pympler import asizeof
 from pympler.web import refresh
 from pytablericons import TablerIcons, OutlineIcon, FilledIcon
 
-from helab.utils.osCached import os_isdir, os_listdir, os_listdir_cache, os_isdir_cache, os_scandir_cache, os_scandir, \
-    os_scandir_list
+from helab.utils.os_cached import os_isdir, os_listdir, os_scandir
+from helab.utils.cachingSetup import *
 # from helab.utils.osCached import os_isdir, os_listdir, os_scandir
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.statusDeepWorker import StatusDeepWorker
@@ -40,8 +41,8 @@ class helabFileSystemModel(QFileSystemModel):
     # CACHE_HAS_CHILDREN: TTLCache[str, bool] = TTLCache(maxsize=10*1000, ttl=30)
 
     def __init__(self,
-                 status_cache: LRUCache[str, Tuple[str, int, List[str]]],
-                 hasChildren_cache: TTLCache[str, bool],
+                 status_cache: FanoutCache,
+                 hasChildren_cache: FanoutCache,
                  thread_pool: QThreadPool,
                  running_workers_status: Dict[str, StatusWorker],
                  running_workers_deep: Dict[str, StatusDeepWorker],
@@ -149,7 +150,8 @@ class helabFileSystemModel(QFileSystemModel):
     def fetch_status(self, folder_path: str) -> Tuple[str, int, List[str]]:
         # logging.debug(f"Getting status for: {folder_path}")
         # Check if the status is already cached
-        status_data = self.status_cache.get(folder_path)
+        # status_data = self.status_cache.get(folder_path)
+        status_data = cast(Optional[Tuple[str, int, List[str]]], self.status_cache.get(folder_path))
         if status_data is not None:
             if status_data[0] == 'loading':
                 # logging.debug(f"Status is loading for: {folder_path}")
@@ -167,7 +169,8 @@ class helabFileSystemModel(QFileSystemModel):
             # Check if a worker is already running for this folder_path
             if folder_path in self.running_workers_status:
                 logging.debug(f"Worker already running for: {folder_path}")
-                return self.status_cache.get(folder_path, ('loading', 0, []))
+                return ('loading', 0, [])
+                # return self.status_cache.get(folder_path, ('loading', 0, []))
 
             logging.debug(f"Status not cached for: {folder_path}")
             # Set status to 'loading' in cache with empty extra_icons
@@ -199,7 +202,8 @@ class helabFileSystemModel(QFileSystemModel):
 
     def handle_status_computed(self, file_path: str, status: str, count: int, extra_icons: List[str]) -> None:
         # logging.debug(f"Status computed for: {file_path}: {status}, {count}, Cached: {asizeof.asizeof(self.status_cache) / 1000} KB")
-        size_in_kb: int = asizeof.asizeof(self.status_cache) // 1000  # type: ignore
+        # size_in_kb: int = asizeof.asizeof(self.status_cache) // 1000  # type: ignore
+        size_in_kb = self.status_cache.volume() // 1000
         logging.debug(f"Status computed for: {file_path}: {status}, {count}, Cached: {size_in_kb} KB")
         # Update the cache with the computed status and extra icons
         self.status_cache[file_path] = (status, count, extra_icons)
@@ -276,7 +280,11 @@ class helabFileSystemModel(QFileSystemModel):
 
     def invalidate_cache_for_directory(self, directory_path: str) -> None:
         # Remove all cached entries under the given directory
-        keys_to_remove = [key for key in self.status_cache if key.startswith(directory_path)]
+        # keys_to_remove = [key for key in self.status_cache if key.startswith(directory_path)]
+        keys_to_remove = [
+            key for key in self.status_cache
+            if isinstance(key, str) and key.startswith(directory_path)
+        ]
         for key in keys_to_remove:
             del self.status_cache[key]
 
@@ -379,7 +387,8 @@ class helabFileSystemModel(QFileSystemModel):
             return False
         dir_path = file_info.absoluteFilePath()
 
-        cached_result = self.hasChildren_cache.get(dir_path)
+        # cached_result = self.hasChildren_cache.get(dir_path)
+        cached_result = cast(Optional[bool], self.hasChildren_cache.get(dir_path))
         if cached_result is not None:
             # logging.debug(f"hasChildren used cache for: {dir_path}: {cached_result}")
             return cached_result

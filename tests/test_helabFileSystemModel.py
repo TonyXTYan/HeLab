@@ -2,6 +2,9 @@ import unittest
 import sys
 from unittest.mock import MagicMock, patch
 from typing import Dict, Tuple, List
+
+from diskcache import FanoutCache
+
 from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.statusWorker import StatusWorker
@@ -11,13 +14,14 @@ from PyQt6.QtCore import QThreadPool
 
 # helab/models/test_helabFileSystemModel.py
 
+from helab.utils.cachingSetup import status_cache, hasChildren_cache
 
 
 class TestHelabFileSystemModel(unittest.TestCase):
     def setUp(self) -> None:
         # Initialize the cache and thread pool
-        self.status_cache: LRUCache[str, Tuple[str, int, List[str]]] = LRUCache(maxsize=1000)
-        self.hasChildren_cache: TTLCache[str, bool] = TTLCache(maxsize=1*1000, ttl=2 * 60)
+        # self.status_cache: FanoutCache
+        # self.hasChildren_cache: FanoutCache
         self.thread_pool = QThreadPool()
 
         # Initialize the running_workers dictionaries
@@ -27,8 +31,8 @@ class TestHelabFileSystemModel(unittest.TestCase):
 
         # Create an instance of helabFileSystemModel
         self.model = helabFileSystemModel(
-            status_cache=self.status_cache,
-            hasChildren_cache=self.hasChildren_cache,
+            status_cache=status_cache,
+            hasChildren_cache=hasChildren_cache,
             thread_pool=self.thread_pool,
             running_workers_status=self.running_workers_status,
             running_workers_deep=self.running_workers_deep,

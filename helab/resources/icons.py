@@ -28,7 +28,7 @@ def tablerIcon(icon: OutlineIcon | FilledIcon, color: str, size: int=128) -> QIc
 
 
 class StatusIcons:
-    STATUS_ICONS_NAME = ['ok', 'warning', 'critical', 'loading', 'nothing', 'missing', 'cancelled']
+    STATUS_ICONS_NAME = ['ok', 'warning', 'critical', 'loading', 'nothing', 'missing', 'cancelled', 'paused']
     STATUS_ICONS_EXTRA_NAME = ['database', 'report', 'chart3d', 'ram', 'live']
     STATUS_ICONS_EXTRA_NAME_SORT_KEY = {
         'database': 10,
@@ -45,6 +45,8 @@ class StatusIcons:
     ICON_NOTHING = QIcon()
     ICON_MISSING = QIcon()
     ICON_CANCELLED = QIcon()
+    ICON_PAUSED = QIcon()
+    ICON_MAYBE = QIcon()
 
     ICONS_STATUS: Dict[str, QIcon] = {}
     ICON_DATABASE = QIcon()
@@ -65,6 +67,8 @@ class StatusIcons:
         StatusIcons.ICON_NOTHING = tablerIcon(FilledIcon.POINT, '#bbbbbb')
         StatusIcons.ICON_MISSING = tablerIcon(OutlineIcon.ERROR_404, '#bbbbbb')
         StatusIcons.ICON_CANCELLED = tablerIcon(OutlineIcon.PROGRESS_X, '#9923bd')
+        StatusIcons.ICON_PAUSED = tablerIcon(FilledIcon.PLAYER_PAUSE, '#000000')
+        StatusIcons.ICON_MAYBE = tablerIcon(OutlineIcon.PROGRESS_HELP, '#000000')
         StatusIcons.ICONS_STATUS = {
             'ok': StatusIcons.ICON_OK,
             'warning': StatusIcons.ICON_WARNING,
@@ -73,6 +77,8 @@ class StatusIcons:
             'nothing': StatusIcons.ICON_NOTHING,
             'missing': StatusIcons.ICON_MISSING,
             'cancelled': StatusIcons.ICON_CANCELLED,
+            'paused': StatusIcons.ICON_PAUSED,
+            'maybe': StatusIcons.ICON_MAYBE,
         }
         StatusIcons.ICON_DATABASE = tablerIcon(OutlineIcon.DATABASE, '#444444')
         StatusIcons.ICON_REPORT = tablerIcon(OutlineIcon.REPORT_ANALYTICS, '#444444')
