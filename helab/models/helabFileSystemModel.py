@@ -192,7 +192,7 @@ class helabFileSystemModel(QFileSystemModel):
             worker.signals.finished.connect(self.handle_status_computed)
             # self.thread_pool.start(worker)
             worker.setAutoDelete(True)
-            QTimer.singleShot(5, lambda: self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value)) # type: ignore[call-overload]
+            QTimer.singleShot(5, lambda: self.thread_pool.start(worker, priority=QThread.Priority.IdlePriority.value)) # type: ignore[call-overload]
             # self.running_workers.add(worker)
             self.running_workers_status[folder_path] = worker
             return ('loading', 0, [])
@@ -232,7 +232,7 @@ class helabFileSystemModel(QFileSystemModel):
     def on_directory_loaded(self, path: str) -> None:
         # Invalidate cache entries for the loaded directory
         # self.invalidate_cache_for_directory(path)
-        logging.debug(f"Directory loaded: {path} (POP)")
+        logging.debug(f"on_directory_loaded: (popped) {path}")
         # QTimer.singleShot(10, lambda: self.status_cache.pop(path, None))
         self.status_cache.pop(path, None)
         # joblib_memory.cache(func=os_scandir).clear()
@@ -247,7 +247,7 @@ class helabFileSystemModel(QFileSystemModel):
         old_path = os.path.join(path, old_name)
         new_path = os.path.join(path, new_name)
         self.status_cache.pop(old_path, None)
-        logging.debug(f"(POP)File renamed: {old_path} -> {new_path}")
+        logging.debug(f"on_file_renamed: (popped) {old_path} -> {new_path}")
         # Optionally, recompute the status for the new path
         # self.get_status(new_path)
 
@@ -265,7 +265,7 @@ class helabFileSystemModel(QFileSystemModel):
             for column in range(topLeft.column(), bottomRight.column() + 1):
                 index = self.index(row, column, topLeft.parent())
                 file_path = self.filePath(index)
-                logging.debug(f"Data changed for: {file_path}")
+                logging.debug(f"on_data_changed: {file_path}")
 
         # self.refresh()
 
@@ -381,20 +381,21 @@ class helabFileSystemModel(QFileSystemModel):
 
         cached_result = self.hasChildren_cache.get(dir_path)
         if cached_result is not None:
+            # logging.debug(f"hasChildren used cache for: {dir_path}: {cached_result}")
             return cached_result
         else:
             if dir_path in self.running_workers_hasChildren:
                 return False
             else:
-                logging.debug(f"hasChildren new worker at: {dir_path}")
-                logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {self.hasChildren_cache.currsize}") # type: ignore[attr-defined]
+                logging.debug(f"hasChildren new DirectoryCheckWorker at: {dir_path}")
+                # logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {self.hasChildren_cache.currsize}") # type: ignore[attr-defined]
                 # logging.debug(f"os_listdir_cache: {os_listdir_cache.currsize}, os_scandir_cache: {os_scandir_cache.currsize}, os_isdir_cache: {os_isdir_cache.currsize}, hasChildren_cache: {self.hasChildren_cache.currsize}")
                 # logging.debug(f"os_listdir_cache: {os_listdir_cache.volume()}, os_scandir_cache: {os_scandir_cache.volume()}, os_isdir_cache: {os_isdir_cache.volume()}, hasChildren_cache: {self.hasChildren_cache.currsize}")
                 # logging.debug(f"hasChildren_cache: {self.hasChildren_cache.currsize}")
                 worker = DirectoryCheckWorker(dir_path)
                 worker.signals.finished.connect(self.on_has_children_finished)
                 worker.setAutoDelete(True)
-                self.thread_pool.start(worker, priority=QThread.Priority.HighPriority.value) # type: ignore[call-overload]
+                self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value) # type: ignore[call-overload]
                 # QTimer.singleShot(10, lambda: self.thread_pool.start(worker))
                 self.running_workers_hasChildren[dir_path] = worker
                 return False
@@ -436,7 +437,25 @@ class helabFileSystemModel(QFileSystemModel):
 
     def on_has_children_finished(self, dir_path: str, has_children: bool) -> None:
         # Update the cache with the computed result
-        self.hasChildren_cache[dir_path] = has_children
+        if has_children is not None:
+            self.hasChildren_cache[dir_path] = has_children
+        else:
+            logging.warning(f"on_has_children_finished: has_children is None for: {dir_path}")
+        # logging.debug(f"hasChildren computed for: {dir_path}: {has_children}, in cache: {self.hasChildren_cache[dir_path]}")
+
+        # Remove the worker from the running_workers_hasChildren dictionary
+        if dir_path in self.running_workers_hasChildren:
+            del self.running_workers_hasChildren[dir_path]
+            # logging.debug(f"Worker removed from running_workers_hasChildren for: {dir_path}")
+
+            logging.debug(f"on_has_children_finished for: {dir_path}: {has_children}, value in cache: {self.hasChildren_cache[dir_path]}")
+            # logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {self.hasChildren_cache.currsize}") # type: ignore[attr-defined]
+        else:
+            logging.warning(f"on_has_children_finished: running_workers_hasChildren has no: {dir_path}")
+
+        #update view ?
+        # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+
         # Retrieve QModelIndex for the directory
         index = self.index(dir_path)
         # Emit dataChanged for the directory
@@ -446,10 +465,3 @@ class helabFileSystemModel(QFileSystemModel):
                 index,
                 [Qt.ItemDataRole.DisplayRole]
             )
-        # Remove the worker from the running_workers_hasChildren dictionary
-        if dir_path in self.running_workers_hasChildren:
-            del self.running_workers_hasChildren[dir_path]
-            # logging.debug(f"Worker removed from running_workers_hasChildren for: {dir_path}")
-
-        logging.debug(f"on_has_children_finished for: {dir_path}: {has_children}")
-        logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {self.hasChildren_cache.currsize}") # type: ignore[attr-defined]

@@ -37,11 +37,12 @@ from cachetools import TTLCache
 executor = ThreadPoolExecutor(max_workers=8)
 
 
+OS_DIR_CACHE_TTL = 24*60*60
 
-os_listdir_cache: TTLCache[str, List[str]] = cachetools.TTLCache(maxsize=10*1000, ttl=60)
+os_listdir_cache: TTLCache[str, List[str]] = cachetools.TTLCache(maxsize=10*1000, ttl=OS_DIR_CACHE_TTL)
 # os_scandir_cache: TTLCache[str, Iterator[os.DirEntry[Any]]] = cachetools.TTLCache(maxsize=100*1000, ttl=60)
-os_scandir_cache:TTLCache[str, List[os.DirEntry[Any]]] = TTLCache(maxsize=100*1000, ttl=60)
-os_isdir_cache: TTLCache[str, bool] = cachetools.TTLCache(maxsize=1000*1000, ttl=60)
+os_scandir_cache:TTLCache[str, List[os.DirEntry[Any]]] = TTLCache(maxsize=100*1000, ttl=OS_DIR_CACHE_TTL)
+os_isdir_cache: TTLCache[str, bool] = cachetools.TTLCache(maxsize=1000*1000, ttl=OS_DIR_CACHE_TTL)
 
 # os_listdir_lock = threading.Lock()
 # os_scandir_lock = threading.Lock()

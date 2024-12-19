@@ -31,8 +31,8 @@ class FolderTabWidget(QTabWidget):
                 """)
 
         # Initialize shared resources
-        self.status_cache: LRUCache[str, Tuple[str, int, List[str]]] = LRUCache(maxsize=10000)
-        self.hasChildren_cache: TTLCache[str, bool] = TTLCache(maxsize=100*1000, ttl=2*60)
+        self.status_cache: LRUCache[str, Tuple[str, int, List[str]]] = LRUCache(maxsize=10*1000)
+        self.hasChildren_cache: TTLCache[str, bool] = TTLCache(maxsize=100*1000, ttl=24*60*60)
 
         thread_pool = QThreadPool.globalInstance()
         if thread_pool is None:

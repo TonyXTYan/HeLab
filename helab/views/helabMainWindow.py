@@ -9,15 +9,17 @@ import types
 from typing import List, Optional
 
 import psutil
-from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl
+from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint
 from PyQt6.QtGui import QAction, QIcon, QCloseEvent, QPixmap
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
-    QLabel, QToolBar, QSizePolicy, QFileDialog
+    QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip
 from humanfriendly.terminal import message
 from numpy.f2py.crackfortran import include_paths
 
 from helab.resources.icons import ToolIcons
 from helab.utils.constants import *
+from helab.utils.osCached import os_listdir_cache, os_scandir_cache, os_isdir_cache, os_listdir, os_scandir, os_isdir, \
+    os_scandir_list
 from helab.views.folderExplorer import FolderExplorer
 from helab.views.folderTabsWidget import FolderTabWidget
 from helab.views.settingsDialog import SettingsDialog
@@ -101,6 +103,7 @@ class MainWindow(QMainWindow):
         self.status_timer_threadpool = QTimer(self)
         self.status_timer_threadpool.timeout.connect(self.update_status_bar_left)
         self.status_timer_threadpool.start(200)  # Update every 200ms
+        self.status_timer_threadpool_hang_counts = 0
 
 
         self.status_timer_cpu_ram = QTimer(self)
@@ -138,6 +141,17 @@ class MainWindow(QMainWindow):
         # self.status_bar.showMessage(f"{active_threads}, {QThreadPool.globalInstance().stackSize()}, {len(self.tab_widget.running_workers_status)}")
         # queue_depth = len(self.tab_widget.running_workers_status) + len(self.tab_widget.running_workers_deep) + len(self.tab_widget.running_workers_hasChildren)
         queue_depths = (len(self.tab_widget.running_workers_status), len(self.tab_widget.running_workers_deep), len(self.tab_widget.running_workers_hasChildren))
+
+        def _cache_status_stirng() -> str:
+            cache_str = "Cache status:\n"
+            cache_str += f"  tab_widget.status_cache:      {len(self.tab_widget.status_cache)} items\n"
+            cache_str += f"  tab_widget.hasChildren_cache: {len(self.tab_widget.hasChildren_cache)} items\n"
+            cache_str += f"  os_listdir_cache: {os_listdir.cache_info()}\n"           # type: ignore[attr-defined]
+            cache_str += f"  os_scandir_cache: {os_scandir_list.cache_info()}\n"      # type: ignore[attr-defined]
+            cache_str += f"  os_isdir_cache:   {os_isdir.cache_info()}\n"             # type: ignore[attr-defined]
+            return cache_str
+
+        tooltip_string = "Threadpool status: "
         if sum(queue_depths) > 0:
             # transform = QTransform().rotate(self.status_icon_loading_angle)
             # center = self.status_icon_loading.rect().center()
@@ -150,15 +164,90 @@ class MainWindow(QMainWindow):
             self.tab_widget.set_tab_switching_disable()
             self.set_tools_and_tabs_disable()
 
-            if sum(queue_depths) < 10:
-                working_paths =  list(self.tab_widget.running_workers_status.keys())
-                working_paths += list(self.tab_widget.running_workers_deep.keys())
-                working_paths += list(self.tab_widget.running_workers_hasChildren.keys())
-                message_string = f"Working on: {working_paths}"
-                logging.debug(message_string)
+            # if sum(queue_depths) < 10:
+            #     working_paths =  list(self.tab_widget.running_workers_status.keys())
+            #     working_paths += list(self.tab_widget.running_workers_deep.keys())
+            #     working_paths += list(self.tab_widget.running_workers_hasChildren.keys())
+            #     message_string = f"Working on: {working_paths}"
+            #     logging.debug(message_string)
+
+            tooltip_string += "\n"
+            tooltip_string += f"  Number of active threads in threadpool: {active_threads}\n"
+            tooltip_string += f"  Number of queued threads with tracking: {sum(queue_depths)}\n\n"
+
+            running_workers_status_keys = list(self.tab_widget.running_workers_status.keys())
+            if len(running_workers_status_keys) > 3:
+                tooltip_string += f"  running_workers_status working on: \n"
+                for key in running_workers_status_keys[:3]:
+                    tooltip_string += f"    {key}\n"
+                tooltip_string += f"    ... and {len(running_workers_status_keys)-3} more\n"
+            elif len(running_workers_status_keys) > 0:
+                tooltip_string += f"  running_workers_status working on: \n"
+                for key in running_workers_status_keys:
+                    tooltip_string += f"    {key}\n"
+            else:
+                tooltip_string += "  running_workers_status is empty\n"
+            tooltip_string += "\n"
+
+            running_workers_deep_keys = list(self.tab_widget.running_workers_deep.keys())
+            if len(running_workers_deep_keys) > 3:
+                tooltip_string += f"  running_workers_deep working on: \n"
+                for key in running_workers_deep_keys[:3]:
+                    tooltip_string += f"    {key}\n"
+                tooltip_string += f"    ... and {len(running_workers_deep_keys)-3} more\n"
+            elif len(running_workers_deep_keys) > 0:
+                tooltip_string += f"  running_workers_deep working on: \n"
+                for key in running_workers_deep_keys:
+                    tooltip_string += f"    {key}\n"
+            else:
+                tooltip_string += "  running_workers_deep is empty\n"
+            tooltip_string += "\n"
+
+            running_workers_hasChildren_keys = list(self.tab_widget.running_workers_hasChildren.keys())
+            if len(running_workers_hasChildren_keys) > 3:
+                tooltip_string += f"  running_workers_hasChildren working on: \n"
+                for key in running_workers_hasChildren_keys[:3]:
+                    tooltip_string += f"    {key}\n"
+                tooltip_string += f"    ... and {len(running_workers_hasChildren_keys)-3} more\n"
+            elif len(running_workers_hasChildren_keys) > 0:
+                tooltip_string += f"  running_workers_hasChildren working on: \n"
+                for key in running_workers_hasChildren_keys:
+                    tooltip_string += f"    {key}\n"
+            else:
+                tooltip_string += "  running_workers_hasChildren is empty\n"
+            tooltip_string += "\n"
+
+            tooltip_string += _cache_status_stirng()
+
+            self.status_bar_message_left.setToolTip(tooltip_string)
+            # self.status_bar_message_left.installEventFilter(self)
+            tooltip_string_num_lines = len(tooltip_string.split("\n"))
+
+            self.status_timer_threadpool_hang_counts += 1
+
+            if self.isActiveWindow() and self.status_timer_threadpool_hang_counts >= 3:
+                QToolTip.showText(self.status_bar_message_left.mapToGlobal(
+                    QPoint(40, -60 + self.status_bar_message_left.height() - round(tooltip_string_num_lines * 15) ) ),
+                    tooltip_string,
+                    self.status_bar_message_left)
+            if self.status_timer_threadpool_hang_counts >= 50:
+                # at least 50*0.2 = 10 seconds
+                logging.warning("Long compute time detected, GUI may be unresponsive")
+                logging.warning(f"Tooltip string: \n{tooltip_string}")
+
+            else:
+                QToolTip.hideText()
 
         else:
+            tooltip_string += "all done\n"
+            tooltip_string += "No active threads in threadpool\n"
+            tooltip_string += _cache_status_stirng()
+            self.status_bar_message_left.setToolTip(tooltip_string)
             self.status_bar_message_left.setText(f"Threads Pool Standby")
+            # self.status_bar_message_left.setToolTip("No active threads in threadpool")
+            if self.status_timer_threadpool_hang_counts > 0:
+                self.status_timer_threadpool_hang_counts = 0
+                QToolTip.hideText()
             # self.status_bar.setPixmap(self.status_icon_checked)
             self.action_tab_cancel.setEnabled(False)
             self.tab_widget.set_tab_switching_enable()
@@ -176,6 +265,9 @@ class MainWindow(QMainWindow):
         # Update the status bar message
         self.status_bar_message_right.setText(
             f"CPU {cpu_usage_app:.1f}% / {cpu_usage_total:.1f}%   RAM {ram_usage_app_gb:.1f}GB / {ram_usage_total_gb:.1f}GB")
+
+        # self.status_bar_message_right.setToolTip("(App resource usage) / (system total resource usage)")
+
 
 
     def create_menus(self) -> None:
@@ -751,8 +843,6 @@ class MainWindow(QMainWindow):
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.itemExpandedSignal.connect(self.update_tool_enabled_state)
             QTimer.singleShot(50, self.update_status_bar_left)
-
-
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         logging.info("MainWindow closeEvent")

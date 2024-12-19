@@ -104,32 +104,85 @@ class StatusWorker(QRunnable):
 
 
         # pattern match and list all files of d123.txt
-        d_pattern = re.compile(r'^d\d+\.txt$')
-        d_files = [f for f in files if d_pattern.match(f)]
-        d_files_len = len(d_files)
+        # d_dld_pattern = re.compile(r'^d\d+\.txt$')
+        d_dld_pattern = re.compile(r'^d(\d+)\.txt$')
+        # d_files = [f for f in files if d_dld_pattern.match(f)]
+        d_dld_shots = [int(match.group(1)) for f in files if (match := d_dld_pattern.match(f))]
+        d_dld_files_len = len(d_dld_shots)
 
         # pattern match and list all files of d_txy_forc123.txt
-        d_txy_pattern = re.compile(r'^d_txy_forc\d+\.txt$')
-        d_txy_files = [f for f in files if d_txy_pattern.match(f)]
-        d_txy_files_len = len(d_txy_files)
+        # d_txy_pattern = re.compile(r'^d_txy_forc\d+\.txt$')
+        d_txy_pattern = re.compile(r'^d_txy_forc(\d+)\.txt$')
+        # d_txy_files = [f for f in files if d_txy_pattern.match(f)]
+        d_txy_shots = [int(match.group(1)) for f in files if (match := d_txy_pattern.match(f))]
+        d_txy_files_len = len(d_txy_shots)
 
-        logging.debug(f"StatusWorker._run_helper_v1: d_files: {d_files_len}, d_txy_files: {d_txy_files_len}")
+        d_union_shots = set(d_dld_shots) | set(d_txy_shots)
+        d_inter_shots = set(d_dld_shots) & set(d_txy_shots)
+        d_only_dld_shots = set(d_dld_shots) - d_inter_shots
+        d_only_txy_shots = set(d_txy_shots) - d_inter_shots
+
+        d_union_shots_len = len(d_union_shots)
+        d_inter_shots_len = len(d_inter_shots)
+        d_only_dld_shots_len = len(d_only_dld_shots)
+        d_only_txy_shots_len = len(d_only_txy_shots)
+
+
+        logging.debug(f"StatusWorker._run_helper_v1: d_dld_files: {d_dld_files_len}, d_txy_files: {d_txy_files_len}, "
+                      f"d_union_shots: {d_union_shots_len}, d_inter_shots: {d_inter_shots_len}, "
+                      f"d_only_dld_shots: {d_only_dld_shots_len}, d_only_txy_shots: {d_only_txy_shots_len}"
+                      )
+
+
 
         if self._is_canceled:
             self.signals.finished.emit(self.file_path, 'canceled', -1, [])
             return
 
-        if d_files_len == 0 and d_txy_files_len == 0:
+        if (d_only_dld_shots_len == 0 and d_only_txy_shots_len == 0) and d_union_shots_len == 0:
+            # no data files found
+            assert d_union_shots_len == d_inter_shots_len, "Impossible logic! d_union_shots_len != d_inter_shots_len"
             self.signals.finished.emit(self.file_path, 'nothing', -1, [])
-        elif d_files_len == 0 or d_txy_files_len == 0:
-            self.signals.finished.emit(self.file_path, 'warning', max(d_files_len, d_txy_files_len), [])
-        elif d_files_len != d_txy_files_len:
-            self.signals.finished.emit(self.file_path, 'warning', max(d_files_len, d_txy_files_len), [])
-        elif d_files_len == d_txy_files_len:
-            self.signals.finished.emit(self.file_path, 'ok', max(d_files_len, d_txy_files_len), [])
+        elif (d_only_dld_shots_len == 0 and d_only_txy_shots_len == 0) and d_union_shots_len > 0:
+            # consistent data folder
+            assert d_union_shots_len == d_inter_shots_len, "Impossible logic! d_union_shots_len != d_inter_shots_len"
+            self.signals.finished.emit(self.file_path, 'ok', d_union_shots_len, [])
+        elif (d_only_dld_shots_len > 0 or d_only_txy_shots_len > 0) and d_inter_shots_len > 0:
+            # inconsistent data folder
+            self.signals.finished.emit(self.file_path, 'warning', d_inter_shots_len, [])
+        elif (d_only_dld_shots_len > 0 or d_only_txy_shots_len > 0) and d_inter_shots_len == 0:
+            # terribly inconsistent data folder
+            if d_only_dld_shots_len == 0:
+                logging.warning(f"StatusWorker._run_helper_v1: folder only contain txy data: {d_only_txy_shots_len} at {self.file_path}")
+                self.signals.finished.emit(self.file_path, 'warning', d_only_txy_shots_len, [])
+            elif d_only_txy_shots_len == 0:
+                logging.warning(f"StatusWorker._run_helper_v1: folder only contain dld data: {d_only_dld_shots_len} at {self.file_path}")
+                self.signals.finished.emit(self.file_path, 'warning', d_only_dld_shots_len, [])
+            else:
+                # This means there are some dld files and some txy files but none of them are matching
+                logging.critical(f"StatusWorker._run_helper_v1: serverly fucked up dataset at {self.file_path} (no matching pairs)")
+                self.signals.finished.emit(self.file_path, 'critical', 0, [])
         else:
-            self.signals.finished.emit(self.file_path, 'critical', max(d_files_len, d_txy_files_len), [])
-            logging.error(f"StatusWorker._run_helper_v1: unexpected condition for {self.file_path}")
+            logging.fatal(f"StatusWorker._run_helper_v1: unexpected condition for {self.file_path}"
+                          f"d_dld_files: {d_dld_files_len}, d_txy_files: {d_txy_files_len}, "
+                          f"d_union_shots: {d_union_shots_len}, d_inter_shots: {d_inter_shots_len}, "
+                          f"d_only_dld_shots: {d_only_dld_shots_len}, d_only_txy_shots: {d_only_txy_shots_len}"
+                          )
+            assert False, "Impossible logic! Unexpected condition"
+
+
+        # if d_dld_files_len == 0 and d_txy_files_len == 0:
+        #     self.signals.finished.emit(self.file_path, 'nothing', -1, [])
+        # elif d_dld_files_len == 0 or d_txy_files_len == 0:
+        #     self.signals.finished.emit(self.file_path, 'warning', max(d_dld_files_len, d_txy_files_len), [])
+        # elif d_dld_files_len != d_txy_files_len:
+        #     self.signals.finished.emit(self.file_path, 'warning', max(d_dld_files_len, d_txy_files_len), [])
+        # elif d_dld_files_len == d_txy_files_len:
+        #     self.signals.finished.emit(self.file_path, 'ok', max(d_dld_files_len, d_txy_files_len), [])
+        # else:
+        #     self.signals.finished.emit(self.file_path, 'critical', max(d_dld_files_len, d_txy_files_len), [])
+        #     logging.error(f"StatusWorker._run_helper_v1: unexpected condition for {self.file_path}")
+
         # self._run_helper_simulate()
         # return
 
