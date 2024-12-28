@@ -870,6 +870,8 @@ class MainWindow(QMainWindow):
         os_listdir_cache.close()
         os_scandir_cache.close()
         os_isdir_cache.close()
+        status_cache.close()
+        hasChildren_cache.close()
 
         # Save settings
         # settings = QSettings("ANU", "HeLab")

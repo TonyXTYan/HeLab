@@ -3,7 +3,8 @@ import os
 
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable
 
-from helab.utils.os_cached import os_isdir, os_listdir, os_scandir
+from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import entries
+from helab.utils.os_cached import os_isdir, os_listdir, os_listdir_filtered
 
 
 class WorkerSignals(QObject):
@@ -22,7 +23,8 @@ class DirectoryCheckWorker(QRunnable):
         if self._is_canceled: return
         # wtf = os_scandir(self.dir_path)
         try:
-            entries = [entry for entry in os_listdir(self.dir_path) if not entry.endswith('.txt') and entry not in ['cache', 'out', 'output']]
+            # entries = [entry for entry in os_listdir(self.dir_path) if not entry.endswith('.txt') and entry not in ['cache', 'out', 'output']]
+            entries = os_listdir_filtered(self.dir_path)
             result = any(os_isdir(os.path.join(self.dir_path, entry)) for entry in entries)
             num_non_txt_paths = len(entries)
 

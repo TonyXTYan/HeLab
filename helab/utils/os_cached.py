@@ -1,6 +1,8 @@
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, Future
+# from logging import FATAL
+from types import SimpleNamespace
 from typing import Iterator, List, Any, cast, Callable, Dict
 
 from helab.utils.cachingSetup import os_isdir_cache, os_listdir_cache, os_scandir_cache
@@ -121,9 +123,45 @@ import diskcache
 
 
 
-@os_listdir_cache.memoize(expire=OS_DIR_CACHE_TTL)  # type: ignore[misc]
-def os_listdir(path: str) -> List[str]:
+# @os_listdir_cache.memoize(expire=OS_DIR_CACHE_TTL, ignore=['invalidate_cache'])  # type: ignore[misc]
+def os_listdir(path: str, invalidate_cache:bool=False) -> List[str]:
+    if invalidate_cache:
+        os_listdir_cache.pop(_os_listdir.__cache_key__(path))
+        # logging.warning(f"os_listdir: pop {path}")
+        # os_listdir_cache.pop(path)
+        # return os_listdir(path) # type: ignore[no-any-return]
     return os.listdir(path)
+
+@os_listdir_cache.memoize(expire=OS_DIR_CACHE_TTL)  # type: ignore[misc]
+def _os_listdir(path: str) -> List[str]:
+    return os.listdir(path)
+
+# @os_listdir_cache.memoize(expire=OS_DIR_CACHE_TTL, ignore=['invalidate_cache'])  # type: ignore[misc]
+def os_listdir_filtered(path: str, invalidate_cache:bool=False) -> List[str]:
+    if invalidate_cache:
+        os_listdir_cache.pop(_os_listdir_filtered.__cache_key__(path))
+        # # raise FATAL("just checking")
+        # logging.warning(f"os_listdir_filtered: pop {path}")
+        # logging.warning(f"os_listdir_filtered: keys {_os_listdir_filtered.__cache_key__(path)}")
+        # bla = os_listdir_cache.pop(path)
+        # logging.warning(f"os_listdir_filtered: pop {path} -> {bla}")
+        # bla2 = os_listdir_cache.pop(_os_listdir_filtered.__cache_key__(path))
+        # logging.warning(f"os_listdir_filtered: pop {path} -> {bla2}")
+        # # logging.warning(f"os_listdir_filtered: keys {os_listdir_cache.keys()}")
+        # # assert False, "just testing"
+    return _os_listdir_filtered(path) # type: ignore[no-any-return]
+    # return [entry for entry in os_listdir(path) if not entry.endswith('.txt') and entry not in ['cache', 'out', 'output']]
+
+@os_listdir_cache.memoize(expire=OS_DIR_CACHE_TTL)  # type: ignore[misc]
+def _os_listdir_filtered(path: str) -> List[str]:
+    return [
+        entry for entry in os_listdir(path)
+        if not entry.endswith('.txt')
+           # and entry.startswith('')
+           and entry not in ['cache', 'out', 'output', '.DS_Store']
+    ]
+
+
 
 # os_listdir = cast(Callable[[str], List[str]], os_listdir)
 
@@ -131,8 +169,9 @@ def os_listdir(path: str) -> List[str]:
 # def os_scandir(path: str) -> Iterator[os.DirEntry[Any]]:
 #     return os.scandir(path)
 
+# @os_scandir_cache.memoize(expire=OS_DIR_CACHE_TTL, ignore=['invalidate_cache'])  # type: ignore[misc]
 @os_scandir_cache.memoize(expire=OS_DIR_CACHE_TTL)  # type: ignore[misc]
-def os_scandir(path: str) -> List[Dict[str, Any]]:
+def _os_scandir_dic(path: str) -> List[Dict[str, Any]]:
     return [
         {
             'name': entry.name,
@@ -156,10 +195,57 @@ def os_scandir(path: str) -> List[Dict[str, Any]]:
         for entry in os.scandir(path)
     ]
 
+def os_scandir_dic(path: str, invalidate_cache:bool=False) -> List[Dict[str, Any]]:
+    if invalidate_cache:
+        os_scandir_cache.pop(_os_scandir_dic.__cache_key__(path))
+    return _os_scandir_dic(path) # type: ignore[no-any-return]
+
+
+
+# def os_scandir_dic(path: str, invalidate_cache: bool = False) -> List[Dict[str, Any]]:
+#     if invalidate_cache:
+#         os_scandir_cache.pop(path)
+#     return os_scandir_dic(path)
+
+@os_scandir_cache.memoize(expire=OS_DIR_CACHE_TTL)  # type: ignore[misc]
+def _os_scandir_sns(path: str) -> List[SimpleNamespace]:
+    return [
+        SimpleNamespace(
+            name=entry.name,
+            path=entry.path,
+            is_dir=entry.is_dir(),
+            is_file=entry.is_file(),
+            is_symlink=entry.is_symlink(),
+            stat=SimpleNamespace(
+                st_mode=entry.stat().st_mode,
+                st_ino=entry.stat().st_ino,
+                st_dev=entry.stat().st_dev,
+                st_nlink=entry.stat().st_nlink,
+                st_uid=entry.stat().st_uid,
+                st_gid=entry.stat().st_gid,
+                st_size=entry.stat().st_size,
+                st_atime=entry.stat().st_atime,
+                st_mtime=entry.stat().st_mtime,
+                st_ctime=entry.stat().st_ctime,
+            ),
+        )
+        for entry in os.scandir(path)
+    ]
+
+def os_scandir_sns(path: str, invalidate_cache:bool=False) -> List[SimpleNamespace]:
+    if invalidate_cache:
+        os_scandir_cache.pop(_os_scandir_sns.__cache_key__(path))
+    return _os_scandir_sns(path) # type: ignore[no-any-return]
+
 
 @os_isdir_cache.memoize(expire=OS_DIR_CACHE_TTL)    # type: ignore[misc]
-def os_isdir(path: str) -> bool:
+def _os_isdir(path: str) -> bool:
     return os.path.isdir(path)
+
+def os_isdir(path: str, invalidate_cache:bool=False) -> bool:
+    if invalidate_cache:
+        os_isdir_cache.pop(_os_isdir.__cache_key__(path))
+    return _os_isdir(path) # type: ignore[no-any-return]
 
 
 

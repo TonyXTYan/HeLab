@@ -28,7 +28,7 @@ def tablerIcon(icon: OutlineIcon | FilledIcon, color: str, size: int=128) -> QIc
 
 
 class StatusIcons:
-    STATUS_ICONS_NAME = ['ok', 'warning', 'critical', 'loading', 'nothing', 'missing', 'cancelled', 'paused']
+    STATUS_ICONS_NAME = ['ok', 'fixable', 'warning', 'critical', 'loading', 'nothing', 'something', 'unknown', 'missing', 'cancelled', 'paused']
     STATUS_ICONS_EXTRA_NAME = ['database', 'report', 'chart3d', 'ram', 'live']
     STATUS_ICONS_EXTRA_NAME_SORT_KEY = {
         'database': 10,
@@ -38,21 +38,27 @@ class StatusIcons:
         'live': 0,
     }
     ICON_OK = QIcon()
+    ICON_FIXABLE = QIcon()
     ICON_CRITICAL = QIcon()
     ICON_WARNING = QIcon()
     ICON_LOADING = QIcon()
     ICON_LIVE = QIcon()
     ICON_NOTHING = QIcon()
+    ICON_SOMETHING = QIcon()
+    ICON_UNKNOWN = QIcon()
     ICON_MISSING = QIcon()
     ICON_CANCELLED = QIcon()
     ICON_PAUSED = QIcon()
     ICON_MAYBE = QIcon()
 
     ICONS_STATUS: Dict[str, QIcon] = {}
+
+    ICON_WAITING = QIcon()
     ICON_DATABASE = QIcon()
     ICON_REPORT = QIcon()
     ICON_CHART3D = QIcon()
     ICON_RAM = QIcon()
+
     ICONS_EXTRA: Dict[str, QIcon] = {}
 
 
@@ -60,26 +66,33 @@ class StatusIcons:
     @staticmethod
     def initialise_icons() -> None:
         StatusIcons.ICON_OK = tablerIcon(OutlineIcon.CIRCLE_CHECK, '#00bb39')
+        StatusIcons.ICON_FIXABLE = tablerIcon(OutlineIcon.HELP_CIRCLE, '#B8D20E')
         StatusIcons.ICON_CRITICAL = tablerIcon(OutlineIcon.XBOX_X, '#e50000')
         StatusIcons.ICON_WARNING = tablerIcon(OutlineIcon.ALERT_CIRCLE, '#f8c350')
         StatusIcons.ICON_LOADING = tablerIcon(OutlineIcon.LOADER, '#000000')  # TODO: replace this with PERCENTAGE
-        StatusIcons.ICON_LIVE = tablerIcon(OutlineIcon.LIVE_PHOTO, '#000000')
+        StatusIcons.ICON_LIVE = tablerIcon(OutlineIcon.EYE, '#000000')
         StatusIcons.ICON_NOTHING = tablerIcon(FilledIcon.POINT, '#bbbbbb')
+        StatusIcons.ICON_SOMETHING = tablerIcon(OutlineIcon.CIRCLE_DOT, '#bbbbbb')
+        StatusIcons.ICON_UNKNOWN = tablerIcon(OutlineIcon.CIRCLE_DASHED, '#bbbbbb')
         StatusIcons.ICON_MISSING = tablerIcon(OutlineIcon.ERROR_404, '#bbbbbb')
         StatusIcons.ICON_CANCELLED = tablerIcon(OutlineIcon.PROGRESS_X, '#9923bd')
-        StatusIcons.ICON_PAUSED = tablerIcon(FilledIcon.PLAYER_PAUSE, '#000000')
+        StatusIcons.ICON_PAUSED = tablerIcon(OutlineIcon.PLAYER_PAUSE, '#000000')
         StatusIcons.ICON_MAYBE = tablerIcon(OutlineIcon.PROGRESS_HELP, '#000000')
         StatusIcons.ICONS_STATUS = {
             'ok': StatusIcons.ICON_OK,
+            'fixable': StatusIcons.ICON_FIXABLE,
             'warning': StatusIcons.ICON_WARNING,
             'critical': StatusIcons.ICON_CRITICAL,
             'loading': StatusIcons.ICON_LOADING,
             'nothing': StatusIcons.ICON_NOTHING,
+            'something': StatusIcons.ICON_SOMETHING,
+            'unknown': StatusIcons.ICON_UNKNOWN,
             'missing': StatusIcons.ICON_MISSING,
             'cancelled': StatusIcons.ICON_CANCELLED,
             'paused': StatusIcons.ICON_PAUSED,
             'maybe': StatusIcons.ICON_MAYBE,
         }
+        StatusIcons.ICON_WAITING = tablerIcon(OutlineIcon.HOURGLASS, '#000000')
         StatusIcons.ICON_DATABASE = tablerIcon(OutlineIcon.DATABASE, '#444444')
         StatusIcons.ICON_REPORT = tablerIcon(OutlineIcon.REPORT_ANALYTICS, '#444444')
         StatusIcons.ICON_CHART3D = tablerIcon(OutlineIcon.CHART_SCATTER_3D, '#444444')
@@ -90,6 +103,8 @@ class StatusIcons:
             'chart3d': StatusIcons.ICON_CHART3D,
             'ram': StatusIcons.ICON_RAM,
             'live': StatusIcons.ICON_LIVE,
+            'waiting': StatusIcons.ICON_WAITING,
+            'loading': StatusIcons.ICON_LOADING,
         }
 
 class ToolIcons:

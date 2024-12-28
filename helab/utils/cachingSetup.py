@@ -20,6 +20,20 @@ os_isdir_cache   = diskcache.FanoutCache(DIR_CACHES + '/os_isdir_cache', **diskc
 status_cache = diskcache.FanoutCache(DIR_CACHES + '/status_cache', **diskcache_params)
 hasChildren_cache = diskcache.FanoutCache(DIR_CACHES + '/hasChildren_cache', **diskcache_params)
 
+def fnum(num: int) -> str:
+    suffixes = ['K', 'M', 'G', 'T', 'P', 'E']
+    for i, suffix in reversed(list(enumerate(suffixes, 1))):
+        divisor = 1000 ** i
+        if num >= divisor:
+            val = num / divisor
+            decimals = 3 if val < 10 else 2 if val < 100 else 1
+            formatted = f"{val:.{decimals}f}{suffix}"
+            return formatted.rjust(6)[-6:]
+    return f"{num}".rjust(6)[-6:]
+
+
+
+
 
 def cache_status_stirng() -> str:
     cache_str = "Cache status:\n"
@@ -30,14 +44,20 @@ def cache_status_stirng() -> str:
     os_listdir_cache_stats = os_listdir_cache.stats()
     os_scandir_cache_stats = os_scandir_cache.stats()
     os_isdir_cache_stats = os_isdir_cache.stats()
-    status_cache_sizes = status_cache.volume() / 1000 / 1000  # MB
-    hasChildren_cache_sizes = hasChildren_cache.volume() / 1000 / 1000  # MB
-    os_listdir_cache_sizes = os_listdir_cache.volume() / 1000 / 1000  # MB
-    os_scandir_cache_sizes = os_scandir_cache.volume() / 1000 / 1000  # MB
-    os_isdir_cache_sizes = os_isdir_cache.volume() / 1000 / 1000  # MB
-    cache_str += f"  status_cache:      hits = {status_cache_stats[0]:<6}, miss = {status_cache_stats[1]:<6}, size = {status_cache_sizes:<6.2f} MB\n"
-    cache_str += f"  hasChildren_cache: hits = {hasChildren_cache_stats[0]:<6}, miss = {hasChildren_cache_stats[1]:<6}, size = {hasChildren_cache_sizes:<6.2f} MB\n"
-    cache_str += f"  os_listdir_cache:  hits = {os_listdir_cache_stats[0]:<6}, miss = {os_listdir_cache_stats[1]:<6}, size = {os_listdir_cache_sizes:<6.2f} MB\n"
-    cache_str += f"  os_scandir_cache:  hits = {os_scandir_cache_stats[0]:<6}, miss = {os_scandir_cache_stats[1]:<6}, size = {os_scandir_cache_sizes:<6.2f} MB\n"
-    cache_str += f"  os_isdir_cache:    hits = {os_isdir_cache_stats[0]:<6}, miss = {os_isdir_cache_stats[1]:<6}, size = {os_isdir_cache_sizes:<6.2f} MB\n"
+    status_cache_sizes = status_cache.volume() # in bytes
+    hasChildren_cache_sizes = hasChildren_cache.volume()
+    os_listdir_cache_sizes = os_listdir_cache.volume()
+    os_scandir_cache_sizes = os_scandir_cache.volume()
+    os_isdir_cache_sizes = os_isdir_cache.volume()
+    # cache_str += f"  status_cache:      hits = {status_cache_stats[0]:<6}, miss = {status_cache_stats[1]:<6}, size = {status_cache_sizes:<6.2f} MB\n"
+    # cache_str += f"  hasChildren_cache: hits = {hasChildren_cache_stats[0]:<6}, miss = {hasChildren_cache_stats[1]:<6}, size = {hasChildren_cache_sizes:<6.2f} MB\n"
+    # cache_str += f"  os_listdir_cache:  hits = {os_listdir_cache_stats[0]:<6}, miss = {os_listdir_cache_stats[1]:<6}, size = {os_listdir_cache_sizes:<6.2f} MB\n"
+    # cache_str += f"  os_scandir_cache:  hits = {os_scandir_cache_stats[0]:<6}, miss = {os_scandir_cache_stats[1]:<6}, size = {os_scandir_cache_sizes:<6.2f} MB\n"
+    # cache_str += f"  os_isdir_cache:    hits = {os_isdir_cache_stats[0]:<6}, miss = {os_isdir_cache_stats[1]:<6}, size = {os_isdir_cache_sizes:<6.2f} MB\n"
+
+    cache_str += f"  status_cache:      hits = {fnum(status_cache_stats[0]     )}, miss = {fnum(status_cache_stats[1]     )}, size = {fnum(status_cache_sizes)}B\n"
+    cache_str += f"  hasChildren_cache: hits = {fnum(hasChildren_cache_stats[0])}, miss = {fnum(hasChildren_cache_stats[1])}, size = {fnum(hasChildren_cache_sizes)}B\n"
+    cache_str += f"  os_listdir_cache:  hits = {fnum(os_listdir_cache_stats[0] )}, miss = {fnum(os_listdir_cache_stats[1] )}, size = {fnum(os_listdir_cache_sizes)}B\n"
+    cache_str += f"  os_scandir_cache:  hits = {fnum(os_scandir_cache_stats[0] )}, miss = {fnum(os_scandir_cache_stats[1] )}, size = {fnum(os_scandir_cache_sizes)}B\n"
+    cache_str += f"  os_isdir_cache:    hits = {fnum(os_isdir_cache_stats[0]   )}, miss = {fnum(os_isdir_cache_stats[1]   )}, size = {fnum(os_isdir_cache_sizes)}B\n"
     return cache_str

@@ -1,8 +1,9 @@
 import os
 import re
 import subprocess
+import sys
 
-
+from joblib.externals.loky.process_executor import MAX_DEPTH
 
 # TOOLBAR_STYLESHEET_LR = """
 # QToolBar {
@@ -74,8 +75,6 @@ def get_git_commit_hash() -> str:
     except Exception:
         return 'unknown'
 
-
-
 APP_VERSION = get_version()
 APP_COMMIT_HASH = get_git_commit_hash()
 
@@ -84,4 +83,7 @@ DIR_TEMPS = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps')
 
 DIR_CACHES = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches')
 
-OS_DIR_CACHE_TTL = 24*60*60
+OS_DIR_CACHE_TTL = 60*60 # seconds
+
+# MAX_DEPTH_INT = int(sys.maxsize)>>10
+MAX_DEPTH_INT = 1<<15

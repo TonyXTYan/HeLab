@@ -9,32 +9,40 @@ import logging
 from PyQt6.QtTest import QTest
 
 from helab.resources.icons import StatusIcons, IconsInitUtil
-from helab.utils.os_cached import os_isdir, os_listdir, os_scandir
+from helab.utils.os_cached import os_isdir, os_listdir
 
 
 # from helab.models.helabFileSystemModel import helabFileSystemModel
 
 
+class StatusReport:
+    def __init__(self, path: str, status: str, count: int, extra_icons: list[str]):
+        self.path = path
+        self.status = status
+        self.count = count
+        self.extra_icons = extra_icons
+
 # Define WorkerSignals to communicate between threads
 class StatusWorkerSignals(QObject):
-    finished = pyqtSignal(str, str, int, list)  # file_path, status, count, extra_icons
-
+    # finished = pyqtSignal(str, str, int, list)  # file_path, status, count, extra_icons
+    finished = pyqtSignal(StatusReport)  # file_path, status, count, extra_icons
 
 # Define the Worker class with cancellation support
 class StatusWorker(QRunnable):
-    def __init__(self, file_path: str):
+    def __init__(self, file_path: str, invalidate_cache:bool=False):
         # QObject.__init__(self)
         # QRunnable.__init__()
         super().__init__()
         self.file_path = file_path
         self.signals = StatusWorkerSignals()
         self._is_canceled = False
+        self.invalidate_cache = invalidate_cache
 
     def run(self) -> None:
         logging.debug(f"StatusWorker started for: {self.file_path}")
         if self._is_canceled:
             logging.debug(f"StatusWorker canceled for: {self.file_path}")
-            self.signals.finished.emit(self.file_path, 'canceled', -1, [])
+            self.signals.finished.emit(StatusReport(self.file_path, 'canceled', -1, []))
             return
 
         # self._run_helper_simulate()
@@ -61,7 +69,7 @@ class StatusWorker(QRunnable):
 
         logging.debug(
             f"StatusWorker._run_helper_simulate: path = {self.file_path}, status = {status}, count = {count}, extra icons = {extra_icons}")
-        self.signals.finished.emit(self.file_path, status, count, extra_icons)
+        self.signals.finished.emit(StatusReport(self.file_path, status, count, extra_icons))
 
     def _run_helper_v1(self) -> None:
         # This method is designed currently to work only with downstairs lab data structure.
@@ -76,9 +84,9 @@ class StatusWorker(QRunnable):
         try:
             # check if self.file_path is a directory
             # if not os.path.isdir(self.file_path):
-            if not os_isdir(self.file_path):
+            if not os_isdir(self.file_path, self.invalidate_cache):
                 logging.error(f"StatusWorker._run_helper_v1: {self.file_path} is not a directory")
-                self.signals.finished.emit(self.file_path, 'missing', -1, [])
+                self.signals.finished.emit(StatusReport(self.file_path, 'missing', -1, []))
                 return
             # check if self.file_path contains any directory
             # dirs = os.listdir(self.file_path)
@@ -86,7 +94,7 @@ class StatusWorker(QRunnable):
             # just_for_the_sake_of_testing = os_scandir(self.file_path)
 
             # list all files in the directory
-            files = os.listdir(self.file_path)
+            files = os_listdir(self.file_path, self.invalidate_cache)
             # future = os_scandir_async(self.file_path)
             # files_scan = future.result()
             # files_scan = os_scandir(self.file_path)
@@ -97,11 +105,11 @@ class StatusWorker(QRunnable):
 
         except PermissionError as e:
             logging.error(f"StatusWorker._run_helper_v1: PermissionError accessing {self.file_path}: {e}")
-            self.signals.finished.emit(self.file_path, 'missing', -1, [])
+            self.signals.finished.emit(StatusReport(self.file_path, 'missing', -1, []))
             return
         except Exception as e:
             logging.error(f"StatusWorker._run_helper_v1: Error accessing {self.file_path}: {e}")
-            self.signals.finished.emit(self.file_path, 'missing', -1, [])
+            self.signals.finished.emit(StatusReport(self.file_path, 'missing', -1, []))
             return
 
 
@@ -138,32 +146,36 @@ class StatusWorker(QRunnable):
 
 
         if self._is_canceled:
-            self.signals.finished.emit(self.file_path, 'canceled', -1, [])
+            self.signals.finished.emit(StatusReport(self.file_path, 'canceled', -1, []))
             return
 
         if (d_only_dld_shots_len == 0 and d_only_txy_shots_len == 0) and d_union_shots_len == 0:
             # no data files found
             assert d_union_shots_len == d_inter_shots_len, "Impossible logic! d_union_shots_len != d_inter_shots_len"
-            self.signals.finished.emit(self.file_path, 'nothing', -1, [])
+            self.signals.finished.emit(StatusReport(self.file_path, 'nothing', -1, []))
         elif (d_only_dld_shots_len == 0 and d_only_txy_shots_len == 0) and d_union_shots_len > 0:
             # consistent data folder
             assert d_union_shots_len == d_inter_shots_len, "Impossible logic! d_union_shots_len != d_inter_shots_len"
-            self.signals.finished.emit(self.file_path, 'ok', d_union_shots_len, [])
-        elif (d_only_dld_shots_len > 0 or d_only_txy_shots_len > 0) and d_inter_shots_len > 0:
+            self.signals.finished.emit(StatusReport(self.file_path, 'ok', d_union_shots_len, []))
+        elif (d_only_dld_shots_len > 0 and d_only_txy_shots_len == 0) and d_inter_shots_len > 0:
+            self.signals.finished.emit(StatusReport(self.file_path, 'fixable', d_inter_shots_len, []))
+        elif (d_only_dld_shots_len > 0 and d_only_txy_shots_len > 0) and d_inter_shots_len > 0:
             # inconsistent data folder
-            self.signals.finished.emit(self.file_path, 'warning', d_inter_shots_len, [])
+            self.signals.finished.emit(StatusReport(self.file_path, 'warning', d_inter_shots_len, []))
+        elif (d_only_dld_shots_len == 0 and d_only_txy_shots_len > 0) and d_inter_shots_len > 0:
+            self.signals.finished.emit(StatusReport(self.file_path, 'critical', d_inter_shots_len, []))
         elif (d_only_dld_shots_len > 0 or d_only_txy_shots_len > 0) and d_inter_shots_len == 0:
             # terribly inconsistent data folder
             if d_only_dld_shots_len == 0:
                 logging.warning(f"StatusWorker._run_helper_v1: folder only contain txy data: {d_only_txy_shots_len} at {self.file_path}")
-                self.signals.finished.emit(self.file_path, 'warning', d_only_txy_shots_len, [])
+                self.signals.finished.emit(StatusReport(self.file_path, 'warning', d_only_txy_shots_len, []))
             elif d_only_txy_shots_len == 0:
                 logging.warning(f"StatusWorker._run_helper_v1: folder only contain dld data: {d_only_dld_shots_len} at {self.file_path}")
-                self.signals.finished.emit(self.file_path, 'warning', d_only_dld_shots_len, [])
+                self.signals.finished.emit(StatusReport(self.file_path, 'warning', d_only_dld_shots_len, []))
             else:
                 # This means there are some dld files and some txy files but none of them are matching
                 logging.critical(f"StatusWorker._run_helper_v1: serverly fucked up dataset at {self.file_path} (no matching pairs)")
-                self.signals.finished.emit(self.file_path, 'critical', 0, [])
+                self.signals.finished.emit(StatusReport(self.file_path, 'critical', 0, []))
         else:
             logging.fatal(f"StatusWorker._run_helper_v1: unexpected condition for {self.file_path}"
                           f"d_dld_files: {d_dld_files_len}, d_txy_files: {d_txy_files_len}, "
@@ -174,15 +186,15 @@ class StatusWorker(QRunnable):
 
 
         # if d_dld_files_len == 0 and d_txy_files_len == 0:
-        #     self.signals.finished.emit(self.file_path, 'nothing', -1, [])
+        #     self.signals.finished.emit(StatusReport(self.file_path, 'nothing', -1, [])
         # elif d_dld_files_len == 0 or d_txy_files_len == 0:
-        #     self.signals.finished.emit(self.file_path, 'warning', max(d_dld_files_len, d_txy_files_len), [])
+        #     self.signals.finished.emit(StatusReport(self.file_path, 'warning', max(d_dld_files_len, d_txy_files_len), [])
         # elif d_dld_files_len != d_txy_files_len:
-        #     self.signals.finished.emit(self.file_path, 'warning', max(d_dld_files_len, d_txy_files_len), [])
+        #     self.signals.finished.emit(StatusReport(self.file_path, 'warning', max(d_dld_files_len, d_txy_files_len), [])
         # elif d_dld_files_len == d_txy_files_len:
-        #     self.signals.finished.emit(self.file_path, 'ok', max(d_dld_files_len, d_txy_files_len), [])
+        #     self.signals.finished.emit(StatusReport(self.file_path, 'ok', max(d_dld_files_len, d_txy_files_len), [])
         # else:
-        #     self.signals.finished.emit(self.file_path, 'critical', max(d_dld_files_len, d_txy_files_len), [])
+        #     self.signals.finished.emit(StatusReport(self.file_path, 'critical', max(d_dld_files_len, d_txy_files_len), [])
         #     logging.error(f"StatusWorker._run_helper_v1: unexpected condition for {self.file_path}")
 
         # self._run_helper_simulate()
@@ -202,7 +214,7 @@ class StatusWorker(QRunnable):
     #     # extra_icons = []
     #
     #     logging.debug(f"Worker finished for: {self.file_path} with status: {status}, count: {count}, extra icons: {extra_icons}")
-    #     self.signals.finished.emit(self.file_path, status, count, extra_icons)
+    #     self.signals.finished.emit(StatusReport(self.file_path, status, count, extra_icons)
 
 
 

@@ -5,6 +5,7 @@ from PyQt6.QtGui import QMouseEvent, QFocusEvent, QPainter
 from PyQt6.QtWidgets import QTreeView, QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QProxyStyle, QStyle
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
+from helab.workers.statusWorker import StatusReport
 
 
 # class OptionalBranchIconStyle(QProxyStyle):
@@ -193,9 +194,14 @@ class StatusTreeView(QTreeView):
         # Get data from the model
         file_path = model.filePath(index)
         # status, count, extra_icons = self.model().get_status(file_path)
-        status, count, extra_icons = model.fetch_status(file_path)
-        info_text = f"Path: {file_path}\nStatus: {status}\nCount: {count}\nExtra Icons: {', '.join(extra_icons) if extra_icons else 'None'}"
-        self.popup.set_info(info_text)
+        # status, count, extra_icons = model.fetch_status(file_path)
+        status_report = model.fetch_status(file_path)
+        if isinstance(status_report, StatusReport):
+            status = status_report.status
+            count = status_report.count
+            extra_icons = status_report.extra_icons
+            info_text = f"Path: {file_path}\nStatus: {status}\nCount: {count}\nExtra Icons: {', '.join(extra_icons) if extra_icons else 'None'}"
+            self.popup.set_info(info_text)
         # Position the popup near the cursor
         # self.popup.move(global_pos + QPoint(10, 10))  # Slight offset
         self.popup.move(global_pos - QPoint(1, 1))  # Slight offset

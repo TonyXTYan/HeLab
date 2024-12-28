@@ -12,7 +12,9 @@ from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPus
 from cachetools import LRUCache, TTLCache
 from diskcache import FanoutCache
 
+from helab.utils.constants import *
 from helab.models.helabFileSystemModel import helabFileSystemModel
+from helab.utils.os_cached import os_isdir
 from helab.views.statusIconDelegate import StatusIconDelegate
 from helab.views.statusTreeView import StatusTreeView
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
@@ -336,53 +338,63 @@ class FolderExplorer(QWidget):
         menu.addAction(action_open_in_file_manager)
 
 
-        action_recalc_status = QAction("Recalculate Status", self)
-        action_recalc_status.triggered.connect(lambda: self.context_menu_action_recalc_status(file_info))
-        menu.addAction(action_recalc_status)
+        # action_recalc_status = QAction("Recalculate Status", self)
+        # action_recalc_status.triggered.connect(lambda: self.context_menu_action_recalc_status(file_info))
+        # menu.addAction(action_recalc_status)
 
         # action_recursive_calc_status = QAction("Deeply Recalculate Status", self)
         # action_recursive_calc_status.triggered.connect(lambda: self.context_menu_action_recursive_calc_status(file_info))
         # menu.addAction(action_recursive_calc_status)
 
         # Create a submenu for recursive calculation
-        action_menu_deep_recalc = QMenu("Recalculate Status for enclosed folders", self)
-        action_menu_deep_recalc.setWhatsThis("Recalculate the status for the selected folder and its enclosed folders.")
+        action_menu_deep_recalc = QMenu("Recalculate Status (Rebuild cache)", self)
+        # action_menu_deep_recalc.setWhatsThis("Recalculate the status for the selected folder and its enclosed folders.")
+        # action_menu_deep_recalc.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, current_depth=0))
 
-        action_depth_0 = QAction("This folder only (depth 0)", self)
-        action_depth_0.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=0))
+        action_depth_0 = QAction("Depth 0 - Selected folder", self)
+        action_depth_0.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=0, invalidate_cache=True))
         action_menu_deep_recalc.addAction(action_depth_0)
 
-        action_depth_1 = QAction("Immediate subfolders (depth 1)", self)
-        action_depth_1.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=1))
+        action_depth_1 = QAction("Depth 1 - Immediate subfolders)", self)
+        action_depth_1.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=1, invalidate_cache=True))
         action_menu_deep_recalc.addAction(action_depth_1)
 
-        action_depth_2 = QAction("Up to 2 levels deep (depth 2)", self)
-        action_depth_2.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=2))
+        action_depth_2 = QAction("Depth 2", self)
+        action_depth_2.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=2, invalidate_cache=True))
         action_menu_deep_recalc.addAction(action_depth_2)
 
-        action_depth_infinite = QAction("All subfolders (infinite depth)", self)
-        action_depth_infinite.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=sys.maxsize))
+        action_depth_3 = QAction("Depth 3", self)
+        action_depth_3.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=3, invalidate_cache=True))
+        action_menu_deep_recalc.addAction(action_depth_3)
+
+        action_depth_infinite = QAction("Depth ∞ - All subfolders", self)
+        action_depth_infinite.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=MAX_DEPTH_INT, invalidate_cache=True))
+        # action_depth_infinite.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, current_depth=1<<15))
         action_menu_deep_recalc.addAction(action_depth_infinite)
 
         # Add the deep menu to the main menu
         menu.addMenu(action_menu_deep_recalc)
 
 
-        action_menu_deep_fill_blanks = QMenu("Calculate blank status for enclosed folders", self)
-        action_fill_depth_0 = QAction("This folder only (depth 0)", self)
-        action_fill_depth_0.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=0, use_cache=True))
+        action_menu_deep_fill_blanks = QMenu("Recalculate Status (Fill blanks)", self)
+        action_fill_depth_0 = QAction("Depth 0 - Selected folder", self)
+        action_fill_depth_0.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=0, invalidate_cache=False))
         action_menu_deep_fill_blanks.addAction(action_fill_depth_0)
 
-        action_fill_depth_1 = QAction("Immediate subfolders (depth 1)", self)
-        action_fill_depth_1.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=1, use_cache=True))
+        action_fill_depth_1 = QAction("Depth 1 - Immediate subfolders", self)
+        action_fill_depth_1.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=1, invalidate_cache=False))
         action_menu_deep_fill_blanks.addAction(action_fill_depth_1)
 
-        action_fill_depth_2 = QAction("Up to 2 levels deep (depth 2)", self)
-        action_fill_depth_2.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=2, use_cache=True))
+        action_fill_depth_2 = QAction("Depth 2", self)
+        action_fill_depth_2.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=2, invalidate_cache=False))
         action_menu_deep_fill_blanks.addAction(action_fill_depth_2)
 
-        action_fill_depth_infinite = QAction("All subfolders (infinite depth)", self)
-        action_fill_depth_infinite.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=sys.maxsize, use_cache=True))
+        action_fill_depth_3 = QAction("Depth 3", self)
+        action_fill_depth_3.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=3, invalidate_cache=False))
+        action_menu_deep_fill_blanks.addAction(action_fill_depth_3)
+
+        action_fill_depth_infinite = QAction("Depth ∞ - All subfolders", self)
+        action_fill_depth_infinite.triggered.connect(lambda: self.context_menu_action_deep_calc_status(file_info, max_depth=MAX_DEPTH_INT, invalidate_cache=False))
         action_menu_deep_fill_blanks.addAction(action_fill_depth_infinite)
 
         menu.addMenu(action_menu_deep_fill_blanks)
@@ -393,22 +405,23 @@ class FolderExplorer(QWidget):
         if viewport is None: return
         menu.exec(viewport.mapToGlobal(position))
 
-    def context_menu_action_recalc_status(self, folder_info: QFileInfo) -> None:
-        logging.debug(f"Recalculate Status for : {folder_info.absoluteFilePath()}")
-        # Invalidate the cached status
-        self.model.status_cache.pop(folder_info.absoluteFilePath(), None)
-        # Trigger a fresh status computation
-        self.model.fetch_status(folder_info.absoluteFilePath())
+    # def context_menu_action_recalc_status(self, folder_info: QFileInfo) -> None:
+    #     logging.debug(f"Recalculate Status for : {folder_info.absoluteFilePath()}")
+    #     # Invalidate the cached status
+    #     self.model.status_cache.pop(folder_info.absoluteFilePath(), None)
+    #     # Trigger a fresh status computation
+    #     self.model.fetch_status(folder_info.absoluteFilePath())
 
-    def context_menu_action_deep_calc_status(self, folder_info: QFileInfo, max_depth: int = sys.maxsize, use_cache: bool = False) -> None:
+    def context_menu_action_deep_calc_status(self, folder_info: QFileInfo, max_depth: int = MAX_DEPTH_INT, invalidate_cache: bool = True) -> None:
     # WARNING: THIS METHOD IS REALLY SHIT
-        if use_cache: logging.warning("Fill blank is not implemented")
+    #     if not invalidate_cache: logging.warning("context_menu_action_deep_calc_status: Fill blank is not implemented")
         file_path = folder_info.absoluteFilePath()
-        if not folder_info.isDir():
-            logging.debug(f"Selected item is not a directory: {file_path}")
+
+        if not os_isdir(file_path):
+            logging.debug(f"context_menu_action_deep_calc_status: Selected item is not a directory: {file_path}")
             return
-        logging.debug(f"Deeply recalculating status for: {file_path} with {max_depth=}")
-        self.model.start_deep_status_worker(file_path, max_depth)
+        logging.debug(f"context_menu_action_deep_calc_status: {file_path = } with {max_depth = }")
+        self.model.start_deep_status_worker(file_path, max_depth, invalidate_cache)
 
     def open_in_file_manager(self, folder_info: QFileInfo) -> None:
         path = folder_info.absoluteFilePath()
