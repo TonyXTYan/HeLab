@@ -229,7 +229,7 @@ class MainWindow(QMainWindow):
                 tooltip_string += "  running_workers_hasChildren is empty\n"
             tooltip_string += "\n"
 
-            tooltip_string += cache_status_stirng()
+            tooltip_string += cache_status_string()
 
             self.status_bar_message_left.setToolTip(tooltip_string)
             # self.status_bar_message_left.installEventFilter(self)
@@ -254,7 +254,7 @@ class MainWindow(QMainWindow):
         else:
             tooltip_string += "all done\n"
             tooltip_string += "No active threads in threadpool\n"
-            tooltip_string += cache_status_stirng()
+            tooltip_string += cache_status_string()
             self.status_bar_message_left.setToolTip(tooltip_string)
             self.status_bar_message_left.setText(f"Threads Pool Standby")
             # self.status_bar_message_left.setToolTip("No active threads in threadpool")
@@ -376,9 +376,27 @@ class MainWindow(QMainWindow):
             action_debug_icons = QAction("Show all Icons", self)
             action_debug_icons.triggered.connect(self.show_debug_icons_window)
             menu_debug.addAction(action_debug_icons)
+
+
+            menu_debug.addSeparator()
+
+            action_debug_3 = QAction('Debug 3', self)
+            action_debug_3.triggered.connect(self.action_debug_3_run)
+            menu_debug.addAction(action_debug_3)
+
+
+
+
         else:
             logging.error("menu_debug is None")
             
+    def action_debug_3_run(self) -> None:
+        logging.info("action_debug_3_run: called")
+        logging.info(f"{os_listdir_cache.__dict__}")
+        logging.info(f"_os_listdir_cache = {os_listdir_cache.__dict__}")
+
+        pass
+
 
     def show_settings_dialog(self) -> None:
         # pass

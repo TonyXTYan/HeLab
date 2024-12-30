@@ -9,6 +9,7 @@ import logging
 from PyQt6.QtTest import QTest
 
 from helab.resources.icons import StatusIcons, IconsInitUtil
+from helab.utils.cachingSetup import data_ram_cache
 from helab.utils.os_cached import os_isdir, os_listdir
 
 
@@ -144,38 +145,48 @@ class StatusWorker(QRunnable):
                       )
 
 
-
+        emit_status = 'canceled'
+        emit_counts = -2
+        emit_eicons = []
         if self._is_canceled:
-            self.signals.finished.emit(StatusReport(self.file_path, 'canceled', -1, []))
-            return
-
+            # self.signals.finished.emit(StatusReport(self.file_path, 'canceled', -1, []))
+            emit_status, emit_counts = 'canceled', -1
+            # return
         if (d_only_dld_shots_len == 0 and d_only_txy_shots_len == 0) and d_union_shots_len == 0:
             # no data files found
             assert d_union_shots_len == d_inter_shots_len, "Impossible logic! d_union_shots_len != d_inter_shots_len"
-            self.signals.finished.emit(StatusReport(self.file_path, 'nothing', -1, []))
+            # self.signals.finished.emit(StatusReport(self.file_path, 'nothing', -1, []))
+            emit_status, emit_counts = 'nothing', -1
         elif (d_only_dld_shots_len == 0 and d_only_txy_shots_len == 0) and d_union_shots_len > 0:
             # consistent data folder
             assert d_union_shots_len == d_inter_shots_len, "Impossible logic! d_union_shots_len != d_inter_shots_len"
-            self.signals.finished.emit(StatusReport(self.file_path, 'ok', d_union_shots_len, []))
+            # self.signals.finished.emit(StatusReport(self.file_path, 'ok', d_union_shots_len, []))
+            emit_status, emit_counts = 'ok', d_union_shots_len
         elif (d_only_dld_shots_len > 0 and d_only_txy_shots_len == 0) and d_inter_shots_len > 0:
-            self.signals.finished.emit(StatusReport(self.file_path, 'fixable', d_inter_shots_len, []))
+            # self.signals.finished.emit(StatusReport(self.file_path, 'fixable', d_inter_shots_len, []))
+            emit_status, emit_counts = 'fixable', d_inter_shots_len
         elif (d_only_dld_shots_len > 0 and d_only_txy_shots_len > 0) and d_inter_shots_len > 0:
             # inconsistent data folder
-            self.signals.finished.emit(StatusReport(self.file_path, 'warning', d_inter_shots_len, []))
+            # self.signals.finished.emit(StatusReport(self.file_path, 'warning', d_inter_shots_len, []))
+            emit_status, emit_counts = 'warning', d_inter_shots_len
         elif (d_only_dld_shots_len == 0 and d_only_txy_shots_len > 0) and d_inter_shots_len > 0:
-            self.signals.finished.emit(StatusReport(self.file_path, 'critical', d_inter_shots_len, []))
+            # self.signals.finished.emit(StatusReport(self.file_path, 'critical', d_inter_shots_len, []))
+            emit_status, emit_counts = 'critical', d_inter_shots_len
         elif (d_only_dld_shots_len > 0 or d_only_txy_shots_len > 0) and d_inter_shots_len == 0:
             # terribly inconsistent data folder
             if d_only_dld_shots_len == 0:
                 logging.warning(f"StatusWorker._run_helper_v1: folder only contain txy data: {d_only_txy_shots_len} at {self.file_path}")
-                self.signals.finished.emit(StatusReport(self.file_path, 'warning', d_only_txy_shots_len, []))
+                # self.signals.finished.emit(StatusReport(self.file_path, 'warning', d_only_txy_shots_len, []))
+                emit_status, emit_counts = 'warning', d_only_txy_shots_len
             elif d_only_txy_shots_len == 0:
                 logging.warning(f"StatusWorker._run_helper_v1: folder only contain dld data: {d_only_dld_shots_len} at {self.file_path}")
-                self.signals.finished.emit(StatusReport(self.file_path, 'warning', d_only_dld_shots_len, []))
+                # self.signals.finished.emit(StatusReport(self.file_path, 'warning', d_only_dld_shots_len, []))
+                emit_status, emit_counts = 'warning', d_only_dld_shots_len
             else:
                 # This means there are some dld files and some txy files but none of them are matching
                 logging.critical(f"StatusWorker._run_helper_v1: serverly fucked up dataset at {self.file_path} (no matching pairs)")
-                self.signals.finished.emit(StatusReport(self.file_path, 'critical', 0, []))
+                # self.signals.finished.emit(StatusReport(self.file_path, 'critical', 0, []))
+                emit_status, emit_counts = 'critical', 0
         else:
             logging.fatal(f"StatusWorker._run_helper_v1: unexpected condition for {self.file_path}"
                           f"d_dld_files: {d_dld_files_len}, d_txy_files: {d_txy_files_len}, "
@@ -184,6 +195,23 @@ class StatusWorker(QRunnable):
                           )
             assert False, "Impossible logic! Unexpected condition"
 
+        if emit_counts >= 0:
+            try:
+                # data_files = data_ram_cache.__getitem__(self.file_path)
+                data_files = data_ram_cache[self.file_path]
+                if not data_files is None:
+                    emit_eicons.append('ram')
+                    logging.debug(f"StatusWorker._run_helper_v1: data in data_ram_cache for {self.file_path}")
+                else:
+                    logging.warning(f"StatusWorker._run_helper_v1: data_ram_cache None for {self.file_path}")
+            except KeyError:
+                logging.debug(f"StatusWorker._run_helper_v1: no key in data_ram_cache {self.file_path}")
+                pass
+            except Exception as e:
+                logging.error(f"StatusWorker._run_helper_v1: error accessing cache for {self.file_path}: {e}")
+                pass
+
+        self.signals.finished.emit(StatusReport(self.file_path, emit_status, emit_counts, emit_eicons))
 
         # if d_dld_files_len == 0 and d_txy_files_len == 0:
         #     self.signals.finished.emit(StatusReport(self.file_path, 'nothing', -1, [])

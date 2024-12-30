@@ -172,50 +172,57 @@ class helabFileSystemModel(QFileSystemModel):
                 # return status_data
                 # if folder_path in self.running_workers_status and self.running_workers_status[folder_path] is not None:
                         # logging.debug(f"Worker still running for: {folder_path}")
-                if folder_path in self.running_workers_status:
+                if folder_path in self.running_workers_status: # legit loading
                     return status_data
-                else:
+                else: # loading but worker is gone (unexpected)
+                    logging.warning(f"fetch_status: loading but worker is gone for: {folder_path}")
                     del self.status_cache[folder_path]
                     return self.fetch_status(folder_path)
             else:
                 return status_data
-        else:
+        else: # status_data is None from cache
             # Check if a worker is already running for this folder_path
+            loading_status = StatusReport(folder_path, 'loading', -300, [])
             if folder_path in self.running_workers_status:
                 # logging.debug(f"fetch_status worker already running for: {folder_path}")
                 # return ('loading', 0, [])
                 # return self.status_cache.get(folder_path, ('loading', 0, []))
-                return StatusReport(folder_path, 'loading', 0, [])
+                self.status_cache[folder_path] = loading_status
+                return loading_status
+            # else: # not in running_workers_status
 
             logging.debug(f"fetch_status: not cached for: {folder_path}")
             # Set status to 'loading' in cache with empty extra_icons
             # self.status_cache[folder_path] = ('loading', 0, [])
-            self.status_cache[folder_path] = StatusReport(folder_path, 'loading', 0, [])
+            # self.status_cache[folder_path] = StatusReport(folder_path, 'loading', -300, [])
             # Emit dataChanged to update the view with 'loading' status
-            index = self.index(folder_path, self.COLUMN_STATUS_NUMBER)
-            if index.isValid():
-                self.dataChanged.emit(
-                    index,
-                    index,
-                    [Qt.ItemDataRole.DisplayRole]
-                )
-            index_icon = self.index(folder_path, self.COLUMN_STATUS_ICON)
-            if index_icon.isValid():
-                self.dataChanged.emit(
-                    index_icon,
-                    index_icon,
-                    [Qt.ItemDataRole.DecorationRole]
-                )
+
+            # index = self.index(folder_path, self.COLUMN_STATUS_NUMBER)
+            # if index.isValid():
+            #     self.dataChanged.emit(
+            #         index,
+            #         index,
+            #         [Qt.ItemDataRole.DisplayRole]
+            #     )
+            # index_icon = self.index(folder_path, self.COLUMN_STATUS_ICON)
+            # if index_icon.isValid():
+            #     self.dataChanged.emit(
+            #         index_icon,
+            #         index_icon,
+            #         [Qt.ItemDataRole.DecorationRole]
+            #     )
+
             # Create and start the worker
             worker = StatusWorker(folder_path)
             worker.signals.finished.connect(self.handle_status_computed)
             # self.thread_pool.start(worker)
             worker.setAutoDelete(True)
-            QTimer.singleShot(5, lambda: self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value))
-            # self.running_workers.add(worker)
             self.running_workers_status[folder_path] = worker
+            # self.running_workers.add(worker)
             # return ('loading', 0, [])
-            return StatusReport(folder_path, 'loading', 0, [])
+            QTimer.singleShot(5, lambda: self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value))
+            # return StatusReport(folder_path, 'loading', 0, [])
+            return loading_status
 
     def handle_status_computed(self, status_report: StatusReport) -> None:
         file_path = status_report.path
@@ -304,8 +311,8 @@ class helabFileSystemModel(QFileSystemModel):
         # Invalidate cache entries for the loaded directory
         # self.invalidate_cache_for_directory(path)
         logging.debug(f"on_directory_loaded: (popped) {path}")
-        # QTimer.singleShot(10, lambda: self.status_cache.pop(path, None))
-        self.status_cache.pop(path, None)
+        QTimer.singleShot(10, lambda: self.status_cache.pop(path))
+        # self.status_cache.pop(path, None)
         # joblib_memory.cache(func=os_scandir).clear()
         # joblib_memory.clear(warn=False, func=os_listdir, args=(path,))
         # joblib_memory.clear

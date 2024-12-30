@@ -1,5 +1,17 @@
 # This Python file uses the following encoding: utf-8
 import logging
+import tempfile
+
+import coloredlogs
+# from helab.utils.loggingSetup import setup_logging
+# setup_logging()
+coloredlogs.install(
+        level=logging.DEBUG,
+        # format='%(asctime)s - %(levelname)s - %(message)s'
+        fmt='%(asctime)s - %(levelname)s:\t%(message)s',
+    )
+
+
 import platform
 import re
 import subprocess
@@ -11,14 +23,14 @@ from PyQt6.QtWidgets import QApplication
 
 from helab.resources.icons import StatusIcons, ToolIcons, IconsInitUtil
 from helab.utils.constants import *
-from helab.utils.loggingSetup import setup_logging
+from helab.utils.cachingSetup import *
 from helab.views.helabMainWindow import MainWindow
 
 
 
 if __name__ == "__main__":
 
-    setup_logging()
+    # setup_logging()
     logging.debug("this is a debugging message")
     logging.info("this is an informational message")
     logging.warning("this is a warning message")
@@ -26,10 +38,13 @@ if __name__ == "__main__":
     logging.critical("this is a critical message")
 
     logging.info(f"Platform: {sys.platform}, {platform.system()}, {platform.release()}, {platform.version()}, {platform.machine()}, {platform.processor()}")
+    logging.info(f"{tempfile.gettempdir() = }")
 
     logging.info(f"Starting HeLab v{APP_VERSION} ({APP_COMMIT_HASH})")
 
     # font_db = QFontDatabase()
+
+    logging.debug(cache_status_string())
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")

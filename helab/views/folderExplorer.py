@@ -1,3 +1,4 @@
+import glob
 import logging
 import os
 import platform
@@ -5,6 +6,7 @@ import subprocess
 import sys
 from typing import Optional, Dict, List, Tuple
 
+import pandas as pd
 from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal, QThreadPool, QModelIndex, QItemSelection, \
     QPoint, QFileInfo, QTimer
 from PyQt6.QtGui import QAction, QFontInfo
@@ -12,6 +14,7 @@ from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPus
 from cachetools import LRUCache, TTLCache
 from diskcache import FanoutCache
 
+from helab.utils.cachingSetup import status_cache, data_ram_cache
 from helab.utils.constants import *
 from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.utils.os_cached import os_isdir
@@ -19,7 +22,7 @@ from helab.views.statusIconDelegate import StatusIconDelegate
 from helab.views.statusTreeView import StatusTreeView
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.statusDeepWorker import StatusDeepWorker
-from helab.workers.statusWorker import StatusWorker
+from helab.workers.statusWorker import StatusWorker, StatusReport
 
 
 class FolderExplorer(QWidget):
@@ -210,10 +213,20 @@ class FolderExplorer(QWidget):
     def on_selection_changed(self, selected: QItemSelection, deselected: QItemSelection) -> None:
         selection_model = self.get_selection_model()
         indexes = selection_model.selectedRows()
+
+        # there_should_only_be_one_index = len(indexes) == 1
+        if len(indexes) > 1:
+            logging.critical(f"on_selection_changed: DIDN'T THINK THIS WAS POSSIBLE {len(indexes) = }")
+
         for index in indexes:
             file_path = self.model.filePath(index)
             logging.debug(f"folderExplorer.on_selection_changed: {file_path = }")
             self.selected_path = file_path
+
+            self.action_debug_2_run(self.model.fileInfo(index))
+
+
+
 
 
     def expand_to_path(self, path: str) -> None:
@@ -413,11 +426,111 @@ class FolderExplorer(QWidget):
 
         menu.addMenu(action_menu_deep_fill_blanks)
 
+        menu.addSeparator()
+
+        action_menu_debug = QMenu("Debug", self)
+        action_debug_1 = QAction("Debug Action 1", self)
+        action_debug_1.triggered.connect(lambda: self.action_debug_1_run(file_info))
+        action_menu_debug.addAction(action_debug_1)
+
+        action_debug_2 = QAction("Debug Action 2", self)
+        action_debug_2.triggered.connect(lambda: self.action_debug_2_run(file_info))
+        action_menu_debug.addAction(action_debug_2)
+
+        menu.addMenu(action_menu_debug)
+
 
         # **Display the context menu at the cursor's global position**
         viewport = self.tree.viewport()
         if viewport is None: return
         menu.exec(viewport.mapToGlobal(position))
+
+
+    def action_debug_1_run(self, file_info: QFileInfo) -> int:
+        file_path = file_info.absoluteFilePath()
+        logging.warning(f"action_debug_1_run: file_path = {file_path}")
+        logging.warning(f"THIS IS STRICTLY FOR DEBUGGING PURPOSES")
+
+        status_report = status_cache[file_path]
+        if status_report is None:
+            logging.warning(f"status_cache is None for {file_path = }")
+            return -1
+        if not isinstance(status_report, StatusReport):
+            logging.warning(f"status_cache is not a StatusReport for {file_path = }")
+            return -2
+
+        logging.warning(f"{status_report.status = }")
+
+        if not status_report.status in ['ok', 'fixable', 'warning', 'critical']:
+            logging.warning(f"status is not STATUS_OK for {file_path = }")
+            return -3
+
+        return 0
+
+    def action_debug_2_run(self, file_info: QFileInfo) -> None:
+        try:
+            folder_path = file_info.absoluteFilePath()
+            if not self.action_debug_1_run(file_info) == 0 : return
+            try:
+                data_files = data_ram_cache[folder_path]
+                if not data_files is None:
+                    logging.warning(f"action_debug_2_run: {folder_path = } already in cache")
+                    return
+            except KeyError:
+                pass
+            except Exception as e:
+                logging.error(f"StatusWorker._run_helper_v1: error accessing cache for {folder_path}: {e}")
+                pass
+
+            logging.warning(f"{self.selected_path == folder_path = }")
+
+            file_pattern = os.path.join(folder_path, 'd_txy_forc*.txt')
+            files = glob.glob(file_pattern)
+            # logging.debug(f"{files}")
+            data_dict = {}
+            for file in files:
+                # Extract the base filename
+                basename = os.path.basename(file)  # e.g., 'd_txy_forc11.txt'
+
+                # Extract the number using string manipulation or regex
+                # Here, we'll use string methods
+                number_str = basename.split('forc')[1].split('.txt')[0]  # '11'
+                number = int(number_str)
+
+                # Load the data into a DataFrame
+                # Adjust the separator if your data uses a different delimiter (e.g., comma, space)
+                df = pd.read_csv(file, sep=',', names=['t', 'x', 'y'])
+
+                # Alternatively, if the separator is whitespace:
+                # df = pd.read_csv(file, delim_whitespace=True, names=['t', 'x', 'y'])
+
+                # Store the DataFrame in the dictionary
+                data_dict[number] = df
+
+            # Add a 'file_number' column to each DataFrame
+            for number, df in data_dict.items():
+                df['file_number'] = number
+
+            # Concatenate all DataFrames
+            combined_df = pd.concat(data_dict.values())
+
+            # Set 'file_number' as the index
+            combined_df.set_index('file_number', inplace=True)
+
+            # Optional: Sort the index for better organization
+            combined_df.sort_index(inplace=True)
+
+            print(combined_df)
+
+            data_ram_cache[folder_path] = combined_df
+
+            status_cache.pop(folder_path)
+            self.model.fetch_status(folder_path)
+
+            logging.warning(f"action_debug_2_run: {folder_path = } DONE")
+        except Exception as e:
+            logging.critical(f"action_debug_2_run: {e = }")
+
 
     # def context_menu_action_recalc_status(self, folder_info: QFileInfo) -> None:
     #     logging.debug(f"Recalculate Status for : {folder_info.absoluteFilePath()}")

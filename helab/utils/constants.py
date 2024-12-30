@@ -83,6 +83,8 @@ DIR_TEMPS = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps')
 
 DIR_CACHES = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches')
 
+DIR_TEMP = "/tmp/cache"
+
 OS_DIR_CACHE_TTL = 60*60 # seconds
 
 # MAX_DEPTH_INT = int(sys.maxsize)>>10

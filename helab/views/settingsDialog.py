@@ -1,9 +1,12 @@
 # settingsDialog.py
 import logging
+import sys
 from re import S
-from typing import Optional
+from typing import Optional, Dict, Any
 
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QLineEdit, QLabel, QTabWidget, QWidget
+from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QLineEdit, QLabel, QTabWidget, \
+    QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox
 from PyQt6.QtCore import QSettings
 from diskcache import FanoutCache
 
@@ -14,7 +17,7 @@ class SettingsDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumSize(800, 400)
+        self.setMinimumSize(800, 500)
         self.main_layout = QVBoxLayout(self)
         MLCM = 8 # Main Layout Contents Margin
         self.main_layout.setContentsMargins(MLCM,MLCM,MLCM,MLCM)
@@ -47,9 +50,7 @@ class SettingsDialog(QDialog):
 
         self.tabs.addTab(self.general_tab, "General")
 
-
         # TODO: default load folder
-
 
         # Scripts Tab
         self.scripts_tab = QWidget()
@@ -59,10 +60,10 @@ class SettingsDialog(QDialog):
 
 
         # Cache Tab
-        self.cache_tab = QWidget()
-        self.cache_layout = QVBoxLayout(self.cache_tab)
-        self.cache_layout.addWidget(QLabel("Cache Settings"))
-        self.tabs.addTab(self.cache_tab, "Cache")
+        # self.cache_tab = QWidget()
+        # self.cache_layout = QVBoxLayout(self.cache_tab)
+        # self.cache_layout.addWidget(QLabel("Cache Settings"))
+        # self.tabs.addTab(self.cache_tab, "Cache")
 
 
 
@@ -74,43 +75,70 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self.placeholder_tab, "Placeholder")
 
 
+        self._make_tab_cache()
+
+
         # Buttons
         self.button_layout = QHBoxLayout()
         self.save_button = QPushButton("Save")
         self.cancel_button = QPushButton("Cancel")
+        self.reset_button = QPushButton("Reset")
         self.button_layout.addWidget(self.save_button)
         self.button_layout.addWidget(self.cancel_button)
+        self.button_layout.addWidget(self.reset_button)
         self.main_layout.addLayout(self.button_layout)
 
         self.save_button.clicked.connect(self.save_settings)
         self.cancel_button.clicked.connect(self.reject)
+        self.reset_button.clicked.connect(self.reset_settings)
 
         self.load_settings()
 
         # self.main_layout.setStretch(0, 1)
         # self.main_layout.setStretch(1, 0)
 
-
+    def _make_tab_cache(self) -> None:
         # Cache Tab
         self.cache_tab = QWidget()
         self.cache_layout = QVBoxLayout(self.cache_tab)
 
-        self.caches = [
-            ('os_listdir_cache', os_listdir_cache),
-            ('os_scandir_cache', os_scandir_cache),
-            ('os_isdir_cache', os_isdir_cache),
-            ('status_cache', status_cache),
-            ('hasChildren_cache', hasChildren_cache),
-        ]
-
         self.cache_widgets = []
+        self.cache_params_ui: Dict[str, Dict[str, Any]] = {}
 
-        for cache_name, cache in self.caches:
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+
+        experimental_label = QLabel(
+            "Warning: Changing these settings may cause unexpected behaviour. \n"
+            "To change the cache settings, please edit in the raw .py file.")
+        experimental_label.setWordWrap(True)
+        scroll_layout.addWidget(experimental_label)
+
+
+        force_save_button = QPushButton("Force Save Cache to Disk")
+        force_save_button.clicked.connect(self.save_cache_to_disk)
+        scroll_layout.addWidget(force_save_button)
+
+        clear_all_button = QPushButton("Clear All Caches")
+        clear_all_button.clicked.connect(self.clear_all_caches)
+        scroll_layout.addWidget(clear_all_button)
+
+        for cache_name, cache in caches.items():
             cache_widget = QWidget()
             cache_layout = QHBoxLayout(cache_widget)
 
+            # cache_label = QLabel(f"<b>{cache_name}</b>")
             cache_label = QLabel(cache_name)
+            cache_label.setStyleSheet("font-weight: bold")
             cache_layout.addWidget(cache_label)
+
+            cache_hits_label = QLabel()
+            cache_layout.addWidget(cache_hits_label)
+
+            cache_miss_label = QLabel()
+            cache_layout.addWidget(cache_miss_label)
 
             cache_size_label = QLabel()
             cache_layout.addWidget(cache_size_label)
@@ -119,20 +147,117 @@ class SettingsDialog(QDialog):
             clear_button.clicked.connect(lambda _, c=cache: self.clear_cache(c))
             cache_layout.addWidget(clear_button)
 
+            # # logging.debug(f"Cache: {cache_name}, {sys.getsizeof(cache)}")
+            # connection = cache._sql
+            # ram_usage = connection.execeute("PRAGMA cache_size").fetchone()[0]
+            # ram_highwater = connection.execeute("PRAGMA memory_highwater").fetchone()[0]
+            # logging.debug(f"Cache: {cache_name}, {ram_usage = }, {ram_highwater = }")
+
+            # hits, miss = cache.stats()
+
             self.cache_widgets.append({
                 'cache_name': cache_name,
                 'cache': cache,
+                'hits_label': cache_hits_label,
+                'miss_label': cache_miss_label,
                 'size_label': cache_size_label,
             })
+            scroll_layout.addWidget(cache_widget)
 
-            self.cache_layout.addWidget(cache_widget)
 
-        clear_all_button = QPushButton("Clear All Caches")
-        clear_all_button.clicked.connect(self.clear_all_caches)
-        self.cache_layout.addWidget(clear_all_button)
+            form_widget = QWidget()
+            form_layout = QFormLayout(form_widget)
 
+            # form_layout.addRow(QLabel(f"<b>{cache_name}</b>"), QLabel(""))
+            self.cache_params_ui[cache_name] = {}
+            param_keys = CACHE_PARAMS_DEFAULTS.keys()
+            existing_params = load_cache_param(cache_name)
+            for pkey in param_keys:
+                lbl = QLabel(pkey)
+                if pkey == "statistics":
+                    pass
+                elif pkey == "sqlite_journal_mode":
+                    cb = QComboBox()
+                    modes = [
+                        "delete",
+                        "truncate",
+                        "persist",
+                        "memory",
+                        "wal",
+                        "off"
+                    ]
+                    cb.addItems(modes)
+                    idx = cb.findText(str(existing_params[pkey]))
+                    if idx >= 0:
+                        cb.setCurrentIndex(idx)
+                    form_layout.addRow(lbl, cb)
+                    self.cache_params_ui[cache_name][pkey] = cb
+                elif pkey == "eviction_policy":
+                    # example: a combo box for known policies
+                    cb = QComboBox()
+                    policies = [
+                        "least-recently-stored",
+                        "least-recently-used",
+                        "least-frequently-used",
+                        "none"
+                    ]
+                    cb.addItems(policies)
+                    idx = cb.findText(str(existing_params[pkey]))
+                    if idx >= 0:
+                        cb.setCurrentIndex(idx)
+                    form_layout.addRow(lbl, cb)
+                    self.cache_params_ui[cache_name][pkey] = cb
+                else:
+                    # # Use a line edit for numeric/bool/string
+                    # le = QLineEdit(str(existing_params[pkey]))
+                    # form_layout.addRow(lbl, le)
+                    # self.cache_params_ui[cache_name][pkey] = le
+                    number_filed = QSpinBox()
+                    number_filed.setMaximum(1<<14)
+                    # number_filed.setValue(existing_params[pkey])
+
+                     # Auto-select unit for the existing value
+                    size_in_bytes = existing_params[pkey]
+
+                    units = ["B", "KB", "MB", "GB", "TB"] if pkey != "sqlite_cache_size" else ["I", "K", "M", "G", "T"]
+
+                    unit_idx = 0
+                    while size_in_bytes >= 1024 and unit_idx < len(units) - 1:
+                        size_in_bytes >>= 10
+                        unit_idx += 1
+                    if (unit_idx >= 3 and size_in_bytes > 100) or unit_idx >= 4:
+                        logging.warning(f"Cache {cache_name} param {pkey} is large: {size_in_bytes} {units[unit_idx]}")
+
+                    number_filed.setValue(size_in_bytes)
+                    unit_selector = QComboBox()
+                    unit_selector.addItems(units)
+                    unit_selector.setCurrentIndex(unit_idx)
+
+                    unit_layout = QHBoxLayout()
+                    unit_layout.addWidget(number_filed)
+                    unit_layout.addWidget(unit_selector)
+
+                    unit_widget = QWidget()
+                    unit_widget.setLayout(unit_layout)
+                    form_layout.addRow(lbl, unit_widget)
+                    self.cache_params_ui[cache_name][pkey] = (number_filed, unit_selector)
+
+            # self.cache_layout.addWidget(form_widget)
+            # self.cache_layout.addWidget(cache_widget)
+
+            scroll_layout.addWidget(form_widget)
+            form_widget.setEnabled(False)
+
+        scroll_area.setWidget(scroll_content)
+        self.cache_layout.addWidget(scroll_area)
+        # self.cache_layout.addWidget(clear_all_button)
         self.tabs.addTab(self.cache_tab, "Cache")
+        self.update_cache_info()
 
+    def save_cache_to_disk(self) -> None:
+        for cache_info in self.cache_widgets:
+            cache = cache_info['cache']
+            cache.close()
         self.update_cache_info()
 
 
@@ -146,6 +271,48 @@ class SettingsDialog(QDialog):
         settings = QSettings("ANU", "HeLab")
         settings.setValue("example_checkbox", self.example_checkbox.isChecked())
         settings.setValue("example_text", self.example_text.text())
+
+        # Save DiskCache parameters overrides
+        for cache_name, param_widgets in self.cache_params_ui.items():
+            for param_key, widget in param_widgets.items():
+                setting_path = f"diskcache/{cache_name}/{param_key}"
+                default_val = CACHE_PARAMS_DEFAULTS[param_key]
+
+                # If it's a combo
+                if isinstance(widget, QComboBox):
+                    val_str = widget.currentText()
+                    settings.setValue(setting_path, val_str)
+
+                # If it's a line edit
+                elif isinstance(widget, QLineEdit):
+                    text_val = widget.text().strip()
+                    if isinstance(default_val, bool):
+                        val = text_val.lower() in ("true", "1", "yes")
+                    elif isinstance(default_val, int):
+                        try:
+                            val = int(text_val) # type: ignore
+                        except ValueError:
+                            val = default_val   # type: ignore
+                    else:
+                        val = text_val # type: ignore   #TODO: FIXME: TYPING ERROR
+                    settings.setValue(setting_path, val)
+
+                # Handle (QSpinBox, QComboBox) tuple
+                elif isinstance(widget, tuple) and len(widget) == 2:
+                    number_filed, unit_selector = widget
+                    base_val = number_filed.value()
+                    unit = unit_selector.currentText()
+                    if param_key != "sqlite_cache_size":
+                        factors = ["B", "KB", "MB", "GB", "TB"]
+                    else:
+                        factors = ["I", "K", "M", "G", "T"]
+
+                    factor_idx = factors.index(unit)
+                    for _ in range(factor_idx):
+                        base_val <<= 10
+                    settings.setValue(setting_path, base_val)
+
+
         self.accept()
         logging.debug("Settings saved")
 
@@ -162,5 +329,21 @@ class SettingsDialog(QDialog):
         for cache_info in self.cache_widgets:
             cache = cache_info['cache']
             size_label = cache_info['size_label']
-            cache_size_MB = cache.volume() / 1000 / 1000  # MB
-            size_label.setText(f"Size: {cache_size_MB:<6.2f} MB")
+            hits_label = cache_info['hits_label']
+            miss_label = cache_info['miss_label']
+            hits, miss = cache.stats()
+            hits_label.setText(f"Hits: {fnum(hits)}")
+            miss_label.setText(f"Miss: {fnum(miss)}")
+            size_label.setText(f"Size: {fnum(cache.volume())}B")
+
+
+    def closeEvent(self, a0: QCloseEvent|None) -> None:
+        # self.save_settings()
+        # TODO warning box if unsaved changes
+        super().closeEvent(a0)
+
+    def reset_settings(self) -> None:
+        settings = QSettings("ANU", "HeLab")
+        settings.clear()
+        self.load_settings()
+        logging.debug("Settings reset to default")

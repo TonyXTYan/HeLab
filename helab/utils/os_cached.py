@@ -136,6 +136,7 @@ def os_listdir(path: str, invalidate_cache:bool=False) -> List[str]:
 def _os_listdir(path: str) -> List[str]:
     return os.listdir(path)
 
+
 # @os_listdir_cache.memoize(expire=OS_DIR_CACHE_TTL, ignore=['invalidate_cache'])  # type: ignore[misc]
 def os_listdir_filtered(path: str, invalidate_cache:bool=False) -> List[str]:
     if invalidate_cache:
@@ -274,3 +275,19 @@ def os_isdir(path: str, invalidate_cache:bool=False) -> bool:
 #         result = os.path.isdir(path)
 #         os_isdir_cache[path] = result
 #         return result
+
+
+# _os_listdir.__cache__key = custom_key_function
+# _os_listdir_filtered.__cache__key = custom_key_function
+# _os_isdir.__cache__key = custom_key_function
+# _os_scandir_dic.__cache__key = custom_key_function
+# _os_scandir_sns.__cache__key = custom_key_function
+#
+
+
+
+
+
+
+# logging.error(f"{os_listdir_cache.__dict__ = }")
+# logging.error(f"{_os_listdir.__dict__ = }")
