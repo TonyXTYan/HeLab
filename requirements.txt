@@ -25,4 +25,4 @@ uncertainties
 pandas
 scipy
 joblib
-dogpile.cache
+diskcache
