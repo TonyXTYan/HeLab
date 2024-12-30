@@ -49,11 +49,11 @@ class StatusDeepWorker(QRunnable):
         #                 logging.error(f"Error accessing {current_path}: {e}")
         #                 continue
         #             for dir_name in dirs:
-        #                 dir_path = os.path.join(current_path, dir_name)
+        #                 model_root_path = os.path.join(current_path, dir_name)
         #                 if self._is_cancelled:
         #                     logging.debug(f"Deep worker cancelled during BFS: {self.root_path}")
         #                     return
-        #                 queue.append((dir_path, current_depth + 1))
+        #                 queue.append((model_root_path, current_depth + 1))
         # except Exception as e:
         #     logging.error(f"Error in StatusDeepWorker: {e}")
         #     return

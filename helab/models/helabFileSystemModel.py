@@ -446,10 +446,10 @@ class helabFileSystemModel(QFileSystemModel):
     #     count = 0
     #     try:
     #         while count < batch_size:
-    #             dir_path = next(self.directory_iterator)
-    #             logging.debug(f"Recalculating status for: {dir_path}")
-    #             self.status_cache.pop(dir_path, None)
-    #             self.fetch_status(dir_path)     #### THIS IS WHERE THE RECURSIVE STATUS RECALCULATION HAPPENS
+    #             model_root_path = next(self.directory_iterator)
+    #             logging.debug(f"Recalculating status for: {model_root_path}")
+    #             self.status_cache.pop(model_root_path, None)
+    #             self.fetch_status(model_root_path)     #### THIS IS WHERE THE RECURSIVE STATUS RECALCULATION HAPPENS
     #             count += 1
     #     except StopIteration:
     #         # No more directories
@@ -487,10 +487,10 @@ class helabFileSystemModel(QFileSystemModel):
             return False
         dir_path = file_info.absoluteFilePath()
 
-        # cached_result = self.hasChildren_cache.get(dir_path)
+        # cached_result = self.hasChildren_cache.get(model_root_path)
         cached_result = cast(Optional[bool], self.hasChildren_cache.get(dir_path))
         if cached_result is not None:
-            # logging.debug(f"hasChildren used cache for: {dir_path}: {cached_result}")
+            # logging.debug(f"hasChildren used cache for: {model_root_path}: {cached_result}")
             return cached_result
         else:
             if dir_path in self.running_workers_hasChildren:
@@ -512,31 +512,31 @@ class helabFileSystemModel(QFileSystemModel):
 
 
 
-        # directory = QDir(dir_path)
+        # directory = QDir(model_root_path)
         # directory.setFilter(QDir.Filter.Dirs | QDir.Filter.NoDotAndDotDot)
         # return directory.exists() and directory.count() > 0  # '.' and '..''
 
 
         # try:
         #     return any(
-        #         # os.path.isdir(os.path.join(dir_path, entry))
-        #         # for entry in os.listdir(dir_path)
-        #         os_isdir(os.path.join(dir_path, entry))
-        #         for entry in os_listdir(dir_path)
+        #         # os.path.isdir(os.path.join(model_root_path, entry))
+        #         # for entry in os.listdir(model_root_path)
+        #         os_isdir(os.path.join(model_root_path, entry))
+        #         for entry in os_listdir(model_root_path)
         #     )
         # except Exception as e:
         #     return False
 
         # # Start the worker
-        # worker = DirectoryCheckWorker(dir_path)
+        # worker = DirectoryCheckWorker(model_root_path)
         # worker.signals.finished.connect(self.on_has_children_finished)
         # threadpool = QThreadPool.globalInstance()
         # threadpool.start(worker)
         #
         # return True  # Return False initially, update will be handled in on_has_children_finished
         
-    # def on_has_children_finished(self, dir_path: str, has_children: bool):
-    #     index = self.index(dir_path)
+    # def on_has_children_finished(self, model_root_path: str, has_children: bool):
+    #     index = self.index(model_root_path)
     #     if index.isValid():
     #         # Notify the view that the data has changed
     #         self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
@@ -550,12 +550,12 @@ class helabFileSystemModel(QFileSystemModel):
             self.hasChildren_cache[dir_path] = has_children
         else:
             logging.warning(f"on_has_children_finished: has_children is None for: {dir_path}")
-        # logging.debug(f"hasChildren computed for: {dir_path}: {has_children}, in cache: {self.hasChildren_cache[dir_path]}")
+        # logging.debug(f"hasChildren computed for: {model_root_path}: {has_children}, in cache: {self.hasChildren_cache[model_root_path]}")
 
         # Remove the worker from the running_workers_hasChildren dictionary
         if dir_path in self.running_workers_hasChildren:
             del self.running_workers_hasChildren[dir_path]
-            # logging.debug(f"Worker removed from running_workers_hasChildren for: {dir_path}")
+            # logging.debug(f"Worker removed from running_workers_hasChildren for: {model_root_path}")
 
             logging.debug(f"on_has_children_finished for: {dir_path}: {has_children}, value in cache: {self.hasChildren_cache[dir_path]}")
             # logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {self.hasChildren_cache.currsize}") # type: ignore[attr-defined]

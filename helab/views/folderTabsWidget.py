@@ -5,6 +5,7 @@ import os
 import sys
 from typing import Tuple, List, Dict
 
+from PIL.TiffTags import lookup
 from PyQt6.QtCore import QDir, QThreadPool, Qt, QSize
 from PyQt6.QtWidgets import QTabWidget, QWidget, QMessageBox, QTabBar
 from cachetools import LRUCache, TTLCache
@@ -76,35 +77,47 @@ class FolderTabWidget(QTabWidget):
                     close_button.setEnabled(False)  # Disable the close button
             tab_bar.setEnabled(False)
 
-    def add_new_folder_explorer_tab(self) -> None:
+    def add_new_folder_explorer_tab(self,
+                                    model_root_path: str = QDir.rootPath(),
+                                    view_path: str = QDir.rootPath(),
+                                    target_path: str|None = None,
+                                    set_initial_expand_to_parent_level: bool = True,
+                                    ) -> None:
         # Create a new FolderExplorer instance
-        dirPath = QDir.rootPath()
-        view_path = dirPath
+        # model_root_path = QDir.rootPath()
+        # model_root_path = QDir.drives()
+        # view_path = QDir.rootPath()
+        # view_path = model_root_path
+
+        # model_root_path = ""
+        # view_path = ""
         # target_path = r'/Volumes/tonyNVME Gold/dld output'
 
-        target_paths = [
-            '/Volumes/tonyNVME Gold/dld output',
-            '/Users/tonyyan/.cache/2024_Momentum_Bells_V2 - 20241200',
-            # '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - Testing MS Teams/2024_Momentum_Bells_V2 - 20241200',
-            # Don't use OneDrive it's shit (cause file system hangs)
-            os.getcwd(),
-            '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab',
-            'C:\\Users\\XinTong\\Documents',
-            'O:\\'
-            ''
-        ]
+        if target_path is None:
+            target_paths = [
+                '/Volumes/tonyNVME Gold/dld output',
+                '/Users/tonyyan/.cache/2024_Momentum_Bells_V2 - 20241200',
+                # '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - Testing MS Teams/2024_Momentum_Bells_V2 - 20241200',
+                # Don't use OneDrive it's shit (cause file system hangs)
+                os.getcwd(),
+                '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab',
+                'C:\\Users\\XinTong\\Documents',
+                'O:\\'
+                ''
+            ]
 
-        target_path = next((path for path in target_paths if os.path.exists(path)), '')
+            target_path = next((path for path in target_paths if os.path.exists(path)), '')
     
         try:
-            if not os.path.commonpath([dirPath, target_path]) == os.path.abspath(dirPath):
+            if not os.path.commonpath([model_root_path, target_path]) == os.path.abspath(model_root_path):
                 logging.warning(
-                    f"Target path {target_path} is not under the root path {dirPath}. Adjusting dirPath accordingly.")
-                dirPath = os.path.dirname(target_path)
+                    f"Target path {target_path} is not under the root path {model_root_path}. Adjusting model_root_path accordingly.")
+                model_root_path = os.path.dirname(target_path)
         except ValueError as e:
             logging.error(f"Error validating target path: {e}")
-            dirPath = QDir.rootPath()
+            model_root_path = QDir.rootPath()
             target_path = QDir.rootPath()
+            view_path = QDir.rootPath()
 
         columns_to_show = [
             helabFileSystemModel.COLUMN_NAME,
@@ -113,8 +126,13 @@ class FolderTabWidget(QTabWidget):
             helabFileSystemModel.COLUMN_STATUS_ICON,
             helabFileSystemModel.COLUMN_RIGHTFILL
         ]
+
+        logging.debug(f"add_new_folder_explorer_tab: {model_root_path = }, {target_path = }, {view_path = }")
+        # on M4M: add_new_folder_explorer_tab: model_root_path = '/', target_path = '/Volumes/tonyNVME Gold/dld output', view_path = '/'
+
+
         folder_explorer = FolderExplorer(
-            dir_path = dirPath,
+            model_root_path= model_root_path,
             target_path = target_path,
             view_path = view_path,
             columns_to_show = columns_to_show,
@@ -123,7 +141,8 @@ class FolderTabWidget(QTabWidget):
             thread_pool = self.thread_pool,
             running_workers_status = self.running_workers_status,
             running_workers_deep = self.running_workers_deep,
-            running_workers_hasChildren = self.running_workers_hasChildren
+            running_workers_hasChildren = self.running_workers_hasChildren,
+            set_initial_expand_to_parent_level = set_initial_expand_to_parent_level
         )
         index = self.addTab(folder_explorer, 'File Explorer')
 
@@ -181,7 +200,7 @@ class FolderTabWidget(QTabWidget):
         logging.debug(f"(TabWidget) Current tab changed to index {index}")
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
-            logging.debug(f"Current tab dir_path: {current_folder_explorer.dir_path}, view_path: {current_folder_explorer.view_path}, target_path: {current_folder_explorer.target_path}")
+            logging.debug(f"Current tab dir_path: {current_folder_explorer.model_root_path}, view_path: {current_folder_explorer.view_path}, target_path: {current_folder_explorer.target_path}")
         else:
             logging.warning("Current tab is not a FolderExplorer instance.")
         # current_folder_explorer = self.currentWidget()

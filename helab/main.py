@@ -1,5 +1,6 @@
 # This Python file uses the following encoding: utf-8
 import logging
+import platform
 import re
 import subprocess
 import sys
@@ -23,6 +24,8 @@ if __name__ == "__main__":
     logging.warning("this is a warning message")
     logging.error("this is an error message")
     logging.critical("this is a critical message")
+
+    logging.info(f"Platform: {sys.platform}, {platform.system()}, {platform.release()}, {platform.version()}, {platform.machine()}, {platform.processor()}")
 
     logging.info(f"Starting HeLab v{APP_VERSION} ({APP_COMMIT_HASH})")
 

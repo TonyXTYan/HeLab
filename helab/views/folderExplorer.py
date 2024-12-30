@@ -27,7 +27,7 @@ class FolderExplorer(QWidget):
     itemExpandedSignal = pyqtSignal(QModelIndex)
 
     def __init__(self,
-                 dir_path: str,
+                 model_root_path: str,
                  target_path: str,
                  view_path: str,
                  columns_to_show: List[int],
@@ -37,7 +37,9 @@ class FolderExplorer(QWidget):
                  running_workers_status: Dict[str, StatusWorker],
                  running_workers_deep: Dict[str, StatusDeepWorker],
                  running_workers_hasChildren: Dict[str, DirectoryCheckWorker],
-                 parent: QWidget | None = None) -> None:
+                 parent: QWidget | None = None,
+                 set_initial_expand_to_parent_level: bool = True,
+                 ) -> None:
         super().__init__(parent)
         # appWidth = 800
         # appHeight = 800
@@ -46,7 +48,7 @@ class FolderExplorer(QWidget):
         # self.setGeometry(300, 300, appWidth, appHeight)
 
         # Initialize view_path
-        self.dir_path = dir_path  # System root path
+        self.model_root_path = model_root_path  # System root path
         self.target_path = target_path  # Path to auto-expand upon opening
         self.view_path = view_path  # Current root path of the view
         self.columns_to_show = columns_to_show
@@ -66,17 +68,17 @@ class FolderExplorer(QWidget):
             running_workers_deep = running_workers_deep,
             running_workers_hasChildren = running_workers_hasChildren
         )
-        self.model.setRootPath(dir_path)
+        self.model.setRootPath(self.model_root_path)
         self.model.setReadOnly(True)
         # self.model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
         self.model.setFilter(QDir.Filter.Dirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
-        # self.rootPathChanged.emit(self.dir_path)
+        # self.rootPathChanged.emit(self.model_root_path)
 
         # self.tree = QTreeView()
         self.tree = StatusTreeView()
         self.tree.setContentsMargins(0, 0, 0, 0)
         self.tree.setModel(self.model)
-        # self.tree.setRootIndex(self.model.index(dir_path))
+        # self.tree.setRootIndex(self.model.index(model_root_path))
         self.tree.setRootIndex(self.model.index(self.view_path))
         self.tree.setColumnWidth(helabFileSystemModel.COLUMN_NAME, 270)
         self.tree.setColumnWidth(helabFileSystemModel.COLUMN_DATE_MODIFIED, 160)
@@ -168,12 +170,14 @@ class FolderExplorer(QWidget):
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
 
-        # self.rootPathChanged.emit(self.dir_path)
+        # self.rootPathChanged.emit(self.model_root_path)
         self.emit_root_path_changed()
         # selection_model.emitSelectionChanged(selection_model.selection(), selection_model.selection())
         # self.emit_selection_changed()
         # QTimer.singleShot(15, self._set_initial_rootIndex)
-        self._set_initial_rootIndex()
+
+        if set_initial_expand_to_parent_level: self._set_initial_rootIndex()
+
         QTimer.singleShot(30, self.emit_selection_changed)
 
 
@@ -215,11 +219,11 @@ class FolderExplorer(QWidget):
     def expand_to_path(self, path: str) -> None:
         # Ensure that the path to expand is under the current view_path
         if not os.path.commonpath([self.view_path, path]) == os.path.abspath(self.view_path):
-            logging.warning(f"Path {path} is not under the current view path {self.view_path}.")
+            logging.warning(f"expand_to_path: Path {path} is not under the current view path {self.view_path}.")
             return
         index = self.model.index(path)
         if not index.isValid():
-            logging.warning(f"Invalid path: {path}")
+            logging.warning(f"expand_to_path: Invalid path: {path}")
             return
         # Expand all parent items
         parent_index = index.parent()
@@ -273,12 +277,12 @@ class FolderExplorer(QWidget):
         logging.debug(f"Back button clicked. New root path: {self.model.filePath(self.tree.rootIndex())}")
 
     def update_back_button_state(self) -> None:
-        logging.debug(f"Updating back button state. {self.view_path = }, {self.dir_path = }, {self.target_path = }")
+        logging.debug(f"Updating back button state. {self.view_path = }, {self.model_root_path = }, {self.target_path = }")
         # There's some very fucked up logic here that I don't understand
-        logging.debug(f"{self.tree.rootIndex() == self.model.index(self.dir_path) = }")
+        logging.debug(f"{self.tree.rootIndex() == self.model.index(self.model_root_path) = }")
         logging.debug(f"rootIndex = {self.model.filePath(self.tree.rootIndex())}")
-        # if self.view_path == self.dir_path:
-        if self.tree.rootIndex() == self.model.index(self.dir_path):
+        # if self.view_path == self.model_root_path:
+        if self.tree.rootIndex() == self.model.index(self.model_root_path):
             self.back_button.setEnabled(False)
             self.back_button_enabled = False
         else:
@@ -440,7 +444,7 @@ class FolderExplorer(QWidget):
 
     def refresh(self) -> None:
         """
-        Refresh the FolderExplorer while maintaining dir_path, target_path, and view_path.
+        Refresh the FolderExplorer while maintaining model_root_path, target_path, and view_path.
         """
 
         # Really should use dataEmit change? rather than making a new model every time
@@ -457,7 +461,7 @@ class FolderExplorer(QWidget):
         current_root_index = self.tree.rootIndex()
         self.model.refresh()
         self.tree.setModel(self.model)
-        self.model.setRootPath(self.dir_path)
+        self.model.setRootPath(self.model_root_path)
         # self.tree.setRootIndex(self.model.index(self.view_path))
         self.tree.setRootIndex(current_root_index)
         # self.expand_to_path(self.target_path)
@@ -465,7 +469,7 @@ class FolderExplorer(QWidget):
         logging.debug("FolderExplorer.refresh() finished.")
 
     def rescan(self) -> None:
-        logging.debug(f"FolderExplorer.rescan() view_path: {self.view_path} dir_path: {self.dir_path} target_path: {self.target_path}")
+        logging.debug(f"FolderExplorer.rescan() view_path: {self.view_path} model_root_path: {self.model_root_path} target_path: {self.target_path}")
 
         return
 

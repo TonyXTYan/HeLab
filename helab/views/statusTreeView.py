@@ -36,7 +36,7 @@ from helab.workers.statusWorker import StatusReport
 #         # if file_info.isDir():
 #         # #     # logging.debug(f"index_has_subdirectories: {file_path.absoluteFilePath() = }")
 #         #     logging.debug(f"index_has_subdirectories: {file_info.absoluteFilePath() = }")
-#         # #     dir_path = file_path.absoluteFilePath()
+#         # #     model_root_path = file_path.absoluteFilePath()
 #         #     directory = QDir(file_info)
 #         # #     # Exclude '.' and '..' entries
 #         #     entry_list = directory.entryList(QDir.Filter.Dirs | QDir.Filter.NoDotAndDotDot)

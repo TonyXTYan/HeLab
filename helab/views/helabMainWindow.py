@@ -9,7 +9,8 @@ import types
 from typing import List, Optional
 
 import psutil
-from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint
+from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
+    QDir
 from PyQt6.QtGui import QAction, QIcon, QCloseEvent, QPixmap
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip
@@ -359,14 +360,27 @@ class MainWindow(QMainWindow):
     def open_folder_path_dialog(self) -> None:
         options = QFileDialog.Option.ShowDirsOnly
         folder_path = QFileDialog.getExistingDirectory(self, "Select Folder", "", options=options)
+        logging.debug(f"open_folder_path_dialog: selected {folder_path = }")
         if folder_path:
             # Handle the selected folder path as needed
             # self.current_tab.setPath(folder_path)
-            current_tab = self.tab_widget.currentWidget()
+            # current_tab = self.tab_widget.currentWidget()
             # if hasattr(current_tab, 'setPath'):
             #     current_tab.setPath(folder_path)
-            if isinstance(current_tab, FolderExplorer):
-                current_tab.open_to_path(folder_path)
+            # if isinstance(current_tab, FolderExplorer):
+            #     current_tab.open_to_path(folder_path)
+
+            model_root_path = os.path.splitdrive(folder_path)[0] + os.sep
+            logging.info(f"open_folder_path_dialog: {model_root_path = }")
+
+            self.tab_widget.add_new_folder_explorer_tab(
+                model_root_path = model_root_path,
+                view_path = folder_path,
+                target_path = folder_path,
+                set_initial_expand_to_parent_level = False,
+            )
+        else:
+            logging.debug("open_folder_path_dialog: no folder selected")
 
     def _setup_central_widgets(self) -> None:
         # Create the main horizontal splitter
