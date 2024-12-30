@@ -2,6 +2,7 @@
 import gc
 import logging
 import os
+import platform
 import sys
 from typing import Tuple, List, Dict
 
@@ -78,8 +79,8 @@ class FolderTabWidget(QTabWidget):
             tab_bar.setEnabled(False)
 
     def add_new_folder_explorer_tab(self,
-                                    model_root_path: str = QDir.rootPath(),
-                                    view_path: str = QDir.rootPath(),
+                                    model_root_path: str|None = QDir.rootPath(),
+                                    view_path: str|None = None,
                                     target_path: str|None = None,
                                     set_initial_expand_to_parent_level: bool = True,
                                     ) -> None:
@@ -92,6 +93,14 @@ class FolderTabWidget(QTabWidget):
         # model_root_path = ""
         # view_path = ""
         # target_path = r'/Volumes/tonyNVME Gold/dld output'
+
+        logging.debug(f"folderTabsWidget.add_new_folder_explorer_tab: called  {model_root_path = }, {target_path = }, {view_path = }")
+
+        if model_root_path is None:
+            model_root_path = QDir.rootPath()
+
+        if view_path is None:
+            view_path = model_root_path
 
         if target_path is None:
             target_paths = [
@@ -127,7 +136,7 @@ class FolderTabWidget(QTabWidget):
             helabFileSystemModel.COLUMN_RIGHTFILL
         ]
 
-        logging.debug(f"add_new_folder_explorer_tab: {model_root_path = }, {target_path = }, {view_path = }")
+        logging.debug(f"folderTabsWidget.add_new_folder_explorer_tab: cleaned {model_root_path = }, {target_path = }, {view_path = }")
         # on M4M: add_new_folder_explorer_tab: model_root_path = '/', target_path = '/Volumes/tonyNVME Gold/dld output', view_path = '/'
 
 
@@ -155,12 +164,20 @@ class FolderTabWidget(QTabWidget):
         # self.tab_widget.addTab(folder_explorer, 'File Explorer')
 
     def update_folder_explorer_tab_title(self, path: str, index: int) -> None:
-        logging.debug(f"Updating tab title for index {index} to {path}")
+        logging.debug(f"update_folder_explorer_tab_title: {index = } and {path = }")
         # self.tab_widget.setTabText(index, os.path.basename(path))
-        if path == "/":
-            self.setTabText(index, "Root path")
+        if platform.system() == 'Windows':
+            drive, tail = os.path.splitdrive(path)
+            if tail in ('\\', '/'):
+                self.setTabText(index, drive)
+            else:
+                self.setTabText(index, os.path.basename(path))
         else:
-            self.setTabText(index, os.path.basename(path))
+            if path == "/":
+                self.setTabText(index, "/")
+            else:
+                self.setTabText(index, os.path.basename(path))
+        logging.debug(f"update_folder_explorer_tab_title: {self.tabText(index) = }")
 
     def on_back_button_clicked(self) -> None:
         # Get the current folder explorer
@@ -168,6 +185,7 @@ class FolderTabWidget(QTabWidget):
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.on_back_button_clicked()
             self.tab_back_button_enabled = current_folder_explorer.back_button_enabled
+            logging.debug(f"folderTabWidget.on_back_button_clicked: {self.tab_back_button_enabled = }")
 
 
     def clear_status_cache(self) -> None:

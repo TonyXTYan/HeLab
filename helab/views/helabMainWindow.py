@@ -1,5 +1,6 @@
 import logging
 import os
+import platform
 import re
 import signal
 import subprocess
@@ -13,7 +14,7 @@ from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelecti
     QDir
 from PyQt6.QtGui import QAction, QIcon, QCloseEvent, QPixmap
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
-    QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip
+    QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu
 from humanfriendly.terminal import message
 from numpy.f2py.crackfortran import include_paths
 
@@ -55,7 +56,11 @@ class MainWindow(QMainWindow):
         # current directory is
 
         self.process = psutil.Process()
-        self.setWindowIcon(QIcon("./helab/resources/icons/ai-icon.icns")) # this doesn't do anything on macos (?)
+        icon_path = os.path.abspath("./helab/resources/ai-icon.icns")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+        else:
+            logging.error(f"Icon file not found: {icon_path}")
 
         self.setWindowTitle(f"HeLab GUI Loading... v{APP_VERSION} ({APP_COMMIT_HASH})")
         self.resize(self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
@@ -286,15 +291,42 @@ class MainWindow(QMainWindow):
             # Create actions
             open_action = QAction(' Open', self)
             open_action.triggered.connect(self.open_folder_path_dialog)
-            exit_action = QAction(' Quit', self)
-            exit_action.triggered.connect(self.close)
+            menu_file.addAction(open_action)
+
+            if platform.system() == "Windows":
+                open_drives_action = QMenu(' Open Drives', self)
+                drives = QDir.drives()
+                for drive in drives:
+                    drive_path = drive.absolutePath()
+                    action_drive = QAction(drive_path, self)
+                    # model_root_path = model_root_path = os.path.splitdrive(drive_path)[0] + os.sep
+                    logging.debug(f"create_menus: drives submenu added {drive_path = }")
+                    # action_drive.triggered.connect(lambda _,dp = drive_path: self.tab_widget.add_new_folder_explorer_tab(
+                    #     model_root_path=dp,
+                    #     view_path=dp,
+                    #     target_path=dp,
+                    #     set_initial_expand_to_parent_level=False,
+                    # ))
+                    action_drive.triggered.connect(lambda _,dp = drive_path: self.add_new_folder_explorer_tab(
+                        model_root_path = dp,
+                        view_path = dp,
+                        target_path = dp,
+                        set_initial_expand_to_parent_level = False,
+                    ))
+                    open_drives_action.addAction(action_drive)
+                menu_file.addMenu(open_drives_action)
+
+
+            menu_file.addSeparator()
+
             menu_action_settings = QAction(' Settings...', self)
             menu_action_settings.triggered.connect(self.show_settings_dialog)
-
-
-            menu_file.addAction(open_action)
             menu_file.addAction(menu_action_settings)
+
             menu_file.addSeparator()
+
+            exit_action = QAction(' Quit', self)
+            exit_action.triggered.connect(self.close)
             menu_file.addAction(exit_action)
         else :
             logging.error("menu_file is None")
@@ -373,7 +405,13 @@ class MainWindow(QMainWindow):
             model_root_path = os.path.splitdrive(folder_path)[0] + os.sep
             logging.info(f"open_folder_path_dialog: {model_root_path = }")
 
-            self.tab_widget.add_new_folder_explorer_tab(
+            # self.tab_widget.add_new_folder_explorer_tab(
+            #     model_root_path = model_root_path,
+            #     view_path = folder_path,
+            #     target_path = folder_path,
+            #     set_initial_expand_to_parent_level = False,
+            # )
+            self.add_new_folder_explorer_tab(
                 model_root_path = model_root_path,
                 view_path = folder_path,
                 target_path = folder_path,
@@ -492,7 +530,8 @@ class MainWindow(QMainWindow):
 
 
         # action_tab_new.triggered.connect(self.tab_widget.add_new_folder_explorer_tab)
-        self.action_tab_new.triggered.connect(self.add_new_folder_explorer_tab)
+        # self.action_tab_new.triggered.connect(self.add_new_folder_explorer_tab)
+        self.action_tab_new.triggered.connect(lambda _ : self.add_new_folder_explorer_tab())
         # action_tab_folder_up.triggered.connect(self.tab_widget.on_back_button_clicked)
         self.action_tab_folder_up.triggered.connect(self.on_back_button_clicked)
         self.action_tab_refresh.triggered.connect(self.tab_widget.refresh_current_folder_explorer)
@@ -799,6 +838,7 @@ class MainWindow(QMainWindow):
 
     def on_back_button_clicked(self) -> None:
         self.tab_widget.on_back_button_clicked()
+        logging.debug(f"heLabMainWindow.on_back_button_clicked: {self.tab_widget.tab_back_button_enabled = }")
         self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
 
     def on_current_tab_changed(self, index: int) -> None:
@@ -812,6 +852,7 @@ class MainWindow(QMainWindow):
             # Connect the selectionChanged signal to the slot
             # selection_model.selectionChanged.connect(self.on_folder_explorer_selection_changed)
             current_folder_explorer.emit_selection_changed()
+            # self.on_folder_explorer_selection_changed(current_folder_explorer.get_selection_model().selection())
 
 
     def on_folder_explorer_selection_changed(self, selected: QItemSelection) -> None:
@@ -822,22 +863,41 @@ class MainWindow(QMainWindow):
             file_info = QFileInfo(selected_path)
             if file_info.isDir():
                 folder_name = file_info.fileName()
+                logging.debug(f"on_folder_explorer_selection_changed: {selected_path = }, {folder_name = }")
                 self.current_tracking_folder_path = selected_path
-                self.setWindowTitle(f"HeLab    Folder: {folder_name}")
+                if folder_name == '':
+                    self.setWindowTitle(f"HeLab  -  {selected_path}")
+                else:
+                    self.setWindowTitle(f"HeLab  -  {folder_name}")
             else:
                 self.setWindowTitle(f"HeLab    Invalid Path (?)")
                 logging.warning(f"on_folder_explorer_selection_changed: not a directory: {selected_path}")
         else:
             self.setWindowTitle(    f"HeLab    No Folder Selected")
+        logging.debug(f"on_folder_explorer_selection_changed: done")
 
-    def add_new_folder_explorer_tab(self) -> None:
-        self.tab_widget.add_new_folder_explorer_tab()
+    def add_new_folder_explorer_tab(self,
+                                    model_root_path: str|None = None,
+                                    view_path: str|None = None,
+                                    target_path: str|None = None,
+                                    set_initial_expand_to_parent_level:bool = True,
+                                    ) -> None:
+        logging.debug(f"helabMainWindow.add_new_folder_explorer_tab: {model_root_path = }, {view_path = }, {target_path = }, {set_initial_expand_to_parent_level = }")
+        self.tab_widget.add_new_folder_explorer_tab(
+            model_root_path = model_root_path,
+            view_path = view_path,
+            target_path = target_path,
+            set_initial_expand_to_parent_level = set_initial_expand_to_parent_level,
+        )
         self.update_tool_enabled_state()
         current_folder_explorer = self.tab_widget.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.rootPathChanged.connect(self.update_tool_enabled_state)
+            logging.debug(f"add_new_folder_explorer_tab: {current_folder_explorer.selected_path = }")
             selection_model = current_folder_explorer.get_selection_model()
             selection_model.selectionChanged.connect(self.on_folder_explorer_selection_changed)
+        else:
+            logging.error("add_new_folder_explorer_tab: current_folder_explorer is not FolderExplorer")
 
     def update_tool_enabled_state(self) -> None:
         current_folder_explorer = self.tab_widget.currentWidget()
@@ -848,12 +908,15 @@ class MainWindow(QMainWindow):
             self.action_tab_folder_up.setEnabled(False)
 
     def set_tools_and_tabs_enable(self) -> None:
+        # logging.debug("set_tools_and_tabs_enable")
         self.action_tab_new.setEnabled(True)
-        self.action_tab_folder_up.setEnabled(True)
+        # self.action_tab_folder_up.setEnabled(True)
         self.action_tab_refresh.setEnabled(True)
         self.action_tab_rescan.setEnabled(True)
+        self.update_tool_enabled_state()
 
     def set_tools_and_tabs_disable(self) -> None:
+        # logging.debug("set_tools_and_tabs_disable")
         self.action_tab_new.setEnabled(False)
         self.action_tab_folder_up.setEnabled(False)
         self.action_tab_refresh.setEnabled(False)

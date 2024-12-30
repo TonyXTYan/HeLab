@@ -212,7 +212,7 @@ class FolderExplorer(QWidget):
         indexes = selection_model.selectedRows()
         for index in indexes:
             file_path = self.model.filePath(index)
-            logging.debug(f"Selected file path: {file_path}")
+            logging.debug(f"folderExplorer.on_selection_changed: {file_path = }")
             self.selected_path = file_path
 
 
@@ -262,32 +262,42 @@ class FolderExplorer(QWidget):
 
     def on_back_button_clicked(self) -> None:
         # Get the parent index of the current root index
-        logging.debug(f"Back button clicked. Current root path: {self.view_path}")
+        logging.debug(f"on_back_button_clicked: Current root path: {self.view_path}")
         current_root_index = self.tree.rootIndex()
         parent_index = current_root_index.parent()
         if parent_index.isValid():
+            logging.debug(f"on_back_button_clicked: valid {parent_index = }")
             self.tree.setRootIndex(parent_index)
         else:
             # If no parent, set to the model's root (view path)
+            # logging.debug(f"on_back_button_clicked: invalid {parent_index = }")
+            # if platform.system() == "Windows":
+            #     drives = QDir.drives()
+            #     self.model.setRootPath("")
+            #     self.tree.setRootIndex(self.model.index(""))
+            #     logging.debug("on_back_button_clicked: Showing all drives")
+            # else:
             self.tree.setRootIndex(self.model.index(self.model.rootPath()))
         # Update the back button enabled state
         self.update_back_button_state()
         # self.robotPathChanged.emit(self.model.filePath(self.tree.rootIndex()))
         self.emit_root_path_changed()
-        logging.debug(f"Back button clicked. New root path: {self.model.filePath(self.tree.rootIndex())}")
+        logging.debug(f"on_back_button_clicked: New root path: {self.model.filePath(self.tree.rootIndex())}")
 
     def update_back_button_state(self) -> None:
-        logging.debug(f"Updating back button state. {self.view_path = }, {self.model_root_path = }, {self.target_path = }")
+        # logging.debug(f"update_back_button_state: called on {self.view_path = }, {self.model_root_path = }, {self.target_path = }")
         # There's some very fucked up logic here that I don't understand
-        logging.debug(f"{self.tree.rootIndex() == self.model.index(self.model_root_path) = }")
-        logging.debug(f"rootIndex = {self.model.filePath(self.tree.rootIndex())}")
+        # logging.debug(f"update_back_button_state: {self.tree.rootIndex() == self.model.index(self.model_root_path) = }")
+        # logging.debug(f"update_back_button_state: rootIndex = {self.model.filePath(self.tree.rootIndex())}")
         # if self.view_path == self.model_root_path:
         if self.tree.rootIndex() == self.model.index(self.model_root_path):
             self.back_button.setEnabled(False)
             self.back_button_enabled = False
+            # logging.debug(f"update_back_button_state: Back button disabled")
         else:
             self.back_button.setEnabled(True)
             self.back_button_enabled = True
+            # logging.debug(f"update_back_button_state: Back button enabled")
 
     def emit_root_path_changed(self) -> None:
         self.rootPathChanged.emit(self.model.filePath(self.tree.rootIndex()))
