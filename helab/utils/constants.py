@@ -95,6 +95,7 @@ DEV_POTENTIAL_DATA_PATHS = [
     '/Users/tonyyan/.cache/2024_Momentum_Bells_V2 - 20241200',
     # '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - Testing MS Teams/2024_Momentum_Bells_V2 - 20241200',
     # Don't use OneDrive it's shit (cause file system hangs)
+    os.path.join(os.getcwd(),'tests_sample_data'),
     os.getcwd(),
     '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab',
     'C:\\Users\\XinTong\\Documents',
@@ -106,5 +107,6 @@ DEV_POTENTIAL_DATA_PATHS = [
 
 
 DEV_PATH_TO_MATLAB = "/Applications/MATLAB_R2024b.app"
+DEV_PATH_TO_TDC_AUTOCONVERTER_GIT_FOLDER = "/Users/tonyyan/Documents/_ANU/_He_BEC_Group/tdc_autoconverter"
 DEV_PATH_TO_TDC_AUTO_CONVERT_M = "/Users/tonyyan/Documents/_ANU/_He_BEC_Group/tdc_autoconverter/tdc_auto_convert.m"
 DEV_PATH_TO_TDC_CONVERT_FILELIST_M = "/Users/tonyyan/Documents/_ANU/_He_BEC_Group/tdc_autoconverter/tdc_convert_filelist.m"

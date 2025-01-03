@@ -11,10 +11,10 @@ from typing import List, Optional
 
 import psutil
 from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
-    QDir
+    QDir, QDateTime
 from PyQt6.QtGui import QAction, QIcon, QCloseEvent, QPixmap
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
-    QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu
+    QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox
 from humanfriendly.terminal import message
 from numpy.f2py.crackfortran import include_paths
 
@@ -81,6 +81,17 @@ class MainWindow(QMainWindow):
 
         # Create Status Bar
         self.status_bar.setStyleSheet("QStatusBar { border-top: 1px solid #d8d8d8; }")
+
+        status_bar_padding = QWidget()
+        status_bar_padding.setMaximumWidth(2)
+        self.status_bar.addWidget(status_bar_padding)
+
+        self.status_bar_checkbox = QCheckBox("")
+        self.status_bar_checkbox.setChecked(True)
+        self.status_bar_checkbox.setToolTip("Toggle threads status pop up info visibility")
+        self.status_bar.addWidget(self.status_bar_checkbox)
+
+
         self.setStatusBar(self.status_bar)
         self.status_bar_message_left = QLabel("...")
         self.status_bar.addWidget(self.status_bar_message_left)
@@ -112,6 +123,7 @@ class MainWindow(QMainWindow):
         self.status_timer_threadpool.timeout.connect(self.update_status_bar_left)
         self.status_timer_threadpool.start(200)  # Update every 200ms
         self.status_timer_threadpool_hang_counts = 0
+        self.status_timer_threadpool_hang_timestamp: Optional[QDateTime] = None
 
 
         self.status_timer_cpu_ram = QTimer(self)
@@ -176,7 +188,10 @@ class MainWindow(QMainWindow):
             # rotated_pixmap = self.status_icon_loading.transformed(transform)
             # self.status_icon.setPixmap(rotated_pixmap)
             # self.status_icon_loading_angle = (self.status_icon_loading_angle + 10) % 360
-            self.status_bar_message_left.setText(f"Working: {active_threads}, Queued: {queue_depths}")
+
+            indicator_dot = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[self.status_timer_threadpool_hang_counts % 10]
+
+            self.status_bar_message_left.setText(f" {indicator_dot} Active: {active_threads}, Queued: {queue_depths}")
             self.action_tab_cancel.setEnabled(True)
             self.tab_widget.set_tab_switching_disable()
             self.set_tools_and_tabs_disable()
@@ -261,9 +276,16 @@ class MainWindow(QMainWindow):
             # self.status_bar_message_left.installEventFilter(self)
             tooltip_string_num_lines = len(tooltip_string.split("\n"))
 
+            if self.status_timer_threadpool_hang_counts == 0:
+                self.status_timer_threadpool_hang_timestamp = QDateTime.currentDateTime()
             self.status_timer_threadpool_hang_counts += 1
 
-            if self.isActiveWindow() and self.status_timer_threadpool_hang_counts >= 3:
+            if (self.isActiveWindow()
+                and self.status_bar_checkbox.isChecked()
+                and (self.status_timer_threadpool_hang_counts >= 10
+                  or  (self.status_timer_threadpool_hang_timestamp is not None
+                    and QDateTime.currentDateTime().toSecsSinceEpoch() - self.status_timer_threadpool_hang_timestamp.toSecsSinceEpoch() > 3)
+            )):
                 QToolTip.showText(self.status_bar_message_left.mapToGlobal(
                     QPoint(40, -60 + self.status_bar_message_left.height() - round(tooltip_string_num_lines * 15) ) ),
                     tooltip_string,
@@ -282,10 +304,11 @@ class MainWindow(QMainWindow):
             tooltip_string += "No active threads in threadpool\n"
             tooltip_string += cache_status_string()
             self.status_bar_message_left.setToolTip(tooltip_string)
-            self.status_bar_message_left.setText(f"Threads Pool Standby")
+            self.status_bar_message_left.setText(f"   Threads Pool Standby")
             # self.status_bar_message_left.setToolTip("No active threads in threadpool")
             if self.status_timer_threadpool_hang_counts > 0:
                 self.status_timer_threadpool_hang_counts = 0
+                self.status_timer_threadpool_hang_timestamp = None
                 QToolTip.hideText()
             # self.status_bar.setPixmap(self.status_icon_checked)
             self.action_tab_cancel.setEnabled(False)
@@ -887,7 +910,7 @@ class MainWindow(QMainWindow):
 
     def on_current_tab_changed(self, index: int) -> None:
         # self.tab_widget.on_current_tab_changed(index)
-        logging.debug(f"(MainWindow) Current tab changed to index {index}")
+        logging.debug(f"helabMainWindow.on_current_tab_changed: to index {index}")
         # self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
         self.update_tool_enabled_state()
         current_folder_explorer = self.tab_widget.currentWidget()
@@ -961,8 +984,8 @@ class MainWindow(QMainWindow):
 
     def set_tools_and_tabs_disable(self) -> None:
         # logging.debug("set_tools_and_tabs_disable")
-        self.action_tab_new.setEnabled(False)
-        self.action_tab_folder_up.setEnabled(False)
+        # self.action_tab_new.setEnabled(False)
+        # self.action_tab_folder_up.setEnabled(False)
         self.action_tab_refresh.setEnabled(False)
         self.action_tab_rescan.setEnabled(False)
 
@@ -988,6 +1011,8 @@ class MainWindow(QMainWindow):
         for dock_widget in self.dock_widgets:
             dock_widget.close()
 
+        self.tab_widget.closeEvent(a0)
+
         os_listdir_cache.close()
         os_scandir_cache.close()
         os_isdir_cache.close()
@@ -1001,6 +1026,7 @@ class MainWindow(QMainWindow):
         # super().closeEvent(a0)
 
         logging.info("MainWindow closeEvent done")
+        QApplication.quit()
         pass
 
     def handle_exit(self, signum: int, frame: Optional[types.FrameType]) -> None:

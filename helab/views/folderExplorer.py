@@ -1,3 +1,4 @@
+import gc
 import glob
 import logging
 import os
@@ -13,9 +14,10 @@ from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal, QThre
 from PyQt6.QtGui import QAction, QFontInfo
 from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu
 from cachetools import LRUCache, TTLCache
+from debugpy.server.cli import switches
 from diskcache import FanoutCache
 
-from helab.utils.cachingSetup import status_cache, data_ram_cache
+from helab.utils.cachingSetup import status_cache, data_ram_cache, hasChildren_cache, fnum
 from helab.utils.constants import *
 from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.utils.os_cached import os_isdir
@@ -66,6 +68,9 @@ class FolderExplorer(QWidget):
         self.running_workers_deep = running_workers_deep
         self.running_workers_hasChildren = running_workers_hasChildren
         self.running_workers_ramLoading = running_workers_ramLoading
+
+        self.folder_opened_data: Optional[pd.DataFrame] = None
+        self.folder_opened_path: Optional[str] = None
 
         self.model = helabFileSystemModel(
             status_cache = status_cache,
@@ -215,21 +220,57 @@ class FolderExplorer(QWidget):
             selection_model.select(current_selection, QItemSelectionModel.SelectionFlag.Select)
 
     def on_selection_changed(self, selected: QItemSelection, deselected: QItemSelection) -> None:
-        selection_model = self.get_selection_model()
-        indexes = selection_model.selectedRows()
+        # selection_model = self.get_selection_model()
+        # indexes = selection_model.selectedRows()
+        #
+        # # there_should_only_be_one_index = len(indexes) == 1
+        # if len(indexes) > 1:
+        #     logging.critical(f"on_selection_changed: DIDN'T THINK THIS WAS POSSIBLE {len(indexes) = }")
+        #
+        # for index in indexes:
+        #     file_path = self.model.filePath(index)
+        #     logging.debug(f"folderExplorer.on_selection_changed: {file_path = }")
+        #     self.selected_path = file_path
+        #
+        #     self.action_debug_3_run(self.model.fileInfo(index))
 
-        # there_should_only_be_one_index = len(indexes) == 1
-        if len(indexes) > 1:
-            logging.critical(f"on_selection_changed: DIDN'T THINK THIS WAS POSSIBLE {len(indexes) = }")
+        # logging.debug(f"on_selection_changed: {selected.indexes() = }, {deselected = }")
 
-        for index in indexes:
-            file_path = self.model.filePath(index)
-            logging.debug(f"folderExplorer.on_selection_changed: {file_path = }")
+        selected_indexes = selected.indexes()
+        deselected_indexes = deselected.indexes()
+        ncols = self.model.columnCount()
+        exclusion_list = [ncols, ncols-1, 0, 1]
+
+        if len(selected_indexes) not in exclusion_list:
+            logging.critical(f"folderExplorer.on_selection_changed: selected_indexes unexpected {len(selected_indexes) = }, {self.model.columnCount() = }")
+            logging.critical(f"they are {[self.model.filePath(si) for si in selected_indexes]}")
+            # logging.fatal(f"WTF {len(selected_indexes) != self.model.columnCount()}")
+        for si in selected_indexes:
+            file_path = self.model.filePath(si)
+            logging.debug(f"folderExplorer.on_selection_changed: selected {file_path = }")
             self.selected_path = file_path
+            self.load_to_ram_cache(self.model.fileInfo(si))
+            break
 
-            self.action_debug_3_run(self.model.fileInfo(index))
-
-
+        # if len(deselected_indexes) != self.model.columnCount() and len(deselected_indexes) != 0:
+        if len(deselected_indexes) not in exclusion_list:
+            logging.critical(f"folderExplorer.on_selection_changed: deselected_indexes unexpected {len(deselected_indexes) = }, {self.model.columnCount() = }")
+            logging.critical(f"they are {[self.model.filePath(di) for di in deselected_indexes]}")
+        for di in deselected_indexes:
+            file_path = self.model.filePath(di)
+            logging.debug(f"folderExplorer.on_selection_changed: deselected {file_path = }")
+            # self.selected_path = file_path
+            status_report = status_cache.get(file_path)
+            if status_report is not None and isinstance(status_report, StatusReport):
+                # logging.debug(f"{status_report.status = }")
+                status_report.update_ram_status()
+                if file_path in self.running_workers_ramLoading:
+                    status_report.set_loading_ram_status()
+                # logging.debug(f"folderExplorer.on_selection_changed: {file_path = } is in running_workers_ramLoading")
+                # self.running_workers_ramLoading[file_path].cancel()
+                # self.running_workers_ramLoading.pop(file_path)
+                gc.collect()
+            break
 
 
 
@@ -430,19 +471,37 @@ class FolderExplorer(QWidget):
 
         menu.addMenu(action_menu_deep_fill_blanks)
 
+
+
+        action_menu_clear_cache = QMenu("Pop Cache Here", self)
+        action_clear_cache_depth_status = QAction("Clear status_cache", self)
+        action_clear_cache_depth_status.triggered.connect(lambda: self.context_menu_action_pop_cache(file_info, cache_name="status_cache"))
+        action_menu_clear_cache.addAction(action_clear_cache_depth_status)
+
+        action_clear_cache_depth_hasChildren = QAction("Clear hasChildren Cache", self)
+        action_clear_cache_depth_hasChildren.triggered.connect(lambda: self.context_menu_action_pop_cache(file_info, cache_name="hasChildren_cache"))
+        action_menu_clear_cache.addAction(action_clear_cache_depth_hasChildren)
+
+        action_clear_cache_depth_data_ram = QAction("Clear data_ram Cache", self)
+        action_clear_cache_depth_data_ram.triggered.connect(lambda: self.context_menu_action_pop_cache(file_info, cache_name="data_ram_cache"))
+        action_menu_clear_cache.addAction(action_clear_cache_depth_data_ram)
+
+        menu.addMenu(action_menu_clear_cache)
+
+
         menu.addSeparator()
 
         action_menu_debug = QMenu("Debug", self)
-        action_debug_1 = QAction("Debug Action 1", self)
-        action_debug_1.triggered.connect(lambda: self.action_debug_1_run(file_info))
+        action_debug_1 = QAction("get_valid_status_report", self)
+        action_debug_1.triggered.connect(lambda: self.get_valid_status_report(file_info))
         action_menu_debug.addAction(action_debug_1)
 
         action_debug_2 = QAction("Debug Action 2", self)
         action_debug_2.triggered.connect(lambda: self.action_debug_2_run(file_info))
         action_menu_debug.addAction(action_debug_2)
 
-        action_debug_3 = QAction("Debug Action 3", self)
-        action_debug_3.triggered.connect(lambda: self.action_debug_1_run(file_info))
+        action_debug_3 = QAction("load_to_ram_cache", self)
+        action_debug_3.triggered.connect(lambda: self.load_to_ram_cache(file_info))
         action_menu_debug.addAction(action_debug_3)
 
         menu.addMenu(action_menu_debug)
@@ -453,32 +512,46 @@ class FolderExplorer(QWidget):
         if viewport is None: return
         menu.exec(viewport.mapToGlobal(position))
 
+    def context_menu_action_pop_cache(self, file_info: QFileInfo, cache_name: str) -> None:
+        path = file_info.absoluteFilePath()
+        match cache_name:
+            case "status_cache":
+                status_cache.pop(path)
+            case "hasChildren_cache":
+                hasChildren_cache.pop(path)
+            case "data_ram_cache":
+                data_ram_cache.pop(path)
+                status_report = status_cache.get(path)
+                if isinstance(status_report, StatusReport):
+                    status_report.update_ram_status(is_opened=path==self.selected_path)
+        pass
 
-    def action_debug_1_run(self, file_info: QFileInfo) -> Tuple[int, StatusReport|None]:
+    def get_valid_status_report(self, file_info: QFileInfo) -> Tuple[int, StatusReport | None]:
         file_path = file_info.absoluteFilePath()
-        logging.warning(f"action_debug_1_run: file_path = {file_path}")
-        logging.warning(f"THIS IS STRICTLY FOR DEBUGGING PURPOSES")
+        logging.debug(f"get_valid_status_report: file_path = {file_path}")
+        # logging.warning(f"THIS IS STRICTLY FOR DEBUGGING PURPOSES")
 
-        status_report = status_cache[file_path]
+        status_report = status_cache.get(file_path)
         if status_report is None:
-            logging.warning(f"status_cache is None for {file_path = }")
+            logging.warning(f"  status_cache is None for {file_path = }")
             return (-1, None)
         if not isinstance(status_report, StatusReport):
-            logging.warning(f"status_cache is not a StatusReport for {file_path = }")
+            logging.warning(f"  status_cache is not a StatusReport for {file_path = }")
             return (-2, None)
 
-        logging.warning(f"{status_report.status = }")
+        logging.debug(f"  {status_report.status = }")
 
         if not status_report.status in ['ok', 'fixable', 'warning', 'critical']:
-            logging.warning(f"status is not STATUS_OK for {file_path = }")
+            # logging.warning(f"  status is not STATUS_OK for {file_path = }")
             return (-3, None)
 
         return (0, status_report)
 
     def action_debug_2_run(self, file_info: QFileInfo) -> None:
+        logging.fatal(f"action_debug_2_run: THIS IS NO LONGER USED")
         try:
             folder_path = file_info.absoluteFilePath()
-            if not self.action_debug_1_run(file_info)[0] == 0 : return
+            if not self.get_valid_status_report(file_info)[0] == 0 : return
             try:
                 data_files = data_ram_cache[folder_path]
                 if not data_files is None:
@@ -539,17 +612,31 @@ class FolderExplorer(QWidget):
         except Exception as e:
             logging.critical(f"action_debug_2_run: {e = }")
 
-    def action_debug_3_run(self, file_info: QFileInfo) -> None:
+    def load_to_ram_cache(self, file_info: QFileInfo) -> None:
         folder_path = file_info.absoluteFilePath()
-        check, status_report = self.action_debug_1_run(file_info)
+
+        if folder_path in self.running_workers_ramLoading:
+            logging.warning(f"load_to_ram_cache: already running {folder_path = }")
+            # self.on_load_folder_to_ram_finished(folder_path, [], None)
+            return
+
+        # don't return here even if it's in cache, need to decompress the data using the worker thread
+        # if folder_path in data_ram_cache:
+        #     logging.warning(f"load_to_ram_cache: already in cache {folder_path = }")
+        #     self.on_load_folder_to_ram_finished_helper(folder_path, data_ram_cache[folder_path])
+        #     return
+
+        check, status_report = self.get_valid_status_report(file_info)
         if check != 0 :
-            logging.warning(f"action_debug_3_run: not a data folder path: {folder_path}")
+            logging.debug(f"load_to_ram_cache: called on not-data-folder path: {folder_path}")
             return
         if status_report is None:
-            logging.critical(f"action_debug_3_run: Impossible logic case status_report is None at {folder_path = }")
+            logging.critical(f"load_to_ram_cache: Impossible logic case status_report is None at {folder_path = }")
             return
-        status_report.extra_icons.append('loading')
-        status_cache[folder_path] = status_report
+        # status_report.extra_icons.append('loading')
+        # status_cache[folder_path] = status_report
+        status_report.set_loading_ram_status()
+
 
         worker = LoadFolderToRamWorker(folder_path)
         worker.signals.finished.connect(self.on_load_folder_to_ram_finished)
@@ -560,11 +647,40 @@ class FolderExplorer(QWidget):
         QTimer.singleShot(10, lambda: self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value)) # type: ignore[call-overload]
         pass
     
-    def on_load_folder_to_ram_finished(self, folder_path: str) -> None:
-        logging.debug("on_load_folder_to_ram_finished: {folder_path = }")
+    def on_load_folder_to_ram_finished(self, folder_path: str, problematic_txy_ns: List[int], data: object) -> None:
+        logging.debug(f"on_load_folder_to_ram_finished: {folder_path = }")
         del self.running_workers_ramLoading[folder_path]
-        status_cache.pop(folder_path)
-        self.model.fetch_status(folder_path)
+        self.on_load_folder_to_ram_finished_helper(folder_path, problematic_txy_ns, data)
+
+    def on_load_folder_to_ram_finished_helper(self, folder_path: str, problematic_txy_ns: Optional[List[int]], data: object) -> None:
+        if isinstance(data, pd.DataFrame):
+            self.folder_opened_path = folder_path
+            self.folder_opened_data = data
+            status_report = status_cache[folder_path]
+            if status_report is not None and isinstance(status_report, StatusReport):
+                # status_report.extra_icons.remove('loading')
+                # status_report.update_extend_extras('')
+                if folder_path == self.selected_path:
+                    status_report.update_ram_status(is_opened=True)
+                else:
+                    status_report.update_ram_status(is_opened=False)
+
+                if problematic_txy_ns is not None and len(problematic_txy_ns) > 0:
+                    status_report.update_problematic_txy_ns(problematic_txy_ns)
+
+                # status_cache[folder_path] = status_report
+                index = self.model.index(folder_path, helabFileSystemModel.COLUMN_STATUS_ICON)
+                if index.isValid():
+                    self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+                    logging.debug(f"on_load_folder_to_ram_finished: loadded {data.shape[0]} rows {fnum(data.memory_usage(index=True).sum())}B at {folder_path = }")
+                else:
+                    logging.error(f"on_load_folder_to_ram_finished: invalid index at {folder_path} ({index = })")
+
+
+        else:
+            logging.error(f"on_load_folder_to_ram_finished: {type(data) = } is not pd.DataFrame, {folder_path = }")
+            status_cache.pop(folder_path)
+            self.model.fetch_status(folder_path)
         pass
 
     def on_load_folder_to_ram_error(self, folder_path: str, error: str) -> None:
@@ -572,6 +688,7 @@ class FolderExplorer(QWidget):
         del self.running_workers_ramLoading[folder_path]
         status_cache.pop(folder_path)
         self.model.fetch_status(folder_path)
+        data_ram_cache.pop(folder_path)
         pass
 
 
@@ -652,10 +769,30 @@ class FolderExplorer(QWidget):
         logging.debug(f"Opened FolderExplorer to path: {path}")
 
     def close_cleanup(self) -> None:
+        # FIXME: code duplication
+        if self.folder_opened_path is not None:
+            try:
+                status_report = status_cache[self.folder_opened_path]
+                if isinstance(status_report, StatusReport):
+                    status_report.update_ram_status(is_opened=False)
+                    index = self.model.index(self.folder_opened_path, helabFileSystemModel.COLUMN_STATUS_ICON)
+                    if index.isValid():
+                        self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+                    else:
+                        logging.error(f"folderExplorer.close_cleanup: invalid index at {self.folder_opened_path} ({index = })")
+            except KeyError:
+                logging.critical(f"folderExplorer.close_cleanup: impossible logic case, Key not found in status_cache[{self.folder_opened_path}]")
+            except Exception as e:
+                logging.error(f"folderExplorer.close_cleanup: {e = }")
+
+        self.folder_opened_data = None
+        self.folder_opened_path = None
+
+
         # self.model.clearItemData()
         self.model.deleteLater()
         self.deleteLater()
-        logging.debug("FolderExplorer closed and cleaned up.")
+        logging.debug("FolderExplorer.close_cleanup: finished")
 
 
 

@@ -29,13 +29,18 @@ def tablerIcon(icon: OutlineIcon | FilledIcon, color: str, size: int=128) -> QIc
 
 class StatusIcons:
     STATUS_ICONS_NAME = ['ok', 'fixable', 'warning', 'critical', 'loading', 'nothing', 'something', 'unknown', 'missing', 'cancelled', 'paused']
-    STATUS_ICONS_EXTRA_NAME = ['database', 'report', 'chart3d', 'ram', 'live']
+    STATUS_ICONS_EXTRA_NAME = ['database', 'report', 'chart3d', 'ram', 'ram_single', 'ram_opened', 'live', 'waiting', 'loading', 'loading_ram']
     STATUS_ICONS_EXTRA_NAME_SORT_KEY = {
-        'database': 10,
-        'report': 31,
-        'chart3d': 30,
-        'ram': 11,
-        'live': 0,
+        'database':     230,
+        'report':       240,
+        'chart3d':      250,
+        'ram':           11,
+        'ram_single':    12,
+        'ram_opened':    13,
+        'loading_ram':   14,
+        'loading':        0,
+        'live':         100,
+        'waiting':        1,
     }
     ICON_OK = QIcon()
     ICON_FIXABLE = QIcon()
@@ -58,6 +63,8 @@ class StatusIcons:
     ICON_REPORT = QIcon()
     ICON_CHART3D = QIcon()
     ICON_RAM = QIcon()
+    ICON_RAM_SINGLE = QIcon()
+    ICON_RAM_OPENED = QIcon()
 
     ICONS_EXTRA: Dict[str, QIcon] = {}
 
@@ -92,19 +99,24 @@ class StatusIcons:
             'paused': StatusIcons.ICON_PAUSED,
             'maybe': StatusIcons.ICON_MAYBE,
         }
-        StatusIcons.ICON_WAITING = tablerIcon(OutlineIcon.HOURGLASS, '#000000')
-        StatusIcons.ICON_DATABASE = tablerIcon(OutlineIcon.DATABASE, '#444444')
-        StatusIcons.ICON_REPORT = tablerIcon(OutlineIcon.REPORT_ANALYTICS, '#444444')
-        StatusIcons.ICON_CHART3D = tablerIcon(OutlineIcon.CHART_SCATTER_3D, '#444444')
-        StatusIcons.ICON_RAM = tablerIcon(OutlineIcon.CONTAINER, '#444444')
+        StatusIcons.ICON_WAITING = tablerIcon(OutlineIcon.HOURGLASS, '#888888')
+        StatusIcons.ICON_DATABASE = tablerIcon(OutlineIcon.DATABASE, '#888888')
+        StatusIcons.ICON_REPORT = tablerIcon(OutlineIcon.REPORT_ANALYTICS, '#888888')
+        StatusIcons.ICON_CHART3D = tablerIcon(OutlineIcon.CHART_SCATTER_3D, '#888888')
+        StatusIcons.ICON_RAM = tablerIcon(OutlineIcon.CONTAINER, '#888888')
+        StatusIcons.ICON_RAM_SINGLE = tablerIcon(OutlineIcon.CONTAINER, '#FF44BB')
+        StatusIcons.ICON_RAM_OPENED = tablerIcon(OutlineIcon.CONTAINER, '#00FF00')
         StatusIcons.ICONS_EXTRA = {
             'database': StatusIcons.ICON_DATABASE,
             'report': StatusIcons.ICON_REPORT,
             'chart3d': StatusIcons.ICON_CHART3D,
             'ram': StatusIcons.ICON_RAM,
+            'ram_single': StatusIcons.ICON_RAM_SINGLE,
+            'ram_opened': StatusIcons.ICON_RAM_OPENED,
             'live': StatusIcons.ICON_LIVE,
             'waiting': StatusIcons.ICON_WAITING,
             'loading': StatusIcons.ICON_LOADING,
+            'loading_ram': StatusIcons.ICON_WAITING,
         }
 
 class ToolIcons:

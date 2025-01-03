@@ -2,14 +2,16 @@ import os
 import random
 import re
 import time
+from typing import Optional, Set, List
 
+from PyInstaller.compat import is_openbsd
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QTimer
 import logging
 
 from PyQt6.QtTest import QTest
 
 from helab.resources.icons import StatusIcons, IconsInitUtil
-from helab.utils.cachingSetup import data_ram_cache
+from helab.utils.cachingSetup import data_ram_cache, status_cache
 from helab.utils.os_cached import os_isdir, os_listdir
 
 
@@ -17,11 +19,63 @@ from helab.utils.os_cached import os_isdir, os_listdir
 
 
 class StatusReport:
-    def __init__(self, path: str, status: str, count: int, extra_icons: list[str]):
+    def __init__(self, path: str, status: str, count: int, extra_icons: list[str],
+                 d_dld_shots: Optional[List[int]] = None, d_txy_shots: Optional[List[int]] = None
+                 ):
         self.path = path
         self.status = status
         self.count = count
         self.extra_icons = extra_icons
+        self.d_dld_shots = d_dld_shots
+        self.d_txy_shots = d_txy_shots
+        self.problematic_txy_ns: Optional[List[int]] = None
+
+    def update_extend_extras(self, extra_icons: list[str] | str ) -> None:
+        if isinstance(extra_icons, str):
+            extra_icons = [extra_icons]
+        current_set = set(self.extra_icons)
+        current_set.update(extra_icons)
+        self.extra_icons = sorted(list(current_set),
+                                  key=lambda x: StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get(x, 0))
+        status_cache[self.path] = self
+
+    def update_remove_extras(self, to_remove: list[str] | str) -> None:
+        if isinstance(to_remove, str):
+            to_remove = [to_remove]
+        current_set = set(self.extra_icons)
+        current_set.difference_update(to_remove)
+        self.extra_icons = sorted(list(current_set),
+                                  key=lambda x: StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get(x, 0))
+        status_cache[self.path] = self
+    
+    def update_ram_status(self, is_opened: bool = False) -> None:
+        try:
+            self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'loading_ram'])
+            data_files = data_ram_cache[self.path]
+            if not data_files is None:
+                if is_opened:
+                    self.update_extend_extras('ram_opened')
+                else:
+                    self.update_extend_extras('ram')
+        except KeyError:
+            # self.update_remove_extras(['ram', 'ram_single', 'ram_opened'])
+            if is_opened:
+                self.update_extend_extras('ram_single')
+        except Exception as e:
+            logging.error(f"StatusReport.update_ram_status: error accessing cache for {self.path}: {e}")
+            # self.update_remove_extras(['ram', 'ram_single', 'ram_opened'])
+            # if e == KeyError and is_opened:
+            #     self.update_extend_extras('ram_single')
+        status_cache[self.path] = self
+
+    def set_loading_ram_status(self) -> None:
+        self.update_remove_extras(['ram', 'ram_single', 'ram_opened'])
+        self.update_extend_extras('loading_ram')
+
+    def update_problematic_txy_ns(self, problematic_txy_ns: List[int]) -> None:
+        self.problematic_txy_ns = problematic_txy_ns
+        status_cache[self.path] = self
+
 
 # Define WorkerSignals to communicate between threads
 class StatusWorkerSignals(QObject):
@@ -144,6 +198,11 @@ class StatusWorker(QRunnable):
                       f"d_only_dld_shots: {d_only_dld_shots_len}, d_only_txy_shots: {d_only_txy_shots_len}"
                       )
 
+        if len(d_dld_shots) != len(set(d_dld_shots)):
+            logging.fatal(f"StatusWorker._run_helper_v1: IMPOSSIBLE?! {self.file_path = }\t d_dld_shots contains duplicates: {d_dld_shots[:min(10,len(d_dld_shots))]}")
+        if len(d_txy_shots) != len(set(d_txy_shots)):
+            logging.fatal(f"StatusWorker._run_helper_v1: IMPOSSIBLE?! {self.file_path = }\t d_txy_shots contains duplicates: {d_txy_shots[:min(10,len(d_txy_shots))]}")
+
 
         emit_status = 'canceled'
         emit_counts = -2
@@ -211,7 +270,7 @@ class StatusWorker(QRunnable):
                 logging.error(f"StatusWorker._run_helper_v1: error accessing cache for {self.file_path}: {e}")
                 pass
 
-        self.signals.finished.emit(StatusReport(self.file_path, emit_status, emit_counts, emit_eicons))
+        self.signals.finished.emit(StatusReport(self.file_path, emit_status, emit_counts, emit_eicons, d_dld_shots, d_txy_shots))
 
         # if d_dld_files_len == 0 and d_txy_files_len == 0:
         #     self.signals.finished.emit(StatusReport(self.file_path, 'nothing', -1, [])

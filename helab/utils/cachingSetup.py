@@ -54,9 +54,9 @@ CACHE_PARAMS_OVERRIDE: Dict[str, Dict[str, Any]] = {
     },
     "data_ram_cache": {
         "size_limit": 1<<30<<3, # 8GB,
-        "sqlite_mmap_size": 1<<30<<2, # 4GB
-        "sqlite_cache_size": 1<<18, # 1-4GB (256K pages)
-        "disk_min_file_size": 1<<20, # 1MB
+        "sqlite_mmap_size": 1<<30<<0, # 1GB
+        "sqlite_cache_size": 1<<10<<8, #  256K pages (~1GB)
+        "disk_min_file_size": 1<<20<<3, # 8MB
         "tag_index": True,
     },
 }

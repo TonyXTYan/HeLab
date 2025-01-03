@@ -1,10 +1,14 @@
 import logging
+from typing import Optional, Set
 
+import matlab.engine
 from PyQt6.QtCore import Qt, QModelIndex, QTimer, QEvent, QRect, QPoint, QObject, pyqtSignal, QDir, QFile, QFileInfo
 from PyQt6.QtGui import QMouseEvent, QFocusEvent, QPainter
 from PyQt6.QtWidgets import QTreeView, QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QProxyStyle, QStyle
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
+from helab.utils.cachingSetup import status_cache, data_ram_cache
+from helab.utils.constants import *
 from helab.workers.statusWorker import StatusReport
 
 
@@ -47,6 +51,18 @@ from helab.workers.statusWorker import StatusReport
 class StatusHoverIconInfo(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, Qt.WindowType.Popup)
+
+        self.status_report: Optional[StatusReport] = None
+        self.d_union_shots: Optional[Set[int]] = None
+        self.d_inter_shots: Optional[Set[int]] = None
+        self.d_only_dld_shots: Optional[Set[int]] = None
+        self.d_only_txy_shots: Optional[Set[int]] = None
+        self.d_union_shots_len: Optional[int] = None
+        self.d_inter_shots_len: Optional[int] = None
+        self.d_only_dld_shots_len: Optional[int] = None
+        self.d_only_txy_shots_len: Optional[int] = None
+
+
         # Update window flags to include WindowStaysOnTopHint and remove FramelessWindowHint
         self.setWindowFlags(
             Qt.WindowType.Popup |
@@ -60,12 +76,15 @@ class StatusHoverIconInfo(QWidget):
         layout.setSpacing(4)  # space between widgets
 
         self.label = QLabel("Detailed Info")
-        self.button1 = QPushButton("Action 1")
-        self.button2 = QPushButton("Action 2")
+        self.button1 = QPushButton("Fill missing DLD ∖ TXY")
+        self.button2 = QPushButton("Recalculate ill formated TXY")
 
         # Connect buttons to placeholder functions
-        self.button1.clicked.connect(self.action1)
-        self.button2.clicked.connect(self.action2)
+        self.button1.clicked.connect(self.action1_fill_missing_dld)
+        self.button2.clicked.connect(self.action2_recalc_txys)
+
+        self.button1.setEnabled(False)
+        self.button2.setEnabled(False)
 
         layout.addWidget(self.label)
 
@@ -80,18 +99,108 @@ class StatusHoverIconInfo(QWidget):
         layout.addLayout(button_layout)
         self.setLayout(layout)
 
-    def set_info(self, info_text: str) -> None:
+    def hide(self) -> None:
+        super().hide()
+        self.button1.setEnabled(False)
+        self.button2.setEnabled(False)
+        self.status_report = None
+        self.label.setText("Nothing (this should not be visible)")
+        self.d_union_shots = None
+        self.d_inter_shots = None
+        self.d_only_dld_shots = None
+        self.d_only_txy_shots = None
+        self.d_union_shots_len = None
+        self.d_inter_shots_len = None
+        self.d_only_dld_shots_len = None
+        self.d_only_txy_shots_len = None
+
+
+    def set_status_report(self, status_report: StatusReport) -> None:
+        self.status_report = status_report
+        self.refresh_info()
+
+    def refresh_info(self) -> None:
+        if not hasattr(self, 'status_report'):
+            return
+        if self.status_report is None:
+            return
+        status_report = self.status_report
+        status = status_report.status
+        count = status_report.count
+        file_path = status_report.path
+        extra_icons = status_report.extra_icons
+        info_text = f"Path: {file_path}\nStatus: {status}\nCount: {count}\nExtra Icons: {', '.join(extra_icons) if extra_icons else 'None'}"
+
+        if status_report.d_dld_shots is not None and status_report.d_txy_shots is not None:
+            # Warning: duplicate code to statusWorker.py
+            self.d_union_shots = set(status_report.d_dld_shots) | set(status_report.d_txy_shots)
+            self.d_inter_shots = set(status_report.d_dld_shots) & set(status_report.d_txy_shots)
+            self.d_only_dld_shots = set(status_report.d_dld_shots) - self.d_inter_shots
+            self.d_only_txy_shots = set(status_report.d_txy_shots) - self.d_inter_shots
+
+            self.d_union_shots_len = len(self.d_union_shots)
+            self.d_inter_shots_len = len(self.d_inter_shots)
+            self.d_only_dld_shots_len = len(self.d_only_dld_shots)
+            self.d_only_txy_shots_len = len(self.d_only_txy_shots)
+
+            info_text += "\n\n"
+            info_text += f"  DLD ∪ TXY: {self.d_union_shots_len} \n"
+            info_text += f"  DLD ∩ TXY: {self.d_inter_shots_len} \n"
+            info_text += f"  DLD ∖ TXY: {self.d_only_dld_shots_len} \n"
+            info_text += f"  TXY ∖ DLD: {self.d_only_txy_shots_len} \n"
+
+            if self.d_only_dld_shots_len > 0:
+                self.button1.setEnabled(True)
+
+        if status_report.problematic_txy_ns is not None:
+            info_text += "\n\n"
+            info_text += f"Problematic TXY files: {status_report.problematic_txy_ns}\n"
+            self.button2.setEnabled(True)
         self.label.setText(info_text)
 
     # Placeholder function for Action 1
-    def action1(self) -> None:
-        logging.debug("Action 1 triggered")
-        # You can replace the print statement with actual functionality later
+    def action1_fill_missing_dld(self) -> None:
+        self.button1.setEnabled(False)
+        if self.d_only_dld_shots is None:
+            logging.fatal("action1_fill_missing_dld: Impossible state")
+            return
+        if self.status_report is None:
+            logging.fatal("action1_fill_missing_dld: Impossible state")
+            return
+
+        eng = matlab.engine.start_matlab()
+        # eng.addpath(DEV_PATH_TO_TDC_AUTOCONVERTER_GIT_FOLDER)
+        eng.addpath(eng.genpath(DEV_PATH_TO_TDC_AUTOCONVERTER_GIT_FOLDER))
+        file_list = [f"d{shot}.txt" for shot in self.d_only_dld_shots]
+        logging.debug(f"action1_fill_missing_dld: {file_list = }, {self.status_report.path = }")
+        eng.tdc_convert_filelist(file_list, self.status_report.path, nargout=0)
+
+        status_cache.pop(self.status_report.path)
+        data_ram_cache.pop(self.status_report.path)
+
+        pass
 
     # Placeholder function for Action 2
-    def action2(self) -> None:
-        logging.debug("Action 2 triggered")
-        # You can replace the print statement with actual functionality later
+    def action2_recalc_txys(self) -> None:
+        logging.debug("action2_recalc_txys: called")
+        self.button2.setEnabled(False)
+        if self.status_report is None:
+            logging.fatal("action2_recalc_txys: Impossible state")
+            return
+        if self.status_report.problematic_txy_ns is None:
+            logging.fatal("action2_recalc_txys: Impossible state")
+            return
+
+        eng = matlab.engine.start_matlab()
+        eng.addpath(eng.genpath(DEV_PATH_TO_TDC_AUTOCONVERTER_GIT_FOLDER))
+        file_list = [f"d{shot}.txt" for shot in self.status_report.problematic_txy_ns]
+        logging.debug(f"action2_recalc_txys: {file_list = }, {self.status_report.path = }")
+        eng.tdc_convert_filelist(file_list, self.status_report.path, nargout=0)
+
+        status_cache.pop(self.status_report.path)
+        data_ram_cache.pop(self.status_report.path)
+
+        pass
 
 
 class StatusTreeView(QTreeView):
@@ -171,14 +280,14 @@ class StatusTreeView(QTreeView):
                     self.current_hover_index = index
                     self.show_popup(event.globalPosition().toPoint(), index)
             else:
-                self.hover_timer.start(300)  # Delay hiding by 300ms
+                self.hover_timer.start(500)  # Delay hiding by 300ms
         else:
-            self.hover_timer.start(300)  # Delay hiding by 300ms
+            self.hover_timer.start(500)  # Delay hiding by 300ms
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, a0: QEvent | None) -> None:
         if a0 is None: return
-        self.hover_timer.start(300)  # Delay hiding by 300ms
+        self.hover_timer.start(500)  # Delay hiding by 300ms
         super().leaveEvent(a0)
 
     def show_popup(self, global_pos: QPoint, index: QModelIndex) -> None:
@@ -197,13 +306,42 @@ class StatusTreeView(QTreeView):
         # status, count, extra_icons = model.fetch_status(file_path)
         status_report = model.fetch_status(file_path)
         if isinstance(status_report, StatusReport):
-            status = status_report.status
-            count = status_report.count
-            extra_icons = status_report.extra_icons
-            info_text = f"Path: {file_path}\nStatus: {status}\nCount: {count}\nExtra Icons: {', '.join(extra_icons) if extra_icons else 'None'}"
-            self.popup.set_info(info_text)
+            self.popup.set_status_report(status_report)
+            # self.popup.refresh_info()
+            # status = status_report.status
+            # count = status_report.count
+            # extra_icons = status_report.extra_icons
+            # info_text = f"Path: {file_path}\nStatus: {status}\nCount: {count}\nExtra Icons: {', '.join(extra_icons) if extra_icons else 'None'}"
+            #
+            # if status_report.d_dld_shots is not None and status_report.d_txy_shots is not None:
+            #     # Warning: duplicate code to statusWorker.py
+            #     d_union_shots = set(status_report.d_dld_shots) | set(status_report.d_txy_shots)
+            #     d_inter_shots = set(status_report.d_dld_shots) & set(status_report.d_txy_shots)
+            #     d_only_dld_shots = set(status_report.d_dld_shots) - d_inter_shots
+            #     d_only_txy_shots = set(status_report.d_txy_shots) - d_inter_shots
+            #
+            #     d_union_shots_len = len(d_union_shots)
+            #     d_inter_shots_len = len(d_inter_shots)
+            #     d_only_dld_shots_len = len(d_only_dld_shots)
+            #     d_only_txy_shots_len = len(d_only_txy_shots)
+            #
+            #     info_text += "\n\n"
+            #     info_text += f"  DLD ∪ TXY: {d_union_shots_len} \n"
+            #     info_text += f"  DLD ∩ TXY: {d_inter_shots_len} \n"
+            #     info_text += f"  DLD ∖ TXY: {d_only_dld_shots_len} \n"
+            #     info_text += f"  TXY ∖ DLD: {d_only_txy_shots_len} \n"
+            #
+            #     if d_only_dld_shots_len > 0:
+            #         self.popup.button1.setEnabled(True)
+            #
+            # if status_report.problematic_txy_ns is not None:
+            #     info_text += "\n\n"
+            #     info_text += f"Problematic TXY files: {status_report.problematic_txy_ns}\n"
+            #     self.popup.button2.setEnabled(True)
+
+            # self.popup.refresh_info(info_text)
         # Position the popup near the cursor
-        # self.popup.move(global_pos + QPoint(10, 10))  # Slight offset
+        # self.popup.(global_pos + QPoint(10, 10))  # Slight offset
         self.popup.move(global_pos - QPoint(1, 1))  # Slight offset
         self.popup.show()
         self.popup_visible = True
@@ -222,6 +360,7 @@ class StatusTreeView(QTreeView):
         if e is None: return
         super().focusOutEvent(e)
         self.hide_popup()
+        # QTimer.singleShot(500, self.hide_popup)
 
     def on_item_expanded(self, index: QModelIndex) -> None:
         model = self.model()

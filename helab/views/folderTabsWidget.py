@@ -4,12 +4,13 @@ import logging
 import os
 import platform
 import sys
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Any
 
 from PIL.TiffTags import lookup
 from PyQt6.QtCore import QDir, QThreadPool, Qt, QSize
-from PyQt6.QtWidgets import QTabWidget, QWidget, QMessageBox, QTabBar
+from PyQt6.QtWidgets import QTabWidget, QWidget, QMessageBox, QTabBar, QAbstractItemView
 from cachetools import LRUCache, TTLCache
+from matplotlib.backend_bases import CloseEvent
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.utils.cachingSetup import status_cache, hasChildren_cache
@@ -67,7 +68,12 @@ class FolderTabWidget(QTabWidget):
                     close_button = tab_bar.tabButton(index, QTabBar.ButtonPosition.RightSide)
                     if close_button:
                         close_button.setEnabled(True)  # Enable the close button
-            tab_bar.setEnabled(True)
+                    current_folder_explorer = self.widget(index)
+                    if isinstance(current_folder_explorer, FolderExplorer):
+                        # current_folder_explorer.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+                        # current_folder_explorer.tree.setEnabled(True)
+                        pass
+            # tab_bar.setEnabled(True)
 
     def set_tab_switching_disable(self) -> None:
         self._tab_switching_enabled = False
@@ -79,7 +85,12 @@ class FolderTabWidget(QTabWidget):
                 close_button = tab_bar.tabButton(index, QTabBar.ButtonPosition.RightSide)
                 if close_button:
                     close_button.setEnabled(False)  # Disable the close button
-            tab_bar.setEnabled(False)
+                current_folder_explorer = self.widget(index)
+                if isinstance(current_folder_explorer, FolderExplorer):
+                    # current_folder_explorer.tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+                    # current_folder_explorer.tree.setEnabled(False)
+                    pass
+            # tab_bar.setEnabled(False)
 
     def add_new_folder_explorer_tab(self,
                                     model_root_path: str|None = QDir.rootPath(),
@@ -147,7 +158,12 @@ class FolderTabWidget(QTabWidget):
         )
         index = self.addTab(folder_explorer, 'File Explorer')
 
-        folder_explorer.rootPathChanged.connect(lambda path, idx=index: self.update_folder_explorer_tab_title(path, idx))
+        folder_explorer.rootPathChanged.connect(lambda path, idx=index: self.update_folder_explorer_tab_title_on_root_change(path, idx))\
+        # folder_explorer.on_selection_changed.connect(lambda path, idx=index: self.update_folder_explorer_tab_title(path, idx))
+
+        # selection_model = folder_explorer.get_selection_model()
+        # selection_model.selectionChanged.connect(self.update_folder_explorer_tab_title_on_selection_change)
+
         folder_explorer.emit_root_path_changed()
 
         self.setCurrentIndex(index)
@@ -155,7 +171,7 @@ class FolderTabWidget(QTabWidget):
         # Add the FolderExplorer as a new tab
         # self.tab_widget.addTab(folder_explorer, 'File Explorer')
 
-    def update_folder_explorer_tab_title(self, path: str, index: int) -> None:
+    def update_folder_explorer_tab_title_on_root_change(self, path: str, index: int) -> None:
         logging.debug(f"update_folder_explorer_tab_title: {index = } and {path = }")
         # self.tab_widget.setTabText(index, os.path.basename(path))
         if platform.system() == 'Windows':
@@ -169,7 +185,20 @@ class FolderTabWidget(QTabWidget):
                 self.setTabText(index, "/")
             else:
                 self.setTabText(index, os.path.basename(path))
+
         logging.debug(f"update_folder_explorer_tab_title: {self.tabText(index) = }")
+
+    def update_folder_explorer_tab_title_on_selection_change(self, selected: List[str], deselected: List[str]) -> None:
+        current_folder_explorer = self.currentWidget()
+        if isinstance(current_folder_explorer, FolderExplorer):
+            selected_path = current_folder_explorer.selected_path
+            if selected_path:
+                # self.setTabText(self.currentIndex(), os.path.basename(selected_path))
+                self.update_folder_explorer_tab_title_on_root_change(selected_path, self.currentIndex())
+            else:
+                self.setTabText(self.currentIndex(), "File Explorer")
+        else:
+            logging.warning("Current tab is not a FolderExplorer instance.")
 
     def on_back_button_clicked(self) -> None:
         # Get the current folder explorer
@@ -207,12 +236,15 @@ class FolderTabWidget(QTabWidget):
             logging.warning("Current tab is not a FolderExplorer instance.")
 
     def on_current_tab_changed(self, index: int) -> None:
-        logging.debug(f"(TabWidget) Current tab changed to index {index}")
+        logging.debug(f"folderTabWidget.on_current_tab_changed: to index {index}")
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             logging.debug(f"Current tab dir_path: {current_folder_explorer.model_root_path}, view_path: {current_folder_explorer.view_path}, target_path: {current_folder_explorer.target_path}")
         else:
-            logging.warning("Current tab is not a FolderExplorer instance.")
+            if index == -1:
+                logging.debug("folderTabWidget.on_current_tab_changed: index is -1")
+            else:
+                logging.warning(f"folderTabWidget.on_current_tab_changed: current tab {index = } is not a FolderExplorer instance.")
         # current_folder_explorer = self.currentWidget()
         # if isinstance(current_folder_explorer, FolderExplorer):
         #     current_folder_explorer.update_back_button_state()
@@ -247,3 +279,11 @@ class FolderTabWidget(QTabWidget):
             current_folder_explorer.deleteLater()
         super().removeTab(index)
         # gc.collect()
+
+    def closeEvent(self, a0: Any) -> None:
+        # Close all tabs
+        for index in reversed(range(self.count())):
+            self.removeTab(0)
+
+        super().closeEvent(a0)
+        logging.debug("FolderTabWidget.closeEvent: finished")
