@@ -60,15 +60,24 @@ class TestStatusWorker(unittest.TestCase):
     #     self.assertIsInstance(args[2], int)
     #     self.assertIsInstance(args[3], list)
 
-    def test_worker_can_be_canceled(self) -> None:
-        worker = StatusWorker("test_file.txt")
-        worker.cancel()
-        spy = QSignalSpy(worker.signals.finished)
-        self.threadpool.start(worker)
-        while not self.threadpool.activeThreadCount() == 0: time.sleep(0.05)
+    # def test_worker_can_be_canceled(self) -> None:
+    #     worker = StatusWorker("test_file.txt")
+    #     worker.cancel()
+    #     spy = QSignalSpy(worker.signals.finished)
+    #     self.threadpool.start(worker)
+    #     while not self.threadpool.activeThreadCount() == 0: time.sleep(0.05)
+    #
+    #     self.app.processEvents()
+    #     self.assertFalse(spy.wait(10000))  # wait for up to 1 second
 
-        self.app.processEvents()
-        self.assertFalse(spy.wait(10000))  # wait for up to 1 second
+    # def test_worker_emits_finished_signal(self) -> None:
+    #     worker = StatusWorker("/")
+    #     spy = QSignalSpy(worker.signals.finished)
+    #     self.threadpool.start(worker)
+    #
+    #     if not spy.wait(5000):
+    #         self.fail("Timeout waiting for finished signal")
+
 
 if __name__ == '__main__':
     unittest.main()

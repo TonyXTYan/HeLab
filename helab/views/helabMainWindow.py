@@ -148,7 +148,12 @@ class MainWindow(QMainWindow):
         active_threads = thread_pool.activeThreadCount()
         # self.status_bar.showMessage(f"{active_threads}, {QThreadPool.globalInstance().stackSize()}, {len(self.tab_widget.running_workers_status)}")
         # queue_depth = len(self.tab_widget.running_workers_status) + len(self.tab_widget.running_workers_deep) + len(self.tab_widget.running_workers_hasChildren)
-        queue_depths = (len(self.tab_widget.running_workers_status), len(self.tab_widget.running_workers_deep), len(self.tab_widget.running_workers_hasChildren))
+        queue_depths = (
+            len(self.tab_widget.running_workers_status),
+            len(self.tab_widget.running_workers_deep),
+            len(self.tab_widget.running_workers_hasChildren),
+            len(self.tab_widget.running_workers_ramLoading),
+        )
 
         if not self.isActiveWindow():
             QToolTip.hideText()
@@ -187,47 +192,68 @@ class MainWindow(QMainWindow):
             tooltip_string += f"  Number of active threads in threadpool: {active_threads}\n"
             tooltip_string += f"  Number of queued threads with tracking: {sum(queue_depths)}\n\n"
 
-            running_workers_status_keys = list(self.tab_widget.running_workers_status.keys())
-            if len(running_workers_status_keys) > 3:
-                tooltip_string += f"  running_workers_status working on: \n"
-                for key in running_workers_status_keys[:3]:
-                    tooltip_string += f"    {key}\n"
-                tooltip_string += f"    ... and {len(running_workers_status_keys)-3} more\n"
-            elif len(running_workers_status_keys) > 0:
-                tooltip_string += f"  running_workers_status working on: \n"
-                for key in running_workers_status_keys:
-                    tooltip_string += f"    {key}\n"
-            else:
-                tooltip_string += "  running_workers_status is empty\n"
-            tooltip_string += "\n"
+            def make_tooltip_string(worker_name: str, worker_keys: List[str]) -> str:
+                tooltip_string = ""
+                if len(worker_keys) > 3:
+                    tooltip_string += f"  {worker_name} working on: \n"
+                    for key in worker_keys[:3]:
+                        tooltip_string += f"    {key}\n"
+                    tooltip_string += f"    ... and {len(worker_keys)-3} more\n"
+                elif len(worker_keys) > 0:
+                    tooltip_string += f"  {worker_name} working on: \n"
+                    for key in worker_keys:
+                        tooltip_string += f"    {key}\n"
+                else:
+                    tooltip_string += f"  {worker_name} is empty\n"
+                tooltip_string += "\n"
+                return tooltip_string
 
-            running_workers_deep_keys = list(self.tab_widget.running_workers_deep.keys())
-            if len(running_workers_deep_keys) > 3:
-                tooltip_string += f"  running_workers_deep working on: \n"
-                for key in running_workers_deep_keys[:3]:
-                    tooltip_string += f"    {key}\n"
-                tooltip_string += f"    ... and {len(running_workers_deep_keys)-3} more\n"
-            elif len(running_workers_deep_keys) > 0:
-                tooltip_string += f"  running_workers_deep working on: \n"
-                for key in running_workers_deep_keys:
-                    tooltip_string += f"    {key}\n"
-            else:
-                tooltip_string += "  running_workers_deep is empty\n"
-            tooltip_string += "\n"
+            tooltip_string += make_tooltip_string("running_workers_status", list(self.tab_widget.running_workers_status.keys()))
+            tooltip_string += make_tooltip_string("running_workers_deep", list(self.tab_widget.running_workers_deep.keys()))
+            tooltip_string += make_tooltip_string("running_workers_hasChildren", list(self.tab_widget.running_workers_hasChildren.keys()))
+            tooltip_string += make_tooltip_string("running_workers_ramLoading", list(self.tab_widget.running_workers_ramLoading.keys()))
 
-            running_workers_hasChildren_keys = list(self.tab_widget.running_workers_hasChildren.keys())
-            if len(running_workers_hasChildren_keys) > 3:
-                tooltip_string += f"  running_workers_hasChildren working on: \n"
-                for key in running_workers_hasChildren_keys[:3]:
-                    tooltip_string += f"    {key}\n"
-                tooltip_string += f"    ... and {len(running_workers_hasChildren_keys)-3} more\n"
-            elif len(running_workers_hasChildren_keys) > 0:
-                tooltip_string += f"  running_workers_hasChildren working on: \n"
-                for key in running_workers_hasChildren_keys:
-                    tooltip_string += f"    {key}\n"
-            else:
-                tooltip_string += "  running_workers_hasChildren is empty\n"
-            tooltip_string += "\n"
+            # running_workers_status_keys = list(self.tab_widget.running_workers_status.keys())
+            # if len(running_workers_status_keys) > 3:
+            #     tooltip_string += f"  running_workers_status working on: \n"
+            #     for key in running_workers_status_keys[:3]:
+            #         tooltip_string += f"    {key}\n"
+            #     tooltip_string += f"    ... and {len(running_workers_status_keys)-3} more\n"
+            # elif len(running_workers_status_keys) > 0:
+            #     tooltip_string += f"  running_workers_status working on: \n"
+            #     for key in running_workers_status_keys:
+            #         tooltip_string += f"    {key}\n"
+            # else:
+            #     tooltip_string += "  running_workers_status is empty\n"
+            # tooltip_string += "\n"
+            #
+            # running_workers_deep_keys = list(self.tab_widget.running_workers_deep.keys())
+            # if len(running_workers_deep_keys) > 3:
+            #     tooltip_string += f"  running_workers_deep working on: \n"
+            #     for key in running_workers_deep_keys[:3]:
+            #         tooltip_string += f"    {key}\n"
+            #     tooltip_string += f"    ... and {len(running_workers_deep_keys)-3} more\n"
+            # elif len(running_workers_deep_keys) > 0:
+            #     tooltip_string += f"  running_workers_deep working on: \n"
+            #     for key in running_workers_deep_keys:
+            #         tooltip_string += f"    {key}\n"
+            # else:
+            #     tooltip_string += "  running_workers_deep is empty\n"
+            # tooltip_string += "\n"
+            #
+            # running_workers_hasChildren_keys = list(self.tab_widget.running_workers_hasChildren.keys())
+            # if len(running_workers_hasChildren_keys) > 3:
+            #     tooltip_string += f"  running_workers_hasChildren working on: \n"
+            #     for key in running_workers_hasChildren_keys[:3]:
+            #         tooltip_string += f"    {key}\n"
+            #     tooltip_string += f"    ... and {len(running_workers_hasChildren_keys)-3} more\n"
+            # elif len(running_workers_hasChildren_keys) > 0:
+            #     tooltip_string += f"  running_workers_hasChildren working on: \n"
+            #     for key in running_workers_hasChildren_keys:
+            #         tooltip_string += f"    {key}\n"
+            # else:
+            #     tooltip_string += "  running_workers_hasChildren is empty\n"
+            # tooltip_string += "\n"
 
             tooltip_string += cache_status_string()
 

@@ -340,6 +340,9 @@ class SettingsDialog(QDialog):
     def closeEvent(self, a0: QCloseEvent|None) -> None:
         # self.save_settings()
         # TODO warning box if unsaved changes
+
+
+        logging.warning("Settings dialog closed")
         super().closeEvent(a0)
 
     def reset_settings(self) -> None:

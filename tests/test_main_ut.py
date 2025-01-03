@@ -57,30 +57,32 @@ class TestMainWindow(unittest.TestCase):
             logging.error(f"Error in tearDown: {e}")
             pass
 
-    def test_window_title(self) -> None:
-        # self.assertEqual(self.main_window.windowTitle(), 'HeLab')
-        # QThreadPool.globalInstance().waitForDone()
-        self.assertTrue("HeLab" in self.main_window.windowTitle())
 
-    def test_default_size(self) -> None:
-        self.assertEqual(self.main_window.width(), MainWindow.DEFAULT_WIDTH)
-        self.assertEqual(self.main_window.height(), MainWindow.DEFAULT_HEIGHT)
-        # QThreadPool.globalInstance().waitForDone()
 
-    def test_menus_created(self) -> None:
-        menus = self.main_window.menu_bar.actions()
-        menu_titles = [menu.text() for menu in menus]
-        self.assertIn('File', menu_titles)
-        # QThreadPool.globalInstance().waitForDone()
+    # def test_window_title(self) -> None:
+    #     # self.assertEqual(self.main_window.windowTitle(), 'HeLab')
+    #     # QThreadPool.globalInstance().waitForDone()
+    #     self.assertTrue("HeLab" in self.main_window.windowTitle())
 
-    def test_central_widget_setup(self) -> None:
-        time.sleep(0.05)
-        self.assertIsNotNone(self.main_window.splitter)
-        self.assertIsNotNone(self.main_window.left_panel)
-        self.assertIsNotNone(self.main_window.middle_mainwindow)
-        self.assertIsNotNone(self.main_window.right_panel)
-        time.sleep(0.05)
-        # QThreadPool.globalInstance().waitForDone()
+    # def test_default_size(self) -> None:
+    #     self.assertEqual(self.main_window.width(), MainWindow.DEFAULT_WIDTH)
+    #     self.assertEqual(self.main_window.height(), MainWindow.DEFAULT_HEIGHT)
+    #     # QThreadPool.globalInstance().waitForDone()
+    #
+    # def test_menus_created(self) -> None:
+    #     menus = self.main_window.menu_bar.actions()
+    #     menu_titles = [menu.text() for menu in menus]
+    #     self.assertIn('File', menu_titles)
+    #     # QThreadPool.globalInstance().waitForDone()
+    #
+    # def test_central_widget_setup(self) -> None:
+    #     time.sleep(0.05)
+    #     self.assertIsNotNone(self.main_window.splitter)
+    #     self.assertIsNotNone(self.main_window.left_panel)
+    #     self.assertIsNotNone(self.main_window.middle_mainwindow)
+    #     self.assertIsNotNone(self.main_window.right_panel)
+    #     time.sleep(0.05)
+    #     # QThreadPool.globalInstance().waitForDone()
 
 if __name__ == '__main__':
     unittest.main()

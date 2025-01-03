@@ -208,3 +208,38 @@ def cache_status_string() -> str:
 #     # Hash the string using SHA-256
 #     # print(f"custom_key_function: {key_string = }, hash = {hashlib.sha256(key_string.encode()).hexdigest()}")
 #     return hashlib.sha256(key_string.encode()).hexdigest()
+
+
+
+# Status Cache Management
+class SCMgmt:
+    @staticmethod
+    def update_append_extras() -> None:
+        pass
+
+    @staticmethod
+    def update_remove_extras() -> None:
+        pass
+
+    @staticmethod
+    def satinity_check() -> None:
+        pass
+
+    @staticmethod
+    def audit() -> None:
+        pass
+
+class DRMgmt:
+    @staticmethod
+    def load_data() -> None:
+        pass
+    @staticmethod
+    def evict_data() -> None:
+        pass
+    @staticmethod
+    def evict_all() -> None:
+        pass
+    @staticmethod
+    def shrink_ram() -> None:
+        pass
+

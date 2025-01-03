@@ -13,8 +13,10 @@ from cachetools import LRUCache, TTLCache
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.utils.cachingSetup import status_cache, hasChildren_cache
+from helab.utils.constants import *
 from helab.views.folderExplorer import FolderExplorer
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
+from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
 from helab.workers.statusDeepWorker import StatusDeepWorker
 from helab.workers.statusWorker import StatusWorker
 
@@ -47,6 +49,7 @@ class FolderTabWidget(QTabWidget):
         self.running_workers_status: Dict[str, StatusWorker] = {}
         self.running_workers_deep: Dict[str, StatusDeepWorker] = {}
         self.running_workers_hasChildren: Dict[str, DirectoryCheckWorker] = {}
+        self.running_workers_ramLoading: Dict[str, LoadFolderToRamWorker] = {}
         self.tab_back_button_enabled = False
 
         self.currentChanged.connect(self.on_current_tab_changed)
@@ -103,19 +106,7 @@ class FolderTabWidget(QTabWidget):
             view_path = model_root_path
 
         if target_path is None:
-            target_paths = [
-                '/Volumes/tonyNVME Gold/dld output',
-                '/Users/tonyyan/.cache/2024_Momentum_Bells_V2 - 20241200',
-                # '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - Testing MS Teams/2024_Momentum_Bells_V2 - 20241200',
-                # Don't use OneDrive it's shit (cause file system hangs)
-                os.getcwd(),
-                '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab',
-                'C:\\Users\\XinTong\\Documents',
-                'O:\\'
-                ''
-            ]
-
-            target_path = next((path for path in target_paths if os.path.exists(path)), '')
+            target_path = next((path for path in DEV_POTENTIAL_DATA_PATHS if os.path.exists(path)), '')
     
         try:
             if not os.path.commonpath([model_root_path, target_path]) == os.path.abspath(model_root_path):
@@ -151,6 +142,7 @@ class FolderTabWidget(QTabWidget):
             running_workers_status = self.running_workers_status,
             running_workers_deep = self.running_workers_deep,
             running_workers_hasChildren = self.running_workers_hasChildren,
+            running_workers_ramLoading = self.running_workers_ramLoading,
             set_initial_expand_to_parent_level = set_initial_expand_to_parent_level
         )
         index = self.addTab(folder_explorer, 'File Explorer')
