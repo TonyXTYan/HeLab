@@ -36,11 +36,15 @@ class LoadFolderToRamWorker(QRunnable):
     _TIMEDELTA_SEC_UPDATE_PROGRESS_MIN = timedelta(seconds=0.5)
     _TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM = timedelta(seconds=0.5)
 
+    CANCEL_MSG_ALREADY_CACHED_AND_NOT_SELECTED = "cancelled - already cached and no longer selected (user changed selection)"
+    CANCEL_MSG_SHUTDOWN_REQUESTED = "cancelled - shutdown requested"
+
     def __init__(self, folder_path: str):
         super().__init__()
         self.folder_path = folder_path
         self.signals = LoadFolderToRamWorkerSignals()
         self._cancel_requested = False
+        self._cancel_message = ""
 
     # noinspection PyUnresolvedReferences
     def run(self) -> None:
@@ -50,7 +54,7 @@ class LoadFolderToRamWorker(QRunnable):
         def _check_cancel_status() -> None:
             if self._cancel_requested:
                 logging.warning(f"LoadFolderToRamWorker: {self.folder_path = } was canceled.")
-                self.signals.error.emit(self.folder_path, "Canceled")
+                self.signals.error.emit(self.folder_path, self._cancel_message)
                 return
         _check_cancel_status()
         try:
@@ -242,8 +246,9 @@ class LoadFolderToRamWorker(QRunnable):
             logging.error(f"LoadFolderToRamWorker: {e = }")
             self.signals.error.emit(self.folder_path, str(e))
 
-    def cancel(self) -> None:
+    def cancel(self, message:str="") -> None:
         self._cancel_requested = True
+        self._cancel_message = message
 
     @staticmethod
     def compress_dataframe(df: pd.DataFrame) -> bytes:

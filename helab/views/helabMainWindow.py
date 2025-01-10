@@ -1018,14 +1018,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         logging.info("MainWindow closeEvent")
 
-        for workerS in running_workers_status.values():
-            workerS.cancel()
-        for workerD in running_workers_deep.values():
-            workerD.cancel()
-        for workerC in running_workers_hasChildren.values():
-            workerC.cancel()
-        for workerL in running_workers_ramLoading.values():
-            workerL.cancel()
+        cancel_all_workers()
 
         for temp_file in self.named_temp_files:
             temp_file.close()

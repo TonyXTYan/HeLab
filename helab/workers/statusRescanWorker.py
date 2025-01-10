@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 class StatusRescanWorkerSignals(QObject):
     finished = pyqtSignal()
-    cancelled = pyqtSignal()
+    cancelled = pyqtSignal(bool)
 
 class StatusRescanWorker(QRunnable):
     def __init__(self,
@@ -25,12 +25,13 @@ class StatusRescanWorker(QRunnable):
         # self.folder_opened_path = folder_opened_path
         self.signals = StatusRescanWorkerSignals()
         self._is_cancelled = False
+        self._is_cancelled_scan_again = False
 
     def run(self) -> None:
         rows = self.model.get_visible_rows()
         for index, path in rows:
             if self._is_cancelled:
-                self.signals.cancelled.emit()
+                self.signals.cancelled.emit(self._is_cancelled_scan_again)
                 return
             status_report = status_cache.get(path)
             if isinstance(status_report, StatusReport):
@@ -56,5 +57,6 @@ class StatusRescanWorker(QRunnable):
         self.signals.finished.emit()
 
 
-    def cancel(self) -> None:
+    def cancel(self, scan_again:bool=True) -> None:
         self._is_cancelled = True
+        self._is_cancelled_scan_again = scan_again

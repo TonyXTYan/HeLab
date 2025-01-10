@@ -365,6 +365,7 @@ class helabFileSystemModel(QFileSystemModel):
 
     def stop_all_scans(self) -> None:
         logging.debug("Stopping all scans...")
+        #TODO: use cancel_all_workers() ?
         # Iterate through all running workers and cancel them
         for file_path, worker in list(running_workers_status.items()):
             worker.cancel()
@@ -605,7 +606,7 @@ class helabFileSystemModel(QFileSystemModel):
 
         if self.rescan_worker is not None:
             logging.warning("helabFileSystemModel.rescan: already running")
-            self.rescan_worker.cancel()
+            self.rescan_worker.cancel(scan_again=True)
             return
         else:
             logging.debug("helabFileSystemModel.rescan: starting")
@@ -625,14 +626,18 @@ class helabFileSystemModel(QFileSystemModel):
         self.refresh()
         self.rescan_worker = None
 
-    def on_rescan_cancelled(self) -> None:
+    def on_rescan_cancelled(self, scan_again:bool = True) -> None:
         logging.info("helabFileSystemModel.on_rescan_cancelled")
         self.refresh()
         self.rescan_worker = None
-        QTimer.singleShot(100, self.rescan)
+        if scan_again: QTimer.singleShot(100, self.rescan)
 
     def on_item_expanded(self, index: QModelIndex) -> None:
         logging.debug(f"helabFileSystemModel.on_item_expanded: {self.filePath(index)}")
         self.rescan()
 
-
+    def rescan_cancel_if_any(self) -> None:
+        if self.rescan_worker is not None:
+            self.rescan_worker.cancel(scan_again=False)
+            self.rescan_worker = None
+            logging.info("helabFileSystemModel.rescan_cancel_if_any: cancelled")

@@ -129,6 +129,7 @@ class StatusReport:
             # if 'progress_ram' in self.extra_icons:
             if any([icon in self.extra_icons for icon in ['loading_ram', 'progress_ram']]):
                 if self.path not in running_workers_ramLoading.keys():
+                    logging.debug(f"StatusReport.validate_ok: {self.path} is in loading_ram but not in running_workers_ramLoading")
                     return (False, False, False)
 
             if self.time_last_updated is None:
@@ -190,6 +191,7 @@ class StatusWorkerSignals(QObject):
     finished = pyqtSignal(StatusReport)  # file_path, status, count, extra_icons
 
 # Define the Worker class with cancellation support
+# noinspection PyUnresolvedReferences
 class StatusWorker(QRunnable):
     def __init__(self, file_path: str, invalidate_cache:bool=False):
         # QObject.__init__(self)

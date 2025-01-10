@@ -255,6 +255,9 @@ class FolderExplorer(QWidget):
                 status_report.update_ram_status()
                 if file_path in running_workers_ramLoading:
                     status_report.set_loading_ram_status()
+                    if file_path in data_ram_cache:
+                        running_workers_ramLoading[file_path].cancel(message=LoadFolderToRamWorker.CANCEL_MSG_ALREADY_CACHED_AND_NOT_SELECTED)
+
                 # logging.debug(f"folderExplorer.on_selection_changed: {file_path = } is in running_workers_ramLoading")
                 # self.running_workers_ramLoading[file_path].cancel()
                 # self.running_workers_ramLoading.pop(file_path)
@@ -637,7 +640,6 @@ class FolderExplorer(QWidget):
         # status_cache[folder_path] = status_report
         status_report.set_loading_ram_status()
 
-
         worker = LoadFolderToRamWorker(folder_path)
         worker.signals.finished.connect(self.on_load_folder_to_ram_finished)
         worker.signals.loading.connect(self.on_load_folder_to_ram_loading)
@@ -650,7 +652,7 @@ class FolderExplorer(QWidget):
     
     def on_load_folder_to_ram_finished(self, folder_path: str, problematic_txy_ns: List[int], data: object) -> None:
         logging.debug(f"on_load_folder_to_ram_finished: {folder_path = }")
-        del running_workers_ramLoading[folder_path]
+        running_workers_ramLoading.pop(folder_path, None)
         self.on_load_folder_to_ram_finished_helper(folder_path, problematic_txy_ns, data)
 
     def on_load_folder_to_ram_finished_helper(self, folder_path: str, problematic_txy_ns: Optional[List[int]], data: object) -> None:
@@ -658,7 +660,7 @@ class FolderExplorer(QWidget):
             self.folder_opened_path = folder_path
             self.model.folder_opened_path = folder_path
             self.folder_opened_data = data
-            status_report = status_cache[folder_path]
+            status_report = status_cache.get(folder_path)
             if status_report is not None and isinstance(status_report, StatusReport):
                 # status_report.extra_icons.remove('loading')
                 # status_report.update_extend_extras('')
@@ -677,7 +679,9 @@ class FolderExplorer(QWidget):
                     logging.debug(f"on_load_folder_to_ram_finished: loadded {data.shape[0]} rows {fnum(data.memory_usage(index=True).sum())}B at {folder_path = }")
                 else:
                     logging.error(f"on_load_folder_to_ram_finished: invalid index at {folder_path} ({index = })")
-
+            else:
+                logging.error(f"on_load_folder_to_ram_finished: {folder_path = } is not in status_cache")
+                self.model.fetch_status(folder_path)
 
         else:
             logging.error(f"on_load_folder_to_ram_finished: {type(data) = } is not pd.DataFrame, {folder_path = }")
@@ -690,7 +694,8 @@ class FolderExplorer(QWidget):
         del running_workers_ramLoading[folder_path]
         status_cache.pop(folder_path)
         self.model.fetch_status(folder_path)
-        data_ram_cache.pop(folder_path)
+        if error != LoadFolderToRamWorker.CANCEL_MSG_ALREADY_CACHED_AND_NOT_SELECTED:
+            data_ram_cache.pop(folder_path)
         pass
 
     def on_load_folder_to_ram_loading(self, folder_path: str, progress: float) -> None:
@@ -809,7 +814,7 @@ class FolderExplorer(QWidget):
         self.folder_opened_data = None
         self.folder_opened_path = None
         self.model.folder_opened_path = None
-
+        self.model.rescan_cancel_if_any()
 
         # self.model.clearItemData()
         self.model.deleteLater()

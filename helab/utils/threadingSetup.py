@@ -4,6 +4,7 @@ import sys
 from typing import Dict, Tuple
 
 from PyQt6.QtCore import QThreadPool
+from humanfriendly.terminal import message
 
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
@@ -55,6 +56,18 @@ def clear_all_thread_pools() -> None:
     thread_pool_global.clear()
     thread_pool_load_data_ram.clear()
     logging.info("All thread pools cleared.")
+
+
+def cancel_all_workers() -> None:
+    for workerS in running_workers_status.values():
+        workerS.cancel()
+    for workerD in running_workers_deep.values():
+        workerD.cancel()
+    for workerC in running_workers_hasChildren.values():
+        workerC.cancel()
+    for workerL in running_workers_ramLoading.values():
+        workerL.cancel(message=LoadFolderToRamWorker.CANCEL_MSG_SHUTDOWN_REQUESTED)
+    logging.info("All workers cancelled.")
 
 
 # TODO QRunnableCancellable
