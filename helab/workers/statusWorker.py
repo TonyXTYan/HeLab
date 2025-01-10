@@ -14,8 +14,9 @@ from PyQt6.QtTest import QTest
 from babel.dates import time_
 from mypyc.namegen import candidate_suffixes
 
+from helab.utils.cachingSetup import *
+from helab.utils.threadingSetup import *
 from helab.resources.icons import StatusIcons, IconsInitUtil, circular_progress_QIcon_cached
-from helab.utils.cachingSetup import data_ram_cache, status_cache
 from helab.utils.os_cached import os_isdir, os_listdir
 
 
@@ -47,25 +48,25 @@ class StatusReport:
     def _update_cache(self) -> None:
         status_cache[self.path] = self
 
-    def update_extend_extras(self, extra_icons: list[str] | str ) -> None:
+    def update_extend_extras(self, extra_icons: list[str]|str, update_cache:bool = True) -> None:
         if isinstance(extra_icons, str):
             extra_icons = [extra_icons]
         current_set = set(self.extra_icons)
         current_set.update(extra_icons)
         self.extra_icons = sorted(list(current_set),
                                   key=lambda x: StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get(x, 0))
-        self._update_cache()
+        if update_cache: self._update_cache()
 
-    def update_remove_extras(self, to_remove: list[str] | str) -> None:
+    def update_remove_extras(self, to_remove: list[str]|str, update_cache:bool = True) -> None:
         if isinstance(to_remove, str):
             to_remove = [to_remove]
         current_set = set(self.extra_icons)
         current_set.difference_update(to_remove)
         self.extra_icons = sorted(list(current_set),
                                   key=lambda x: StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get(x, 0))
-        self._update_cache()
+        if update_cache: self._update_cache()
     
-    def update_ram_status(self, is_opened: bool = False, time_load_ram: Optional[datetime] = None) -> None:
+    def update_ram_status(self, is_opened: bool = False, time_load_ram: Optional[datetime] = None, update_cache:bool = True) -> None:
         if time_load_ram: self.time_load_ram = time_load_ram
         try:
             self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'loading_ram', 'progress_ram'])
@@ -85,15 +86,15 @@ class StatusReport:
             # if e == KeyError and is_opened:
             #     self.update_extend_extras('ram_single')
             # self.time_load_ram = None
-        self._update_cache()
+        if update_cache: self._update_cache()
 
     def set_loading_ram_status(self) -> None:
-        self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'progress_ram'])
-        self.update_extend_extras('loading_ram')
+        self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'progress_ram'], update_cache=False)
+        self.update_extend_extras('loading_ram', update_cache=True)
 
     def set_loading_ram_progress(self, progress: float) -> None:
-        self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'loading_ram'])
-        self.update_extend_extras('progress_ram')
+        self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'loading_ram'], update_cache=False)
+        self.update_extend_extras('progress_ram', update_cache=False)
         self.payload_progress_ram = progress
         self._update_cache()
 
@@ -125,6 +126,11 @@ class StatusReport:
         ok_file = True
         ok_data = True
         try:
+            # if 'progress_ram' in self.extra_icons:
+            if any([icon in self.extra_icons for icon in ['loading_ram', 'progress_ram']]):
+                if self.path not in running_workers_ramLoading.keys():
+                    return (False, False, False)
+
             if self.time_last_updated is None:
                 # logging.debug(f"StatusReport.validate_ok: time_last_updated is None")
                 return (False, False, False)

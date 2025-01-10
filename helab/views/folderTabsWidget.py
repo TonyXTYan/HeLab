@@ -7,14 +7,15 @@ import sys
 from typing import Tuple, List, Dict, Any
 
 from PIL.TiffTags import lookup
-from PyQt6.QtCore import QDir, QThreadPool, Qt, QSize
+from PyQt6.QtCore import QDir, QThreadPool, Qt, QSize, QTimer
 from PyQt6.QtWidgets import QTabWidget, QWidget, QMessageBox, QTabBar, QAbstractItemView
 from cachetools import LRUCache, TTLCache
 from matplotlib.backend_bases import CloseEvent
 
+from helab.utils.constants import *
+from helab.utils.threadingSetup import *
 from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.utils.cachingSetup import status_cache, hasChildren_cache
-from helab.utils.constants import *
 from helab.views.folderExplorer import FolderExplorer
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
@@ -41,16 +42,6 @@ class FolderTabWidget(QTabWidget):
         # self.hasChildren_cache: TTLCache[str, bool] = TTLCache(maxsize=100*1000, ttl=24*60*60)
         self.status_cache = status_cache
         self.hasChildren_cache = hasChildren_cache
-
-        thread_pool = QThreadPool.globalInstance()
-        if thread_pool is None:
-            logging.fatal("QThreadPool.globalInstance() returned None. Exiting.")
-            sys.exit(1)
-        self.thread_pool: QThreadPool = thread_pool
-        self.running_workers_status: Dict[str, StatusWorker] = {}
-        self.running_workers_deep: Dict[str, StatusDeepWorker] = {}
-        self.running_workers_hasChildren: Dict[str, DirectoryCheckWorker] = {}
-        self.running_workers_ramLoading: Dict[str, LoadFolderToRamWorker] = {}
         self.tab_back_button_enabled = False
 
         self.currentChanged.connect(self.on_current_tab_changed)
@@ -149,13 +140,6 @@ class FolderTabWidget(QTabWidget):
             target_path = target_path,
             view_path = view_path,
             columns_to_show = columns_to_show,
-            status_cache = self.status_cache,
-            hasChildren_cache = self.hasChildren_cache,
-            thread_pool = self.thread_pool,
-            running_workers_status = self.running_workers_status,
-            running_workers_deep = self.running_workers_deep,
-            running_workers_hasChildren = self.running_workers_hasChildren,
-            running_workers_ramLoading = self.running_workers_ramLoading,
             set_initial_expand_to_parent_level = set_initial_expand_to_parent_level
         )
         index = self.addTab(folder_explorer, 'File Explorer')
@@ -169,6 +153,10 @@ class FolderTabWidget(QTabWidget):
         folder_explorer.emit_root_path_changed()
 
         self.setCurrentIndex(index)
+
+        QTimer.singleShot(300, self.refresh_current_folder_explorer)
+        QTimer.singleShot(600, self.rescan_current_folder_explorer)
+
 
         # Add the FolderExplorer as a new tab
         # self.tab_widget.addTab(folder_explorer, 'File Explorer')
@@ -212,9 +200,9 @@ class FolderTabWidget(QTabWidget):
 
     def clear_status_cache(self) -> None:
         self.status_cache.clear()
-        self.running_workers_status.clear()
-        self.running_workers_deep.clear()
-        self.running_workers_hasChildren.clear()
+        running_workers_status.clear()
+        running_workers_deep.clear()
+        running_workers_hasChildren.clear()
 
         logging.info("Status cache cleared.")
         self.refresh_current_folder_explorer()
@@ -264,7 +252,7 @@ class FolderTabWidget(QTabWidget):
         # self.widget(index).close_cleanup
         logging.debug(f"Removing tab at index {index}")
         current_folder_explorer = self.widget(index)
-        queue_depth = len(self.running_workers_status) + len(self.running_workers_deep)
+        queue_depth = sum(running_worker_queues_len()) + all_pools_total_activeThreadCount()
         if queue_depth > 0:
             QMessageBox.warning(self, "Please wait for background taks to finish",
                                 "There are ongoing background tasks. Please wait for them to complete or cancel them before closing the tab.",

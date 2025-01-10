@@ -40,9 +40,19 @@ class LoadFolderToRamWorker(QRunnable):
         super().__init__()
         self.folder_path = folder_path
         self.signals = LoadFolderToRamWorkerSignals()
+        self._cancel_requested = False
 
+    # noinspection PyUnresolvedReferences
     def run(self) -> None:
         logging.debug(f"LoadFolderToRamWorker: {self.folder_path = }")
+
+        # noinspection PyUnresolvedReferences
+        def _check_cancel_status() -> None:
+            if self._cancel_requested:
+                logging.warning(f"LoadFolderToRamWorker: {self.folder_path = } was canceled.")
+                self.signals.error.emit(self.folder_path, "Canceled")
+                return
+        _check_cancel_status()
         try:
             data_files = data_ram_cache[self.folder_path]
             if isinstance(data_files, bytes):
@@ -77,6 +87,7 @@ class LoadFolderToRamWorker(QRunnable):
             self.signals.error.emit(self.folder_path, str(e))
             return
 
+        _check_cancel_status()
         try:
             file_pattern = os.path.join(self.folder_path, 'd_txy_forc*.txt')
             files = glob.glob(file_pattern)
@@ -98,6 +109,7 @@ class LoadFolderToRamWorker(QRunnable):
             problematic_txy_ns = []
             # for file in files:
             for i, file in enumerate(files):
+                _check_cancel_status()
                 # Extract the base filename
                 basename = os.path.basename(file)
 
@@ -158,6 +170,7 @@ class LoadFolderToRamWorker(QRunnable):
                     no_error_files_since_last_debug_print += 1
                     continue
 
+            _check_cancel_status()
             if datetime.now() - time_start_loading > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_MIN:
                 self.signals.loading.emit(self.folder_path, 1.0)
                 # logging.debug(f"LoadFolderToRamWorker: formatting data {self.folder_path}. ")
@@ -228,6 +241,9 @@ class LoadFolderToRamWorker(QRunnable):
         except Exception as e:
             logging.error(f"LoadFolderToRamWorker: {e = }")
             self.signals.error.emit(self.folder_path, str(e))
+
+    def cancel(self) -> None:
+        self._cancel_requested = True
 
     @staticmethod
     def compress_dataframe(df: pd.DataFrame) -> bytes:

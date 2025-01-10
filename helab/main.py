@@ -27,7 +27,7 @@ from helab.resources.icons import StatusIcons, ToolIcons, IconsInitUtil
 from helab.utils.constants import *
 from helab.utils.cachingSetup import *
 from helab.views.helabMainWindow import MainWindow
-
+from helab.utils.threadingSetup import *
 
 
 if __name__ == "__main__":
@@ -41,13 +41,6 @@ if __name__ == "__main__":
 
     logging.info(f"Platform: {sys.platform}, {platform.system()}, {platform.release()}, {platform.version()}, {platform.machine()}, {platform.processor()}")
     logging.info(f"{tempfile.gettempdir() = }")
-
-    num_cpus = os.cpu_count()
-    if num_cpus is None: num_cpus = 1
-    num_threads: int = int(max(2, round(num_cpus / 3)))
-    logging.info(f"{num_cpus = }, {num_threads = }")
-    thread_pool = QThreadPool.globalInstance()
-    if thread_pool: thread_pool.setMaxThreadCount(num_threads)
 
     logging.info(f"Starting HeLab v{APP_VERSION} ({APP_COMMIT_HASH})")
 

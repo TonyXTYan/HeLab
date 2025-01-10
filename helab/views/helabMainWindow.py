@@ -12,7 +12,7 @@ from typing import List, Optional
 
 import psutil
 from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
-    QDir, QDateTime
+    QDir, QDateTime, QSettings
 from PyQt6.QtGui import QAction, QIcon, QCloseEvent, QPixmap, QResizeEvent
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox
@@ -25,6 +25,7 @@ from helab.utils.constants import *
 # from helab.utils.os_cached import , os_scandir_cache, os_isdir_cache, os_listdir, os_scandir, os_isdir, os_scandir_cache
 from helab.utils.os_cached import *
 from helab.utils.cachingSetup import *
+from helab.utils.threadingSetup import *
 from helab.views.folderExplorer import FolderExplorer
 from helab.views.folderTabsWidget import FolderTabWidget
 from helab.views.memoryUsageWindow import MemoryUsageWindow
@@ -37,12 +38,12 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 import plotly
 
 
-
-
+# noinspection PyUnresolvedReferences
 class MainWindow(QMainWindow):
     DEFAULT_WIDTH = 1600
     DEFAULT_HEIGHT = 900
 
+    # noinspection PyUnresolvedReferences
     def __init__(self) -> None:
         super().__init__()
         logging.debug(f"Current directory is {CURRENT_WORKING_DIRECTORY}")
@@ -121,9 +122,9 @@ class MainWindow(QMainWindow):
 
 
         # Setup a timer to update the status bar with thread status
-        self.status_timer_threadpool = QTimer(self)
-        self.status_timer_threadpool.timeout.connect(self.update_status_bar_left)
-        self.status_timer_threadpool.start(200)  # Update every 200ms
+        self.status_timer_thread_status = QTimer(self)
+        self.status_timer_thread_status.timeout.connect(self.update_status_bar_left)
+        self.status_timer_thread_status.start(200)  # Update every 200ms
         self.status_timer_threadpool_hang_counts = 0
         self.status_timer_threadpool_hang_timestamp: Optional[QDateTime] = None
 
@@ -155,19 +156,10 @@ class MainWindow(QMainWindow):
 
 
     def update_status_bar_left(self) -> None:
-        thread_pool = QThreadPool.globalInstance()
-        if thread_pool is None:
-            logging.error("QThreadPool.globalInstance() returned None.")
-            return
-        active_threads = thread_pool.activeThreadCount()
+        active_threads = all_pools_total_activeThreadCount()
         # self.status_bar.showMessage(f"{active_threads}, {QThreadPool.globalInstance().stackSize()}, {len(self.tab_widget.running_workers_status)}")
         # queue_depth = len(self.tab_widget.running_workers_status) + len(self.tab_widget.running_workers_deep) + len(self.tab_widget.running_workers_hasChildren)
-        queue_depths = (
-            len(self.tab_widget.running_workers_status),
-            len(self.tab_widget.running_workers_deep),
-            len(self.tab_widget.running_workers_hasChildren),
-            len(self.tab_widget.running_workers_ramLoading),
-        )
+        queue_depths = running_worker_queues_len()
 
         if not self.isActiveWindow():
             QToolTip.hideText()
@@ -211,10 +203,10 @@ class MainWindow(QMainWindow):
                 tooltip_string += "\n"
                 return tooltip_string
 
-            tooltip_string += make_tooltip_string("running_workers_status", list(self.tab_widget.running_workers_status.keys()))
-            tooltip_string += make_tooltip_string("running_workers_deep", list(self.tab_widget.running_workers_deep.keys()))
-            tooltip_string += make_tooltip_string("running_workers_hasChildren", list(self.tab_widget.running_workers_hasChildren.keys()))
-            tooltip_string += make_tooltip_string("running_workers_ramLoading", list(self.tab_widget.running_workers_ramLoading.keys()))
+            tooltip_string += make_tooltip_string("running_workers_status", list(running_workers_status.keys()))
+            tooltip_string += make_tooltip_string("running_workers_deep", list(running_workers_deep.keys()))
+            tooltip_string += make_tooltip_string("running_workers_hasChildren", list(running_workers_hasChildren.keys()))
+            tooltip_string += make_tooltip_string("running_workers_ramLoading", list(running_workers_ramLoading.keys()))
 
             tooltip_string += cache_status_string()
 
@@ -278,8 +270,7 @@ class MainWindow(QMainWindow):
 
         # self.status_bar_message_right.setToolTip("(App resource usage) / (system total resource usage)")
 
-
-
+    # noinspection PyUnresolvedReferences
     def create_menus(self) -> None:
         # Add menus and actions
         # 
@@ -353,9 +344,11 @@ class MainWindow(QMainWindow):
             self.view_toggle_status_bar.triggered.connect(lambda: self.status_bar.setVisible(not self.status_bar.isVisible()))
             menu_view.addAction(self.view_toggle_status_bar)
 
+            settings = QSettings("ANU", "HeLab")
             self.view_toggle_thread_status = QAction('Toggle Thread Status Auto Pop-up', self)
             self.view_toggle_thread_status.setCheckable(True)
-            self.view_toggle_thread_status.setChecked(True)
+            self.view_toggle_thread_status.setChecked(settings.value("view_toggle_thread_status", type=bool, defaultValue=True))
+            self.view_toggle_thread_status.triggered.connect(lambda checked: settings.setValue("view_toggle_thread_status", checked))
             menu_view.addAction(self.view_toggle_thread_status)
 
             menu_view.addSeparator()
@@ -1025,12 +1018,14 @@ class MainWindow(QMainWindow):
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         logging.info("MainWindow closeEvent")
 
-        for workerS in self.tab_widget.running_workers_status.values():
+        for workerS in running_workers_status.values():
             workerS.cancel()
-        for workerD in self.tab_widget.running_workers_deep.values():
+        for workerD in running_workers_deep.values():
             workerD.cancel()
-        for workerC in self.tab_widget.running_workers_hasChildren.values():
+        for workerC in running_workers_hasChildren.values():
             workerC.cancel()
+        for workerL in running_workers_ramLoading.values():
+            workerL.cancel()
 
         for temp_file in self.named_temp_files:
             temp_file.close()

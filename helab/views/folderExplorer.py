@@ -17,8 +17,9 @@ from cachetools import LRUCache, TTLCache
 from debugpy.server.cli import switches
 from diskcache import FanoutCache
 
-from helab.utils.cachingSetup import status_cache, data_ram_cache, hasChildren_cache, fnum
 from helab.utils.constants import *
+from helab.utils.cachingSetup import *
+from helab.utils.threadingSetup import *
 from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.utils.os_cached import os_isdir
 from helab.views.statusIconDelegate import StatusIconDelegate
@@ -33,18 +34,12 @@ class FolderExplorer(QWidget):
     rootPathChanged = pyqtSignal(str)
     itemExpandedSignal = pyqtSignal(QModelIndex)
 
+    # noinspection PyUnresolvedReferences
     def __init__(self,
                  model_root_path: str,
                  target_path: str,
                  view_path: str,
                  columns_to_show: List[int],
-                 status_cache: FanoutCache,
-                 hasChildren_cache: FanoutCache,
-                 thread_pool: QThreadPool,
-                 running_workers_status: Dict[str, StatusWorker],
-                 running_workers_deep: Dict[str, StatusDeepWorker],
-                 running_workers_hasChildren: Dict[str, DirectoryCheckWorker],
-                 running_workers_ramLoading: Dict[str, LoadFolderToRamWorker],
                  parent: QWidget | None = None,
                  set_initial_expand_to_parent_level: bool = True,
                  ) -> None:
@@ -63,25 +58,10 @@ class FolderExplorer(QWidget):
 
         self.auto_load_ram = True
 
-        self.status_cache = status_cache
-        self.hasChildren_cache = hasChildren_cache
-        self.thread_pool = thread_pool
-        self.running_workers_status = running_workers_status
-        self.running_workers_deep = running_workers_deep
-        self.running_workers_hasChildren = running_workers_hasChildren
-        self.running_workers_ramLoading = running_workers_ramLoading
-
         self.folder_opened_data: Optional[pd.DataFrame] = None
         self.folder_opened_path: Optional[str] = None
 
-        self.model = helabFileSystemModel(
-            status_cache = status_cache,
-            hasChildren_cache = hasChildren_cache,
-            thread_pool = thread_pool,
-            running_workers_status = running_workers_status,
-            running_workers_deep = running_workers_deep,
-            running_workers_hasChildren = running_workers_hasChildren
-        )
+        self.model = helabFileSystemModel()
         self.model.setRootPath(self.model_root_path)
         self.model.setReadOnly(True)
         # self.model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
@@ -273,7 +253,7 @@ class FolderExplorer(QWidget):
             if status_report is not None and isinstance(status_report, StatusReport):
                 # logging.debug(f"{status_report.status = }")
                 status_report.update_ram_status()
-                if file_path in self.running_workers_ramLoading:
+                if file_path in running_workers_ramLoading:
                     status_report.set_loading_ram_status()
                 # logging.debug(f"folderExplorer.on_selection_changed: {file_path = } is in running_workers_ramLoading")
                 # self.running_workers_ramLoading[file_path].cancel()
@@ -326,6 +306,7 @@ class FolderExplorer(QWidget):
             # self.rootPathChanged.emit(file_info.absoluteFilePath())
             self.emit_root_path_changed()
             # logging.debug(f"Double click {index = }, path = {file_info.absoluteFilePath()}")
+            self.model.rescan()
 
     def on_back_button_clicked(self) -> None:
         # Get the parent index of the current root index
@@ -349,6 +330,7 @@ class FolderExplorer(QWidget):
         self.update_back_button_state()
         # self.robotPathChanged.emit(self.model.filePath(self.tree.rootIndex()))
         self.emit_root_path_changed()
+        self.model.rescan()
         logging.debug(f"on_back_button_clicked: New root path: {self.model.filePath(self.tree.rootIndex())}")
 
     def update_back_button_state(self) -> None:
@@ -390,7 +372,7 @@ class FolderExplorer(QWidget):
             raise RuntimeError("FolderExplorer.__init__ encountered selectionModel without select method")
         return selection_model
 
-
+    # noinspection PyUnresolvedReferences
     def show_context_menu(self, position: QPoint) -> None:
         # Map the position to the tree view's viewport
         index = self.tree.indexAt(position)
@@ -633,7 +615,7 @@ class FolderExplorer(QWidget):
     def load_to_ram_cache(self, file_info: QFileInfo) -> None:
         folder_path = file_info.absoluteFilePath()
 
-        if folder_path in self.running_workers_ramLoading:
+        if folder_path in running_workers_ramLoading:
             logging.warning(f"load_to_ram_cache: already running {folder_path = }")
             # self.on_load_folder_to_ram_finished(folder_path, [], None)
             return
@@ -661,14 +643,14 @@ class FolderExplorer(QWidget):
         worker.signals.loading.connect(self.on_load_folder_to_ram_loading)
         worker.signals.error.connect(self.on_load_folder_to_ram_error)
         worker.setAutoDelete(True)
-        self.running_workers_ramLoading[folder_path] = worker
+        running_workers_ramLoading[folder_path] = worker
         # self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value)
-        QTimer.singleShot(10, lambda: self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value)) # type: ignore[call-overload]
+        QTimer.singleShot(10, lambda: thread_pool_load_data_ram.start(worker, priority=QThread.Priority.IdlePriority.value)) # type: ignore[call-overload]
         pass
     
     def on_load_folder_to_ram_finished(self, folder_path: str, problematic_txy_ns: List[int], data: object) -> None:
         logging.debug(f"on_load_folder_to_ram_finished: {folder_path = }")
-        del self.running_workers_ramLoading[folder_path]
+        del running_workers_ramLoading[folder_path]
         self.on_load_folder_to_ram_finished_helper(folder_path, problematic_txy_ns, data)
 
     def on_load_folder_to_ram_finished_helper(self, folder_path: str, problematic_txy_ns: Optional[List[int]], data: object) -> None:
@@ -705,7 +687,7 @@ class FolderExplorer(QWidget):
 
     def on_load_folder_to_ram_error(self, folder_path: str, error: str) -> None:
         logging.error(f"on_load_folder_to_ram_error: {folder_path = }, {error = }")
-        del self.running_workers_ramLoading[folder_path]
+        del running_workers_ramLoading[folder_path]
         status_cache.pop(folder_path)
         self.model.fetch_status(folder_path)
         data_ram_cache.pop(folder_path)

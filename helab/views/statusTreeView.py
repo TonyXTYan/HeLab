@@ -1,7 +1,6 @@
 import logging
 from typing import Optional, Set
 
-import matlab.engine
 from PyQt6.QtCore import Qt, QModelIndex, QTimer, QEvent, QRect, QPoint, QObject, pyqtSignal, QDir, QFile, QFileInfo
 from PyQt6.QtGui import QMouseEvent, QFocusEvent, QPainter
 from PyQt6.QtWidgets import QTreeView, QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QProxyStyle, QStyle
@@ -160,6 +159,7 @@ class StatusHoverIconInfo(QWidget):
 
     # Placeholder function for Action 1
     def action1_fill_missing_dld(self) -> None:
+        import matlab.engine
         self.button1.setEnabled(False)
         if self.d_only_dld_shots is None:
             logging.fatal("action1_fill_missing_dld: Impossible state")
@@ -182,6 +182,7 @@ class StatusHoverIconInfo(QWidget):
 
     # Placeholder function for Action 2
     def action2_recalc_txys(self) -> None:
+        import matlab.engine
         logging.debug("action2_recalc_txys: called")
         self.button2.setEnabled(False)
         if self.status_report is None:
@@ -365,9 +366,10 @@ class StatusTreeView(QTreeView):
     def on_item_expanded(self, index: QModelIndex) -> None:
         model = self.model()
         if isinstance(model, helabFileSystemModel):
-            logging.debug(f"on_item_expanded: {model.filePath(index)}")
+            logging.debug(f"StatusTreeView.on_item_expanded: {model.filePath(index)}")
+            model.on_item_expanded(index)
         else:
-            logging.debug(f"on_item_expanded: invalid model {index}")
+            logging.debug(f"StatusTreeView.on_item_expanded: invalid model {index}")
         self.hide_popup()
         self.itemExpandedSignal.emit(index)
 

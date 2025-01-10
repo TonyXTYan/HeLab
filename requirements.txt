@@ -28,6 +28,5 @@ scipy
 joblib
 diskcache
 pgzip
-matlabengine
 pyarrow
 zstandard

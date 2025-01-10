@@ -14,13 +14,15 @@ from diskcache import FanoutCache
 from pympler import asizeof
 from pympler.web import refresh
 from pytablericons import TablerIcons, OutlineIcon, FilledIcon
-
+from rich.status import Status
 
 from helab.utils.cachingSetup import *
+from helab.utils.threadingSetup import *
 from helab.utils.constants import MAX_DEPTH_INT
 from helab.utils.os_cached import os_listdir_filtered
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.statusDeepWorker import StatusDeepWorker
+from helab.workers.statusRescanWorker import StatusRescanWorker
 # from helab.utils.loggingSetup import setup_logging
 
 from helab.workers.statusWorker import StatusWorker, StatusReport
@@ -37,18 +39,9 @@ class helabFileSystemModel(QFileSystemModel):
     COLUMN_RIGHTFILL = 6
     STATUS_EXTRA_ICONS_ROLE = Qt.ItemDataRole.UserRole + 1
 
-    running_workers_status: Dict[str, StatusWorker]
-    running_workers_deep: Dict[str, StatusDeepWorker]
-
     # CACHE_HAS_CHILDREN: TTLCache[str, bool] = TTLCache(maxsize=10*1000, ttl=30)
 
     def __init__(self,
-                 status_cache: FanoutCache,
-                 hasChildren_cache: FanoutCache,
-                 thread_pool: QThreadPool,
-                 running_workers_status: Dict[str, StatusWorker],
-                 running_workers_deep: Dict[str, StatusDeepWorker],
-                 running_workers_hasChildren: Dict[str, DirectoryCheckWorker],
                  *args: QObject | None, **kwargs: QObject | None
                  ) -> None:
         super().__init__(*args, **kwargs)
@@ -57,10 +50,6 @@ class helabFileSystemModel(QFileSystemModel):
 
         self.status_cache = status_cache
         self.hasChildren_cache = hasChildren_cache
-        self.thread_pool = thread_pool
-        self.running_workers_status = running_workers_status
-        self.running_workers_deep = running_workers_deep
-        self.running_workers_hasChildren = running_workers_hasChildren
 
         self.folder_opened_path: Optional[str] = None # same as the one folderExplorer, updated by folderExplorer
 
@@ -72,7 +61,7 @@ class helabFileSystemModel(QFileSystemModel):
         # self.thread_pool = QThreadPool.globalInstance()
         # self.thread_pool.setMaxThreadCount(8)
         # self.thread_pool.setThreadPriority(QThread.Priority.LowPriority)
-        logging.debug(f"Multithreading with maximum {self.thread_pool.maxThreadCount()} threads")
+        logging.debug(f"Multithreading with maximum {thread_pool_global.maxThreadCount()} threads")
 
         # Initialize a set to keep track of running workers
         # self.running_workers_status = {}
@@ -87,7 +76,9 @@ class helabFileSystemModel(QFileSystemModel):
         self.dataChanged.connect(self.on_data_changed)
         self.modelReset.connect(self.on_model_reset)
 
-        QTimer.singleShot(300, self.refresh)
+        self.rescan_worker: Optional[StatusRescanWorker] = None
+
+        # QTimer.singleShot(300, self.refresh)
 
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -189,7 +180,7 @@ class helabFileSystemModel(QFileSystemModel):
                 # return status_data
                 # if folder_path in self.running_workers_status and self.running_workers_status[folder_path] is not None:
                         # logging.debug(f"Worker still running for: {folder_path}")
-                if folder_path in self.running_workers_status: # legit loading
+                if folder_path in running_workers_status: # legit loading
                     return status_data
                 else: # loading but worker is gone (unexpected)
                     logging.warning(f"fetch_status: loading but worker is gone for: {folder_path}")
@@ -200,7 +191,7 @@ class helabFileSystemModel(QFileSystemModel):
         else: # status_data is None from cache
             # Check if a worker is already running for this folder_path
             loading_status = StatusReport(folder_path, 'loading', -300, [])
-            if folder_path in self.running_workers_status:
+            if folder_path in running_workers_status:
                 # logging.debug(f"fetch_status worker already running for: {folder_path}")
                 # return ('loading', 0, [])
                 # return self.status_cache.get(folder_path, ('loading', 0, []))
@@ -232,12 +223,12 @@ class helabFileSystemModel(QFileSystemModel):
             # Create and start the worker
             worker = StatusWorker(folder_path)
             worker.signals.finished.connect(self.handle_status_computed)
-            # self.thread_pool.start(worker)
+            thread_pool_global.start(worker, priority=QThread.Priority.IdlePriority.value)
             worker.setAutoDelete(True)
-            self.running_workers_status[folder_path] = worker
+            running_workers_status[folder_path] = worker
             # self.running_workers.add(worker)
             # return ('loading', 0, [])
-            QTimer.singleShot(5, lambda: self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value))
+            # QTimer.singleShot(5, lambda: thread_pool_global.start(worker, priority=QThread.Priority.LowPriority.value))
             # return StatusReport(folder_path, 'loading', 0, [])
             return loading_status
 
@@ -258,8 +249,8 @@ class helabFileSystemModel(QFileSystemModel):
 
         # self.running_workers.discard(self.sender())
         # Remove the worker from the running_workers dictionary
-        if file_path in self.running_workers_status:
-            del self.running_workers_status[file_path]
+        if file_path in running_workers_status:
+            del running_workers_status[file_path]
             logging.debug(f"handle_status_computed: Worker removed from running_workers for: {file_path}")
 
         status = status_report.status
@@ -375,26 +366,26 @@ class helabFileSystemModel(QFileSystemModel):
     def stop_all_scans(self) -> None:
         logging.debug("Stopping all scans...")
         # Iterate through all running workers and cancel them
-        for file_path, worker in list(self.running_workers_status.items()):
+        for file_path, worker in list(running_workers_status.items()):
             worker.cancel()
             # self.running_workers.remove(worker)
-            del self.running_workers_status[file_path]
+            del running_workers_status[file_path]
             # self.status_cache.pop(file_path, None)
             # del self.status_cache[file_path]
             logging.debug(f"Worker canceled for: {file_path}")
 
         # Cancel all StatusDeepWorker instances
         # for worker in list(self.running_workers_deep):
-        for folder_path, workerD in list(self.running_workers_deep.items()):
+        for folder_path, workerD in list(running_workers_deep.items()):
             workerD.cancel()
             # self.running_workers_deep.remove(worker)
-            del self.running_workers_deep[folder_path]
+            del running_workers_deep[folder_path]
             # del self.status_cache[folder_path]
             logging.debug(f"Cancelled StatusDeepWorker for: {workerD.root_path}")
 
-        for folder_path, workerC in list(self.running_workers_hasChildren.items()):
+        for folder_path, workerC in list(running_workers_hasChildren.items()):
             workerC.cancel()
-            del self.running_workers_hasChildren[folder_path]
+            del running_workers_hasChildren[folder_path]
             logging.debug(f"Cancelled DirectoryCheckWorker for: {workerC.dir_path}")
 
         # self.running_workers_status = {}
@@ -420,9 +411,10 @@ class helabFileSystemModel(QFileSystemModel):
 
         worker = StatusDeepWorker(root_path, invalidate_cache)
         worker.signals.finished.connect(lambda rp, dr: self.process_deep_status(rp, dr, current_depth, invalidate_cache))
-        self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value) # type: ignore[call-overload]
+        worker.setAutoDelete(True)
+        thread_pool_global.start(worker, priority=QThread.Priority.IdlePriority.value) # type: ignore[call-overload]
         # Track the StatusDeepWorker
-        self.running_workers_deep[root_path] = worker
+        running_workers_deep[root_path] = worker
         logging.debug(f"start_deep_status_worker started for: {root_path}, with depth: {current_depth}")
 
     def process_deep_status(self, root_path: str, directory_list: List[str], current_depth: int, invalidate_cache: bool = True) -> None:
@@ -436,13 +428,13 @@ class helabFileSystemModel(QFileSystemModel):
 
         logging.debug(f"process_deep_status: {len(directory_list) = }, {current_depth = }, at {root_path = }")
         if current_depth < 0:
-            self.running_workers_deep.pop(root_path)
+            running_workers_deep.pop(root_path)
             logging.warning(f"process_deep_status: cancelled and removed from tracking: {root_path}. THIS CASE SHOULD NOT HAPPEN!")
             return
-        if root_path in self.running_workers_deep:
+        if root_path in running_workers_deep:
             # self.running_workers_deep[root_path].cancel()
             # del self.running_workers_deep[root_path]
-            self.running_workers_deep.pop(root_path)
+            running_workers_deep.pop(root_path)
             logging.debug(f"process_deep_status: Worker removed for: {root_path}")
 
         # self.status_cache.pop(root_path)
@@ -510,7 +502,7 @@ class helabFileSystemModel(QFileSystemModel):
             # logging.debug(f"hasChildren used cache for: {model_root_path}: {cached_result}")
             return cached_result
         else:
-            if dir_path in self.running_workers_hasChildren:
+            if dir_path in running_workers_hasChildren:
                 return False
             else:
                 logging.debug(f"hasChildren new DirectoryCheckWorker at: {dir_path}")
@@ -521,9 +513,9 @@ class helabFileSystemModel(QFileSystemModel):
                 worker = DirectoryCheckWorker(dir_path)
                 worker.signals.finished.connect(self.on_has_children_finished)
                 worker.setAutoDelete(True)
-                self.thread_pool.start(worker, priority=QThread.Priority.HighPriority.value) # type: ignore[call-overload]
-                # QTimer.singleShot(10, lambda: self.thread_pool.start(worker))
-                self.running_workers_hasChildren[dir_path] = worker
+                thread_pool_global.start(worker, priority=QThread.Priority.LowestPriority.value) # type: ignore[call-overload]
+                # QTimer.singleShot(10, lambda: thread_pool_global.start(worker))
+                running_workers_hasChildren[dir_path] = worker
                 return False
 
 
@@ -570,8 +562,8 @@ class helabFileSystemModel(QFileSystemModel):
         # logging.debug(f"hasChildren computed for: {model_root_path}: {has_children}, in cache: {self.hasChildren_cache[model_root_path]}")
 
         # Remove the worker from the running_workers_hasChildren dictionary
-        if dir_path in self.running_workers_hasChildren:
-            del self.running_workers_hasChildren[dir_path]
+        if dir_path in running_workers_hasChildren:
+            del running_workers_hasChildren[dir_path]
             # logging.debug(f"Worker removed from running_workers_hasChildren for: {model_root_path}")
 
             # logging.debug(f"on_has_children_finished for: {dir_path}: {has_children}, value in cache: {self.hasChildren_cache[dir_path]}")
@@ -609,25 +601,38 @@ class helabFileSystemModel(QFileSystemModel):
         return rows
 
     def rescan(self) -> None:
-        logging.info("helabFileSystemModel.rescan: called")
+        # logging.info("helabFileSystemModel.rescan: called")
 
-        rows = self.get_visible_rows()
-        for index, path in rows:
-            # self.fetch_status(filepath)
-            # self.hasChildren(filepath)
-            status_report = status_cache.get(path)
-            if isinstance(status_report, StatusReport):
-                vpath, vfile, vdata = status_report.validate_ok()
-                logging.debug(f"rescan: got {vpath = }, {vfile = }, {vdata = } \tat {path}")
-                if not vfile:
-                    logging.debug(f"rescan: status_cache pop {path}")
-                    status_cache.pop(path)
-                    # self.fetch_status(path)
+        if self.rescan_worker is not None:
+            logging.warning("helabFileSystemModel.rescan: already running")
+            self.rescan_worker.cancel()
+            return
+        else:
+            logging.debug("helabFileSystemModel.rescan: starting")
 
-                if any(i in status_report.extra_icons for i in ['ram', 'ram_single', 'ram_opened']):
-                    if path == self.folder_opened_path:
-                        status_report.update_ram_status(is_opened=True)
-                    else:
-                        status_report.update_ram_status(is_opened=False)
-        self.refresh()
+        worker = StatusRescanWorker(self)
+        worker.signals.finished.connect(self.on_rescan_finished)
+        worker.signals.cancelled.connect(self.on_rescan_cancelled)
+        worker.setAutoDelete(True)
+        # thread_pool_global.start(worker, priority=QThread.Priority.LowestPriority.value)
+        QTimer.singleShot(1, lambda: thread_pool_global.start(worker, priority=QThread.Priority.HighPriority.value))    # type: ignore[call-overload]
+        # self.refresh()
+        self.rescan_worker = worker
         pass
+
+    def on_rescan_finished(self) -> None:
+        logging.info("helabFileSystemModel.on_rescan_finished")
+        self.refresh()
+        self.rescan_worker = None
+
+    def on_rescan_cancelled(self) -> None:
+        logging.info("helabFileSystemModel.on_rescan_cancelled")
+        self.refresh()
+        self.rescan_worker = None
+        QTimer.singleShot(100, self.rescan)
+
+    def on_item_expanded(self, index: QModelIndex) -> None:
+        logging.debug(f"helabFileSystemModel.on_item_expanded: {self.filePath(index)}")
+        self.rescan()
+
+
