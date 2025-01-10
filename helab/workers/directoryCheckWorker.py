@@ -52,7 +52,7 @@ class DirectoryCheckWorker(QRunnable):
             result = False
             num_non_txt_paths = None
         # logging.debug(f"DirectoryCheckWorker finished for: {self.model_root_path}, result = {result}")
-        logging.debug(f"DirectoryCheckWorker finished for: {self.dir_path}, result = {result}, num_non_txt_paths = {num_non_txt_paths}")
+        # logging.debug(f"DirectoryCheckWorker finished for: {self.dir_path}, result = {result}, num_non_txt_paths = {num_non_txt_paths}")
         self.signals.finished.emit(self.dir_path, result)
 
     def cancel(self) -> None:

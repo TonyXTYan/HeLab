@@ -1,3 +1,4 @@
+import gc
 import logging
 import os
 import platform
@@ -12,7 +13,7 @@ from typing import List, Optional
 import psutil
 from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
     QDir, QDateTime
-from PyQt6.QtGui import QAction, QIcon, QCloseEvent, QPixmap
+from PyQt6.QtGui import QAction, QIcon, QCloseEvent, QPixmap, QResizeEvent
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox
 from humanfriendly.terminal import message
@@ -26,6 +27,7 @@ from helab.utils.os_cached import *
 from helab.utils.cachingSetup import *
 from helab.views.folderExplorer import FolderExplorer
 from helab.views.folderTabsWidget import FolderTabWidget
+from helab.views.memoryUsageWindow import MemoryUsageWindow
 from helab.views.settingsDialog import SettingsDialog
 from helab.views.debugIcons import DebugIconsWindow
 
@@ -82,14 +84,14 @@ class MainWindow(QMainWindow):
         # Create Status Bar
         self.status_bar.setStyleSheet("QStatusBar { border-top: 1px solid #d8d8d8; }")
 
-        status_bar_padding = QWidget()
-        status_bar_padding.setMaximumWidth(2)
-        self.status_bar.addWidget(status_bar_padding)
-
-        self.status_bar_checkbox = QCheckBox("")
-        self.status_bar_checkbox.setChecked(True)
-        self.status_bar_checkbox.setToolTip("Toggle threads status pop up info visibility")
-        self.status_bar.addWidget(self.status_bar_checkbox)
+        # status_bar_padding = QWidget()
+        # status_bar_padding.setMaximumWidth(2)
+        # self.status_bar.addWidget(status_bar_padding)
+        #
+        # self.status_bar_checkbox = QCheckBox("")
+        # self.status_bar_checkbox.setChecked(True)
+        # self.status_bar_checkbox.setToolTip("Toggle threads status pop up info visibility")
+        # self.status_bar.addWidget(self.status_bar_checkbox)
 
 
         self.setStatusBar(self.status_bar)
@@ -182,26 +184,12 @@ class MainWindow(QMainWindow):
 
         tooltip_string = "Threadpool status: "
         if sum(queue_depths) > 0:
-            # transform = QTransform().rotate(self.status_icon_loading_angle)
-            # center = self.status_icon_loading.rect().center()
-            # transform = QTransform().translate(center.x(), center.y()).rotate(self.status_icon_loading_angle).translate(-center.x(), -center.y())
-            # rotated_pixmap = self.status_icon_loading.transformed(transform)
-            # self.status_icon.setPixmap(rotated_pixmap)
-            # self.status_icon_loading_angle = (self.status_icon_loading_angle + 10) % 360
-
-            indicator_dot = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[self.status_timer_threadpool_hang_counts % 10]
+            indicator_dot = INDICATOR_DOTS[self.status_timer_threadpool_hang_counts % 10]
 
             self.status_bar_message_left.setText(f" {indicator_dot} Active: {active_threads}, Queued: {queue_depths}")
             self.action_tab_cancel.setEnabled(True)
             self.tab_widget.set_tab_switching_disable()
             self.set_tools_and_tabs_disable()
-
-            # if sum(queue_depths) < 10:
-            #     working_paths =  list(self.tab_widget.running_workers_status.keys())
-            #     working_paths += list(self.tab_widget.running_workers_deep.keys())
-            #     working_paths += list(self.tab_widget.running_workers_hasChildren.keys())
-            #     message_string = f"Working on: {working_paths}"
-            #     logging.debug(message_string)
 
             tooltip_string += "\n"
             tooltip_string += f"  Number of active threads in threadpool: {active_threads}\n"
@@ -228,48 +216,6 @@ class MainWindow(QMainWindow):
             tooltip_string += make_tooltip_string("running_workers_hasChildren", list(self.tab_widget.running_workers_hasChildren.keys()))
             tooltip_string += make_tooltip_string("running_workers_ramLoading", list(self.tab_widget.running_workers_ramLoading.keys()))
 
-            # running_workers_status_keys = list(self.tab_widget.running_workers_status.keys())
-            # if len(running_workers_status_keys) > 3:
-            #     tooltip_string += f"  running_workers_status working on: \n"
-            #     for key in running_workers_status_keys[:3]:
-            #         tooltip_string += f"    {key}\n"
-            #     tooltip_string += f"    ... and {len(running_workers_status_keys)-3} more\n"
-            # elif len(running_workers_status_keys) > 0:
-            #     tooltip_string += f"  running_workers_status working on: \n"
-            #     for key in running_workers_status_keys:
-            #         tooltip_string += f"    {key}\n"
-            # else:
-            #     tooltip_string += "  running_workers_status is empty\n"
-            # tooltip_string += "\n"
-            #
-            # running_workers_deep_keys = list(self.tab_widget.running_workers_deep.keys())
-            # if len(running_workers_deep_keys) > 3:
-            #     tooltip_string += f"  running_workers_deep working on: \n"
-            #     for key in running_workers_deep_keys[:3]:
-            #         tooltip_string += f"    {key}\n"
-            #     tooltip_string += f"    ... and {len(running_workers_deep_keys)-3} more\n"
-            # elif len(running_workers_deep_keys) > 0:
-            #     tooltip_string += f"  running_workers_deep working on: \n"
-            #     for key in running_workers_deep_keys:
-            #         tooltip_string += f"    {key}\n"
-            # else:
-            #     tooltip_string += "  running_workers_deep is empty\n"
-            # tooltip_string += "\n"
-            #
-            # running_workers_hasChildren_keys = list(self.tab_widget.running_workers_hasChildren.keys())
-            # if len(running_workers_hasChildren_keys) > 3:
-            #     tooltip_string += f"  running_workers_hasChildren working on: \n"
-            #     for key in running_workers_hasChildren_keys[:3]:
-            #         tooltip_string += f"    {key}\n"
-            #     tooltip_string += f"    ... and {len(running_workers_hasChildren_keys)-3} more\n"
-            # elif len(running_workers_hasChildren_keys) > 0:
-            #     tooltip_string += f"  running_workers_hasChildren working on: \n"
-            #     for key in running_workers_hasChildren_keys:
-            #         tooltip_string += f"    {key}\n"
-            # else:
-            #     tooltip_string += "  running_workers_hasChildren is empty\n"
-            # tooltip_string += "\n"
-
             tooltip_string += cache_status_string()
 
             self.status_bar_message_left.setToolTip(tooltip_string)
@@ -281,7 +227,8 @@ class MainWindow(QMainWindow):
             self.status_timer_threadpool_hang_counts += 1
 
             if (self.isActiveWindow()
-                and self.status_bar_checkbox.isChecked()
+                # and self.status_bar_checkbox.isChecked()
+                and self.view_toggle_thread_status.isChecked()  # type: ignore[has-type] # I personally guarantee this is fine
                 and (self.status_timer_threadpool_hang_counts >= 10
                   or  (self.status_timer_threadpool_hang_timestamp is not None
                     and QDateTime.currentDateTime().toSecsSinceEpoch() - self.status_timer_threadpool_hang_timestamp.toSecsSinceEpoch() > 3)
@@ -304,7 +251,7 @@ class MainWindow(QMainWindow):
             tooltip_string += "No active threads in threadpool\n"
             tooltip_string += cache_status_string()
             self.status_bar_message_left.setToolTip(tooltip_string)
-            self.status_bar_message_left.setText(f"   Threads Pool Standby")
+            self.status_bar_message_left.setText(f" Threads Pool Standby")
             # self.status_bar_message_left.setToolTip("No active threads in threadpool")
             if self.status_timer_threadpool_hang_counts > 0:
                 self.status_timer_threadpool_hang_counts = 0
@@ -313,7 +260,8 @@ class MainWindow(QMainWindow):
             # self.status_bar.setPixmap(self.status_icon_checked)
             self.action_tab_cancel.setEnabled(False)
             self.tab_widget.set_tab_switching_enable()
-            self.set_tools_and_tabs_enable()
+            if not self.action_tab_live_checked:
+                self.set_tools_and_tabs_enable()
 
     def update_status_bar_right(self) -> None:
         # Update the right message with CPU and RAM usage
@@ -382,31 +330,56 @@ class MainWindow(QMainWindow):
 
         menu_view = self.menu_bar.addMenu('View')
         if menu_view is not None:
-            view_toggle_toolbar_left = QAction('Toggle Left Toolbar', self)
-            if (tv := self.sidebar_toolbar_left.toggleViewAction()): view_toggle_toolbar_left.triggered.connect(tv.trigger)
-            # view_toggle_toolbar_left.triggered.connect(self.sidebar_toolbar_left.toggleViewAction().trigger)
-            menu_view.addAction(view_toggle_toolbar_left)
+            self.view_toggle_toolbar_left = QAction('Toggle Left Toolbar', self)
+            self.view_toggle_toolbar_left.setCheckable(True)
+            self.view_toggle_toolbar_left.setChecked(True)
+            if (tv := self.sidebar_toolbar_left.toggleViewAction()): self.view_toggle_toolbar_left.triggered.connect(tv.trigger)
+            # self.view_toggle_toolbar_left.triggered.connect(self.sidebar_toolbar_left.toggleViewAction().trigger)
+            # self.view_toggle_toolbar_left.triggered.connect(lambda: self.toggle)
+            menu_view.addAction(self.view_toggle_toolbar_left)
 
-            view_toggle_toolbar_right = QAction('Toggle Right Toolbar', self)
-            if (tv := self.sidebar_toolbar_right.toggleViewAction()): view_toggle_toolbar_right.triggered.connect(tv.trigger)
+            self.view_toggle_toolbar_right = QAction('Toggle Right Toolbar', self)
+            self.view_toggle_toolbar_right.setCheckable(True)
+            self.view_toggle_toolbar_right.setChecked(True)
+            if (tv := self.sidebar_toolbar_right.toggleViewAction()): self.view_toggle_toolbar_right.triggered.connect(tv.trigger)
             # view_toggle_toolbar_right.triggered.connect(self.sidebar_toolbar_right.toggleViewAction().trigger)
-            menu_view.addAction(view_toggle_toolbar_right)
+            menu_view.addAction(self.view_toggle_toolbar_right)
 
             menu_view.addSeparator()
 
-            view_toggle_status_bar = QAction('Toggle Status Bar', self)
-            view_toggle_status_bar.triggered.connect(lambda: self.status_bar.setVisible(not self.status_bar.isVisible()))
-            menu_view.addAction(view_toggle_status_bar)
+            self.view_toggle_status_bar = QAction('Toggle Status Bar', self)
+            self.view_toggle_status_bar.setCheckable(True)
+            self.view_toggle_status_bar.setChecked(True)
+            self.view_toggle_status_bar.triggered.connect(lambda: self.status_bar.setVisible(not self.status_bar.isVisible()))
+            menu_view.addAction(self.view_toggle_status_bar)
+
+            self.view_toggle_thread_status = QAction('Toggle Thread Status Auto Pop-up', self)
+            self.view_toggle_thread_status.setCheckable(True)
+            self.view_toggle_thread_status.setChecked(True)
+            menu_view.addAction(self.view_toggle_thread_status)
 
             menu_view.addSeparator()
 
-            view_toggle_left_panel = QAction('Toggle Left Panel', self)
-            view_toggle_left_panel.triggered.connect(self.toggle_left_panel)
-            menu_view.addAction(view_toggle_left_panel)
+            self.view_toggle_auto_load_ram = QAction('Toggle Auto Load to RAM', self)
+            self.view_toggle_auto_load_ram.setCheckable(True)
+            self.view_toggle_auto_load_ram.setChecked(True)
+            self.view_toggle_auto_load_ram.triggered.connect(self.toggle_auto_load_ram)
+            menu_view.addAction(self.view_toggle_auto_load_ram)
 
-            view_toggle_right_panel = QAction('Toggle Right Panel', self)
-            view_toggle_right_panel.triggered.connect(self.toggle_right_panel)
-            menu_view.addAction(view_toggle_right_panel)
+            menu_view.addSeparator()
+
+            self.view_toggle_left_panel = QAction('Toggle Left Panel', self)
+            self.view_toggle_left_panel.setCheckable(True)
+            self.view_toggle_left_panel.setChecked(True)
+            self.view_toggle_left_panel.triggered.connect(self.toggle_left_panel)
+            menu_view.addAction(self.view_toggle_left_panel)
+
+            self.view_toggle_right_panel = QAction('Toggle Right Panel', self)
+            self.view_toggle_right_panel.setCheckable(True)
+            self.view_toggle_right_panel.setChecked(True)
+            self.view_toggle_right_panel.triggered.connect(self.toggle_right_panel)
+            menu_view.addAction(self.view_toggle_right_panel)
+
 
         
         menu_debug = self.menu_bar.addMenu('Debug')
@@ -426,6 +399,9 @@ class MainWindow(QMainWindow):
             action_debug_icons.triggered.connect(self.show_debug_icons_window)
             menu_debug.addAction(action_debug_icons)
 
+            action_debug_memory_usage_window = QAction('Show Memory Usage', self)
+            action_debug_memory_usage_window.triggered.connect(self.show_memory_usage_window)
+            menu_debug.addAction(action_debug_memory_usage_window)
 
             menu_debug.addSeparator()
 
@@ -433,6 +409,14 @@ class MainWindow(QMainWindow):
             action_debug_3.triggered.connect(self.action_debug_3_run)
             menu_debug.addAction(action_debug_3)
 
+
+            action_debug_4 = QAction('Debug 4', self)
+            action_debug_4.triggered.connect(self.action_debug_4_run)
+            menu_debug.addAction(action_debug_4)
+
+            action_debug_gc_collect = QAction('gc.collect()', self)
+            action_debug_gc_collect.triggered.connect(gc.collect)
+            menu_debug.addAction(action_debug_gc_collect)
 
 
 
@@ -446,11 +430,23 @@ class MainWindow(QMainWindow):
 
         pass
 
+    def action_debug_4_run(self) -> None:
+        current_file_explorer = self.tab_widget.currentWidget()
+        if isinstance(current_file_explorer, FolderExplorer):
+            logging.info(f"{current_file_explorer.model.rootPath() = }")
+            rows = current_file_explorer.model.get_visible_rows()
+            for r in rows:
+                logging.info(f"{r = }")
+
 
     def show_settings_dialog(self) -> None:
         # pass
-        settings_dialog = SettingsDialog(self)
-        settings_dialog.exec()
+        self.settings_dialog = SettingsDialog(self)
+        self.settings_dialog.exec()
+
+    def show_memory_usage_window(self) -> None:
+        self.memory_usage_window = MemoryUsageWindow()
+        self.memory_usage_window.show()
 
     def show_debug_icons_window(self) -> None:
         self.debug_icons_window = DebugIconsWindow()
@@ -516,6 +512,7 @@ class MainWindow(QMainWindow):
         self.splitter.setStretchFactor(1, 1)  # Middle area
         self.splitter.setStretchFactor(2, 1)  # Right panel
 
+        self.splitter.splitterMoved.connect(self.on_splitter_moved)
 
     def _setup_left_toolbar(self) -> None:
         # Add a toolbar with a toggle button for the left panel
@@ -529,11 +526,11 @@ class MainWindow(QMainWindow):
         self.sidebar_toolbar_right.setMovable(False)
         self.addToolBar(Qt.ToolBarArea.RightToolBarArea, self.sidebar_toolbar_right)
 
-        toggle_left_panel_action = QAction(ToolIcons.ICON_LEFT_COLLAPSE, "Toggle Left Panel", self)
-        toggle_left_panel_action.setCheckable(True)
-        toggle_left_panel_action.setChecked(True)
-        toggle_left_panel_action.triggered.connect(self.toggle_left_panel)
-        self.sidebar_toolbar_left.addAction(toggle_left_panel_action)
+        self.toggle_left_panel_action = QAction(ToolIcons.ICON_LEFT_COLLAPSE, "Toggle Left Panel", self)
+        self.toggle_left_panel_action.setCheckable(True)
+        self.toggle_left_panel_action.setChecked(True)
+        self.toggle_left_panel_action.triggered.connect(self.toggle_left_panel)
+        self.sidebar_toolbar_left.addAction(self.toggle_left_panel_action)
 
         # Left panel
         self.left_panel = QWidget()
@@ -559,14 +556,20 @@ class MainWindow(QMainWindow):
         self.action_tab_refresh = QAction(ToolIcons.ICON_REFRESH, "Refresh", self)
         self.action_tab_rescan = QAction(ToolIcons.ICON_ZOOM_REPLACE, "Rescan", self)
         self.action_tab_cancel = QAction(ToolIcons.ICON_ZOOM_CANCEL, "Cancel", self)
+        self.action_tab_live = QAction(ToolIcons.ICON_LIVE, "Live", self)
+        self.action_tab_live.setCheckable(True)
+        self.action_tab_live_checked = False
+        self.action_tab_live_was_left_panel_open_before_clicking_live = True
 
         self.action_tab_new.setToolTip("New Tab")
         self.action_tab_new.setWhatsThis(
             "New Tab??? plz let me know if you see this text")  # literally don't know where this will show up memm
+        # self.action_tab_new.set
         self.action_tab_refresh.setToolTip("Refresh file list view")
         self.action_tab_folder_up.setToolTip("Navigate up one directory")
         self.action_tab_rescan.setToolTip("Rescan the current directory")
         self.action_tab_cancel.setToolTip("Cancel background tasks")
+        self.action_tab_live.setToolTip("Live update the current directory")
 
         # action_tab_new.triggered.connect(self.add_new_folder_explorer_tab)
         # action_tab_folder_up.triggered.connect(self.on_back_button_clicked)
@@ -585,6 +588,7 @@ class MainWindow(QMainWindow):
         self.sidebar_toolbar_left.addAction(self.action_tab_refresh)
         self.sidebar_toolbar_left.addAction(self.action_tab_rescan)
         self.sidebar_toolbar_left.addAction(self.action_tab_cancel)
+        self.sidebar_toolbar_left.addAction(self.action_tab_live)
 
     def _setup_left_side(self) -> None:
 
@@ -605,6 +609,7 @@ class MainWindow(QMainWindow):
         self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
         self.action_tab_rescan.triggered.connect(self.tab_widget.rescan_current_folder_explorer)
         self.action_tab_cancel.triggered.connect(self.tab_widget.on_stop_button_clicked)
+        self.action_tab_live.triggered.connect(self.on_live_button_clicked)
 
         self.sidebar_toolbar_left.addSeparator()
 
@@ -622,17 +627,17 @@ class MainWindow(QMainWindow):
         self.sidebar_toolbar_left.addSeparator()
 
         # Add a button to the bottom of sidebar_toolbar_left
-        toggle_panel_left_bottom_action = QAction(ToolIcons.ICON_BOTTOM_EXPAND, "Toggle Panel", self)
-        toggle_panel_left_bottom_action.setCheckable(True)
-        toggle_panel_left_bottom_action.setChecked(True)
-        self.sidebar_toolbar_left.addAction(toggle_panel_left_bottom_action)
-        toggle_panel_left_bottom_action.triggered.connect(self.toggle_left_bottom_panel)
+        self.toggle_panel_left_bottom_action = QAction(ToolIcons.ICON_BOTTOM_EXPAND, "Toggle Panel", self)
+        self.toggle_panel_left_bottom_action.setCheckable(True)
+        self.toggle_panel_left_bottom_action.setChecked(True)
+        self.sidebar_toolbar_left.addAction(self.toggle_panel_left_bottom_action)
+        self.toggle_panel_left_bottom_action.triggered.connect(self.toggle_left_bottom_panel)
 
         # Create a panel below the tab_widget
         self.panel_left_bottom = QWidget()
         self.panel_layout_left_bottom = QVBoxLayout(self.panel_left_bottom)
         self.panel_layout_left_bottom.setContentsMargins(0, 0, 0, 0)
-        self.panel_label_left_bottom = QLabel("Left Bottom Placeholder")
+        self.panel_label_left_bottom = QLabel("Left Bottom Placeholder\n"+"Folder grouping and statistics (?)")
         self.panel_label_left_bottom.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.panel_layout_left_bottom.addWidget(self.panel_label_left_bottom)
         self.panel_left_bottom.setVisible(True)
@@ -644,11 +649,11 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.left_panel)
 
     def _setup_right_side(self) -> None:
-        toggle_right_panel_action = QAction(ToolIcons.ICON_RIGHT_COLLAPSE, "Toggle Right Panel", self)
-        toggle_right_panel_action.setCheckable(True)
-        toggle_right_panel_action.setChecked(True)
-        toggle_right_panel_action.triggered.connect(self.toggle_right_panel)
-        self.sidebar_toolbar_right.addAction(toggle_right_panel_action)
+        self.toggle_right_panel_action = QAction(ToolIcons.ICON_RIGHT_COLLAPSE, "Toggle Right Panel", self)
+        self.toggle_right_panel_action.setCheckable(True)
+        self.toggle_right_panel_action.setChecked(True)
+        self.toggle_right_panel_action.triggered.connect(self.toggle_right_panel)
+        self.sidebar_toolbar_right.addAction(self.toggle_right_panel_action)
         spacer_right = QWidget()
         spacer_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.sidebar_toolbar_right.addWidget(spacer_right)
@@ -719,65 +724,6 @@ class MainWindow(QMainWindow):
         self.middle_mainwindow.setCentralWidget(self.central_placeholder)
         self.dock_widgets: List[QDockWidget] = []
 
-
-        # # txy_density_plot = fig_txt_density(self.current_tracking_folder_path)
-        # txy_density_plot = fig_txt_density
-        # # txy_density_html = txy_density_plot.to_html(include_plotlyjs='cdn')
-        # txy_density_html = txy_density_plot.to_html()
-        # # txy_density_html = plotly.io.to_html(txy_density_plot, include_plotlyjs='cdn')
-        # txy_density_view = QWebEngineView()
-        # # txy_density_view.setHtml(txy_density_html)
-        # # txy_density_view.setHtml("<h1>HELLO WORLD</h1>")
-        # # txy_density_view.load(QUrl("https://www.google.com"))
-        # # txy_density_view.load(QUrl("/Users/tonyyan/Documents/_ANU/_He_BEC_Group/He34_Scattering/Rabi_Oscillations/iframe_figures/figure_165.html"))
-        # # txy_density_view.load(QUrl("file:///Users/tonyyan/Documents/_ANU/_He_BEC_Group/He34_Scattering/Rabi_Oscillations/iframe_figures/figure_165.html"))    # THIS WORKS
-        # # txy_density_view.load(QUrl.fromLocalFile("/Users/tonyyan/Documents/_ANU/_He_BEC_Group/He34_Scattering/Rabi_Oscillations/iframe_figures/figure_165.html"))    # THIS WORKS
-        # # with tempfile.NamedTemporaryFile(delete=False, suffix='.html') as f:
-        # #     f.write(txy_density_html.encode('utf-8'))
-        # #     txy_density_temp_html_filename = f.name
-        #     # txy_density_plot.
-        # txy_density_temp = tempfile.NamedTemporaryFile(prefix="txy_density_", suffix='.html', dir=TEMPFILES_DIR)
-        # self.named_temp_files.append(txy_density_temp)
-        # txy_density_temp.write(txy_density_html.encode('utf-8'))
-        # txy_density_temp_html_filename = txy_density_temp.name
-        # logging.debug(f"txy_density_temp_html_filename = {txy_density_temp_html_filename}")
-        # txy_density_view.load(QUrl.fromLocalFile(txy_density_temp_html_filename))
-        # # txy_density_view.load(QUrl(f"file://{txy_density_temp_html_filename}"))
-        # # txy_density_view.load(QUrl.fromLocalFile("/var/folders/28/6kl95rk567xgr9h1r_nstsfm0000gn/T/tmp_jgyy9hc.html")) # Doesn't work
-        # txy_density_dock_widget = QDockWidget("fig_txt_density", self)
-        # txy_density_dock_widget.setWidget(txy_density_view)
-        # self.dock_widgets.append(txy_density_dock_widget)
-        #
-        # self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, txy_density_dock_widget)
-        #
-        # # txy_density_png = txy_density_plot.to_image(format="png")
-        # # # Create QLabel to display the PNG image
-        # # txy_density_image_label = QLabel()
-        # # txy_density_pixmap = QPixmap()
-        # # txy_density_pixmap.loadFromData(txy_density_png)
-        # # txy_density_image_label.setPixmap(txy_density_pixmap)
-        # # txy_density_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # # # Create QDockWidget for the PNG image
-        # # txy_density_image_dock_widget = QDockWidget("fig_txt_density Image", self)
-        # # txy_density_image_dock_widget.setWidget(txy_density_image_label)
-        # # self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,txy_density_image_dock_widget)
-        #
-        #
-        #
-        # txy_3d_plot = fig_txt_density
-        # txy_3d_html = txy_3d_plot.to_html()
-        # txy_3d_view = QWebEngineView()
-        # txy_3d_temp = tempfile.NamedTemporaryFile(prefix="txy_3d_", suffix='.html', dir=TEMPFILES_DIR)
-        # self.named_temp_files.append(txy_3d_temp)
-        # txy_3d_temp.write(txy_3d_html.encode('utf-8'))
-        # txy_3d_temp_html_filename = txy_3d_temp.name
-        # logging.debug(f"txy_3d_temp_html_filename = {txy_3d_temp_html_filename}")
-        # txy_3d_view.load(QUrl.fromLocalFile(txy_3d_temp_html_filename))
-        # txy_3d_dock_widget = QDockWidget("fig_txt_density 3D", self)
-        # txy_3d_dock_widget.setWidget(txy_3d_view)
-        # self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, txy_3d_dock_widget)
-        # self.dock_widgets.append(txy_3d_dock_widget)
-
         try:
             from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density, fig_txy_3d, fig_shots_scan, fig_pulse_eff_fitted, fig_shots_transfer
             self._setup_legacy_plotly_to_dock_widget(fig_txt_density, "fig_txt_density")
@@ -819,6 +765,7 @@ class MainWindow(QMainWindow):
         # Connect signals to check if dock widgets are closed
         for dock_widget in self.dock_widgets:
             dock_widget.visibilityChanged.connect(self.update_placeholder_visibility)
+            # dock_widget.
             dock_widget.setStyleSheet(QDOCKWIDGET_STYLESHEET)
 
         # Initial check to set placeholder visibility
@@ -827,6 +774,7 @@ class MainWindow(QMainWindow):
 
     def update_placeholder_visibility(self) -> None:
         # Check if any dock widgets are visible
+        logging.debug(f"update_placeholder_visibility: called")
         any_visible = any(dock_widget.isVisible() for dock_widget in self.dock_widgets)
         if any_visible:
             self.central_placeholder.hide()
@@ -835,7 +783,7 @@ class MainWindow(QMainWindow):
 
 
     def toggle_left_panel(self, checked: bool) -> None:
-        if checked:
+        if checked: # Expand the left panel
             # self.splitter.setSizes([self.left_panel_width, self.splitter.sizes()[1], self.splitter.sizes()[2]])
             self.splitter.setSizes([
                 self.left_panel_width,
@@ -843,35 +791,67 @@ class MainWindow(QMainWindow):
                 self.width()-self.left_panel_width-self.right_panel_width,
                 self.right_panel_width
             ])
-            self.sidebar_toolbar_left.actions()[0].setIcon(ToolIcons.ICON_LEFT_COLLAPSE)
-        else:
+            self.toggle_left_panel_action.setIcon(ToolIcons.ICON_LEFT_COLLAPSE)
+            self.toggle_left_panel_action.setChecked(True)
+            self.view_toggle_left_panel.setChecked(True)
+        else: # Collapse the left panel
             self.left_panel_width = self.left_panel.width() if self.left_panel.width() > 600 else self.left_panel_width
             self.right_panel_width = self.right_panel.width() if self.right_panel.width() > 300 else self.right_panel_width
             self.splitter.setSizes([0, self.splitter.sizes()[1], self.splitter.sizes()[2]])
-            self.sidebar_toolbar_left.actions()[0].setIcon(ToolIcons.ICON_LEFT_EXPAND)
+            self.toggle_left_panel_action.setIcon(ToolIcons.ICON_LEFT_EXPAND)
+            self.toggle_left_panel_action.setChecked(False)
+            self.view_toggle_left_panel.setChecked(False)
+
 
         # Update the bottom panel icon based on its visibility and the state of the left panel
         # if self.panel_left_bottom.isVisible():
-        #     self.sidebar_toolbar_left.actions()[-1].setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
+        #     self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
         # else:
         if self.splitter.sizes()[0] == 0:  # Check if the left panel is hidden
-            self.sidebar_toolbar_left.actions()[-1].setIcon(ToolIcons.ICON_BOTTOM_INACTIVE)
+            self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_INACTIVE)
+            self.toggle_panel_left_bottom_action.setChecked(False)
         else:
             if self.panel_left_bottom.isVisible():
-                self.sidebar_toolbar_left.actions()[-1].setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
+                self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
+                self.toggle_panel_left_bottom_action.setChecked(True)
             else:
-                self.sidebar_toolbar_left.actions()[-1].setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
+                self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
+                self.toggle_panel_left_bottom_action.setChecked(False)
+
+    def on_splitter_moved(self, pos: int, index: int) -> None:
+        # Update the left panel width when the splitter is moved
+        # self.left_panel_width = self.splitter.sizes()[0]
+        # self.right_panel_width = self.splitter.sizes()[2]
+        logging.debug(f"on_splitter_moved: {pos = }, {index = }, {self.splitter.sizes() = }")
+
+        if self.splitter.sizes()[0] == 0:  # Check if the left panel is hidden
+            self.toggle_left_panel_action.setIcon(ToolIcons.ICON_LEFT_EXPAND)
+            self.toggle_left_panel_action.setChecked(False)
+            self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_INACTIVE)
+            self.toggle_panel_left_bottom_action.setChecked(False)
+            self.view_toggle_left_panel.setChecked(False)
+        else:
+            self.toggle_left_panel_action.setIcon(ToolIcons.ICON_LEFT_COLLAPSE)
+            self.toggle_left_panel_action.setChecked(True)
+            self.view_toggle_left_panel.setChecked(True)
+            if self.panel_left_bottom.isVisible():
+                self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
+                self.toggle_panel_left_bottom_action.setChecked(True)
+            else:
+                self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
+                self.toggle_panel_left_bottom_action.setChecked(False)
 
     def toggle_left_bottom_panel(self, checked: bool) -> None:
         if checked:
             self.panel_left_bottom.setVisible(True)
-            self.sidebar_toolbar_left.actions()[-1].setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
+            self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
+
         else:
             self.panel_left_bottom.setVisible(False)
             if self.splitter.sizes()[0] == 0:  # Check if the left panel is hidden
-                self.sidebar_toolbar_left.actions()[-1].setIcon(ToolIcons.ICON_BOTTOM_INACTIVE)
+                self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_INACTIVE)
             else:
-                self.sidebar_toolbar_left.actions()[-1].setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
+                self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
 
     # def enterEvent(self, a0):
     #     # Display the tooltip immediately when mouse enters the widget area
@@ -886,6 +866,8 @@ class MainWindow(QMainWindow):
                 self.right_panel_width
             ])
             self.sidebar_toolbar_right.actions()[0].setIcon(ToolIcons.ICON_RIGHT_COLLAPSE)
+            self.toggle_right_panel_action.setChecked(True)
+            self.view_toggle_right_panel.setChecked(True)
         else:
             self.right_panel_width = self.right_panel.width() if self.right_panel.width() > 300 else self.right_panel_width
             self.splitter.setSizes([
@@ -894,6 +876,8 @@ class MainWindow(QMainWindow):
                 0
             ])
             self.sidebar_toolbar_right.actions()[0].setIcon(ToolIcons.ICON_RIGHT_EXPAND)
+            self.toggle_right_panel_action.setChecked(False)
+            self.view_toggle_right_panel.setChecked(False)
 
     def toggle_right_bottom_panel(self, checked: bool) -> None:
         if checked:
@@ -995,6 +979,49 @@ class MainWindow(QMainWindow):
             current_folder_explorer.itemExpandedSignal.connect(self.update_tool_enabled_state)
             QTimer.singleShot(50, self.update_status_bar_left)
 
+    def on_live_button_clicked(self) -> None:
+        if self.action_tab_live_checked:
+            logging.debug("on_live_button_clicked: set to unchecked (stop tracking)")
+            self.action_tab_live.setChecked(False)
+            self.action_tab_live_checked = False
+            self.tab_widget.setEnabled(True)
+            if self.splitter.sizes()[0] == 0:
+                self.toggle_left_panel( self.action_tab_live_was_left_panel_open_before_clicking_live )
+            self.set_tools_and_tabs_enable()
+            self.update_tool_enabled_state()
+        else:
+            logging.debug("on_live_button_clicked: set to checked (start tracking)")
+            # logging.fatal(f"debug: {self.splitter.sizes()[0] > 0 = }")
+            self.action_tab_live_was_left_panel_open_before_clicking_live = self.splitter.sizes()[0] > 0
+            self.action_tab_live.setChecked(True)
+            self.action_tab_live_checked = True
+            self.tab_widget.setEnabled(False)
+            self.toggle_left_panel(False)
+            self.action_tab_refresh.setEnabled(False)
+            self.action_tab_new.setEnabled(False)
+            self.action_tab_rescan.setEnabled(False)
+            self.action_tab_folder_up.setEnabled(False)
+
+        current_folder_explorer = self.tab_widget.currentWidget()
+        if isinstance(current_folder_explorer, FolderExplorer):
+            # current_folder_explorer.toggle_live_update()
+            pass
+
+    def toggle_auto_load_ram(self) -> None:
+        toggled_on = self.view_toggle_auto_load_ram.isChecked()
+        logging.debug(f"toggle_auto_load_ram: called {toggled_on = }")
+        current_folder_explorer = self.tab_widget.currentWidget()
+        if isinstance(current_folder_explorer, FolderExplorer):
+            current_folder_explorer.auto_load_ram = toggled_on
+        else:
+            logging.error("toggle_auto_load_ram: current_folder_explorer is not FolderExplorer")
+
+
+    def resizeEvent(self, a0: QResizeEvent | None) -> None:
+        self.setUpdatesEnabled(False)
+        super().resizeEvent(a0)
+        QTimer.singleShot(100, lambda: self.setUpdatesEnabled(True))
+
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         logging.info("MainWindow closeEvent")
 
@@ -1031,6 +1058,7 @@ class MainWindow(QMainWindow):
 
     def handle_exit(self, signum: int, frame: Optional[types.FrameType]) -> None:
         # self.closeEvent(None)
+        logging.info("handle_exit: called")
         self.close()
 
 

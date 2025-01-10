@@ -4,13 +4,14 @@ import sys
 from re import S
 from typing import Optional, Dict, Any
 
-from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtGui import QCloseEvent, QDesktopServices
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QLineEdit, QLabel, QTabWidget, \
-    QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox
-from PyQt6.QtCore import QSettings
+    QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem
+from PyQt6.QtCore import QSettings, QUrl
 from diskcache import FanoutCache
 
 from helab.utils.cachingSetup import *
+from helab.utils.constants import *
 
 
 class SettingsDialog(QDialog):
@@ -48,6 +49,66 @@ class SettingsDialog(QDialog):
         self.general_layout.addWidget(QLabel("Example Text:"))
         self.general_layout.addWidget(self.example_text)
 
+
+        # DIR_TEMPS and DIR_CACHES
+        self.general_layout.addSpacerItem(QSpacerItem(0, 10))
+        self.general_layout.addWidget(QLabel("Directory Settings"))
+        self.dir_scroll_area = QScrollArea()
+        self.dir_scroll_area.setWidgetResizable(True)
+        self.dir_scroll_content = QWidget()
+        self.dir_scroll_layout = QVBoxLayout(self.dir_scroll_content)
+        self.dir_scroll_layout.setSpacing(0)
+        # self.dir_scroll_layout.setContentsMargins(0, 0, 0, 0)
+        # self.dir_scroll_area.setStyleSheet("QScrollArea {background: transparent;}")
+        # self.dir_scroll_area.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget {background: transparent;}")
+
+        self.dir_temps_edit = QLineEdit()
+        self.dir_caches_edit = QLineEdit()
+
+        self.dir_temps_edit.setText(DIR_TEMPS)
+        self.dir_caches_edit.setText(DIR_CACHES)
+
+        self.dir_temps_browse_btn = QPushButton("Browse...")
+        self.dir_caches_browse_btn = QPushButton("Browse...")
+        self.dir_temps_open_btn = QPushButton("Open Path")
+        self.dir_caches_open_btn = QPushButton("Open Path")
+        self.dir_temps_reset_btn = QPushButton("Reset to Default")
+        self.dir_caches_reset_btn = QPushButton("Reset to Default")
+
+        self.dir_temps_browse_btn.clicked.connect(self.browse_dir_temps)
+        self.dir_caches_browse_btn.clicked.connect(self.browse_dir_caches)
+        self.dir_temps_open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.dir_temps_edit.text())))
+        self.dir_caches_open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.dir_caches_edit.text())))
+        self.dir_temps_reset_btn.clicked.connect(lambda: self.dir_temps_edit.setText(get_setting_or_default("dir_temps", DIR_TEMPS_CANDIDATES)))
+        self.dir_caches_reset_btn.clicked.connect(lambda: self.dir_caches_edit.setText(get_setting_or_default("dir_caches", DIR_CACHES_CANDIDATES)))
+
+
+
+        self.dir_scroll_layout.addWidget(QLabel("DIR_TEMPS:"))
+        self.dir_scroll_layout.addWidget(self.dir_temps_edit)
+        dir_temps_btn_layout = QHBoxLayout()
+        dir_temps_btn_layout.addWidget(self.dir_temps_browse_btn)
+        dir_temps_btn_layout.addWidget(self.dir_temps_open_btn)
+        dir_temps_btn_layout.addWidget(self.dir_temps_reset_btn)
+        self.dir_scroll_layout.addLayout(dir_temps_btn_layout)
+
+        self.dir_scroll_layout.addWidget(QLabel("DIR_CACHES:"))
+        self.dir_scroll_layout.addWidget(self.dir_caches_edit)
+        dir_caches_btn_layout = QHBoxLayout()
+        dir_caches_btn_layout.addWidget(self.dir_caches_browse_btn)
+        dir_caches_btn_layout.addWidget(self.dir_caches_open_btn)
+        dir_caches_btn_layout.addWidget(self.dir_caches_reset_btn)
+        self.dir_scroll_layout.addLayout(dir_caches_btn_layout)
+
+        self.dir_scroll_area.setWidget(self.dir_scroll_content)
+        self.general_layout.addWidget(self.dir_scroll_area)
+
+        # Expandable spacer
+        self.general_layout.addStretch()
+
+
+
+
         self.tabs.addTab(self.general_tab, "General")
 
         # TODO: default load folder
@@ -65,14 +126,11 @@ class SettingsDialog(QDialog):
         # self.cache_layout.addWidget(QLabel("Cache Settings"))
         # self.tabs.addTab(self.cache_tab, "Cache")
 
-
-
-        # Placeholder tab
-        self.placeholder_tab = QWidget()
-        self.placeholder_layout = QVBoxLayout(self.placeholder_tab)
-        self.placeholder_layout.addWidget(QLabel("Placeholder text for the second tab"))
-
-        self.tabs.addTab(self.placeholder_tab, "Placeholder")
+        # # Placeholder tab
+        # self.placeholder_tab = QWidget()
+        # self.placeholder_layout = QVBoxLayout(self.placeholder_tab)
+        # self.placeholder_layout.addWidget(QLabel("Placeholder text for the second tab"))
+        # self.tabs.addTab(self.placeholder_tab, "Placeholder")
 
 
         self._make_tab_cache()
@@ -254,6 +312,16 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self.cache_tab, "Cache")
         self.update_cache_info()
 
+    def browse_dir_temps(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Select DIR_TEMPS Folder")
+        if folder:
+            self.dir_temps_edit.setText(folder)
+
+    def browse_dir_caches(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Select DIR_CACHES Folder")
+        if folder:
+            self.dir_caches_edit.setText(folder)
+
     def save_cache_to_disk(self) -> None:
         for cache_info in self.cache_widgets:
             cache = cache_info['cache']
@@ -265,12 +333,16 @@ class SettingsDialog(QDialog):
         settings = QSettings("ANU", "HeLab")
         self.example_checkbox.setChecked(settings.value("example_checkbox", False, type=bool))
         self.example_text.setText(settings.value("example_text", "", type=str))
+        self.dir_temps_edit.setText(settings.value("dir_temps", DIR_TEMPS, type=str))
+        self.dir_caches_edit.setText(settings.value("dir_caches", DIR_CACHES, type=str))
         logging.debug("Settings loaded")
 
     def save_settings(self) -> None:
         settings = QSettings("ANU", "HeLab")
         settings.setValue("example_checkbox", self.example_checkbox.isChecked())
         settings.setValue("example_text", self.example_text.text())
+        settings.setValue("dir_temps", self.dir_temps_edit.text())
+        settings.setValue("dir_caches", self.dir_caches_edit.text())
 
         # Save DiskCache parameters overrides
         for cache_name, param_widgets in self.cache_params_ui.items():
@@ -344,6 +416,7 @@ class SettingsDialog(QDialog):
 
         logging.warning("Settings dialog closed")
         super().closeEvent(a0)
+        self.deleteLater()
 
     def reset_settings(self) -> None:
         settings = QSettings("ANU", "HeLab")

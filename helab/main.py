@@ -3,6 +3,7 @@ import logging
 import tempfile
 
 import coloredlogs
+
 # from helab.utils.loggingSetup import setup_logging
 # setup_logging()
 coloredlogs.install(
@@ -16,8 +17,9 @@ import platform
 import re
 import subprocess
 import sys
+import os
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication
 
@@ -40,6 +42,13 @@ if __name__ == "__main__":
     logging.info(f"Platform: {sys.platform}, {platform.system()}, {platform.release()}, {platform.version()}, {platform.machine()}, {platform.processor()}")
     logging.info(f"{tempfile.gettempdir() = }")
 
+    num_cpus = os.cpu_count()
+    if num_cpus is None: num_cpus = 1
+    num_threads: int = int(max(2, round(num_cpus / 3)))
+    logging.info(f"{num_cpus = }, {num_threads = }")
+    thread_pool = QThreadPool.globalInstance()
+    if thread_pool: thread_pool.setMaxThreadCount(num_threads)
+
     logging.info(f"Starting HeLab v{APP_VERSION} ({APP_COMMIT_HASH})")
 
     # font_db = QFontDatabase()
@@ -50,12 +59,12 @@ if __name__ == "__main__":
     app.setStyle("Fusion")
     # app.setStyleSheet("QWidget { background-color: #fafafa; }")
     if "SF Mono" in QFontDatabase.families():
-        font = QFont("SF Mono", 12)
-        logging.debug("Using SF Mono font.")
+        helab_mono_font = QFont("SF Mono", 12)
+        logging.debug("Using SF Mono helab_mono_font.")
     else:
-        font = QFont("Monospace", 12)
-        logging.warning("SF Mono font not found. Using Monospace font instead.")
-    app.setFont(font)
+        helab_mono_font = QFont("Monospace", 12)
+        logging.warning("SF Mono helab_mono_font not found. Using Monospace helab_mono_font instead.")
+    app.setFont(helab_mono_font)
 
     IconsInitUtil.initialise_icons()
 

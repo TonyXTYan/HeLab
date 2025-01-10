@@ -90,3 +90,9 @@ helab_tempfiles
 helab_caches
 helab_temps
 *.ipynb
+coverage.xml
+helab_main.prof
+*.log
+mprofile_*.dat
+profile.html
+profile.json

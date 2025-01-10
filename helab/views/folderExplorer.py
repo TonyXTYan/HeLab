@@ -12,7 +12,7 @@ import pandas as pd
 from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal, QThreadPool, QModelIndex, QItemSelection, \
     QPoint, QFileInfo, QTimer, QRunnable, QObject, QThread
 from PyQt6.QtGui import QAction, QFontInfo
-from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu
+from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu, QApplication
 from cachetools import LRUCache, TTLCache
 from debugpy.server.cli import switches
 from diskcache import FanoutCache
@@ -60,6 +60,8 @@ class FolderExplorer(QWidget):
         self.target_path = target_path  # Path to auto-expand upon opening
         self.view_path = view_path  # Current root path of the view
         self.columns_to_show = columns_to_show
+
+        self.auto_load_ram = True
 
         self.status_cache = status_cache
         self.hasChildren_cache = hasChildren_cache
@@ -245,12 +247,19 @@ class FolderExplorer(QWidget):
             logging.critical(f"folderExplorer.on_selection_changed: selected_indexes unexpected {len(selected_indexes) = }, {self.model.columnCount() = }")
             logging.critical(f"they are {[self.model.filePath(si) for si in selected_indexes]}")
             # logging.fatal(f"WTF {len(selected_indexes) != self.model.columnCount()}")
+        # if self.auto_load_ram:
         for si in selected_indexes:
             file_path = self.model.filePath(si)
-            logging.debug(f"folderExplorer.on_selection_changed: selected {file_path = }")
             self.selected_path = file_path
-            self.load_to_ram_cache(self.model.fileInfo(si))
+            logging.debug(f"folderExplorer.on_selection_changed: selected {file_path = }")
+            if self.auto_load_ram:
+                self.load_to_ram_cache(self.model.fileInfo(si))
+                logging.debug(f"folderExplorer.on_selection_changed: load_to_ram_cache requested at {file_path = }")
+            else:
+                logging.debug(f"folderExplorer.on_selection_changed: auto_load_ram disabled at {file_path = }")
             break
+        # else:
+        #     logging.debug(f"folderExplorer.on_selection_changed: auto_load_ram disabled")
 
         # if len(deselected_indexes) != self.model.columnCount() and len(deselected_indexes) != 0:
         if len(deselected_indexes) not in exclusion_list:
@@ -391,6 +400,7 @@ class FolderExplorer(QWidget):
         selection_model = self.get_selection_model()
 
         # **Select the item under the cursor**
+        # TODO: change to allow multi row selection.
         self.tree.setCurrentIndex(index)
         selection_model.select(
             index,
@@ -408,6 +418,11 @@ class FolderExplorer(QWidget):
         action_open_in_file_manager = QAction("Open in File Manager", self)
         action_open_in_file_manager.triggered.connect(lambda: self.open_in_file_manager(file_info))
         menu.addAction(action_open_in_file_manager)
+
+
+        action_copy_pathname = QAction("Copy Pathname to Clipboard", self)
+        action_copy_pathname.triggered.connect(lambda: self.copy_pathname_to_clipboard(file_info))
+        menu.addAction(action_copy_pathname)
 
 
         # action_recalc_status = QAction("Recalculate Status", self)
@@ -524,6 +539,9 @@ class FolderExplorer(QWidget):
                 status_report = status_cache.get(path)
                 if isinstance(status_report, StatusReport):
                     status_report.update_ram_status(is_opened=path==self.selected_path)
+            case _:
+                logging.error(f"context_menu_action_pop_cache: Unknown cache_name {cache_name = }")
+                return
         pass
 
     def get_valid_status_report(self, file_info: QFileInfo) -> Tuple[int, StatusReport | None]:
@@ -640,6 +658,7 @@ class FolderExplorer(QWidget):
 
         worker = LoadFolderToRamWorker(folder_path)
         worker.signals.finished.connect(self.on_load_folder_to_ram_finished)
+        worker.signals.loading.connect(self.on_load_folder_to_ram_loading)
         worker.signals.error.connect(self.on_load_folder_to_ram_error)
         worker.setAutoDelete(True)
         self.running_workers_ramLoading[folder_path] = worker
@@ -655,6 +674,7 @@ class FolderExplorer(QWidget):
     def on_load_folder_to_ram_finished_helper(self, folder_path: str, problematic_txy_ns: Optional[List[int]], data: object) -> None:
         if isinstance(data, pd.DataFrame):
             self.folder_opened_path = folder_path
+            self.model.folder_opened_path = folder_path
             self.folder_opened_data = data
             status_report = status_cache[folder_path]
             if status_report is not None and isinstance(status_report, StatusReport):
@@ -691,6 +711,16 @@ class FolderExplorer(QWidget):
         data_ram_cache.pop(folder_path)
         pass
 
+    def on_load_folder_to_ram_loading(self, folder_path: str, progress: float) -> None:
+        # logging.debug(f"on_load_folder_to_ram_loading: {folder_path = }, {progress = }")
+        status_report = status_cache.get(folder_path)
+        if status_report is not None and isinstance(status_report, StatusReport):
+            status_report.set_loading_ram_progress(progress)
+            index = self.model.index(folder_path, helabFileSystemModel.COLUMN_STATUS_ICON)
+            if index.isValid():
+                self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+        pass
+
 
     # def context_menu_action_recalc_status(self, folder_info: QFileInfo) -> None:
     #     logging.debug(f"Recalculate Status for : {folder_info.absoluteFilePath()}")
@@ -720,6 +750,15 @@ class FolderExplorer(QWidget):
             subprocess.run(["xdg-open", path])
         else:
             pass
+
+    def copy_pathname_to_clipboard(self, folder_info: QFileInfo) -> None:
+        path = folder_info.absoluteFilePath()
+        clipboard = QApplication.clipboard()
+        if clipboard is None:
+            logging.error("copy_pathname_to_clipboard: clipboard is None")
+            return
+        clipboard.setText(path)
+        logging.debug(f"Copied selected_path to clipboard: {path}")
 
     def on_stop_button_clicked(self) -> None:
         logging.debug("Stop all scans button clicked.")
@@ -753,8 +792,8 @@ class FolderExplorer(QWidget):
 
     def rescan(self) -> None:
         logging.debug(f"FolderExplorer.rescan() view_path: {self.view_path} model_root_path: {self.model_root_path} target_path: {self.target_path}")
-
-        return
+        self.model.rescan()
+        pass
 
 
     def open_to_path(self, path: str) -> None:
@@ -787,6 +826,7 @@ class FolderExplorer(QWidget):
 
         self.folder_opened_data = None
         self.folder_opened_path = None
+        self.model.folder_opened_path = None
 
 
         # self.model.clearItemData()

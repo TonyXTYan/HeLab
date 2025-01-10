@@ -1,16 +1,20 @@
+from datetime import datetime
 import os
 import random
 import re
 import time
-from typing import Optional, Set, List
+from copy import deepcopy
+from typing import Optional, Set, List, Tuple
 
 from PyInstaller.compat import is_openbsd
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QTimer
 import logging
 
 from PyQt6.QtTest import QTest
+from babel.dates import time_
+from mypyc.namegen import candidate_suffixes
 
-from helab.resources.icons import StatusIcons, IconsInitUtil
+from helab.resources.icons import StatusIcons, IconsInitUtil, circular_progress_QIcon_cached
 from helab.utils.cachingSetup import data_ram_cache, status_cache
 from helab.utils.os_cached import os_isdir, os_listdir
 
@@ -19,8 +23,15 @@ from helab.utils.os_cached import os_isdir, os_listdir
 
 
 class StatusReport:
-    def __init__(self, path: str, status: str, count: int, extra_icons: list[str],
-                 d_dld_shots: Optional[List[int]] = None, d_txy_shots: Optional[List[int]] = None
+    def __init__(self,
+                 path: str,
+                 status: str,
+                 count: int,
+                 extra_icons: list[str],
+                 d_dld_shots:
+                 Optional[List[int]] = None,
+                 d_txy_shots: Optional[List[int]] = None,
+                 time_last_updated: Optional[datetime] = datetime.now()
                  ):
         self.path = path
         self.status = status
@@ -29,6 +40,12 @@ class StatusReport:
         self.d_dld_shots = d_dld_shots
         self.d_txy_shots = d_txy_shots
         self.problematic_txy_ns: Optional[List[int]] = None
+        self.payload_progress_ram: Optional[float] = None
+        self.time_last_updated = time_last_updated
+        self.time_load_ram: Optional[datetime] = None
+
+    def _update_cache(self) -> None:
+        status_cache[self.path] = self
 
     def update_extend_extras(self, extra_icons: list[str] | str ) -> None:
         if isinstance(extra_icons, str):
@@ -37,7 +54,7 @@ class StatusReport:
         current_set.update(extra_icons)
         self.extra_icons = sorted(list(current_set),
                                   key=lambda x: StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get(x, 0))
-        status_cache[self.path] = self
+        self._update_cache()
 
     def update_remove_extras(self, to_remove: list[str] | str) -> None:
         if isinstance(to_remove, str):
@@ -46,11 +63,12 @@ class StatusReport:
         current_set.difference_update(to_remove)
         self.extra_icons = sorted(list(current_set),
                                   key=lambda x: StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get(x, 0))
-        status_cache[self.path] = self
+        self._update_cache()
     
-    def update_ram_status(self, is_opened: bool = False) -> None:
+    def update_ram_status(self, is_opened: bool = False, time_load_ram: Optional[datetime] = None) -> None:
+        if time_load_ram: self.time_load_ram = time_load_ram
         try:
-            self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'loading_ram'])
+            self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'loading_ram', 'progress_ram'])
             data_files = data_ram_cache[self.path]
             if not data_files is None:
                 if is_opened:
@@ -66,16 +84,99 @@ class StatusReport:
             # self.update_remove_extras(['ram', 'ram_single', 'ram_opened'])
             # if e == KeyError and is_opened:
             #     self.update_extend_extras('ram_single')
-        status_cache[self.path] = self
+            # self.time_load_ram = None
+        self._update_cache()
 
     def set_loading_ram_status(self) -> None:
-        self.update_remove_extras(['ram', 'ram_single', 'ram_opened'])
+        self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'progress_ram'])
         self.update_extend_extras('loading_ram')
+
+    def set_loading_ram_progress(self, progress: float) -> None:
+        self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'loading_ram'])
+        self.update_extend_extras('progress_ram')
+        self.payload_progress_ram = progress
+        self._update_cache()
 
     def update_problematic_txy_ns(self, problematic_txy_ns: List[int]) -> None:
         self.problematic_txy_ns = problematic_txy_ns
-        status_cache[self.path] = self
+        self._update_cache()
 
+    def return_extra_icons_paintable(self) -> object:
+        # return sorted([StatusIcons.ICONS_EXTRA.get(icon_key) for icon_key in self.extra_icons],
+        #               key=lambda x: StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get(x,0))
+
+        candidate = deepcopy(self.extra_icons)
+        if 'progress_ram' in self.extra_icons:
+            candidate.remove('progress_ram')
+            candidate_return = self._sorted_extra_icons_to_QIcons(candidate)
+            if self.payload_progress_ram is None:
+                logging.warning(f"StatusReport.return_extra_icons_paintable: progress_ram icon found but no progress value for {self.path}")
+                self.update_remove_extras('progress_ram')
+                return candidate_return
+            else:
+                candidate_return.insert(0, circular_progress_QIcon_cached(self.payload_progress_ram))
+                return candidate_return
+        else:
+            return self._sorted_extra_icons_to_QIcons(candidate)
+
+
+    def validate_ok(self) -> Tuple[bool, bool, bool]:
+        ok_path = True
+        ok_file = True
+        ok_data = True
+        try:
+            if self.time_last_updated is None:
+                # logging.debug(f"StatusReport.validate_ok: time_last_updated is None")
+                return (False, False, False)
+
+            path_last_modified_time = datetime.fromtimestamp(os.path.getatime(self.path))
+            # if path_last_modified_time is None:
+            #     logging.warning(f"StatusReport.validate_ok: path {self.path} does not exist")
+            #     return (False, False)
+            if path_last_modified_time > self.time_last_updated:
+                # logging.debug(f"StatusReport.validate_ok: path {self.path} was modified after last update")
+                ok_path = False
+
+            if self.time_load_ram and path_last_modified_time > self.time_load_ram:
+                ok_data = False
+
+            files_inside_path = os_listdir(self.path, invalidate_cache=True)
+            for f in files_inside_path:
+                file_path = os.path.join(self.path, f)
+                file_last_modified_time = datetime.fromtimestamp(os.path.getatime(file_path))
+                # if file_last_modified_time is None:
+                #     logging.warning(f"StatusReport.validate_ok: file {f} does not exist")
+                #     ok_file = False
+                #     break
+                if file_last_modified_time > self.time_last_updated:
+                    # logging.debug(f"StatusReport.validate_ok: file {file_path} was modified after last update")
+                    ok_file = False
+                    break
+
+            return (ok_path, ok_file, ok_data)
+        except AttributeError as e:
+            logging.debug(f"StatusReport.validate_ok: (pop) AttributeError validating {self.path}: {e}")
+            status_cache.pop(self.path)
+            return (False, False ,False)
+        except PermissionError as e:
+            logging.debug(f"StatusReport.validate_ok: PermissionError validating {self.path}: {e}")
+            return (ok_path, ok_file ,ok_data)
+        except Exception as e:
+            logging.warning(f"StatusReport.validate_ok: error validating {self.path}: {e}")
+            return (False, False, False)
+
+
+    @staticmethod
+    def _sort_extra_icons(extra_icons: list[str]) -> list[str]:
+        return sorted(extra_icons, key=lambda x: StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get(x, 0))
+
+    @staticmethod
+    def _extra_icons_to_QIcons(extra_icons: list[str]) -> list[object]:
+        return [StatusIcons.ICONS_EXTRA.get(icon_key) for icon_key in extra_icons]
+
+    @staticmethod
+    def _sorted_extra_icons_to_QIcons(extra_icons: list[str]) -> list[object]:
+        return [StatusIcons.ICONS_EXTRA.get(icon_key) for icon_key in StatusReport._sort_extra_icons(extra_icons)]
 
 # Define WorkerSignals to communicate between threads
 class StatusWorkerSignals(QObject):
@@ -134,7 +235,6 @@ class StatusWorker(QRunnable):
         #   d_txy_forc123.txt         # tdc_autoconverter d123.txt in (t, x, y) format 
         #   log_KeysightMatlab.txt    # Optional
         #   log_LabviewMatlab.txt     # Optional
-
 
         try:
             # check if self.file_path is a directory
@@ -207,44 +307,32 @@ class StatusWorker(QRunnable):
         emit_status = 'canceled'
         emit_counts = -2
         emit_eicons = []
-        if self._is_canceled:
-            # self.signals.finished.emit(StatusReport(self.file_path, 'canceled', -1, []))
-            emit_status, emit_counts = 'canceled', -1
-            # return
         if (d_only_dld_shots_len == 0 and d_only_txy_shots_len == 0) and d_union_shots_len == 0:
             # no data files found
             assert d_union_shots_len == d_inter_shots_len, "Impossible logic! d_union_shots_len != d_inter_shots_len"
-            # self.signals.finished.emit(StatusReport(self.file_path, 'nothing', -1, []))
             emit_status, emit_counts = 'nothing', -1
         elif (d_only_dld_shots_len == 0 and d_only_txy_shots_len == 0) and d_union_shots_len > 0:
             # consistent data folder
             assert d_union_shots_len == d_inter_shots_len, "Impossible logic! d_union_shots_len != d_inter_shots_len"
-            # self.signals.finished.emit(StatusReport(self.file_path, 'ok', d_union_shots_len, []))
             emit_status, emit_counts = 'ok', d_union_shots_len
         elif (d_only_dld_shots_len > 0 and d_only_txy_shots_len == 0) and d_inter_shots_len > 0:
-            # self.signals.finished.emit(StatusReport(self.file_path, 'fixable', d_inter_shots_len, []))
             emit_status, emit_counts = 'fixable', d_inter_shots_len
         elif (d_only_dld_shots_len > 0 and d_only_txy_shots_len > 0) and d_inter_shots_len > 0:
             # inconsistent data folder
-            # self.signals.finished.emit(StatusReport(self.file_path, 'warning', d_inter_shots_len, []))
             emit_status, emit_counts = 'warning', d_inter_shots_len
         elif (d_only_dld_shots_len == 0 and d_only_txy_shots_len > 0) and d_inter_shots_len > 0:
-            # self.signals.finished.emit(StatusReport(self.file_path, 'critical', d_inter_shots_len, []))
             emit_status, emit_counts = 'critical', d_inter_shots_len
         elif (d_only_dld_shots_len > 0 or d_only_txy_shots_len > 0) and d_inter_shots_len == 0:
             # terribly inconsistent data folder
             if d_only_dld_shots_len == 0:
                 logging.warning(f"StatusWorker._run_helper_v1: folder only contain txy data: {d_only_txy_shots_len} at {self.file_path}")
-                # self.signals.finished.emit(StatusReport(self.file_path, 'warning', d_only_txy_shots_len, []))
                 emit_status, emit_counts = 'warning', d_only_txy_shots_len
             elif d_only_txy_shots_len == 0:
                 logging.warning(f"StatusWorker._run_helper_v1: folder only contain dld data: {d_only_dld_shots_len} at {self.file_path}")
-                # self.signals.finished.emit(StatusReport(self.file_path, 'warning', d_only_dld_shots_len, []))
                 emit_status, emit_counts = 'warning', d_only_dld_shots_len
             else:
                 # This means there are some dld files and some txy files but none of them are matching
                 logging.critical(f"StatusWorker._run_helper_v1: serverly fucked up dataset at {self.file_path} (no matching pairs)")
-                # self.signals.finished.emit(StatusReport(self.file_path, 'critical', 0, []))
                 emit_status, emit_counts = 'critical', 0
         else:
             logging.fatal(f"StatusWorker._run_helper_v1: unexpected condition for {self.file_path}"
@@ -270,22 +358,8 @@ class StatusWorker(QRunnable):
                 logging.error(f"StatusWorker._run_helper_v1: error accessing cache for {self.file_path}: {e}")
                 pass
 
-        self.signals.finished.emit(StatusReport(self.file_path, emit_status, emit_counts, emit_eicons, d_dld_shots, d_txy_shots))
+        self.signals.finished.emit(StatusReport(self.file_path, emit_status, emit_counts, emit_eicons, d_dld_shots, d_txy_shots, datetime.now()))
 
-        # if d_dld_files_len == 0 and d_txy_files_len == 0:
-        #     self.signals.finished.emit(StatusReport(self.file_path, 'nothing', -1, [])
-        # elif d_dld_files_len == 0 or d_txy_files_len == 0:
-        #     self.signals.finished.emit(StatusReport(self.file_path, 'warning', max(d_dld_files_len, d_txy_files_len), [])
-        # elif d_dld_files_len != d_txy_files_len:
-        #     self.signals.finished.emit(StatusReport(self.file_path, 'warning', max(d_dld_files_len, d_txy_files_len), [])
-        # elif d_dld_files_len == d_txy_files_len:
-        #     self.signals.finished.emit(StatusReport(self.file_path, 'ok', max(d_dld_files_len, d_txy_files_len), [])
-        # else:
-        #     self.signals.finished.emit(StatusReport(self.file_path, 'critical', max(d_dld_files_len, d_txy_files_len), [])
-        #     logging.error(f"StatusWorker._run_helper_v1: unexpected condition for {self.file_path}")
-
-        # self._run_helper_simulate()
-        # return
 
     def cancel(self) -> None:
         self._is_canceled = True

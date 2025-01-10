@@ -7,7 +7,7 @@ from typing import Dict, Tuple, List, cast, Optional
 
 import cachetools
 from PyQt6.QtCore import Qt, QThreadPool, QThread, QModelIndex, QTimer, QObject, QDir, pyqtSignal, QRunnable
-from PyQt6.QtGui import QFileSystemModel, QIcon, QColor
+from PyQt6.QtGui import QFileSystemModel, QIcon, QColor, QPainter, QFont, QPixmap
 from PyQt6.QtWidgets import QApplication
 from cachetools import LRUCache, TTLCache
 from diskcache import FanoutCache
@@ -24,7 +24,7 @@ from helab.workers.statusDeepWorker import StatusDeepWorker
 # from helab.utils.loggingSetup import setup_logging
 
 from helab.workers.statusWorker import StatusWorker, StatusReport
-from helab.resources.icons import tablerIcon, StatusIcons
+from helab.resources.icons import tablerIcon, StatusIcons, str_to_QIcon
 
 
 class helabFileSystemModel(QFileSystemModel):
@@ -62,6 +62,7 @@ class helabFileSystemModel(QFileSystemModel):
         self.running_workers_deep = running_workers_deep
         self.running_workers_hasChildren = running_workers_hasChildren
 
+        self.folder_opened_path: Optional[str] = None # same as the one folderExplorer, updated by folderExplorer
 
         # Initialize the cache with a maximum size to prevent unlimited growth
         # self.status_cache = LRUCache(maxsize=10000)  # Store up to 10000 entries
@@ -86,6 +87,9 @@ class helabFileSystemModel(QFileSystemModel):
         self.dataChanged.connect(self.on_data_changed)
         self.modelReset.connect(self.on_model_reset)
 
+        QTimer.singleShot(300, self.refresh)
+
+
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return super().columnCount(parent) + 3  # Add three extra columns
 
@@ -94,10 +98,18 @@ class helabFileSystemModel(QFileSystemModel):
             return None
         column = index.column()
         file_info = self.fileInfo(index)
-        statusReport = self.fetch_status(file_info.absoluteFilePath())
+        path = file_info.absoluteFilePath()
+        statusReport = self.fetch_status(path)
         status = statusReport.status
         count = statusReport.count
         extra_icons = statusReport.extra_icons
+        
+        # # if ['ram', 'ram_single', 'ram_opened'] in extra_icons:
+        # if any(i in extra_icons for i in ['ram', 'ram_single', 'ram_opened']):
+        #     if path == self.folder_opened_path:
+        #         statusReport.update_ram_status(is_opened=True)
+        #     else:
+        #         statusReport.update_ram_status(is_opened=False)
 
         if column == self.COLUMN_DATE_MODIFIED:
             if role == Qt.ItemDataRole.DisplayRole:
@@ -129,11 +141,16 @@ class helabFileSystemModel(QFileSystemModel):
                 icon = StatusIcons.ICONS_STATUS.get(status)
                 return icon
             elif role == self.STATUS_EXTRA_ICONS_ROLE:
+                return statusReport.return_extra_icons_paintable()
+
                 # Retrieve extra icons from the cache
 
                 # _, _, extra_icons = self.fetch_status(file_info.absoluteFilePath())
                 # return [self.status_icons_extra.get(icon_key) for icon_key in extra_icons]
-                return [StatusIcons.ICONS_EXTRA.get(icon_key) for icon_key in extra_icons]
+                # return sorted([StatusIcons.ICONS_EXTRA.get(icon_key) for icon_key in extra_icons],
+                #               key=lambda x: StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get(x,0))
+                        # + [circularProgressIcon(0.1), circularProgressIcon(0.45), circularProgressIcon(0.9), circularProgressIcon(1)])
+                        # + [str_to_QIcon("1"), str_to_QIcon(" 2"), str_to_QIcon("69"), str_to_QIcon("100")]
             elif role == Qt.ItemDataRole.TextAlignmentRole:
                 return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
             else:
@@ -239,25 +256,6 @@ class helabFileSystemModel(QFileSystemModel):
         # self.status_cache[file_path] = (status, count, extra_icons)
         self.status_cache[file_path] = status_report
 
-        # Retrieve QModelIndex for Status Number and Status Icon columns
-        status_number_index = self.index(file_path, self.COLUMN_STATUS_NUMBER)
-        status_icon_index = self.index(file_path, self.COLUMN_STATUS_ICON)
-
-        # Emit dataChanged for Status Number column
-        if status_number_index.isValid():
-            self.dataChanged.emit(
-                status_number_index,
-                status_number_index,
-                [Qt.ItemDataRole.DisplayRole]
-            )
-
-        # Emit dataChanged for Status Icon column
-        if status_icon_index.isValid():
-            self.dataChanged.emit(
-                status_icon_index,
-                status_icon_index,
-                [Qt.ItemDataRole.DecorationRole]
-            )
         # self.running_workers.discard(self.sender())
         # Remove the worker from the running_workers dictionary
         if file_path in self.running_workers_status:
@@ -307,6 +305,17 @@ class helabFileSystemModel(QFileSystemModel):
         else:
             pass
 
+
+        # Retrieve QModelIndex for Status Number and Status Icon columns
+        status_number_index = self.index(file_path, self.COLUMN_STATUS_NUMBER)
+        status_icon_index = self.index(file_path, self.COLUMN_STATUS_ICON)
+        # Emit dataChanged for Status Number column
+        if status_number_index.isValid():
+            self.dataChanged.emit(status_number_index, status_number_index, [Qt.ItemDataRole.DisplayRole] )
+        # Emit dataChanged for Status Icon column
+        if status_icon_index.isValid():
+            self.dataChanged.emit(status_icon_index, status_icon_index, [Qt.ItemDataRole.DecorationRole] )
+
     def on_directory_loaded(self, path: str) -> None:
         # Invalidate cache entries for the loaded directory
         # self.invalidate_cache_for_directory(path)
@@ -343,7 +352,8 @@ class helabFileSystemModel(QFileSystemModel):
             for column in range(topLeft.column(), bottomRight.column() + 1):
                 index = self.index(row, column, topLeft.parent())
                 file_path = self.filePath(index)
-                logging.debug(f"on_data_changed: {file_path}")
+                # logging.debug(f"on_data_changed: {file_path}")
+                pass
 
         # self.refresh()
 
@@ -541,7 +551,7 @@ class helabFileSystemModel(QFileSystemModel):
         # threadpool.start(worker)
         #
         # return True  # Return False initially, update will be handled in on_has_children_finished
-        
+
     # def on_has_children_finished(self, model_root_path: str, has_children: bool):
     #     index = self.index(model_root_path)
     #     if index.isValid():
@@ -564,7 +574,7 @@ class helabFileSystemModel(QFileSystemModel):
             del self.running_workers_hasChildren[dir_path]
             # logging.debug(f"Worker removed from running_workers_hasChildren for: {model_root_path}")
 
-            logging.debug(f"on_has_children_finished for: {dir_path}: {has_children}, value in cache: {self.hasChildren_cache[dir_path]}")
+            # logging.debug(f"on_has_children_finished for: {dir_path}: {has_children}, value in cache: {self.hasChildren_cache[dir_path]}")
             # logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {self.hasChildren_cache.currsize}") # type: ignore[attr-defined]
         else:
             logging.warning(f"on_has_children_finished: running_workers_hasChildren has no: {dir_path}")
@@ -581,3 +591,43 @@ class helabFileSystemModel(QFileSystemModel):
                 index,
                 [Qt.ItemDataRole.DisplayRole]
             )
+
+    def get_visible_rows(self, parent: QModelIndex = QModelIndex()) -> List[Tuple[QModelIndex, str]]:
+        """Get all visible rows in the model."""
+        rows = []
+        row_count = self.rowCount(parent)
+
+        for row in range(row_count):
+            index = self.index(row, 0, parent)
+            filepath = self.filePath(index)
+            rows.append((index, filepath))
+
+            # If item has children and is expanded, recursively get its items
+            if self.hasChildren(index):
+                rows.extend(self.get_visible_rows(index))
+
+        return rows
+
+    def rescan(self) -> None:
+        logging.info("helabFileSystemModel.rescan: called")
+
+        rows = self.get_visible_rows()
+        for index, path in rows:
+            # self.fetch_status(filepath)
+            # self.hasChildren(filepath)
+            status_report = status_cache.get(path)
+            if isinstance(status_report, StatusReport):
+                vpath, vfile, vdata = status_report.validate_ok()
+                logging.debug(f"rescan: got {vpath = }, {vfile = }, {vdata = } \tat {path}")
+                if not vfile:
+                    logging.debug(f"rescan: status_cache pop {path}")
+                    status_cache.pop(path)
+                    # self.fetch_status(path)
+
+                if any(i in status_report.extra_icons for i in ['ram', 'ram_single', 'ram_opened']):
+                    if path == self.folder_opened_path:
+                        status_report.update_ram_status(is_opened=True)
+                    else:
+                        status_report.update_ram_status(is_opened=False)
+        self.refresh()
+        pass

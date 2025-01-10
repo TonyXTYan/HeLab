@@ -170,10 +170,10 @@ class StatusHoverIconInfo(QWidget):
 
         eng = matlab.engine.start_matlab()
         # eng.addpath(DEV_PATH_TO_TDC_AUTOCONVERTER_GIT_FOLDER)
-        eng.addpath(eng.genpath(DEV_PATH_TO_TDC_AUTOCONVERTER_GIT_FOLDER))
+        eng.addpath(eng.genpath(DEV_PATH_TO_TDC_AUTOCONVERTER_GIT_FOLDER))                          # type: ignore[reportOptionalMemberAccess, unused-ignore]
         file_list = [f"d{shot}.txt" for shot in self.d_only_dld_shots]
         logging.debug(f"action1_fill_missing_dld: {file_list = }, {self.status_report.path = }")
-        eng.tdc_convert_filelist(file_list, self.status_report.path, nargout=0)
+        eng.tdc_convert_filelist(file_list, self.status_report.path, nargout=0)                     # type: ignore[reportOptionalMemberAccess, unused-ignore]
 
         status_cache.pop(self.status_report.path)
         data_ram_cache.pop(self.status_report.path)
@@ -192,10 +192,10 @@ class StatusHoverIconInfo(QWidget):
             return
 
         eng = matlab.engine.start_matlab()
-        eng.addpath(eng.genpath(DEV_PATH_TO_TDC_AUTOCONVERTER_GIT_FOLDER))
+        eng.addpath(eng.genpath(DEV_PATH_TO_TDC_AUTOCONVERTER_GIT_FOLDER))                          # type: ignore[reportOptionalMemberAccess, unused-ignore]
         file_list = [f"d{shot}.txt" for shot in self.status_report.problematic_txy_ns]
         logging.debug(f"action2_recalc_txys: {file_list = }, {self.status_report.path = }")
-        eng.tdc_convert_filelist(file_list, self.status_report.path, nargout=0)
+        eng.tdc_convert_filelist(file_list, self.status_report.path, nargout=0)                     # type: ignore[reportOptionalMemberAccess, unused-ignore]
 
         status_cache.pop(self.status_report.path)
         data_ram_cache.pop(self.status_report.path)

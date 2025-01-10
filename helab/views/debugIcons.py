@@ -3,7 +3,7 @@ import stat
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QSizePolicy, QSplitter
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QCloseEvent
 
 from helab.resources.icons import StatusIcons, ToolIcons, PercentageIcon
 
@@ -107,3 +107,8 @@ class DebugIconsWindow(QWidget):
 
         layout.addWidget(splitter)
         self.setLayout(layout)
+
+    def closeEvent(self, a0: QCloseEvent|None) -> None:
+        logging.debug("DebugIconsWindow.closeEvent")
+        super().closeEvent(a0)
+        self.deleteLater()

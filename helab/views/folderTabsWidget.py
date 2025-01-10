@@ -70,6 +70,8 @@ class FolderTabWidget(QTabWidget):
                         close_button.setEnabled(True)  # Enable the close button
                     current_folder_explorer = self.widget(index)
                     if isinstance(current_folder_explorer, FolderExplorer):
+                        # current_folder_explorer.tree.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)     # Just click to select multiple items
+                        # current_folder_explorer.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)  # Hold Cmd or Shift to select multiple items
                         # current_folder_explorer.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
                         # current_folder_explorer.tree.setEnabled(True)
                         pass
@@ -171,20 +173,20 @@ class FolderTabWidget(QTabWidget):
         # Add the FolderExplorer as a new tab
         # self.tab_widget.addTab(folder_explorer, 'File Explorer')
 
-    def update_folder_explorer_tab_title_on_root_change(self, path: str, index: int) -> None:
-        logging.debug(f"update_folder_explorer_tab_title: {index = } and {path = }")
-        # self.tab_widget.setTabText(index, os.path.basename(path))
+    def update_folder_explorer_tab_title_on_root_change(self, selected_path: str, index: int) -> None:
+        logging.debug(f"update_folder_explorer_tab_title: {index = } and {selected_path = }")
+        # self.tab_widget.setTabText(index, os.selected_path.basename(selected_path))
         if platform.system() == 'Windows':
-            drive, tail = os.path.splitdrive(path)
+            drive, tail = os.path.splitdrive(selected_path)
             if tail in ('\\', '/'):
                 self.setTabText(index, drive)
             else:
-                self.setTabText(index, os.path.basename(path))
+                self.setTabText(index, os.path.basename(selected_path))
         else:
-            if path == "/":
+            if selected_path == "/":
                 self.setTabText(index, "/")
             else:
-                self.setTabText(index, os.path.basename(path))
+                self.setTabText(index, os.path.basename(selected_path))
 
         logging.debug(f"update_folder_explorer_tab_title: {self.tabText(index) = }")
 
@@ -207,7 +209,6 @@ class FolderTabWidget(QTabWidget):
             current_folder_explorer.on_back_button_clicked()
             self.tab_back_button_enabled = current_folder_explorer.back_button_enabled
             logging.debug(f"folderTabWidget.on_back_button_clicked: {self.tab_back_button_enabled = }")
-
 
     def clear_status_cache(self) -> None:
         self.status_cache.clear()

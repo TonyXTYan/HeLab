@@ -2,6 +2,12 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+import logging
+from typing import List
+
+from PyQt6.QtCore import QSettings
+# from PyQt6.QtGui import QFontDatabase, QFont
 
 from joblib.externals.loky.process_executor import MAX_DEPTH
 
@@ -12,6 +18,11 @@ from joblib.externals.loky.process_executor import MAX_DEPTH
 #     spacing: 5px;
 # }
 # """
+
+# try:
+#     helab_mono_font = QFont("SF Mono", 12)
+# except:
+#     helab_mono_font = QFont("Monospace", 12)
 
 TOOLBAR_STYLESHEET_LR = """
     QToolBar {
@@ -79,11 +90,45 @@ APP_VERSION = get_version()
 APP_COMMIT_HASH = get_git_commit_hash()
 
 CURRENT_WORKING_DIRECTORY = os.getcwd()
-DIR_TEMPS = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps')
 
-DIR_CACHES = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches')
+TEMPFILE_PREFIX = tempfile.gettempdir()
 
-DIR_TEMP = "/tmp/cache"
+DIR_TEMPS_CANDIDATES = [
+    os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps'),
+    os.path.join(TEMPFILE_PREFIX, 'helab_temps'),
+    # tempfile.mkdtemp(prefix='helab_temps'),
+]
+DIR_CACHES_CANDIDATES = [
+    os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches'),
+    os.path.join(TEMPFILE_PREFIX, 'helab_caches'),
+    # tempfile.mkdtemp(prefix='helab_caches'),
+]
+
+INDICATOR_DOTS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+def get_setting_or_default(key: str, candidates: List[str]) -> str:
+    settings = QSettings("ANU", "HeLab")
+    value = settings.value(key, type=str)
+    if value and isinstance(value, str):
+        if os.path.exists(value):
+            return str(value)
+        else: 
+            logging.warning(f"Setting {key} with path {value} does not exist. Replacing with default.")
+        # settings.setValue(key, value)  # Save the used value
+    else:
+        logging.warning(f"Setting {key} not found. Replacing with default.")
+    new_value = next((path for path in candidates if os.path.exists(path)), '')
+    settings.setValue(key, new_value)  # Save the replaced value
+    return new_value
+
+
+DIR_TEMPS = get_setting_or_default("dir_temps", DIR_TEMPS_CANDIDATES)
+DIR_CACHES = get_setting_or_default("dir_caches", DIR_CACHES_CANDIDATES)
+
+
+# DIR_TEMPS = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps')
+# DIR_CACHES = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches')
+# DIR_TEMP = "/tmp/cache"
 
 OS_DIR_CACHE_TTL = 60*60 # seconds
 
@@ -95,8 +140,8 @@ DEV_POTENTIAL_DATA_PATHS = [
     '/Users/tonyyan/.cache/2024_Momentum_Bells_V2 - 20241200',
     # '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - Testing MS Teams/2024_Momentum_Bells_V2 - 20241200',
     # Don't use OneDrive it's shit (cause file system hangs)
-    os.path.join(os.getcwd(),'tests_sample_data'),
-    os.getcwd(),
+    os.path.join(CURRENT_WORKING_DIRECTORY,'tests_sample_data'),
+    CURRENT_WORKING_DIRECTORY,
     '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab',
     'C:\\Users\\XinTong\\Documents',
     'O:\\',

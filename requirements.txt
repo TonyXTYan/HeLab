@@ -5,6 +5,7 @@ types-cachetools
 PyQt6
 PyQt6-Qt6
 PyQt6_sip
+PyQt6-Charts
 pyqt6rc
 pytablericons
 pytest

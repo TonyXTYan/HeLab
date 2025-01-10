@@ -129,6 +129,13 @@ pip install -e .
 ```
 
 
+
+```bash
+python -m cProfile -o helab_main.prof  helab/main.py
+snakeviz helab_main.pro
+```
+
+
 ## Dumps
 
 ![mypy](https://img.shields.io/badge/mypy-f5f5f5.svg?logo=mypy&logoColor=black)

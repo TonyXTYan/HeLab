@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from concurrent.futures import thread
 import gc
 import glob
@@ -25,11 +26,16 @@ from helab.utils.cachingSetup import data_ram_cache, fnum, status_cache
 
 
 class LoadFolderToRamWorkerSignals(QObject):
-    finished = pyqtSignal(str, list, object)  # (folder_path: str, problematic_datasets: List[str], data: DataFrame)
+    finished = pyqtSignal(str, list, pd.DataFrame)  # (folder_path: str, problematic_datasets: List[str], data: DataFrame)
     error = pyqtSignal(str, str) # (folder_path: str, error: str)
+    loading = pyqtSignal(str, float)  # (folder_path: str, progress: float)
 
 
 class LoadFolderToRamWorker(QRunnable):
+
+    _TIMEDELTA_SEC_UPDATE_PROGRESS_MIN = timedelta(seconds=0.5)
+    _TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM = timedelta(seconds=0.5)
+
     def __init__(self, folder_path: str):
         super().__init__()
         self.folder_path = folder_path
@@ -39,7 +45,7 @@ class LoadFolderToRamWorker(QRunnable):
         logging.debug(f"LoadFolderToRamWorker: {self.folder_path = }")
         try:
             data_files = data_ram_cache[self.folder_path]
-            if data_files is not None:
+            if isinstance(data_files, bytes):
                 logging.debug(f"LoadFolderToRamWorker: already in cache (compressed) {fnum(getsizeof(data_files))}B, {self.folder_path = } ")
                 self.signals.finished.emit(self.folder_path, [], self.decompress_dataframe(data_files))
                 return
@@ -82,29 +88,55 @@ class LoadFolderToRamWorker(QRunnable):
                 self.signals.error.emit(self.folder_path, f"Folder too large: {fnum(total_file_size_bytes)}B")
                 return
 
+            time_start_loading = datetime.now()
+            time_last_debug_print = datetime.now()
+            no_loaded_files_since_last_debug_print = 0
+            no_error_files_since_last_debug_print = 0
+            no_total_files = len(files)
 
             data_dict = {}
             problematic_txy_ns = []
-            for file in files:
+            # for file in files:
+            for i, file in enumerate(files):
                 # Extract the base filename
                 basename = os.path.basename(file)
+
+                if datetime.now() - time_start_loading > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_MIN \
+                    and datetime.now() - time_last_debug_print > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM:
+                    # logging.warning(f"LoadFolderToRamWorker: loading {file = } is taking too long")
+                    # logging.debug(f"LoadFolderToRamWorker: loading dir {self.folder_path} \t "
+                    #              f"tElaps = {round((datetime.now() - time_start_loading).total_seconds())}s, "
+                    #              f"tRemng = {round(((datetime.now() - time_start_loading) / (i+1) * (no_total_files-i)).total_seconds())}s, "
+                    #              f"nLoadd = {no_loaded_files_since_last_debug_print}/s, "
+                    #              f"nError = {no_error_files_since_last_debug_print}/s, "
+                    #              f"nTotal = {i+1}/{no_total_files} = {round((i+1)/no_total_files*100,1)}%"
+                    #              )
+                    self.signals.loading.emit(self.folder_path, (i+1)/no_total_files)
+                if datetime.now() - time_last_debug_print > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM:
+                    no_loaded_files_since_last_debug_print = 0
+                    no_error_files_since_last_debug_print = 0
+                    time_last_debug_print = datetime.now()
+
 
                 # Extract the number using string manipulation or regex
                 # Here, we'll use string methods
                 number_str = basename.split('forc')[1].split('.txt')[0]
                 number = int(number_str)
                 try:
-
                     # Load the data into a DataFrame
                     # Adjust the separator if your data uses a different delimiter (e.g., comma, space)
                     df = pd.read_csv(file, sep=',', names=['t', 'x', 'y'])
 
-                    if df.isna().any().any():
+                    if df.isna().any().any():   # Check for NaN values          # type: ignore[reportAttributeAccessIssue]  #pyright bug?
                         problematic_txy_ns.append(number)
                         logging.error(f"LoadFolderToRamWorker: DataFrame contains NaN or empty values in {file}")
+                        logging.critical(f"LoadFolderToRamWorker: {df.isna().sum() = } entries are dropped.")
+                        data_dict[number] = df.dropna()
+                        no_error_files_since_last_debug_print += 1
                     else:
                         # logging.debug(f"LoadFolderToRamWorker: DataFrame is clean for {file}")
                         data_dict[number] = df
+                        no_loaded_files_since_last_debug_print += 1
                         pass
 
                     # df = dd.read_csv(file, sep=',', names=['t', 'x', 'y'])        # spamming log console
@@ -118,11 +150,17 @@ class LoadFolderToRamWorker(QRunnable):
                 except pandas.errors.ParserError as e:
                     logging.error(f"LoadFolderToRamWorker: ParseError at {file = }, {e = }")
                     problematic_txy_ns.append(number)
+                    no_error_files_since_last_debug_print += 1
                     continue
                 except Exception as e:
                     logging.error(f"LoadFolderToRamWorker: failed to load {file = }, {e = }")
                     problematic_txy_ns.append(number)
+                    no_error_files_since_last_debug_print += 1
                     continue
+
+            if datetime.now() - time_start_loading > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_MIN:
+                self.signals.loading.emit(self.folder_path, 1.0)
+                # logging.debug(f"LoadFolderToRamWorker: formatting data {self.folder_path}. ")
 
             # Add a 'file_number' column to each DataFrame
             for number, df in data_dict.items():
