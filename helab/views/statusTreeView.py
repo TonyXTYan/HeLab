@@ -159,7 +159,7 @@ class StatusHoverIconInfo(QWidget):
 
     # Placeholder function for Action 1
     def action1_fill_missing_dld(self) -> None:
-        import matlab.engine
+        import matlab.engine    # type: ignore[reportMissingImports, import-error, import, no-name-in-module, unused-ignore]
         self.button1.setEnabled(False)
         if self.d_only_dld_shots is None:
             logging.fatal("action1_fill_missing_dld: Impossible state")
@@ -182,7 +182,7 @@ class StatusHoverIconInfo(QWidget):
 
     # Placeholder function for Action 2
     def action2_recalc_txys(self) -> None:
-        import matlab.engine
+        import matlab.engine    # type: ignore[reportMissingImports, import-error, import, no-name-in-module, unused-ignore]
         logging.debug("action2_recalc_txys: called")
         self.button2.setEnabled(False)
         if self.status_report is None:

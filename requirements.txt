@@ -30,4 +30,3 @@ diskcache
 pgzip
 pyarrow
 zstandard
-matlabengine
