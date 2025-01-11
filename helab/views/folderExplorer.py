@@ -35,7 +35,6 @@ class FolderExplorer(QWidget):
     rootPathChanged = pyqtSignal(str)
     itemExpandedSignal = pyqtSignal(QModelIndex)
 
-    # noinspection PyUnresolvedReferences
     def __init__(self,
                  model_root_path: str,
                  target_path: str,
@@ -356,7 +355,7 @@ class FolderExplorer(QWidget):
             raise RuntimeError("FolderExplorer.__init__ encountered selectionModel without select method")
         return selection_model
 
-    # noinspection PyUnresolvedReferences
+    
     def show_context_menu(self, position: QPoint) -> None:
         # Map the position to the tree view's viewport
         index = self.tree.indexAt(position)

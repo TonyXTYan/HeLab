@@ -1,3 +1,5 @@
+#helab/workers/statusWorker.py
+from __future__ import annotations
 from datetime import datetime
 import os
 import random
@@ -30,7 +32,7 @@ class StatusReport:
                  d_dld_shots:
                  Optional[List[int]] = None,
                  d_txy_shots: Optional[List[int]] = None,
-                 time_last_updated: Optional[datetime] = datetime.now()
+                 time_last_updated: datetime = datetime.now()
                  ):
         self.path = path
         self.status = status
@@ -46,6 +48,43 @@ class StatusReport:
         self.log_LabviewMatlab_txt: Optional[str] = None
         self.log_KeysightMatlab_txt: Optional[str] = None
         self.about_txt: Optional[str] = None
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, StatusReport):
+            return False
+        # self.path == other.path
+        return (self.path == other.path and
+                self.status == other.status and
+                self.count == other.count and
+                self.extra_icons == other.extra_icons and
+                self.d_dld_shots == other.d_dld_shots and
+                self.d_txy_shots == other.d_txy_shots and
+                self.problematic_txy_ns == other.problematic_txy_ns and
+                self.payload_progress_ram == other.payload_progress_ram and
+                self.time_last_updated == other.time_last_updated and
+                self.time_load_ram == other.time_load_ram and
+                self.log_LabviewMatlab_txt == other.log_LabviewMatlab_txt and
+                self.log_KeysightMatlab_txt == other.log_KeysightMatlab_txt and
+                self.about_txt == other.about_txt
+                )
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    def __le__(self, other: StatusReport) -> bool:
+        return self.time_last_updated <= other.time_last_updated
+
+    def __lt__(self, other: StatusReport) -> bool:
+        return self.time_last_updated < other.time_last_updated
+
+    def __ge__(self, other: StatusReport) -> bool:
+        return self.time_last_updated >= other.time_last_updated
+
+    def __gt__(self, other: StatusReport) -> bool:
+        return self.time_last_updated > other.time_last_updated
+
+
+
 
     def _update_cache(self) -> None:
         status_cache[self.path] = self
@@ -134,9 +173,9 @@ class StatusReport:
                     logging.debug(f"StatusReport.validate_ok: {self.path} is in loading_ram but not in running_workers_ramLoading")
                     return (False, False, False)
 
-            if self.time_last_updated is None:
-                # logging.debug(f"StatusReport.validate_ok: time_last_updated is None")
-                return (False, False, False)
+            # if self.time_last_updated is None:
+            #     # logging.debug(f"StatusReport.validate_ok: time_last_updated is None")
+            #     return (False, False, False)
 
             path_last_modified_time = datetime.fromtimestamp(os.path.getatime(self.path))
             # if path_last_modified_time is None:
@@ -187,13 +226,18 @@ class StatusReport:
     def _sorted_extra_icons_to_QIcons(extra_icons: list[str]) -> list[object]:
         return [StatusIcons.ICONS_EXTRA.get(icon_key) for icon_key in StatusReport._sort_extra_icons(extra_icons)]
 
+
+
+
+
+
 # Define WorkerSignals to communicate between threads
 class StatusWorkerSignals(QObject):
     # finished = pyqtSignal(str, str, int, list)  # file_path, status, count, extra_icons
     finished = pyqtSignal(StatusReport)  # file_path, status, count, extra_icons
 
 # Define the Worker class with cancellation support
-# noinspection PyUnresolvedReferences
+
 class StatusWorker(QRunnable):
     def __init__(self, file_path: str, invalidate_cache:bool=False):
         # QObject.__init__(self)

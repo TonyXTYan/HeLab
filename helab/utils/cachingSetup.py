@@ -9,7 +9,7 @@ from diskcache import FanoutCache
 from copy import deepcopy
 from PyQt6.QtCore import QSettings
 
-from helab.utils.constants import DIR_CACHES
+from helab.utils.constants import *
 from helab.utils.loggingSetup import setup_logging
 
 
@@ -80,7 +80,7 @@ def load_cache_param(cache_name: str) -> OrderedDict[str, Any]:
     :return: An OrderedDict containing the cache parameters.
     :rtype: OrderedDict[str, Any]
     """
-    settings = QSettings("ANU", "HeLab")
+    settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
     base_params = deepcopy(CACHE_PARAMS_DEFAULTS)
 
     for key, val in CACHE_PARAMS_OVERRIDE.get(cache_name, {}).items():
@@ -120,7 +120,7 @@ def fnum(num: int) -> str:
 
     e.g.
 
-    - `fnum(123)`  -> `'  123'`
+    - `fnum(123)`  -> `'   123'`
     - `fnum(1234)` -> `'1.234K'`
     - `fnum(123000)`  -> `'123.0K'`
     - `fnum(1234567)` -> `'1.235M'`
@@ -153,14 +153,12 @@ def cache_status_string() -> str:
 
 
 
-
 # def custom_key_function(func, *args, **kwargs):
 #     # Create a unique string representation of the function and its arguments
 #     key_string = f"{func.__module__}.{func.__name__}:{args}:{kwargs}"
 #     # Hash the string using SHA-256
 #     # print(f"custom_key_function: {key_string = }, hash = {hashlib.sha256(key_string.encode()).hexdigest()}")
 #     return hashlib.sha256(key_string.encode()).hexdigest()
-
 
 
 # Status Cache Management

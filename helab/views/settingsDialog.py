@@ -275,7 +275,7 @@ class SettingsDialog(QDialog):
                     # number_filed.setValue(existing_params[pkey])
 
                      # Auto-select unit for the existing value
-                    size_in_bytes = existing_params[pkey]
+                    size_in_bytes = int(existing_params[pkey])
 
                     units = ["B", "KB", "MB", "GB", "TB"] if pkey != "sqlite_cache_size" else ["I", "K", "M", "G", "T"]
 
@@ -330,7 +330,7 @@ class SettingsDialog(QDialog):
 
 
     def load_settings(self) -> None:
-        settings = QSettings("ANU", "HeLab")
+        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
         self.example_checkbox.setChecked(settings.value("example_checkbox", False, type=bool))
         self.example_text.setText(settings.value("example_text", "", type=str))
         self.dir_temps_edit.setText(settings.value("dir_temps", DIR_TEMPS, type=str))
@@ -338,7 +338,7 @@ class SettingsDialog(QDialog):
         logging.debug("Settings loaded")
 
     def save_settings(self) -> None:
-        settings = QSettings("ANU", "HeLab")
+        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
         settings.setValue("example_checkbox", self.example_checkbox.isChecked())
         settings.setValue("example_text", self.example_text.text())
         settings.setValue("dir_temps", self.dir_temps_edit.text())
@@ -419,7 +419,7 @@ class SettingsDialog(QDialog):
         self.deleteLater()
 
     def reset_settings(self) -> None:
-        settings = QSettings("ANU", "HeLab")
+        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
         settings.clear()
         self.load_settings()
         logging.debug("Settings reset to default")

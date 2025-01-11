@@ -38,12 +38,12 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 import plotly
 
 
-# noinspection PyUnresolvedReferences
+
 class MainWindow(QMainWindow):
     DEFAULT_WIDTH = 1600
     DEFAULT_HEIGHT = 900
 
-    # noinspection PyUnresolvedReferences
+    
     def __init__(self) -> None:
         super().__init__()
         logging.debug(f"Current directory is {CURRENT_WORKING_DIRECTORY}")
@@ -270,7 +270,7 @@ class MainWindow(QMainWindow):
 
         # self.status_bar_message_right.setToolTip("(App resource usage) / (system total resource usage)")
 
-    # noinspection PyUnresolvedReferences
+    
     def create_menus(self) -> None:
         # Add menus and actions
         # 
@@ -344,7 +344,7 @@ class MainWindow(QMainWindow):
             self.view_toggle_status_bar.triggered.connect(lambda: self.status_bar.setVisible(not self.status_bar.isVisible()))
             menu_view.addAction(self.view_toggle_status_bar)
 
-            settings = QSettings("ANU", "HeLab")
+            settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
             self.view_toggle_thread_status = QAction('Toggle Thread Status Auto Pop-up', self)
             self.view_toggle_thread_status.setCheckable(True)
             self.view_toggle_thread_status.setChecked(settings.value("view_toggle_thread_status", type=bool, defaultValue=True))
@@ -1035,7 +1035,7 @@ class MainWindow(QMainWindow):
         hasChildren_cache.close()
 
         # Save settings
-        # settings = QSettings("ANU", "HeLab")
+        # settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
         # settings.setValue("geometry", self.saveGeometry())
         # settings.setValue("windowState", self.saveState())
         # super().closeEvent(a0)

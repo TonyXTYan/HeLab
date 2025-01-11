@@ -1,15 +1,18 @@
+# helab/utils/threadingSetup.py
+from __future__ import annotations
 import logging
 import os
 import sys
-from typing import Dict, Tuple
+from typing import Dict, Tuple, TYPE_CHECKING
 
 from PyQt6.QtCore import QThreadPool
 from humanfriendly.terminal import message
 
-from helab.workers.directoryCheckWorker import DirectoryCheckWorker
-from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
-from helab.workers.statusDeepWorker import StatusDeepWorker
-from helab.workers.statusWorker import StatusWorker
+if TYPE_CHECKING:
+    from helab.workers.directoryCheckWorker import DirectoryCheckWorker
+    from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
+    from helab.workers.statusDeepWorker import StatusDeepWorker
+    from helab.workers.statusWorker import StatusWorker
 
 running_workers_status: Dict[str, StatusWorker] = {}
 running_workers_deep: Dict[str, StatusDeepWorker] = {}

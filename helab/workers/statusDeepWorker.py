@@ -26,68 +26,18 @@ class StatusDeepWorker(QRunnable):
     def run(self) -> None:
         logging.debug(f"Deep Worker started for: {self.root_path}, invalidate_cache = {self.invalidate_cache}")
         directory_list: List[str] = []
-        # queue = [(self.root_path, 0)]  # Each item is a tuple (path, depth)
-        # try:
-        #     while queue:
-        #         if self._is_cancelled:
-        #             logging.debug(f"Deep worker cancelled: {self.root_path}")
-        #             return
-        #         current_path, current_depth = queue.pop(0)
-        #         if current_depth > self.current_depth:
-        #             continue
-        #         directory_list.append(current_path)
-        #         if current_depth < self.current_depth:
-        #             try:
-        #                 dirs = [
-        #                     d for d in os.listdir(current_path)
-        #                     if os.path.isdir(os.path.join(current_path, d))
-        #                 ]
-        #             except PermissionError as e:
-        #                 logging.error(f"PermissionError accessing {current_path}: {e}")
-        #                 continue
-        #             except Exception as e:
-        #                 logging.error(f"Error accessing {current_path}: {e}")
-        #                 continue
-        #             for dir_name in dirs:
-        #                 model_root_path = os.path.join(current_path, dir_name)
-        #                 if self._is_cancelled:
-        #                     logging.debug(f"Deep worker cancelled during BFS: {self.root_path}")
-        #                     return
-        #                 queue.append((model_root_path, current_depth + 1))
-        # except Exception as e:
-        #     logging.error(f"Error in StatusDeepWorker: {e}")
-        #     return
-        # self.signals.finished.emit(self.root_path, directory_list)
-        # logging.debug(f"Deep worker finished for: {self.root_path}")
+
         if self._is_cancelled:
             logging.debug(f"StatusDeepWorker cancelled: {self.root_path}")
-            self.signals.finished.emit(self.root_path, directory_list, -100)
+            self.signals.finished.emit(self.root_path, directory_list)
             return
         try:
-            # Gather only immediate subdirectories of self.root_path
-            # dirs = [
-            #     d for d in os_listdir(self.root_path)
-            #     if os_isdir(os.path.join(self.root_path, d))
-            # ]
-
-            # os_scandir_results =  os_scandir_sns(self.root_path)
-            # for entry in os_scandir_results:
-            #     # logging.debug(f"StatusDeepWorker: entry: {entry.path}")
-            #     if self._is_cancelled:
-            #         logging.debug(f"StatusDeepWorker cancelled during BFS: {self.root_path}")
-            #         self.signals.finished.emit(self.root_path, directory_list, -100)
-            #         return
-            #     if entry.is_dir:
-            #         directory_list.append(entry.path)
-
-            # os_listdir_results = os_listdir(self.root_path)
-            # logging.debug(f"StatusDeepWorker: os_listdir_results: {os_listdir_results}")
             os_listdir_results = os_listdir_filtered(self.root_path, invalidate_cache=self.invalidate_cache)
             for entry in os_listdir_results:
                 path = os.path.join(self.root_path, entry)
                 if self._is_cancelled:
                     logging.debug(f"StatusDeepWorker cancelled during BFS: {self.root_path}")
-                    self.signals.finished.emit(self.root_path, directory_list, -100)
+                    self.signals.finished.emit(self.root_path, directory_list)
                     return
                 if os_isdir(path):
                     directory_list.append(path)

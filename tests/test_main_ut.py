@@ -10,6 +10,9 @@ from PyQt6.QtWidgets import QApplication
 from helab.resources.icons import IconsInitUtil
 from helab.views.helabMainWindow import MainWindow
 
+import pytest
+import os
+pytestmark = pytest.mark.skipif("PYTEST_XDIST_WORKER" in os.environ, reason="Skip parallel tests due to PyQt concurrency issues.")
 
 class TestMainWindow(unittest.TestCase):
     app: QCoreApplication | QApplication | None
@@ -57,7 +60,29 @@ class TestMainWindow(unittest.TestCase):
             logging.error(f"Error in tearDown: {e}")
             pass
 
+    # def test_app_initialization(self) -> None:
+    #     self.assertIsNotNone(self.app)
+    #     self.assertIsNotNone(self.main_window)
 
+    # def test_window_title(self) -> None:
+    #     self.assertTrue("HeLab" in self.main_window.windowTitle())
+
+    # def test_default_size(self) -> None:
+    #     self.assertEqual(self.main_window.width(), MainWindow.DEFAULT_WIDTH)
+    #     self.assertEqual(self.main_window.height(), MainWindow.DEFAULT_HEIGHT)
+
+    # def test_menus_created(self) -> None:
+    #     menus = self.main_window.menu_bar.actions()
+    #     menu_titles = [menu.text() for menu in menus]
+    #     self.assertIn('File', menu_titles)
+
+    # def test_central_widget_setup(self) -> None:
+    #     time.sleep(0.05)
+    #     self.assertIsNotNone(self.main_window.splitter)
+    #     self.assertIsNotNone(self.main_window.left_panel)
+    #     self.assertIsNotNone(self.main_window.middle_mainwindow)
+    #     self.assertIsNotNone(self.main_window.right_panel)
+    #     time.sleep(0.05)
 
     # def test_window_title(self) -> None:
     #     # self.assertEqual(self.main_window.windowTitle(), 'HeLab')

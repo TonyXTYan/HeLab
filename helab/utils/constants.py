@@ -7,6 +7,8 @@ import logging
 from typing import List
 import hashlib
 
+from typing import Optional
+
 from PyQt6.QtCore import QSettings
 # from PyQt6.QtGui import QFontDatabase, QFont
 
@@ -105,6 +107,13 @@ def get_git_commit_hash() -> str:
 APP_VERSION = get_version()
 APP_COMMIT_HASH = get_git_commit_hash()
 
+
+QSETTINGS_ORG_NAME = "ANU_HE_BEC_GROUP"
+QSETTINGS_APP_NAME = "HeLab"
+QSETTINGS_APP_NAME_SANDBOX = "Helab_SANDBOX"
+
+
+
 CURRENT_WORKING_DIRECTORY = os.getcwd()
 
 TEMPFILE_PREFIX = tempfile.gettempdir()
@@ -126,17 +135,18 @@ DIR_CACHES_CANDIDATES = [
 
 INDICATOR_DOTS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
-def get_path_from_setting_or_use_default(key: str, candidates: List[str]) -> str:
+def get_path_from_setting_or_use_default(key: str, candidates: List[str], sandbox_app: Optional[str] = None) -> str:
     """
-    Retrieve a setting value by key or replace it with a default from candidates if not found or invalid.
-    :param key: The key to look up in the settings.
-    :type key: str
-    :param candidates: A list of candidate paths to use as default if the setting is not found or invalid.
-    :type candidates: List[str]
-    :return: The valid setting value or a default from the candidates.
-    :rtype: str    
+    This function attempts to retrieve a setting value using the provided key. If the value is found and is a valid path,
+    it is returned. If the value is not found or is invalid, the function will search through the provided list of 
+    candidate paths and return the first valid path. If no valid path is found, an error is raised.
+
+    :param sandbox_app: Optional application name for sandbox settings. Defaults to None.
+    :type sandbox_app: Optional[str]
+    :raises NotADirectoryError: If no valid default path is found in the candidates.
     """
-    settings = QSettings("ANU", "HeLab")
+    
+    settings = QSettings(QSETTINGS_ORG_NAME, sandbox_app or QSETTINGS_APP_NAME)
     value = settings.value(key, type=str)
     if value and isinstance(value, str):
         if os.path.exists(value):
@@ -147,6 +157,9 @@ def get_path_from_setting_or_use_default(key: str, candidates: List[str]) -> str
     else:
         logging.warning(f"Setting {key} not found. Replacing with default.")
     new_value = next((path for path in candidates if os.path.exists(path)), '')
+    if new_value == '':
+        logging.error(f"No valid default path found for {key}.")
+        raise NotADirectoryError(f"No valid default path found for {key = }, {candidates = }.")
     settings.setValue(key, new_value)  # Save the replaced value
     return new_value
 
@@ -236,3 +249,9 @@ def hash_str(path: str) -> str:
 
 def hash_str_to_int(code: str) -> int:
     return base62_decode(code)
+
+
+
+
+
+

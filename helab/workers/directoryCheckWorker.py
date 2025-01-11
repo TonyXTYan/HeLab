@@ -1,3 +1,4 @@
+#helab/workers/directoryCheckWorker.py
 import logging
 import os
 
@@ -8,6 +9,7 @@ from helab.utils.os_cached import os_isdir, os_listdir, os_listdir_filtered
 
 class WorkerSignals(QObject):
     finished = pyqtSignal(str, bool)
+
 
 class DirectoryCheckWorker(QRunnable):
     finished = pyqtSignal(bool)

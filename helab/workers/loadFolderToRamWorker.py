@@ -48,11 +48,11 @@ class LoadFolderToRamWorker(QRunnable):
         self._cancel_requested = False
         self._cancel_message = ""
 
-    # noinspection PyUnresolvedReferences
+    
     def run(self) -> None:
         logging.debug(f"LoadFolderToRamWorker: {self.folder_path = }")
 
-        # noinspection PyUnresolvedReferences
+        
         def _check_cancel_status() -> None:
             if self._cancel_requested:
                 logging.warning(f"LoadFolderToRamWorker: {self.folder_path = } was canceled.")
