@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from types import SimpleNamespace
 from typing import Iterator, List, Any, cast, Callable, Dict
 
+# import aiofiles
+
 from helab.utils.cachingSetup import os_isdir_cache, os_listdir_cache, os_scandir_cache
 from helab.utils.constants import OS_DIR_CACHE_TTL
 
@@ -27,6 +29,7 @@ def os_listdir(path: str, invalidate_cache:bool=False) -> List[str]:
 def _os_listdir(path: str) -> List[str]:
     with os.scandir(path) as entries:
         return [entry.name for entry in entries]
+    # aiofiles.os.listdir(path)
 
 def os_listdir_filtered(path: str, invalidate_cache:bool=False) -> List[str]:
     """
@@ -48,6 +51,25 @@ def _os_listdir_filtered(path: str) -> List[str]:
            # and entry.startswith('')
            and entry not in ['cache', 'out', 'output', '.DS_Store']
     ]
+
+
+def os_listdirdir(path: str, invalidate_cache:bool=False) -> List[str]:
+    if invalidate_cache:
+        os_listdir_cache.pop(_os_listdirdir.__cache_key__(path))
+    return _os_listdirdir(path) # type: ignore[no-any-return]
+
+@os_listdir_cache.memoize(expire=OS_DIR_CACHE_TTL)  # type: ignore[misc]
+def _os_listdirdir(path: str) -> List[str]:
+    # return [
+    #     entry for entry in os_listdir(path)
+    #     if os_isdir(os.path.join(path, entry))
+    # ]
+    with os.scandir(path) as entries:
+        return [
+            entry.name for entry in entries
+            if entry.is_dir()
+        ]
+
 
 @os_scandir_cache.memoize(expire=OS_DIR_CACHE_TTL)  # type: ignore[misc]
 def _os_scandir_dic(path: str) -> List[Dict[str, Any]]:

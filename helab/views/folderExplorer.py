@@ -289,7 +289,7 @@ class FolderExplorer(QWidget):
             # self.rootPathChanged.emit(file_info.absoluteFilePath())
             self.emit_root_path_changed()
             # logging.debug(f"Double click {index = }, path = {file_info.absoluteFilePath()}")
-            self.model.rescan()
+            self.model.rescan(user_intend = False)
 
     def on_back_button_clicked(self) -> None:
         # Get the parent index of the current root index
@@ -313,7 +313,7 @@ class FolderExplorer(QWidget):
         self.update_back_button_state()
         # self.robotPathChanged.emit(self.model.filePath(self.tree.rootIndex()))
         self.emit_root_path_changed()
-        self.model.rescan()
+        self.model.rescan(user_intend= False)
         logging.debug(f"on_back_button_clicked: New root path: {self.model.filePath(self.tree.rootIndex())}")
 
     def update_back_button_state(self) -> None:
@@ -557,7 +557,7 @@ class FolderExplorer(QWidget):
 
         logging.debug(f"  {status_report.status = }")
 
-        if not status_report.status in ['ok', 'fixable', 'warning', 'critical']:
+        if not status_report.status in StatusReport.STATUS_CONTAINS_DATA:
             # logging.warning(f"  status is not STATUS_OK for {file_path = }")
             return (-3, None)
 
@@ -808,9 +808,9 @@ class FolderExplorer(QWidget):
         # self._set_initial_rootIndex()
         logging.debug("FolderExplorer.refresh() finished.")
 
-    def rescan(self) -> None:
+    def rescan(self, user_intend: bool = False) -> None:
         logging.debug(f"FolderExplorer.rescan() view_path: {self.view_path} model_root_path: {self.model_root_path} target_path: {self.target_path}")
-        self.model.rescan()
+        self.model.rescan(user_intend = user_intend)
         pass
 
 

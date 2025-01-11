@@ -8,6 +8,8 @@ from typing import Dict, Tuple, TYPE_CHECKING
 from PyQt6.QtCore import QThreadPool
 from humanfriendly.terminal import message
 
+logging.critical("threadingSetup.py: Loading")
+
 if TYPE_CHECKING:
     from helab.workers.directoryCheckWorker import DirectoryCheckWorker
     from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
@@ -40,7 +42,9 @@ def running_worker_queues_len() -> Tuple[int,int,int,int]:
 
 def all_pools_total_activeThreadCount() -> int:
     return  thread_pool_general.activeThreadCount() + \
-            thread_pool_load_data_ram.activeThreadCount()
+            thread_pool_load_data_ram.activeThreadCount() + \
+            getattr(QThreadPool.globalInstance(), 'activeThreadCount', lambda: 0)()
+            # QThreadPool.globalInstance().activeThreadCount()
 
 
 def clear_all_thread_pools() -> None:

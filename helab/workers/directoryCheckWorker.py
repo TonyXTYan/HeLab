@@ -4,15 +4,17 @@ import os
 
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable
 
+from helab.utils.cachingSetup import hasChildren_cache
 from helab.utils.os_cached import os_isdir, os_listdir, os_listdir_filtered
 
 
 class WorkerSignals(QObject):
     finished = pyqtSignal(str, bool)
+    canceled = pyqtSignal(str)
 
 
 class DirectoryCheckWorker(QRunnable):
-    finished = pyqtSignal(bool)
+    # finished = pyqtSignal(bool)
 
     def __init__(self, dir_path: str) -> None:
         super().__init__()
@@ -21,7 +23,10 @@ class DirectoryCheckWorker(QRunnable):
         self._is_canceled = False
 
     def run(self) -> None:
-        if self._is_canceled: return
+        if self._is_canceled:
+            self.signals.canceled.emit(self.dir_path)
+            hasChildren_cache.pop(self.dir_path, None)
+            return
         # wtf = os_scandir(self.model_root_path)
         try:
             # entries = [entry for entry in os_listdir(self.model_root_path) if not entry.endswith('.txt') and entry not in ['cache', 'out', 'output']]
@@ -54,6 +59,7 @@ class DirectoryCheckWorker(QRunnable):
             num_non_txt_paths = None
         # logging.debug(f"DirectoryCheckWorker finished for: {self.model_root_path}, result = {result}")
         # logging.debug(f"DirectoryCheckWorker finished for: {self.dir_path}, result = {result}, num_non_txt_paths = {num_non_txt_paths}")
+        hasChildren_cache[self.dir_path] = result
         self.signals.finished.emit(self.dir_path, result)
 
     def cancel(self) -> None:

@@ -293,6 +293,7 @@ def str_to_QIcon(text: str, size: int = 128*4, scaled: int = 128) -> QIcon:
 
 
 class PercentageIcon:
+
     """
     A class to manage and cache icons representing percentage progress.
 

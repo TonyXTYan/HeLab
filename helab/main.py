@@ -38,6 +38,7 @@ if __name__ == "__main__":
     logging.warning("this is a warning message")
     logging.error("this is an error message")
     logging.critical("this is a critical message")
+    logging.fatal("this is a fatal message")
 
     logging.info(f"Platform: {sys.platform}, {platform.system()}, {platform.release()}, {platform.version()}, {platform.machine()}, {platform.processor()}")
     logging.info(f"{tempfile.gettempdir() = }")

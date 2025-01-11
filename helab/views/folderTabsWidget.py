@@ -154,8 +154,8 @@ class FolderTabWidget(QTabWidget):
 
         self.setCurrentIndex(index)
 
-        QTimer.singleShot(300, self.refresh_current_folder_explorer)
-        QTimer.singleShot(600, self.rescan_current_folder_explorer)
+        QTimer.singleShot(300, lambda: self.rescan_current_folder_explorer(user_intend = False))
+        # QTimer.singleShot(600, lambda: self.rescan_current_folder_explorer(user_intend = False))
 
 
         # Add the FolderExplorer as a new tab
@@ -216,10 +216,10 @@ class FolderTabWidget(QTabWidget):
         else:
             logging.warning("Current tab is not a FolderExplorer instance.")
 
-    def rescan_current_folder_explorer(self) -> None:
+    def rescan_current_folder_explorer(self, user_intend: bool = False) -> None:
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
-            current_folder_explorer.rescan()
+            current_folder_explorer.rescan(user_intend)
             logging.info("FolderTabWidget.rescan_current_folder_explorer() returned.")
         else:
             logging.warning("Current tab is not a FolderExplorer instance.")

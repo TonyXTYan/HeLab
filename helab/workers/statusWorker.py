@@ -17,13 +17,17 @@ from PyQt6.QtTest import QTest
 from helab.utils.cachingSetup import *
 from helab.utils.threadingSetup import *
 from helab.resources.icons import StatusIcons, IconsInitUtil, circular_progress_QIcon_cached
-from helab.utils.os_cached import os_isdir, os_listdir
+from helab.utils.os_cached import os_isdir, os_listdir, os_listdir_filtered, os_listdirdir
 
 
 # from helab.models.helabFileSystemModel import helabFileSystemModel
 
 
 class StatusReport:
+    STATUS_CONTAINS_DATA = ['ok', 'fixable', 'warning', 'critical', 'something']
+    STATUS_MISTRY = ['canceled', 'unknown', 'loading', 'maybe']
+    STATUS_NOTHING = ['nothing', 'missing']
+
     def __init__(self,
                  path: str,
                  status: str,
@@ -84,8 +88,6 @@ class StatusReport:
         return self.time_last_updated > other.time_last_updated
 
 
-
-
     def _update_cache(self) -> None:
         status_cache[self.path] = self
 
@@ -128,6 +130,26 @@ class StatusReport:
             #     self.update_extend_extras('ram_single')
             # self.time_load_ram = None
         if update_cache: self._update_cache()
+
+    def update_there_is_something(self) -> None:
+        # self.update_remove_extras('nothing', update_cache=False)
+        # self.update_extend_extras('something', update_cache=True)
+        if self.status not in StatusReport.STATUS_CONTAINS_DATA:
+            self.status = 'something'
+            self._update_cache()
+
+    def update_to_unknown_status(self) -> None:
+        if self.status in StatusReport.STATUS_CONTAINS_DATA:
+            logging.warning(f"StatusReport.update_to_maybe_status: do not call this function like this for {self.path} with {self.status = }"
+                            f", (this call will not doing anything)")
+            return
+        if self.status == 'loading':
+            logging.warning(f"StatusReport.update_to_maybe_status: status still updating for {self.path}"
+                            f", (this call will not doing anything, but anyway this line should never be reached)")
+            return
+        self.status = 'unknown'
+        self._update_cache()
+
 
     def set_loading_ram_status(self) -> None:
         self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'progress_ram'], update_cache=False)
@@ -197,7 +219,7 @@ class StatusReport:
                 #     ok_file = False
                 #     break
                 if file_last_modified_time > self.time_last_updated:
-                    # logging.debug(f"StatusReport.validate_ok: file {file_path} was modified after last update")
+                    # logging.debug(f"StatusReport.validate_ok: file {path} was modified after last update")
                     ok_file = False
                     break
 
@@ -233,8 +255,8 @@ class StatusReport:
 
 # Define WorkerSignals to communicate between threads
 class StatusWorkerSignals(QObject):
-    # finished = pyqtSignal(str, str, int, list)  # file_path, status, count, extra_icons
-    finished = pyqtSignal(StatusReport)  # file_path, status, count, extra_icons
+    # finished = pyqtSignal(str, str, int, list)  # path, status, count, extra_icons
+    finished = pyqtSignal(StatusReport)  # path, status, count, extra_icons
 
 # Define the Worker class with cancellation support
 
@@ -243,20 +265,82 @@ class StatusWorker(QRunnable):
         # QObject.__init__(self)
         # QRunnable.__init__()
         super().__init__()
-        self.file_path = file_path
+        self.path = file_path
         self.signals = StatusWorkerSignals()
         self._is_canceled = False
         self.invalidate_cache = invalidate_cache
 
     def run(self) -> None:
-        logging.debug(f"StatusWorker started for: {self.file_path}")
-        if self._is_canceled:
-            logging.debug(f"StatusWorker canceled for: {self.file_path}")
-            self.signals.finished.emit(StatusReport(self.file_path, 'canceled', -1, []))
-            return
-
+        logging.debug(f"StatusWorker started for: {self.path}")
+        if self._check_cancel_status(): return
         # self._run_helper_simulate()
         self._run_helper_v1()
+
+    def _check_cancel_status(self) -> bool:
+        if self._is_canceled:
+            logging.debug(f"StatusWorker canceled for: {self.path}")
+            # self.signals.finished.emit(StatusReport(self.path, 'canceled', -1, []))
+            self._finished_emit_helper(StatusReport(self.path, 'canceled', -1, []))
+            return True
+        else: return False
+
+    def _finished_emit_helper(self, status_report: StatusReport) -> None:
+        if self.path in status_cache:
+            logging.debug(f"StatusWorker._finished_emit_helper: overwriting cache for {self.path} with status = {status_report.status}")
+        status_cache[self.path] = status_report
+
+        self._finished_emit_helper_parent_path(status_report)
+        self._finished_emit_helper_children_path(status_report)
+
+        time.sleep(0.01)  # slight delay to void GIL
+
+        self.signals.finished.emit(status_report)
+
+    def _finished_emit_helper_parent_path(self, status_report: StatusReport) -> None:
+        if status_report.status in StatusReport.STATUS_CONTAINS_DATA:
+            parent_path = os.path.dirname(self.path)
+
+            if parent_path == self.path:
+                logging.warning(f"StatusWorker._finished_emit_helper: parent_path is same as path for {self.path}, this is root path?")
+                return
+
+            if parent_path not in hasChildren_cache:
+                logging.warning(f"StatusWorker._finished_emit_helper: hasChildren not found for {parent_path}")
+            elif not hasChildren_cache[parent_path]:
+                logging.warning(f"StatusWorker._finished_emit_helper: hasChildren is False for {parent_path}")
+            else:
+                pass
+
+            parent_status_report = status_cache.get(parent_path, None)
+            if isinstance(parent_status_report, StatusReport):
+                parent_status_report.update_there_is_something()
+            else:
+                logging.warning(f"StatusWorker._finished_emit_helper: parent_status_report not found for {parent_path}")
+                return
+
+    def _finished_emit_helper_children_path(self, status_report: StatusReport) -> None:
+        if status_report.status == 'nothing':
+            children_paths = os_listdirdir(self.path, invalidate_cache=self.invalidate_cache)
+            at_least_one_mystry = False
+            for child_path in children_paths:
+                child_status_report = status_cache.get(child_path, None)
+                if not isinstance(child_status_report, StatusReport):
+                    # logging.warning(f"StatusWorker._finished_emit_helper: child_status_report not found for {child_path}")
+                    continue
+                elif child_status_report.status in StatusReport.STATUS_CONTAINS_DATA:
+                    status_report.update_there_is_something()
+                    return
+                elif child_status_report.status in StatusReport.STATUS_MISTRY:
+                    at_least_one_mystry = True
+                elif child_status_report.status in StatusReport.STATUS_NOTHING:
+                    continue
+                else:
+                    logging.critical(f"StatusWorker._finished_emit_helper: unexpected case {child_status_report.status = }")
+                    continue
+            if at_least_one_mystry:
+                status_report.update_to_unknown_status()
+
+
 
     def _run_helper_simulate(self) -> None:
         # Simulate a long-running computation
@@ -278,8 +362,9 @@ class StatusWorker(QRunnable):
         # extra_icons = []
 
         logging.debug(
-            f"StatusWorker._run_helper_simulate: path = {self.file_path}, status = {status}, count = {count}, extra icons = {extra_icons}")
-        self.signals.finished.emit(StatusReport(self.file_path, status, count, extra_icons))
+            f"StatusWorker._run_helper_simulate: path = {self.path}, status = {status}, count = {count}, extra icons = {extra_icons}")
+        # self.signals.finished.emit(StatusReport(self.path, status, count, extra_icons))
+        self._finished_emit_helper(StatusReport(self.path, status, count, extra_icons))
 
     def _run_helper_v1(self) -> None:
         # This method is designed currently to work only with downstairs lab data structure.
@@ -291,36 +376,50 @@ class StatusWorker(QRunnable):
         #   log_LabviewMatlab.txt     # Optional
 
         try:
-            # check if self.file_path is a directory
-            # if not os.path.isdir(self.file_path):
-            if not os_isdir(self.file_path, self.invalidate_cache):
-                logging.error(f"StatusWorker._run_helper_v1: {self.file_path} is not a directory")
-                self.signals.finished.emit(StatusReport(self.file_path, 'missing', -1, []))
+            # check if self.path is a directory
+            # if not os.path.isdir(self.path):
+            if not os_isdir(self.path, self.invalidate_cache):
+                logging.error(f"StatusWorker._run_helper_v1: {self.path} is not a directory")
+                # self.signals.finished.emit(StatusReport(self.path, 'missing', -1, []))
+                self._finished_emit_helper(StatusReport(self.path, 'missing', -1, []))
                 return
-            # check if self.file_path contains any directory
-            # dirs = os.listdir(self.file_path)
+            # check if self.path contains any directory
+            # dirs = os.listdir(self.path)
 
-            # just_for_the_sake_of_testing = os_scandir(self.file_path)
+            # just_for_the_sake_of_testing = os_scandir(self.path)
+
+            if self._check_cancel_status(): return
+
+            files_filtered = os_listdir_filtered(self.path, self.invalidate_cache)
+            files_filtered_len = len(files_filtered)
+
+            if self._check_cancel_status(): return
 
             # list all files in the directory
-            files = os_listdir(self.file_path, self.invalidate_cache)
-            # future = os_scandir_async(self.file_path)
+            files = os_listdir(self.path, self.invalidate_cache)
+
+            if self._check_cancel_status(): return
+
+            # future = os_scandir_async(self.path)
             # files_scan = future.result()
-            # files_scan = os_scandir(self.file_path)
+            # files_scan = os_scandir(self.path)
             # files = [entry.name for entry in files_scan if entry.is_file()]
-            # with os_scandir(self.file_path) as it:
+            # with os_scandir(self.path) as it:
             #     files = [entry.name for entry in it if entry.is_file()]
-            logging.debug(f"StatusWorker._run_helper_v1: files in {self.file_path}: counted {len(files)}")
+            logging.debug(f"StatusWorker._run_helper_v1: files in {self.path}: counted {len(files)}")
 
         except PermissionError as e:
-            logging.error(f"StatusWorker._run_helper_v1: PermissionError accessing {self.file_path}: {e}")
-            self.signals.finished.emit(StatusReport(self.file_path, 'missing', -1, []))
+            logging.error(f"StatusWorker._run_helper_v1: PermissionError accessing {self.path}: {e}")
+            # self.signals.finished.emit(StatusReport(self.path, 'missing', -1, []))
+            self._finished_emit_helper(StatusReport(self.path, 'missing', -1, []))
             return
         except Exception as e:
-            logging.error(f"StatusWorker._run_helper_v1: Error accessing {self.file_path}: {e}")
-            self.signals.finished.emit(StatusReport(self.file_path, 'missing', -1, []))
+            logging.error(f"StatusWorker._run_helper_v1: Error accessing {self.path}: {e}")
+            # self.signals.finished.emit(StatusReport(self.path, 'missing', -1, []))
+            self._finished_emit_helper(StatusReport(self.path, 'missing', -1, []))
             return
 
+        time.sleep(0.01)  # slight delay to void GIL
 
         # pattern match and list all files of d123.txt
         # d_dld_pattern = re.compile(r'^d\d+\.txt$')
@@ -346,16 +445,18 @@ class StatusWorker(QRunnable):
         d_only_dld_shots_len = len(d_only_dld_shots)
         d_only_txy_shots_len = len(d_only_txy_shots)
 
+        if self._check_cancel_status(): return
 
         logging.debug(f"StatusWorker._run_helper_v1: d_dld_files: {d_dld_files_len}, d_txy_files: {d_txy_files_len}, "
                       f"d_union_shots: {d_union_shots_len}, d_inter_shots: {d_inter_shots_len}, "
-                      f"d_only_dld_shots: {d_only_dld_shots_len}, d_only_txy_shots: {d_only_txy_shots_len}"
+                      f"d_only_dld_shots: {d_only_dld_shots_len}, d_only_txy_shots: {d_only_txy_shots_len}, "
+                      f"files_filtered_len: {files_filtered_len}"
                       )
 
         if len(d_dld_shots) != len(set(d_dld_shots)):
-            logging.fatal(f"StatusWorker._run_helper_v1: IMPOSSIBLE?! {self.file_path = }\t d_dld_shots contains duplicates: {d_dld_shots[:min(10,len(d_dld_shots))]}")
+            logging.fatal(f"StatusWorker._run_helper_v1: IMPOSSIBLE?! {self.path = }\t d_dld_shots contains duplicates: {d_dld_shots[:min(10, len(d_dld_shots))]}")
         if len(d_txy_shots) != len(set(d_txy_shots)):
-            logging.fatal(f"StatusWorker._run_helper_v1: IMPOSSIBLE?! {self.file_path = }\t d_txy_shots contains duplicates: {d_txy_shots[:min(10,len(d_txy_shots))]}")
+            logging.fatal(f"StatusWorker._run_helper_v1: IMPOSSIBLE?! {self.path = }\t d_txy_shots contains duplicates: {d_txy_shots[:min(10, len(d_txy_shots))]}")
 
 
         emit_status = 'canceled'
@@ -379,17 +480,17 @@ class StatusWorker(QRunnable):
         elif (d_only_dld_shots_len > 0 or d_only_txy_shots_len > 0) and d_inter_shots_len == 0:
             # terribly inconsistent data folder
             if d_only_dld_shots_len == 0:
-                logging.warning(f"StatusWorker._run_helper_v1: folder only contain txy data: {d_only_txy_shots_len} at {self.file_path}")
+                logging.warning(f"StatusWorker._run_helper_v1: folder only contain txy data: {d_only_txy_shots_len} at {self.path}")
                 emit_status, emit_counts = 'warning', d_only_txy_shots_len
             elif d_only_txy_shots_len == 0:
-                logging.warning(f"StatusWorker._run_helper_v1: folder only contain dld data: {d_only_dld_shots_len} at {self.file_path}")
+                logging.warning(f"StatusWorker._run_helper_v1: folder only contain dld data: {d_only_dld_shots_len} at {self.path}")
                 emit_status, emit_counts = 'warning', d_only_dld_shots_len
             else:
                 # This means there are some dld files and some txy files but none of them are matching
-                logging.critical(f"StatusWorker._run_helper_v1: serverly fucked up dataset at {self.file_path} (no matching pairs)")
+                logging.critical(f"StatusWorker._run_helper_v1: serverly fucked up dataset at {self.path} (no matching pairs)")
                 emit_status, emit_counts = 'critical', 0
         else:
-            logging.fatal(f"StatusWorker._run_helper_v1: unexpected condition for {self.file_path}"
+            logging.fatal(f"StatusWorker._run_helper_v1: unexpected condition for {self.path}"
                           f"d_dld_files: {d_dld_files_len}, d_txy_files: {d_txy_files_len}, "
                           f"d_union_shots: {d_union_shots_len}, d_inter_shots: {d_inter_shots_len}, "
                           f"d_only_dld_shots: {d_only_dld_shots_len}, d_only_txy_shots: {d_only_txy_shots_len}"
@@ -398,22 +499,22 @@ class StatusWorker(QRunnable):
 
         if emit_counts >= 0:
             try:
-                # data_files = data_ram_cache.__getitem__(self.file_path)
-                data_files = data_ram_cache[self.file_path]
+                # data_files = data_ram_cache.__getitem__(self.path)
+                data_files = data_ram_cache[self.path]
                 if not data_files is None:
                     emit_eicons.append('ram')
-                    logging.debug(f"StatusWorker._run_helper_v1: data in data_ram_cache for {self.file_path}")
+                    logging.debug(f"StatusWorker._run_helper_v1: data in data_ram_cache for {self.path}")
                 else:
-                    logging.warning(f"StatusWorker._run_helper_v1: data_ram_cache None for {self.file_path}")
+                    logging.warning(f"StatusWorker._run_helper_v1: data_ram_cache None for {self.path}")
             except KeyError:
-                logging.debug(f"StatusWorker._run_helper_v1: no key in data_ram_cache {self.file_path}")
+                logging.debug(f"StatusWorker._run_helper_v1: no key in data_ram_cache {self.path}")
                 pass
             except Exception as e:
-                logging.error(f"StatusWorker._run_helper_v1: error accessing cache for {self.file_path}: {e}")
+                logging.error(f"StatusWorker._run_helper_v1: error accessing cache for {self.path}: {e}")
                 pass
 
-        self.signals.finished.emit(StatusReport(self.file_path, emit_status, emit_counts, emit_eicons, d_dld_shots, d_txy_shots, datetime.now()))
-
+        # self.signals.finished.emit(StatusReport(self.path, emit_status, emit_counts, emit_eicons, d_dld_shots, d_txy_shots, datetime.now()))
+        self._finished_emit_helper(StatusReport(self.path, emit_status, emit_counts, emit_eicons, d_dld_shots, d_txy_shots, datetime.now()))
 
     def cancel(self) -> None:
         self._is_canceled = True
@@ -428,8 +529,8 @@ class StatusWorker(QRunnable):
     #     extra_icons = sorted(random.sample(StatusIcons.STATUS_ICONS_EXTRA_NAME, random.randint(0, 4)), key=StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get)
     #     # extra_icons = []
     #
-    #     logging.debug(f"Worker finished for: {self.file_path} with status: {status}, count: {count}, extra icons: {extra_icons}")
-    #     self.signals.finished.emit(StatusReport(self.file_path, status, count, extra_icons)
+    #     logging.debug(f"Worker finished for: {self.path} with status: {status}, count: {count}, extra icons: {extra_icons}")
+    #     self.signals.finished.emit(StatusReport(self.path, status, count, extra_icons)
 
 
 

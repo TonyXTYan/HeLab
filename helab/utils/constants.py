@@ -119,9 +119,9 @@ CURRENT_WORKING_DIRECTORY = os.getcwd()
 TEMPFILE_PREFIX = tempfile.gettempdir()
 
 DIR_TEMPS_CANDIDATES = [
-    tempfile.mkdtemp(prefix='helab_temps'),
+    tempfile.mkdtemp(prefix='helab_temps_'),
     os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps'),
-    os.path.join(TEMPFILE_PREFIX, 'helab_temps'),
+    os.path.join(TEMPFILE_PREFIX, 'helab_temps_'),
 ]
 
 DIR_CACHES_CANDIDATES = [

@@ -32,7 +32,7 @@ from helab.views.memoryUsageWindow import MemoryUsageWindow
 from helab.views.settingsDialog import SettingsDialog
 from helab.views.debugIcons import DebugIconsWindow
 
-from PyQt6.QtWebEngineWidgets import QWebEngineView
+# from PyQt6.QtWebEngineWidgets import QWebEngineView
 # sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 # from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density
 import plotly
@@ -600,7 +600,7 @@ class MainWindow(QMainWindow):
         self.action_tab_folder_up.triggered.connect(self.on_back_button_clicked)
         self.action_tab_refresh.triggered.connect(self.tab_widget.refresh_current_folder_explorer)
         self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
-        self.action_tab_rescan.triggered.connect(self.tab_widget.rescan_current_folder_explorer)
+        self.action_tab_rescan.triggered.connect(lambda: self.tab_widget.rescan_current_folder_explorer(user_intend = True))
         self.action_tab_cancel.triggered.connect(cancel_all_workers)
         self.action_tab_live.triggered.connect(self.on_live_button_clicked)
 
@@ -692,6 +692,7 @@ class MainWindow(QMainWindow):
     # REVIEW: these can be moved somewhere else
     # def plotly_to_dock_widget(self, plotly_fig: plotly.graph_objs.Figure, dock_widget_title: str) -> (tempfile.NamedTemporaryFile, QDockWidget):
     def _setup_legacy_plotly_to_dock_widget(self, plotly_fig: plotly.graph_objs.Figure, dock_widget_title: str) -> None:
+        from PyQt6.QtWebEngineWidgets import QWebEngineView
         plotly_fig_html = plotly_fig.to_html()
         plotly_view = QWebEngineView()
         plotly_temp = tempfile.NamedTemporaryFile(prefix="plotly_", suffix='.html', dir=DIR_TEMPS)
@@ -882,7 +883,7 @@ class MainWindow(QMainWindow):
 
     def on_back_button_clicked(self) -> None:
         self.tab_widget.on_back_button_clicked()
-        logging.debug(f"heLabMainWindow.on_back_button_clicked: {self.tab_widget.tab_back_button_enabled = }")
+        logging.info(f"heLabMainWindow.on_back_button_clicked: {self.tab_widget.tab_back_button_enabled = }")
         self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
 
     def on_current_tab_changed(self, index: int) -> None:

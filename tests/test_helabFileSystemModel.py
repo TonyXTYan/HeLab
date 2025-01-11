@@ -5,7 +5,6 @@ They are assumed to be present in the codebase.
 """
 import time
 import unittest
-from os import wait3
 from unittest.mock import MagicMock, patch, call
 from typing import Dict
 

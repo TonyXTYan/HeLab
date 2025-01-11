@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timedelta
 from concurrent.futures import thread
 import gc
@@ -53,12 +54,13 @@ class LoadFolderToRamWorker(QRunnable):
         logging.debug(f"LoadFolderToRamWorker: {self.folder_path = }")
 
         
-        def _check_cancel_status() -> None:
+        def _check_cancel_status() -> bool:
             if self._cancel_requested:
                 logging.warning(f"LoadFolderToRamWorker: {self.folder_path = } was canceled.")
                 self.signals.error.emit(self.folder_path, self._cancel_message)
-                return
-        _check_cancel_status()
+                return True
+            else: return False
+        if _check_cancel_status(): return
         try:
             data_files = data_ram_cache[self.folder_path]
             if isinstance(data_files, bytes):
@@ -93,7 +95,7 @@ class LoadFolderToRamWorker(QRunnable):
             self.signals.error.emit(self.folder_path, str(e))
             return
 
-        _check_cancel_status()
+        if _check_cancel_status(): return
         try:
             file_pattern = os.path.join(self.folder_path, 'd_txy_forc*.txt')
             files = glob.glob(file_pattern)
@@ -117,7 +119,7 @@ class LoadFolderToRamWorker(QRunnable):
             problematic_txy_ns = []
             # for file in files:
             for i, file in enumerate(files):
-                _check_cancel_status()
+                if _check_cancel_status(): return
                 # Extract the base filename
                 basename = os.path.basename(file)
 
@@ -131,7 +133,9 @@ class LoadFolderToRamWorker(QRunnable):
                     #              f"nError = {no_error_files_since_last_debug_print}/s, "
                     #              f"nTotal = {i+1}/{no_total_files} = {round((i+1)/no_total_files*100,1)}%"
                     #              )
+                    time.sleep(0.001)  # slight delay to void GIL
                     self.signals.loading.emit(self.folder_path, percentages[-5]*(i+1)/no_total_files)
+                    time.sleep(0.001)  # slight delay to void GIL
                     update_progress = True
                 if datetime.now() - time_last_debug_print > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM:
                     no_loaded_files_since_last_debug_print = 0
@@ -180,7 +184,7 @@ class LoadFolderToRamWorker(QRunnable):
                     no_error_files_since_last_debug_print += 1
                     continue
 
-            _check_cancel_status()
+            if _check_cancel_status(): return
             # update_progress = datetime.now() - time_start_loading > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_MIN
             if update_progress: self.signals.loading.emit(self.folder_path, percentages[-4])
                 # logging.debug(f"LoadFolderToRamWorker: formatting data {self.folder_path}. ")
