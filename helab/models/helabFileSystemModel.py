@@ -5,15 +5,8 @@ import sys
 
 from typing import Dict, Tuple, List, cast, Optional
 
-import cachetools
-from PyQt6.QtCore import Qt, QThreadPool, QThread, QModelIndex, QTimer, QObject, QDir, pyqtSignal, QRunnable
-from PyQt6.QtGui import QFileSystemModel, QIcon, QColor, QPainter, QFont, QPixmap
-from PyQt6.QtWidgets import QApplication
-from cachetools import LRUCache, TTLCache
-from diskcache import FanoutCache
-from pympler import asizeof
-from pympler.web import refresh
-from pytablericons import TablerIcons, OutlineIcon, FilledIcon
+from PyQt6.QtCore import Qt, QThread, QModelIndex, QTimer, QObject, QDir
+from PyQt6.QtGui import QFileSystemModel, QColor
 
 from helab.utils.cachingSetup import *
 from helab.utils.threadingSetup import *

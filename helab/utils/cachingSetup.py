@@ -35,6 +35,8 @@ CACHE_PARAMS_DEFAULTS: OrderedDict[str, Any] = OrderedDict([
     ("sqlite_cache_size", 2**15),   # 32,768 pages (~128MB)
     ("disk_min_file_size", 2**16),  # 64KB
     ("shards", 32),
+    ("timeout", 0.500),
+    ("sqlite_busy_timeout", 500),
 ])
 """
 The default cache parameters for all caches.
