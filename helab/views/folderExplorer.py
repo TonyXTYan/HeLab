@@ -16,7 +16,6 @@ from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal, QThre
 from PyQt6.QtGui import QAction, QFontInfo, QGuiApplication
 from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu, QApplication
 from cachetools import LRUCache, TTLCache
-from debugpy.server.cli import switches
 from diskcache import FanoutCache
 
 from helab.utils.constants import *
