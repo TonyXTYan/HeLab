@@ -27,7 +27,7 @@ class TestStatusDeepWorker:
         with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
             worker.run()
 
-        root_path, subdirs = blocker.args
+        root_path, subdirs = blocker.args       # type: ignore[reportGeneralTypeIssues, unused-ignore]
         assert root_path == str(folder_path)
         assert subdirs == []
 
@@ -49,7 +49,7 @@ class TestStatusDeepWorker:
         with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
             worker.run()
 
-        root_path, subdirs = blocker.args
+        root_path, subdirs = blocker.args       # type: ignore[reportGeneralTypeIssues, unused-ignore]
         assert root_path == str(folder_path)
         # We expect exactly the 3 subdirs
         subdirs_set = set(subdirs)
@@ -71,7 +71,7 @@ class TestStatusDeepWorker:
         with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
             worker.run()
 
-        root_path, subdirs = blocker.args
+        root_path, subdirs = blocker.args       # type: ignore[reportGeneralTypeIssues, unused-ignore]
         assert root_path == str(folder_path)
         # Because it was canceled, we expect subdirs = []
         # The code in run() typically emits (root_path, []), with special argument for depth if canceled

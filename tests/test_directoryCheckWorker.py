@@ -29,7 +29,7 @@ class TestDirectoryCheckWorker:
         with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
             worker.run()
 
-        path_arg, has_children = blocker.args
+        path_arg, has_children = blocker.args       # type: ignore[reportGeneralTypeIssues, unused-ignore]
         assert path_arg == str(folder_path)
         assert has_children is False
 
@@ -47,7 +47,7 @@ class TestDirectoryCheckWorker:
         with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
             worker.run()
 
-        path_arg, has_children = blocker.args
+        path_arg, has_children = blocker.args       # type: ignore[reportGeneralTypeIssues, unused-ignore]
         assert path_arg == str(folder_path)
         assert has_children is True
 
@@ -68,7 +68,7 @@ class TestDirectoryCheckWorker:
         # We'll still wait a short time for a signal.
         # We can't rely on a canceled worker always never emitting.
         # We can do a try/except.
-        with pytest.raises(pytestqt.exceptions.TimeoutError):
+        with pytest.raises(pytestqt.exceptions.TimeoutError):   # type: ignore[reportAttributeAccessIssue, unused-ignore]
             # We expect NO signal => test that waitSignal times out
             with qtbot.waitSignal(worker.signals.finished, timeout=500):
                 worker.run()
