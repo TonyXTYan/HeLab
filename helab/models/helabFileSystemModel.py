@@ -2,6 +2,7 @@
 import logging
 import os
 import sys
+from random import randint
 
 from typing import Dict, Tuple, List, cast, Optional
 
@@ -238,10 +239,11 @@ class helabFileSystemModel(QFileSystemModel):
         status_column_index = self.index(path, self.COLUMN_STATUS_NUMBER)
         status_icon_index = self.index(path, self.COLUMN_STATUS_ICON)
         if status_column_index.isValid():
-            self.dataChanged.emit(status_column_index, status_column_index, [Qt.ItemDataRole.DisplayRole])
+            # self.dataChanged.emit(status_column_index, status_column_index, [Qt.ItemDataRole.DisplayRole])
+            QTimer.singleShot(randint(300,800), lambda: self.dataChanged.emit(status_column_index, status_column_index, [Qt.ItemDataRole.DisplayRole]))
         if status_icon_index.isValid():
-            self.dataChanged.emit(status_icon_index, status_icon_index, [Qt.ItemDataRole.DecorationRole])
-
+            # self.dataChanged.emit(status_icon_index, status_icon_index, [Qt.ItemDataRole.DecorationRole])
+            QTimer.singleShot(randint(300,800), lambda: self.dataChanged.emit(status_icon_index, status_icon_index, [Qt.ItemDataRole.DecorationRole]))
 
     def handle_status_computed(self, status_report: StatusReport) -> None:
         file_path = status_report.path
@@ -342,6 +344,8 @@ class helabFileSystemModel(QFileSystemModel):
             bottomRight (QModelIndex): The bottom-right index of the changed data.
             roles (List[int]): The roles that were changed.
         """
+        return
+
         # Iterate through the changed rows
         for row in range(topLeft.row(), bottomRight.row() + 1):
             for column in range(topLeft.column(), bottomRight.column() + 1):
@@ -552,11 +556,12 @@ class helabFileSystemModel(QFileSystemModel):
         # index = self.index(dir_path)
         # # Emit dataChanged for the directory
         # if index.isValid():
-        #     self.dataChanged.emit(
-        #         index,
-        #         index,
-        #         [Qt.ItemDataRole.DisplayRole]
-        #     )
+        #     # self.dataChanged.emit(
+        #     #     index,
+        #     #     index,
+        #     #     [Qt.ItemDataRole.DisplayRole]
+        #     # )
+        #     QTimer.singleShot(randint(5,15), lambda: self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole]))
 
     def on_has_children_canceled(self, dir_path: str) -> None:
         logging.debug("on_has_children_canceled: {dir_path = }")
@@ -605,12 +610,13 @@ class helabFileSystemModel(QFileSystemModel):
         self.rescan_worker = worker
         pass
 
-    def on_rescan_finished(self) -> None:
+    def on_rescan_finished(self, u: bool = False) -> None:
         logging.info("helabFileSystemModel.on_rescan_finished")
         self.refresh()
         self.rescan_worker = None
         rows = self.get_visible_rows()
-        for index, path in rows:
+        # for index, path in rows:
+        for ith, (index, path) in enumerate(rows):
             status_report = status_cache.get(path)
             if isinstance(status_report, StatusReport):
                 if any(i in status_report.extra_icons for i in ['ram', 'ram_single', 'ram_opened']):
@@ -620,7 +626,14 @@ class helabFileSystemModel(QFileSystemModel):
                         status_report.update_ram_status(is_opened=False)
             index = self.index(path)
             if index.isValid():
-                self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+                # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+                # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole])
+                # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE])
+                delay_ms = randint(5,20) + ith if u else randint(300,500) + ith*10
+                QTimer.singleShot(delay_ms, lambda:
+                self.dataChanged.emit(index, index,
+                    [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE])
+                )
 
     def on_rescan_cancelled(self, scan_again:bool = True, u: bool = False) -> None:
         logging.info(f"helabFileSystemModel.on_rescan_cancelled {scan_again = }")

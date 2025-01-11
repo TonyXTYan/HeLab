@@ -30,14 +30,16 @@ CACHE_PARAMS_DEFAULTS: OrderedDict[str, Any] = OrderedDict([
     ("statistics", True),
     ("eviction_policy", "least-recently-stored"),
     ("sqlite_journal_mode", "memory"),
-    ("size_limit", 2**30),          # 1GB
-    ("sqlite_mmap_size", 2**27),    # 128MB
-    ("sqlite_cache_size", 2**15),   # 32,768 pages (~128MB)
-    ("disk_min_file_size", 2**16),  # 64KB
+    # ("sqlite_journal_mode", "wal"),
+    ("size_limit", 1<<30),          # 1GB
+    ("sqlite_mmap_size", 1<<20<<7), # 128MB
+    ("sqlite_cache_size", 1<<10<<5),# 32,768 pages (~128MB)
+    ("disk_min_file_size", 1<<20),  # 1MB
     # ("shards", 32),
     ("shards", 16),
-    ("timeout", 0.050), # diskcache default is 0.010 seconds,
-    ("sqlite_busy_timeout", 5), # seconds?
+    ("timeout", 0.100), # diskcache default is 0.010 seconds,
+    ("sqlite_busy_timeout", 2), # seconds?
+    ("cache_compression", True),
 ])
 """
 The default cache parameters for all caches.

@@ -1,6 +1,7 @@
 #helab/workers/directoryCheckWorker.py
 import logging
 import os
+import time
 
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable
 
@@ -31,7 +32,10 @@ class DirectoryCheckWorker(QRunnable):
         try:
             # entries = [entry for entry in os_listdir(self.model_root_path) if not entry.endswith('.txt') and entry not in ['cache', 'out', 'output']]
             entries = os_listdir_filtered(self.dir_path)
+            time.sleep(0.01)
             result = any(os_isdir(os.path.join(self.dir_path, entry)) for entry in entries)
+            time.sleep(0.01)
+
             num_non_txt_paths = len(entries)
 
             # just_for_the_sake_of_testing = os_scandir(self.model_root_path)
@@ -60,6 +64,7 @@ class DirectoryCheckWorker(QRunnable):
         # logging.debug(f"DirectoryCheckWorker finished for: {self.model_root_path}, result = {result}")
         # logging.debug(f"DirectoryCheckWorker finished for: {self.dir_path}, result = {result}, num_non_txt_paths = {num_non_txt_paths}")
         hasChildren_cache[self.dir_path] = result
+        time.sleep(0.01)
         self.signals.finished.emit(self.dir_path, result)
 
     def cancel(self) -> None:

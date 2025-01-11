@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from helab.models.helabFileSystemModel import helabFileSystemModel
 
 class StatusRescanWorkerSignals(QObject):
-    finished = pyqtSignal()
+    finished = pyqtSignal(bool)
     cancelled = pyqtSignal(bool, bool)
 
 class StatusRescanWorker(QRunnable):
@@ -33,34 +33,38 @@ class StatusRescanWorker(QRunnable):
         self.signals = StatusRescanWorkerSignals()
         self.user_intend = user_intend
         self._is_cancelled = False
-        self._is_cancelled_scan_again = False
+        self._is_cancelled_scan_again = False   # TODO what is this for?
 
     def run(self) -> None:
-        # logging.debug("StatusRescanWorker.run: started")
+        logging.debug(f"StatusRescanWorker.run: started with {len(self.rows)} rows and {self.model_folder_opened_path = }, {self.user_intend = }")
         if not self.user_intend:
-            delay_processing_countdown = 5
-            while 1 < all_pools_total_activeThreadCount():
-                # logging.debug(f"StatusRescanWorker.run: waiting for 0 < {all_pools_total_activeThreadCount() = }")
-                time.sleep(1.0)
-                delay_processing_countdown -= 1
-                if delay_processing_countdown <= 0:
-                    break
+            time.sleep(0.5)
+            # delay_processing_countdown = 5
+            # while 1 < all_pools_total_activeThreadCount():
+            #     # logging.debug(f"StatusRescanWorker.run: waiting for 0 < {all_pools_total_activeThreadCount() = }")
+            #     time.sleep(1.0)
+            #     delay_processing_countdown -= 1
+            #     if delay_processing_countdown <= 0:
+            #         break
+        else:
+            time.sleep(0.01)
 
         # rows = self.model.get_visible_rows()
         for index, path in self.rows:
             if self._is_cancelled:
                 self.signals.cancelled.emit(self._is_cancelled_scan_again, self.user_intend)
                 return
+            time.sleep(0.01)
             status_report = status_cache.get(path)
             if isinstance(status_report, StatusReport):
                 vpath, vfile, vdata = status_report.validate_ok()
                 # logging.debug(f"rescan: got {vpath = }, {vfile = }, {vdata = } \tat {path}")
                 if not vfile:
-                    logging.debug(f"rescan: status_cache pop {path}")
+                    logging.debug(f"StatusRescanWorker: status_cache pop {path}")
                     status_cache.pop(path)
                     # self.fetch_status(path)
                 elif not vpath or not vdata:
-                    logging.debug(f"rescan: got {vpath = }, {vfile = }, {vdata = } \tat {path}")
+                    logging.debug(f"StatusRescanWorker: got {vpath = }, {vfile = }, {vdata = } \tat {path}")
                     # status_cache.pop(path)
                     # self.fetch_status(path)
 
@@ -74,7 +78,8 @@ class StatusRescanWorker(QRunnable):
                 # if index.isValid():
                 #     self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
             # logging.debug(f"StatusRescanWorker.run: checked {path = }")
-        self.signals.finished.emit()
+        time.sleep(0.01)
+        self.signals.finished.emit(self.user_intend)
 
 
     def cancel(self, scan_again:bool=True) -> None:

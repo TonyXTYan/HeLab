@@ -91,6 +91,27 @@ class StatusReport:
     def _update_cache(self) -> None:
         status_cache[self.path] = self
 
+    def merge_with(self, status_report: StatusReport) -> None:
+        if self.path != status_report.path:
+            logging.warning(f"StatusReport.update_overwrite_status: path mismatch for {self.path} and {status_report.path}")
+            return
+        if self.time_last_updated > status_report.time_last_updated:
+            logging.warning(f"StatusReport.update_overwrite_status: time_last_updated mismatch for {self.path}")
+            return
+        self.status = status_report.status
+        self.count = status_report.count
+        self.extra_icons = status_report.extra_icons
+        self.d_dld_shots = status_report.d_dld_shots
+        self.d_txy_shots = status_report.d_txy_shots
+        self.problematic_txy_ns = status_report.problematic_txy_ns
+        self.payload_progress_ram = status_report.payload_progress_ram
+        self.time_last_updated = status_report.time_last_updated
+        self.time_load_ram = status_report.time_load_ram
+        self.log_LabviewMatlab_txt = status_report.log_LabviewMatlab_txt
+        self.log_KeysightMatlab_txt = status_report.log_KeysightMatlab_txt
+        self.about_txt = status_report.about_txt
+        self._update_cache()
+
     def update_extend_extras(self, extra_icons: list[str]|str, update_cache:bool = True) -> None:
         if isinstance(extra_icons, str):
             extra_icons = [extra_icons]
@@ -274,6 +295,7 @@ class StatusWorker(QRunnable):
         logging.debug(f"StatusWorker started for: {self.path}")
         if self._check_cancel_status(): return
         # self._run_helper_simulate()
+        time.sleep(0.05)
         self._run_helper_v1()
 
     def _check_cancel_status(self) -> bool:
@@ -287,13 +309,14 @@ class StatusWorker(QRunnable):
     def _finished_emit_helper(self, status_report: StatusReport) -> None:
         if self.path in status_cache:
             logging.debug(f"StatusWorker._finished_emit_helper: overwriting cache for {self.path} with status = {status_report.status}")
-        status_cache[self.path] = status_report
-
+        # status_cache[self.path] = status_report
+        time.sleep(0.10)
+        status_report.merge_with(status_report)
+        time.sleep(0.05)
         self._finished_emit_helper_parent_path(status_report)
+        time.sleep(0.05)
         self._finished_emit_helper_children_path(status_report)
-
-        time.sleep(0.01)  # slight delay to void GIL
-
+        time.sleep(0.10)
         self.signals.finished.emit(status_report)
 
     def _finished_emit_helper_parent_path(self, status_report: StatusReport) -> None:
@@ -322,7 +345,9 @@ class StatusWorker(QRunnable):
         if status_report.status == 'nothing':
             children_paths = os_listdirdir(self.path, invalidate_cache=self.invalidate_cache)
             at_least_one_mystry = False
-            for child_path in children_paths:
+            for child_path_name in children_paths:
+                child_path = os.path.join(self.path, child_path_name)
+                # logging.debug(f"StatusWorker._finished_emit_helper: checking child_path = {child_path}")
                 child_status_report = status_cache.get(child_path, None)
                 if not isinstance(child_status_report, StatusReport):
                     # logging.warning(f"StatusWorker._finished_emit_helper: child_status_report not found for {child_path}")
@@ -389,9 +414,11 @@ class StatusWorker(QRunnable):
             # just_for_the_sake_of_testing = os_scandir(self.path)
 
             if self._check_cancel_status(): return
-
+            time.sleep(0.05)  # slight delay to void GIL
             files_filtered = os_listdir_filtered(self.path, self.invalidate_cache)
+            time.sleep(0.05)
             files_filtered_len = len(files_filtered)
+            time.sleep(0.05)
 
             if self._check_cancel_status(): return
 
