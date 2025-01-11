@@ -1,7 +1,7 @@
 import functools
 from enum import IntEnum, Enum
 # from functools import lru_cache
-from typing import Dict
+from typing import Dict, List
 
 from PIL.ImageQt import ImageQt
 from PyQt6.QtCore import Qt, QRect
@@ -12,18 +12,21 @@ from pytablericons import TablerIcons, OutlineIcon, FilledIcon
 
 from functools import lru_cache as functools_lru_cache
 
-# def tablerIcon_old(icon: OutlineIcon | FilledIcon, color: str, size: int=128) -> QIcon:
-#     return QIcon(
-#         TablerIcons
-#         .load(icon, color=color)
-#         .toqpixmap()
-#         .scaled(size, size,
-#                 Qt.AspectRatioMode.KeepAspectRatio,
-#                 Qt.TransformationMode.SmoothTransformation
-#                 )
-#     )
-
 def tablerIcon(icon: OutlineIcon | FilledIcon, color: str, size: int=128) -> QIcon:
+    """
+    Returns a QIcon object for a given Tabler icon with a specified color and size.
+    :param icon: TablerIcon
+        The Tabler icon to be used, either an OutlineIcon or FilledIcon.
+    :type icon: OutlineIcon | FilledIcon
+        The color to apply to the icon.
+    :param color: str
+        The size of the icon in pixels. Defaults to 128.
+    :type color: str
+    :param size: int
+        A QIcon object with the specified properties.
+    :type size: int
+    :rtype: QIcon
+    """
     image = TablerIcons.load(icon, color=color)
     pixmap = QPixmap.fromImage(ImageQt(image))
     pixmap = pixmap.scaled(size, size,
@@ -33,6 +36,29 @@ def tablerIcon(icon: OutlineIcon | FilledIcon, color: str, size: int=128) -> QIc
 
 
 class StatusIcons:
+    """
+    A class to manage and cache icons representing different statuses.
+
+    Attributes:
+    -----------
+    STATUS_ICONS_NAME : List[str]
+        List of status names.
+    STATUS_ICONS_EXTRA_NAME : List[str]
+        List of extra status names.
+    STATUS_ICONS_EXTRA_NAME_SORT_KEY : Dict[str, int]
+        Dictionary to sort extra status names.
+    ICON_... : QIcon
+        Icons for each status.
+    ICONS_STATUS : Dict[str, QIcon]
+        Dictionary of status icons.
+    ICONS_EXTRA : Dict[str, QIcon]
+        Dictionary of extra status icons.
+
+    Methods:
+    --------
+    initialise_icons() -> None:
+        Initialises the icons for the StatusIcons class.
+    """
     STATUS_ICONS_NAME = [
         'ok',
         'fixable',
@@ -105,6 +131,9 @@ class StatusIcons:
     # ICON_OK = tablerIcon(OutlineIcon.CIRCLE_CHECK, '#00bb39')
     @staticmethod
     def initialise_icons() -> None:
+        """
+        Initialises the icons for the StatusIcons class.
+        """
         StatusIcons.ICON_OK = tablerIcon(OutlineIcon.CIRCLE_CHECK, '#00bb39')
         StatusIcons.ICON_FIXABLE = tablerIcon(OutlineIcon.HELP_CIRCLE, '#B8D20E')
         StatusIcons.ICON_CRITICAL = tablerIcon(OutlineIcon.XBOX_X, '#e50000')
@@ -156,6 +185,21 @@ class StatusIcons:
         }
 
 class ToolIcons:
+    """
+    A class to manage and cache icons for various tools.
+
+    Attributes:
+    -----------
+    ICON_... : QIcon
+        Icons for each tool.
+
+    Methods:
+    --------
+    initialise_icons() -> None:
+        Initialises the icons for the ToolIcons class.
+    """
+
+
     ICON_PLUS = QIcon()
     ICON_MINUS = QIcon()
     ICON_TAB_PLUS = QIcon()
@@ -181,6 +225,9 @@ class ToolIcons:
 
     @staticmethod
     def initialise_icons() -> None:
+        """
+        Initialises the icons for the ToolIcons class.
+        """
         ToolIcons.ICON_PLUS = tablerIcon(OutlineIcon.LIBRARY_PLUS, '#000000')
         ToolIcons.ICON_MINUS = tablerIcon(OutlineIcon.LIBRARY_MINUS, '#000000')
         ToolIcons.ICON_TAB_PLUS = tablerIcon(OutlineIcon.BROWSER_PLUS, '#000000')
@@ -211,14 +258,7 @@ class ToolIcons:
 
         ToolIcons.ICON_LIVE = tablerIcon(OutlineIcon.SCAN_EYE, '#000000')
 
-class PercentageIcon:
-    ICON_10 = QIcon()
 
-    @staticmethod
-    def initialise_icons() -> None:
-        # THIS IS NOT THE INTENDED PERCENTAGE ICON
-        # NEED PYTABLERICONS TO UPDATE
-        PercentageIcon.ICON_10 = tablerIcon(OutlineIcon.PERCENTAGE, '#000000')
 
 class IconsInitUtil:
     @staticmethod
@@ -228,6 +268,17 @@ class IconsInitUtil:
         PercentageIcon.initialise_icons()
 
 def str_to_QIcon(text: str, size: int = 128*4, scaled: int = 128) -> QIcon:
+    """
+    Converts a given string to a QIcon with specified size and scaling.
+    :param text: The string to be converted into an icon.
+    :type text: str
+    :param size: The size of the initial pixmap (default is 128*4=512).
+    :type size: int
+    :param scaled: The size to which the pixmap should be scaled (default is 128).
+    :type scaled: int
+    :return: A QIcon object created from the given string.
+    :rtype: QIcon
+    """
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
@@ -241,14 +292,91 @@ def str_to_QIcon(text: str, size: int = 128*4, scaled: int = 128) -> QIcon:
     return QIcon(pixmap)
 
 
-def circular_progress_QIcon_cached(progress: float) -> QIcon:
-    return circular_progress_QIcon_cached_helper(round(progress * 720))
+class PercentageIcon:
+    """
+    A class to manage and cache icons representing percentage progress.
 
-@functools_lru_cache(maxsize=720+1)
-def circular_progress_QIcon_cached_helper(progress: int) -> QIcon:
-    return circular_progress_QIcon(float(progress / 720))
+    Attributes:
+    -----------
+    _DIVS_COARSE : int
+        Number of coarse divisions for the percentage icons.
+    _DIVS_COARSE_CUTOFF_RIGHT : int
+        Right cutoff value for coarse divisions.
+    _DIVS_COARSE_CUTOFF_LEFT : int
+        Left cutoff value for coarse divisions.
+    _DIVS_FINE_MULTIPLIER : int
+        Multiplier to determine the number of fine divisions.
+    _DIVS_FINE : int
+        Total number of fine divisions (calculated as _DIVS_COARSE * _DIVS_FINE_MULTIPLIER).
+    ICONS : Dict[int, QIcon]
+        Dictionary to store QIcon objects for each coarse division.
+    KEYS : List[int]
+        Sorted list of keys from the ICONS dictionary.
+    KEYS_PERCENTAGE : List[float]
+        List of percentage values corresponding to the keys in the ICONS dictionary.
 
-def circular_progress_QIcon(
+    Methods:
+    --------
+    initialise_icons() -> None:
+        Pre-fills the fine-grained cache and initialises icons for coarse divisions.
+    """
+    _DIVS_COARSE = 12
+    _DIVS_COARSE_CUTOFF_RIGHT = -5
+    _DIVS_COARSE_CUTOFF_LEFT  = 0
+    _DIVS_FINE_MULTIPLIER = 30
+    _DIVS_FINE = _DIVS_COARSE * _DIVS_FINE_MULTIPLIER # 12*30 = 360
+    # ICON_10 = QIcon()
+    ICONS: Dict[int, QIcon] = {}
+    KEYS: List[int] = []
+    KEYS_PERCENTAGE: List[float] = []
+
+    @staticmethod
+    def initialise_icons() -> None:
+        """
+         Pre-fill fine-grained cache and initialise icons for coarse divisions.
+         """
+
+        # Pre-fill fine cache
+        for i in range(PercentageIcon._DIVS_FINE + 1):
+            _circular_progress_QIcon_cached_helper(i)
+
+        # Initialise ICONS and class variables using coarse divisions
+        PercentageIcon.ICONS = {}
+        for i in range(PercentageIcon._DIVS_COARSE + 1):
+            PercentageIcon.ICONS[i] = _circular_progress_QIcon_cached_helper(i * PercentageIcon._DIVS_FINE_MULTIPLIER)
+        PercentageIcon.KEYS = sorted(list(PercentageIcon.ICONS.keys()))
+        PercentageIcon.KEYS_PERCENTAGE = [k / PercentageIcon._DIVS_COARSE for k in PercentageIcon.KEYS]
+
+
+def circular_progress_QIcon_cached(percentage: float) -> QIcon:
+    """
+    Returns a cached QIcon representing a circular progress indicator.
+
+    :param percentage: A float value between 0 and 1 representing the progress.
+    :return: A QIcon object representing the circular progress.
+    :raises ValueError: If the percentage is not between 0 and 1.
+    """
+    # return circular_progress_QIcon_cached_helper(round(percentage * PercentageIcon._DIVS_COARSE))
+    if not (0 <= percentage <= 1):
+        raise ValueError("Percentage must be between 0 and 1.")
+    l = PercentageIcon.KEYS_PERCENTAGE[PercentageIcon._DIVS_COARSE_CUTOFF_LEFT]
+    r = PercentageIcon.KEYS_PERCENTAGE[PercentageIcon._DIVS_COARSE_CUTOFF_RIGHT]
+    if l < percentage < r:
+        return _circular_progress_QIcon_cached_helper(round(percentage * PercentageIcon._DIVS_FINE))
+    else:
+        return _circular_progress_QIcon_cached_helper(round(percentage * PercentageIcon._DIVS_COARSE * PercentageIcon._DIVS_FINE_MULTIPLIER))
+
+
+@functools_lru_cache(maxsize=PercentageIcon._DIVS_FINE + 1)
+def _circular_progress_QIcon_cached_helper(progress: int) -> QIcon:
+    """
+    :rtype: QIcon
+    :param progress: int, 0 <= progress <= 360 = PercentageIcon._DIVS_FINE
+    :return: QIcon
+    """
+    return _circular_progress_QIcon(float(progress / PercentageIcon._DIVS_FINE))
+
+def _circular_progress_QIcon(
     progress: float,
     size: int = 128,
     outline_thickness: float = 12.0,

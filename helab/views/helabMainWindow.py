@@ -601,7 +601,7 @@ class MainWindow(QMainWindow):
         self.action_tab_refresh.triggered.connect(self.tab_widget.refresh_current_folder_explorer)
         self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
         self.action_tab_rescan.triggered.connect(self.tab_widget.rescan_current_folder_explorer)
-        self.action_tab_cancel.triggered.connect(self.tab_widget.on_stop_button_clicked)
+        self.action_tab_cancel.triggered.connect(cancel_all_workers)
         self.action_tab_live.triggered.connect(self.on_live_button_clicked)
 
         self.sidebar_toolbar_left.addSeparator()

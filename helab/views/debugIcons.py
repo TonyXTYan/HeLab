@@ -80,17 +80,24 @@ class DebugIconsWindow(QWidget):
 
         percentage_list = QListWidget()
         percentage_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        percentage_list_dir = dir(PercentageIcon)
-        percentage_list_dir_len = 0
-        for attr in percentage_list_dir:
-            if attr.startswith('ICON_'):
-                percentage_list_dir_len += 1
-                icon = getattr(PercentageIcon, attr)
-                if isinstance(icon, QIcon):
-                    item = QListWidgetItem()
-                    item.setText(attr)
-                    item.setIcon(icon)
-                    percentage_list.addItem(item)
+        # percentage_list_dir = dir(PercentageIcon)
+        # percentage_list_dir_len = 0
+        # for attr in percentage_list_dir:
+        #     if attr.startswith('ICON_'):
+        #         percentage_list_dir_len += 1
+        #         icon = getattr(PercentageIcon, attr)
+        #         if isinstance(icon, QIcon):
+        #             item = QListWidgetItem()
+        #             item.setText(attr)
+        #             item.setIcon(icon)
+        #             percentage_list.addItem(item)
+        for div, qicon in PercentageIcon.ICONS.items():
+            item = QListWidgetItem()
+            item.setText(f"divID = {div} = {round(div * (360 / PercentageIcon._DIVS_COARSE))}deg ="
+                         f" {round(div * (100 / PercentageIcon._DIVS_COARSE))}%")
+            item.setIcon(qicon)
+            percentage_list.addItem(item)
+        percentage_list_dir_len = len(PercentageIcon.ICONS)
         percentage_layout.addWidget(percentage_list)
         percentage_widget.setLayout(percentage_layout)
         splitter.addWidget(percentage_widget)

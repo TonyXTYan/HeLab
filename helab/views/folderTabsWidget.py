@@ -110,7 +110,7 @@ class FolderTabWidget(QTabWidget):
             view_path = model_root_path
 
         if target_path is None:
-            target_path = next((path for path in DEV_POTENTIAL_DATA_PATHS if os.path.exists(path)), '')
+            target_path = DEFAULT_DATA_PATH
     
         try:
             if not os.path.commonpath([model_root_path, target_path]) == os.path.abspath(model_root_path):

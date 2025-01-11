@@ -6,6 +6,7 @@ import io
 import logging
 import os
 from sys import getsizeof
+from turtle import update
 from typing import List
 
 import pandas as pd
@@ -22,6 +23,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, QRunnable
 from pandas.core.interchange.dataframe_protocol import DataFrame
 from pandas.errors import ParserError
 
+from helab.resources.icons import PercentageIcon
 from helab.utils.cachingSetup import data_ram_cache, fnum, status_cache
 
 
@@ -36,7 +38,7 @@ class LoadFolderToRamWorker(QRunnable):
     _TIMEDELTA_SEC_UPDATE_PROGRESS_MIN = timedelta(seconds=0.5)
     _TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM = timedelta(seconds=0.5)
 
-    CANCEL_MSG_ALREADY_CACHED_AND_NOT_SELECTED = "cancelled - already cached and no longer selected (user changed selection)"
+    CANCEL_MSG_ALREADY_CACHED_AND_NOT_SELECTED = "cancelled - already cached and no longer selected (user changed selection, cancelled decompress request)"
     CANCEL_MSG_SHUTDOWN_REQUESTED = "cancelled - shutdown requested"
 
     def __init__(self, folder_path: str):
@@ -108,6 +110,8 @@ class LoadFolderToRamWorker(QRunnable):
             no_loaded_files_since_last_debug_print = 0
             no_error_files_since_last_debug_print = 0
             no_total_files = len(files)
+            update_progress = False
+            percentages = PercentageIcon.KEYS_PERCENTAGE
 
             data_dict = {}
             problematic_txy_ns = []
@@ -127,11 +131,13 @@ class LoadFolderToRamWorker(QRunnable):
                     #              f"nError = {no_error_files_since_last_debug_print}/s, "
                     #              f"nTotal = {i+1}/{no_total_files} = {round((i+1)/no_total_files*100,1)}%"
                     #              )
-                    self.signals.loading.emit(self.folder_path, (i+1)/no_total_files)
+                    self.signals.loading.emit(self.folder_path, percentages[-5]*(i+1)/no_total_files)
+                    update_progress = True
                 if datetime.now() - time_last_debug_print > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM:
                     no_loaded_files_since_last_debug_print = 0
                     no_error_files_since_last_debug_print = 0
                     time_last_debug_print = datetime.now()
+                    
 
 
                 # Extract the number using string manipulation or regex
@@ -175,13 +181,14 @@ class LoadFolderToRamWorker(QRunnable):
                     continue
 
             _check_cancel_status()
-            if datetime.now() - time_start_loading > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_MIN:
-                self.signals.loading.emit(self.folder_path, 1.0)
+            # update_progress = datetime.now() - time_start_loading > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_MIN
+            if update_progress: self.signals.loading.emit(self.folder_path, percentages[-4])
                 # logging.debug(f"LoadFolderToRamWorker: formatting data {self.folder_path}. ")
 
             # Add a 'file_number' column to each DataFrame
             for number, df in data_dict.items():
                 df['file_number'] = number
+            if update_progress: self.signals.loading.emit(self.folder_path, percentages[-3])
 
             # Concatenate all DataFrames
             combined_df = pd.concat(data_dict.values())
@@ -206,6 +213,8 @@ class LoadFolderToRamWorker(QRunnable):
             #     buffer_size_bytes = getsizeof(buffer.getvalue())
             # saved = data_ram_cache.set(self.folder_path, buffer.getvalue(), retry=True)
 
+            if update_progress: self.signals.loading.emit(self.folder_path, percentages[-2])
+
             compressed_data = self.compress_dataframe(combined_df)
             buffer_size_bytes = getsizeof(compressed_data)
             saved = data_ram_cache.set(self.folder_path, compressed_data, retry=True)
@@ -216,6 +225,7 @@ class LoadFolderToRamWorker(QRunnable):
             try:
                 # data_files = data_ram_cache.__getitem__(self.file_path)
                 data_files = data_ram_cache[self.folder_path]
+                if update_progress: self.signals.loading.emit(self.folder_path, percentages[-1])
                 if not data_files is None:
                     # logging.debug(f"LoadFolderToRamWorker: everything is fine for {self.folder_path}")
                     pass

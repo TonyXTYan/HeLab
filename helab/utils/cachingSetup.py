@@ -12,13 +12,10 @@ from PyQt6.QtCore import QSettings
 from helab.utils.constants import DIR_CACHES
 from helab.utils.loggingSetup import setup_logging
 
-# logging.basicConfig(level=logging.DEBUG)
-
-# setup_logging()
 
 logging.debug("cachingSetup.py: Loading")
-# logging.debug(f"Page Size {psutil.virtual_memory().get}")
 
+# Default cache parameters from diskcache
 # https://github.com/grantjenks/python-diskcache/blob/master/diskcache/core.py
 # diskcache_params = {
 #     'statistics': True,
@@ -39,6 +36,9 @@ CACHE_PARAMS_DEFAULTS: OrderedDict[str, Any] = OrderedDict([
     ("disk_min_file_size", 2**16),  # 64KB
     ("shards", 32),
 ])
+"""
+The default cache parameters for all caches.
+"""
 
 CACHE_PARAMS_OVERRIDE: Dict[str, Dict[str, Any]] = {
     "status_cache": {
@@ -60,66 +60,24 @@ CACHE_PARAMS_OVERRIDE: Dict[str, Dict[str, Any]] = {
         "tag_index": True,
     },
 }
-
-
-# CACHE_PARAMS_OVERRIDE = OrderedDict([
-#     ("status_cache", {
-#         "size_limit": 2**31, # 2GB
-#     }),
-#     ("hasChildren_cache", {
-#     }),
-#     ("os_listdir_cache", {
-#     }),
-#     ("os_scandir_cache", {
-#     }),
-#     ("os_isdir_cache", {
-#     }),
-# ])
-
-# def load_cache_params(cache_name: str) -> dict:
-#     # Load final merged params from QSettings:
-#     # 1) Start with DEFAULT_CACHE_PARAMS
-#     # 2) Apply any local OVERRIDES
-#     # 3) Apply user overrides from QSettings
-#
-#     settings = QSettings("ANU", "HeLab")
-#     base_params = deepcopy(CACHE_PARAMS_DEFAULTS)
-#
-#     # Merge in local overrides
-#     override_params = CACHE_PARAMS_OVERRIDE.get(cache_name, {})
-#     for k, v in override_params.items():
-#         base_params[k] = v
-#
-#     # Now override from user’s QSettings
-#     group_key = f"cache_params/{cache_name}"
-#     for param_key, default_val in base_params.items():
-#         setting_path = f"{group_key}/{param_key}"
-#         # we check type to ensure we read from QSettings with correct type
-#         if isinstance(default_val, bool):
-#             val = settings.value(setting_path, default_val, type=bool)
-#         elif isinstance(default_val, int):
-#             val = settings.value(setting_path, default_val, type=int)
-#         elif isinstance(default_val, str):
-#             val = settings.value(setting_path, default_val, type=str)
-#         else:
-#             val = settings.value(setting_path, default_val)
-#             logging.warning(f"load_cache_params: Unknown type for {param_key = }, {type(default_val) = }")
-#         base_params[param_key] = val
-#
-#     return base_params
-#
-# def build_all_caches() -> OrderedDict[str, FanoutCache]:
-#     # Build and return an OrderedDict of all caches, one entry per cache_name.
-#     cache_dict = OrderedDict()
-#     for cache_name in CACHE_PARAMS_OVERRIDE.keys():
-#         params = load_cache_params(cache_name)
-#         cache_path = f"{DIR_CACHES}/{cache_name}"
-#         logging.debug(f"build_all_caches: {cache_name = }, {cache_path = }, {params = }")
-#         cache_dict[cache_name] = FanoutCache(cache_path, **params)
-#     return cache_dict
-
+"""
+The default cache parameters for each cache type.
+"""
 
 def load_cache_param(cache_name: str) -> OrderedDict[str, Any]:
+    """
+    Load the cache parameters from the settings.
+
+    This function retrieves cache parameters for a given cache name. It first
+    loads the default cache parameters and then overrides them with any
+    specific parameters defined for the given cache name. Finally, it updates
+    the parameters with values stored in the QSettings.
+
+    :param cache_name: The name of the cache for which parameters are to be loaded.
+    :type cache_name: str
+    :return: An OrderedDict containing the cache parameters.
+    :rtype: OrderedDict[str, Any]
+    """
     settings = QSettings("ANU", "HeLab")
     base_params = deepcopy(CACHE_PARAMS_DEFAULTS)
 
@@ -129,27 +87,11 @@ def load_cache_param(cache_name: str) -> OrderedDict[str, Any]:
     logging.debug(f"load_cache_param: hardcode {cache_name = }, base_params = {json.dumps(base_params)}")
     for key, val in base_params.items():
         setting_path = f"cache_params/{cache_name}/{key}"
-        # logging.debug(f"load_cache_param: {setting_path} = {settings.value(setting_path, val)}")
-        # if isinstance(val, bool):
-        #     base_params[key] = settings.value(setting_path, val, type=bool)
-        # elif isinstance(val, int):
-        #     base_params[key] = settings.value(setting_path, val, type=int)
-        # elif isinstance(val, str):
-        #     base_params[key] = settings.value(setting_path, val, type=str)
-        # else:
-        #     base_params[key] = settings.value(setting_path, val)
-        #     logging.warning(f"load_cache_param: Unknown type for {key = }, {type(val) = }")
         base_params[key] = settings.value(setting_path, val)
 
     logging.debug(f"load_cache_param: loaded   {cache_name = } ,base_params = {json.dumps(base_params)}")
     return base_params
 
-
-# status_cache = FanoutCache(DIR_CACHES + '/status_cache', **diskcache_params)
-# hasChildren_cache = FanoutCache(DIR_CACHES + '/hasChildren_cache', **diskcache_params)
-# os_listdir_cache = FanoutCache(DIR_CACHES + '/os_listdir_cache', **diskcache_params)
-# os_scandir_cache = FanoutCache(DIR_CACHES + '/os_scandir_cache', **diskcache_params)
-# os_isdir_cache   = FanoutCache(DIR_CACHES + '/os_isdir_cache', **diskcache_params)
 
 status_cache      = FanoutCache(DIR_CACHES + '/status_cache',      **load_cache_param('status_cache'))
 hasChildren_cache = FanoutCache(DIR_CACHES + '/hasChildren_cache', **load_cache_param('hasChildren_cache'))
@@ -167,17 +109,21 @@ caches = OrderedDict([
     ('data_ram_cache', data_ram_cache),
 ])
 
-# caches = build_all_caches()
-#
-# status_cache = caches['status_cache']
-# hasChildren_cache = caches['hasChildren_cache']
-# os_listdir_cache = caches['os_listdir_cache']
-# os_scandir_cache = caches['os_scandir_cache']
-# os_isdir_cache = caches['os_isdir_cache']
-
-
 
 def fnum(num: int) -> str:
+    """
+    Format a number with a suffix for thousands, millions, etc.
+    :param num: The number to format
+    :return:    The formatted number
+
+    e.g.
+
+    - `fnum(123)`  -> `'  123'`
+    - `fnum(1234)` -> `'1.234K'`
+    - `fnum(123000)`  -> `'123.0K'`
+    - `fnum(1234567)` -> `'1.235M'`
+    - `fnum(123456789000)` -> `'123.5G'`
+    """
     suffixes = ['K', 'M', 'G', 'T', 'P', 'E']
     for i, suffix in reversed(list(enumerate(suffixes, 1))):
         divisor = 1000 ** i
@@ -190,6 +136,10 @@ def fnum(num: int) -> str:
 
 
 def cache_status_string() -> str:
+    """
+    Create a string with the status of all caches
+    :return: The cache status string
+    """
     cache_str = "Cache status:\n"
     max_len_cache_name = max(len(cache_name) for cache_name in caches.keys())
     for cache_name, cache in caches.items():

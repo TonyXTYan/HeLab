@@ -2,16 +2,18 @@ import gc
 import glob
 import logging
 import os
+import pickle
 import platform
 import stat
 import subprocess
 import sys
+import warnings
 from typing import Optional, Dict, List, Tuple
 
 import pandas as pd
 from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal, QThreadPool, QModelIndex, QItemSelection, \
     QPoint, QFileInfo, QTimer, QRunnable, QObject, QThread
-from PyQt6.QtGui import QAction, QFontInfo
+from PyQt6.QtGui import QAction, QFontInfo, QGuiApplication
 from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu, QApplication
 from cachetools import LRUCache, TTLCache
 from debugpy.server.cli import switches
@@ -44,11 +46,6 @@ class FolderExplorer(QWidget):
                  set_initial_expand_to_parent_level: bool = True,
                  ) -> None:
         super().__init__(parent)
-        # appWidth = 800
-        # appHeight = 800
-
-        # self.setWindowTitle('File System Viewer')
-        # self.setGeometry(300, 300, appWidth, appHeight)
 
         # Initialize view_path
         self.model_root_path = model_root_path  # System root path
@@ -66,7 +63,6 @@ class FolderExplorer(QWidget):
         self.model.setReadOnly(True)
         # self.model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
         self.model.setFilter(QDir.Filter.Dirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
-        # self.rootPathChanged.emit(self.model_root_path)
 
         # self.tree = QTreeView()
         self.tree = StatusTreeView()
@@ -164,7 +160,6 @@ class FolderExplorer(QWidget):
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
 
-        # self.rootPathChanged.emit(self.model_root_path)
         self.emit_root_path_changed()
         # selection_model.emitSelectionChanged(selection_model.selection(), selection_model.selection())
         # self.emit_selection_changed()
@@ -202,21 +197,8 @@ class FolderExplorer(QWidget):
             selection_model.select(current_selection, QItemSelectionModel.SelectionFlag.Select)
 
     def on_selection_changed(self, selected: QItemSelection, deselected: QItemSelection) -> None:
-        # selection_model = self.get_selection_model()
-        # indexes = selection_model.selectedRows()
-        #
-        # # there_should_only_be_one_index = len(indexes) == 1
-        # if len(indexes) > 1:
-        #     logging.critical(f"on_selection_changed: DIDN'T THINK THIS WAS POSSIBLE {len(indexes) = }")
-        #
-        # for index in indexes:
-        #     file_path = self.model.filePath(index)
-        #     logging.debug(f"folderExplorer.on_selection_changed: {file_path = }")
-        #     self.selected_path = file_path
-        #
-        #     self.action_debug_3_run(self.model.fileInfo(index))
 
-        # logging.debug(f"on_selection_changed: {selected.indexes() = }, {deselected = }")
+        # TODO: enable multi-row selection
 
         selected_indexes = selected.indexes()
         deselected_indexes = deselected.indexes()
@@ -356,7 +338,7 @@ class FolderExplorer(QWidget):
 
 
     def get_selection_model(self) -> QItemSelectionModel:
-        # logging.debug(f"CALLED ON THIS METHOD (get_selection_model) IS FUCKING DANGEROUS")
+        # logging.warning(f"get_selection_model: CALLED (this is dangerous)")
         selection_model = self.tree.selectionModel()
         if selection_model is None:
             logging.fatal("FolderExplorer.__init__ encountered None self.tree.selectionModel()")
@@ -473,20 +455,29 @@ class FolderExplorer(QWidget):
 
 
 
-        action_menu_clear_cache = QMenu("Pop Cache Here", self)
-        action_clear_cache_depth_status = QAction("Clear status_cache", self)
-        action_clear_cache_depth_status.triggered.connect(lambda: self.context_menu_action_pop_cache(file_info, cache_name="status_cache"))
-        action_menu_clear_cache.addAction(action_clear_cache_depth_status)
+        action_menu_pop_cache = QMenu("Remove Cache Here", self)
 
-        action_clear_cache_depth_hasChildren = QAction("Clear hasChildren Cache", self)
-        action_clear_cache_depth_hasChildren.triggered.connect(lambda: self.context_menu_action_pop_cache(file_info, cache_name="hasChildren_cache"))
-        action_menu_clear_cache.addAction(action_clear_cache_depth_hasChildren)
+        action_pop_cache_osfs_related = QAction("File System Cache", self)
+        action_pop_cache_osfs_related.triggered.connect(lambda: self.context_menu_action_pop_cache(file_info, cache_name="osfs_system_cache"))
+        action_menu_pop_cache.addAction(action_pop_cache_osfs_related)
 
-        action_clear_cache_depth_data_ram = QAction("Clear data_ram Cache", self)
-        action_clear_cache_depth_data_ram.triggered.connect(lambda: self.context_menu_action_pop_cache(file_info, cache_name="data_ram_cache"))
-        action_menu_clear_cache.addAction(action_clear_cache_depth_data_ram)
+        action_pop_cache_depth_hasChildren = QAction("hasChildren Cache", self)
+        action_pop_cache_depth_hasChildren.triggered.connect(lambda: self.context_menu_action_pop_cache(file_info, cache_name="hasChildren_cache"))
+        action_menu_pop_cache.addAction(action_pop_cache_depth_hasChildren)
 
-        menu.addMenu(action_menu_clear_cache)
+        action_pop_cache_depth_status = QAction("status_cache", self)
+        action_pop_cache_depth_status.triggered.connect(lambda: self.context_menu_action_pop_cache(file_info, cache_name="status_cache"))
+        action_menu_pop_cache.addAction(action_pop_cache_depth_status)
+
+        action_pop_cache_depth_data_ram = QAction("data_ram Cache", self)
+        action_pop_cache_depth_data_ram.triggered.connect(lambda: self.context_menu_action_pop_cache(file_info, cache_name="data_ram_cache"))
+        action_menu_pop_cache.addAction(action_pop_cache_depth_data_ram)
+
+        action_pop_cache_all = QAction("All Caches", self)
+        action_pop_cache_all.triggered.connect(lambda: self.context_menu_action_pop_cache(file_info, cache_name="all"))
+        action_menu_pop_cache.addAction(action_pop_cache_all)
+
+        menu.addMenu(action_menu_pop_cache)
 
 
         menu.addSeparator()
@@ -496,13 +487,19 @@ class FolderExplorer(QWidget):
         action_debug_1.triggered.connect(lambda: self.get_valid_status_report(file_info))
         action_menu_debug.addAction(action_debug_1)
 
-        action_debug_2 = QAction("Debug Action 2", self)
-        action_debug_2.triggered.connect(lambda: self.action_debug_2_run(file_info))
-        action_menu_debug.addAction(action_debug_2)
+        # action_debug_2 = QAction("Debug Action 2", self)
+        # action_debug_2.triggered.connect(lambda: self.action_debug_2_run(file_info))
+        # action_menu_debug.addAction(action_debug_2)
 
         action_debug_3 = QAction("load_to_ram_cache", self)
         action_debug_3.triggered.connect(lambda: self.load_to_ram_cache(file_info))
         action_menu_debug.addAction(action_debug_3)
+
+
+        action_dump_data_to_temp_dir = QAction("Dump data_ram_cache to DIR_TEMPS", self)
+        action_dump_data_to_temp_dir.triggered.connect(lambda: self.on_click_dump_data_to_temp_dir(file_info))
+        action_menu_debug.addAction(action_dump_data_to_temp_dir)
+
 
         menu.addMenu(action_menu_debug)
 
@@ -514,19 +511,37 @@ class FolderExplorer(QWidget):
 
     def context_menu_action_pop_cache(self, file_info: QFileInfo, cache_name: str) -> None:
         path = file_info.absoluteFilePath()
-        match cache_name:
-            case "status_cache":
-                status_cache.pop(path)
-            case "hasChildren_cache":
-                hasChildren_cache.pop(path)
-            case "data_ram_cache":
-                data_ram_cache.pop(path)
-                status_report = status_cache.get(path)
-                if isinstance(status_report, StatusReport):
-                    status_report.update_ram_status(is_opened=path==self.selected_path)
-            case _:
-                logging.error(f"context_menu_action_pop_cache: Unknown cache_name {cache_name = }")
-                return
+        try:
+            match cache_name:
+                case "status_cache":
+                    status_cache.pop(path)
+                case "hasChildren_cache":
+                    hasChildren_cache.pop(path)
+                case "data_ram_cache":
+                    data_ram_cache.pop(path)
+                    status_report = status_cache.get(path)
+                    if isinstance(status_report, StatusReport):
+                        status_report.update_ram_status(is_opened=path==self.selected_path)
+                case "osfs_system_cache":
+                    os_listdir_cache.pop(path)
+                    os_isdir_cache.pop(path)
+                    os_scandir_cache.pop(path)
+                case "all":
+                    status_cache.pop(path)
+                    hasChildren_cache.pop(path)
+                    data_ram_cache.pop(path)
+                    os_listdir_cache.pop(path)
+                    os_isdir_cache.pop(path)
+                    os_scandir_cache.pop(path)
+                case _:
+                    raise ValueError(f"Invalid cache_name: {cache_name} at {path = }")
+            logging.debug(f"context_menu_action_pop_cache: {cache_name = }, {path = }")
+        except KeyError:
+            logging.warning(f"context_menu_action_pop_cache: KeyError {path = }")
+            pass
+        except Exception as e:
+            logging.error(f"context_menu_action_pop_cache: {e = }")
+            pass
         pass
 
     def get_valid_status_report(self, file_info: QFileInfo) -> Tuple[int, StatusReport | None]:
@@ -552,6 +567,7 @@ class FolderExplorer(QWidget):
 
     def action_debug_2_run(self, file_info: QFileInfo) -> None:
         logging.fatal(f"action_debug_2_run: THIS IS NO LONGER USED")
+        warnings.warn("action_debug_2_run", DeprecationWarning)
         try:
             folder_path = file_info.absoluteFilePath()
             if not self.get_valid_status_report(file_info)[0] == 0 : return
@@ -740,16 +756,33 @@ class FolderExplorer(QWidget):
 
     def copy_pathname_to_clipboard(self, folder_info: QFileInfo) -> None:
         path = folder_info.absoluteFilePath()
-        clipboard = QApplication.clipboard()
+        # clipboard = QApplication.clipboard()
+        clipboard = QGuiApplication.clipboard()
         if clipboard is None:
             logging.error("copy_pathname_to_clipboard: clipboard is None")
             return
         clipboard.setText(path)
-        logging.debug(f"Copied selected_path to clipboard: {path}")
+        logging.info(f"copy_pathname_to_clipboard: {path = }")
 
     def on_stop_button_clicked(self) -> None:
         logging.debug("Stop all scans button clicked.")
         self.model.stop_all_scans()
+
+    def on_click_dump_data_to_temp_dir(self, folder_info: QFileInfo) -> None:
+        try:
+            folder_path = folder_info.absoluteFilePath()
+            if folder_path in data_ram_cache:
+                data_compressed = data_ram_cache[folder_path]
+                # data_pd = LoadFolderToRamWorker.decompress_dataframe(data_compressed)
+                temp_path = os.path.join(DIR_TEMPS, hash_str(folder_path))
+                # data_pd.to_pickle(temp_path)
+                # pickle
+                with open(temp_path, 'wb') as f:
+                    pickle.dump(data_compressed, f)
+                logging.debug(f"on_click_dump_data_to_temp_dir: {folder_path = } to {temp_path = }")
+        except Exception as e:
+            logging.error(f"on_click_dump_data_to_temp_dir: {type(e).__name__} - {e}")
+            pass
 
     def refresh(self) -> None:
         """

@@ -11,8 +11,6 @@ from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QTimer
 import logging
 
 from PyQt6.QtTest import QTest
-from babel.dates import time_
-from mypyc.namegen import candidate_suffixes
 
 from helab.utils.cachingSetup import *
 from helab.utils.threadingSetup import *
@@ -44,6 +42,10 @@ class StatusReport:
         self.payload_progress_ram: Optional[float] = None
         self.time_last_updated = time_last_updated
         self.time_load_ram: Optional[datetime] = None
+
+        self.log_LabviewMatlab_txt: Optional[str] = None
+        self.log_KeysightMatlab_txt: Optional[str] = None
+        self.about_txt: Optional[str] = None
 
     def _update_cache(self) -> None:
         status_cache[self.path] = self

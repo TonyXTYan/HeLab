@@ -21,23 +21,11 @@ if os_cpu_count is None: os_cpu_count = 1
 num_threads_half_os_cpu_count: int = int(max(2, round(os_cpu_count / 2)))
 logging.info(f"{os_cpu_count = }, {num_threads_half_os_cpu_count = }")
 
-
-# thread_pool_global: QThreadPool
-# thread_pool_global_instance = QThreadPool.globalInstance()
-# if thread_pool_global_instance is None:
-#     logging.fatal("QThreadPool.globalInstance() is None")
-#     sys.exit(1)
-#     # thread_pool_global = QThreadPool()
-#     # QThreadPool.globalInstance(thread_pool_global)
-# else:
-#     thread_pool_global = thread_pool_global_instance
-thread_pool_global = QThreadPool()
-thread_pool_global.setMaxThreadCount(num_threads_half_os_cpu_count)
-
+thread_pool_general = QThreadPool()
+thread_pool_general.setMaxThreadCount(num_threads_half_os_cpu_count)
 
 thread_pool_load_data_ram = QThreadPool()
 thread_pool_load_data_ram.setMaxThreadCount(1)
-
 
 def running_worker_queues_len() -> Tuple[int,int,int,int]:
     return (
@@ -48,12 +36,14 @@ def running_worker_queues_len() -> Tuple[int,int,int,int]:
     )
 
 def all_pools_total_activeThreadCount() -> int:
-    return  thread_pool_global.activeThreadCount() + \
+    return  thread_pool_general.activeThreadCount() + \
             thread_pool_load_data_ram.activeThreadCount()
 
 
 def clear_all_thread_pools() -> None:
-    thread_pool_global.clear()
+    # QThreadPool.globalInstance().clear()
+    getattr(QThreadPool.globalInstance(), 'clear', lambda: None)()  # emm ya just trying this way to do it 
+    thread_pool_general.clear()
     thread_pool_load_data_ram.clear()
     logging.info("All thread pools cleared.")
 
@@ -61,12 +51,24 @@ def clear_all_thread_pools() -> None:
 def cancel_all_workers() -> None:
     for workerS in running_workers_status.values():
         workerS.cancel()
+    running_workers_status.clear()
+
     for workerD in running_workers_deep.values():
         workerD.cancel()
+    running_workers_deep.clear()
+
     for workerC in running_workers_hasChildren.values():
         workerC.cancel()
+    running_workers_hasChildren.clear()
+
     for workerL in running_workers_ramLoading.values():
         workerL.cancel(message=LoadFolderToRamWorker.CANCEL_MSG_SHUTDOWN_REQUESTED)
+    running_workers_ramLoading.clear()
+
+    thread_pool_general.clear()
+    thread_pool_load_data_ram.clear()
+
+
     logging.info("All workers cancelled.")
 
 

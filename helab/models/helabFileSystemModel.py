@@ -14,7 +14,6 @@ from diskcache import FanoutCache
 from pympler import asizeof
 from pympler.web import refresh
 from pytablericons import TablerIcons, OutlineIcon, FilledIcon
-from rich.status import Status
 
 from helab.utils.cachingSetup import *
 from helab.utils.threadingSetup import *
@@ -61,7 +60,7 @@ class helabFileSystemModel(QFileSystemModel):
         # self.thread_pool = QThreadPool.globalInstance()
         # self.thread_pool.setMaxThreadCount(8)
         # self.thread_pool.setThreadPriority(QThread.Priority.LowPriority)
-        logging.debug(f"Multithreading with maximum {thread_pool_global.maxThreadCount()} threads")
+        logging.debug(f"Multithreading with maximum {thread_pool_general.maxThreadCount()} threads")
 
         # Initialize a set to keep track of running workers
         # self.running_workers_status = {}
@@ -223,12 +222,12 @@ class helabFileSystemModel(QFileSystemModel):
             # Create and start the worker
             worker = StatusWorker(folder_path)
             worker.signals.finished.connect(self.handle_status_computed)
-            thread_pool_global.start(worker, priority=QThread.Priority.IdlePriority.value)
+            thread_pool_general.start(worker, priority=QThread.Priority.IdlePriority.value)
             worker.setAutoDelete(True)
             running_workers_status[folder_path] = worker
             # self.running_workers.add(worker)
             # return ('loading', 0, [])
-            # QTimer.singleShot(5, lambda: thread_pool_global.start(worker, priority=QThread.Priority.LowPriority.value))
+            # QTimer.singleShot(5, lambda: thread_pool_general.start(worker, priority=QThread.Priority.LowPriority.value))
             # return StatusReport(folder_path, 'loading', 0, [])
             return loading_status
 
@@ -413,7 +412,7 @@ class helabFileSystemModel(QFileSystemModel):
         worker = StatusDeepWorker(root_path, invalidate_cache)
         worker.signals.finished.connect(lambda rp, dr: self.process_deep_status(rp, dr, current_depth, invalidate_cache))
         worker.setAutoDelete(True)
-        thread_pool_global.start(worker, priority=QThread.Priority.IdlePriority.value) # type: ignore[call-overload]
+        thread_pool_general.start(worker, priority=QThread.Priority.IdlePriority.value) # type: ignore[call-overload]
         # Track the StatusDeepWorker
         running_workers_deep[root_path] = worker
         logging.debug(f"start_deep_status_worker started for: {root_path}, with depth: {current_depth}")
@@ -514,8 +513,8 @@ class helabFileSystemModel(QFileSystemModel):
                 worker = DirectoryCheckWorker(dir_path)
                 worker.signals.finished.connect(self.on_has_children_finished)
                 worker.setAutoDelete(True)
-                thread_pool_global.start(worker, priority=QThread.Priority.LowestPriority.value) # type: ignore[call-overload]
-                # QTimer.singleShot(10, lambda: thread_pool_global.start(worker))
+                thread_pool_general.start(worker, priority=QThread.Priority.LowestPriority.value) # type: ignore[call-overload]
+                # QTimer.singleShot(10, lambda: thread_pool_general.start(worker))
                 running_workers_hasChildren[dir_path] = worker
                 return False
 
@@ -615,8 +614,8 @@ class helabFileSystemModel(QFileSystemModel):
         worker.signals.finished.connect(self.on_rescan_finished)
         worker.signals.cancelled.connect(self.on_rescan_cancelled)
         worker.setAutoDelete(True)
-        # thread_pool_global.start(worker, priority=QThread.Priority.LowestPriority.value)
-        QTimer.singleShot(1, lambda: thread_pool_global.start(worker, priority=QThread.Priority.HighPriority.value))    # type: ignore[call-overload]
+        # thread_pool_general.start(worker, priority=QThread.Priority.LowestPriority.value)
+        QTimer.singleShot(1, lambda: thread_pool_general.start(worker, priority=QThread.Priority.HighPriority.value))    # type: ignore[call-overload]
         # self.refresh()
         self.rescan_worker = worker
         pass

@@ -3,7 +3,6 @@ import os
 
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable
 
-from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import entries
 from helab.utils.os_cached import os_isdir, os_listdir, os_listdir_filtered
 
 
