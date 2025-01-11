@@ -129,10 +129,6 @@ INDICATOR_DOTS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 def get_path_from_setting_or_use_default(key: str, candidates: List[str]) -> str:
     """
     Retrieve a setting value by key or replace it with a default from candidates if not found or invalid.
-    This function attempts to retrieve a setting value associated with the given key from QSettings.
-    If the retrieved value is a valid path, it is returned. Otherwise, a warning is logged, and the
-    function searches through the provided candidates list for an existing path to use as the new value.
-    The new value is then saved in QSettings and returned.
     :param key: The key to look up in the settings.
     :type key: str
     :param candidates: A list of candidate paths to use as default if the setting is not found or invalid.
@@ -157,6 +153,11 @@ def get_path_from_setting_or_use_default(key: str, candidates: List[str]) -> str
 
 DIR_TEMPS = get_path_from_setting_or_use_default("dir_temps", DIR_TEMPS_CANDIDATES)
 DIR_CACHES = get_path_from_setting_or_use_default("dir_caches", DIR_CACHES_CANDIDATES)
+
+if DIR_TEMPS != DIR_TEMPS_CANDIDATES[0]:
+    os.rmdir(DIR_TEMPS_CANDIDATES[0])
+if DIR_CACHES != DIR_CACHES_CANDIDATES[0]:
+    os.rmdir(DIR_CACHES_CANDIDATES[0])
 
 
 # DIR_TEMPS = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps')
