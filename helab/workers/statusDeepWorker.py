@@ -27,9 +27,14 @@ class StatusDeepWorker(QRunnable):
         logging.debug(f"Deep Worker started for: {self.root_path}, invalidate_cache = {self.invalidate_cache}")
         directory_list: List[str] = []
 
+        def _emit() -> None:
+            self.setAutoDelete(True)
+            self.signals.finished.emit(self.root_path, directory_list)
+            pass
+
         if self._is_cancelled:
             logging.debug(f"StatusDeepWorker cancelled: {self.root_path}")
-            self.signals.finished.emit(self.root_path, directory_list)
+            _emit()
             return
         try:
             os_listdir_results = os_listdir_filtered(self.root_path, invalidate_cache=self.invalidate_cache)
@@ -37,7 +42,7 @@ class StatusDeepWorker(QRunnable):
                 path = os.path.join(self.root_path, entry)
                 if self._is_cancelled:
                     logging.debug(f"StatusDeepWorker cancelled during BFS: {self.root_path}")
-                    self.signals.finished.emit(self.root_path, directory_list)
+                    _emit()
                     return
                 if os_isdir(path):
                     directory_list.append(path)
@@ -47,7 +52,7 @@ class StatusDeepWorker(QRunnable):
         except Exception as e:
             logging.error(f"StatusDeepWorker: Error accessing {self.root_path}: {e}")
         logging.debug(f"StatusDeepWorker finished for: {self.root_path}, found {len(directory_list)} immediate subdirectories")
-        self.signals.finished.emit(self.root_path, directory_list)
+        _emit()
 
 
     def cancel(self) -> None:

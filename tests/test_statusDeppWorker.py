@@ -26,6 +26,7 @@ class TestStatusDeepWorker:
         worker = StatusDeepWorker(str(folder_path))
         with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
             worker.run()
+        blocker.disconnect()
 
         root_path, subdirs = blocker.args       # type: ignore[reportGeneralTypeIssues, unused-ignore]
         assert root_path == str(folder_path)
@@ -48,6 +49,7 @@ class TestStatusDeepWorker:
         worker = StatusDeepWorker(str(folder_path))
         with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
             worker.run()
+        blocker.disconnect()
 
         root_path, subdirs = blocker.args       # type: ignore[reportGeneralTypeIssues, unused-ignore]
         assert root_path == str(folder_path)
@@ -70,6 +72,7 @@ class TestStatusDeepWorker:
 
         with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
             worker.run()
+        blocker.disconnect()
 
         root_path, subdirs = blocker.args       # type: ignore[reportGeneralTypeIssues, unused-ignore]
         assert root_path == str(folder_path)

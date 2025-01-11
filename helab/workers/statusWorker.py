@@ -277,7 +277,8 @@ class StatusReport:
 # Define WorkerSignals to communicate between threads
 class StatusWorkerSignals(QObject):
     # finished = pyqtSignal(str, str, int, list)  # path, status, count, extra_icons
-    finished = pyqtSignal(StatusReport)  # path, status, count, extra_icons
+    # finished = pyqtSignal(StatusReport)  # path, status, count, extra_icons
+    finished = pyqtSignal(str) # path
 
 # Define the Worker class with cancellation support
 
@@ -309,15 +310,18 @@ class StatusWorker(QRunnable):
     def _finished_emit_helper(self, status_report: StatusReport) -> None:
         if self.path in status_cache:
             logging.debug(f"StatusWorker._finished_emit_helper: overwriting cache for {self.path} with status = {status_report.status}")
-        # status_cache[self.path] = status_report
-        time.sleep(0.10)
+        time.sleep(0.05)
         status_report.merge_with(status_report)
         time.sleep(0.05)
         self._finished_emit_helper_parent_path(status_report)
         time.sleep(0.05)
         self._finished_emit_helper_children_path(status_report)
-        time.sleep(0.10)
-        self.signals.finished.emit(status_report)
+        time.sleep(0.01)
+        time.sleep(random.uniform(0.05, 0.10))
+        # time.sleep(3)
+        # self.signals.finished.emit(status_report)
+        self.setAutoDelete(True)
+        self.signals.finished.emit(self.path)
 
     def _finished_emit_helper_parent_path(self, status_report: StatusReport) -> None:
         if status_report.status in StatusReport.STATUS_CONTAINS_DATA:

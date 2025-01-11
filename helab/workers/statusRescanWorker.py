@@ -52,6 +52,7 @@ class StatusRescanWorker(QRunnable):
         # rows = self.model.get_visible_rows()
         for index, path in self.rows:
             if self._is_cancelled:
+                self.setAutoDelete(True)
                 self.signals.cancelled.emit(self._is_cancelled_scan_again, self.user_intend)
                 return
             time.sleep(0.01)
@@ -79,6 +80,7 @@ class StatusRescanWorker(QRunnable):
                 #     self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
             # logging.debug(f"StatusRescanWorker.run: checked {path = }")
         time.sleep(0.01)
+        self.setAutoDelete(True)
         self.signals.finished.emit(self.user_intend)
 
 

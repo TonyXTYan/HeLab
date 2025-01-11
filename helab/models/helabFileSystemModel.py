@@ -70,6 +70,11 @@ class helabFileSystemModel(QFileSystemModel):
 
         self.rescan_worker: Optional[StatusRescanWorker] = None
 
+        self.pending_updates = set()
+        self.update_timer = QTimer()
+        self.update_timer.setSingleShot(True)
+        self.update_timer.timeout.connect(self.emit_pending_updates)
+
         # QTimer.singleShot(300, self.refresh)
 
 
@@ -216,7 +221,7 @@ class helabFileSystemModel(QFileSystemModel):
             worker = StatusWorker(folder_path)
             worker.signals.finished.connect(self.handle_status_computed_v2)
             thread_pool_general.start(worker, priority=QThread.Priority.LowestPriority.value)
-            worker.setAutoDelete(True)
+            # worker.setAutoDelete(True)
             running_workers_status[folder_path] = worker
             # self.running_workers.add(worker)
             # return ('loading', 0, [])
@@ -224,10 +229,22 @@ class helabFileSystemModel(QFileSystemModel):
             # return StatusReport(folder_path, 'loading', 0, [])
             return loading_status
 
-    def handle_status_computed_v2(self, status_report: StatusReport) -> None:
-        path = status_report.path
+    def handle_status_computed_v2(self, path: str) -> None:
+        status_report = status_cache.get(path, None)
+        if not isinstance(status_report, StatusReport):
+            logging.critical(f"handle_status_computed_v2: (IMPOSSIBLE) status_report is not StatusReport: {status_report}")
+            return
+
+        logging.debug(f"handle_status_computed_v2: path = {status_report.path}, status = {status_report.status}, count = {status_report.count}, extras = {status_report.extra_icons}")
+        # path = status_report.path
+        if path != status_report.path:
+            logging.critical(f"handle_status_computed_v2: (IMPOSSIBLE) path mismatch: {path = }, {status_report.path = }")
         if path in running_workers_status:
+            worker = running_workers_status[path]
+            # worker.autoDelete()
+            # worker.setAutoDelete(True)
             del running_workers_status[path]
+            # del worker
         else:
             logging.warning(f"handle_status_computed_v2: worker not in running_workers_status for {path}")
         if path in status_cache:
@@ -236,16 +253,76 @@ class helabFileSystemModel(QFileSystemModel):
             logging.warning(f"handle_status_computed_v2: worker not in status_cache for {path}")
         pass
 
-        status_column_index = self.index(path, self.COLUMN_STATUS_NUMBER)
-        status_icon_index = self.index(path, self.COLUMN_STATUS_ICON)
-        if status_column_index.isValid():
-            # self.dataChanged.emit(status_column_index, status_column_index, [Qt.ItemDataRole.DisplayRole])
-            QTimer.singleShot(randint(300,800), lambda: self.dataChanged.emit(status_column_index, status_column_index, [Qt.ItemDataRole.DisplayRole]))
-        if status_icon_index.isValid():
-            # self.dataChanged.emit(status_icon_index, status_icon_index, [Qt.ItemDataRole.DecorationRole])
-            QTimer.singleShot(randint(300,800), lambda: self.dataChanged.emit(status_icon_index, status_icon_index, [Qt.ItemDataRole.DecorationRole]))
+        self.pending_updates.add(path)
+        if not self.update_timer.isActive():
+            self.update_timer.start(200)
+
+    #     status_column_index = self.index(path, self.COLUMN_STATUS_NUMBER)
+    #     status_icon_index = self.index(path, self.COLUMN_STATUS_ICON)
+    #     # if status_column_index.isValid():
+    #     #     self.dataChanged.emit(status_column_index, status_column_index, [Qt.ItemDataRole.DisplayRole])
+    #     #     # QTimer.singleShot(randint(300,800), lambda: self.dataChanged.emit(status_column_index, status_column_index, [Qt.ItemDataRole.DisplayRole]))
+    #     # if status_icon_index.isValid():
+    #     #     self.dataChanged.emit(status_icon_index, status_icon_index, [Qt.ItemDataRole.DecorationRole])
+    #     #     # QTimer.singleShot(randint(300,800), lambda: self.dataChanged.emit(status_icon_index, status_icon_index, [Qt.ItemDataRole.DecorationRole]))
+    #
+    #     # if status_column_index.isValid() and status_icon_index.isValid():
+    #     #     # self.dataChanged.emit(status_column_index, status_icon_index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole])
+    #     #     self.pending_updates.add((status_column_index, status_icon_index))
+    #     #     if not self.update_timer.isActive():
+    #     #         self.update_timer.start(200)  # Adjust the debounce interval in ms as needed
+    #     # else:
+    #     #     logging.warning(f"handle_status_computed_v2: invalid index situation "
+    #     #                     f"coln = {status_column_index.isValid()}, icon = {status_icon_index.isValid()} {path}")
+    #
+    # #     if status_column_index.isValid():
+    # #         self.pending_updates.add((status_column_index, status_icon_index))
+    # #     if status_icon_index.isValid():
+    # #         self.pending_updates.add((status_icon_index, status_icon_index))
+    # #     if not self.update_timer.isActive():
+    # #         self.update_timer.start(200)  # Adjust the debounce interval in ms as needed
+    # #
+    # # def emit_pending_updates(self) -> None:
+    # #     if not self.pending_updates:
+    # #         return
+    # #
+    # #     pending_updates = self.pending_updates.copy()
+    # #     pending_updates_len = len(pending_updates)
+    # #     logging.debug(f"emit_pending_updates: {pending_updates_len} updates to emit")
+    # #     for iTL, iBR in pending_updates:
+    # #         try:
+    # #             self.dataChanged.emit(iTL, iBR, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole])
+    # #             # self.dataChanged.emit(status_column_index, status_icon_index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE])
+    # #         except Exception as e:
+    # #             logging.error(f"emit_pending_updates: {e}")
+    # #             continue
+    # #     self.pending_updates.clear()
+    # #     logging.debug(f"emit_pending_updates: {pending_updates_len} updates emitted")
+    # #     del pending_updates
+
+    def emit_pending_updates(self) -> None:
+        if not self.pending_updates:
+            return
+
+        paths = self.pending_updates.copy()
+        paths_len = len(paths)
+        logging.debug(f"emit_pending_updates: {paths_len} updates to emit")
+        for path in paths:
+            indexL = self.index(path, self.COLUMN_STATUS_NUMBER)
+            indexR = self.index(path, self.COLUMN_STATUS_ICON)
+            if indexL.isValid() and indexR.isValid():
+                self.dataChanged.emit(indexL, indexR, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole])
+            else:
+                logging.warning(f"emit_pending_updates: invalid index situation "
+                                f"coln = {indexL.isValid()}, icon = {indexR.isValid()} {path}")
+
+                # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE])
+        self.pending_updates.clear()
+        logging.debug(f"emit_pending_updates: {paths_len} updates emitted")
+
 
     def handle_status_computed(self, status_report: StatusReport) -> None:
+        logging.critical(f"handle_status_computed: DEPRECATED")
         file_path = status_report.path
         status = status_report.status
         count = status_report.count
@@ -420,7 +497,7 @@ class helabFileSystemModel(QFileSystemModel):
 
         worker = StatusDeepWorker(root_path, invalidate_cache)
         worker.signals.finished.connect(lambda rp, dr: self.process_deep_status(rp, dr, current_depth, invalidate_cache))
-        worker.setAutoDelete(True)
+        # worker.setAutoDelete(True)
         thread_pool_general.start(worker, priority=QThread.Priority.IdlePriority.value) # type: ignore[call-overload]
         # Track the StatusDeepWorker
         running_workers_deep[root_path] = worker
@@ -522,7 +599,7 @@ class helabFileSystemModel(QFileSystemModel):
                 worker = DirectoryCheckWorker(dir_path)
                 worker.signals.finished.connect(self.on_has_children_finished)
                 worker.signals.canceled.connect(self.on_has_children_canceled)
-                worker.setAutoDelete(True)
+                # worker.setAutoDelete(True)
                 thread_pool_general.start(worker, priority=QThread.Priority.NormalPriority.value) # type: ignore[call-overload]
                 # QTimer.singleShot(10, lambda: thread_pool_general.start(worker))
                 running_workers_hasChildren[dir_path] = worker
@@ -574,16 +651,20 @@ class helabFileSystemModel(QFileSystemModel):
     def get_visible_rows(self, parent: QModelIndex = QModelIndex()) -> List[Tuple[QModelIndex, str]]:
         """Get all visible rows in the model."""
         rows = []
-        row_count = self.rowCount(parent)
+        indexes_to_check = [parent]
 
-        for row in range(row_count):
-            index = self.index(row, 0, parent)
-            filepath = self.filePath(index)
-            rows.append((index, filepath))
+        while indexes_to_check:
+            current_parent = indexes_to_check.pop()
+            row_count = self.rowCount(current_parent)
 
-            # If item has children and is expanded, recursively get its items
-            if self.hasChildren(index):
-                rows.extend(self.get_visible_rows(index))
+            for row in range(row_count):
+                index = self.index(row, 0, current_parent)
+                filepath = self.filePath(index)
+                rows.append((index, filepath))
+
+                # If item has children and is expanded, add its children to the list to check
+                if self.hasChildren(index):
+                    indexes_to_check.append(index)
 
         return rows
 
@@ -600,7 +681,7 @@ class helabFileSystemModel(QFileSystemModel):
         worker = StatusRescanWorker(rows=self.get_visible_rows(), model_folder_opened_path=self.folder_opened_path, user_intend=user_intend)
         worker.signals.finished.connect(self.on_rescan_finished)
         worker.signals.cancelled.connect(self.on_rescan_cancelled)
-        worker.setAutoDelete(True)
+        # worker.setAutoDelete(True)
         # thread_pool_general.start(worker, priority=QThread.Priority.LowestPriority.value)
         if user_intend:
             thread_pool_general.start(worker, priority=QThread.Priority.HighPriority.value)   # type: ignore[call-overload]
@@ -640,7 +721,7 @@ class helabFileSystemModel(QFileSystemModel):
         self.refresh()
         self.rescan_worker = None
         if scan_again:
-            if u:  QTimer.singleShot(10, lambda: self.rescan(user_intend=u))
+            if u:  QTimer.singleShot( 10, lambda: self.rescan(user_intend=u))
             else:  QTimer.singleShot(100, lambda: self.rescan(user_intend=u))
 
     def on_item_expanded(self, index: QModelIndex) -> None:

@@ -38,7 +38,7 @@ CACHE_PARAMS_DEFAULTS: OrderedDict[str, Any] = OrderedDict([
     # ("shards", 32),
     ("shards", 16),
     ("timeout", 0.100), # diskcache default is 0.010 seconds,
-    ("sqlite_busy_timeout", 2), # seconds?
+    ("sqlite_busy_timeout", 10), # seconds?
     ("cache_compression", True),
 ])
 """

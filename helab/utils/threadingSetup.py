@@ -20,6 +20,7 @@ running_workers_status: Dict[str, StatusWorker] = {}
 running_workers_deep: Dict[str, StatusDeepWorker] = {}
 running_workers_hasChildren: Dict[str, DirectoryCheckWorker] = {}
 running_workers_ramLoading: Dict[str, LoadFolderToRamWorker] = {}
+running_workers_emitPending = {}
 
 os_cpu_count = os.cpu_count()
 if os_cpu_count is None: os_cpu_count = 1
@@ -32,30 +33,39 @@ thread_pool_general.setMaxThreadCount(num_threads_half_os_cpu_count)
 thread_pool_load_data_ram = QThreadPool()
 thread_pool_load_data_ram.setMaxThreadCount(1)
 
-def running_worker_queues_len() -> Tuple[int,int,int,int]:
+thread_pool_gui_update = QThreadPool()
+thread_pool_gui_update.setMaxThreadCount(num_threads_half_os_cpu_count)
+
+def running_worker_queues_len() -> Tuple[int,int,int,int,int]:
     return (
         len(running_workers_status),
         len(running_workers_deep),
         len(running_workers_hasChildren),
         len(running_workers_ramLoading),
+        len(running_workers_emitPending),
     )
 
 def all_pools_total_activeThreadCount() -> int:
     return  thread_pool_general.activeThreadCount() + \
             thread_pool_load_data_ram.activeThreadCount() + \
+            thread_pool_gui_update.activeThreadCount() + \
             getattr(QThreadPool.globalInstance(), 'activeThreadCount', lambda: 0)()
             # QThreadPool.globalInstance().activeThreadCount()
-
 
 def clear_all_thread_pools() -> None:
     # QThreadPool.globalInstance().clear()
     getattr(QThreadPool.globalInstance(), 'clear', lambda: None)()  # emm ya just trying this way to do it 
     thread_pool_general.clear()
     thread_pool_load_data_ram.clear()
+    thread_pool_gui_update.clear()
     logging.info("All thread pools cleared.")
 
 
 def cancel_all_workers() -> None:
+    for workerE in running_workers_emitPending.values():
+        workerE.cancel()
+    running_workers_emitPending.clear()
+
     for workerS in running_workers_status.values():
         workerS.cancel()
     running_workers_status.clear()
@@ -68,6 +78,7 @@ def cancel_all_workers() -> None:
         workerC.cancel()
     running_workers_hasChildren.clear()
 
+    from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker   # FIXME I don't like this
     for workerL in running_workers_ramLoading.values():
         workerL.cancel(message=LoadFolderToRamWorker.CANCEL_MSG_SHUTDOWN_REQUESTED)
     running_workers_ramLoading.clear()

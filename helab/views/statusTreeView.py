@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QTreeView, QWidget, QVBoxLayout, QPushButton, QLabel
 from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.utils.cachingSetup import status_cache, data_ram_cache
 from helab.utils.constants import *
+from helab.views.statusIconDelegate import StatusIconDelegate
 from helab.workers.statusWorker import StatusReport
 
 
@@ -217,6 +218,9 @@ class StatusTreeView(QTreeView):
         self.popup.installEventFilter(self)
         self.current_hover_index = QModelIndex()
         self.popup_visible = False
+
+        icon_delegate = StatusIconDelegate(self)
+        self.setItemDelegateForColumn(helabFileSystemModel.COLUMN_STATUS_ICON, icon_delegate)
 
         # Timer to delay hiding the popup
         self.hover_timer = QTimer()

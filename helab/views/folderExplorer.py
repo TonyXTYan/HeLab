@@ -82,9 +82,9 @@ class FolderExplorer(QWidget):
         # self.tree.setStyle(OptionalBranchIconStyle())
         # self.tree.setItemsExpandable(False)
 
-        # Set the custom delegate for the icon column
-        icon_delegate = StatusIconDelegate(self.tree)
-        self.tree.setItemDelegateForColumn(helabFileSystemModel.COLUMN_STATUS_ICON, icon_delegate)
+        # # Set the custom delegate for the icon column
+        # icon_delegate = StatusIconDelegate(self.tree)
+        # self.tree.setItemDelegateForColumn(helabFileSystemModel.COLUMN_STATUS_ICON, icon_delegate)
 
         # Control which columns to show, #TODO: move this to updatable columns to show
         if columns_to_show is not None:

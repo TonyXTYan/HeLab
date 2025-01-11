@@ -1,3 +1,5 @@
+import logging
+
 from PyQt6.QtCore import Qt, QSize, QRect, QModelIndex
 from PyQt6.QtGui import QIcon, QPainter
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
@@ -13,6 +15,7 @@ class StatusIconDelegate(QStyledItemDelegate):
         option.icon = QIcon()
 
     def paint(self, painter: QPainter | None, option: QStyleOptionViewItem | None, index: QModelIndex) -> None:
+        # logging.debug(f"StatusIconDelegate.paint: {index.model().filePath(index)}")
         if painter is None or option is None: return
 
         # Paint the base item (text, etc.) without the default decoration

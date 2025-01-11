@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import types
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 import psutil
@@ -99,6 +100,7 @@ class MainWindow(QMainWindow):
         self.status_bar_message_left = QLabel("...")
         self.status_bar.addWidget(self.status_bar_message_left)
         self.status_bar_message_right = QLabel(f"Please wait. GUI loading... v{APP_VERSION} ({APP_COMMIT_HASH})")
+        self.status_bar_message_last_update = datetime.now()
 
         # status_bar_left_spacer = QWidget()
         # status_bar_left_spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -254,6 +256,12 @@ class MainWindow(QMainWindow):
             self.tab_widget.set_tab_switching_enable()
             if not self.action_tab_live_checked:
                 self.set_tools_and_tabs_enable()
+        datetime_now = datetime.now()
+        time_delta = datetime_now - self.status_bar_message_last_update
+        if time_delta > timedelta(milliseconds=510):
+            # self.status_bar_message_left.setText(f" {INDICATOR_DOTS[self.status_timer_threadpool_hang_counts % 10]} Active: {active_threads}, Queued: {queue_depths}")
+            logging.critical(f"update_status_bar_left: GUI DID\'T RESPOND for {1e-6*time_delta.microseconds:.1f}s {active_threads = }, {queue_depths = }")
+        self.status_bar_message_last_update = datetime.now()
 
     def update_status_bar_right(self) -> None:
         # Update the right message with CPU and RAM usage

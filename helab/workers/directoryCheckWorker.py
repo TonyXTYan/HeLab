@@ -25,8 +25,9 @@ class DirectoryCheckWorker(QRunnable):
 
     def run(self) -> None:
         if self._is_canceled:
-            self.signals.canceled.emit(self.dir_path)
+            self.setAutoDelete(True)
             hasChildren_cache.pop(self.dir_path, None)
+            self.signals.canceled.emit(self.dir_path)
             return
         # wtf = os_scandir(self.model_root_path)
         try:
@@ -64,6 +65,7 @@ class DirectoryCheckWorker(QRunnable):
         # logging.debug(f"DirectoryCheckWorker finished for: {self.model_root_path}, result = {result}")
         # logging.debug(f"DirectoryCheckWorker finished for: {self.dir_path}, result = {result}, num_non_txt_paths = {num_non_txt_paths}")
         hasChildren_cache[self.dir_path] = result
+        self.setAutoDelete(True)
         time.sleep(0.01)
         self.signals.finished.emit(self.dir_path, result)
 
