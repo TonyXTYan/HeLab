@@ -110,16 +110,19 @@ CURRENT_WORKING_DIRECTORY = os.getcwd()
 TEMPFILE_PREFIX = tempfile.gettempdir()
 
 DIR_TEMPS_CANDIDATES = [
+    tempfile.mkdtemp(prefix='helab_temps'),
     os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps'),
     os.path.join(TEMPFILE_PREFIX, 'helab_temps'),
-    # tempfile.mkdtemp(prefix='helab_temps'),
 ]
 
 DIR_CACHES_CANDIDATES = [
+    tempfile.mkdtemp(prefix='helab_caches'),
     os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches'),
     os.path.join(TEMPFILE_PREFIX, 'helab_caches'),
-    # tempfile.mkdtemp(prefix='helab_caches'),
 ]
+
+# logging.debug(f"{DIR_TEMPS_CANDIDATES = }")
+# logging.debug(f"{DIR_CACHES_CANDIDATES = }")
 
 INDICATOR_DOTS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
