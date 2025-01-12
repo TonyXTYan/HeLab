@@ -252,7 +252,7 @@ class FolderTabWidget(QTabWidget):
         # self.widget(index).close_cleanup
         logging.debug(f"Removing tab at index {index}")
         current_folder_explorer = self.widget(index)
-        queue_depth = sum(running_worker_queues_len()) + all_pools_total_activeThreadCount()
+        queue_depth = single_run_pools_total_activeThreadCount()
         if queue_depth > 0:
             QMessageBox.warning(self, "Please wait for background taks to finish",
                                 "There are ongoing background tasks. Please wait for them to complete or cancel them before closing the tab.",

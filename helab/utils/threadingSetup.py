@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from typing import Dict, Tuple, TYPE_CHECKING
+from typing import Dict, Tuple, TYPE_CHECKING, List
 
 from PyQt6.QtCore import QThreadPool
 from humanfriendly.terminal import message
+
 
 logging.critical("threadingSetup.py: Loading")
 
@@ -15,12 +16,13 @@ if TYPE_CHECKING:
     from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
     from helab.workers.statusDeepWorker import StatusDeepWorker
     from helab.workers.statusWorker import StatusWorker
+    from helab.workers.helabFSModelThrottleDataChangedEmit import HeLabFSModelThrottleDataChangedEmit
 
 running_workers_status: Dict[str, StatusWorker] = {}
 running_workers_deep: Dict[str, StatusDeepWorker] = {}
 running_workers_hasChildren: Dict[str, DirectoryCheckWorker] = {}
 running_workers_ramLoading: Dict[str, LoadFolderToRamWorker] = {}
-running_workers_emitPending = {}
+running_workers_ThrottleDataChangedEmits: Dict[str, HeLabFSModelThrottleDataChangedEmit] = {}
 
 os_cpu_count = os.cpu_count()
 if os_cpu_count is None: os_cpu_count = 1
@@ -36,13 +38,35 @@ thread_pool_load_data_ram.setMaxThreadCount(1)
 thread_pool_gui_update = QThreadPool()
 thread_pool_gui_update.setMaxThreadCount(num_threads_half_os_cpu_count)
 
+def pending_gui_update_calls() -> int:
+    # total = 0
+    # for workerE in running_workers_ThrottleDataChangedEmits.values():
+    #     total += len(workerE.pending_updates)
+    # return total
+    return sum(len(w.pending_updates) for w in running_workers_ThrottleDataChangedEmits.values())
+
+
 def running_worker_queues_len() -> Tuple[int,int,int,int,int]:
     return (
         len(running_workers_status),
         len(running_workers_deep),
         len(running_workers_hasChildren),
         len(running_workers_ramLoading),
-        len(running_workers_emitPending),
+        # len(running_workers_ThrottleDataChangedEmits),
+        pending_gui_update_calls()
+    )
+
+def running_workers_persistent_queues_len() -> Tuple[int]:
+    return (
+        len(running_workers_ThrottleDataChangedEmits),
+    )
+
+def running_workers_single_run_queues_len() -> Tuple[int,int,int,int]:
+    return (
+        len(running_workers_status),
+        len(running_workers_deep),
+        len(running_workers_hasChildren),
+        len(running_workers_ramLoading),
     )
 
 def all_pools_total_activeThreadCount() -> int:
@@ -51,6 +75,10 @@ def all_pools_total_activeThreadCount() -> int:
             thread_pool_gui_update.activeThreadCount() + \
             getattr(QThreadPool.globalInstance(), 'activeThreadCount', lambda: 0)()
             # QThreadPool.globalInstance().activeThreadCount()
+
+def single_run_pools_total_activeThreadCount() -> int:
+    return  thread_pool_general.activeThreadCount() + \
+            thread_pool_load_data_ram.activeThreadCount()
 
 def clear_all_thread_pools() -> None:
     # QThreadPool.globalInstance().clear()
@@ -62,9 +90,9 @@ def clear_all_thread_pools() -> None:
 
 
 def cancel_all_workers() -> None:
-    for workerE in running_workers_emitPending.values():
+    for workerE in running_workers_ThrottleDataChangedEmits.values():
         workerE.cancel()
-    running_workers_emitPending.clear()
+    running_workers_ThrottleDataChangedEmits.clear()
 
     for workerS in running_workers_status.values():
         workerS.cancel()

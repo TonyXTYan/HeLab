@@ -29,7 +29,6 @@ class TestDirectoryCheckWorker:
         with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
             worker.run()
 
-        blocker.disconnect()
         path_arg, has_children = blocker.args       # type: ignore[reportGeneralTypeIssues, unused-ignore]
         assert path_arg == str(folder_path)
         assert has_children is False
@@ -48,7 +47,6 @@ class TestDirectoryCheckWorker:
         with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
             worker.run()
 
-        blocker.disconnect()
         path_arg, has_children = blocker.args       # type: ignore[reportGeneralTypeIssues, unused-ignore]
         assert path_arg == str(folder_path)
         assert has_children is True
@@ -74,5 +72,5 @@ class TestDirectoryCheckWorker:
             # We expect NO signal => test that waitSignal times out
             with qtbot.waitSignal(worker.signals.finished, timeout=500) as blocker:
                 worker.run()
-            blocker.disconnect()
+            blocker.disconnect()                                # type: ignore[reportGeneralTypeIssues, unused-ignore]
         # If we get here, we confirm no signal was emitted in the given timeframe.

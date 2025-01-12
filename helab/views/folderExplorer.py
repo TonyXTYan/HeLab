@@ -705,7 +705,7 @@ class FolderExplorer(QWidget):
 
     def on_load_folder_to_ram_error(self, folder_path: str, error: str) -> None:
         logging.error(f"on_load_folder_to_ram_error: {folder_path = }, {error = }")
-        del running_workers_ramLoading[folder_path]
+        running_workers_ramLoading.pop(folder_path, None)
         status_cache.pop(folder_path)
         self.model.fetch_status(folder_path)
         if error != LoadFolderToRamWorker.CANCEL_MSG_ALREADY_CACHED_AND_NOT_SELECTED:
@@ -844,11 +844,12 @@ class FolderExplorer(QWidget):
 
         self.folder_opened_data = None
         self.folder_opened_path = None
-        self.model.folder_opened_path = None
-        self.model.rescan_cancel_if_any()
+        # self.model.folder_opened_path = None
+        # self.model.rescan_cancel_if_any()
+        self.model.close_cleanup()
 
         # self.model.clearItemData()
-        self.model.deleteLater()
+        # self.model.deleteLater()
         self.deleteLater()
         logging.debug("FolderExplorer.close_cleanup: finished")
 

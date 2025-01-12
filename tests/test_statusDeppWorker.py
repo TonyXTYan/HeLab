@@ -9,11 +9,20 @@ from PyQt6.QtCore import QEventLoop
 from pytestqt.qtbot import QtBot
 
 from helab.workers.statusDeepWorker import StatusDeepWorker
-from helab.utils.threadingSetup import running_workers_deep
+from helab.utils.threadingSetup import running_workers_deep, running_workers_status
+
 
 @pytest.mark.usefixtures("qtbot")
 class TestStatusDeepWorker:
     def teardown_method(self) -> None:
+        for workerS in running_workers_status.values():
+            workerS.cancel()
+        running_workers_status.clear()
+
+        for workerD in running_workers_deep.values():
+            workerD.cancel()
+        running_workers_deep.clear()
+
         running_workers_deep.clear()
 
     def test_no_subdirs(self, tmp_path: Path, qtbot: QtBot) -> None:
@@ -26,7 +35,6 @@ class TestStatusDeepWorker:
         worker = StatusDeepWorker(str(folder_path))
         with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
             worker.run()
-        blocker.disconnect()
 
         root_path, subdirs = blocker.args       # type: ignore[reportGeneralTypeIssues, unused-ignore]
         assert root_path == str(folder_path)
@@ -49,7 +57,6 @@ class TestStatusDeepWorker:
         worker = StatusDeepWorker(str(folder_path))
         with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
             worker.run()
-        blocker.disconnect()
 
         root_path, subdirs = blocker.args       # type: ignore[reportGeneralTypeIssues, unused-ignore]
         assert root_path == str(folder_path)
@@ -72,7 +79,6 @@ class TestStatusDeepWorker:
 
         with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
             worker.run()
-        blocker.disconnect()
 
         root_path, subdirs = blocker.args       # type: ignore[reportGeneralTypeIssues, unused-ignore]
         assert root_path == str(folder_path)

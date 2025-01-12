@@ -2,6 +2,7 @@
 import logging
 import os
 import sys
+from datetime import datetime
 from random import randint
 
 from typing import Dict, Tuple, List, cast, Optional
@@ -20,7 +21,7 @@ from helab.workers.statusRescanWorker import StatusRescanWorker
 
 from helab.workers.statusWorker import StatusWorker, StatusReport
 from helab.resources.icons import tablerIcon, StatusIcons, str_to_QIcon
-
+from helab.workers.helabFSModelThrottleDataChangedEmit import HeLabFSModelThrottleDataChangedEmit
 
 class helabFileSystemModel(QFileSystemModel):
     COLUMN_NAME = 0
@@ -38,6 +39,8 @@ class helabFileSystemModel(QFileSystemModel):
                  *args: QObject | None, **kwargs: QObject | None
                  ) -> None:
         super().__init__(*args, **kwargs)
+        self.uuid = str(id(self))
+
         # Cache the standard icons
         # style = QApplication.style()
 
@@ -70,10 +73,15 @@ class helabFileSystemModel(QFileSystemModel):
 
         self.rescan_worker: Optional[StatusRescanWorker] = None
 
-        self.pending_updates = set()
-        self.update_timer = QTimer()
-        self.update_timer.setSingleShot(True)
-        self.update_timer.timeout.connect(self.emit_pending_updates)
+        self.throttled_data_changed_emitter = HeLabFSModelThrottleDataChangedEmit()
+        self.throttled_data_changed_emitter.signals.emit_dataChanged.connect(self.throttled_data_changed_emit_now)
+        running_workers_ThrottleDataChangedEmits[self.uuid] = self.throttled_data_changed_emitter
+        thread_pool_gui_update.start(self.throttled_data_changed_emitter, priority=QThread.Priority.LowestPriority.value) # type: ignore[call-overload]
+
+        # self.pending_updates = set()
+        # self.update_timer = QTimer()
+        # self.update_timer.setSingleShot(True)
+        # self.update_timer.timeout.connect(self.emit_pending_updates)
 
         # QTimer.singleShot(300, self.refresh)
 
@@ -253,9 +261,11 @@ class helabFileSystemModel(QFileSystemModel):
             logging.warning(f"handle_status_computed_v2: worker not in status_cache for {path}")
         pass
 
-        self.pending_updates.add(path)
-        if not self.update_timer.isActive():
-            self.update_timer.start(200)
+        self.throttled_data_changed_emitter.add_update(path)
+
+        # self.pending_updates.add(path)
+        # if not self.update_timer.isActive():
+        #     self.update_timer.start(200)
 
     #     status_column_index = self.index(path, self.COLUMN_STATUS_NUMBER)
     #     status_icon_index = self.index(path, self.COLUMN_STATUS_ICON)
@@ -300,25 +310,25 @@ class helabFileSystemModel(QFileSystemModel):
     # #     logging.debug(f"emit_pending_updates: {pending_updates_len} updates emitted")
     # #     del pending_updates
 
-    def emit_pending_updates(self) -> None:
-        if not self.pending_updates:
-            return
-
-        paths = self.pending_updates.copy()
-        paths_len = len(paths)
-        logging.debug(f"emit_pending_updates: {paths_len} updates to emit")
-        for path in paths:
-            indexL = self.index(path, self.COLUMN_STATUS_NUMBER)
-            indexR = self.index(path, self.COLUMN_STATUS_ICON)
-            if indexL.isValid() and indexR.isValid():
-                self.dataChanged.emit(indexL, indexR, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole])
-            else:
-                logging.warning(f"emit_pending_updates: invalid index situation "
-                                f"coln = {indexL.isValid()}, icon = {indexR.isValid()} {path}")
-
-                # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE])
-        self.pending_updates.clear()
-        logging.debug(f"emit_pending_updates: {paths_len} updates emitted")
+    # def emit_pending_updates(self) -> None:
+    #     if not self.pending_updates:
+    #         return
+    #
+    #     paths = self.pending_updates.copy()
+    #     paths_len = len(paths)
+    #     logging.debug(f"emit_pending_updates: {paths_len} updates to emit")
+    #     for path in paths:
+    #         indexL = self.index(path, self.COLUMN_STATUS_NUMBER)
+    #         indexR = self.index(path, self.COLUMN_STATUS_ICON)
+    #         if indexL.isValid() and indexR.isValid():
+    #             self.dataChanged.emit(indexL, indexR, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole])
+    #         else:
+    #             logging.warning(f"emit_pending_updates: invalid index situation "
+    #                             f"coln = {indexL.isValid()}, icon = {indexR.isValid()} {path}")
+    #
+    #             # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE])
+    #     self.pending_updates.clear()
+    #     logging.debug(f"emit_pending_updates: {paths_len} updates emitted")
 
 
     def handle_status_computed(self, status_report: StatusReport) -> None:
@@ -421,7 +431,7 @@ class helabFileSystemModel(QFileSystemModel):
             bottomRight (QModelIndex): The bottom-right index of the changed data.
             roles (List[int]): The roles that were changed.
         """
-        return
+        # return
 
         # Iterate through the changed rows
         for row in range(topLeft.row(), bottomRight.row() + 1):
@@ -432,6 +442,69 @@ class helabFileSystemModel(QFileSystemModel):
                 pass
 
         # self.refresh()
+
+    def throttled_data_changed_emit_now(self, paths: List[str]) -> None:
+        # logging.debug(f"throttled_data_changed_emit_now: {len(paths)} paths")
+        # time_start = datetime.now()
+
+        # QTimer.singleShot(0, lambda: self._throttled_data_changed_emit_now(paths))
+        QTimer.singleShot(0, lambda: self._bulk_data_changed(paths))
+
+        # self.throttled_data_changed_emitter.pause()
+        # for path in paths:
+        #     index = self.index(path, self.COLUMN_STATUS_NUMBER)
+        #     if index.isValid():
+        #         self.dataChanged.emit( index, index, [Qt.ItemDataRole.DisplayRole] )
+        #     index_icon = self.index(path, self.COLUMN_STATUS_ICON)
+        #     if index_icon.isValid():
+        #         self.dataChanged.emit( index_icon, index_icon, [Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE] )
+        # self.throttled_data_changed_emitter.resume()
+
+        # time_delta = datetime.now() - time_start
+        # logging.debug(f"throttled_data_changed_emit_now: {len(paths)} paths emitted in {round(1e-3*time_delta.microseconds)}ms")
+
+    def _throttled_data_changed_emit_now(self, paths: List[str]) -> None:
+        time_start = datetime.now()
+        
+        self.throttled_data_changed_emitter.pause()
+        for path in paths:
+            index = self.index(path, self.COLUMN_STATUS_NUMBER)
+            if index.isValid():
+                self.dataChanged.emit( index, index, [Qt.ItemDataRole.DisplayRole] )
+            index_icon = self.index(path, self.COLUMN_STATUS_ICON)
+            if index_icon.isValid():
+                self.dataChanged.emit( index_icon, index_icon, [Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE] )
+        self.throttled_data_changed_emitter.resume()
+
+        time_delta = datetime.now() - time_start
+        logging.debug(f"_throttled_data_changed_emit_now: {len(paths)} paths emitted in {round(1e-3*time_delta.microseconds)}ms")
+
+    def _bulk_data_changed(self, paths: List[str]) -> None:
+        time_start = datetime.now()
+        indexes = []
+        for path in paths:
+            idxL = self.index(path, self.COLUMN_STATUS_NUMBER)
+            idxR = self.index(path, self.COLUMN_STATUS_ICON)
+            if idxL.isValid() and idxR.isValid():
+                indexes.extend([idxL, idxR])
+        if not indexes:
+            return
+
+        min_row = min(i.row() for i in indexes)
+        max_row = max(i.row() for i in indexes)
+        min_col = min(i.column() for i in indexes)
+        max_col = max(i.column() for i in indexes)
+
+        top_left = self.index(min_row, min_col)
+        bottom_right = self.index(max_row, max_col)
+        self.dataChanged.emit(
+            top_left,
+            bottom_right,
+            [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE]
+        )
+
+        time_delta = datetime.now() - time_start
+        logging.debug(f"_bulk_data_changed: {len(paths)} paths emitted in {round(1e-3*time_delta.microseconds)}ms")
 
     def on_model_reset(self) -> None:
         # Clear the entire cache
@@ -607,7 +680,7 @@ class helabFileSystemModel(QFileSystemModel):
 
 
     def on_has_children_finished(self, dir_path: str, has_children: bool) -> None:
-        logging.debug(f"on_has_children_finished: {dir_path = }, {has_children = }")
+        # logging.debug(f"on_has_children_finished: {dir_path = }, {has_children = }")
         
         # # Update the cache with the computed result
         # if has_children is not None:
@@ -705,31 +778,44 @@ class helabFileSystemModel(QFileSystemModel):
                         status_report.update_ram_status(is_opened=True)
                     else:
                         status_report.update_ram_status(is_opened=False)
-            index = self.index(path)
-            if index.isValid():
-                # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
-                # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole])
-                # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE])
-                delay_ms = randint(5,20) + ith if u else randint(300,500) + ith*10
-                QTimer.singleShot(delay_ms, lambda:
-                self.dataChanged.emit(index, index,
-                    [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE])
-                )
+            # index = self.index(path)
+            # if index.isValid():
+            #     # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+            #     # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole])
+            #     # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE])
+            #     delay_ms = randint(5,20) + ith if u else randint(300,500) + ith*10
+            #     QTimer.singleShot(delay_ms, lambda:
+            #     self.dataChanged.emit(index, index,
+            #         [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE])
+            #     )
+            self.throttled_data_changed_emitter.add_update(path)
 
-    def on_rescan_cancelled(self, scan_again:bool = True, u: bool = False) -> None:
-        logging.info(f"helabFileSystemModel.on_rescan_cancelled {scan_again = }")
+    def on_rescan_cancelled(self, user_intend: bool = False) -> None:
+        logging.info(f"helabFileSystemModel.on_rescan_cancelled {user_intend = }")
         self.refresh()
         self.rescan_worker = None
-        if scan_again:
-            if u:  QTimer.singleShot( 10, lambda: self.rescan(user_intend=u))
-            else:  QTimer.singleShot(100, lambda: self.rescan(user_intend=u))
+        if user_intend:
+            if user_intend: QTimer.singleShot( 10, lambda: self.rescan(user_intend=user_intend))
+            else:           QTimer.singleShot(100, lambda: self.rescan(user_intend=user_intend))
 
     def on_item_expanded(self, index: QModelIndex) -> None:
         logging.debug(f"helabFileSystemModel.on_item_expanded: {self.filePath(index)}")
         self.rescan()
 
     def rescan_cancel_if_any(self) -> None:
-        if self.rescan_worker is not None:
+        if isinstance(self.rescan_worker, StatusRescanWorker):
             self.rescan_worker.cancel(scan_again=False)
             self.rescan_worker = None
             logging.info("helabFileSystemModel.rescan_cancel_if_any: cancelled")
+
+    def close_cleanup(self) -> None:
+        self.rescan_cancel_if_any()
+        self.stop_all_scans()
+
+        try:
+            running_workers_ThrottleDataChangedEmits.pop(self.uuid).cancel()
+        except:
+            pass
+
+        logging.info("helabFileSystemModel.close_cleanup: done")
+        self.deleteLater()

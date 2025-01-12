@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="56" time="23.558" timestamp="2025-01-12T13:40:36.300623" hostname="TY-MBP-M4M.mshome.net"><testcase classname="tests.test_cachingSetup" name="test_load_cache_param_existing" file="tests/test_cachingSetup.py" line="17" time="0.001" /><testcase classname="tests.test_cachingSetup" name="test_scmgmt_methods" file="tests/test_cachingSetup.py" line="56" time="0.001" /><testcase classname="tests.test_cachingSetup" name="test_fnum[1234567-1.235M]" file="tests/test_cachingSetup.py" line="37" time="0.001" /><testcase classname="tests.test_cachingSetup" name="test_fnum[999-   999]" file="tests/test_cachingSetup.py" line="37" time="0.001" /><testcase classname="tests.test_cachingSetup" name="test_drmgmt_methods" file="tests/test_cachingSetup.py" line="63" time="0.000" /><testcase classname="tests.test_cachingSetup" name="test_fnum[123456789000-123.5G]" file="tests/test_cachingSetup.py" line="37" time="0.000" /><testcase classname="tests.test_cachingSetup" name="test_fnum[1234-1.234K]" file="tests/test_cachingSetup.py" line="37" time="0.000" /><testcase classname="tests.test_cachingSetup" name="test_load_cache_param_nonexistent" file="tests/test_cachingSetup.py" line="29" time="0.001" /><testcase classname="tests.test_cachingSetup" name="test_fnum[123000-123.0K]" file="tests/test_cachingSetup.py" line="37" time="0.000" /><testcase classname="tests.test_cachingSetup" name="test_fnum[123-   123]" file="tests/test_cachingSetup.py" line="37" time="0.001" /><testcase classname="tests.test_constants" name="test_returns_setting_if_valid" file="tests/test_constants.py" line="21" time="0.003" /><testcase classname="tests.test_constants" name="test_uses_first_candidate_if_setting_invalid" file="tests/test_constants.py" line="31" time="0.003" /><testcase classname="tests.test_constants" name="test_setting_with_no_valid_candidates" file="tests/test_constants.py" line="71" time="0.003" /><testcase classname="tests.test_constants" name="test_uses_first_candidate_if_setting_absent" file="tests/test_constants.py" line="42" time="0.002" /><testcase classname="tests.test_constants" name="test_setting_with_mixed_valid_and_invalid_candidates" file="tests/test_constants.py" line="79" time="0.002" /><testcase classname="tests.test_cachingSetup" name="test_cache_status_string" file="tests/test_cachingSetup.py" line="49" time="0.009" /><testcase classname="tests.test_constants" name="test_returns_empty_if_no_candidates_valid" file="tests/test_constants.py" line="51" time="0.002" /><testcase classname="tests.test_constants" name="test_setting_with_multiple_valid_candidates" file="tests/test_constants.py" line="59" time="0.002" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_fetch_status_when_not_cached_starts_worker" file="tests/test_helabFileSystemModel.py" line="142" time="0.008" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_fetch_status_when_worker_already_running" file="tests/test_helabFileSystemModel.py" line="159" time="0.011" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_has_children_creates_worker_if_not_cached" file="tests/test_helabFileSystemModel.py" line="273" time="0.016" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_has_children_not_dir" file="tests/test_helabFileSystemModel.py" line="312" time="0.005" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_on_file_renamed" file="tests/test_helabFileSystemModel.py" line="247" time="0.003" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_on_model_reset" file="tests/test_helabFileSystemModel.py" line="263" time="0.003" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_process_deep_status_removes_worker_and_spawns_children" file="tests/test_helabFileSystemModel.py" line="340" time="0.002" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_rescan_starts_worker" file="tests/test_helabFileSystemModel.py" line="364" time="0.002" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_start_deep_status_worker_creates_worker" file="tests/test_helabFileSystemModel.py" line="327" time="0.002" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_stop_all_scans_cancels_and_removes_deep_workers" file="tests/test_helabFileSystemModel.py" line="77" time="0.003" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_stop_all_scans_cancels_and_removes_directory_check_workers" file="tests/test_helabFileSystemModel.py" line="98" time="0.002" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_stop_all_scans_cancels_and_removes_status_workers" file="tests/test_helabFileSystemModel.py" line="55" time="0.003" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_stop_all_scans_with_no_running_workers" file="tests/test_helabFileSystemModel.py" line="119" time="0.002" /><testcase classname="tests.test_directoryCheckWorker.TestDirectoryCheckWorker" name="test_has_children_false" file="tests/test_directoryCheckWorker.py" line="20" time="0.148" /><testcase classname="tests.test_directoryCheckWorker.TestDirectoryCheckWorker" name="test_has_children_true" file="tests/test_directoryCheckWorker.py" line="35" time="0.003" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_handle_status_computed" file="tests/test_helabFileSystemModel.py" line="211" time="0.649"><failure message="AssertionError: '/test/dir' not found in &lt;diskcache.fanout.FanoutCache object at 0x123a8fdd0&gt;">self = &lt;test_helabFileSystemModel.TestHelabFileSystemModel testMethod=test_handle_status_computed&gt;, mock_logging = &lt;MagicMock name='logging' id='14072561200'&gt;
+
+    @patch('helab.models.helabFileSystemModel.logging')
+    def test_handle_status_computed(self, mock_logging: MagicMock) -&gt; None:
+        """
+        handle_status_computed should remove the worker from running_workers_status
+        and update the status_cache with the new StatusReport. Also ensures dataChanged
+        signals are emitted for relevant columns.
+        """
+        # Prepare a StatusReport
+        path = "/test/dir"
+        report = StatusReport(path, 'ok', 123, ['ram'])
+        worker = MagicMock(spec=StatusWorker)
+        running_workers_status[path] = worker
+    
+        # No actual Qt signals tested here; we just ensure it doesn't crash
+        self.model.handle_status_computed(report)
+    
+        time.sleep(0.1)
+    
+        self.assertNotIn(path, running_workers_status)
+&gt;       self.assertIn(path, status_cache)
+E       AssertionError: '/test/dir' not found in &lt;diskcache.fanout.FanoutCache object at 0x123a8fdd0&gt;
+
+tests/test_helabFileSystemModel.py:231: AssertionError</failure></testcase><testcase classname="tests.test_icons_ut.TestIcons" name="test_icons_extra_not_empty" file="tests/test_icons_ut.py" line="58" time="0.033" /><testcase classname="tests.test_icons_ut.TestIcons" name="test_icons_status_not_empty" file="tests/test_icons_ut.py" line="53" time="0.000" /><testcase classname="tests.test_icons_ut.TestIcons" name="test_known_extra_names" file="tests/test_icons_ut.py" line="67" time="0.000" /><testcase classname="tests.test_icons_ut.TestIcons" name="test_known_status_names" file="tests/test_icons_ut.py" line="63" time="0.000" /><testcase classname="tests.test_icons_ut.TestIcons" name="test_status_icons_initialisation" file="tests/test_icons_ut.py" line="41" time="0.000" /><testcase classname="tests.test_icons_ut.TestIcons" name="test_tabler_icon" file="tests/test_icons_ut.py" line="37" time="0.001" /><testcase classname="tests.test_statusDeppWorker.TestStatusDeepWorker" name="test_no_subdirs" file="tests/test_statusDeppWorker.py" line="18" time="0.002" /><testcase classname="tests.test_icons_pt" name="test_tabler_icon" file="tests/test_icons_pt.py" line="23" time="0.140" /><testcase classname="tests.test_statusDeppWorker.TestStatusDeepWorker" name="test_multiple_subdirs" file="tests/test_statusDeppWorker.py" line="33" time="0.003" /><testcase classname="tests.test_icons_pt" name="test_status_icons_initialisation" file="tests/test_icons_pt.py" line="28" time="0.000" /><testcase classname="tests.test_statusDeppWorker.TestStatusDeepWorker" name="test_cancel_worker" file="tests/test_statusDeppWorker.py" line="60" time="0.017"><failure message="TypeError: StatusDeepWorkerSignals.finished[str, list] signal has 2 argument(s) but 3 provided">self = &lt;test_statusDeppWorker.TestStatusDeepWorker object at 0x333b56750&gt;, tmp_path = PosixPath('/private/var/folders/28/6kl95rk567xgr9h1r_nstsfm0000gn/T/pytest-of-tonyyan/pytest-73/popen-gw0/test_cancel_worker5'), qtbot = &lt;pytestqt.qtbot.QtBot object at 0x348767830&gt;
+
+    def test_cancel_worker(self, tmp_path: Path, qtbot: QtBot) -&gt; None:
+        """
+        Test that if we cancel the worker before it runs, we get an empty list (or no BFS).
+        """
+        folder_path = tmp_path / "canceled_parent"
+        folder_path.mkdir()
+    
+        worker = StatusDeepWorker(str(folder_path))
+        worker.cancel()
+    
+        with qtbot.waitSignal(worker.signals.finished, timeout=2000) as blocker:
+&gt;           worker.run()
+
+tests/test_statusDeppWorker.py:72: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;helab.workers.statusDeepWorker.StatusDeepWorker object at 0x348785a90&gt;
+
+    def run(self) -&gt; None:
+        logging.debug(f"Deep Worker started for: {self.root_path}, invalidate_cache = {self.invalidate_cache}")
+        directory_list: List[str] = []
+    
+        if self._is_cancelled:
+            logging.debug(f"StatusDeepWorker cancelled: {self.root_path}")
+&gt;           self.signals.finished.emit(self.root_path, directory_list, -100)
+E           TypeError: StatusDeepWorkerSignals.finished[str, list] signal has 2 argument(s) but 3 provided
+
+/opt/miniconda3/envs/HeLab/lib/python3.12/site-packages/helab/workers/statusDeepWorker.py:32: TypeError</failure></testcase><testcase classname="tests.test_directoryCheckWorker.TestDirectoryCheckWorker" name="test_cancel_worker" file="tests/test_directoryCheckWorker.py" line="53" time="0.664" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_fetch_status_loading_but_no_worker" file="tests/test_helabFileSystemModel.py" line="188" time="0.006" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_fetch_status_when_cached_not_loading" file="tests/test_helabFileSystemModel.py" line="174" time="0.016"><failure message="AssertionError: &lt;helab.workers.statusWorker.StatusReport object at 0x33960c8f0&gt; != &lt;helab.workers.statusWorker.StatusReport object at 0x33960c860&gt;">self = &lt;test_helabFileSystemModel.TestHelabFileSystemModel testMethod=test_fetch_status_when_cached_not_loading&gt;
+
+    def test_fetch_status_when_cached_not_loading(self) -&gt; None:
+        """
+        If the path is already cached with a known (non-'loading') status,
+        fetch_status should just return the cached StatusReport.
+        """
+        path = "/already/cached"
+        cached_report = StatusReport(path, 'ok', 99, ['ram'])
+        status_cache[path] = cached_report
+    
+        result = self.model.fetch_status(path)
+&gt;       self.assertEqual(result, cached_report)
+E       AssertionError: &lt;helab.workers.statusWorker.StatusReport object at 0x33960c8f0&gt; != &lt;helab.workers.statusWorker.StatusReport object at 0x33960c860&gt;
+
+tests/test_helabFileSystemModel.py:185: AssertionError</failure></testcase><testcase classname="tests.test_typing" name="test_mypy_helab_soft" file="tests/test_typing.py" line="3" time="7.408" /><testcase classname="tests.test_typing" name="test_mypy_helab_tests_soft" file="tests/test_typing.py" line="23" time="1.824" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_has_children_uses_cache" file="tests/test_helabFileSystemModel.py" line="293" time="0.026"><failure message="AssertionError: False is not true">self = &lt;test_helabFileSystemModel.TestHelabFileSystemModel testMethod=test_has_children_uses_cache&gt;
+
+    @patch('helab.models.helabFileSystemModel.hasChildren_cache', {"/some/cached/dir": True})
+    def test_has_children_uses_cache(self) -&gt; None:
+        """
+        If hasChildren_cache has a valid entry for the directory,
+        hasChildren should return that value without spawning a worker.
+        """
+        index_mock = MagicMock(spec=QModelIndex)
+        file_info_mock = MagicMock()
+        file_info_mock.isDir.return_value = True
+        file_info_mock.absoluteFilePath.return_value = '/some/cached/dir'
+        index_mock.isValid.return_value = True
+        self.model.fileInfo = MagicMock(return_value=file_info_mock)            # type: ignore[method-assign]
+    
+        # Ensure there is a subdirectory in the cache
+        hasChildren_cache['/some/cached/dir/subdir'] = True
+    
+        result = self.model.hasChildren(index_mock)
+&gt;       self.assertTrue(result)
+E       AssertionError: False is not true
+
+tests/test_helabFileSystemModel.py:311: AssertionError</failure></testcase><testcase classname="tests.test_typing" name="test_pyright_helab" file="tests/test_typing.py" line="38" time="2.586" /><testcase classname="tests.test_typing" name="test_pyright_tests" file="tests/test_typing.py" line="46" time="1.238" /><testcase classname="tests.test_typing" name="test_mypy_helab_strict" file="tests/test_typing.py" line="16" time="7.390" /><testcase classname="tests.test_typing" name="test_mypy_helab_tests_strict" file="tests/test_typing.py" line="30" time="7.943" /><testcase classname="tests.test_helabFileSystemModel.TestHelabFileSystemModel" name="test_on_directory_loaded_invalidation" file="tests/test_helabFileSystemModel.py" line="233" time="0.002" /></testsuite></testsuites>

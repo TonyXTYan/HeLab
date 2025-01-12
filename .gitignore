@@ -96,3 +96,4 @@ helab_main.prof
 mprofile_*.dat
 profile.html
 profile.json
+.pytest_cache

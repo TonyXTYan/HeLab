@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 class StatusRescanWorkerSignals(QObject):
     finished = pyqtSignal(bool)
-    cancelled = pyqtSignal(bool, bool)
+    cancelled = pyqtSignal(bool)
 
 class StatusRescanWorker(QRunnable):
     def __init__(self,
@@ -33,7 +33,7 @@ class StatusRescanWorker(QRunnable):
         self.signals = StatusRescanWorkerSignals()
         self.user_intend = user_intend
         self._is_cancelled = False
-        self._is_cancelled_scan_again = False   # TODO what is this for?
+        # self._is_cancelled_scan_again = False   # TODO what is this for?
 
     def run(self) -> None:
         logging.debug(f"StatusRescanWorker.run: started with {len(self.rows)} rows and {self.model_folder_opened_path = }, {self.user_intend = }")
@@ -53,7 +53,8 @@ class StatusRescanWorker(QRunnable):
         for index, path in self.rows:
             if self._is_cancelled:
                 self.setAutoDelete(True)
-                self.signals.cancelled.emit(self._is_cancelled_scan_again, self.user_intend)
+                # self.signals.cancelled.emit(self._is_cancelled_scan_again, self.user_intend)
+                self.signals.cancelled.emit(self.user_intend)
                 return
             time.sleep(0.01)
             status_report = status_cache.get(path)
@@ -86,4 +87,4 @@ class StatusRescanWorker(QRunnable):
 
     def cancel(self, scan_again:bool=True) -> None:
         self._is_cancelled = True
-        self._is_cancelled_scan_again = scan_again
+        # self._is_cancelled_scan_again = scan_again

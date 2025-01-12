@@ -91,7 +91,7 @@ jobs:
           else
             source venv/bin/activate
           fi
-            pytest -n 4 -v --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy --reruns 5 --reruns-delay 2
+            pytest -n 4 --verbose --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy --reruns 5 --reruns-delay 2 
 
 #          pytest -n 1 -v --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy
 #          pytest -n 8 -v --cache-clear --cov=helab --junit-xml=pytest-report.xml
@@ -112,7 +112,7 @@ jobs:
         if: matrix.python3-version == '12' && matrix.os == 'macos'
         run: |  
           source venv/bin/activate
-          pytest --cov=helab --cov-report=xml --cov-report=term --ignore=tests/test_typing.py
+          pytest --cov=helab --cov-report=xml --cov-report=term --ignore=tests/test_typing.py --cache-clear 
 
       - name: Upload Code Coverage Report
         if: matrix.python3-version == '12' && matrix.os == 'macos'

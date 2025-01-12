@@ -12,8 +12,6 @@ def test_mypy_helab_soft() -> None:
     print(result.stderr)
     assert result.returncode == 0, "mypy type check failed"
 
-
-
 def test_mypy_helab_strict() -> None:
     os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     result = subprocess.run(['mypy', 'helab', '--strict'], capture_output=True, text=True)

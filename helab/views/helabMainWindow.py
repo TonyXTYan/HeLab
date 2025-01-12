@@ -158,8 +158,10 @@ class MainWindow(QMainWindow):
 
 
     def update_status_bar_left(self) -> None:
-        active_threads = all_pools_total_activeThreadCount()
-        # self.status_bar.showMessage(f"{active_threads}, {QThreadPool.globalInstance().stackSize()}, {len(self.tab_widget.running_workers_status)}")
+        active_threads_all = all_pools_total_activeThreadCount()
+        active_threads_one_run = single_run_pools_total_activeThreadCount()
+
+        # self.status_bar.showMessage(f"{active_threads_all}, {QThreadPool.globalInstance().stackSize()}, {len(self.tab_widget.running_workers_status)}")
         # queue_depth = len(self.tab_widget.running_workers_status) + len(self.tab_widget.running_workers_deep) + len(self.tab_widget.running_workers_hasChildren)
         queue_depths = running_worker_queues_len()
 
@@ -180,13 +182,13 @@ class MainWindow(QMainWindow):
         if sum(queue_depths) > 0:
             indicator_dot = INDICATOR_DOTS[self.status_timer_threadpool_hang_counts % 10]
 
-            self.status_bar_message_left.setText(f" {indicator_dot} Active: {active_threads}, Queued: {queue_depths}")
+            self.status_bar_message_left.setText(f" {indicator_dot} Active: {active_threads_one_run}, Queued: {queue_depths}")
             self.action_tab_cancel.setEnabled(True)
             self.tab_widget.set_tab_switching_disable()
             self.set_tools_and_tabs_disable()
 
             tooltip_string += "\n"
-            tooltip_string += f"  Number of active threads in threadpool: {active_threads}\n"
+            tooltip_string += f"  Number of active threads in threadpool: {active_threads_one_run} / {active_threads_all}\n"
             tooltip_string += f"  Number of queued threads with tracking: {sum(queue_depths)}\n\n"
 
             def make_tooltip_string(worker_name: str, worker_keys: List[str]) -> str:
@@ -259,8 +261,8 @@ class MainWindow(QMainWindow):
         datetime_now = datetime.now()
         time_delta = datetime_now - self.status_bar_message_last_update
         if time_delta > timedelta(milliseconds=510):
-            # self.status_bar_message_left.setText(f" {INDICATOR_DOTS[self.status_timer_threadpool_hang_counts % 10]} Active: {active_threads}, Queued: {queue_depths}")
-            logging.critical(f"update_status_bar_left: GUI DID\'T RESPOND for {1e-6*time_delta.microseconds:.1f}s {active_threads = }, {queue_depths = }")
+            # self.status_bar_message_left.setText(f" {INDICATOR_DOTS[self.status_timer_threadpool_hang_counts % 10]} Active: {active_threads_all}, Queued: {queue_depths}")
+            logging.critical(f"update_status_bar_left: GUI DID\'T RESPOND for {1e-6*time_delta.microseconds:.1f}s {active_threads_all = }, {queue_depths = }")
         self.status_bar_message_last_update = datetime.now()
 
     def update_status_bar_right(self) -> None:
