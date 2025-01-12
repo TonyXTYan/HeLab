@@ -50,7 +50,7 @@ class StatusReport:
         self.payload_progress_ram: Optional[float] = None
         self.time_last_updated = time_last_updated
         self.time_load_ram: Optional[datetime] = None
-        self._reviewed_path_parent_recursively = False
+        self._reviewed_path_parent_recursively: Optional[bool] = None
 
         self.log_LabviewMatlab_txt: Optional[str] = None
         self.log_KeysightMatlab_txt: Optional[str] = None
@@ -91,49 +91,64 @@ class StatusReport:
         return self.time_last_updated > other.time_last_updated
 
 
-    def _update_cache(self) -> None:
+    def _update_cache(self) -> StatusReport:
         status_cache[self.path] = self
+        try:
+            return status_cache[self.path]
+        except Exception as e:
+            logging.error(f"StatusReport._update_cache: error updating cache for {self.path}: {e}")
+            return self
 
-    def merge_with(self, status_report: StatusReport) -> None:
+    def merge_with(self, status_report: StatusReport) -> StatusReport:
         if self.path != status_report.path:
             logging.warning(f"StatusReport.update_overwrite_status: path mismatch for {self.path} and {status_report.path}")
-            return
+            return status_report
         if self.time_last_updated > status_report.time_last_updated:
             logging.warning(f"StatusReport.update_overwrite_status: time_last_updated mismatch for {self.path}")
-            return
-        self.status = status_report.status
-        self.count = status_report.count
-        self.extra_icons = status_report.extra_icons
-        self.d_dld_shots = status_report.d_dld_shots
-        self.d_txy_shots = status_report.d_txy_shots
-        self.problematic_txy_ns = status_report.problematic_txy_ns
-        self.payload_progress_ram = status_report.payload_progress_ram
-        self.time_last_updated = status_report.time_last_updated
-        self.time_load_ram = status_report.time_load_ram
-        self.log_LabviewMatlab_txt = status_report.log_LabviewMatlab_txt
-        self.log_KeysightMatlab_txt = status_report.log_KeysightMatlab_txt
-        self.about_txt = status_report.about_txt
-        self._update_cache()
+            return status_report
+        self.status = status_report.status or self.status
+        self.count = status_report.count or self.count
+        self.extra_icons = status_report.extra_icons or self.extra_icons
+        self.d_dld_shots = status_report.d_dld_shots or self.d_dld_shots
+        self.d_txy_shots = status_report.d_txy_shots or self.d_txy_shots
+        self.problematic_txy_ns = status_report.problematic_txy_ns or self.problematic_txy_ns
+        self.payload_progress_ram = status_report.payload_progress_ram or self.payload_progress_ram
+        self.time_last_updated = status_report.time_last_updated or self.time_last_updated
+        self.time_load_ram = status_report.time_load_ram or self.time_load_ram
+        self.log_LabviewMatlab_txt = status_report.log_LabviewMatlab_txt or self.log_LabviewMatlab_txt
+        self.log_KeysightMatlab_txt = status_report.log_KeysightMatlab_txt or self.log_KeysightMatlab_txt
+        self.about_txt = status_report.about_txt or self.about_txt
+        return self._update_cache()
 
-    def update_extend_extras(self, extra_icons: list[str]|str, update_cache:bool = True) -> None:
+    def override_cache_with(self, status_report: StatusReport) -> StatusReport:
+        if self.path != status_report.path:
+            logging.critical(f"StatusReport.update_overwrite_status: path mismatch for {self.path} and {status_report.path}")
+            return status_report
+        status_cache[self.path] = status_report
+        return status_report
+
+
+    def update_extend_extras(self, extra_icons: list[str]|str, update_cache:bool = True) -> StatusReport:
         if isinstance(extra_icons, str):
             extra_icons = [extra_icons]
         current_set = set(self.extra_icons)
         current_set.update(extra_icons)
         self.extra_icons = sorted(list(current_set),
                                   key=lambda x: StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get(x, 0))
-        if update_cache: self._update_cache()
+        if update_cache: return self._update_cache()
+        else: return self
 
-    def update_remove_extras(self, to_remove: list[str]|str, update_cache:bool = True) -> None:
+    def update_remove_extras(self, to_remove: list[str]|str, update_cache:bool = True) -> StatusReport:
         if isinstance(to_remove, str):
             to_remove = [to_remove]
         current_set = set(self.extra_icons)
         current_set.difference_update(to_remove)
         self.extra_icons = sorted(list(current_set),
                                   key=lambda x: StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get(x, 0))
-        if update_cache: self._update_cache()
+        if update_cache: return self._update_cache()
+        else: return self
     
-    def update_ram_status(self, is_opened: bool = False, time_load_ram: Optional[datetime] = None, update_cache:bool = True) -> None:
+    def update_ram_status(self, is_opened: bool = False, time_load_ram: Optional[datetime] = None, update_cache:bool = True) -> StatusReport:
         if time_load_ram: self.time_load_ram = time_load_ram
         try:
             self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'loading_ram', 'progress_ram'], update_cache=False)
@@ -153,42 +168,44 @@ class StatusReport:
             # if e == KeyError and is_opened:
             #     self.update_extend_extras('ram_single')
             # self.time_load_ram = None
-        if update_cache: self._update_cache()
+        if update_cache: return self._update_cache()
+        else: return self
 
-    def update_there_is_something(self, force: bool = False) -> None:
+    def update_there_is_something(self, force: bool = False) -> StatusReport:
         # self.update_remove_extras('nothing', update_cache=False)
         # self.update_extend_extras('something', update_cache=True)
         if force or self.status not in StatusReport.STATUS_CONTAINS_DATA:
             self.status = 'something'
-            self._update_cache()
+            return self._update_cache()
+        else: return self
 
-    def update_to_unknown_status(self, force: bool = False) -> None:
+    def update_to_unknown_status(self, force: bool = False) -> StatusReport:
         if self.status in StatusReport.STATUS_CONTAINS_DATA and not force:
             logging.warning(f"StatusReport.update_to_maybe_status: do not call this function like this for {self.path} with {self.status = }"
                             f", (this call will not doing anything)")
-            return
+            return self
         if self.status == 'loading' and not force:
             logging.warning(f"StatusReport.update_to_maybe_status: status still updating for {self.path}"
                             f", (this call will not doing anything, but anyway this line should never be reached)")
-            return
+            return self
         self.status = 'unknown'
-        self._update_cache()
+        return self._update_cache()
 
-    def update_to_nothing_status(self, force: bool = False) -> None:
+    def update_to_nothing_status(self, force: bool = False) -> StatusReport:
         if self.status in StatusReport.STATUS_CONTAINS_DATA and not force:
             logging.warning(f"StatusReport.update_to_nothing_status: do not call this function like this for {self.path} with {self.status = }"
                             f", (this call will not doing anything)")
-            return
+            return self
         if self.status == 'loading' and not force:
             logging.warning(f"StatusReport.update_to_nothing_status: status still updating for {self.path}"
                             f", (this call will not doing anything, but anyway this line should never be reached)")
-            return
+            return self
         self.status = 'nothing'
-        self._update_cache()
+        return self._update_cache()
 
-    def set_loading_ram_status(self) -> None:
+    def set_loading_ram_status(self) -> StatusReport:
         self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'progress_ram'], update_cache=False)
-        self.update_extend_extras('loading_ram', update_cache=True)
+        return self.update_extend_extras('loading_ram', update_cache=True)
 
     def cancel_loading_ram_status(self) -> None:
         self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'progress_ram', 'loading_ram'], update_cache=True)
@@ -290,7 +307,7 @@ class StatusReport:
             logging.warning(f"StatusReport.validate_ok: error validating {self.path}: {e}")
             return (False, False, False)
 
-    def review_path_parent(self, force_recursive: Optional[bool] = None, force_review: bool = False) -> None:
+    def review_path_parent(self, force_recursive: Optional[bool] = None, force_review: bool = False) -> StatusReport:
         """
         Review the parent path of the current path and update its status accordingly.
 
@@ -304,7 +321,7 @@ class StatusReport:
         parent_path = os.path.dirname(self.path)
         if parent_path == self.path:
             logging.warning(f"StatusReport.review_path_parent: parent_path is same as path for {self.path}, this is root path?")
-            return
+            return self
 
         if parent_path not in hasChildren_cache:
             logging.warning(f"StatusReport.review_path_parent: hasChildren not found for {parent_path}")
@@ -318,31 +335,30 @@ class StatusReport:
             # parent_status_report.update_there_is_something()
             # parent_status_report.review_path_children()
             if self.status == 'nothing':
+                logging.debug(f"StatusReport.review_path_parent: reviewing parent.children for parent of {self.path = } with {self.status = }")
                 parent_status_report.review_path_children(force_review=True) # this is to get the nothing status if all children are
             elif self.status in StatusReport.STATUS_CONTAINS_DATA:
+                logging.debug(f"StatusReport.review_path_parent: updating parent to something for {self.path = } with {self.status = }")
                 parent_status_report.update_there_is_something()
             else:
                 logging.debug(f"StatusReport.review_path_parent: not reviewing parent for {self.path} with {self.status = }")
-                return
+                return self
         else:
             logging.warning(f"StatusReport.review_path_parent: parent_status_report not found for {parent_path}")
-            return
+            return self
 
-        # if self.status == 'nothing':
-        #     parent_status_report.review_path_children() # this is to get the nothing status if all children are nothing
-        #     logging.debug(f"StatusReport.review_path_parent: make parent check on childrens {self.path = }")
-        #     return
-        # elif self.status not in StatusReport.STATUS_CONTAINS_DATA:
-        #     logging.debug(f"StatusReport.review_path_parent: not reviewing parent for {self.path} with {self.status = }")
-        #     return
 
         if force_recursive is None:
-            self._reviewed_path_parent_recursively = parent_status_report._reviewed_path_parent_recursively
+            self._reviewed_path_parent_recursively = parent_status_report._reviewed_path_parent_recursively or not force_review
             if not self._reviewed_path_parent_recursively:
+                logging.debug(f"StatusReport.review_path_parent: recursion for {self.path}")
                 parent_status_report.review_path_parent(force_recursive = force_recursive)
+            else:
+                logging.debug(f"StatusReport.review_path_parent: already recursively searched for {self.path}")
         elif force_recursive:
             self._reviewed_path_parent_recursively = True
             parent_status_report.review_path_parent(force_recursive = True)
+            logging.debug(f"StatusReport.review_path_parent: forced recursion for {self.path}")
         else:
             # self._reviewed_path_parent_recursively = False
             # parent_status_report.review_path_parent(force_recursive = False)
@@ -351,8 +367,9 @@ class StatusReport:
             else:
                 pass
                 # logging.debug(f"StatusReport.review_path_parent: force_recursive = False and not reviewed recursively for {self.path}")
+        return self
 
-    def review_path_children(self, force_recursive: Optional[bool] = None, force_review: bool = False) -> None:
+    def review_path_children(self, force_recursive: Optional[bool] = None, force_review: bool = False) -> StatusReport:
         """
         Review the children paths of the current path and update the status accordingly.
 
@@ -365,7 +382,7 @@ class StatusReport:
 
         if self.status not in ['nothing', 'unknown'] and not force_review:
             logging.debug(f"StatusReport.review_path_children: not reviewing children for {self.path} with {self.status = }")
-            return
+            return self
 
         children_paths = os_listdirdir(self.path, invalidate_cache=True)
         at_least_one_unknown = False
@@ -385,7 +402,7 @@ class StatusReport:
                 continue
             elif child_status_report.status in StatusReport.STATUS_CONTAINS_DATA:
                 self.update_there_is_something()
-                return
+                return self
             elif child_status_report.status in StatusReport.STATUS_MISTRY:
                 at_least_one_unknown = True
             elif child_status_report.status in StatusReport.STATUS_NOTHING:
@@ -394,13 +411,15 @@ class StatusReport:
                 logging.critical(f"StatusReport.review_path_children: unexpected case {child_status_report.status = }")
                 continue
         if at_least_one_unknown:
+            logging.debug(f"StatusReport.review_path_children: set to unknown for {self.path = }")
             self.update_to_unknown_status()
-        else:
+        else: # all children are nothing
             logging.debug(f"StatusReport.review_path_children: is indeed nothing for {self.path = }")
-            if self.status == 'something' or force_review:
-                self.update_to_nothing_status(force=True)
-            else:
-                self.update_to_nothing_status()
+            # if self.status == 'something' or force_review:
+            #     self.update_to_nothing_status(force=True)
+            # else:
+            self.update_to_nothing_status()
+        return self
 
     @staticmethod
     def _sort_extra_icons(extra_icons: list[str]) -> list[str]:
@@ -506,7 +525,7 @@ class StatusWorker(QRunnable):
         logging.debug(f"StatusWorker started for: {self.path}")
         if self._check_cancel_status(): return
         # self._run_helper_simulate()
-        time.sleep(0.001)
+        time.sleep(0.050)   # Give some time for the main GUI thread to update.
         self._run_helper_v1()
 
     def _check_cancel_status(self) -> bool:
@@ -520,22 +539,27 @@ class StatusWorker(QRunnable):
     def _finished_emit_helper(self, status_report: StatusReport) -> None:
         if self.path in status_cache:
             logging.debug(f"StatusWorker._finished_emit_helper: updating cache for {self.path} with status = {status_report.status}")
-        time.sleep(0.001)
-        status_report.merge_with(status_report)
-        time.sleep(0.001)
+        # time.sleep(0.001)
+        status_report = status_report.merge_with(status_report)
+        # time.sleep(0.001)
         # self._finished_emit_helper_parent_path(status_report)
-        status_report.review_path_parent()
-        time.sleep(0.001)
+        status_report = status_report.review_path_children()
+        status_report = status_report.review_path_parent()
+        # time.sleep(0.001)
         # self._finished_emit_helper_children_path(status_report)
-        status_report.review_path_children()
-        time.sleep(0.001)
-        time.sleep(random.uniform(0.040, 0.80))
+        # time.sleep(0.001)
+        # time.sleep(random.uniform(0.040, 0.80))
         # time.sleep(3)
         # self.signals.finished.emit(status_report)
 
+        status_report._update_cache()
+
         sr = status_cache[self.path]
+        time.sleep(random.uniform(0.050, 0.100))
         if isinstance(sr, StatusReport):
-            logging.debug(f"StatusWorker._finished_emit_helper: updated to {self.path = }, {sr.status = }, {sr.count = }, {sr.extra_icons = }")
+            if sr != status_report:
+                logging.error(f"StatusWorker._finished_emit_helper: updated but not equal for {self.path = }")
+            logging.info(f"StatusWorker._finished_emit_helper: updated to {self.path = }, {sr.status = }, {sr.count = }, {sr.extra_icons = }")
         else:
             logging.error(f"StatusWorker._finished_emit_helper: updated but not found for {self.path = }")
 
