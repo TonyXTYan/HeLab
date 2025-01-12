@@ -170,6 +170,10 @@ class helabFileSystemModel(QFileSystemModel):
         return super().headerData(section, orientation, role)
 
     def fetch_status(self, folder_path: str) -> StatusReport:
+        return StatusWorker.fetch_status(folder_path, self.handle_status_computed_v3)
+        # return QTimer.singleShot(0, lambda: StatusWorker.fetch_status(folder_path, self.handle_status_computed_v3))
+
+    def fetch_status_legacy(self, folder_path: str) -> StatusReport:
         # logging.debug(f"Getting status for: {folder_path}")
         # Check if the status is already cached
         # status_data = .get(folder_path)
@@ -207,6 +211,10 @@ class helabFileSystemModel(QFileSystemModel):
             thread_pool_general.start(worker, priority=QThread.Priority.LowestPriority.value)
             running_workers_status[folder_path] = worker
             return loading_status
+
+    def handle_status_computed_v3(self, path: str) -> None:
+        StatusWorker.on_fetch_status_finished_basic(path)
+        self.throttled_data_changed_emitter.add_update(path)
 
     def handle_status_computed_v2(self, path: str) -> None:
         status_report = status_cache.get(path, None)

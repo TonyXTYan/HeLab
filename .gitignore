@@ -99,3 +99,4 @@ profile.json
 .pytest_cache
 .idea/misc.xml
 .idea/modules.xml
+.coverage.*

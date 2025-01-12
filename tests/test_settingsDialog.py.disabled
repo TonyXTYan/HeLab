@@ -1,0 +1,44 @@
+from typing import Any
+from unittest.mock import patch
+
+import pytest
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
+from pytestqt.qtbot import QtBot
+
+from helab.views.helabMainWindow import MainWindow
+from helab.views.settingsDialog import SettingsDialog
+
+
+@pytest.fixture
+def settings_dialog(qtbot: QtBot) -> Any:
+    dialog = SettingsDialog()
+    assert (isinstance(dialog, QWidget))
+    qtbot.addWidget(dialog)
+    dialog.show()
+    yield dialog
+    try:
+        dialog.close()
+    except Exception:
+        pass
+
+@pytest.fixture(autouse=True)
+def disable_warnings() -> Any:
+    with patch.object(QMessageBox, 'warning'):
+        yield
+
+
+def test_initial_state_settings_dialog(settings_dialog: SettingsDialog) -> None:
+    assert settings_dialog.windowTitle() == "Settings"
+    assert settings_dialog.minimumWidth() == 800
+    assert settings_dialog.minimumHeight() == 500
+    assert settings_dialog.tabs.count() == 3  # General, Scripts, Cache
+    assert settings_dialog.example_text.placeholderText() == "Enter some text"
+    assert settings_dialog.save_button.text() == "Save"
+    assert settings_dialog.cancel_button.text() == "Cancel"
+    assert settings_dialog.reset_button.text() == "Reset"
+
+
+def test_show_and_close_settings_dialog(settings_dialog: SettingsDialog, qtbot: QtBot) -> None:
+    qtbot.mouseClick(settings_dialog.cancel_button, Qt.MouseButton.LeftButton)
+    assert not settings_dialog.isVisible()
