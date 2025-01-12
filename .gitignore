@@ -72,7 +72,7 @@ CMakeLists.txt.user*
 *.dll
 *.exe
 
-.idea
+# .idea
 .qtcreator
 env
 HELIUM.pyproject*
@@ -97,3 +97,5 @@ mprofile_*.dat
 profile.html
 profile.json
 .pytest_cache
+.idea/misc.xml
+.idea/modules.xml
