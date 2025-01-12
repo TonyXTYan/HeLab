@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from PyQt6.QtGui import QIcon, QResizeEvent
 from pytestqt.qtbot import QtBot
-from PyQt6.QtWidgets import QApplication, QMessageBox, QListWidget, QMenu
+from PyQt6.QtWidgets import QApplication, QMessageBox, QListWidget, QMenu, QWidget
 from PyQt6.QtCore import Qt
 
 from helab.resources.icons import StatusIcons, ToolIcons, PercentageIcon
@@ -16,9 +16,17 @@ from helab.views.helabMainWindow import MainWindow
 from helab.views.settingsDialog import SettingsDialog
 
 
+def test_qtbot_add_widget(qtbot: QtBot):
+    widget = QWidget()
+    qtbot.addWidget(widget)
+    widget.show()
+    assert widget.isVisible()
+
+
 @pytest.fixture
 def main_window(qtbot: QtBot) -> Any:
     window = MainWindow()
+    assert (isinstance(window, QWidget))
     qtbot.addWidget(window)
     window.show()
     # return window

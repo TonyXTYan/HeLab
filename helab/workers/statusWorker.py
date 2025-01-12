@@ -1,15 +1,17 @@
 #helab/workers/statusWorker.py
 from __future__ import annotations
+
+import warnings
 from datetime import datetime
 import os
 import random
 import re
 import time
 from copy import deepcopy
-from typing import Optional, Set, List, Tuple
+from typing import Optional, Set, List, Tuple, cast, Callable, Any
 
 from PyInstaller.compat import is_openbsd
-from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QTimer, QDir
+from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QTimer, QDir, QThread
 import logging
 
 from PyQt6.QtTest import QTest
@@ -48,6 +50,7 @@ class StatusReport:
         self.payload_progress_ram: Optional[float] = None
         self.time_last_updated = time_last_updated
         self.time_load_ram: Optional[datetime] = None
+        self._reviewed_path_parent_recursively = False
 
         self.log_LabviewMatlab_txt: Optional[str] = None
         self.log_KeysightMatlab_txt: Optional[str] = None
@@ -152,25 +155,36 @@ class StatusReport:
             # self.time_load_ram = None
         if update_cache: self._update_cache()
 
-    def update_there_is_something(self) -> None:
+    def update_there_is_something(self, force: bool = False) -> None:
         # self.update_remove_extras('nothing', update_cache=False)
         # self.update_extend_extras('something', update_cache=True)
-        if self.status not in StatusReport.STATUS_CONTAINS_DATA:
+        if force or self.status not in StatusReport.STATUS_CONTAINS_DATA:
             self.status = 'something'
             self._update_cache()
 
-    def update_to_unknown_status(self) -> None:
-        if self.status in StatusReport.STATUS_CONTAINS_DATA:
+    def update_to_unknown_status(self, force: bool = False) -> None:
+        if self.status in StatusReport.STATUS_CONTAINS_DATA and not force:
             logging.warning(f"StatusReport.update_to_maybe_status: do not call this function like this for {self.path} with {self.status = }"
                             f", (this call will not doing anything)")
             return
-        if self.status == 'loading':
+        if self.status == 'loading' and not force:
             logging.warning(f"StatusReport.update_to_maybe_status: status still updating for {self.path}"
                             f", (this call will not doing anything, but anyway this line should never be reached)")
             return
         self.status = 'unknown'
         self._update_cache()
 
+    def update_to_nothing_status(self, force: bool = False) -> None:
+        if self.status in StatusReport.STATUS_CONTAINS_DATA and not force:
+            logging.warning(f"StatusReport.update_to_nothing_status: do not call this function like this for {self.path} with {self.status = }"
+                            f", (this call will not doing anything)")
+            return
+        if self.status == 'loading' and not force:
+            logging.warning(f"StatusReport.update_to_nothing_status: status still updating for {self.path}"
+                            f", (this call will not doing anything, but anyway this line should never be reached)")
+            return
+        self.status = 'nothing'
+        self._update_cache()
 
     def set_loading_ram_status(self) -> None:
         self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'progress_ram'], update_cache=False)
@@ -232,6 +246,9 @@ class StatusReport:
 
             if not self.validate_ram_status(): return (False, False, False)
 
+            self.review_path_children(force_review=True)
+            self.review_path_parent(force_review=True)
+
             # if self.time_last_updated is None:
             #     # logging.debug(f"StatusReport.validate_ok: time_last_updated is None")
             #     return (False, False, False)
@@ -273,6 +290,117 @@ class StatusReport:
             logging.warning(f"StatusReport.validate_ok: error validating {self.path}: {e}")
             return (False, False, False)
 
+    def review_path_parent(self, force_recursive: Optional[bool] = None, force_review: bool = False) -> None:
+        """
+        Review the parent path of the current path and update its status accordingly.
+
+        :param force_recursive: If True, force recursive review of parent paths.
+                                If False, do not review recursively.
+                                If None, review recursively if not already reviewed.
+        :type force_recursive: Optional[bool]
+        :return: None
+        """
+
+        parent_path = os.path.dirname(self.path)
+        if parent_path == self.path:
+            logging.warning(f"StatusReport.review_path_parent: parent_path is same as path for {self.path}, this is root path?")
+            return
+
+        if parent_path not in hasChildren_cache:
+            logging.warning(f"StatusReport.review_path_parent: hasChildren not found for {parent_path}")
+        elif not hasChildren_cache[parent_path]:
+            logging.warning(f"StatusReport.review_path_parent: hasChildren is False for {parent_path}")
+        else:
+            pass
+
+        parent_status_report = status_cache.get(parent_path, None)
+        if isinstance(parent_status_report, StatusReport):
+            # parent_status_report.update_there_is_something()
+            # parent_status_report.review_path_children()
+            if self.status == 'nothing':
+                parent_status_report.review_path_children(force_review=True) # this is to get the nothing status if all children are
+            elif self.status in StatusReport.STATUS_CONTAINS_DATA:
+                parent_status_report.update_there_is_something()
+            else:
+                logging.debug(f"StatusReport.review_path_parent: not reviewing parent for {self.path} with {self.status = }")
+                return
+        else:
+            logging.warning(f"StatusReport.review_path_parent: parent_status_report not found for {parent_path}")
+            return
+
+        # if self.status == 'nothing':
+        #     parent_status_report.review_path_children() # this is to get the nothing status if all children are nothing
+        #     logging.debug(f"StatusReport.review_path_parent: make parent check on childrens {self.path = }")
+        #     return
+        # elif self.status not in StatusReport.STATUS_CONTAINS_DATA:
+        #     logging.debug(f"StatusReport.review_path_parent: not reviewing parent for {self.path} with {self.status = }")
+        #     return
+
+        if force_recursive is None:
+            self._reviewed_path_parent_recursively = parent_status_report._reviewed_path_parent_recursively
+            if not self._reviewed_path_parent_recursively:
+                parent_status_report.review_path_parent(force_recursive = force_recursive)
+        elif force_recursive:
+            self._reviewed_path_parent_recursively = True
+            parent_status_report.review_path_parent(force_recursive = True)
+        else:
+            # self._reviewed_path_parent_recursively = False
+            # parent_status_report.review_path_parent(force_recursive = False)
+            if self._reviewed_path_parent_recursively:
+                logging.warning(f"StatusReport.review_path_parent: force_recursive = False but already reviewed recursively for {self.path}")
+            else:
+                pass
+                # logging.debug(f"StatusReport.review_path_parent: force_recursive = False and not reviewed recursively for {self.path}")
+
+    def review_path_children(self, force_recursive: Optional[bool] = None, force_review: bool = False) -> None:
+        """
+        Review the children paths of the current path and update the status accordingly.
+
+        :return: None
+        """
+
+        if force_recursive:
+            warnings.warn("StatusReport.review_path_children: force_recursive is not implemented yet", RuntimeWarning)
+            logging.warning(f"StatusReport.review_path_children: force_recursive is not implemented yet")
+
+        if self.status not in ['nothing', 'unknown'] and not force_review:
+            logging.debug(f"StatusReport.review_path_children: not reviewing children for {self.path} with {self.status = }")
+            return
+
+        children_paths = os_listdirdir(self.path, invalidate_cache=True)
+        at_least_one_unknown = False
+        for child_path_name in children_paths:
+            child_path = QDir(self.path).filePath(child_path_name)
+            # logging.debug(f"StatusReport.review_path_children: checking child_path = {child_path}")
+            child_status_report = status_cache.get(child_path, None)
+
+            # if isinstance(child_status_report, StatusReport):
+            #     logging.warning(f"StatusReport.review_path_children: child_status_report found for {child_path}, {child_status_report.status = }")
+            # else:
+            #     logging.warning(f"StatusReport.review_path_children: child_status_report not found for {child_path}")
+
+            if not isinstance(child_status_report, StatusReport):
+                # logging.warning(f"StatusReport.review_path_children: child_status_report not found for {child_path}")
+                at_least_one_unknown = True
+                continue
+            elif child_status_report.status in StatusReport.STATUS_CONTAINS_DATA:
+                self.update_there_is_something()
+                return
+            elif child_status_report.status in StatusReport.STATUS_MISTRY:
+                at_least_one_unknown = True
+            elif child_status_report.status in StatusReport.STATUS_NOTHING:
+                continue
+            else:
+                logging.critical(f"StatusReport.review_path_children: unexpected case {child_status_report.status = }")
+                continue
+        if at_least_one_unknown:
+            self.update_to_unknown_status()
+        else:
+            logging.debug(f"StatusReport.review_path_children: is indeed nothing for {self.path = }")
+            if self.status == 'something' or force_review:
+                self.update_to_nothing_status(force=True)
+            else:
+                self.update_to_nothing_status()
 
     @staticmethod
     def _sort_extra_icons(extra_icons: list[str]) -> list[str]:
@@ -300,6 +428,71 @@ class StatusWorkerSignals(QObject):
 # Define the Worker class with cancellation support
 
 class StatusWorker(QRunnable):
+
+    @staticmethod
+    def fetch_status(folder_path: str, on_finished: Callable[[str], Any]) -> StatusReport:
+        # logging.debug(f"Getting status for: {folder_path}")
+        # Check if the status is already cached
+        status_data = cast(StatusReport, status_cache.get(folder_path, None))
+        if status_data is not None:
+            if not isinstance(status_data, StatusReport):
+                logging.warning(f"fetch_status: status_data is not StatusReport: {status_data}")
+                scp = status_cache.pop(folder_path, None)
+                if not scp: logging.critical(f"fetch_status: status_cache.pop failed for {folder_path}")
+                return StatusWorker.fetch_status(folder_path, on_finished)
+            if status_data.status == 'loading':
+                if folder_path in running_workers_status: # legit loading
+                    return status_data
+                else: # loading but worker is gone (unexpected)
+                    logging.warning(f"fetch_status: loading but worker is gone for: {folder_path}")
+                    scp = status_cache.pop(folder_path, None)
+                    if not scp: logging.critical(f"fetch_status: status_cache.pop failed for {folder_path}")
+                    return StatusWorker.fetch_status(folder_path, on_finished)
+            else:
+                return status_data
+        else: # status_data is None from cache
+            # Check if a worker is already running for this folder_path
+            loading_status = StatusReport(folder_path, 'loading', -300, [])
+            if folder_path in running_workers_status:
+                # logging.debug(f"fetch_status worker already running for: {folder_path}")
+                status_cache[folder_path] = loading_status
+                return loading_status
+            # else: # not in running_workers_status
+
+            logging.debug(f"fetch_status: not cached for: {folder_path}")
+
+            # Create and start the worker
+            worker = StatusWorker(folder_path)
+            worker.signals.finished.connect(on_finished)
+            thread_pool_general.start(worker, priority=QThread.Priority.LowestPriority.value)
+            running_workers_status[folder_path] = worker
+            return loading_status
+
+    @staticmethod
+    def on_fetch_status_finished_basic(path: str) -> None:
+        status_report = status_cache.get(path, None)
+        if not isinstance(status_report, StatusReport):
+            logging.critical(f"on_fetch_status_finished_basic: (IMPOSSIBLE) status_report is not StatusReport: {status_report}")
+            return
+
+        logging.debug(f"on_fetch_status_finished_basic: path = {status_report.path}, status = {status_report.status}, count = {status_report.count}, extras = {status_report.extra_icons}")
+        # path = status_report.path
+        if path != status_report.path:
+            logging.critical(f"on_fetch_status_finished_basic: (IMPOSSIBLE) path mismatch: {path = }, {status_report.path = }")
+        if path in running_workers_status:
+            worker = running_workers_status[path]
+            # worker.autoDelete()
+            # worker.setAutoDelete(True)
+            del running_workers_status[path]
+            # del worker
+        else:
+            logging.warning(f"on_fetch_status_finished_basic: worker not in running_workers_status for {path}")
+        if path in status_cache:
+            pass
+        else:
+            logging.warning(f"on_fetch_status_finished_basic: worker not in status_cache for {path}")
+        pass
+
     def __init__(self, file_path: str, invalidate_cache:bool=False):
         # QObject.__init__(self)
         # QRunnable.__init__()
@@ -313,7 +506,7 @@ class StatusWorker(QRunnable):
         logging.debug(f"StatusWorker started for: {self.path}")
         if self._check_cancel_status(): return
         # self._run_helper_simulate()
-        time.sleep(0.05)
+        time.sleep(0.001)
         self._run_helper_v1()
 
     def _check_cancel_status(self) -> bool:
@@ -327,14 +520,16 @@ class StatusWorker(QRunnable):
     def _finished_emit_helper(self, status_report: StatusReport) -> None:
         if self.path in status_cache:
             logging.debug(f"StatusWorker._finished_emit_helper: updating cache for {self.path} with status = {status_report.status}")
-        time.sleep(0.05)
+        time.sleep(0.001)
         status_report.merge_with(status_report)
-        time.sleep(0.05)
-        self._finished_emit_helper_parent_path(status_report)
-        time.sleep(0.05)
-        self._finished_emit_helper_children_path(status_report)
-        time.sleep(0.01)
-        time.sleep(random.uniform(0.10, 0.20))
+        time.sleep(0.001)
+        # self._finished_emit_helper_parent_path(status_report)
+        status_report.review_path_parent()
+        time.sleep(0.001)
+        # self._finished_emit_helper_children_path(status_report)
+        status_report.review_path_children()
+        time.sleep(0.001)
+        time.sleep(random.uniform(0.040, 0.80))
         # time.sleep(3)
         # self.signals.finished.emit(status_report)
 
@@ -348,6 +543,8 @@ class StatusWorker(QRunnable):
         self.signals.finished.emit(self.path)
 
     def _finished_emit_helper_parent_path(self, status_report: StatusReport) -> None:
+        warnings.warn("StatusWorker._finished_emit_helper_parent_path is deprecated", DeprecationWarning)
+        logging.warning(f"StatusWorker._finished_emit_helper_parent_path: deprecated")
         if status_report.status in StatusReport.STATUS_CONTAINS_DATA:
             parent_path = os.path.dirname(self.path)
 
@@ -370,6 +567,8 @@ class StatusWorker(QRunnable):
                 return
 
     def _finished_emit_helper_children_path(self, status_report: StatusReport) -> None:
+        warnings.warn("StatusWorker._finished_emit_helper_children_path is deprecated", DeprecationWarning)
+        logging.warning(f"StatusWorker._finished_emit_helper_children_path: deprecated")
         if status_report.status == 'nothing':
             children_paths = os_listdirdir(self.path, invalidate_cache=self.invalidate_cache)
             at_least_one_mystry = False
@@ -383,7 +582,6 @@ class StatusWorker(QRunnable):
                 #     logging.warning(f"StatusWorker._finished_emit_helper: child_status_report found for {child_path}, {child_status_report.status = }")
                 # else:
                 #     logging.warning(f"StatusWorker._finished_emit_helper: child_status_report not found for {child_path}")
-
 
                 if not isinstance(child_status_report, StatusReport):
                     # logging.warning(f"StatusWorker._finished_emit_helper: child_status_report not found for {child_path}")
@@ -403,8 +601,6 @@ class StatusWorker(QRunnable):
                 status_report.update_to_unknown_status()
             else:
                 logging.debug(f"StatusWorker._finished_emit_helper_children_path: is indeed nothing for {status_report.path = }")
-
-
 
     def _run_helper_simulate(self) -> None:
         # Simulate a long-running computation
@@ -453,11 +649,11 @@ class StatusWorker(QRunnable):
             # just_for_the_sake_of_testing = os_scandir(self.path)
 
             if self._check_cancel_status(): return
-            time.sleep(0.05)  # slight delay to void GIL
+            time.sleep(0.001)  # slight delay to void GIL
             files_filtered = os_listdir_filtered(self.path, self.invalidate_cache)
-            time.sleep(0.05)
+            time.sleep(0.001)
             files_filtered_len = len(files_filtered)
-            time.sleep(0.05)
+            time.sleep(0.001)
 
             if self._check_cancel_status(): return
 
@@ -485,7 +681,7 @@ class StatusWorker(QRunnable):
             self._finished_emit_helper(StatusReport(self.path, 'missing', -1, []))
             return
 
-        time.sleep(0.01)  # slight delay to void GIL
+        time.sleep(0.001)  # slight delay to void GIL
 
         # pattern match and list all files of d123.txt
         # d_dld_pattern = re.compile(r'^d\d+\.txt$')
@@ -584,21 +780,5 @@ class StatusWorker(QRunnable):
 
     def cancel(self) -> None:
         self._is_canceled = True
-
-    # def _compute_status(self):
-    #     # Replace the following with your actual status computation logic
-    #     statuses = ['ok', 'warning', 'critical', 'nothing']
-    #     status = random.choice(statuses)
-    #     # count = random.randint(1, 100)
-    #     count = random.randint(10**(length := random.randint(0, 5)), 10**(length + 1) - 1)
-    #
-    #     extra_icons = sorted(random.sample(StatusIcons.STATUS_ICONS_EXTRA_NAME, random.randint(0, 4)), key=StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY.get)
-    #     # extra_icons = []
-    #
-    #     logging.debug(f"Worker finished for: {self.path} with status: {status}, count: {count}, extra icons: {extra_icons}")
-    #     self.signals.finished.emit(StatusReport(self.path, status, count, extra_icons)
-
-
-
 
 

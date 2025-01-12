@@ -47,7 +47,7 @@ class StatusRescanWorker(QRunnable):
             #     if delay_processing_countdown <= 0:
             #         break
         else:
-            time.sleep(0.01)
+            time.sleep(0.001)
 
         # rows = self.model.get_visible_rows()
         for index, path in self.rows:
@@ -56,7 +56,7 @@ class StatusRescanWorker(QRunnable):
                 # self.signals.cancelled.emit(self._is_cancelled_scan_again, self.user_intend)
                 self.signals.cancelled.emit(self.user_intend)
                 return
-            time.sleep(0.05)
+            time.sleep(0.001)
             status_report = status_cache.get(path)
             if isinstance(status_report, StatusReport):
                 vpath, vfile, vdata = status_report.validate_ok()
@@ -80,7 +80,7 @@ class StatusRescanWorker(QRunnable):
                 # if index.isValid():
                 #     self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
             # logging.debug(f"StatusRescanWorker.run: checked {path = }")
-        time.sleep(0.01)
+        time.sleep(0.001)
         self.setAutoDelete(True)
         self.signals.finished.emit(self.user_intend)
 

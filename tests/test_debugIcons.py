@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QListWidget
+from PyQt6.QtWidgets import QListWidget, QWidget
 from pytestqt.qtbot import QtBot
 
 from helab.resources.icons import StatusIcons, ToolIcons, PercentageIcon, IconsInitUtil
@@ -17,6 +17,7 @@ from helab.views.settingsDialog import SettingsDialog
 def debug_icons_window(qtbot: QtBot) -> DebugIconsWindow:
     IconsInitUtil.initialise_icons()
     window = DebugIconsWindow()
+    assert isinstance(window, QWidget)
     qtbot.addWidget(window)
     window.show()
     return window
