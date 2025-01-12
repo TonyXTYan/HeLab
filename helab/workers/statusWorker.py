@@ -9,7 +9,7 @@ from copy import deepcopy
 from typing import Optional, Set, List, Tuple
 
 from PyInstaller.compat import is_openbsd
-from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QTimer
+from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QTimer, QDir
 import logging
 
 from PyQt6.QtTest import QTest
@@ -133,17 +133,17 @@ class StatusReport:
     def update_ram_status(self, is_opened: bool = False, time_load_ram: Optional[datetime] = None, update_cache:bool = True) -> None:
         if time_load_ram: self.time_load_ram = time_load_ram
         try:
-            self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'loading_ram', 'progress_ram'])
+            self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'loading_ram', 'progress_ram'], update_cache=False)
             data_files = data_ram_cache[self.path]
             if not data_files is None:
                 if is_opened:
-                    self.update_extend_extras('ram_opened')
+                    self.update_extend_extras('ram_opened', update_cache=False)
                 else:
-                    self.update_extend_extras('ram')
+                    self.update_extend_extras('ram', update_cache=False)
         except KeyError:
             # self.update_remove_extras(['ram', 'ram_single', 'ram_opened'])
             if is_opened:
-                self.update_extend_extras('ram_single')
+                self.update_extend_extras('ram_single', update_cache=False)
         except Exception as e:
             logging.error(f"StatusReport.update_ram_status: error accessing cache for {self.path}: {e}")
             # self.update_remove_extras(['ram', 'ram_single', 'ram_opened'])
@@ -176,6 +176,10 @@ class StatusReport:
         self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'progress_ram'], update_cache=False)
         self.update_extend_extras('loading_ram', update_cache=True)
 
+    def cancel_loading_ram_status(self) -> None:
+        self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'progress_ram', 'loading_ram'], update_cache=True)
+        self.validate_ram_status()
+
     def set_loading_ram_progress(self, progress: float) -> None:
         self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'loading_ram'], update_cache=False)
         self.update_extend_extras('progress_ram', update_cache=False)
@@ -204,17 +208,29 @@ class StatusReport:
         else:
             return self._sorted_extra_icons_to_QIcons(candidate)
 
+    def validate_ram_status(self) -> bool:
+        # if 'progress_ram' in self.extra_icons:
+        if any([icon in self.extra_icons for icon in ['loading_ram', 'progress_ram']]):
+            if self.path not in running_workers_ramLoading:
+                logging.debug(
+                    f"StatusReport.validate_ok: {self.path} is in loading_ram but not in running_workers_ramLoading")
+                return False
+        if any([icon in self.extra_icons for icon in ['ram', 'ram_single', 'ram_opened']]):
+            if self.path not in data_ram_cache:
+                logging.debug(f"StatusReport.validate_ok: {self.path} is in ram but not in data_ram_cache")
+                return False
+        if self.path in data_ram_cache:
+            if not any([icon in self.extra_icons for icon in ['ram_single', 'ram_opened']]):
+                self.update_extend_extras('ram')
+        return True
 
     def validate_ok(self) -> Tuple[bool, bool, bool]:
         ok_path = True
         ok_file = True
         ok_data = True
         try:
-            # if 'progress_ram' in self.extra_icons:
-            if any([icon in self.extra_icons for icon in ['loading_ram', 'progress_ram']]):
-                if self.path not in running_workers_ramLoading.keys():
-                    logging.debug(f"StatusReport.validate_ok: {self.path} is in loading_ram but not in running_workers_ramLoading")
-                    return (False, False, False)
+
+            if not self.validate_ram_status(): return (False, False, False)
 
             # if self.time_last_updated is None:
             #     # logging.debug(f"StatusReport.validate_ok: time_last_updated is None")
@@ -233,7 +249,8 @@ class StatusReport:
 
             files_inside_path = os_listdir(self.path, invalidate_cache=True)
             for f in files_inside_path:
-                file_path = os.path.join(self.path, f)
+                # file_path = os.path.join(self.path, f)
+                file_path = QDir(self.path).filePath(f)
                 file_last_modified_time = datetime.fromtimestamp(os.path.getatime(file_path))
                 # if file_last_modified_time is None:
                 #     logging.warning(f"StatusReport.validate_ok: file {f} does not exist")
@@ -309,7 +326,7 @@ class StatusWorker(QRunnable):
 
     def _finished_emit_helper(self, status_report: StatusReport) -> None:
         if self.path in status_cache:
-            logging.debug(f"StatusWorker._finished_emit_helper: overwriting cache for {self.path} with status = {status_report.status}")
+            logging.debug(f"StatusWorker._finished_emit_helper: updating cache for {self.path} with status = {status_report.status}")
         time.sleep(0.05)
         status_report.merge_with(status_report)
         time.sleep(0.05)
@@ -317,9 +334,16 @@ class StatusWorker(QRunnable):
         time.sleep(0.05)
         self._finished_emit_helper_children_path(status_report)
         time.sleep(0.01)
-        time.sleep(random.uniform(0.05, 0.10))
+        time.sleep(random.uniform(0.10, 0.20))
         # time.sleep(3)
         # self.signals.finished.emit(status_report)
+
+        sr = status_cache[self.path]
+        if isinstance(sr, StatusReport):
+            logging.debug(f"StatusWorker._finished_emit_helper: updated to {self.path = }, {sr.status = }, {sr.count = }, {sr.extra_icons = }")
+        else:
+            logging.error(f"StatusWorker._finished_emit_helper: updated but not found for {self.path = }")
+
         self.setAutoDelete(True)
         self.signals.finished.emit(self.path)
 
@@ -350,11 +374,20 @@ class StatusWorker(QRunnable):
             children_paths = os_listdirdir(self.path, invalidate_cache=self.invalidate_cache)
             at_least_one_mystry = False
             for child_path_name in children_paths:
-                child_path = os.path.join(self.path, child_path_name)
+                # child_path = os.path.join(self.path, child_path_name)
+                child_path = QDir(self.path).filePath(child_path_name)
                 # logging.debug(f"StatusWorker._finished_emit_helper: checking child_path = {child_path}")
                 child_status_report = status_cache.get(child_path, None)
+
+                # if isinstance(child_status_report, StatusReport):
+                #     logging.warning(f"StatusWorker._finished_emit_helper: child_status_report found for {child_path}, {child_status_report.status = }")
+                # else:
+                #     logging.warning(f"StatusWorker._finished_emit_helper: child_status_report not found for {child_path}")
+
+
                 if not isinstance(child_status_report, StatusReport):
                     # logging.warning(f"StatusWorker._finished_emit_helper: child_status_report not found for {child_path}")
+                    at_least_one_mystry = True
                     continue
                 elif child_status_report.status in StatusReport.STATUS_CONTAINS_DATA:
                     status_report.update_there_is_something()
@@ -368,6 +401,8 @@ class StatusWorker(QRunnable):
                     continue
             if at_least_one_mystry:
                 status_report.update_to_unknown_status()
+            else:
+                logging.debug(f"StatusWorker._finished_emit_helper_children_path: is indeed nothing for {status_report.path = }")
 
 
 

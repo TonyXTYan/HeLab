@@ -14,9 +14,9 @@ class HeLabFSModelThrottleDataChangedEmit(QRunnable):
     def __init__(self,
                  pending_updates: Optional[Set[str]] = None,
                  batch_size: int = 0,
-                 sleep_sec_pause: float = 0.100,
-                 sleep_sec_nothing: float = 0.050,
-                 sleep_sec_end_loop: float = 0.010,
+                 sleep_sec_pause: float = 0.300,
+                 sleep_sec_nothing: float = 0.100,
+                 sleep_sec_end_loop: float = 0.030,
                  ) -> None:
         super().__init__()
         self.uuid = str(id(self))
@@ -83,7 +83,7 @@ class HeLabFSModelThrottleDataChangedEmit(QRunnable):
         with QMutexLocker(self._mutex):
             self.pending_updates.add(item)
 
-    def add_updates(self, items: Set[str]) -> None:
+    def add_updates(self, items: Set[str] | str) -> None:
         with QMutexLocker(self._mutex):
             self.pending_updates.update(items)
 

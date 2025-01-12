@@ -9,7 +9,7 @@ import hashlib
 
 from typing import Optional
 
-from PyQt6.QtCore import QSettings
+from PyQt6.QtCore import QSettings, QDir, QDirIterator
 # from PyQt6.QtGui import QFontDatabase, QFont
 
 from joblib.externals.loky.process_executor import MAX_DEPTH
@@ -114,20 +114,34 @@ QSETTINGS_APP_NAME_SANDBOX = "Helab_SANDBOX"
 
 
 
-CURRENT_WORKING_DIRECTORY = os.getcwd()
+OS_WORKING_DIRECTORY: str = os.getcwd()
+QDir_WORKING_DIRECTORY = QDir.current()
+QDir_USER_DIRECTORY = QDir.homePath()
+QDir_ROOT_DIRECTORY = QDir.rootPath()
+QDir_TEMP_DIRECTORY = QDir.tempPath()
+
+logging.debug(f"{OS_WORKING_DIRECTORY = }")
+logging.debug(f"{QDir_WORKING_DIRECTORY = }")
+logging.debug(f"{QDir_USER_DIRECTORY = }")
+logging.debug(f"{QDir_ROOT_DIRECTORY = }")
+logging.debug(f"{QDir_TEMP_DIRECTORY = }")
 
 TEMPFILE_PREFIX = tempfile.gettempdir()
 
 DIR_TEMPS_CANDIDATES = [
     tempfile.mkdtemp(prefix='helab_temps_'),
-    os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps'),
-    os.path.join(TEMPFILE_PREFIX, 'helab_temps_'),
+    # os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps'),
+    # os.path.join(TEMPFILE_PREFIX, 'helab_temps_'),
+    QDir(QDir_WORKING_DIRECTORY).filePath('helab_temps'),
+    QDir(QDir_TEMP_DIRECTORY).filePath('helab_temps'),
 ]
 
 DIR_CACHES_CANDIDATES = [
     tempfile.mkdtemp(prefix='helab_caches'),
-    os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches'),
-    os.path.join(TEMPFILE_PREFIX, 'helab_caches'),
+    # os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches'),
+    # os.path.join(TEMPFILE_PREFIX, 'helab_caches'),
+    QDir(QDir_WORKING_DIRECTORY).filePath('helab_caches'),
+    QDir(QDir_TEMP_DIRECTORY).filePath('helab_caches'),
 ]
 
 # logging.debug(f"{DIR_TEMPS_CANDIDATES = }")
@@ -187,8 +201,10 @@ DEV_POTENTIAL_DATA_PATHS = [
     '/Users/tonyyan/.cache/2024_Momentum_Bells_V2 - 20241200',
     # '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - Testing MS Teams/2024_Momentum_Bells_V2 - 20241200',
     # Don't use OneDrive it's shit (cause file system hangs)
-    os.path.join(CURRENT_WORKING_DIRECTORY,'tests_sample_data'),
-    CURRENT_WORKING_DIRECTORY,
+    os.path.join(OS_WORKING_DIRECTORY,'tests_sample_data'),
+    str(QDir_WORKING_DIRECTORY.filePath("tests_sample_data")),
+    str(QDir_WORKING_DIRECTORY),
+    OS_WORKING_DIRECTORY,
     '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab',
     'C:\\Users\\XinTong\\Documents',
     'O:\\',

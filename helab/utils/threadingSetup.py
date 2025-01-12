@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import psutil
 from typing import Dict, Tuple, TYPE_CHECKING, List
 
 from PyQt6.QtCore import QThreadPool
@@ -24,19 +25,23 @@ running_workers_hasChildren: Dict[str, DirectoryCheckWorker] = {}
 running_workers_ramLoading: Dict[str, LoadFolderToRamWorker] = {}
 running_workers_ThrottleDataChangedEmits: Dict[str, HeLabFSModelThrottleDataChangedEmit] = {}
 
-os_cpu_count = os.cpu_count()
+os_cpu_count = psutil.cpu_count(logical=False)
 if os_cpu_count is None: os_cpu_count = 1
 num_threads_half_os_cpu_count: int = int(max(2, round(os_cpu_count / 2)))
-logging.info(f"{os_cpu_count = }, {num_threads_half_os_cpu_count = }")
+num_threads_quater_os_cpu_count: int = int(max(1, round(os_cpu_count / 4)))
+logging.info(f"{os_cpu_count = }, {num_threads_half_os_cpu_count = }, {num_threads_quater_os_cpu_count = }")
 
 thread_pool_general = QThreadPool()
 thread_pool_general.setMaxThreadCount(num_threads_half_os_cpu_count)
+logging.debug(f"thread_pool_general setup with .maxThreadCount = {num_threads_half_os_cpu_count}")
 
 thread_pool_load_data_ram = QThreadPool()
-thread_pool_load_data_ram.setMaxThreadCount(1)
+thread_pool_load_data_ram.setMaxThreadCount(num_threads_quater_os_cpu_count)
+logging.debug(f"thread_pool_load_data_ram setup with .maxThreadCount = {num_threads_quater_os_cpu_count}")
 
 thread_pool_gui_update = QThreadPool()
 thread_pool_gui_update.setMaxThreadCount(num_threads_half_os_cpu_count)
+logging.debug(f"thread_pool_gui_update setup with .maxThreadCount = {num_threads_half_os_cpu_count}")
 
 def pending_gui_update_calls() -> int:
     # total = 0

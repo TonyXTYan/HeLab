@@ -29,15 +29,15 @@ logging.debug("cachingSetup.py: Loading")
 CACHE_PARAMS_DEFAULTS: OrderedDict[str, Any] = OrderedDict([
     ("statistics", True),
     ("eviction_policy", "least-recently-stored"),
-    ("sqlite_journal_mode", "memory"),
-    # ("sqlite_journal_mode", "wal"),
+    # ("sqlite_journal_mode", "memory"),
+    ("sqlite_journal_mode", "wal"),
     ("size_limit", 1<<30),          # 1GB
     ("sqlite_mmap_size", 1<<20<<7), # 128MB
     ("sqlite_cache_size", 1<<10<<5),# 32,768 pages (~128MB)
     ("disk_min_file_size", 1<<20),  # 1MB
     # ("shards", 32),
     ("shards", 16),
-    ("timeout", 0.100), # diskcache default is 0.010 seconds,
+    ("timeout", 0.200), # diskcache default is 0.010 seconds,
     ("sqlite_busy_timeout", 10), # seconds?
     ("cache_compression", True),
 ])
@@ -48,7 +48,7 @@ The default cache parameters for all caches.
 CACHE_PARAMS_OVERRIDE: Dict[str, Dict[str, Any]] = {
     "status_cache": {
         "size_limit": 1<<30<<1, # 2GB
-        #TODO increase RAM 
+        #TODO increase RAM ?
     },
     "hasChildren_cache": {
     },

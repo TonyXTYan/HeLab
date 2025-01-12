@@ -56,7 +56,7 @@ class StatusRescanWorker(QRunnable):
                 # self.signals.cancelled.emit(self._is_cancelled_scan_again, self.user_intend)
                 self.signals.cancelled.emit(self.user_intend)
                 return
-            time.sleep(0.01)
+            time.sleep(0.05)
             status_report = status_cache.get(path)
             if isinstance(status_report, StatusReport):
                 vpath, vfile, vdata = status_report.validate_ok()

@@ -20,7 +20,7 @@ import zstandard
 import zstandard as zstd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from PyQt6.QtCore import QObject, pyqtSignal, QRunnable
+from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QDir
 from pandas.core.interchange.dataframe_protocol import DataFrame
 from pandas.errors import ParserError
 
@@ -32,15 +32,16 @@ class LoadFolderToRamWorkerSignals(QObject):
     finished = pyqtSignal(str, list, pd.DataFrame)  # (folder_path: str, problematic_datasets: List[str], data: DataFrame)
     error = pyqtSignal(str, str) # (folder_path: str, error: str)
     loading = pyqtSignal(str, float)  # (folder_path: str, progress: float)
-
+    # cancelled = pyqtSignal(str, str) # (folder_path: str, message: str)
 
 class LoadFolderToRamWorker(QRunnable):
 
     _TIMEDELTA_SEC_UPDATE_PROGRESS_MIN = timedelta(seconds=0.5)
     _TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM = timedelta(seconds=0.5)
 
-    CANCEL_MSG_ALREADY_CACHED_AND_NOT_SELECTED = "cancelled - already cached and no longer selected (user changed selection, cancelled decompress request)"
+    CANCEL_MSG_ALREADY_CACHED_AND_NO_LONGER_SELECTED = "cancelled - already cached and no longer selected (user changed selection, cancelled decompress request)"
     CANCEL_MSG_SHUTDOWN_REQUESTED = "cancelled - shutdown requested"
+    CANCEL_MSG_NOTHING_HERE = "cancelled - nothing here"
 
     def __init__(self, folder_path: str):
         super().__init__()
@@ -97,9 +98,18 @@ class LoadFolderToRamWorker(QRunnable):
 
         if _check_cancel_status(): return
         try:
-            file_pattern = os.path.join(self.folder_path, 'd_txy_forc*.txt')
+            # file_pattern = os.path.join(self.folder_path, 'd_txy_forc*.txt')
+            file_pattern: str = QDir(self.folder_path).filePath('d_txy_forc*.txt')
             files = glob.glob(file_pattern)
-            # logging.debug(f"{files}")
+            # logging.critical(f"{len(files) = }")
+
+            if not files:
+                logging.error(f"LoadFolderToRamWorker: no files found inside {self.folder_path = }")
+                # self.signals.cancelled.emit(self.folder_path, "No files inside")
+                self.signals.error.emit(self.folder_path, LoadFolderToRamWorker.CANCEL_MSG_NOTHING_HERE)
+                return
+
+
 
             total_file_size_bytes = sum(os.path.getsize(file) for file in files)
             if total_file_size_bytes > 1<<30:
@@ -151,7 +161,7 @@ class LoadFolderToRamWorker(QRunnable):
                 try:
                     # Load the data into a DataFrame
                     # Adjust the separator if your data uses a different delimiter (e.g., comma, space)
-                    df = pd.read_csv(file, sep=',', names=['t', 'x', 'y'])
+                    df = pd.read_csv(file, sep=',', names=['t', 'x', 'y'], dtype={'t': float, 'x': float, 'y': float})
 
                     if df.isna().any().any():   # Check for NaN values          # type: ignore[reportAttributeAccessIssue]  #pyright bug?
                         problematic_txy_ns.append(number)

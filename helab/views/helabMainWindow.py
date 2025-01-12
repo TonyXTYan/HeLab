@@ -13,7 +13,7 @@ from typing import List, Optional
 
 import psutil
 from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
-    QDir, QDateTime, QSettings
+    QDir, QDateTime, QSettings, QStorageInfo
 from PyQt6.QtGui import QAction, QIcon, QCloseEvent, QPixmap, QResizeEvent
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox
@@ -47,7 +47,7 @@ class MainWindow(QMainWindow):
     
     def __init__(self) -> None:
         super().__init__()
-        logging.debug(f"Current directory is {CURRENT_WORKING_DIRECTORY}")
+        # logging.debug(f"Current directory is {CURRENT_WORKING_DIRECTORY}")
         if not os.path.exists(DIR_TEMPS): os.makedirs(DIR_TEMPS)
 
         self.current_tracking_folder_path = '/'
@@ -260,7 +260,7 @@ class MainWindow(QMainWindow):
                 self.set_tools_and_tabs_enable()
         datetime_now = datetime.now()
         time_delta = datetime_now - self.status_bar_message_last_update
-        if time_delta > timedelta(milliseconds=510):
+        if time_delta > timedelta(milliseconds=999):
             # self.status_bar_message_left.setText(f" {INDICATOR_DOTS[self.status_timer_threadpool_hang_counts % 10]} Active: {active_threads_all}, Queued: {queue_depths}")
             logging.critical(f"update_status_bar_left: GUI DID\'T RESPOND for {1e-6*time_delta.microseconds:.1f}s {active_threads_all = }, {queue_depths = }")
         self.status_bar_message_last_update = datetime.now()
@@ -296,9 +296,13 @@ class MainWindow(QMainWindow):
                 drives = QDir.drives()
                 for drive in drives:
                     drive_path = drive.absolutePath()
-                    action_drive = QAction(drive_path, self)
+                    storage_info = QStorageInfo(drive_path)
+                    drive_name = storage_info.displayName() or ""
+                    if drive_name == drive_path: drive_name = ""
+                    button_name = f"{drive_path} {drive_name}"
+                    action_drive = QAction(button_name, self)
                     # model_root_path = model_root_path = os.path.splitdrive(drive_path)[0] + os.sep
-                    logging.debug(f"create_menus: drives submenu added {drive_path = }")
+                    logging.debug(f"create_menus: drives submenu added {button_name = }")
                     # action_drive.triggered.connect(lambda _,dp = drive_path: self.tab_widget.add_new_folder_explorer_tab(
                     #     model_root_path=dp,
                     #     view_path=dp,

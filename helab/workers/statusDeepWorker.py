@@ -4,7 +4,7 @@ import logging
 import sys
 from typing import List
 
-from PyQt6.QtCore import QObject, pyqtSignal, QRunnable
+from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QDir
 
 from helab.utils.os_cached import os_listdir, os_isdir, os_scandir_sns, os_listdir_filtered
 from helab.utils.constants import *
@@ -39,7 +39,8 @@ class StatusDeepWorker(QRunnable):
         try:
             os_listdir_results = os_listdir_filtered(self.root_path, invalidate_cache=self.invalidate_cache)
             for entry in os_listdir_results:
-                path = os.path.join(self.root_path, entry)
+                # path = os.path.join(self.root_path, entry)
+                path = QDir(self.root_path).filePath(entry)
                 if self._is_cancelled:
                     logging.debug(f"StatusDeepWorker cancelled during BFS: {self.root_path}")
                     _emit()
