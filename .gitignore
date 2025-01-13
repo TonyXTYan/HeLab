@@ -100,3 +100,4 @@ profile.json
 .idea/misc.xml
 .idea/modules.xml
 .coverage.*
+.coverage*

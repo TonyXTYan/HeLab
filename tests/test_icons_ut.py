@@ -68,6 +68,10 @@ class TestIcons(unittest.TestCase):
     def test_known_extra_names(self) -> None:
         for name in StatusIcons.STATUS_ICONS_EXTRA_NAME:
             self.assertIn(name, StatusIcons.ICONS_EXTRA, msg=f"Missing extra icon for {name}")
+
+    def test_known_extra_names_sort_keys(self) -> None:
+        for name in StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY:
+            self.assertIn(name, StatusIcons.ICONS_EXTRA, msg=f"Missing extra icon for {name}")
             
 if __name__ == '__main__':
     unittest.main()

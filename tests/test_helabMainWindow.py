@@ -16,7 +16,7 @@ from helab.views.helabMainWindow import MainWindow
 from helab.views.settingsDialog import SettingsDialog
 
 
-def test_qtbot_add_widget(qtbot: QtBot):
+def test_qtbot_add_widget(qtbot: QtBot) -> None:
     widget = QWidget()
     qtbot.addWidget(widget)
     widget.show()

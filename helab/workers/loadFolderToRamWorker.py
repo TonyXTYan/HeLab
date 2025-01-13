@@ -1,3 +1,4 @@
+import pickle
 import time
 from datetime import datetime, timedelta
 from concurrent.futures import thread
@@ -8,8 +9,9 @@ import logging
 import os
 from sys import getsizeof
 from turtle import update
-from typing import List
+from typing import List, Any, cast, Dict
 
+import numpy as np
 import pandas as pd
 # import dask.dataframe as dd
 # logging.getLogger('dask').setLevel(logging.WARNING)
@@ -29,7 +31,9 @@ from helab.utils.cachingSetup import data_ram_cache, fnum, status_cache
 
 
 class LoadFolderToRamWorkerSignals(QObject):
-    finished = pyqtSignal(str, list, pd.DataFrame)  # (folder_path: str, problematic_datasets: List[str], data: DataFrame)
+    finished = pyqtSignal(str, list, pd.DataFrame)
+    # finished = pyqtSignal(str, list, dict)
+    # finished = pyqtSignal(str, list, np.ndarray)  # (folder_path: str, problematic_datasets: List[str], data: DataFrame)
     error = pyqtSignal(str, str) # (folder_path: str, error: str)
     loading = pyqtSignal(str, float)  # (folder_path: str, progress: float)
     # cancelled = pyqtSignal(str, str) # (folder_path: str, message: str)
@@ -126,6 +130,7 @@ class LoadFolderToRamWorker(QRunnable):
             percentages = PercentageIcon.KEYS_PERCENTAGE
 
             data_dict = {}
+            # data_array = []
             problematic_txy_ns = []
             # for file in files:
             for i, file in enumerate(files):
@@ -155,7 +160,7 @@ class LoadFolderToRamWorker(QRunnable):
 
 
                 # Extract the number using string manipulation or regex
-                # Here, we'll use string methods
+
                 number_str = basename.split('forc')[1].split('.txt')[0]
                 number = int(number_str)
                 try:
@@ -168,21 +173,18 @@ class LoadFolderToRamWorker(QRunnable):
                         logging.error(f"LoadFolderToRamWorker: DataFrame contains NaN or empty values in {file}")
                         logging.critical(f"LoadFolderToRamWorker: {df.isna().sum() = } entries are dropped.")
                         data_dict[number] = df.dropna()
+                        # data_dict[number] = df.dropna().values
+                        # data_array.append((number, df.dropna().values))
+
                         no_error_files_since_last_debug_print += 1
                     else:
-                        # logging.debug(f"LoadFolderToRamWorker: DataFrame is clean for {file}")
+
                         data_dict[number] = df
+                        # data_dict[number] = df.values
+                        # data_array.append((number, df.values))
                         no_loaded_files_since_last_debug_print += 1
                         pass
 
-                    # df = dd.read_csv(file, sep=',', names=['t', 'x', 'y'])        # spamming log console
-                    # df = df.compute()
-
-                    # Alternatively, if the separator is whitespace:
-                    # df = pd.read_csv(file, delim_whitespace=True, names=['t', 'x', 'y'])
-
-                    # Store the DataFrame in the dictionary
-                    # data_dict[number] = df
                 except pandas.errors.ParserError as e:
                     logging.error(f"LoadFolderToRamWorker: ParseError at {file = }, {e = }")
                     problematic_txy_ns.append(number)
@@ -199,9 +201,18 @@ class LoadFolderToRamWorker(QRunnable):
             if update_progress: self.signals.loading.emit(self.folder_path, percentages[-4])
                 # logging.debug(f"LoadFolderToRamWorker: formatting data {self.folder_path}. ")
 
+            logging.debug(f"LoadFolderToRamWorker: loop finished {self.folder_path = }")
+
+            # data_array.sort(key=lambda x: x[0])  # Sort by file number
+            # file_numbers, data_values = zip(*data_array)
+            # tensor = np.stack(data_values)  # Create a 3D numpy array
+
             # Add a 'file_number' column to each DataFrame
             for number, df in data_dict.items():
                 df['file_number'] = number
+
+            # data_dict = dict(sorted(data_dict.items()))
+
             if update_progress: self.signals.loading.emit(self.folder_path, percentages[-3])
 
             # Concatenate all DataFrames
@@ -214,6 +225,11 @@ class LoadFolderToRamWorker(QRunnable):
             combined_df.sort_index(inplace=True)
 
             # print(combined_df)
+
+
+            # compressed_data = self.compress_dict(data_dict)
+
+            logging.debug(f"LoadFolderToRamWorker: compressed {self.folder_path = }")
 
 
             # data_ram_cache[self.folder_path] = combined_df
@@ -230,8 +246,12 @@ class LoadFolderToRamWorker(QRunnable):
             if update_progress: self.signals.loading.emit(self.folder_path, percentages[-2])
 
             compressed_data = self.compress_dataframe(combined_df)
+            # compressed_data = self.compress_ndarray(tensor)
+
             buffer_size_bytes = getsizeof(compressed_data)
             saved = data_ram_cache.set(self.folder_path, compressed_data, retry=True)
+
+            logging.debug(f"LoadFolderToRamWorker: saved to cache {self.folder_path = }")
 
             if not saved:
                 logging.error(f"LoadFolderToRamWorker: failed to cache {self.folder_path = }")
@@ -270,9 +290,10 @@ class LoadFolderToRamWorker(QRunnable):
             logging.error(f"LoadFolderToRamWorker: {e = }")
             self.signals.error.emit(self.folder_path, str(e))
 
-    def cancel(self, message:str="") -> None:
+    def cancel(self, message: str = "") -> None:
         self._cancel_requested = True
         self._cancel_message = message
+
 
     @staticmethod
     def compress_dataframe(df: pd.DataFrame) -> bytes:
@@ -298,3 +319,123 @@ class LoadFolderToRamWorker(QRunnable):
         buffer = pa.BufferReader(decompressed_data)
         table = pq.read_table(buffer)
         return table.to_pandas()
+
+
+class CompressionAlgorithmsDumpsite:
+
+
+    @staticmethod
+    def compress_ndarray(tensor: np.ndarray[Any, Any]) -> bytes:
+        buffer = io.BytesIO()
+        np.save(buffer, tensor)
+        zstd_compressor = zstandard.ZstdCompressor(level=22)
+        return zstd_compressor.compress(buffer.getvalue())
+
+    @staticmethod
+    def decompress_ndarray(data: bytes) -> np.ndarray[Any, Any]:
+        zstd_decompressor = zstandard.ZstdDecompressor()
+        decompressed_data = zstd_decompressor.decompress(data)
+        buffer = io.BytesIO(decompressed_data)
+        # return np.load(buffer, allow_pickle=False)
+        return cast(np.ndarray[Any, Any], np.load(buffer, allow_pickle=False))
+
+    @staticmethod
+    def compress_dict_ndarray_slow(data: Dict[int, np.ndarray[Any, Any]]) -> bytes:
+        buffer = io.BytesIO()
+        pickle.dump(data, buffer)
+        zstd_compressor = zstandard.ZstdCompressor(level=22)
+        return zstd_compressor.compress(buffer.getvalue())
+
+    @staticmethod
+    def decompress_dict_ndarray_slow(data: bytes) -> Dict[int, np.ndarray[Any, Any]]:
+        zstd_decompressor = zstandard.ZstdDecompressor()
+        decompressed_data = zstd_decompressor.decompress(data)
+        buffer = io.BytesIO(decompressed_data)
+        # return pickle.load(buffer)
+        return cast(Dict[int, np.ndarray[Any, Any]], np.load(buffer, allow_pickle=True))
+
+    @staticmethod
+    def compress_dict_ndarray_slow2(data: Dict[int, np.ndarray[Any, Any]]) -> bytes:
+        """
+        Compress a dictionary of numpy arrays efficiently using NumPy serialization and Zstandard.
+        """
+        buffer = io.BytesIO()
+        with zstandard.ZstdCompressor(level=22).stream_writer(buffer) as compressor:
+            for key, array in data.items():
+                # Serialize each array and its corresponding key
+                buffer_key = np.array([key], dtype=np.int32).tobytes()
+                buffer_array = array.tobytes()
+                compressor.write(buffer_key)
+                compressor.write(buffer_array)
+        return buffer.getvalue()
+
+    @staticmethod
+    def decompress_dict_ndarray_slow2(data: bytes, array_shape: Dict[int, tuple]) -> Dict[int, np.ndarray[Any, Any]]:   # type: ignore
+        """
+        Decompress a dictionary of numpy arrays serialized by compress_dict_ndarray.
+        """
+        decompressed_data = {}
+        buffer = io.BytesIO(data)
+        with zstandard.ZstdDecompressor().stream_reader(buffer) as decompressor:
+            stream = io.BytesIO(decompressor.read())
+            for key, shape in array_shape.items():
+                key_data = int(np.frombuffer(stream.read(4), dtype=np.int32)[0])
+                array_data = np.frombuffer(stream.read(np.prod(shape) * np.dtype('float64').itemsize), dtype='float64')
+                decompressed_data[key_data] = array_data.reshape(shape)
+        return decompressed_data
+
+    @staticmethod
+    def compress_dict(data: Dict[int, np.ndarray[Any, Any]]) -> bytes:
+        """
+        Compress a dictionary of NumPy arrays using Apache Arrow and Zstandard.
+        """
+        # Prepare metadata and flattened arrays
+        keys = []
+        arrays = []
+        shapes = []
+        for key, array in data.items():
+            keys.append(key)
+            arrays.append(array.flatten())  # Flatten for efficient storage
+            shapes.append(array.shape)  # Store the shape for reconstruction
+
+        # Convert keys and shapes to Arrow arrays
+        keys_array = pa.array(keys, type=pa.int32())
+        shapes_array = pa.array(shapes, type=pa.list_(pa.int32()))
+        arrays_array = pa.array(np.concatenate(arrays), type=pa.float64())  # Concatenate all flattened arrays
+
+        # Create an Arrow table
+        table = pa.Table.from_arrays([keys_array, shapes_array, arrays_array], names=["key", "shape", "array"])
+
+        # Serialize and compress with Zstandard
+        buffer = pa.BufferOutputStream()
+        pq.write_table(table, buffer)
+        zstd_compressor = zstandard.ZstdCompressor(level=22)
+        return zstd_compressor.compress(buffer.getvalue().to_pybytes())
+
+    @staticmethod
+    def decompress_dict(data: bytes) -> Dict[int, np.ndarray[Any, Any]]:
+        """
+        Decompress a dictionary of NumPy arrays serialized by compress_dict.
+        """
+        # Decompress with Zstandard
+        zstd_decompressor = zstandard.ZstdDecompressor()
+        decompressed_data = zstd_decompressor.decompress(data)
+        buffer = pa.BufferReader(decompressed_data)
+
+        # Read the Arrow table
+        table = pq.read_table(buffer)
+
+        # Extract keys, shapes, and arrays
+        keys = table["key"].to_numpy()
+        shapes = table["shape"].to_pylist()
+        arrays = table["array"].to_numpy()
+
+        # Reconstruct the dictionary
+        result = {}
+        offset = 0
+        for key, shape in zip(keys, shapes):
+            size = np.prod(shape)
+            result[key] = arrays[offset:offset + size].reshape(shape)
+            offset += size
+
+        return result

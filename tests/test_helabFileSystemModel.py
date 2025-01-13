@@ -243,7 +243,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         time.sleep(0.1)
 
         self.assertNotIn(path, running_workers_status)
-        # self.assertEqual(status_cache[path], report)
+        self.assertEqual(status_cache[path], report)
 
     @patch('helab.models.helabFileSystemModel.os_listdir_filtered')
     @patch('helab.models.helabFileSystemModel.logging')

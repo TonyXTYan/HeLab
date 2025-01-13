@@ -95,17 +95,17 @@ class helabFileSystemModel(QFileSystemModel):
         column = index.column()
         file_info = self.fileInfo(index)
         path = file_info.absoluteFilePath()
-        statusReport = self.fetch_status(path)
-        status = statusReport.status
-        count = statusReport.count
-        extra_icons = statusReport.extra_icons
-        
+        status_report = self.fetch_status(path)
+        # status = status_report.status
+        # count = status_report.count
+        # extra_icons = status_report.extra_icons
+
         # # if ['ram', 'ram_single', 'ram_opened'] in extra_icons:
         # if any(i in extra_icons for i in ['ram', 'ram_single', 'ram_opened']):
         #     if path == self.folder_opened_path:
-        #         statusReport.update_ram_status(is_opened=True)
+        #         status_report.update_ram_status(is_opened=True)
         #     else:
-        #         statusReport.update_ram_status(is_opened=False)
+        #         status_report.update_ram_status(is_opened=False)
 
         if column == self.COLUMN_DATE_MODIFIED:
             if role == Qt.ItemDataRole.DisplayRole:
@@ -117,15 +117,15 @@ class helabFileSystemModel(QFileSystemModel):
             if role == Qt.ItemDataRole.DisplayRole:
                 # print(index, file_info.absoluteFilePath())
                 # status, count, _ = self.fetch_status(file_info.absoluteFilePath())
-                if status == 'loading':
+                if status_report.status == 'loading':
                     return '...'
                 # elif status == 'nothing':
                 #     return ''
                 # elif status == 'missing':
                 #     return ''
-                elif status in ['nothing', 'something', 'missing', 'unknown']:
+                elif status_report.status in ['nothing', 'something', 'missing', 'unknown']:
                     return ''
-                return str(count)
+                return str(status_report.count)
             elif role == Qt.ItemDataRole.TextAlignmentRole:
                 return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             else:
@@ -134,10 +134,15 @@ class helabFileSystemModel(QFileSystemModel):
             if role == Qt.ItemDataRole.DecorationRole:
                 # status, _, _  = self.fetch_status(file_info.absoluteFilePath())
                 # icon = self.status_icons.get(status)
-                icon = StatusIcons.ICONS_STATUS.get(status)
-                return icon
+                icon = StatusIcons.ICONS_STATUS.get(status_report.status, None)
+                if icon: return icon
+                else:
+                    # logging.warning(f"status icon not found for: {status}")   # too many calls
+                    status_report.noticed_errors(StatusReport.ERROR_INVALID_STATUS_ICON)
+                    return StatusIcons.ICON_BUG
             elif role == self.STATUS_EXTRA_ICONS_ROLE:
-                return statusReport.return_extra_icons_paintable()
+                return StatusReport.return_extra_icons_paintable(status_report)
+                # return status_report.return_extra_icons_paintable()
 
                 # Retrieve extra icons from the cache
 
@@ -170,7 +175,7 @@ class helabFileSystemModel(QFileSystemModel):
         return super().headerData(section, orientation, role)
 
     def fetch_status(self, folder_path: str) -> StatusReport:
-        return StatusWorker.fetch_status(folder_path, self.handle_status_computed_v3)
+        return StatusWorker.fetch_status(folder_path, self.throttled_data_changed_emitter.add_update)
         # return QTimer.singleShot(0, lambda: StatusWorker.fetch_status(folder_path, self.handle_status_computed_v3))
 
     def fetch_status_legacy(self, folder_path: str) -> StatusReport:
@@ -549,7 +554,7 @@ class helabFileSystemModel(QFileSystemModel):
 
     def on_has_children_finished(self, dir_path: str, has_children: bool) -> None:
         # logging.debug(f"on_has_children_finished: {dir_path = }, {has_children = }")
-        
+
         # # Update the cache with the computed result
         # if has_children is not None:
         #     hasChildren_cache[dir_path] = has_children

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import warnings
 from typing import TYPE_CHECKING, List, Tuple, Optional
 import logging
 
@@ -66,7 +67,8 @@ class StatusRescanWorker(QRunnable):
                     status_cache.pop(path)
                     # self.fetch_status(path)
                 elif not vpath or not vdata:
-                    logging.debug(f"StatusRescanWorker: got {vpath = }, {vfile = }, {vdata = } \tat {path}")
+                    logging.warn(f"StatusRescanWorker: got {vpath = }, {vfile = }, {vdata = } \tat {path}")
+                    warnings.warn(f"StatusRescanWorker: unimplemented data validation for {path = }, {vpath = }, {vfile = }, {vdata = }", RuntimeWarning)
                     # status_cache.pop(path)
                     # self.fetch_status(path)
 

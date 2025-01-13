@@ -10,7 +10,7 @@ from PyQt6.QtCore import QThreadPool
 from humanfriendly.terminal import message
 
 
-logging.critical("threadingSetup.py: Loading")
+logging.warn("threadingSetup.py: initializing...")
 
 if TYPE_CHECKING:
     from helab.workers.directoryCheckWorker import DirectoryCheckWorker

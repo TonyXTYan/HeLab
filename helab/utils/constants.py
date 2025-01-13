@@ -1,4 +1,5 @@
 import os
+import random
 import re
 import subprocess
 import sys
@@ -73,8 +74,18 @@ def get_version() -> str:
              is not found, it returns '0.0.0' as the default version.
     :rtype: str
     """
-    with open('setup.py', 'r', encoding='utf-8') as f:
-        content = f.read()
+    dirs_to_try = ['setup.py', '../setup.py', '../../setup.py']  # Add more paths as needed
+    content = None
+
+    for path in dirs_to_try:
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                break
+        except FileNotFoundError:
+            continue
+
+    if content:
         match = re.search(r'version\s*=\s*[\'"]([^\'"]+)[\'"]', content)
         if match:
             return match.group(1)
@@ -148,6 +159,8 @@ DIR_CACHES_CANDIDATES = [
 # logging.debug(f"{DIR_CACHES_CANDIDATES = }")
 
 INDICATOR_DOTS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+INDICATOR_DOTS_ALL = "⠃⠅⠆⠇⠉⠊⠋⠌⠍⠎⠏⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟⠡⠢⠣⠤⠥⠦⠧⠨⠩⠪⠫⠬⠭⠮⠯⠰⠱⠲⠳⠴⠵⠶⠷⠸⠹⠺⠻⠼⠽⠾⠿"
+INDICATOR_DOT_RANDOM = lambda: random.choice(INDICATOR_DOTS)
 
 def get_path_from_setting_or_use_default(key: str, candidates: List[str], sandbox_app: Optional[str] = None) -> str:
     """

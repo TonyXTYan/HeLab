@@ -59,7 +59,7 @@ class StatusIcons:
     initialise_icons() -> None:
         Initialises the icons for the StatusIcons class.
     """
-    STATUS_ICONS_NAME = [
+    STATUS_ICONS_NAME: List[str] = [
         'ok',
         'fixable',
         'warning',
@@ -70,9 +70,10 @@ class StatusIcons:
         'unknown',
         'missing',
         'cancelled',
-        'paused'
+        'paused',
+        'bug',
     ]
-    STATUS_ICONS_EXTRA_NAME = [
+    STATUS_ICONS_EXTRA_NAME: List[str] = [
         'database',
         'report',
         'chart3d',
@@ -84,9 +85,10 @@ class StatusIcons:
         'loading',
         'loading_ram',
         'progress',
-        'progress_ram'
+        'progress_ram',
+        'bug',
     ]
-    STATUS_ICONS_EXTRA_NAME_SORT_KEY = {
+    STATUS_ICONS_EXTRA_NAME_SORT_KEY: Dict[str, int] = {
         'database':     230,
         'report':       240,
         'chart3d':      250,
@@ -99,6 +101,7 @@ class StatusIcons:
         'progress':       1,
         'live':         100,
         'waiting':        1,
+        'bug':        1<<30,
     }
     ICON_OK = QIcon()
     ICON_FIXABLE = QIcon()
@@ -113,6 +116,7 @@ class StatusIcons:
     ICON_CANCELLED = QIcon()
     ICON_PAUSED = QIcon()
     ICON_MAYBE = QIcon()
+    ICON_BUG = QIcon()
 
     ICONS_STATUS: Dict[str, QIcon] = {}
 
@@ -136,7 +140,7 @@ class StatusIcons:
         """
         StatusIcons.ICON_OK = tablerIcon(OutlineIcon.CIRCLE_CHECK, '#00bb39')
         StatusIcons.ICON_FIXABLE = tablerIcon(OutlineIcon.HELP_CIRCLE, '#B8D20E')
-        StatusIcons.ICON_CRITICAL = tablerIcon(OutlineIcon.XBOX_X, '#e50000')
+        StatusIcons.ICON_CRITICAL = tablerIcon(OutlineIcon.XBOX_X, '#cc0000')
         StatusIcons.ICON_WARNING = tablerIcon(OutlineIcon.ALERT_CIRCLE, '#f8c350')
         StatusIcons.ICON_LOADING = tablerIcon(OutlineIcon.LOADER, '#000000')  # TODO: replace this with PERCENTAGE
         StatusIcons.ICON_LIVE = tablerIcon(OutlineIcon.EYE, '#000000')
@@ -147,6 +151,7 @@ class StatusIcons:
         StatusIcons.ICON_CANCELLED = tablerIcon(OutlineIcon.PROGRESS_X, '#9923bd')
         StatusIcons.ICON_PAUSED = tablerIcon(OutlineIcon.PLAYER_PAUSE, '#000000')
         StatusIcons.ICON_MAYBE = tablerIcon(OutlineIcon.PROGRESS_HELP, '#000000')
+        StatusIcons.ICON_BUG = tablerIcon(OutlineIcon.BUG, '#ff66cc')
         StatusIcons.ICONS_STATUS = {
             'ok': StatusIcons.ICON_OK,
             'fixable': StatusIcons.ICON_FIXABLE,
@@ -160,6 +165,7 @@ class StatusIcons:
             'cancelled': StatusIcons.ICON_CANCELLED,
             'paused': StatusIcons.ICON_PAUSED,
             'maybe': StatusIcons.ICON_MAYBE,
+            'bug': StatusIcons.ICON_BUG,
         }
         StatusIcons.ICON_WAITING = tablerIcon(OutlineIcon.HOURGLASS, '#888888')
         StatusIcons.ICON_DATABASE = tablerIcon(OutlineIcon.DATABASE, '#888888')
@@ -182,6 +188,7 @@ class StatusIcons:
             'loading_ram': StatusIcons.ICON_WAITING,
             'progress': StatusIcons.ICON_CIRCLE,
             'progress_ram': StatusIcons.ICON_CIRCLE,
+            'bug': StatusIcons.ICON_BUG,
         }
 
 class ToolIcons:
