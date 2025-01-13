@@ -10,6 +10,7 @@ import sys
 import warnings
 from typing import Optional, Dict, List, Tuple
 
+import numpy as np
 import pandas as pd
 from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal, QThreadPool, QModelIndex, QItemSelection, \
     QPoint, QFileInfo, QTimer, QRunnable, QObject, QThread
@@ -30,6 +31,8 @@ from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
 from helab.workers.statusDeepWorker import StatusDeepWorker
 from helab.workers.statusWorker import StatusWorker, StatusReport
 
+import numpy.typing as npt
+from numpy import float64
 
 class FolderExplorer(QWidget):
     rootPathChanged = pyqtSignal(str)
@@ -53,7 +56,7 @@ class FolderExplorer(QWidget):
 
         self.auto_load_ram = True
 
-        self.folder_opened_data: Optional[pd.DataFrame] = None
+        self.folder_opened_data: Optional[Dict[int, npt.NDArray[np.float64]]] = None
         self.folder_opened_path: Optional[str] = None
 
         self.model = helabFileSystemModel()
@@ -289,7 +292,7 @@ class FolderExplorer(QWidget):
             # self.rootPathChanged.emit(file_info.absoluteFilePath())
             self.emit_root_path_changed()
             # logging.debug(f"Double click {index = }, path = {file_info.absoluteFilePath()}")
-            self.model.rescan(user_intend = False)
+            self.model.rescan(user_requested_scan= False)
 
     def on_back_button_clicked(self) -> None:
         # Get the parent index of the current root index
@@ -313,7 +316,7 @@ class FolderExplorer(QWidget):
         self.update_back_button_state()
         # self.robotPathChanged.emit(self.model.filePath(self.tree.rootIndex()))
         self.emit_root_path_changed()
-        self.model.rescan(user_intend= False)
+        self.model.rescan(user_requested_scan= False)
         logging.debug(f"on_back_button_clicked: New root path: {self.model.filePath(self.tree.rootIndex())}")
 
     def update_back_button_state(self) -> None:
@@ -672,7 +675,8 @@ class FolderExplorer(QWidget):
         self.on_load_folder_to_ram_finished_helper(folder_path, problematic_txy_ns, data)
 
     def on_load_folder_to_ram_finished_helper(self, folder_path: str, problematic_txy_ns: Optional[List[int]], data: object) -> None:
-        if isinstance(data, pd.DataFrame):
+        #TODO: move these methods to LoadFolderToRamWorker
+        if isinstance(data, dict):
             self.folder_opened_path = folder_path
             self.model.folder_opened_path = folder_path
             self.folder_opened_data = data
@@ -692,7 +696,8 @@ class FolderExplorer(QWidget):
                 index = self.model.index(folder_path, helabFileSystemModel.COLUMN_STATUS_ICON)
                 if index.isValid():
                     self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
-                    logging.debug(f"on_load_folder_to_ram_finished: loadded {data.shape[0]} rows {fnum(data.memory_usage(index=True).sum())}B at {folder_path = }")
+                    logging.debug(f"on_load_folder_to_ram_finished: loadded {fnum(LoadFolderToRamWorker.get_total_rows_in_dict_of_numpy(data))} rows "
+                                  f"{fnum(LoadFolderToRamWorker.get_approx_size_of_dict_of_numpy(data))}B at {folder_path = }")
                 else:
                     logging.error(f"on_load_folder_to_ram_finished: invalid index at {folder_path} ({index = })")
             else:
@@ -700,7 +705,7 @@ class FolderExplorer(QWidget):
                 self.model.fetch_status(folder_path)
 
         else:
-            logging.error(f"on_load_folder_to_ram_finished: {type(data) = } is not pd.DataFrame, {folder_path = }")
+            logging.critical(f"on_load_folder_to_ram_finished: {type(data) = } is not dict, {folder_path = }")
             status_cache.pop(folder_path)
             self.model.fetch_status(folder_path)
         pass
@@ -825,7 +830,7 @@ class FolderExplorer(QWidget):
 
     def rescan(self, user_intend: bool = False) -> None:
         logging.debug(f"FolderExplorer.rescan() view_path: {self.view_path} model_root_path: {self.model_root_path} target_path: {self.target_path}")
-        self.model.rescan(user_intend = user_intend)
+        self.model.rescan(user_requested_scan= user_intend)
         pass
 
 

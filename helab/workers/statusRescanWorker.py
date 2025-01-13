@@ -17,14 +17,14 @@ if TYPE_CHECKING:
 
 class StatusRescanWorkerSignals(QObject):
     finished = pyqtSignal(bool)
-    cancelled = pyqtSignal(bool)
+    cancelled = pyqtSignal(bool, bool)
 
 class StatusRescanWorker(QRunnable):
     def __init__(self,
                  # model: helabFileSystemModel,
                  rows: List[Tuple[QModelIndex, str]],
                  model_folder_opened_path: Optional[str] = None,
-                 user_intend: bool = False,
+                 user_requested_scan: bool = False,
                  ) -> None:
         super().__init__()
         # self.model = model
@@ -32,30 +32,21 @@ class StatusRescanWorker(QRunnable):
         self.model_folder_opened_path = model_folder_opened_path
         # self.folder_opened_path = folder_opened_path
         self.signals = StatusRescanWorkerSignals()
-        self.user_intend = user_intend
+        self.user_requested_scan = user_requested_scan
         self._is_cancelled = False
-        # self._is_cancelled_scan_again = False   # TODO what is this for?
+        self._is_cancelled_but_scan_again = False
 
     def run(self) -> None:
-        logging.debug(f"StatusRescanWorker.run: started with {len(self.rows)} rows and {self.model_folder_opened_path = }, {self.user_intend = }")
-        if not self.user_intend:
-            time.sleep(0.5)
-            # delay_processing_countdown = 5
-            # while 1 < all_pools_total_activeThreadCount():
-            #     # logging.debug(f"StatusRescanWorker.run: waiting for 0 < {all_pools_total_activeThreadCount() = }")
-            #     time.sleep(1.0)
-            #     delay_processing_countdown -= 1
-            #     if delay_processing_countdown <= 0:
-            #         break
+        logging.debug(f"StatusRescanWorker.run: started with {len(self.rows)} rows and {self.model_folder_opened_path = }, {self.user_requested_scan = }")
+        if not self.user_requested_scan:
+            time.sleep(0.010)
         else:
             time.sleep(0.001)
 
-        # rows = self.model.get_visible_rows()
         for index, path in self.rows:
             if self._is_cancelled:
                 self.setAutoDelete(True)
-                # self.signals.cancelled.emit(self._is_cancelled_scan_again, self.user_intend)
-                self.signals.cancelled.emit(self.user_intend)
+                self.signals.cancelled.emit(self._is_cancelled_but_scan_again, self.user_requested_scan)
                 return
             time.sleep(0.001)
             status_report = status_cache.get(path)
@@ -67,10 +58,8 @@ class StatusRescanWorker(QRunnable):
                     status_cache.pop(path)
                     # self.fetch_status(path)
                 elif not vpath or not vdata:
-                    logging.warn(f"StatusRescanWorker: got {vpath = }, {vfile = }, {vdata = } \tat {path}")
+                    logging.warning(f"StatusRescanWorker: got {vpath = }, {vfile = }, {vdata = } \tat {path}")
                     warnings.warn(f"StatusRescanWorker: unimplemented data validation for {path = }, {vpath = }, {vfile = }, {vdata = }", RuntimeWarning)
-                    # status_cache.pop(path)
-                    # self.fetch_status(path)
 
                 if any(i in status_report.extra_icons for i in ['ram', 'ram_single', 'ram_opened']):
                     if path == self.model_folder_opened_path:
@@ -78,15 +67,23 @@ class StatusRescanWorker(QRunnable):
                     else:
                         status_report.update_ram_status(is_opened=False)
 
-                # index = self.model.index(path)
-                # if index.isValid():
-                #     self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
             # logging.debug(f"StatusRescanWorker.run: checked {path = }")
+
+
+
+
+
+
         time.sleep(0.001)
         self.setAutoDelete(True)
-        self.signals.finished.emit(self.user_intend)
+        self.signals.finished.emit(self.user_requested_scan)
 
 
-    def cancel(self, scan_again:bool=True) -> None:
+    def cancel(self, allow_retry_scan: bool = True) -> None:
         self._is_cancelled = True
-        # self._is_cancelled_scan_again = scan_again
+        self._is_cancelled_but_scan_again = allow_retry_scan
+
+    def update_info(self, rows: List[Tuple[QModelIndex, str]], model_folder_opened_path: Optional[str] = None) -> None:
+        self.rows = rows
+        self.model_folder_opened_path = model_folder_opened_path
+        self._is_cancelled = False

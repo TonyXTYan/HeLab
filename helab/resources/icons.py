@@ -329,7 +329,7 @@ class PercentageIcon:
         Pre-fills the fine-grained cache and initialises icons for coarse divisions.
     """
     _DIVS_COARSE = 12
-    _DIVS_COARSE_CUTOFF_RIGHT = -5
+    _DIVS_COARSE_CUTOFF_RIGHT = -3
     _DIVS_COARSE_CUTOFF_LEFT  = 0
     _DIVS_FINE_MULTIPLIER = 30
     _DIVS_FINE = _DIVS_COARSE * _DIVS_FINE_MULTIPLIER # 12*30 = 360

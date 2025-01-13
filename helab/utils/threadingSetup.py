@@ -9,6 +9,7 @@ from typing import Dict, Tuple, TYPE_CHECKING, List
 from PyQt6.QtCore import QThreadPool
 from humanfriendly.terminal import message
 
+from helab.utils.synchronised_dict import SynchronisedDict
 
 logging.warn("threadingSetup.py: initializing...")
 
@@ -19,11 +20,11 @@ if TYPE_CHECKING:
     from helab.workers.statusWorker import StatusWorker
     from helab.workers.helabFSModelThrottleDataChangedEmit import HeLabFSModelThrottleDataChangedEmit
 
-running_workers_status: Dict[str, StatusWorker] = {}
-running_workers_deep: Dict[str, StatusDeepWorker] = {}
-running_workers_hasChildren: Dict[str, DirectoryCheckWorker] = {}
-running_workers_ramLoading: Dict[str, LoadFolderToRamWorker] = {}
-running_workers_ThrottleDataChangedEmits: Dict[str, HeLabFSModelThrottleDataChangedEmit] = {}
+running_workers_status: SynchronisedDict[str, StatusWorker] = SynchronisedDict()
+running_workers_deep: SynchronisedDict[str, StatusDeepWorker] = SynchronisedDict()
+running_workers_hasChildren: SynchronisedDict[str, DirectoryCheckWorker] = SynchronisedDict()
+running_workers_ramLoading: SynchronisedDict[str, LoadFolderToRamWorker] = SynchronisedDict()
+running_workers_ThrottleDataChangedEmits: SynchronisedDict[str, HeLabFSModelThrottleDataChangedEmit] = SynchronisedDict()
 
 os_cpu_count = psutil.cpu_count(logical=False)
 if os_cpu_count is None: os_cpu_count = 1

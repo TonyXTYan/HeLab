@@ -614,17 +614,19 @@ class StatusWorker(QRunnable):
             return
 
         logging.debug(f"on_fetch_status_finished_basic: path = {status_report.path}, status = {status_report.status}, count = {status_report.count}, extras = {status_report.extra_icons}")
-        # path = status_report.path
-        if path != status_report.path:
-            logging.critical(f"on_fetch_status_finished_basic: (IMPOSSIBLE) path mismatch: {path = }, {status_report.path = }")
+
+        # if path != status_report.path:
+        #     logging.critical(f"on_fetch_status_finished_basic: (IMPOSSIBLE) path mismatch: {path = }, {status_report.path = }")
+        # if path in running_workers_status:
+        #     worker = running_workers_status[path]
+        #     del running_workers_status[path]
+        # else:
+        #     logging.warning(f"on_fetch_status_finished_basic: worker not in running_workers_status for {path}")
+
         if path in running_workers_status:
-            worker = running_workers_status[path]
-            # worker.autoDelete()
-            # worker.setAutoDelete(True)
+            logging.warning(f"on_fetch_status_finished_basic: worker should have already been removed, del anyway {path = }")
             del running_workers_status[path]
-            # del worker
-        else:
-            logging.warning(f"on_fetch_status_finished_basic: worker not in running_workers_status for {path}")
+
         if path in status_cache:
             pass
         else:
@@ -639,6 +641,8 @@ class StatusWorker(QRunnable):
         self.signals = StatusWorkerSignals()
         self._is_cancelled = False
         self.invalidate_cache = invalidate_cache
+
+        self._time_started = datetime.now()
 
     def run(self) -> None:
         logging.debug(f"StatusWorker started for: {self.path}")
@@ -659,6 +663,8 @@ class StatusWorker(QRunnable):
         if self.path in status_cache:
             logging.debug(f"StatusWorker._finished_emit_helper: updating cache for {self.path} with status = {status_report.status}")
 
+        if self.path != status_report.path: logging.critical(f"StatusWorker._finished_emit_helper: path mismatch: {self.path = }, {status_report.path = }")
+
         status_report = status_report._update_cache()
         status_report = status_report.review_path_children()
         status_report = status_report.review_path_parent()
@@ -674,6 +680,18 @@ class StatusWorker(QRunnable):
         else:
             logging.error(f"StatusWorker._finished_emit_helper: updated but not found for {self.path = }")
 
+
+        if status_report.path in running_workers_status:
+            worker = running_workers_status[status_report.path]
+            if worker is self:
+                pass
+            else:
+                logging.error(f"_finished_emit_helper: worker mismatch for {status_report.path}")
+            del running_workers_status[status_report.path]
+        else:
+            logging.warning(f"_finished_emit_helper: worker not in running_workers_status for {status_report.path}")
+
+        time.sleep(0.001)
         self.setAutoDelete(True)
         self.signals.finished.emit(self.path)
 

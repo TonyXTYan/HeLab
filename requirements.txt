@@ -31,3 +31,5 @@ diskcache
 pgzip
 pyarrow
 zstandard
+blosc
+lz4

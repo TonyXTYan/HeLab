@@ -602,26 +602,23 @@ class helabFileSystemModel(QFileSystemModel):
 
         return rows
 
-    def rescan(self, user_intend: bool = False) -> None:
+    def rescan(self, user_requested_scan: bool = False) -> None:
         # logging.info("helabFileSystemModel.rescan: called")
 
         if self.rescan_worker is not None:
-            logging.warning("helabFileSystemModel.rescan: already running")
-            self.rescan_worker.cancel(scan_again=True)
+            logging.warning("helabFileSystemModel.rescan: already running, cancelling this one and it will retry")
+            self.rescan_worker.cancel(allow_retry_scan = True)
             return
         else:
             logging.debug("helabFileSystemModel.rescan: starting")
 
-        worker = StatusRescanWorker(rows=self.get_visible_rows(), model_folder_opened_path=self.folder_opened_path, user_intend=user_intend)
+        worker = StatusRescanWorker(rows=self.get_visible_rows(), model_folder_opened_path=self.folder_opened_path, user_requested_scan=user_requested_scan)
         worker.signals.finished.connect(self.on_rescan_finished)
         worker.signals.cancelled.connect(self.on_rescan_cancelled)
-        # worker.setAutoDelete(True)
-        # thread_pool_general.start(worker, priority=QThread.Priority.LowestPriority.value)
-        if user_intend:
+        if user_requested_scan:
             thread_pool_general.start(worker, priority=QThread.Priority.HighPriority.value)   # type: ignore[call-overload]
         else:
             QTimer.singleShot(100, lambda: thread_pool_general.start(worker, priority=QThread.Priority.LowestPriority.value))    # type: ignore[call-overload]
-        # self.refresh()
         self.rescan_worker = worker
         pass
 
@@ -639,25 +636,15 @@ class helabFileSystemModel(QFileSystemModel):
                         status_report.update_ram_status(is_opened=True)
                     else:
                         status_report.update_ram_status(is_opened=False)
-            # index = self.index(path)
-            # if index.isValid():
-            #     # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
-            #     # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole])
-            #     # self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE])
-            #     delay_ms = randint(5,20) + ith if u else randint(300,500) + ith*10
-            #     QTimer.singleShot(delay_ms, lambda:
-            #     self.dataChanged.emit(index, index,
-            #         [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE])
-            #     )
             self.throttled_data_changed_emitter.add_update(path)
 
-    def on_rescan_cancelled(self, user_intend: bool = False) -> None:
-        logging.info(f"helabFileSystemModel.on_rescan_cancelled {user_intend = }")
+    def on_rescan_cancelled(self, retry: bool = False, was_user_requested_scan: bool = False) -> None:
+        logging.info(f"helabFileSystemModel.on_rescan_cancelled {retry = }, {was_user_requested_scan = }")
         self.refresh()
         self.rescan_worker = None
-        if user_intend:
-            if user_intend: QTimer.singleShot( 10, lambda: self.rescan(user_intend=user_intend))
-            else:           QTimer.singleShot(100, lambda: self.rescan(user_intend=user_intend))
+        if retry: QTimer.singleShot(10, lambda: self.rescan(user_requested_scan=was_user_requested_scan))
+        else:     QTimer.singleShot(100, lambda: self.rescan(user_requested_scan=was_user_requested_scan))
+
 
     def on_item_expanded(self, index: QModelIndex) -> None:
         logging.debug(f"helabFileSystemModel.on_item_expanded: {self.filePath(index)}")
@@ -665,7 +652,7 @@ class helabFileSystemModel(QFileSystemModel):
 
     def rescan_cancel_if_any(self) -> None:
         if isinstance(self.rescan_worker, StatusRescanWorker):
-            self.rescan_worker.cancel(scan_again=False)
+            self.rescan_worker.cancel(allow_retry_scan = False)
             self.rescan_worker = None
             logging.info("helabFileSystemModel.rescan_cancel_if_any: cancelled")
 

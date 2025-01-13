@@ -101,3 +101,4 @@ profile.json
 .idea/modules.xml
 .coverage.*
 .coverage*
+junit.xml

@@ -1,20 +1,25 @@
+from __future__ import annotations
+
+import lzma
 import pickle
+import re
 import time
+import warnings
 from datetime import datetime, timedelta
-from concurrent.futures import thread
 import gc
 import glob
 import io
 import logging
 import os
 from sys import getsizeof
-from turtle import update
-from typing import List, Any, cast, Dict
 
+from typing import List, Any, cast, Dict, Callable
+
+import blosc
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
-# import dask.dataframe as dd
-# logging.getLogger('dask').setLevel(logging.WARNING)
+
 import pandas.errors
 import pgzip
 import pyarrow
@@ -23,20 +28,15 @@ import zstandard as zstd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QDir
-from pandas.core.interchange.dataframe_protocol import DataFrame
-from pandas.errors import ParserError
 
 from helab.resources.icons import PercentageIcon
 from helab.utils.cachingSetup import data_ram_cache, fnum, status_cache
 
 
 class LoadFolderToRamWorkerSignals(QObject):
-    finished = pyqtSignal(str, list, pd.DataFrame)
-    # finished = pyqtSignal(str, list, dict)
-    # finished = pyqtSignal(str, list, np.ndarray)  # (folder_path: str, problematic_datasets: List[str], data: DataFrame)
+    finished = pyqtSignal(str, list, dict)  # (folder_path: str, problematic_datasets: List[str], data: DataFrame)
     error = pyqtSignal(str, str) # (folder_path: str, error: str)
     loading = pyqtSignal(str, float)  # (folder_path: str, progress: float)
-    # cancelled = pyqtSignal(str, str) # (folder_path: str, message: str)
 
 class LoadFolderToRamWorker(QRunnable):
 
@@ -54,6 +54,7 @@ class LoadFolderToRamWorker(QRunnable):
         self._cancel_requested = False
         self._cancel_message = ""
 
+
     
     def run(self) -> None:
         logging.debug(f"LoadFolderToRamWorker: {self.folder_path = }")
@@ -70,26 +71,9 @@ class LoadFolderToRamWorker(QRunnable):
             data_files = data_ram_cache[self.folder_path]
             if isinstance(data_files, bytes):
                 logging.debug(f"LoadFolderToRamWorker: already in cache (compressed) {fnum(getsizeof(data_files))}B, {self.folder_path = } ")
-                self.signals.finished.emit(self.folder_path, [], self.decompress_dataframe(data_files))
+                self.signals.finished.emit(self.folder_path, [], self.default_algorithm_decompress(data_files))
                 return
 
-
-                # logging.debug(f"LoadFolderToRamWorker: {self.folder_path = } already in cache")
-                # self.signals.finished.emit(self.folder_path, [], data_files)
-                # return
-
-
-                # with io.BytesIO(data_files) as f:                       # type: ignore[reportArgumentType, unused-ignore]
-                #     data_files_bytes = getsizeof(data_files)
-                #     logging.debug(f"LoadFolderToRamWorker: {fnum(data_files_bytes)}B loaded from cache {self.folder_path = }")
-                #     # combined_df = pgzip.open(f, 'rb', thread=10)
-                #     with pgzip.open(f, 'rb') as f:
-                #         combined_df = pd.read_pickle(f)                 # type: ignore[reportArgumentType, unused-ignore]
-                #         logging.debug(f"LoadFolderToRamWorker: {fnum(combined_df.memory_usage(index=True).sum())}B ")    # type: ignore[reportArgumentType, unused-ignore]
-                # # logging.debug(f"LoadFolderToRamWorker: {fnum(combined_df.memory_usage(index=True).sum())}B "     # type: ignore[reportArgumentType, unused-ignore]
-                # #               f"loaded from {fnum(data_files_bytes)}B cache {self.folder_path = }"
-                # self.signals.finished.emit(self.folder_path, [], combined_df)
-                # return
         except KeyError:
             pass
         except Exception as e:
@@ -130,9 +114,11 @@ class LoadFolderToRamWorker(QRunnable):
             percentages = PercentageIcon.KEYS_PERCENTAGE
 
             data_dict = {}
-            # data_array = []
+
             problematic_txy_ns = []
-            # for file in files:
+            total_rows = 0
+            total_bytes = 0
+
             for i, file in enumerate(files):
                 if _check_cancel_status(): return
                 # Extract the base filename
@@ -140,50 +126,46 @@ class LoadFolderToRamWorker(QRunnable):
 
                 if datetime.now() - time_start_loading > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_MIN \
                     and datetime.now() - time_last_debug_print > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM:
-                    # logging.warning(f"LoadFolderToRamWorker: loading {file = } is taking too long")
-                    # logging.debug(f"LoadFolderToRamWorker: loading dir {self.folder_path} \t "
-                    #              f"tElaps = {round((datetime.now() - time_start_loading).total_seconds())}s, "
-                    #              f"tRemng = {round(((datetime.now() - time_start_loading) / (i+1) * (no_total_files-i)).total_seconds())}s, "
-                    #              f"nLoadd = {no_loaded_files_since_last_debug_print}/s, "
-                    #              f"nError = {no_error_files_since_last_debug_print}/s, "
-                    #              f"nTotal = {i+1}/{no_total_files} = {round((i+1)/no_total_files*100,1)}%"
-                    #              )
                     time.sleep(0.001)  # slight delay to void GIL
-                    self.signals.loading.emit(self.folder_path, percentages[-5]*(i+1)/no_total_files)
+                    self.signals.loading.emit(self.folder_path, percentages[-3]*(i+1)/no_total_files)
                     time.sleep(0.001)  # slight delay to void GIL
                     update_progress = True
                 if datetime.now() - time_last_debug_print > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM:
                     no_loaded_files_since_last_debug_print = 0
                     no_error_files_since_last_debug_print = 0
                     time_last_debug_print = datetime.now()
-                    
 
 
                 # Extract the number using string manipulation or regex
 
-                number_str = basename.split('forc')[1].split('.txt')[0]
+                # number_str = basename.split('forc')[1].split('.txt')[0]
+                # match = re.search(r'forc(\d+).txt', basename).group(1)
+                match = re.search(r'forc(\d+).txt', basename)
+                if match:
+                    number_str = match.group(1)
+                else:
+                    logging.error(f"LoadFolderToRamWorker: failed to extract number from {basename}")
+                    continue
                 number = int(number_str)
                 try:
                     # Load the data into a DataFrame
                     # Adjust the separator if your data uses a different delimiter (e.g., comma, space)
-                    df = pd.read_csv(file, sep=',', names=['t', 'x', 'y'], dtype={'t': float, 'x': float, 'y': float})
+                    df = pd.read_csv(file, sep=',', names=['t', 'x', 'y'], dtype={'t': np.double, 'x': np.double, 'y': np.double})
 
                     if df.isna().any().any():   # Check for NaN values          # type: ignore[reportAttributeAccessIssue]  #pyright bug?
                         problematic_txy_ns.append(number)
-                        logging.error(f"LoadFolderToRamWorker: DataFrame contains NaN or empty values in {file}")
-                        logging.critical(f"LoadFolderToRamWorker: {df.isna().sum() = } entries are dropped.")
-                        data_dict[number] = df.dropna()
-                        # data_dict[number] = df.dropna().values
-                        # data_array.append((number, df.dropna().values))
-
+                        # logging.warning(f"LoadFolderToRamWorker: DataFrame contains NaN or empty values in {file}")
+                        logging.warning(f"LoadFolderToRamWorker: {df.isna().sum().to_dict() = } entries are dropped.")
+                        # data_dict[number] = df.dropna()
                         no_error_files_since_last_debug_print += 1
                     else:
 
-                        data_dict[number] = df
-                        # data_dict[number] = df.values
-                        # data_array.append((number, df.values))
+                        # data_dict[number] = df
                         no_loaded_files_since_last_debug_print += 1
-                        pass
+                    np_array = np.array(df.dropna())
+                    data_dict[number] = np_array
+                    total_rows += np_array.shape[0]
+                    total_bytes += np_array.nbytes
 
                 except pandas.errors.ParserError as e:
                     logging.error(f"LoadFolderToRamWorker: ParseError at {file = }, {e = }")
@@ -197,56 +179,25 @@ class LoadFolderToRamWorker(QRunnable):
                     continue
 
             if _check_cancel_status(): return
-            # update_progress = datetime.now() - time_start_loading > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_MIN
-            if update_progress: self.signals.loading.emit(self.folder_path, percentages[-4])
-                # logging.debug(f"LoadFolderToRamWorker: formatting data {self.folder_path}. ")
 
+            # update_progress = datetime.now() - time_start_loading > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_MIN
+            # if update_progress: self.signals.loading.emit(self.folder_path, percentages[-4])
+                # logging.debug(f"LoadFolderToRamWorker: formatting data {self.folder_path}. ")
             logging.debug(f"LoadFolderToRamWorker: loop finished {self.folder_path = }")
 
-            # data_array.sort(key=lambda x: x[0])  # Sort by file number
-            # file_numbers, data_values = zip(*data_array)
-            # tensor = np.stack(data_values)  # Create a 3D numpy array
+            # for number, df in data_dict.items():
+            #     df['file_number'] = number
+            # if update_progress: self.signals.loading.emit(self.folder_path, percentages[-3])
 
-            # Add a 'file_number' column to each DataFrame
-            for number, df in data_dict.items():
-                df['file_number'] = number
-
-            # data_dict = dict(sorted(data_dict.items()))
-
-            if update_progress: self.signals.loading.emit(self.folder_path, percentages[-3])
-
-            # Concatenate all DataFrames
-            combined_df = pd.concat(data_dict.values())
-
-            # Set 'file_number' as the index
-            combined_df.set_index('file_number', inplace=True)
-
-            # Optional: Sort the index for better organization
-            combined_df.sort_index(inplace=True)
-
-            # print(combined_df)
-
-
-            # compressed_data = self.compress_dict(data_dict)
-
-            logging.debug(f"LoadFolderToRamWorker: compressed {self.folder_path = }")
-
-
-            # data_ram_cache[self.folder_path] = combined_df
-            # saved = data_ram_cache.set(self.folder_path, combined_df, retry=True)
-
-
-            # buffer = io.BytesIO()
-            # with pgzip.open(buffer, 'wb') as f:
-            #     combined_df.to_pickle(f)                         # type: ignore[reportArgumentType, unused-ignore]
-            #     # buffer_size_bytes = buffer.getbuffer().nbytes
-            #     buffer_size_bytes = getsizeof(buffer.getvalue())
-            # saved = data_ram_cache.set(self.folder_path, buffer.getvalue(), retry=True)
+            # combined_df = pd.concat(data_dict.values())
+            # combined_df.set_index('file_number', inplace=True)
+            # combined_df.sort_index(inplace=True)
+            # logging.debug(f"LoadFolderToRamWorker: compressed {self.folder_path = }")
 
             if update_progress: self.signals.loading.emit(self.folder_path, percentages[-2])
 
-            compressed_data = self.compress_dataframe(combined_df)
-            # compressed_data = self.compress_ndarray(tensor)
+            # compressed_data = self.compress_dataframe(combined_df)
+            compressed_data = self.default_algorithm_compress(data_dict)
 
             buffer_size_bytes = getsizeof(compressed_data)
             saved = data_ram_cache.set(self.folder_path, compressed_data, retry=True)
@@ -257,7 +208,6 @@ class LoadFolderToRamWorker(QRunnable):
                 logging.error(f"LoadFolderToRamWorker: failed to cache {self.folder_path = }")
 
             try:
-                # data_files = data_ram_cache.__getitem__(self.file_path)
                 data_files = data_ram_cache[self.folder_path]
                 if update_progress: self.signals.loading.emit(self.folder_path, percentages[-1])
                 if not data_files is None:
@@ -279,12 +229,12 @@ class LoadFolderToRamWorker(QRunnable):
             # status_cache.pop(self.folder_path)
             # self.model.fetch_status(self.folder_path)
 
-            logging.debug(f"LoadFolderToRamWorker: successfully loadded {combined_df.shape[0]} rows "
+            logging.debug(f"LoadFolderToRamWorker: successfully loadded {total_rows} rows "
                          f"from {len(files)} files (|problematic| = {len(problematic_txy_ns)}) "
-                         f"and size {fnum(combined_df.memory_usage(index=True).sum())}B "
+                         f"and size ~{fnum(self.get_approx_size_of_dict_of_numpy(data_dict))}B "
                          f"compressed to {fnum(buffer_size_bytes)}B in path {self.folder_path}")
             gc.collect()
-            self.signals.finished.emit(self.folder_path, problematic_txy_ns, combined_df)
+            self.signals.finished.emit(self.folder_path, problematic_txy_ns, data_dict)
 
         except Exception as e:
             logging.error(f"LoadFolderToRamWorker: {e = }")
@@ -294,6 +244,78 @@ class LoadFolderToRamWorker(QRunnable):
         self._cancel_requested = True
         self._cancel_message = message
 
+
+    @staticmethod
+    def default_algorithm_compress(data: Dict[int, npt.NDArray[np.float64]]) -> bytes:
+        compressed = CompressionAlgorithmsDumpsite.compress_blosc(data)
+        if not isinstance(compressed, bytes):
+            raise TypeError("compress_blosc must return bytes")
+        return compressed
+
+    @staticmethod
+    def default_algorithm_decompress(compressed_data: bytes) -> Dict[int, npt.NDArray[np.float64]]:
+        data = CompressionAlgorithmsDumpsite.decompress_blosc(compressed_data)
+        if not isinstance(data, dict):
+            raise TypeError("decompress_blosc must return dict")
+        return data
+    #TODO convert blosc to lzma to save space
+
+    @staticmethod
+    def get_approx_size_of_dict_of_numpy(data: Dict[int, npt.NDArray[np.float64]]) -> int:
+        return sum(getsizeof(key) + value.nbytes for key, value in data.items()) + getsizeof(data)
+
+    @staticmethod
+    def get_total_rows_in_dict_of_numpy(data: Dict[int, npt.NDArray[np.float64]]) -> int:
+        return sum(value.shape[0] for value in data.values())
+
+    @staticmethod
+    def valide_cached_health() -> None:
+        warnings.warn("valide_cached_health is not implemented yet", RuntimeWarning)
+        warnings.warn("should move this to a separate class", RuntimeWarning)
+        logging.warn("valide_cached_health is not implemented yet")
+
+class CompressionAlgorithmsDumpsite:
+    @staticmethod
+    def compress_blosc(data: Any,
+                       typesize: int = 8, cname: str = 'zstd', clevel: int = 9, shuffle: int = blosc.NOSHUFFLE) -> Any:
+        serialized = pickle.dumps(data)
+        compressed = blosc.compress(serialized, typesize=typesize, cname=cname, clevel=clevel, shuffle=shuffle)
+        return compressed
+
+    @staticmethod
+    def decompress_blosc(compressed_data: bytes) -> Any:
+        decompressed = blosc.decompress(compressed_data)
+        data = pickle.loads(decompressed)
+        return data
+
+    @staticmethod
+    def compress_zstd(data: Any, threads: int = 4) -> bytes:
+        serialized_data = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+        compressor = zstd.ZstdCompressor(level=22, threads=threads)
+        compressed_data = compressor.compress(serialized_data)
+        return compressed_data
+
+    @staticmethod
+    def decompress_zstd(compressed_data: bytes) -> Any:
+        decompressor = zstd.ZstdDecompressor()
+        decompressed_data = decompressor.decompress(compressed_data)
+        data = pickle.loads(decompressed_data)
+        return data
+
+    @staticmethod
+    def compress_lzma(data: Any) -> Any:
+        serialized_data = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+        compressed_data = lzma.compress(serialized_data, preset=9)
+        return compressed_data
+
+    @staticmethod
+    def decompress_lzma(compressed_data: Any) -> Any:
+        serialized_data = lzma.decompress(compressed_data)
+        data = pickle.loads(serialized_data)
+        return data
+
+
+    # DO NOT USE ANYTHING FROM BELOW THIS LINE #####################################################
 
     @staticmethod
     def compress_dataframe(df: pd.DataFrame) -> bytes:
@@ -319,10 +341,6 @@ class LoadFolderToRamWorker(QRunnable):
         buffer = pa.BufferReader(decompressed_data)
         table = pq.read_table(buffer)
         return table.to_pandas()
-
-
-class CompressionAlgorithmsDumpsite:
-
 
     @staticmethod
     def compress_ndarray(tensor: np.ndarray[Any, Any]) -> bytes:
@@ -380,7 +398,7 @@ class CompressionAlgorithmsDumpsite:
             stream = io.BytesIO(decompressor.read())
             for key, shape in array_shape.items():
                 key_data = int(np.frombuffer(stream.read(4), dtype=np.int32)[0])
-                array_data = np.frombuffer(stream.read(np.prod(shape) * np.dtype('float64').itemsize), dtype='float64')
+                array_data = np.frombuffer(stream.read(np.prod(shape) * np.dtype('float64').itemsize), dtype='float64') # type: ignore[unused-ignore]
                 decompressed_data[key_data] = array_data.reshape(shape)
         return decompressed_data
 
@@ -439,3 +457,4 @@ class CompressionAlgorithmsDumpsite:
             offset += size
 
         return result
+
