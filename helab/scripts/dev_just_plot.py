@@ -65,7 +65,9 @@ if __name__ == "__main__":
     #     1: rng.normal(loc=(5, 2, 20), scale=(2, 5, 5), size=(300, 3)),
     #     2: rng.normal(loc=(10, 0, -10), scale=(3, 10, 3), size=(150, 3))
     # }
-    data = LoadFolderToRamWorker.default_algorithm_decompress(data_ram_cache[list(data_ram_cache)[0]])
+    # data = LoadFolderToRamWorker.default_algorithm_decompress(data_ram_cache[list(data_ram_cache)[0]])
+    data = LoadFolderToRamWorker.default_algorithm_decompress(
+        data_ram_cache['/Users/tonyyan/OneDrive - Australian National University/SharePoint - Testing only/_He_BEC_data_root_copy/20230130_new_plates_halo_3_halos_manual_exclude'])
 
     mainWin = MainWindow(data)
     mainWin.resize(1200, 800)

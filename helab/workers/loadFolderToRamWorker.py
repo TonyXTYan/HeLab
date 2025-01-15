@@ -107,8 +107,9 @@ class LoadFolderToRamWorker(QRunnable):
             time_start_loading = datetime.now()
             time_last_debug_print = datetime.now()
             no_loaded_files_since_last_debug_print = 0
-            no_error_files_since_last_debug_print = 0
-            no_total_files = len(files)
+            num_error_files_since_last_debug_print = 0
+            num_total_files = len(files)
+            num_timeout_errors = 0
             update_progress = False
             percentages = PercentageIcon.KEYS_PERCENTAGE
 
@@ -126,12 +127,12 @@ class LoadFolderToRamWorker(QRunnable):
                 if datetime.now() - time_start_loading > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_MIN \
                     and datetime.now() - time_last_debug_print > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM:
                     time.sleep(0.001)  # slight delay to void GIL
-                    self.signals.loading.emit(self.folder_path, percentages[-3]*(i+1)/no_total_files)
+                    self.signals.loading.emit(self.folder_path, percentages[-3]*(i+1)/num_total_files)
                     time.sleep(0.001)  # slight delay to void GIL
                     update_progress = True
                 if datetime.now() - time_last_debug_print > LoadFolderToRamWorker._TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM:
                     no_loaded_files_since_last_debug_print = 0
-                    no_error_files_since_last_debug_print = 0
+                    num_error_files_since_last_debug_print = 0
                     time_last_debug_print = datetime.now()
 
 
@@ -156,7 +157,7 @@ class LoadFolderToRamWorker(QRunnable):
                         # logging.warning(f"LoadFolderToRamWorker: DataFrame contains NaN or empty values in {file}")
                         logging.warning(f"LoadFolderToRamWorker: {df.isna().sum().to_dict() = } entries are dropped.")
                         # data_dict[number] = df.dropna()
-                        no_error_files_since_last_debug_print += 1
+                        num_error_files_since_last_debug_print += 1
                     else:
 
                         # data_dict[number] = df
@@ -169,12 +170,22 @@ class LoadFolderToRamWorker(QRunnable):
                 except pandas.errors.ParserError as e:
                     logging.error(f"LoadFolderToRamWorker: ParseError at {file = }, {e = }")
                     problematic_txy_ns.append(number)
-                    no_error_files_since_last_debug_print += 1
+                    num_error_files_since_last_debug_print += 1
                     continue
                 except Exception as e:
                     logging.error(f"LoadFolderToRamWorker: failed to load {file = }, {e = }")
                     problematic_txy_ns.append(number)
-                    no_error_files_since_last_debug_print += 1
+                    num_error_files_since_last_debug_print += 1
+                    continue
+                except TimeoutError as e:
+                    logging.error(f"LoadFolderToRamWorker: TimeoutError at {file = }, {e = }")
+                    problematic_txy_ns.append(number)
+                    num_error_files_since_last_debug_print += 1
+                    num_timeout_errors += 1
+                    if num_timeout_errors > 5:
+                        logging.error(f"LoadFolderToRamWorker: cancelling as too many TimeoutErrors at {file = }, {e = }")
+                        # Thanks Microsoft for their shitty OneDrive throttling behaviour
+                        raise TimeoutError("Too many TimeoutErrors")
                     continue
 
             if _check_cancel_status(): return

@@ -84,6 +84,8 @@ class StatusRescanWorker(QRunnable):
         self._is_cancelled_but_scan_again = allow_retry_scan
 
     def update_info(self, rows: List[Tuple[QModelIndex, str]], model_folder_opened_path: Optional[str] = None) -> None:
+        warnings.warn("StatusRescanWorker.update_info: dont use this method, just cancel and scan angain", DeprecationWarning)
+        # maybe move the initialisation rescan scripts to this class here.
         self.rows = rows
         self.model_folder_opened_path = model_folder_opened_path
         self._is_cancelled = False

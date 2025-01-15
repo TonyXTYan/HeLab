@@ -562,7 +562,7 @@ class FolderExplorer(QWidget):
 
         logging.debug(f"  {status_report.status = }")
 
-        if not status_report.status in StatusReport.STATUS_CONTAINS_DATA:
+        if not status_report.status in StatusReport.STATUS_CONTAINS_DATA_HERE:
             # logging.warning(f"  status is not STATUS_OK for {file_path = }")
             return (-3, None)
 

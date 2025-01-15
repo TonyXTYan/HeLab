@@ -26,6 +26,7 @@ from helab.utils.os_cached import os_isdir, os_listdir, os_listdir_filtered, os_
 
 class StatusReport:
     STATUS_CONTAINS_DATA = ['ok', 'fixable', 'warning', 'critical', 'something']
+    STATUS_CONTAINS_DATA_HERE = ['ok', 'fixable', 'warning', 'critical']
     STATUS_MISTERY = ['cancelled', 'unknown', 'loading', 'maybe']
     STATUS_NOTHING = ['nothing', 'missing']
     ERROR_INVALID_STATUS_ICON = ("StatusReport: invalid status icon", LookupError())

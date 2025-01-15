@@ -136,6 +136,20 @@ snakeviz helab_main.pro
 ```
 
 
+
+## Notes on plotting libraries 
+
+* `Matplotlib` ok for publication quality
+* `Plotly` ok, but have html file caveats 
+* `PyQtGraphs` panning and plot range issues (?), maybe will try to use this to write a fast update code. 
+* `PyVista` panning and plot range issues (?)
+* `VisPy` missing data points on large data file ()
+* `Manim` emmm no (too much configuration), not real time
+
+
+
+
+
 ## Dumps
 
 ![mypy](https://img.shields.io/badge/mypy-f5f5f5.svg?logo=mypy&logoColor=black)
@@ -182,3 +196,25 @@ pytest
 
 
 - [ ] Code validation check in pipeline
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

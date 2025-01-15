@@ -745,6 +745,7 @@ class MainWindow(QMainWindow):
         self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, plotly_dock_widget)
         self.dock_widgets.append(plotly_dock_widget)
         # self.named_temp_files.append(plotly_temp)
+        plotly_temp.close()
 
 
     def _setup_middle_area(self) -> None:
