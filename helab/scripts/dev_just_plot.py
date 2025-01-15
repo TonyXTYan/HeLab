@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
-from helab.scripts.pg_simple_densities import make_three_density_plots
+from helab.scripts.pg_simple_densities import *
 import numpy as np
 import numpy.typing as npt
 
@@ -31,6 +31,7 @@ class MainWindow(QMainWindow):
 
         # Create the plot widget using the reusable function
         win = make_three_density_plots(data, nbins=300)
+        # win = make_three_density_plots_with_drag(data, nbins=300)
 
         # Create a dock widget and set the container as its content
         dock = QDockWidget("Density Plots", self)

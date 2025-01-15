@@ -29,3 +29,4 @@ zstandard
 blosc
 lz4
 pyqtgraph
+pyopengl

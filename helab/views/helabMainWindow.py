@@ -16,7 +16,7 @@ from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelecti
     QDir, QDateTime, QSettings, QStorageInfo
 from PyQt6.QtGui import QAction, QIcon, QCloseEvent, QPixmap, QResizeEvent
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
-    QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox
+    QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget
 from humanfriendly.terminal import message
 from numpy.f2py.crackfortran import include_paths
 
@@ -39,7 +39,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 # from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density
 import plotly
 import pyqtgraph as pg
-
+import pyqtgraph.parametertree as ptree
 
 
 class MainWindow(QMainWindow):
@@ -678,8 +678,30 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.right_splitter)
         self.right_panel.setLayout(right_layout)
 
-        right_top_widget = QLabel("Right Top Placeholder")
-        right_top_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # right_top_widget = QLabel("Right Top Placeholder")
+        # right_top_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+
+        params = [
+            {'name': 'Parameter 1', 'type': 'int', 'value': 10},
+            {'name': 'Parameter 2', 'type': 'float', 'value': 0.5},
+            {'name': 'Parameter 3', 'type': 'bool', 'value': True},
+            {'name': 'Parameter 4', 'type': 'str', 'value': 'default'},
+            {'name': 'Advanced Settings', 'type': 'group', 'children': [
+                {'name': 'Sub-Parameter 1', 'type': 'int', 'value': 5},
+                {'name': 'Sub-Parameter 2', 'type': 'float', 'value': 1.5},
+                {'name': 'Sub-Parameter 3', 'type': 'bool', 'value': False},
+            ]},
+            {'name': 'Parameter 5', 'type': 'list', 'value': [1, 2, 3]},
+        ]
+        param_tree = ptree.ParameterTree()
+        param_tree.setParameters(ptree.Parameter.create(name='params', type='group', children=params), showTop=False)
+
+        tab_widget = QTabWidget()
+        tab_widget.addTab(param_tree, "Parameters")
+
+        right_top_widget = tab_widget
+
 
         # Right bottom panel
         self.panel_right_bottom = QWidget()

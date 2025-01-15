@@ -1,4 +1,5 @@
-# common_density.py
+# helab/scripts/pg_simple_densities.py
+import logging
 from typing import Optional, Dict, Tuple, Callable
 
 import numpy as np
@@ -11,8 +12,8 @@ from scipy.optimize import curve_fit
 from scipy.stats import norm
 
 
-from PyQt6.QtCore import QObject, QEvent
-from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtCore import QObject, QEvent, QRectF
+from PyQt6.QtGui import QMouseEvent, QPainter, QColor
 
 
 def compute_range(
@@ -20,18 +21,6 @@ def compute_range(
     specified_range: Optional[Tuple[float, float]] = None,
     nsigs: float = 3,
 ) -> Tuple[float, float]:
-    """
-    Compute a range for the given data. If a range is specified, it is used directly.
-    Otherwise, fit a Gaussian to the data and use the tighter range between
-    ±3 standard deviations and the min/max of the data.
-
-    Parameters:
-        data (np.ndarray): The data to compute the range for.
-        specified_range (Optional[Tuple[float, float]]): A manually specified range.
-
-    Returns:
-        Tuple[float, float]: The computed range.
-    """
     if specified_range is not None:
         return specified_range
 
@@ -57,10 +46,6 @@ def make_three_density_plots(
     x_range: Optional[tuple[float, float]] = None,
     y_range: Optional[tuple[float, float]] = None
 ) -> GraphicsLayoutWidget:
-    """
-    Create a GraphicsLayoutWidget containing three side-by-side density plots
-    for t, x, y values against i, sharing the same vertical axes.
-    """
     # Filter keys based on i_range if provided
     all_keys = sorted(data.keys())
     if i_range is not None:
@@ -128,6 +113,7 @@ def make_three_density_plots(
 
     ticks = [(row + 0.5, str(i_keys[row])) for row in selected_rows]
     p1.getAxis('left').setTicks([ticks])
+    # p1.scene().sigMouseClicked.connect(lambda event: on_mouse_click(event, p1, "t", i_keys))
 
     # Plot 2: x vs i
     win.nextColumn()
@@ -140,7 +126,7 @@ def make_three_density_plots(
     p2.getAxis('left').setVisible(False)
     img2.setLookupTable(cmap.getLookupTable(alpha=True))
     p2.setYLink(p1)  # Link y-axis to p1 to share the custom ticks
-
+    # p2.scene().sigMouseClicked.connect(lambda event: on_mouse_click(event, p2, "x", i_keys))
 
     # Plot 3: y vs i
     win.nextColumn()
@@ -153,12 +139,29 @@ def make_three_density_plots(
     p3.getAxis('left').setVisible(False)
     img3.setLookupTable(cmap.getLookupTable(alpha=True))
     p3.setYLink(p1)  # Link y-axis to p1 to share the custom ticks
+    # p3.scene().sigMouseClicked.connect(lambda event: on_mouse_click(event, p3, "y", i_keys))
 
     p1.setMouseEnabled(x=False, y=False)
     p2.setMouseEnabled(x=False, y=False)
     p3.setMouseEnabled(x=False, y=False)
 
+    # p1.hideButtons()
+    # p2.hideButtons()
+    # p3.hideButtons()
 
     return win
 
+
+# def on_mouse_click(event: QMouseEvent, plot: pg.PlotItem, plot_type: str, i_keys: list[int]):
+#     """Handle mouse clicks on the plot."""
+#     pos = event.pos()  # Get the position of the click in scene coordinates
+#     if plot.sceneBoundingRect().contains(pos):
+#         mouse_point = plot.vb.mapSceneToView(pos)  # Map to plot coordinates
+#         i = int(mouse_point.y())  # Get i from y-coordinate
+#         value = mouse_point.x()  # Get t, x, or y from x-coordinate
+#
+#         if 0 <= i < len(i_keys):  # Ensure i is valid
+#             print(f"Clicked on {plot_type}: i={i_keys[i]}, {plot_type}={value}")
+#         else:
+#             print(f"Clicked outside valid i range: i={i}, {plot_type}={value}")
 
