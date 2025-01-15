@@ -236,7 +236,7 @@ class StatusReport:
             return self._update_cache()
         else: return self
 
-    def update_to_unknown_status(self, force: bool = False) -> StatusReport:
+    def update_to_unknown_status(self, force: bool = False) -> StatusReport:    #TODO: rename this to something like noticed_potential_unknown_status
         """
         Update the status report to 'unknown' status.
         :param force: force set the status to 'unknown'
@@ -404,10 +404,16 @@ class StatusReport:
         :type force_recursive: Optional[bool]
         :return: None
         """
+        try:
+            return self._review_path_parent(force_recursive=force_recursive, force_review=force_review)
+        except Exception as e:
+            logging.error(f"StatusReport.review_path_parent: error reviewing parent for {self.path}: {e}")
+            return self
 
+    def _review_path_parent(self, force_recursive: Optional[bool] = None, force_review: bool = False) -> StatusReport:
         parent_path = os.path.dirname(self.path)
         if os.path.islink(parent_path):
-            logging.warning(f"StatusReport.review_path_parent: {parent_path} is a symbolic link")
+            logging.warning(f"StatusReport.review_path_parent: symbolic link encountered at {parent_path}")
             return self
         if parent_path == self.path:
             # logging.warning(f"StatusReport.review_path_parent: parent_path is same as path for {self.path}, this is root path?")
@@ -430,6 +436,9 @@ class StatusReport:
             elif self.status in StatusReport.STATUS_CONTAINS_DATA:
                 # logging.debug(f"StatusReport.review_path_parent: updating parent to something for {self.path = } with {self.status = }")
                 parent_status_report.update_there_is_something()
+            elif self.status in StatusReport.STATUS_MISTERY:
+                # logging.debug(f"StatusReport.review_path_parent: updating parent to unknown for {self.path = } with {self.status = }")
+                parent_status_report.update_to_unknown_status()
             else:
                 logging.debug(f"StatusReport.review_path_parent: not reviewing parent for {self.path} with {self.status = }")
                 return self
@@ -468,20 +477,33 @@ class StatusReport:
 
         :return: None
         """
+        try:
+            return self._review_path_children(force_recursive=force_recursive, force_review=force_review)
+        except Exception as e:
+            logging.error(f"StatusReport.review_path_children: error reviewing children for {self.path}: {e}")
+            return self
 
+    def _review_path_children(self, force_recursive: Optional[bool] = None, force_review: bool = False) -> StatusReport:
+        """
+        just a wrapper for review_path_children to catch exceptions
+        """
         if force_recursive:
             warnings.warn("StatusReport.review_path_children: force_recursive is not implemented yet", RuntimeWarning)
             logging.warning(f"StatusReport.review_path_children: force_recursive is not implemented yet")
 
         if self.status not in ['nothing', 'unknown'] and not force_review:
-            logging.debug(f"StatusReport.review_path_children: not reviewing children for {self.path} with {self.status = }")
+            # logging.debug(f"StatusReport.review_path_children: not reviewing children for {self.path} with {self.status = }")
             return self
 
         children_paths = os_listdirdir(self.path, invalidate_cache=True)
         at_least_one_unknown = False
+
         for child_path_name in children_paths:
             child_path = QDir(self.path).filePath(child_path_name)
             # logging.debug(f"StatusReport.review_path_children: checking child_path = {child_path}")
+            if os.path.islink(child_path):
+                logging.debug(f"StatusReport.review_path_children: symbolic link encountered at {child_path}")
+                continue
             child_status_report = status_cache.get(child_path, None)
 
             # if isinstance(child_status_report, StatusReport):
@@ -504,7 +526,7 @@ class StatusReport:
                 logging.critical(f"StatusReport.review_path_children: unexpected case {child_status_report.status = }")
                 continue
         if at_least_one_unknown:
-            logging.debug(f"StatusReport.review_path_children: set to unknown for {self.path = }")
+            # logging.debug(f"StatusReport.review_path_children: set to unknown for {self.path = }")
             self.update_to_unknown_status()                 # 'unknown' take precedence over 'nothing'
         else: # all children are nothing
             # logging.debug(f"StatusReport.review_path_children: is indeed nothing for {self.path = }")

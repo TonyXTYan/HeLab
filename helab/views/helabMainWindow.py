@@ -32,11 +32,13 @@ from helab.views.folderTabsWidget import FolderTabWidget
 from helab.views.memoryUsageWindow import MemoryUsageWindow
 from helab.views.settingsDialog import SettingsDialog
 from helab.views.debugIcons import DebugIconsWindow
+from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
 
-# from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebEngineWidgets import QWebEngineView
 # sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 # from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density
 import plotly
+import pyqtgraph as pg
 
 
 
@@ -244,10 +246,10 @@ class MainWindow(QMainWindow):
 
         else:
             tooltip_string += "all done\n"
-            tooltip_string += "No active threads in threadpool\n"
+            tooltip_string += "No active threads in thread pools\n"
             tooltip_string += cache_status_string()
             self.status_bar_message_left.setToolTip(tooltip_string)
-            self.status_bar_message_left.setText(f" Threads Pool Standby")
+            self.status_bar_message_left.setText(f" Thread Pools Standby")
             # self.status_bar_message_left.setToolTip("No active threads in threadpool")
             if self.status_timer_threadpool_hang_counts > 0:
                 self.status_timer_threadpool_hang_counts = 0
@@ -737,8 +739,8 @@ class MainWindow(QMainWindow):
             self._setup_legacy_plotly_to_dock_widget(fig_txt_density, "fig_txt_density")
             self._setup_legacy_plotly_to_dock_widget(fig_txy_3d, "fig_txy_3d")
             self._setup_legacy_plotly_to_dock_widget(fig_shots_scan, "fig_shots_scan")
-            self._setup_legacy_plotly_to_dock_widget(fig_shots_transfer, "fig_shots_transfer")
-            self._setup_legacy_plotly_to_dock_widget(fig_pulse_eff_fitted, "fig_pulse_eff_fitted")
+            # self._setup_legacy_plotly_to_dock_widget(fig_shots_transfer, "fig_shots_transfer")
+            # self._setup_legacy_plotly_to_dock_widget(fig_pulse_eff_fitted, "fig_pulse_eff_fitted")
         except Exception as e:
             logging.error(f"Failed to load legacy_plotly.scattering_proj_monitori_dld: {e}")
             # Add placeholder dock widgets to the middle main window
@@ -763,6 +765,22 @@ class MainWindow(QMainWindow):
             self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget3)
             self.dock_widgets.append(dock_widget3)
 
+        try:
+            self._setup_matplotlib_to_dock_widget()
+        except Exception as e:
+            logging.error(f"_setup_middle_area: Failed to load matplotlib {e}")
+
+
+        try:
+            self._setup_pyqtgraph_to_dock_widget()
+        except Exception as e:
+            logging.error(f"_setup_middle_area: Failed to load pyqtgraphs lib {e}")
+
+        try:
+            self._setup_simple_test_pyqtgraph()
+        except Exception as e:
+            logging.error(f"_setup_middle_area: Failed to load pg_simple_densities {e}")
+
 
         # Add the middle main window to the splitter
         self.splitter.addWidget(self.middle_mainwindow)
@@ -779,6 +797,48 @@ class MainWindow(QMainWindow):
         # Initial check to set placeholder visibility
         self.update_placeholder_visibility()
 
+    def _setup_simple_test_pyqtgraph(self) -> None:
+        import helab.scripts.pg_simple_densities as pgsd
+        win = pgsd.make_three_density_plots(
+            LoadFolderToRamWorker.default_algorithm_decompress(data_ram_cache[list(data_ram_cache)[0]]))
+
+
+        dock_widget = QDockWidget("Simple Test PyqtGraph", self)
+        dock_widget.setWidget(win)
+
+        # dock_widget = QDockWidget("Simple Test PyqtGraph", self)
+        # dock_widget.setWidget(win)
+        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_widget)
+        self.dock_widgets.append(dock_widget)
+
+
+    def _setup_matplotlib_to_dock_widget(self) -> None:
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT as NavigationToolbar
+        import numpy as np
+
+        fig, ax = plt.subplots()
+        # scatter = ax.scatter([1, 2, 3, 4], [10, 20, 25, 30])
+        scatter = ax.scatter(np.random.rand(100), np.random.rand(100))
+        ax.set_title("Basic Scatter Plot")
+        canvas = FigureCanvas(fig)  # type: ignore
+
+        dock_widget = QDockWidget("Matplotlib Scatter", self)
+        dock_widget.setWidget(canvas)
+        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_widget)
+        self.dock_widgets.append(dock_widget)
+
+    def _setup_pyqtgraph_to_dock_widget(self) -> None:
+        import pyqtgraph as pg
+        import numpy as np
+
+        plot_widget = pg.PlotWidget()
+        plot_widget.setBackground('w') 
+        plot_widget.plot(np.random.rand(100), np.random.rand(100), pen=None, symbol='o')
+        dock_widget = QDockWidget("PyQtGraph Plot", self)
+        dock_widget.setWidget(plot_widget)
+        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_widget)
+        self.dock_widgets.append(dock_widget)
 
     def update_placeholder_visibility(self) -> None:
         # Check if any dock widgets are visible
@@ -1063,6 +1123,7 @@ class MainWindow(QMainWindow):
         # self.closeEvent(None)
         logging.info("handle_exit: called")
         self.close()
+
 
 
 

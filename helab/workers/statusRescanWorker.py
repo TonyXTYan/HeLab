@@ -49,35 +49,35 @@ class StatusRescanWorker(QRunnable):
                 self.signals.cancelled.emit(self._is_cancelled_but_scan_again, self.user_requested_scan)
                 return
             time.sleep(0.001)
-            status_report = status_cache.get(path)
-            if isinstance(status_report, StatusReport):
-                vpath, vfile, vdata = status_report.validate_ok()
-                # logging.debug(f"rescan: got {vpath = }, {vfile = }, {vdata = } \tat {path}")
-                if not vfile:
-                    logging.debug(f"StatusRescanWorker: status_cache pop {path}")
-                    status_cache.pop(path)
-                    # self.fetch_status(path)
-                elif not vpath or not vdata:
-                    logging.warning(f"StatusRescanWorker: got {vpath = }, {vfile = }, {vdata = } \tat {path}")
-                    warnings.warn(f"StatusRescanWorker: unimplemented data validation for {path = }, {vpath = }, {vfile = }, {vdata = }", RuntimeWarning)
-
-                if any(i in status_report.extra_icons for i in ['ram', 'ram_single', 'ram_opened']):
-                    if path == self.model_folder_opened_path:
-                        status_report.update_ram_status(is_opened=True)
-                    else:
-                        status_report.update_ram_status(is_opened=False)
+            self.validate_this(path, self.model_folder_opened_path)
 
             # logging.debug(f"StatusRescanWorker.run: checked {path = }")
-
-
-
-
-
 
         time.sleep(0.001)
         self.setAutoDelete(True)
         self.signals.finished.emit(self.user_requested_scan)
 
+    @staticmethod
+    def validate_this(path: str, model_folder_opened_path: Optional[str] = None) -> None:
+        status_report = status_cache.get(path)
+        if isinstance(status_report, StatusReport):
+            vpath, vfile, vdata = status_report.validate_ok()
+            # logging.debug(f"rescan: got {vpath = }, {vfile = }, {vdata = } \tat {path}")
+            if not vfile:
+                logging.debug(f"StatusRescanWorker: status_cache pop {path}")
+                status_cache.pop(path)
+                # self.fetch_status(path)
+            elif not vpath or not vdata:
+                logging.warning(f"StatusRescanWorker: got {vpath = }, {vfile = }, {vdata = } \tat {path}")
+                warnings.warn(
+                    f"StatusRescanWorker: unimplemented data validation for {path = }, {vpath = }, {vfile = }, {vdata = }",
+                    RuntimeWarning)
+
+            if any(i in status_report.extra_icons for i in ['ram', 'ram_single', 'ram_opened']):
+                if path == model_folder_opened_path:
+                    status_report.update_ram_status(is_opened=True)
+                else:
+                    status_report.update_ram_status(is_opened=False)
 
     def cancel(self, allow_retry_scan: bool = True) -> None:
         self._is_cancelled = True

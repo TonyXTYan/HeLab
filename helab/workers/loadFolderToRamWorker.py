@@ -21,7 +21,6 @@ import numpy.typing as npt
 import pandas as pd
 
 import pandas.errors
-import pgzip
 import pyarrow
 import zstandard
 import zstandard as zstd

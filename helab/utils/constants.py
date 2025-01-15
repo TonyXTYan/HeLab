@@ -148,7 +148,7 @@ DIR_TEMPS_CANDIDATES = [
 ]
 
 DIR_CACHES_CANDIDATES = [
-    tempfile.mkdtemp(prefix='helab_caches'),
+    tempfile.mkdtemp(prefix='helab_caches_'),
     # os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches'),
     # os.path.join(TEMPFILE_PREFIX, 'helab_caches'),
     QDir(QDir_WORKING_DIRECTORY).filePath('helab_caches'),

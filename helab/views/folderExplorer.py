@@ -16,7 +16,6 @@ from PyQt6.QtCore import QSize, QDir, QItemSelectionModel, Qt, pyqtSignal, QThre
     QPoint, QFileInfo, QTimer, QRunnable, QObject, QThread
 from PyQt6.QtGui import QAction, QFontInfo, QGuiApplication
 from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPushButton, QTreeView, QMenu, QApplication
-from cachetools import LRUCache, TTLCache
 from diskcache import FanoutCache
 
 from helab.utils.constants import *
@@ -29,6 +28,7 @@ from helab.views.statusTreeView import StatusTreeView
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
 from helab.workers.statusDeepWorker import StatusDeepWorker
+from helab.workers.statusRescanWorker import StatusRescanWorker
 from helab.workers.statusWorker import StatusWorker, StatusReport
 
 import numpy.typing as npt
@@ -688,6 +688,7 @@ class FolderExplorer(QWidget):
                     status_report.update_ram_status(is_opened=True,  update_cache=True)
                 else:
                     status_report.update_ram_status(is_opened=False, update_cache=True)
+                QTimer.singleShot(500, lambda: StatusRescanWorker.validate_this(status_report, self.model.folder_opened_path))  # REVIEW: this is a dodgy workaround to a race condition
 
                 if problematic_txy_ns is not None and len(problematic_txy_ns) > 0:
                     status_report.update_problematic_txy_ns(problematic_txy_ns)

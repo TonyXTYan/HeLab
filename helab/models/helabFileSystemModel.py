@@ -322,8 +322,11 @@ class helabFileSystemModel(QFileSystemModel):
         # QTimer.singleShot(10, lambda: status_cache.pop(path))
         logging.warning(f"on_directory_loaded: TODO: implement (popped) {path}")
         # status_cache.pop(path, None)
+
         os_listdir_cache.pop(path, None)
         os_scandir_cache.pop(path, None)
+        QTimer.singleShot(1, lambda: StatusRescanWorker.validate_this(path, self.folder_opened_path))
+
         # os_isdir_cache.pop(path, None)
 
     def on_file_renamed(self, path: str, old_name: str, new_name: str) -> None:
@@ -382,7 +385,14 @@ class helabFileSystemModel(QFileSystemModel):
     #     logging.debug(f"_throttled_data_changed_emit_now: {len(paths)} paths emitted in {round(1e-3*time_delta.microseconds)}ms")
 
     def _bulk_data_changed(self, paths: List[str]) -> None:
-        # time_start = datetime.now()
+        """
+        Emit dataChanged signals for the given paths.
+
+        Warning: Please try to use this method where possible, as it emits dataChanged signals for all paths at once.
+
+        :param paths:
+        :return:
+        """
 
         indexes = []
         for path in paths:
