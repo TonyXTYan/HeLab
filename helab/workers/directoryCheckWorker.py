@@ -77,11 +77,11 @@ class DirectoryCheckWorker(QRunnable):
             def callback_finished(p: str, h: bool) -> None:
                 DirectoryCheckWorker.on_has_children_finished(p, h)
                 if on_finished is not None:
-                    QTimer.singleShot(0, lambda p, h: on_finished(p, h))        # type: ignore[reportOptionalCall, unused-ignore]
+                    QTimer.singleShot(0, lambda: on_finished(p, h))        # type: ignore[reportOptionalCall, unused-ignore]
             def callback_cancelled(p: str) -> None:
                 DirectoryCheckWorker.on_has_children_canceled(p)
                 if on_cancelled is not None:
-                    QTimer.singleShot(0, lambda p: on_cancelled(p))             # type: ignore[reportOptionalCall, unused-ignore]
+                    QTimer.singleShot(0, lambda: on_cancelled(p))             # type: ignore[reportOptionalCall, unused-ignore]
 
             worker = DirectoryCheckWorker(dir_path)
             worker.signals.finished.connect(callback_finished)
