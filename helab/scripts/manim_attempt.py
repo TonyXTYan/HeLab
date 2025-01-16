@@ -1,3 +1,4 @@
+# type: ignore
 from manim import *
 import numpy as np
 # from manimlib import VGroup, DEGREES, ThreeDAxes, ThreeDScene, WHITE

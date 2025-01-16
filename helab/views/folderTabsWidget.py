@@ -14,8 +14,8 @@ from matplotlib.backend_bases import CloseEvent
 
 from helab.utils.constants import *
 from helab.utils.threadingSetup import *
+from helab.utils.cachingSetup import *
 from helab.models.helabFileSystemModel import helabFileSystemModel
-from helab.utils.cachingSetup import status_cache, hasChildren_cache
 from helab.views.folderExplorer import FolderExplorer
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
@@ -41,7 +41,6 @@ class FolderTabWidget(QTabWidget):
         # self.status_cache: LRUCache[str, Tuple[str, int, List[str]]] = LRUCache(maxsize=10*1000)
         # self.hasChildren_cache: TTLCache[str, bool] = TTLCache(maxsize=100*1000, ttl=24*60*60)
         self.status_cache = status_cache
-        self.hasChildren_cache = hasChildren_cache
         self.tab_back_button_enabled = False
 
         self.currentChanged.connect(self.on_current_tab_changed)
@@ -144,8 +143,9 @@ class FolderTabWidget(QTabWidget):
         )
         index = self.addTab(folder_explorer, 'File Explorer')
 
-        folder_explorer.rootPathChanged.connect(lambda path, idx=index: self.update_folder_explorer_tab_title_on_root_change(path, idx))\
+        # folder_explorer.rootPathChanged.connect(lambda path, idx=index: self.update_folder_explorer_tab_title_on_root_change(path, idx))\
         # folder_explorer.on_selection_changed.connect(lambda path, idx=index: self.update_folder_explorer_tab_title(path, idx))
+        folder_explorer.rootPathChanged.connect(lambda _ : self.update_tab_titles())
 
         # selection_model = folder_explorer.get_selection_model()
         # selection_model.selectionChanged.connect(self.update_folder_explorer_tab_title_on_selection_change)
@@ -161,6 +161,14 @@ class FolderTabWidget(QTabWidget):
         # Add the FolderExplorer as a new tab
         # self.tab_widget.addTab(folder_explorer, 'File Explorer')
 
+    def update_tab_titles(self) -> None:
+        for index in range(self.count()):
+            current_folder_explorer = self.widget(index)
+            if isinstance(current_folder_explorer, FolderExplorer):
+                self.setTabText(index, current_folder_explorer.tab_title_update())
+            else:
+                logging.critical(f"update_tab_titles: Current tab {index = } is not a FolderExplorer instance.")
+
     def update_folder_explorer_tab_title_on_root_change(self, selected_path: str, index: int) -> None:
         logging.debug(f"update_folder_explorer_tab_title: {index = } and {selected_path = }")
         # self.tab_widget.setTabText(index, os.selected_path.basename(selected_path))
@@ -175,8 +183,8 @@ class FolderTabWidget(QTabWidget):
                 self.setTabText(index, "/")
             else:
                 self.setTabText(index, os.path.basename(selected_path))
-
         logging.debug(f"update_folder_explorer_tab_title: {self.tabText(index) = }")
+
 
     def update_folder_explorer_tab_title_on_selection_change(self, selected: List[str], deselected: List[str]) -> None:
         current_folder_explorer = self.currentWidget()
@@ -226,6 +234,7 @@ class FolderTabWidget(QTabWidget):
 
     def on_current_tab_changed(self, index: int) -> None:
         logging.debug(f"folderTabWidget.on_current_tab_changed: to index {index}")
+        self.update_tab_titles()
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             logging.debug(f"Current tab dir_path: {current_folder_explorer.model_root_path}, view_path: {current_folder_explorer.view_path}, target_path: {current_folder_explorer.target_path}")

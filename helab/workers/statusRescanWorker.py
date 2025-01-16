@@ -10,7 +10,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, Qt, QModelIndex
 # from helab.models.helabFileSystemModel import helabFileSystemModel
 from helab.utils.cachingSetup import status_cache
 from helab.utils.threadingSetup import all_pools_total_activeThreadCount
-from helab.workers.statusWorker import StatusReport
+from helab.workers.statusWorker import StatusReport, StatusWorker
 
 if TYPE_CHECKING:
     from helab.models.helabFileSystemModel import helabFileSystemModel
@@ -78,6 +78,12 @@ class StatusRescanWorker(QRunnable):
                     status_report.update_ram_status(is_opened=True)
                 else:
                     status_report.update_ram_status(is_opened=False)
+
+            if not all(hasattr(status_report, i) for i in StatusReport.ATTRIBUTES_OPTIONAL):
+                logging.warning(f"StatusRescanWorker: missing attributes in {path = }, {status_report = }")
+                warnings.warn(f"StatusRescanWorker: missing attributes in {path = }, {status_report = }", RuntimeWarning)
+                status_cache.pop(path)
+        StatusWorker.fetch_status(path)
 
     def cancel(self, allow_retry_scan: bool = True) -> None:
         self._is_cancelled = True

@@ -30,10 +30,12 @@ from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QDir
 
 from helab.resources.icons import PercentageIcon
 from helab.utils.cachingSetup import data_ram_cache, fnum, status_cache
+from helab.workers.statusWorker import StatusReport
 
 
 class LoadFolderToRamWorkerSignals(QObject):
-    finished = pyqtSignal(str, list, dict)  # (folder_path: str, problematic_datasets: List[str], data: DataFrame)
+    finished = pyqtSignal(str, dict, list, list, int, int, int, int, object)
+    # (folder_path: str, data: Dict[], problematic_datasets: List[str])
     error = pyqtSignal(str, str) # (folder_path: str, error: str)
     loading = pyqtSignal(str, float)  # (folder_path: str, progress: float)
 
@@ -58,7 +60,7 @@ class LoadFolderToRamWorker(QRunnable):
     def run(self) -> None:
         logging.debug(f"LoadFolderToRamWorker: {self.folder_path = }")
 
-        
+
         def _check_cancel_status() -> bool:
             if self._cancel_requested:
                 logging.warning(f"LoadFolderToRamWorker: {self.folder_path = } was canceled.")
@@ -67,10 +69,22 @@ class LoadFolderToRamWorker(QRunnable):
             else: return False
         if _check_cancel_status(): return
         try:
-            data_files = data_ram_cache[self.folder_path]
-            if isinstance(data_files, bytes):
-                logging.debug(f"LoadFolderToRamWorker: already in cache (compressed) {fnum(getsizeof(data_files))}B, {self.folder_path = } ")
-                self.signals.finished.emit(self.folder_path, [], self.default_algorithm_decompress(data_files))
+            data_cached = data_ram_cache[self.folder_path]
+            if isinstance(data_cached, bytes):
+                logging.debug(f"LoadFolderToRamWorker: already in cache (compressed) {fnum(getsizeof(data_cached))}B, {self.folder_path = } ")
+                data = self.default_algorithm_decompress(data_cached)
+                sr = status_cache.get(self.folder_path, None)
+                sr = cast(StatusReport, sr)
+                self.signals.finished.emit(self.folder_path,
+                                           data,
+                                           list(sorted(data.keys())),
+                                           sr.problematic_txy_ns or [],
+                                           len(data),
+                                           self.get_total_rows_in_dict_of_numpy(data),
+                                           self.get_approx_size_of_dict_of_numpy(data),
+                                           getsizeof(data_cached),
+                                           None
+                                           )
                 return
 
         except KeyError:
@@ -85,6 +99,7 @@ class LoadFolderToRamWorker(QRunnable):
 
         if _check_cancel_status(): return
         try:
+            time_start_loading = datetime.now()
             # file_pattern = os.path.join(self.folder_path, 'd_txy_forc*.txt')
             file_pattern: str = QDir(self.folder_path).filePath('d_txy_forc*.txt')
             files = glob.glob(file_pattern)
@@ -104,7 +119,6 @@ class LoadFolderToRamWorker(QRunnable):
                 self.signals.error.emit(self.folder_path, f"Folder too large: {fnum(total_file_size_bytes)}B")
                 return
 
-            time_start_loading = datetime.now()
             time_last_debug_print = datetime.now()
             no_loaded_files_since_last_debug_print = 0
             num_error_files_since_last_debug_print = 0
@@ -172,11 +186,6 @@ class LoadFolderToRamWorker(QRunnable):
                     problematic_txy_ns.append(number)
                     num_error_files_since_last_debug_print += 1
                     continue
-                except Exception as e:
-                    logging.error(f"LoadFolderToRamWorker: failed to load {file = }, {e = }")
-                    problematic_txy_ns.append(number)
-                    num_error_files_since_last_debug_print += 1
-                    continue
                 except TimeoutError as e:
                     logging.error(f"LoadFolderToRamWorker: TimeoutError at {file = }, {e = }")
                     problematic_txy_ns.append(number)
@@ -186,6 +195,11 @@ class LoadFolderToRamWorker(QRunnable):
                         logging.error(f"LoadFolderToRamWorker: cancelling as too many TimeoutErrors at {file = }, {e = }")
                         # Thanks Microsoft for their shitty OneDrive throttling behaviour
                         raise TimeoutError("Too many TimeoutErrors")
+                    continue
+                except Exception as e:
+                    logging.error(f"LoadFolderToRamWorker: failed to load {file = }, {e = }")
+                    problematic_txy_ns.append(number)
+                    num_error_files_since_last_debug_print += 1
                     continue
 
             if _check_cancel_status(): return
@@ -218,9 +232,9 @@ class LoadFolderToRamWorker(QRunnable):
                 logging.error(f"LoadFolderToRamWorker: failed to cache {self.folder_path = }")
 
             try:
-                data_files = data_ram_cache[self.folder_path]
+                data_cached = data_ram_cache[self.folder_path]
                 if update_progress: self.signals.loading.emit(self.folder_path, percentages[-1])
-                if not data_files is None:
+                if not data_cached is None:
                     # logging.debug(f"LoadFolderToRamWorker: everything is fine for {self.folder_path}")
                     pass
                 else:
@@ -239,12 +253,21 @@ class LoadFolderToRamWorker(QRunnable):
             # status_cache.pop(self.folder_path)
             # self.model.fetch_status(self.folder_path)
 
-            logging.debug(f"LoadFolderToRamWorker: successfully loadded {total_rows} rows "
+            logging.debug(f"LoadFolderToRamWorker: successfully loaded {total_rows} rows "
                          f"from {len(files)} files (|problematic| = {len(problematic_txy_ns)}) "
-                         f"and size ~{fnum(self.get_approx_size_of_dict_of_numpy(data_dict))}B "
+                         f"and size ~{fnum(self.get_approx_size_of_dict_of_numpy(data_dict))}B or ~{fnum(total_bytes)}B "
                          f"compressed to {fnum(buffer_size_bytes)}B in path {self.folder_path}")
             gc.collect()
-            self.signals.finished.emit(self.folder_path, problematic_txy_ns, data_dict)
+            self.signals.finished.emit(self.folder_path,
+                                       data_dict,
+                                       list(sorted(data_dict.keys())),
+                                       problematic_txy_ns,
+                                       len(files),
+                                       total_rows,
+                                       self.get_approx_size_of_dict_of_numpy(data_dict),
+                                       buffer_size_bytes,
+                                       time_start_loading
+                                       )
 
         except Exception as e:
             logging.error(f"LoadFolderToRamWorker: {e = }")

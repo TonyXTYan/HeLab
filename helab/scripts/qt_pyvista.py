@@ -1,3 +1,4 @@
+# type: ignore
 import sys
 import numpy as np
 import pyvista as pv

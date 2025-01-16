@@ -19,9 +19,9 @@ from PyQt6.QtTest import QTest
 from helab.utils.cachingSetup import *
 from helab.utils.threadingSetup import *
 from helab.resources.icons import StatusIcons, IconsInitUtil, circular_progress_QIcon_cached
-from helab.utils.os_cached import os_isdir, os_listdir, os_listdir_filtered, os_listdirdir
-
-
+from helab.utils.os_cached import os_isdir, os_listdir, os_listdir_filtered, os_listdirdir, OSCMgmt
+from helab.utils.constants import *
+from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 
 
 class StatusReport:
@@ -31,13 +31,27 @@ class StatusReport:
     STATUS_NOTHING = ['nothing', 'missing']
     ERROR_INVALID_STATUS_ICON = ("StatusReport: invalid status icon", LookupError())
 
+    ATTRIBUTES_OPTIONAL: List[str] = [
+        "payload_progress_ram",
+        "problematic_txy_ns",
+        "loaded_txy_files_count",
+        "loaded_txy_rows_count",
+        "data_dict_bytes",
+        "data_comp_bytes",
+        "time_load_ram",
+        "_reviewed_path_parent_recursively",
+        "log_LabviewMatlab_txt",
+        "log_KeysightMatlab_txt",
+        "about_txt",
+        "payload_errors"
+    ]
+
     def __init__(self,
                  path: str,
                  status: str,
                  count: int,
                  extra_icons: list[str],
-                 d_dld_shots:
-                 Optional[List[int]] = None,
+                 d_dld_shots: Optional[List[int]] = None,
                  d_txy_shots: Optional[List[int]] = None,
                  time_last_updated: datetime = datetime.now()
                  ):
@@ -47,10 +61,16 @@ class StatusReport:
         self.extra_icons = extra_icons
         self.d_dld_shots = d_dld_shots
         self.d_txy_shots = d_txy_shots
-        self.problematic_txy_ns: Optional[List[int]] = None
-        self.payload_progress_ram: Optional[float] = None
         self.time_last_updated = time_last_updated
+
+        self.payload_progress_ram: Optional[float] = None
+        self.problematic_txy_ns: Optional[List[int]] = None
+        self.loaded_txy_files_count: Optional[int] = None
+        self.loaded_txy_rows_count: Optional[int] = None
+        self.data_dict_bytes: Optional[int] = None
+        self.data_comp_bytes: Optional[int] = None
         self.time_load_ram: Optional[datetime] = None
+
         self._reviewed_path_parent_recursively: Optional[bool] = None
 
         self.log_LabviewMatlab_txt: Optional[str] = None
@@ -202,7 +222,7 @@ class StatusReport:
         :param update_cache:    Whether to update the cache with the new status report
         :return:    The updated status report
         """
-        self.time_load_ram = time_load_ram
+        if time_load_ram: self.time_load_ram = time_load_ram
         try:
             self.update_remove_extras(['ram', 'ram_single', 'ram_opened', 'loading_ram', 'progress_ram'], update_cache=False)
             data_files = data_ram_cache[self.path]
@@ -306,6 +326,23 @@ class StatusReport:
         """
         self.problematic_txy_ns = problematic_txy_ns
         self._update_cache()
+
+    def update_loaded_data_status(self,
+                                  problematic_txy_ns: Optional[List[int]],
+                                  loaded_txy_files_count: int,
+                                  loaded_txy_rows_count: int,
+                                  data_dict_bytes: int,
+                                  data_comp_bytes: int,
+                                  loaded_time: Optional[datetime] = None
+                                  ) -> None:
+        self.problematic_txy_ns = problematic_txy_ns
+        self.loaded_txy_files_count = loaded_txy_files_count
+        self.loaded_txy_rows_count = loaded_txy_rows_count
+        self.data_dict_bytes = data_dict_bytes
+        self.data_comp_bytes = data_comp_bytes
+        if loaded_time: self.time_load_ram = loaded_time
+        self._update_cache()
+
 
     def validate_ram_status(self) -> bool:
         """
@@ -420,10 +457,15 @@ class StatusReport:
             # logging.warning(f"StatusReport.review_path_parent: parent_path is same as path for {self.path}, this is root path?")
             return self
 
-        if parent_path not in hasChildren_cache:
-            logging.critical(f"StatusReport.review_path_parent: hasChildren not cached for {parent_path}")
-        elif not hasChildren_cache[parent_path]:
-            logging.critical(f"StatusReport.review_path_parent: hasChildren logical error for {parent_path}")
+        if not OSCMgmt.has_children_contains(parent_path):
+            # logging.critical(f"StatusReport.review_path_parent: hasChildren not cached for {parent_path}")
+            _ = DirectoryCheckWorker.has_children(parent_path)
+            if parent_path not in running_workers_hasChildren:
+                logging.critical(f"StatusReport.review_path_parent: hasChildren not cached or caching for {parent_path}")
+                logging.critical(f"StatusReport.review_path_parent: {list(running_workers_hasChildren.keys()) = }, {OSCMgmt.has_children(parent_path) = }")
+
+        # elif not OSCMgmt.has_children(parent_path):
+        #     logging.critical(f"StatusReport.review_path_parent: hasChildren logical error for {parent_path}")
         else:
             pass
 
@@ -588,7 +630,7 @@ class StatusWorker(QRunnable):
         """
         # logging.debug(f"Getting status for: {folder_path}")
         # Check if the status is already cached
-        status_data = cast(StatusReport, status_cache.get(folder_path, None))
+        status_data = status_cache.get(folder_path, None)
         if status_data is not None:
             if not isinstance(status_data, StatusReport):
                 logging.warning(f"fetch_status: status_data is not StatusReport: {status_data}")
@@ -625,7 +667,7 @@ class StatusWorker(QRunnable):
             # Create and start the worker
             worker = StatusWorker(folder_path)
             worker.signals.finished.connect(callback)
-            thread_pool_general.start(worker, priority=QThread.Priority.LowestPriority.value)
+            thread_pool_general.start(worker, priority=QThread.Priority.LowestPriority.value)   # type: ignore[call-overload]
             running_workers_status[folder_path] = worker
             return loading_status
 

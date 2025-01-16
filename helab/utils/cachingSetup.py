@@ -2,7 +2,7 @@ import hashlib
 import json
 import logging
 from collections import OrderedDict
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import psutil
 from diskcache import FanoutCache
@@ -50,13 +50,7 @@ CACHE_PARAMS_OVERRIDE: Dict[str, Dict[str, Any]] = {
         "size_limit": 1<<30<<1, # 2GB
         #TODO increase RAM ?
     },
-    "hasChildren_cache": {
-    },
-    "os_listdir_cache": {
-    },
-    "os_scandir_cache": {
-    },
-    "os_isdir_cache": {
+    "os_file_system_cache": {
     },
     "data_ram_cache": {
         "size_limit": 1<<30<<3, # 8GB,
@@ -99,24 +93,18 @@ def load_cache_param(cache_name: str) -> OrderedDict[str, Any]:
     return base_params
 
 
-status_cache      = FanoutCache(DIR_CACHES + '/status_cache',      **load_cache_param('status_cache'))
-hasChildren_cache = FanoutCache(DIR_CACHES + '/hasChildren_cache', **load_cache_param('hasChildren_cache'))
-os_listdir_cache  = FanoutCache(DIR_CACHES + '/os_listdir_cache',  **load_cache_param('os_listdir_cache'))
-os_scandir_cache  = FanoutCache(DIR_CACHES + '/os_scandir_cache',  **load_cache_param('os_scandir_cache'))
-os_isdir_cache    = FanoutCache(DIR_CACHES + '/os_isdir_cache',    **load_cache_param('os_isdir_cache'))
-data_ram_cache    = FanoutCache(DIR_CACHES + '/data_ram_cache',    **load_cache_param('data_ram_cache'))
+status_cache         = FanoutCache(DIR_CACHES + '/status_cache',      **load_cache_param('status_cache'))
+os_file_system_cache = FanoutCache(DIR_CACHES + '/os_file_system_cache', **load_cache_param('os_file_system_cache'))
+data_ram_cache       = FanoutCache(DIR_CACHES + '/data_ram_cache',    **load_cache_param('data_ram_cache'))
 
 caches = OrderedDict([
     ('status_cache', status_cache),
-    ('hasChildren_cache', hasChildren_cache),
-    ('os_scandir_cache', os_scandir_cache),
-    ('os_listdir_cache', os_listdir_cache),
-    ('os_isdir_cache', os_isdir_cache),
+    ('os_file_system_cache', os_file_system_cache),
     ('data_ram_cache', data_ram_cache),
 ])
 
 
-def fnum(num: int) -> str:
+def fnum(num: Optional[int]) -> str:
     """
     Format a number with a suffix for thousands, millions, etc.
     :param num: The number to format
@@ -130,6 +118,7 @@ def fnum(num: int) -> str:
     - `fnum(1234567)` -> `'1.235M'`
     - `fnum(123456789000)` -> `'123.5G'`
     """
+    if num is None: return "NA"
     suffixes = ['K', 'M', 'G', 'T', 'P', 'E']
     for i, suffix in reversed(list(enumerate(suffixes, 1))):
         divisor = 1000 ** i
@@ -155,7 +144,12 @@ def cache_status_string() -> str:
         cache_str += f"  {cache_name}: {spacer}hits = {fnum(hits)}, miss = {fnum(miss)}, size = {fnum(size)}B\n"
     return cache_str
 
-
+def close_all_caches() -> None:
+    """
+    Close all caches
+    """
+    for cache in caches.values():
+        cache.close()
 
 # def custom_key_function(func, *args, **kwargs):
 #     # Create a unique string representation of the function and its arguments
@@ -164,36 +158,4 @@ def cache_status_string() -> str:
 #     # print(f"custom_key_function: {key_string = }, hash = {hashlib.sha256(key_string.encode()).hexdigest()}")
 #     return hashlib.sha256(key_string.encode()).hexdigest()
 
-
-# Status Cache Management
-class SCMgmt:
-    @staticmethod
-    def update_append_extras() -> None:
-        pass
-
-    @staticmethod
-    def update_remove_extras() -> None:
-        pass
-
-    @staticmethod
-    def satinity_check() -> None:
-        pass
-
-    @staticmethod
-    def audit() -> None:
-        pass
-
-class DRMgmt:
-    @staticmethod
-    def load_data() -> None:
-        pass
-    @staticmethod
-    def evict_data() -> None:
-        pass
-    @staticmethod
-    def evict_all() -> None:
-        pass
-    @staticmethod
-    def shrink_ram() -> None:
-        pass
 

@@ -1,4 +1,5 @@
 # main_app.py
+# type: ignore
 import logging
 import coloredlogs
 coloredlogs.install(

@@ -1,4 +1,5 @@
 # helab/scripts/pg_simple_densities.py
+# type: ignore
 import logging
 from typing import Optional, Dict, Tuple, Callable
 

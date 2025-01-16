@@ -4,6 +4,7 @@ import os
 import sys
 from datetime import datetime
 from random import randint
+import warnings
 
 from typing import Dict, Tuple, List, cast, Optional
 
@@ -12,8 +13,8 @@ from PyQt6.QtGui import QFileSystemModel, QColor
 
 from helab.utils.cachingSetup import *
 from helab.utils.threadingSetup import *
-from helab.utils.constants import MAX_DEPTH_INT
-from helab.utils.os_cached import os_listdir_filtered
+from helab.utils.os_cached import *
+from helab.utils.constants import *
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
 from helab.workers.statusDeepWorker import StatusDeepWorker
 from helab.workers.statusRescanWorker import StatusRescanWorker
@@ -43,8 +44,6 @@ class helabFileSystemModel(QFileSystemModel):
 
         # Cache the standard icons
         # style = QApplication.style()
-
-        # self.hasChildren_cache = hasChildren_cache
 
         self.folder_opened_path: Optional[str] = None # same as the one folderExplorer, updated by folderExplorer
 
@@ -323,9 +322,9 @@ class helabFileSystemModel(QFileSystemModel):
         logging.warning(f"on_directory_loaded: TODO: implement (popped) {path}")
         # status_cache.pop(path, None)
 
-        os_listdir_cache.pop(path, None)
-        os_scandir_cache.pop(path, None)
-        QTimer.singleShot(1, lambda: StatusRescanWorker.validate_this(path, self.folder_opened_path))
+        OSCMgmt.clean_cache_at(path)
+        _ = DirectoryCheckWorker.has_children(path)
+        QTimer.singleShot(10, lambda: StatusRescanWorker.validate_this(path, self.folder_opened_path))
 
         # os_isdir_cache.pop(path, None)
 
@@ -410,9 +409,10 @@ class helabFileSystemModel(QFileSystemModel):
 
         top_left = self.index(min_row, min_col)
         bottom_right = self.index(max_row, max_col)
-        self.dataChanged.emit(top_left, bottom_right,
-            [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE]
-        )
+        # self.dataChanged.emit(top_left, bottom_right,
+        #     [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE, self.HAS_CHILDREN_ROLE]
+        # )
+        self.dataChanged.emit(top_left, bottom_right)
 
         # time_delta = datetime.now() - time_start
         # logging.debug(f"_bulk_data_changed: {len(paths)} paths emitted in {round(1e-3*time_delta.microseconds)}ms")
@@ -538,31 +538,35 @@ class helabFileSystemModel(QFileSystemModel):
             return False
         dir_path = file_info.absoluteFilePath()
 
-        # cached_result = hasChildren_cache.get(model_root_path)
-        cached_result = cast(Optional[bool], hasChildren_cache.get(dir_path))
-        if cached_result is not None:
-            # logging.debug(f"hasChildren used cache for: {model_root_path}: {cached_result}")
-            return cached_result
-        else:
-            if dir_path in running_workers_hasChildren:
-                return False
-            else:
-                logging.debug(f"hasChildren new DirectoryCheckWorker at: {dir_path}")
-                # logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {hasChildren_cache.currsize}") # type: ignore[attr-defined]
-                # logging.debug(f"os_listdir_cache: {os_listdir_cache.currsize}, os_scandir_cache: {os_scandir_cache.currsize}, os_isdir_cache: {os_isdir_cache.currsize}, hasChildren_cache: {hasChildren_cache.currsize}")
-                # logging.debug(f"os_listdir_cache: {os_listdir_cache.volume()}, os_scandir_cache: {os_scandir_cache.volume()}, os_isdir_cache: {os_isdir_cache.volume()}, hasChildren_cache: {hasChildren_cache.currsize}")
-                # logging.debug(f"hasChildren_cache: {hasChildren_cache.currsize}")
-                worker = DirectoryCheckWorker(dir_path)
-                worker.signals.finished.connect(self.on_has_children_finished)
-                worker.signals.canceled.connect(self.on_has_children_canceled)
-                # worker.setAutoDelete(True)
-                thread_pool_general.start(worker, priority=QThread.Priority.NormalPriority.value) # type: ignore[call-overload]
-                # QTimer.singleShot(10, lambda: thread_pool_general.start(worker))
-                running_workers_hasChildren[dir_path] = worker
-                return False
+        return DirectoryCheckWorker.has_children(dir_path, on_finished=lambda p, h: self.throttled_data_changed_emitter.add_update(p))
+
+        # # cached_result = hasChildren_cache.get(model_root_path)
+        # # cached_result = cast(Optional[bool], hasChildren_cache.get(dir_path))
+        # cached_result = OSCMgmt.has_children(dir_path)
+        # if cached_result is not None:
+        #     # logging.debug(f"hasChildren used cache for: {model_root_path}: {cached_result}")
+        #     return cached_result
+        # else:
+        #     if dir_path in running_workers_hasChildren:
+        #         return False
+        #     else:
+        #         logging.debug(f"hasChildren new DirectoryCheckWorker at: {dir_path}")
+        #         # logging.debug(f"lisdir: {os_listdir.cache_info()}, scandir: {os_scandir_list.cache_info()}, isdir: {os_isdir.cache_info()}, hasChildren_cache: {hasChildren_cache.currsize}") # type: ignore[attr-defined]
+        #         # logging.debug(f"os_listdir_cache: {os_listdir_cache.currsize}, os_scandir_cache: {os_scandir_cache.currsize}, os_isdir_cache: {os_isdir_cache.currsize}, hasChildren_cache: {hasChildren_cache.currsize}")
+        #         # logging.debug(f"os_listdir_cache: {os_listdir_cache.volume()}, os_scandir_cache: {os_scandir_cache.volume()}, os_isdir_cache: {os_isdir_cache.volume()}, hasChildren_cache: {hasChildren_cache.currsize}")
+        #         # logging.debug(f"hasChildren_cache: {hasChildren_cache.currsize}")
+        #         worker = DirectoryCheckWorker(dir_path)
+        #         worker.signals.finished.connect(self.on_has_children_finished)
+        #         worker.signals.canceled.connect(self.on_has_children_canceled)
+        #         # worker.setAutoDelete(True)
+        #         thread_pool_general.start(worker, priority=QThread.Priority.NormalPriority.value) # type: ignore[call-overload]
+        #         # QTimer.singleShot(10, lambda: thread_pool_general.start(worker))
+        #         running_workers_hasChildren[dir_path] = worker
+        #         return False
 
 
     def on_has_children_finished(self, dir_path: str, has_children: bool) -> None:
+        warnings.warn("on_has_children_finished: DEPRECATED", DeprecationWarning)
         # logging.debug(f"on_has_children_finished: {dir_path = }, {has_children = }")
 
         # # Update the cache with the computed result
@@ -585,6 +589,7 @@ class helabFileSystemModel(QFileSystemModel):
         self.throttled_data_changed_emitter.add_update(dir_path)
 
     def on_has_children_canceled(self, dir_path: str) -> None:
+        warnings.warn("on_has_children_canceled: DEPRECATED", DeprecationWarning)
         logging.debug("on_has_children_canceled: {dir_path = }")
         if dir_path in running_workers_hasChildren:
             del running_workers_hasChildren[dir_path]

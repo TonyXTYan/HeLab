@@ -83,7 +83,9 @@ def test_on_back_button_clicked(main_window: MainWindow) -> None:
 
 def test_close_event_main_window(main_window: MainWindow, qtbot: QtBot) -> None:
     QApplication.processEvents()
+    qtbot.wait(1000)
     main_window.close()
+    qtbot.wait(1000)
     assert not main_window.isVisible()
 
 # def test_create_menus_main_window(main_window: MainWindow) -> None:

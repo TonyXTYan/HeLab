@@ -3,11 +3,11 @@ import os
 from concurrent.futures import ThreadPoolExecutor, Future
 # from logging import FATAL
 from types import SimpleNamespace
-from typing import Iterator, List, Any, cast, Callable, Dict
+from typing import Iterator, List, Any, cast, Callable, Dict, Optional
 
 # import aiofiles
 
-from helab.utils.cachingSetup import os_isdir_cache, os_listdir_cache, os_scandir_cache
+from helab.utils.cachingSetup import os_file_system_cache
 from helab.utils.constants import OS_DIR_CACHE_TTL
 
 
@@ -22,10 +22,10 @@ def os_listdir(path: str, invalidate_cache:bool=False) -> List[str]:
     """
 
     if invalidate_cache:
-        os_listdir_cache.pop(_os_listdir.__cache_key__(path))
+        os_file_system_cache.pop(_os_listdir.__cache_key__(path))
     return _os_listdir(path)    # type: ignore[no-any-return]
 
-@os_listdir_cache.memoize(expire=OS_DIR_CACHE_TTL)  # type: ignore[misc]
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_listdir")  # type: ignore[misc]
 def _os_listdir(path: str) -> List[str]:
     with os.scandir(path) as entries:
         return [entry.name for entry in entries]
@@ -39,11 +39,11 @@ def os_listdir_filtered(path: str, invalidate_cache:bool=False) -> List[str]:
     :return: List of directory entries.
     """
     if invalidate_cache:
-        os_listdir_cache.pop(_os_listdir_filtered.__cache_key__(path))
+        os_file_system_cache.pop(_os_listdir_filtered.__cache_key__(path))
     return _os_listdir_filtered(path) # type: ignore[no-any-return]
 
 
-@os_listdir_cache.memoize(expire=OS_DIR_CACHE_TTL)  # type: ignore[misc]
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_listdir_filtered")  # type: ignore[misc]
 def _os_listdir_filtered(path: str) -> List[str]:
     return [
         entry for entry in os_listdir(path)
@@ -55,10 +55,10 @@ def _os_listdir_filtered(path: str) -> List[str]:
 
 def os_listdirdir(path: str, invalidate_cache:bool=False) -> List[str]:
     if invalidate_cache:
-        os_listdir_cache.pop(_os_listdirdir.__cache_key__(path))
+        os_file_system_cache.pop(_os_listdirdir.__cache_key__(path))
     return _os_listdirdir(path) # type: ignore[no-any-return]
 
-@os_listdir_cache.memoize(expire=OS_DIR_CACHE_TTL)  # type: ignore[misc]
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_listdirdir")  # type: ignore[misc]
 def _os_listdirdir(path: str) -> List[str]:
     # return [
     #     entry for entry in os_listdir(path)
@@ -70,8 +70,27 @@ def _os_listdirdir(path: str) -> List[str]:
             if entry.is_dir()
         ]
 
+def os_has_children(path: str, invalidate_cache:bool=False) -> bool:
+    """
+    Check if a directory has children, with optional cache invalidation.
+    :param path: Directory path.
+    :param invalidate_cache: Invalidate cache if True.
+    :return: True if directory has children, False otherwise.
+    """
 
-@os_scandir_cache.memoize(expire=OS_DIR_CACHE_TTL)  # type: ignore[misc]
+    if invalidate_cache:
+        os_file_system_cache.pop(_os_has_children.__cache_key__(path))
+    return _os_has_children(path) # type: ignore[no-any-return]
+
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_has_children")  # type: ignore[misc]
+def _os_has_children(path: str) -> bool:
+    with os.scandir(path) as entries:
+        return any(
+            entry.is_dir()
+            for entry in entries
+        )
+
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_scandir_dic")  # type: ignore[misc]
 def _os_scandir_dic(path: str) -> List[Dict[str, Any]]:
     return [
         {
@@ -106,10 +125,10 @@ def os_scandir_dic(path: str, invalidate_cache:bool=False) -> List[Dict[str, Any
     """
     
     if invalidate_cache:
-        os_scandir_cache.pop(_os_scandir_dic.__cache_key__(path))
+        os_file_system_cache.pop(_os_scandir_dic.__cache_key__(path))
     return _os_scandir_dic(path) # type: ignore[no-any-return]
 
-@os_scandir_cache.memoize(expire=OS_DIR_CACHE_TTL)  # type: ignore[misc]
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_scandir_sns")  # type: ignore[misc]
 def _os_scandir_sns(path: str) -> List[SimpleNamespace]:
     return [
         SimpleNamespace(
@@ -136,11 +155,11 @@ def _os_scandir_sns(path: str) -> List[SimpleNamespace]:
 
 def os_scandir_sns(path: str, invalidate_cache:bool=False) -> List[SimpleNamespace]:
     if invalidate_cache:
-        os_scandir_cache.pop(_os_scandir_sns.__cache_key__(path))
+        os_file_system_cache.pop(_os_scandir_sns.__cache_key__(path))
     return _os_scandir_sns(path) # type: ignore[no-any-return]
 
 
-@os_isdir_cache.memoize(expire=OS_DIR_CACHE_TTL)    # type: ignore[misc]
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_isdir")    # type: ignore[misc]
 def _os_isdir(path: str) -> bool:
     return os.path.isdir(path)
 
@@ -153,7 +172,46 @@ def os_isdir(path: str, invalidate_cache:bool=False) -> bool:
     """
 
     if invalidate_cache:
-        os_isdir_cache.pop(_os_isdir.__cache_key__(path))
+        os_file_system_cache.pop(_os_isdir.__cache_key__(path))
     return _os_isdir(path) # type: ignore[no-any-return]
+
+
+#  Cache Management
+class OSCMgmt:
+    HAS_CHILDREN_KEY_SUFFIX = "|/:HAS_CHILDREN?"    # Basically a bunch of forbidden characters for a path to guarantee no key clash
+
+    @staticmethod
+    def _has_children_key(path: str) -> str:
+        return path + OSCMgmt.HAS_CHILDREN_KEY_SUFFIX
+
+    @staticmethod
+    def pop_has_children(path: str) -> Optional[bool]:
+        return os_file_system_cache.pop(OSCMgmt._has_children_key(path), None)          #type: ignore[no-any-return]
+
+    @staticmethod
+    def set_has_children(path: str, has_children: bool) -> bool:
+        return os_file_system_cache.set(OSCMgmt._has_children_key(path), has_children)  #type: ignore[no-any-return]
+
+    @staticmethod
+    def has_children(path: str, invalidate_cache:bool=False) -> Optional[bool]:
+        return os_file_system_cache.get(OSCMgmt._has_children_key(path), None)          #type: ignore[no-any-return]
+
+    @staticmethod
+    def has_children_contains(path: str) -> bool:
+        return OSCMgmt._has_children_key(path) in os_file_system_cache
+        # return os_file_system_cache.__contains__(OSCMgmt._has_children_key(path))
+
+
+
+
+
+    @staticmethod
+    def clean_cache_at(path: str) -> None:
+        OSCMgmt.pop_has_children(path)
+        os_file_system_cache.pop(_os_listdir.__cache_key__(path))
+        os_file_system_cache.pop(_os_listdir_filtered.__cache_key__(path))
+        os_file_system_cache.pop(_os_scandir_dic.__cache_key__(path))
+        os_file_system_cache.pop(_os_scandir_sns.__cache_key__(path))
+        os_file_system_cache.pop(_os_isdir.__cache_key__(path))
 
 

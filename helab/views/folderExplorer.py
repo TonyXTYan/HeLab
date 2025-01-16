@@ -1,3 +1,4 @@
+from datetime import datetime
 import gc
 import glob
 import logging
@@ -22,7 +23,7 @@ from helab.utils.constants import *
 from helab.utils.cachingSetup import *
 from helab.utils.threadingSetup import *
 from helab.models.helabFileSystemModel import helabFileSystemModel
-from helab.utils.os_cached import os_isdir
+from helab.utils.os_cached import os_isdir, OSCMgmt
 from helab.views.statusIconDelegate import StatusIconDelegate
 from helab.views.statusTreeView import StatusTreeView
 from helab.workers.directoryCheckWorker import DirectoryCheckWorker
@@ -53,6 +54,7 @@ class FolderExplorer(QWidget):
         self.target_path = target_path  # Path to auto-expand upon opening
         self.view_path = view_path  # Current root path of the view
         self.columns_to_show = columns_to_show
+        self.tab_title_str = model_root_path
 
         self.auto_load_ram = True
 
@@ -169,6 +171,7 @@ class FolderExplorer(QWidget):
         if set_initial_expand_to_parent_level: self._set_initial_rootIndex()
 
         QTimer.singleShot(30, self.emit_selection_changed)
+        QTimer.singleShot(30, self.tab_title_update)
 
 
     def _set_initial_rootIndex(self) -> None:
@@ -519,23 +522,18 @@ class FolderExplorer(QWidget):
                     w = running_workers_status.pop(path)
                     if w: w.cancel()
                 case "hasChildren_cache":
-                    hasChildren_cache.pop(path)
+                    OSCMgmt.pop_has_children(path)
                 case "data_ram_cache":
                     data_ram_cache.pop(path)
                     status_report = status_cache.get(path)
                     if isinstance(status_report, StatusReport):
                         status_report.update_ram_status(is_opened=path==self.selected_path)
                 case "osfs_system_cache":
-                    os_listdir_cache.pop(path)
-                    os_isdir_cache.pop(path)
-                    os_scandir_cache.pop(path)
+                    OSCMgmt.clean_cache_at(path)
                 case "all":
                     status_cache.pop(path)
-                    hasChildren_cache.pop(path)
                     data_ram_cache.pop(path)
-                    os_listdir_cache.pop(path)
-                    os_isdir_cache.pop(path)
-                    os_scandir_cache.pop(path)
+                    OSCMgmt.clean_cache_at(path)
                 case _:
                     raise ValueError(f"Invalid cache_name: {cache_name} at {path = }")
             logging.debug(f"context_menu_action_pop_cache: {cache_name = }, {path = }")
@@ -669,44 +667,75 @@ class FolderExplorer(QWidget):
         QTimer.singleShot(10, lambda: thread_pool_load_data_ram.start(worker, priority=QThread.Priority.IdlePriority.value)) # type: ignore[call-overload]
         pass
     
-    def on_load_folder_to_ram_finished(self, folder_path: str, problematic_txy_ns: List[int], data: object) -> None:
-        logging.debug(f"on_load_folder_to_ram_finished: {folder_path = }")
+    def on_load_folder_to_ram_finished(self,
+                                       folder_path: str,
+                                       data: object,
+                                       dict_keys: List[int],
+                                       problematic_txy_ns: Optional[List[int]],
+                                       ok_txy_files_count: int,
+                                       total_txy_rows: int,
+                                       data_dict_size: int,
+                                       data_comp_size: int,
+                                       loaded_time: Optional[datetime],
+                                       ) -> None:
+        logging.debug(f"on_load_folder_to_ram_finished: {folder_path = }"
+                      f", {problematic_txy_ns = }, {ok_txy_files_count = }, {total_txy_rows = }"
+                      f", {data_dict_size = }, {data_comp_size = }, {loaded_time = }")
         running_workers_ramLoading.pop(folder_path, None)
-        self.on_load_folder_to_ram_finished_helper(folder_path, problematic_txy_ns, data)
+        self.on_load_folder_to_ram_finished_helper(folder_path, data, dict_keys, problematic_txy_ns, ok_txy_files_count, total_txy_rows, data_dict_size, data_comp_size, loaded_time)
 
-    def on_load_folder_to_ram_finished_helper(self, folder_path: str, problematic_txy_ns: Optional[List[int]], data: object) -> None:
+    def on_load_folder_to_ram_finished_helper(self, folder_path: str,
+                                              data: object,
+                                              dict_keys: List[int],
+                                              problematic_txy_ns: Optional[List[int]],
+                                              ok_txy_files_count: int,
+                                              total_txy_rows: int,
+                                              data_dict_size: int,
+                                              data_comp_size: int,
+                                              loaded_time: Optional[datetime],
+                                              ) -> None:
         #TODO: move these methods to LoadFolderToRamWorker
         if isinstance(data, dict):
-            self.folder_opened_path = folder_path
-            self.model.folder_opened_path = folder_path
-            self.folder_opened_data = data
             status_report = status_cache.get(folder_path)
             if status_report is not None and isinstance(status_report, StatusReport):
                 # status_report.extra_icons.remove('loading')
                 # status_report.update_extend_extras('')
                 if folder_path == self.selected_path:
+                    self.model.folder_opened_path = folder_path
+                    self.folder_opened_path = folder_path
+                    self.folder_opened_data = data
                     status_report.update_ram_status(is_opened=True,  update_cache=True)
                 else:
                     status_report.update_ram_status(is_opened=False, update_cache=True)
-                QTimer.singleShot(500, lambda: StatusRescanWorker.validate_this(status_report, self.model.folder_opened_path))  # REVIEW: this is a dodgy workaround to a race condition
 
-                if problematic_txy_ns is not None and len(problematic_txy_ns) > 0:
-                    status_report.update_problematic_txy_ns(problematic_txy_ns)
+                status_report.update_loaded_data_status(problematic_txy_ns=problematic_txy_ns,
+                                                        loaded_txy_files_count=ok_txy_files_count,
+                                                        loaded_txy_rows_count=total_txy_rows,
+                                                        data_dict_bytes=data_dict_size,
+                                                        data_comp_bytes=data_comp_size,
+                                                        loaded_time=loaded_time)
+
+                StatusRescanWorker.validate_this(status_report.path, self.folder_opened_path)
+
+                # if problematic_txy_ns is not None and len(problematic_txy_ns) > 0:
+                #     status_report.update_problematic_txy_ns(problematic_txy_ns)
 
                 # status_cache[folder_path] = status_report
                 index = self.model.index(folder_path, helabFileSystemModel.COLUMN_STATUS_ICON)
                 if index.isValid():
-                    self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
-                    logging.debug(f"on_load_folder_to_ram_finished: loadded {fnum(LoadFolderToRamWorker.get_total_rows_in_dict_of_numpy(data))} rows "
-                                  f"{fnum(LoadFolderToRamWorker.get_approx_size_of_dict_of_numpy(data))}B at {folder_path = }")
+                    # self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+                    self.model.throttled_data_changed_emitter.add_update(folder_path)
+                    # logging.debug(f"on_load_folder_to_ram_finished_helper: loaded {total_txy_rows} rows "
+                    #               f"{fnum(ok_txy_files_count)} files, "
+                    #               f"{fnum(data_dict_size)}B at {folder_path = }")
                 else:
-                    logging.error(f"on_load_folder_to_ram_finished: invalid index at {folder_path} ({index = })")
+                    logging.error(f"on_load_folder_to_ram_finished_helper: invalid index at {folder_path} ({index = })")
             else:
-                logging.error(f"on_load_folder_to_ram_finished: {folder_path = } is not in status_cache")
+                logging.error(f"on_load_folder_to_ram_finished_helper: {folder_path = } is not in status_cache")
                 self.model.fetch_status(folder_path)
 
         else:
-            logging.critical(f"on_load_folder_to_ram_finished: {type(data) = } is not dict, {folder_path = }")
+            logging.critical(f"on_load_folder_to_ram_finished_helper: {type(data) = } is not dict, {folder_path = }")
             status_cache.pop(folder_path)
             self.model.fetch_status(folder_path)
         pass
@@ -803,6 +832,21 @@ class FolderExplorer(QWidget):
             logging.error(f"on_click_dump_data_to_temp_dir: {type(e).__name__} - {e}")
             pass
 
+    def tab_title_update(self) -> str:
+        path = self.model.filePath(self.tree.rootIndex())
+        if platform.system() == 'Windows':
+            drive, tail = os.path.splitdrive(path)
+            if tail in ('\\', '/'):
+                self.tab_title_str = drive
+            else:
+                self.tab_title_str =  os.path.basename(path)
+        else:
+            if path == "/":
+                self.tab_title_str = "/"
+            else:
+                self.tab_title_str =  os.path.basename(path)
+        return self.tab_title_str
+
     def refresh(self) -> None:
         """
         Refresh the FolderExplorer while maintaining model_root_path, target_path, and view_path.
@@ -821,7 +865,7 @@ class FolderExplorer(QWidget):
         # )
         current_root_index = self.tree.rootIndex()
         self.model.refresh()
-        self.tree.setModel(self.model)
+        # self.tree.setModel(self.model)
         self.model.setRootPath(self.model_root_path)
         # self.tree.setRootIndex(self.model.index(self.view_path))
         self.tree.setRootIndex(current_root_index)

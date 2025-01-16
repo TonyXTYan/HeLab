@@ -19,9 +19,10 @@ from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWid
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget
 from humanfriendly.terminal import message
 from numpy.f2py.crackfortran import include_paths
+from typing_extensions import no_type_check
 
 from helab.resources.icons import ToolIcons
-from helab.utils.cachingSetup import status_cache, hasChildren_cache
+from helab.utils.cachingSetup import *
 from helab.utils.constants import *
 # from helab.utils.os_cached import , os_scandir_cache, os_isdir_cache, os_listdir, os_scandir, os_isdir, os_scandir_cache
 from helab.utils.os_cached import *
@@ -434,8 +435,6 @@ class MainWindow(QMainWindow):
             
     def action_debug_3_run(self) -> None:
         logging.info("action_debug_3_run: called")
-        logging.info(f"{os_listdir_cache.__dict__}")
-        logging.info(f"_os_listdir_cache = {os_listdir_cache.__dict__}")
 
         pass
 
@@ -733,7 +732,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWebEngineWidgets import QWebEngineView
         plotly_fig_html = plotly_fig.to_html()
         plotly_view = QWebEngineView()
-        plotly_temp = tempfile.NamedTemporaryFile(prefix="plotly_", suffix='.html', dir=DIR_TEMPS)
+        plotly_temp = tempfile.NamedTemporaryFile(prefix="plotly_", suffix='.html', dir=DIR_TEMPS, delete=False)
         self.named_temp_files.append(plotly_temp)
         plotly_temp.write(plotly_fig_html.encode('utf-8'))
         plotly_temp_html_filename = plotly_temp.name
@@ -745,8 +744,9 @@ class MainWindow(QMainWindow):
         self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, plotly_dock_widget)
         self.dock_widgets.append(plotly_dock_widget)
         # self.named_temp_files.append(plotly_temp)
-        plotly_temp.close()
-
+        # plotly_temp.close()
+        # os.remove(plotly_temp_html_filename)
+        # QTimer.singleShot(10*1000, lambda: os.remove(plotly_temp_html_filename))
 
     def _setup_middle_area(self) -> None:
         # Middle area (main content area)
@@ -789,18 +789,18 @@ class MainWindow(QMainWindow):
             self.dock_widgets.append(dock_widget3)
 
         try:
-            self._setup_matplotlib_to_dock_widget()
+            self._setup_matplotlib_to_dock_widget() # type: ignore
         except Exception as e:
             logging.error(f"_setup_middle_area: Failed to load matplotlib {e}")
 
 
         try:
-            self._setup_pyqtgraph_to_dock_widget()
+            self._setup_pyqtgraph_to_dock_widget()  # type: ignore[unused-ignore]
         except Exception as e:
             logging.error(f"_setup_middle_area: Failed to load pyqtgraphs lib {e}")
 
         try:
-            self._setup_simple_test_pyqtgraph()
+            self._setup_simple_test_pyqtgraph()     # type: ignore
         except Exception as e:
             logging.error(f"_setup_middle_area: Failed to load pg_simple_densities {e}")
 
@@ -820,6 +820,7 @@ class MainWindow(QMainWindow):
         # Initial check to set placeholder visibility
         self.update_placeholder_visibility()
 
+    @no_type_check
     def _setup_simple_test_pyqtgraph(self) -> None:
         import helab.scripts.pg_simple_densities as pgsd
         win = pgsd.make_three_density_plots(
@@ -834,17 +835,17 @@ class MainWindow(QMainWindow):
         self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_widget)
         self.dock_widgets.append(dock_widget)
 
-
+    @no_type_check
     def _setup_matplotlib_to_dock_widget(self) -> None:
         import matplotlib.pyplot as plt
-        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT as NavigationToolbar
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT as NavigationToolbar # type: ignore
         import numpy as np
 
         fig, ax = plt.subplots()
         # scatter = ax.scatter([1, 2, 3, 4], [10, 20, 25, 30])
         scatter = ax.scatter(np.random.rand(100), np.random.rand(100))
         ax.set_title("Basic Scatter Plot")
-        canvas = FigureCanvas(fig)  # type: ignore
+        canvas = FigureCanvas(fig)
 
         dock_widget = QDockWidget("Matplotlib Scatter", self)
         dock_widget.setWidget(canvas)
@@ -1116,21 +1117,19 @@ class MainWindow(QMainWindow):
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         logging.info("MainWindow closeEvent")
 
-        cancel_all_workers()
+        QTimer.singleShot(0, cancel_all_workers)
 
         for temp_file in self.named_temp_files:
-            temp_file.close()
+            QTimer.singleShot(0, temp_file.close)
+            QTimer.singleShot(10, lambda: os.remove(temp_file.name))
 
         for dock_widget in self.dock_widgets:
-            dock_widget.close()
+            QTimer.singleShot(0, dock_widget.close)
 
-        self.tab_widget.closeEvent(a0)
+        QTimer.singleShot(0, lambda: self.tab_widget.closeEvent(a0))
 
-        os_listdir_cache.close()
-        os_scandir_cache.close()
-        os_isdir_cache.close()
-        status_cache.close()
-        hasChildren_cache.close()
+        # Save the status cache
+        QTimer.singleShot(0, close_all_caches)
 
         # Save settings
         # settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)

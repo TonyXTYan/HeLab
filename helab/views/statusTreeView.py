@@ -6,7 +6,7 @@ from PyQt6.QtGui import QMouseEvent, QFocusEvent, QPainter
 from PyQt6.QtWidgets import QTreeView, QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QProxyStyle, QStyle
 
 from helab.models.helabFileSystemModel import helabFileSystemModel
-from helab.utils.cachingSetup import status_cache, data_ram_cache
+from helab.utils.cachingSetup import status_cache, data_ram_cache, fnum
 from helab.utils.constants import *
 from helab.views.statusIconDelegate import StatusIconDelegate
 from helab.workers.statusWorker import StatusReport
@@ -124,6 +124,7 @@ class StatusHoverIconInfo(QWidget):
             return
         if self.status_report is None:
             return
+
         status_report = self.status_report
         status = status_report.status
         count = status_report.count
@@ -144,10 +145,10 @@ class StatusHoverIconInfo(QWidget):
             self.d_only_txy_shots_len = len(self.d_only_txy_shots)
 
             info_text += "\n\n"
-            info_text += f"  DLD ∪ TXY: {self.d_union_shots_len} \n"
-            info_text += f"  DLD ∩ TXY: {self.d_inter_shots_len} \n"
-            info_text += f"  DLD ∖ TXY: {self.d_only_dld_shots_len} \n"
-            info_text += f"  TXY ∖ DLD: {self.d_only_txy_shots_len} \n"
+            info_text += f"  DLD ∪ TXY: {fnum(self.d_union_shots_len)} \n"
+            info_text += f"  DLD ∩ TXY: {fnum(self.d_inter_shots_len)} \n"
+            info_text += f"  DLD ∖ TXY: {fnum(self.d_only_dld_shots_len)} \n"
+            info_text += f"  TXY ∖ DLD: {fnum(self.d_only_txy_shots_len)} \n"
 
             if self.d_only_dld_shots_len > 0:
                 self.button1.setEnabled(True)
@@ -156,6 +157,17 @@ class StatusHoverIconInfo(QWidget):
             info_text += "\n\n"
             info_text += f"Problematic TXY files: {status_report.problematic_txy_ns}\n"
             self.button2.setEnabled(True)
+
+
+        if status_report.path in data_ram_cache:
+            info_text += "\n\n"
+            info_text += f"Data cached in RAM \n"
+            info_text += f"  Loaded Timestamp:     {status_report.time_load_ram} \n"
+            info_text += f"  Loaded txy files:     {fnum(status_report.loaded_txy_files_count)} \n"
+            info_text += f"  Loaded txy rows:      {fnum(status_report.loaded_txy_rows_count)} \n"
+            info_text += f"  Data compressed size: {fnum(status_report.data_comp_bytes)}B \n"
+            info_text += f"  Data loaded RAM size: {fnum(status_report.data_dict_bytes)}B \n"
+
         self.label.setText(info_text)
 
     # Placeholder function for Action 1
@@ -313,37 +325,6 @@ class StatusTreeView(QTreeView):
         status_report = model.fetch_status(file_path)
         if isinstance(status_report, StatusReport):
             self.popup.set_status_report(status_report)
-            # self.popup.refresh_info()
-            # status = status_report.status
-            # count = status_report.count
-            # extra_icons = status_report.extra_icons
-            # info_text = f"Path: {file_path}\nStatus: {status}\nCount: {count}\nExtra Icons: {', '.join(extra_icons) if extra_icons else 'None'}"
-            #
-            # if status_report.d_dld_shots is not None and status_report.d_txy_shots is not None:
-            #     # Warning: duplicate code to statusWorker.py
-            #     d_union_shots = set(status_report.d_dld_shots) | set(status_report.d_txy_shots)
-            #     d_inter_shots = set(status_report.d_dld_shots) & set(status_report.d_txy_shots)
-            #     d_only_dld_shots = set(status_report.d_dld_shots) - d_inter_shots
-            #     d_only_txy_shots = set(status_report.d_txy_shots) - d_inter_shots
-            #
-            #     d_union_shots_len = len(d_union_shots)
-            #     d_inter_shots_len = len(d_inter_shots)
-            #     d_only_dld_shots_len = len(d_only_dld_shots)
-            #     d_only_txy_shots_len = len(d_only_txy_shots)
-            #
-            #     info_text += "\n\n"
-            #     info_text += f"  DLD ∪ TXY: {d_union_shots_len} \n"
-            #     info_text += f"  DLD ∩ TXY: {d_inter_shots_len} \n"
-            #     info_text += f"  DLD ∖ TXY: {d_only_dld_shots_len} \n"
-            #     info_text += f"  TXY ∖ DLD: {d_only_txy_shots_len} \n"
-            #
-            #     if d_only_dld_shots_len > 0:
-            #         self.popup.button1.setEnabled(True)
-            #
-            # if status_report.problematic_txy_ns is not None:
-            #     info_text += "\n\n"
-            #     info_text += f"Problematic TXY files: {status_report.problematic_txy_ns}\n"
-            #     self.popup.button2.setEnabled(True)
 
             # self.popup.refresh_info(info_text)
         # Position the popup near the cursor

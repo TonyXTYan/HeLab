@@ -7,8 +7,6 @@ from helab.utils.cachingSetup import (
     load_cache_param,
     fnum,
     cache_status_string,
-    SCMgmt,
-    DRMgmt,
     CACHE_PARAMS_DEFAULTS,
     CACHE_PARAMS_OVERRIDE,
     caches
@@ -52,17 +50,3 @@ def test_cache_status_string() -> None:
     assert "Cache status:" in status_str
     for cache_name in caches.keys():
         assert cache_name in status_str
-
-
-def test_scmgmt_methods() -> None:
-    SCMgmt.update_append_extras()
-    SCMgmt.update_remove_extras()
-    SCMgmt.satinity_check()
-    SCMgmt.audit()
-
-
-def test_drmgmt_methods() -> None:
-    DRMgmt.load_data()
-    DRMgmt.evict_data()
-    DRMgmt.evict_all()
-    DRMgmt.shrink_ram()

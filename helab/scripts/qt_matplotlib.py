@@ -1,3 +1,4 @@
+# type: ignore
 import sys
 import numpy as np
 from PyQt6.QtWidgets import (
