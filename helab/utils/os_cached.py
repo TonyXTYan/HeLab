@@ -7,7 +7,7 @@ from typing import Iterator, List, Any, cast, Callable, Dict, Optional
 
 # import aiofiles
 
-from helab.utils.cachingSetup import os_file_system_cache
+from helab.utils.caching_setup import os_file_system_cache
 from helab.utils.constants import OS_DIR_CACHE_TTL
 
 

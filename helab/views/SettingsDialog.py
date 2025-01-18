@@ -1,4 +1,4 @@
-# settingsDialog.py
+# SettingsDialog.py
 import logging
 import sys
 from re import S
@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QChe
 from PyQt6.QtCore import QSettings, QUrl
 from diskcache import FanoutCache
 
-from helab.utils.cachingSetup import *
+from helab.utils.caching_setup import *
 from helab.utils.constants import *
 
 

@@ -1,6 +1,6 @@
 """
-Note: This file contains expanded tests for helabFileSystemModel.
-Other referenced files (helabFileSystemModel.py, workers, and utils) are not shown here.
+Note: This file contains expanded tests for HelabFileSystemModel.
+Other referenced files (HelabFileSystemModel.py, workers, and utils) are not shown here.
 They are assumed to be present in the codebase.
 """
 import time
@@ -11,14 +11,15 @@ from typing import Dict, cast
 from PyQt6.QtCore import QThreadPool, QModelIndex, QTimer, QEventLoop
 from mypyc.ir.rtypes import RUnion
 
-from helab.models.helabFileSystemModel import helabFileSystemModel
+from helab.models.HelabFileSystemModel import HelabFileSystemModel
 from helab.utils.os_cached import OSCMgmt
-from helab.workers.statusWorker import StatusWorker, StatusReport
-from helab.workers.statusDeepWorker import StatusDeepWorker
-from helab.workers.directoryCheckWorker import DirectoryCheckWorker
+from helab.workers.StatusWorker import StatusWorker
+from helab.models.StatusReport import StatusReport
+from helab.workers.StatusDeepWorker import StatusDeepWorker
+from helab.workers.DirectoryCheckWorker import DirectoryCheckWorker
 
 # Global worker dicts from helab.utils.threadingSetup
-from helab.utils.threadingSetup import (
+from helab.utils.threading_setup import (
     running_workers_status,
     running_workers_deep,
     running_workers_hasChildren,
@@ -26,7 +27,7 @@ from helab.utils.threadingSetup import (
 )
 
 # Global caches from helab.utils.cachingSetup
-from helab.utils.cachingSetup import *
+from helab.utils.caching_setup import *
 
 
 class TestHelabFileSystemModel(unittest.TestCase):
@@ -43,7 +44,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         os_file_system_cache.clear()
         data_ram_cache.clear()
 
-        self.model = helabFileSystemModel()
+        self.model = HelabFileSystemModel()
         self.thread_pool = cast(QThreadPool, QThreadPool.globalInstance())
 
     def tearDown(self) -> None:
@@ -65,7 +66,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
     # ------------------------------------------------------------------
     #
 
-    @patch('helab.models.helabFileSystemModel.logging')
+    @patch('helab.models.HelabFileSystemModel.logging')
     def test_stop_all_scans_cancels_and_removes_status_workers(self, mock_logging: MagicMock) -> None:
         """
         Verify that stop_all_scans cancels all StatusWorker instances and
@@ -87,7 +88,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         mock_logging.debug.assert_any_call("Worker canceled for: /path/to/file2")
         mock_logging.debug.assert_any_call("All scans have been requested to stop.")
 
-    @patch('helab.models.helabFileSystemModel.logging')
+    @patch('helab.models.HelabFileSystemModel.logging')
     def test_stop_all_scans_cancels_and_removes_deep_workers(self, mock_logging: MagicMock) -> None:
         """
         Verify that stop_all_scans cancels all StatusDeepWorker instances and
@@ -108,7 +109,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         mock_logging.debug.assert_any_call("Cancelled StatusDeepWorker for: /path/to/deep1")
         mock_logging.debug.assert_any_call("Cancelled StatusDeepWorker for: /path/to/deep2")
 
-    @patch('helab.models.helabFileSystemModel.logging')
+    @patch('helab.models.HelabFileSystemModel.logging')
     def test_stop_all_scans_cancels_and_removes_directory_check_workers(self, mock_logging: MagicMock) -> None:
         """
         Verify that stop_all_scans cancels all DirectoryCheckWorker instances and
@@ -129,7 +130,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         mock_logging.debug.assert_any_call("Cancelled DirectoryCheckWorker for: /path/to/check1")
         mock_logging.debug.assert_any_call("Cancelled DirectoryCheckWorker for: /path/to/check2")
 
-    @patch('helab.models.helabFileSystemModel.logging')
+    @patch('helab.models.HelabFileSystemModel.logging')
     def test_stop_all_scans_with_no_running_workers(self, mock_logging: MagicMock) -> None:
         """
         Ensure stop_all_scans does not fail when there are no workers running.
@@ -152,7 +153,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
     # ------------------------------------------------------------------
     #
 
-    @patch('helab.models.helabFileSystemModel.thread_pool_general.start')
+    @patch('helab.models.HelabFileSystemModel.thread_pool_general.start')
     def test_fetch_status_when_not_cached_starts_worker(self, mock_pool_start: MagicMock) -> None:
         """
         If a path is not cached and no worker is running, fetch_status should
@@ -169,7 +170,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         # Confirm that a worker was started
         mock_pool_start.assert_called_once()
 
-    @patch('helab.models.helabFileSystemModel.thread_pool_general.start')
+    @patch('helab.models.HelabFileSystemModel.thread_pool_general.start')
     def test_fetch_status_when_worker_already_running(self, mock_pool_start: MagicMock) -> None:
         """
         If a worker is already running for a path, fetch_status should return a
@@ -198,7 +199,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         # Ensure it didn't create a new worker
         self.assertNotIn(path, running_workers_status)
 
-    @patch('helab.models.helabFileSystemModel.logging')
+    @patch('helab.models.HelabFileSystemModel.logging')
     def test_fetch_status_loading_but_no_worker(self, mock_logging: MagicMock) -> None:
         """
         If the path is cached as 'loading' but no worker is present in
@@ -211,7 +212,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         # There's no worker for this path
         self.assertNotIn(path, running_workers_status)
 
-        with patch('helab.models.helabFileSystemModel.thread_pool_general.start') as mock_start:
+        with patch('helab.models.HelabFileSystemModel.thread_pool_general.start') as mock_start:
             report = self.model.fetch_status(path)
 
         # mock_logging.warning.assert_any_call(
@@ -221,7 +222,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         self.assertIn(path, running_workers_status)
         mock_start.assert_called_once()
 
-    @patch('helab.models.helabFileSystemModel.logging')
+    @patch('helab.models.HelabFileSystemModel.logging')
     def test_handle_status_computed(self, mock_logging: MagicMock) -> None:
         """
         handle_status_computed should remove the worker from running_workers_status
@@ -242,8 +243,8 @@ class TestHelabFileSystemModel(unittest.TestCase):
         self.assertNotIn(path, running_workers_status)
         self.assertEqual(status_cache[path], report)
 
-    @patch('helab.models.helabFileSystemModel.os_listdir_filtered')
-    @patch('helab.models.helabFileSystemModel.logging')
+    @patch('helab.models.HelabFileSystemModel.os_listdir_filtered')
+    @patch('helab.models.HelabFileSystemModel.logging')
     def test_on_directory_loaded_invalidation(self, mock_logging: MagicMock, mock_listdir: MagicMock) -> None:
         """
         on_directory_loaded should pop the directory entry from status_cache,
@@ -255,7 +256,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         self.assertFalse(OSCMgmt.has_children(path))
         mock_logging.debug.assert_called_with(f"on_directory_loaded: (popped) {path}")
 
-    @patch('helab.models.helabFileSystemModel.logging')
+    @patch('helab.models.HelabFileSystemModel.logging')
     def test_on_file_renamed(self, mock_logging: MagicMock) -> None:
         """
         on_file_renamed should remove the old path from the cache, ensuring we
@@ -271,7 +272,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         self.assertNotIn(old_path, status_cache)
         mock_logging.debug.assert_called_with(f"on_file_renamed: (popped) {old_path} -> {directory}/{new_name}")
 
-    @patch('helab.models.helabFileSystemModel.logging')
+    @patch('helab.models.HelabFileSystemModel.logging')
     def test_on_model_reset(self, mock_logging: MagicMock) -> None:
         """
         on_model_reset should clear the entire status_cache.
@@ -281,7 +282,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         self.assertEqual(len(status_cache), 0)
         mock_logging.debug.assert_called_with("(CLEAR) Model reset")
 
-    @patch('helab.models.helabFileSystemModel.DirectoryCheckWorker')
+    @patch('helab.models.HelabFileSystemModel.DirectoryCheckWorker')
     def test_has_children_creates_worker_if_not_cached(self, mock_dir_worker: MagicMock) -> None:
         """
         If hasChildren_cache doesn't have an entry for a directory, hasChildren
@@ -303,7 +304,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         # mock_dir_worker.assert_called_once()
         # mock_dir_worker.assert_called_once_with(file_info_mock)
 
-    @patch('helab.models.helabFileSystemModel', {"/some/cached/dir": True})
+    @patch('helab.models.HelabFileSystemModel', {"/some/cached/dir": True})
     def test_has_children_uses_cache(self) -> None:
         """
         If hasChildren_cache has a valid entry for the directory,
@@ -327,7 +328,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         result = OSCMgmt.has_children('/some/cached/dir')
         self.assertTrue(result)
 
-    @patch('helab.models.helabFileSystemModel.DirectoryCheckWorker')
+    @patch('helab.models.HelabFileSystemModel.DirectoryCheckWorker')
     def test_has_children_not_dir(self, mock_dir_worker: MagicMock) -> None:
         """
         If file_info is not a directory, hasChildren should just return False.
@@ -342,8 +343,8 @@ class TestHelabFileSystemModel(unittest.TestCase):
         self.assertFalse(result)
         mock_dir_worker.assert_not_called()
 
-    @patch('helab.models.helabFileSystemModel.logging')
-    @patch('helab.models.helabFileSystemModel.thread_pool_general.start')
+    @patch('helab.models.HelabFileSystemModel.logging')
+    @patch('helab.models.HelabFileSystemModel.thread_pool_general.start')
     def test_start_deep_status_worker_creates_worker(self, mock_pool_start: MagicMock, mock_log: MagicMock) -> None:
         """
         start_deep_status_worker should create a StatusDeepWorker, register it, and start it.
@@ -355,7 +356,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         # mock_pool_start.assert_called_once()
         QTimer.singleShot(10, running_workers_deep[path].run)
 
-    @patch('helab.models.helabFileSystemModel.logging')
+    @patch('helab.models.HelabFileSystemModel.logging')
     def test_process_deep_status_removes_worker_and_spawns_children(self, mock_log: MagicMock) -> None:
         """
         process_deep_status should remove the finished worker from running_workers_deep
@@ -379,7 +380,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
             call("/root/path/sub2", 1, True),
         ], any_order=True)
 
-    @patch('helab.models.helabFileSystemModel.thread_pool_general.start')
+    @patch('helab.models.HelabFileSystemModel.thread_pool_general.start')
     def test_rescan_starts_worker(self, mock_pool_start: MagicMock) -> None:
         """
         rescan should create a StatusRescanWorker if not already running and start it.
@@ -391,7 +392,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
         QTimer.singleShot(10, self.model.rescan_worker.run) # type: ignore[union-attr]
         # mock_pool_start.assert_called_once()
 
-    @patch('helab.models.helabFileSystemModel.logging')
+    @patch('helab.models.HelabFileSystemModel.logging')
     def disabled_test_rescan_cancel_if_any(self, mock_log: MagicMock) -> None:
         """
         rescan_cancel_if_any should cancel and remove the worker if it exists.
@@ -405,7 +406,7 @@ class TestHelabFileSystemModel(unittest.TestCase):
 
         dummy_worker.cancel.assert_called_once_with(scan_again=False)
         self.assertIsNone(self.model.rescan_worker)
-        mock_log.info.assert_any_call("helabFileSystemModel.rescan_cancel_if_any: cancelled")
+        mock_log.info.assert_any_call("HelabFileSystemModel.rescan_cancel_if_any: cancelled")
 
 
 if __name__ == '__main__':

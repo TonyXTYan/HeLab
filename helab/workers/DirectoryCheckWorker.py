@@ -1,13 +1,13 @@
-#helab/workers/directoryCheckWorker.py
+#helab/workers/DirectoryCheckWorker.py
 import logging
 import os
 import time
 
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QThread, QTimer
 
-from helab.utils.cachingSetup import *
+from helab.utils.caching_setup import *
 from helab.utils.os_cached import *
-from helab.utils.threadingSetup import running_workers_hasChildren, thread_pool_general
+from helab.utils.threading_setup import running_workers_hasChildren, thread_pool_general
 
 from typing import Optional, Callable
 

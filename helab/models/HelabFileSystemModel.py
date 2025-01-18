@@ -1,4 +1,4 @@
-# helab/models/helabFileSystemModel.py
+# helab/models/HelabFileSystemModel.py
 import logging
 import os
 import sys
@@ -11,20 +11,21 @@ from typing import Dict, Tuple, List, cast, Optional
 from PyQt6.QtCore import Qt, QThread, QModelIndex, QTimer, QObject, QDir
 from PyQt6.QtGui import QFileSystemModel, QColor
 
-from helab.utils.cachingSetup import *
-from helab.utils.threadingSetup import *
+from helab.utils.caching_setup import *
+from helab.utils.threading_setup import *
 from helab.utils.os_cached import *
 from helab.utils.constants import *
-from helab.workers.directoryCheckWorker import DirectoryCheckWorker
-from helab.workers.statusDeepWorker import StatusDeepWorker
-from helab.workers.statusRescanWorker import StatusRescanWorker
+from helab.workers.DirectoryCheckWorker import DirectoryCheckWorker
+from helab.workers.StatusDeepWorker import StatusDeepWorker
+from helab.workers.StatusRescanWorker import StatusRescanWorker
 # from helab.utils.loggingSetup import setup_logging
 
-from helab.workers.statusWorker import StatusWorker, StatusReport
+from helab.workers.StatusWorker import StatusWorker
+from helab.models.StatusReport import StatusReport
 from helab.resources.icons import tablerIcon, StatusIcons, str_to_QIcon
-from helab.workers.helabFSModelThrottleDataChangedEmit import HeLabFSModelThrottleDataChangedEmit
+from helab.workers.HelabFSModelThrottleDataChangedEmit import HelabFSModelThrottleDataChangedEmit
 
-class helabFileSystemModel(QFileSystemModel):
+class HelabFileSystemModel(QFileSystemModel):
     COLUMN_NAME = 0
     COLUMN_SIZE = 1
     COLUMN_TYPE = 2
@@ -34,35 +35,13 @@ class helabFileSystemModel(QFileSystemModel):
     COLUMN_RIGHTFILL = 6
     STATUS_EXTRA_ICONS_ROLE = Qt.ItemDataRole.UserRole + 1
 
-    # CACHE_HAS_CHILDREN: TTLCache[str, bool] = TTLCache(maxsize=10*1000, ttl=30)
-
     def __init__(self,
                  *args: QObject | None, **kwargs: QObject | None
                  ) -> None:
         super().__init__(*args, **kwargs)
         self.uuid = str(id(self))
 
-        # Cache the standard icons
-        # style = QApplication.style()
-
         self.folder_opened_path: Optional[str] = None # same as the one folderExplorer, updated by folderExplorer
-
-        # Initialize the cache with a maximum size to prevent unlimited growth
-        # self.status_cache = LRUCache(maxsize=10000)  # Store up to 10000 entries
-
-        # Initialize the thread pool
-        # self.thread_pool = QThreadPool()        # Might need to move this to a global queue system
-        # self.thread_pool = QThreadPool.globalInstance()
-        # self.thread_pool.setMaxThreadCount(8)
-        # self.thread_pool.setThreadPriority(QThread.Priority.LowPriority)
-        logging.debug(f"Multithreading with maximum {thread_pool_general.maxThreadCount()} threads")
-
-        # Initialize a set to keep track of running workers
-        # self.running_workers_status = {}
-        # self.running_workers_deep = {}
-
-        # # Connect the status_updated signal to a slot
-        # self.status_updated.connect(self.on_status_updated)
 
         # Connect signals to cache invalidation methods
         self.directoryLoaded.connect(self.on_directory_loaded)
@@ -72,17 +51,10 @@ class helabFileSystemModel(QFileSystemModel):
 
         self.rescan_worker: Optional[StatusRescanWorker] = None
 
-        self.throttled_data_changed_emitter = HeLabFSModelThrottleDataChangedEmit()
+        self.throttled_data_changed_emitter = HelabFSModelThrottleDataChangedEmit()
         self.throttled_data_changed_emitter.signals.emit_dataChanged.connect(self._throttled_data_changed_emit_now)
         running_workers_ThrottleDataChangedEmits[self.uuid] = self.throttled_data_changed_emitter
         thread_pool_gui_update.start(self.throttled_data_changed_emitter, priority=QThread.Priority.LowestPriority.value) # type: ignore[call-overload]
-
-        # self.pending_updates = set()
-        # self.update_timer = QTimer()
-        # self.update_timer.setSingleShot(True)
-        # self.update_timer.timeout.connect(self.emit_pending_updates)
-
-        # QTimer.singleShot(300, self.refresh)
 
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -174,7 +146,7 @@ class helabFileSystemModel(QFileSystemModel):
         return super().headerData(section, orientation, role)
 
     def fetch_status(self, folder_path: str) -> StatusReport:
-        return StatusWorker.fetch_status(folder_path, self.throttled_data_changed_emitter.add_update)
+        return StatusReport.fetch_status(folder_path, self.throttled_data_changed_emitter.add_update)
         # return QTimer.singleShot(0, lambda: StatusWorker.fetch_status(folder_path, self.handle_status_computed_v3))
 
     def fetch_status_legacy(self, folder_path: str) -> StatusReport:
@@ -217,7 +189,7 @@ class helabFileSystemModel(QFileSystemModel):
             return loading_status
 
     def handle_status_computed_v3(self, path: str) -> None:
-        StatusWorker.on_fetch_status_finished_basic(path)
+        StatusReport.on_fetch_status_finished_basic(path)
         self.throttled_data_changed_emitter.add_update(path)
 
     def handle_status_computed_v2(self, path: str) -> None:
@@ -527,7 +499,7 @@ class helabFileSystemModel(QFileSystemModel):
         # self.beginResetModel()
         # self.endResetModel()
         self.directoryLoaded.emit(self.rootPath())
-        logging.debug("helabFileSystemModel has been refreshed.")
+        logging.debug("HelabFileSystemModel has been refreshed.")
 
     # @cachetools.cached(CACHE_HAS_CHILDREN)
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
@@ -618,14 +590,14 @@ class helabFileSystemModel(QFileSystemModel):
         return rows
 
     def rescan(self, user_requested_scan: bool = False) -> None:
-        # logging.info("helabFileSystemModel.rescan: called")
+        # logging.info("HelabFileSystemModel.rescan: called")
 
         if self.rescan_worker is not None:
-            logging.warning("helabFileSystemModel.rescan: already running, cancelling this one and it will retry")
+            logging.warning("HelabFileSystemModel.rescan: already running, cancelling this one and it will retry")
             self.rescan_worker.cancel(allow_retry_scan = True)
             return
         else:
-            logging.debug("helabFileSystemModel.rescan: starting")
+            logging.debug("HelabFileSystemModel.rescan: starting")
 
         worker = StatusRescanWorker(rows=self.get_visible_rows(), model_folder_opened_path=self.folder_opened_path, user_requested_scan=user_requested_scan)
         worker.signals.finished.connect(self.on_rescan_finished)
@@ -638,7 +610,7 @@ class helabFileSystemModel(QFileSystemModel):
         pass
 
     def on_rescan_finished(self, u: bool = False) -> None:
-        logging.info("helabFileSystemModel.on_rescan_finished")
+        logging.info("HelabFileSystemModel.on_rescan_finished")
         self.refresh()
         self.rescan_worker = None
         rows = self.get_visible_rows()
@@ -654,7 +626,7 @@ class helabFileSystemModel(QFileSystemModel):
             self.throttled_data_changed_emitter.add_update(path)
 
     def on_rescan_cancelled(self, retry: bool = False, was_user_requested_scan: bool = False) -> None:
-        logging.info(f"helabFileSystemModel.on_rescan_cancelled {retry = }, {was_user_requested_scan = }")
+        logging.info(f"HelabFileSystemModel.on_rescan_cancelled {retry = }, {was_user_requested_scan = }")
         self.refresh()
         self.rescan_worker = None
         if retry: QTimer.singleShot(10, lambda: self.rescan(user_requested_scan=was_user_requested_scan))
@@ -662,14 +634,14 @@ class helabFileSystemModel(QFileSystemModel):
 
 
     def on_item_expanded(self, index: QModelIndex) -> None:
-        logging.debug(f"helabFileSystemModel.on_item_expanded: {self.filePath(index)}")
+        logging.debug(f"HelabFileSystemModel.on_item_expanded: {self.filePath(index)}")
         self.rescan()
 
     def rescan_cancel_if_any(self) -> None:
         if isinstance(self.rescan_worker, StatusRescanWorker):
             self.rescan_worker.cancel(allow_retry_scan = False)
             self.rescan_worker = None
-            logging.info("helabFileSystemModel.rescan_cancel_if_any: cancelled")
+            logging.info("HelabFileSystemModel.rescan_cancel_if_any: cancelled")
 
     def close_cleanup(self) -> None:
         self.rescan_cancel_if_any()
@@ -680,5 +652,5 @@ class helabFileSystemModel(QFileSystemModel):
         except:
             pass
 
-        logging.info("helabFileSystemModel.close_cleanup: done")
+        logging.info("HelabFileSystemModel.close_cleanup: done")
         self.deleteLater()

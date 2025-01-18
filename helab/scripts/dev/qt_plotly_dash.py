@@ -14,10 +14,10 @@ import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output
 
-from helab.scripts.pg_simple_densities import compute_range
-from helab.utils.cachingSetup import data_ram_cache
+from helab.scripts.dev.pg_simple_densities import compute_range
+from helab.utils.caching_setup import data_ram_cache
 from helab.utils.constants import DIR_TEMPS
-from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
+from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
 
 class DashServer:
     def __init__(self):

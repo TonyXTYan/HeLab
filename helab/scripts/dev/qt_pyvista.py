@@ -5,8 +5,8 @@ import pyvista as pv
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
 from pyvistaqt import QtInteractor
 
-from helab.utils.cachingSetup import data_ram_cache
-from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
+from helab.utils.caching_setup import data_ram_cache
+from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
 
 
 class MainWindow(QMainWindow):

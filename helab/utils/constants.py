@@ -280,6 +280,10 @@ def hash_str_to_int(code: str) -> int:
     return base62_decode(code)
 
 
+def assert_warn(condition: bool, message: str) -> None:
+    if not condition:
+        logging.warning(message)
+
 
 
 

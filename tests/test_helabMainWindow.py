@@ -10,10 +10,10 @@ from PyQt6.QtWidgets import QApplication, QMessageBox, QListWidget, QMenu, QWidg
 from PyQt6.QtCore import Qt
 
 from helab.resources.icons import StatusIcons, ToolIcons, PercentageIcon
-from helab.views.debugIcons import DebugIconsWindow
-from helab.views.folderExplorer import FolderExplorer
-from helab.views.helabMainWindow import MainWindow
-from helab.views.settingsDialog import SettingsDialog
+from helab.views.DebugIconsWindow import DebugIconsWindow
+from helab.views.FolderExplorer import FolderExplorer
+from helab.views.HelabMainWindow import HelabMainWindow
+from helab.views.SettingsDialog import SettingsDialog
 
 
 def test_qtbot_add_widget(qtbot: QtBot) -> None:
@@ -25,7 +25,7 @@ def test_qtbot_add_widget(qtbot: QtBot) -> None:
 
 @pytest.fixture
 def main_window(qtbot: QtBot) -> Any:
-    window = MainWindow()
+    window = HelabMainWindow()
     assert (isinstance(window, QWidget))
     qtbot.addWidget(window)
     window.show()
@@ -42,13 +42,13 @@ def disable_warnings() -> Any:
         yield
 
 
-def test_initial_state_main_window(main_window: MainWindow) -> None:
+def test_initial_state_main_window(main_window: HelabMainWindow) -> None:
     assert main_window.width() == main_window.DEFAULT_WIDTH
     assert main_window.height() == main_window.DEFAULT_HEIGHT
     assert main_window.status_bar is not None
 
 
-def test_toggle_left_panel(main_window: MainWindow) -> None:
+def test_toggle_left_panel(main_window: HelabMainWindow) -> None:
     initial_sizes = main_window.splitter.sizes()
     main_window.toggle_left_panel(False)
     collapsed_sizes = main_window.splitter.sizes()
@@ -59,7 +59,7 @@ def test_toggle_left_panel(main_window: MainWindow) -> None:
     assert expanded_sizes[0] == main_window.left_panel_width or expanded_sizes[0] > 0
 
 
-def test_toggle_right_panel(main_window: MainWindow) -> None:
+def test_toggle_right_panel(main_window: HelabMainWindow) -> None:
     initial_sizes = main_window.splitter.sizes()
     main_window.toggle_right_panel(False)
     collapsed_sizes = main_window.splitter.sizes()
@@ -70,25 +70,25 @@ def test_toggle_right_panel(main_window: MainWindow) -> None:
     assert expanded_sizes[2] == main_window.right_panel_width or expanded_sizes[2] > 0
 
 
-def test_add_new_folder_explorer_tab(main_window: MainWindow) -> None:
+def test_add_new_folder_explorer_tab(main_window: HelabMainWindow) -> None:
     initial_count = main_window.tab_widget.count()
     main_window.add_new_folder_explorer_tab()
     assert main_window.tab_widget.count() == initial_count + 1
 
 
-def test_on_back_button_clicked(main_window: MainWindow) -> None:
+def test_on_back_button_clicked(main_window: HelabMainWindow) -> None:
     main_window.on_back_button_clicked()
     assert True
 
 
-def test_close_event_main_window(main_window: MainWindow, qtbot: QtBot) -> None:
+def test_close_event_main_window(main_window: HelabMainWindow, qtbot: QtBot) -> None:
     QApplication.processEvents()
     qtbot.wait(1000)
     main_window.close()
     qtbot.wait(1000)
     assert not main_window.isVisible()
 
-# def test_create_menus_main_window(main_window: MainWindow) -> None:
+# def test_create_menus_main_window(main_window: HelabMainWindow) -> None:
 #     menubar = main_window.menu_bar
 #     assert menubar is not None
 #
@@ -131,14 +131,14 @@ def test_close_event_main_window(main_window: MainWindow, qtbot: QtBot) -> None:
 #         assert any(action.text().strip() == expected_action for action in debug_actions)
 
 
-# def test_show_settings_dialog(main_window: MainWindow, qtbot: QtBot) -> None:
+# def test_show_settings_dialog(main_window: HelabMainWindow, qtbot: QtBot) -> None:
 #     with patch.object(main_window, 'show_settings_dialog') as mock_show_settings:
 #         settings_action = main_window.menu_bar.findChild(QMenu, 'File').actions()[-2]
 #         qtbot.mouseClick(settings_action, Qt.MouseButton.LeftButton)
 #         mock_show_settings.assert_called_once()
 
 
-# def test_toggle_auto_load_ram(main_window: MainWindow, qtbot: QtBot) -> None:
+# def test_toggle_auto_load_ram(main_window: HelabMainWindow, qtbot: QtBot) -> None:
 #     current_folder_explorer = main_window.tab_widget.currentWidget()
 #     if isinstance(current_folder_explorer, FolderExplorer):
 #         original_state = current_folder_explorer.auto_load_ram
@@ -148,7 +148,7 @@ def test_close_event_main_window(main_window: MainWindow, qtbot: QtBot) -> None:
 #         pytest.skip("Current widget is not FolderExplorer")
 
 
-# def test_on_live_button_clicked_start(main_window: MainWindow, qtbot: QtBot) -> None:
+# def test_on_live_button_clicked_start(main_window: HelabMainWindow, qtbot: QtBot) -> None:
 #     main_window.action_tab_live_checked = False
 #     with patch.object(main_window, 'toggle_left_panel') as mock_toggle:
 #         qtbot.mouseClick(main_window.action_tab_live, Qt.MouseButton.LeftButton)
@@ -161,7 +161,7 @@ def test_close_event_main_window(main_window: MainWindow, qtbot: QtBot) -> None:
 #         assert not main_window.action_tab_folder_up.isEnabled()
 
 
-# def test_on_live_button_clicked_stop(main_window: MainWindow, qtbot: QtBot) -> None:
+# def test_on_live_button_clicked_stop(main_window: HelabMainWindow, qtbot: QtBot) -> None:
 #     main_window.action_tab_live_checked = True
 #     with patch.object(main_window, 'toggle_left_panel') as mock_toggle:
 #         qtbot.mouseClick(main_window.action_tab_live, Qt.MouseButton.LeftButton)
@@ -174,7 +174,7 @@ def test_close_event_main_window(main_window: MainWindow, qtbot: QtBot) -> None:
 #         assert main_window.action_tab_folder_up.isEnabled()
 
 
-# def test_resize_event_main_window(main_window: MainWindow, qtbot: QtBot) -> None:
+# def test_resize_event_main_window(main_window: HelabMainWindow, qtbot: QtBot) -> None:
 #     with patch.object(main_window, 'setUpdatesEnabled') as mock_set_updates:
 #         resize_event = QResizeEvent(main_window.size(), main_window.size())
 #         main_window.resizeEvent(resize_event)
@@ -182,7 +182,7 @@ def test_close_event_main_window(main_window: MainWindow, qtbot: QtBot) -> None:
 #         mock_set_updates.assert_any_call(True)
 
 
-def test_handle_exit_main_window(main_window: MainWindow, qtbot: QtBot) -> None:
+def test_handle_exit_main_window(main_window: HelabMainWindow, qtbot: QtBot) -> None:
     with patch.object(main_window, 'close') as mock_close:
         main_window.handle_exit(signal.SIGINT, None)
         mock_close.assert_called_once()

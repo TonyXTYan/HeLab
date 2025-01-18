@@ -9,8 +9,8 @@ import pytestqt
 from PyQt6.QtCore import QEventLoop
 from pytestqt.qtbot import QtBot
 
-from helab.workers.directoryCheckWorker import DirectoryCheckWorker
-from helab.utils.threadingSetup import running_workers_hasChildren
+from helab.workers.DirectoryCheckWorker import DirectoryCheckWorker
+from helab.utils.threading_setup import running_workers_hasChildren
 
 
 @pytest.mark.usefixtures("qtbot")

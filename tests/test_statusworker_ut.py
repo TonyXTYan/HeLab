@@ -5,7 +5,7 @@ from PyQt6.QtCore import QCoreApplication, QThreadPool
 from PyQt6.QtTest import QSignalSpy, QTest
 
 from helab.resources.icons import StatusIcons
-from helab.workers.statusWorker import StatusWorker, StatusReport
+from helab.workers.StatusWorker import StatusWorker
 
 
 class TestStatusWorker(unittest.TestCase):

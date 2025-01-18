@@ -10,10 +10,10 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 import plotly.graph_objs as go
 import plotly.io as pio
 
-from helab.scripts.pg_simple_densities import compute_range
-from helab.utils.cachingSetup import data_ram_cache
+from helab.scripts.dev.pg_simple_densities import compute_range
+from helab.utils.caching_setup import data_ram_cache
 from helab.utils.constants import DIR_TEMPS
-from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
+from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
 
 
 class Plotly3DScatter(QWidget):

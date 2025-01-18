@@ -10,10 +10,9 @@ from copy import deepcopy
 from PyQt6.QtCore import QSettings
 
 from helab.utils.constants import *
-from helab.utils.loggingSetup import setup_logging
 
 
-logging.debug("cachingSetup.py: Loading")
+logging.debug("caching_setup.py: Loading")
 
 # Default cache parameters from diskcache
 # https://github.com/grantjenks/python-diskcache/blob/master/diskcache/core.py

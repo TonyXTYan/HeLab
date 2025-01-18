@@ -6,10 +6,10 @@ from typing import Set, Optional, List
 from PyQt6.QtCore import QRunnable, QObject, pyqtSignal, QMutex, QMutexLocker
 
 
-class HeLabFSModelThrottleDataChangedEmitSignals(QObject):
+class HelabFSModelThrottleDataChangedEmitSignals(QObject):
     emit_dataChanged = pyqtSignal(list) # List[str]
 
-class HeLabFSModelThrottleDataChangedEmit(QRunnable):
+class HelabFSModelThrottleDataChangedEmit(QRunnable):
 
     def __init__(self,
                  pending_updates: Optional[Set[str]] = None,
@@ -23,7 +23,7 @@ class HeLabFSModelThrottleDataChangedEmit(QRunnable):
         self.pending_updates: Set[str] = pending_updates or set()
         self._is_paused = False
         self._is_cancelled = False
-        self.signals = HeLabFSModelThrottleDataChangedEmitSignals()
+        self.signals = HelabFSModelThrottleDataChangedEmitSignals()
         self._mutex = QMutex()
         self.batch_size = batch_size
         self.sleep_sec_pause = sleep_sec_pause
@@ -33,7 +33,7 @@ class HeLabFSModelThrottleDataChangedEmit(QRunnable):
     def run(self) -> None:
 
         while not self._is_cancelled:
-            # logging.debug(f"HeLabFSModelThrottleDataChangedEmit running - {len(self.pending_updates)}")
+            # logging.debug(f"HelabFSModelThrottleDataChangedEmit running - {len(self.pending_updates)}")
             time.sleep(self.sleep_sec_end_loop)
 
             if self._is_paused:
@@ -82,12 +82,12 @@ class HeLabFSModelThrottleDataChangedEmit(QRunnable):
     def add_update(self, item: str) -> None:
         with QMutexLocker(self._mutex):
             self.pending_updates.add(item)
-            # logging.debug(f"HeLabFSModelThrottleDataChangedEmit.add_update: {item = }, pending = {len(self.pending_updates)}")
+            # logging.debug(f"HelabFSModelThrottleDataChangedEmit.add_update: {item = }, pending = {len(self.pending_updates)}")
 
     def add_updates(self, items: Set[str] | str) -> None:
         with QMutexLocker(self._mutex):
             self.pending_updates.update(items)
-            # logging.debug(f"HeLabFSModelThrottleDataChangedEmit.add_updates: {items = }, pending = {len(self.pending_updates)}")
+            # logging.debug(f"HelabFSModelThrottleDataChangedEmit.add_updates: {items = }, pending = {len(self.pending_updates)}")
 
     def clear_updates(self) -> None:
         with QMutexLocker(self._mutex):

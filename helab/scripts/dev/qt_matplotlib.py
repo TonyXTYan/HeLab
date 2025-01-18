@@ -13,8 +13,8 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-from helab.utils.cachingSetup import data_ram_cache
-from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
+from helab.utils.caching_setup import data_ram_cache
+from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
 from helab.scripts.pg_simple_densities import compute_range
 
 from vispy import app, scene

@@ -20,17 +20,18 @@ from PyQt6.QtWidgets import QWidget, QHeaderView, QHBoxLayout, QVBoxLayout, QPus
 from diskcache import FanoutCache
 
 from helab.utils.constants import *
-from helab.utils.cachingSetup import *
-from helab.utils.threadingSetup import *
-from helab.models.helabFileSystemModel import helabFileSystemModel
+from helab.utils.caching_setup import *
+from helab.utils.threading_setup import *
+from helab.models.HelabFileSystemModel import HelabFileSystemModel
 from helab.utils.os_cached import os_isdir, OSCMgmt
-from helab.views.statusIconDelegate import StatusIconDelegate
-from helab.views.statusTreeView import StatusTreeView
-from helab.workers.directoryCheckWorker import DirectoryCheckWorker
-from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
-from helab.workers.statusDeepWorker import StatusDeepWorker
-from helab.workers.statusRescanWorker import StatusRescanWorker
-from helab.workers.statusWorker import StatusWorker, StatusReport
+from helab.views.StatusIconDelegate import StatusIconDelegate
+from helab.views.StatusTreeView import StatusTreeView
+from helab.workers.DirectoryCheckWorker import DirectoryCheckWorker
+from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
+from helab.workers.StatusDeepWorker import StatusDeepWorker
+from helab.workers.StatusRescanWorker import StatusRescanWorker
+from helab.workers.StatusWorker import StatusWorker
+from helab.models.StatusReport import StatusReport
 
 import numpy.typing as npt
 from numpy import float64
@@ -61,7 +62,7 @@ class FolderExplorer(QWidget):
         self.folder_opened_data: Optional[Dict[int, npt.NDArray[np.float64]]] = None
         self.folder_opened_path: Optional[str] = None
 
-        self.model = helabFileSystemModel()
+        self.model = HelabFileSystemModel()
         self.model.setRootPath(self.model_root_path)
         self.model.setReadOnly(True)
         # self.model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
@@ -73,11 +74,11 @@ class FolderExplorer(QWidget):
         self.tree.setModel(self.model)
         # self.tree.setRootIndex(self.model.index(model_root_path))
         self.tree.setRootIndex(self.model.index(self.view_path))
-        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_NAME, 270)
-        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_DATE_MODIFIED, 160)
-        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_STATUS_NUMBER, 60)
-        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_STATUS_ICON, 60)
-        self.tree.setColumnWidth(helabFileSystemModel.COLUMN_RIGHTFILL, 0)
+        self.tree.setColumnWidth(HelabFileSystemModel.COLUMN_NAME, 270)
+        self.tree.setColumnWidth(HelabFileSystemModel.COLUMN_DATE_MODIFIED, 160)
+        self.tree.setColumnWidth(HelabFileSystemModel.COLUMN_STATUS_NUMBER, 60)
+        self.tree.setColumnWidth(HelabFileSystemModel.COLUMN_STATUS_ICON, 60)
+        self.tree.setColumnWidth(HelabFileSystemModel.COLUMN_RIGHTFILL, 0)
         self.tree.setAlternatingRowColors(True)
         self.tree.setIconSize(QSize(16, 16))
         self.tree.setUniformRowHeights(True)
@@ -89,7 +90,7 @@ class FolderExplorer(QWidget):
 
         # # Set the custom delegate for the icon column
         # icon_delegate = StatusIconDelegate(self.tree)
-        # self.tree.setItemDelegateForColumn(helabFileSystemModel.COLUMN_STATUS_ICON, icon_delegate)
+        # self.tree.setItemDelegateForColumn(HelabFileSystemModel.COLUMN_STATUS_ICON, icon_delegate)
 
         # Control which columns to show, #TODO: move this to updatable columns to show
         if columns_to_show is not None:
@@ -106,17 +107,17 @@ class FolderExplorer(QWidget):
             logging.fatal(f"{self.tree = }")
             return
 
-        header.setSectionResizeMode(helabFileSystemModel.COLUMN_NAME, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(helabFileSystemModel.COLUMN_NAME, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(HelabFileSystemModel.COLUMN_NAME, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(HelabFileSystemModel.COLUMN_NAME, QHeaderView.ResizeMode.Interactive)
         # Other columns resize to contents
-        header.setSectionResizeMode(helabFileSystemModel.COLUMN_SIZE, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(helabFileSystemModel.COLUMN_TYPE, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(helabFileSystemModel.COLUMN_DATE_MODIFIED, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(helabFileSystemModel.COLUMN_STATUS_NUMBER, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(helabFileSystemModel.COLUMN_STATUS_ICON, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(helabFileSystemModel.COLUMN_RIGHTFILL, QHeaderView.ResizeMode.ResizeToContents)
-        # self.tree.setColumnWidth(helabFileSystemModel.COLUMN_STATUS_ICON, 60)
-        # self.tree.setColumnWidth(helabFileSystemModel.COLUMN_RIGHTFILL, 0)
+        header.setSectionResizeMode(HelabFileSystemModel.COLUMN_SIZE, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(HelabFileSystemModel.COLUMN_TYPE, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(HelabFileSystemModel.COLUMN_DATE_MODIFIED, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(HelabFileSystemModel.COLUMN_STATUS_NUMBER, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(HelabFileSystemModel.COLUMN_STATUS_ICON, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(HelabFileSystemModel.COLUMN_RIGHTFILL, QHeaderView.ResizeMode.ResizeToContents)
+        # self.tree.setColumnWidth(HelabFileSystemModel.COLUMN_STATUS_ICON, 60)
+        # self.tree.setColumnWidth(HelabFileSystemModel.COLUMN_RIGHTFILL, 0)
 
         # Create a horizontal main_layout for buttons
         button_layout = QHBoxLayout()
@@ -157,7 +158,8 @@ class FolderExplorer(QWidget):
         # Automatically expand the view to the desired path
         # QTimer.singleShot(1000, lambda: self.expand_to_path(target_path))
         self.expand_to_path(self.target_path)
-        self.selected_path = self.target_path
+        self.selected_path_globally = self.target_path
+        """This is the globally selected path, which the main window will be showing the data for"""
 
         # **Added Lines: Set context menu policy and connect the signal**
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -200,9 +202,23 @@ class FolderExplorer(QWidget):
             selection_model.clearSelection()
             selection_model.select(current_selection, QItemSelectionModel.SelectionFlag.Select)
 
-    def on_selection_changed(self, selected: QItemSelection, deselected: QItemSelection) -> None:
+    def clear_selection(self) -> None:
+        selection_model = self.get_selection_model()
+        selection_model.clearSelection()
 
-        # TODO: enable multi-row selection
+    def get_selected_path_from_model(self) -> str:
+        selection_model = self.get_selection_model()
+        current_selection = selection_model.selection()
+        if current_selection.isEmpty():
+            return self.view_path
+        else:
+            return self.model.filePath(current_selection.indexes()[0])
+
+    def on_selection_changed(self, selected: QItemSelection, deselected: QItemSelection) -> None:
+    #     pass
+    #
+    # def on_selection_changed_depreciated(self, selected: QItemSelection, deselected: QItemSelection) -> None:
+    #     # TODO: enable multi-row selection
 
         selected_indexes = selected.indexes()
         deselected_indexes = deselected.indexes()
@@ -216,7 +232,7 @@ class FolderExplorer(QWidget):
         # if self.auto_load_ram:
         for si in selected_indexes:
             file_path = self.model.filePath(si)
-            self.selected_path = file_path
+            self.selected_path_globally = file_path
             logging.info(f"folderExplorer.on_selection_changed: selected {file_path = }")
             if self.auto_load_ram:
                 self.load_to_ram_cache(self.model.fileInfo(si))
@@ -527,7 +543,7 @@ class FolderExplorer(QWidget):
                     data_ram_cache.pop(path)
                     status_report = status_cache.get(path)
                     if isinstance(status_report, StatusReport):
-                        status_report.update_ram_status(is_opened=path==self.selected_path)
+                        status_report.update_ram_status(is_opened=path==self.selected_path_globally)
                 case "osfs_system_cache":
                     OSCMgmt.clean_cache_at(path)
                 case "all":
@@ -546,25 +562,7 @@ class FolderExplorer(QWidget):
         pass
 
     def get_valid_status_report(self, file_info: QFileInfo) -> Tuple[int, StatusReport | None]:
-        file_path = file_info.absoluteFilePath()
-        logging.debug(f"get_valid_status_report: file_path = {file_path}")
-        # logging.warning(f"THIS IS STRICTLY FOR DEBUGGING PURPOSES")
-
-        status_report = status_cache.get(file_path)
-        if status_report is None:
-            logging.warning(f"  status_cache is None for {file_path = }")
-            return (-1, None)
-        if not isinstance(status_report, StatusReport):
-            logging.warning(f"  status_cache is not a StatusReport for {file_path = }")
-            return (-2, None)
-
-        logging.debug(f"  {status_report.status = }")
-
-        if not status_report.status in StatusReport.STATUS_CONTAINS_DATA_HERE:
-            # logging.warning(f"  status is not STATUS_OK for {file_path = }")
-            return (-3, None)
-
-        return (0, status_report)
+        return StatusReport.get_valid_status_report(file_info.absoluteFilePath())
 
     def action_debug_2_run(self, file_info: QFileInfo) -> None:
         logging.fatal(f"action_debug_2_run: THIS IS NO LONGER USED")
@@ -583,7 +581,7 @@ class FolderExplorer(QWidget):
                 logging.error(f"StatusWorker._run_helper_v1: error accessing cache for {folder_path}: {e}")
                 pass
 
-            logging.warning(f"{self.selected_path == folder_path = }")
+            logging.warning(f"{self.selected_path_globally == folder_path = }")
 
             file_pattern = os.path.join(folder_path, 'd_txy_forc*.txt')
             files = glob.glob(file_pattern)
@@ -634,55 +632,7 @@ class FolderExplorer(QWidget):
 
     def load_to_ram_cache(self, file_info: QFileInfo) -> None:
         folder_path = file_info.absoluteFilePath()
-
-        if folder_path in running_workers_ramLoading:
-            logging.warning(f"load_to_ram_cache: already running {folder_path = }")
-            # self.on_load_folder_to_ram_finished(folder_path, [], None)
-            return
-
-        # don't return here even if it's in cache, need to decompress the data using the worker thread
-        # if folder_path in data_ram_cache:
-        #     logging.warning(f"load_to_ram_cache: already in cache {folder_path = }")
-        #     self.on_load_folder_to_ram_finished_helper(folder_path, data_ram_cache[folder_path])
-        #     return
-
-        check, status_report = self.get_valid_status_report(file_info)
-        if check != 0 :
-            logging.debug(f"load_to_ram_cache: called on not-data-folder path: {folder_path}")
-            return
-        if status_report is None:
-            logging.critical(f"load_to_ram_cache: Impossible logic case status_report is None at {folder_path = }")
-            return
-        # status_report.extra_icons.append('loading')
-        # status_cache[folder_path] = status_report
-        status_report.set_loading_ram_status()
-
-        worker = LoadFolderToRamWorker(folder_path)
-        worker.signals.finished.connect(self.on_load_folder_to_ram_finished)
-        worker.signals.loading.connect(self.on_load_folder_to_ram_loading)
-        worker.signals.error.connect(self.on_load_folder_to_ram_error)
-        worker.setAutoDelete(True)
-        running_workers_ramLoading[folder_path] = worker
-        # self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value)
-        QTimer.singleShot(10, lambda: thread_pool_load_data_ram.start(worker, priority=QThread.Priority.IdlePriority.value)) # type: ignore[call-overload]
-        pass
-    
-    def on_load_folder_to_ram_finished(self,
-                                       folder_path: str,
-                                       data: object,
-                                       dict_keys: List[int],
-                                       problematic_txy_ns: Optional[List[int]],
-                                       ok_txy_files_count: int,
-                                       total_txy_rows: int,
-                                       data_dict_size: int,
-                                       data_comp_size: int,
-                                       loaded_time: Optional[datetime],
-                                       ) -> None:
-        logging.debug(f"on_load_folder_to_ram_finished: {folder_path = }"
-                      f", {problematic_txy_ns = }, {ok_txy_files_count = }, {total_txy_rows = }"
-                      f", {data_dict_size = }, {data_comp_size = }, {loaded_time = }")
-        running_workers_ramLoading.pop(folder_path, None)
-        self.on_load_folder_to_ram_finished_helper(folder_path, data, dict_keys, problematic_txy_ns, ok_txy_files_count, total_txy_rows, data_dict_size, data_comp_size, loaded_time)
+        LoadFolderToRamWorker.load_to_ram_cache(folder_path, on_finished=self.on_load_folder_to_ram_finished_helper)
 
     def on_load_folder_to_ram_finished_helper(self, folder_path: str,
                                               data: object,
@@ -694,13 +644,12 @@ class FolderExplorer(QWidget):
                                               data_comp_size: int,
                                               loaded_time: Optional[datetime],
                                               ) -> None:
-        #TODO: move these methods to LoadFolderToRamWorker
         if isinstance(data, dict):
             status_report = status_cache.get(folder_path)
             if status_report is not None and isinstance(status_report, StatusReport):
                 # status_report.extra_icons.remove('loading')
                 # status_report.update_extend_extras('')
-                if folder_path == self.selected_path:
+                if folder_path == self.selected_path_globally:
                     self.model.folder_opened_path = folder_path
                     self.folder_opened_path = folder_path
                     self.folder_opened_data = data
@@ -721,7 +670,7 @@ class FolderExplorer(QWidget):
                 #     status_report.update_problematic_txy_ns(problematic_txy_ns)
 
                 # status_cache[folder_path] = status_report
-                index = self.model.index(folder_path, helabFileSystemModel.COLUMN_STATUS_ICON)
+                index = self.model.index(folder_path, HelabFileSystemModel.COLUMN_STATUS_ICON)
                 if index.isValid():
                     # self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
                     self.model.throttled_data_changed_emitter.add_update(folder_path)
@@ -738,39 +687,8 @@ class FolderExplorer(QWidget):
             logging.critical(f"on_load_folder_to_ram_finished_helper: {type(data) = } is not dict, {folder_path = }")
             status_cache.pop(folder_path)
             self.model.fetch_status(folder_path)
+        emit_data_changed_signal(folder_path)
         pass
-
-    def on_load_folder_to_ram_error(self, folder_path: str, error: str) -> None:
-        logging.error(f"on_load_folder_to_ram_error: {folder_path = }, {error = }")
-        running_workers_ramLoading.pop(folder_path, None)
-        status_report = status_cache.get(folder_path, None)
-        status_report_exist = isinstance(status_report, StatusReport)
-        if not status_report_exist:
-            logging.error(f"on_load_folder_to_ram_error: not cached in in status_cache {folder_path = }")
-
-        if error in [LoadFolderToRamWorker.CANCEL_MSG_NOTHING_HERE,
-                     LoadFolderToRamWorker.CANCEL_MSG_ALREADY_CACHED_AND_NO_LONGER_SELECTED]:
-            if status_report_exist:
-                status_report.cancel_loading_ram_status()
-                # QTimer.singleShot(100, status_report.validate_ram_status)
-                self.model.throttled_data_changed_emitter.add_update(folder_path)
-            return
-        else:
-            status_cache.pop(folder_path, None)
-            self.model.fetch_status(folder_path)
-            data_ram_cache.pop(folder_path, None)
-
-    def on_load_folder_to_ram_loading(self, folder_path: str, progress: float) -> None:
-        # logging.debug(f"on_load_folder_to_ram_loading: {folder_path = }, {progress = }")
-        status_report = status_cache.get(folder_path)
-        if status_report is not None and isinstance(status_report, StatusReport):
-            status_report.set_loading_ram_progress(progress)
-            # index = self.model.index(folder_path, helabFileSystemModel.COLUMN_STATUS_ICON)
-            # if index.isValid():
-            #     self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
-            self.model.throttled_data_changed_emitter.add_update(folder_path)
-        pass
-
 
     # def context_menu_action_recalc_status(self, folder_info: QFileInfo) -> None:
     #     logging.debug(f"Recalculate Status for : {folder_info.absoluteFilePath()}")
@@ -857,7 +775,7 @@ class FolderExplorer(QWidget):
 
         logging.debug("Refreshing FolderExplorer.")
         # Reinitialize the model with the current paths
-        # self.model = helabFileSystemModel(
+        # self.model = HelabFileSystemModel(
         #     self.status_cache,
         #     self.thread_pool,
         #     self.running_workers_status,
@@ -897,7 +815,7 @@ class FolderExplorer(QWidget):
                 status_report = status_cache[self.folder_opened_path]
                 if isinstance(status_report, StatusReport):
                     status_report.update_ram_status(is_opened=False)
-                    index = self.model.index(self.folder_opened_path, helabFileSystemModel.COLUMN_STATUS_ICON)
+                    index = self.model.index(self.folder_opened_path, HelabFileSystemModel.COLUMN_STATUS_ICON)
                     if index.isValid():
                         self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
                     else:

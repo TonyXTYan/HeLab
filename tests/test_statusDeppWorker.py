@@ -6,8 +6,8 @@ import logging
 from PyQt6.QtCore import QDir, QEventLoop
 from pytestqt.qtbot import QtBot
 
-from helab.workers.statusDeepWorker import StatusDeepWorker
-from helab.utils.threadingSetup import running_workers_deep, running_workers_status
+from helab.workers.StatusDeepWorker import StatusDeepWorker
+from helab.utils.threading_setup import running_workers_deep, running_workers_status
 
 
 @pytest.mark.usefixtures("qtbot")

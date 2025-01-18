@@ -1,4 +1,4 @@
-# helab/workers/statusDeepWorker.py
+# helab/workers/StatusDeepWorker.py
 import os
 import logging
 import sys

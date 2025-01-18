@@ -5,11 +5,11 @@ from PyQt6.QtCore import Qt, QModelIndex, QTimer, QEvent, QRect, QPoint, QObject
 from PyQt6.QtGui import QMouseEvent, QFocusEvent, QPainter
 from PyQt6.QtWidgets import QTreeView, QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QProxyStyle, QStyle
 
-from helab.models.helabFileSystemModel import helabFileSystemModel
-from helab.utils.cachingSetup import status_cache, data_ram_cache, fnum
+from helab.models.HelabFileSystemModel import HelabFileSystemModel
+from helab.utils.caching_setup import status_cache, data_ram_cache, fnum
 from helab.utils.constants import *
-from helab.views.statusIconDelegate import StatusIconDelegate
-from helab.workers.statusWorker import StatusReport
+from helab.views.StatusIconDelegate import StatusIconDelegate
+from helab.models.StatusReport import StatusReport
 
 
 # class OptionalBranchIconStyle(QProxyStyle):
@@ -25,7 +25,7 @@ from helab.workers.statusWorker import StatusReport
 #                     return  # Do not draw the branch icon if there are no subdirectories
 #         super().drawPrimitive(element, option, painter, widget)
 #
-#     def index_has_subdirectories(self, index: QModelIndex, model: helabFileSystemModel) -> bool:
+#     def index_has_subdirectories(self, index: QModelIndex, model: HelabFileSystemModel) -> bool:
 #         logging.debug(f"index_has_subdirectories: {index = }")
 #         logging.debug(f"index_has_subdirectories: {index.model() = }, {model = }")
 #         logging.debug(f"index_has_subdirectories: {model.filePath(index) = }")
@@ -133,7 +133,7 @@ class StatusHoverIconInfo(QWidget):
         info_text = f"Path: {file_path}\nStatus: {status}\nCount: {count}\nExtra Icons: {', '.join(extra_icons) if extra_icons else 'None'}"
 
         if status_report.d_dld_shots is not None and status_report.d_txy_shots is not None:
-            # Warning: duplicate code to statusWorker.py
+            # Warning: duplicate code to StatusWorker.py
             self.d_union_shots = set(status_report.d_dld_shots) | set(status_report.d_txy_shots)
             self.d_inter_shots = set(status_report.d_dld_shots) & set(status_report.d_txy_shots)
             self.d_only_dld_shots = set(status_report.d_dld_shots) - self.d_inter_shots
@@ -232,7 +232,7 @@ class StatusTreeView(QTreeView):
         self.popup_visible = False
 
         icon_delegate = StatusIconDelegate(self)
-        self.setItemDelegateForColumn(helabFileSystemModel.COLUMN_STATUS_ICON, icon_delegate)
+        self.setItemDelegateForColumn(HelabFileSystemModel.COLUMN_STATUS_ICON, icon_delegate)
 
         # Timer to delay hiding the popup
         self.hover_timer = QTimer()
@@ -258,7 +258,7 @@ class StatusTreeView(QTreeView):
         if event is None: return
         pos = event.pos()
         index = self.indexAt(pos)
-        if index.isValid() and index.column() == helabFileSystemModel.COLUMN_STATUS_ICON:
+        if index.isValid() and index.column() == HelabFileSystemModel.COLUMN_STATUS_ICON:
             # Determine if the mouse is over the icon area
             rect = self.visualRect(index)
             icon_size = self.iconSize()
@@ -269,7 +269,7 @@ class StatusTreeView(QTreeView):
                 icon_size.width(),
                 icon_size.height()
             )
-            extra_icons = index.data(helabFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
+            extra_icons = index.data(HelabFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
             extra_icon_rects = []
             if extra_icons:
                 x_offset = status_icon_rect.right() + 2  # 2px spacing between icons
@@ -315,8 +315,8 @@ class StatusTreeView(QTreeView):
         if model is None or not hasattr(model, 'filePath') or not hasattr(model, 'fetch_status'):
             logging.error("show_popup: model is bad")
             return
-        if not isinstance(model, helabFileSystemModel):
-            logging.error("show_popup: model is not helabFileSystemModel")
+        if not isinstance(model, HelabFileSystemModel):
+            logging.error("show_popup: model is not HelabFileSystemModel")
             return
         # Get data from the model
         file_path = model.filePath(index)
@@ -351,7 +351,7 @@ class StatusTreeView(QTreeView):
 
     def on_item_expanded(self, index: QModelIndex) -> None:
         model = self.model()
-        if isinstance(model, helabFileSystemModel):
+        if isinstance(model, HelabFileSystemModel):
             logging.debug(f"StatusTreeView.on_item_expanded: {model.filePath(index)}")
             model.on_item_expanded(index)
         else:

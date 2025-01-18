@@ -13,7 +13,7 @@ import logging
 import os
 from sys import getsizeof
 
-from typing import List, Any, cast, Dict, Callable
+from typing import List, Any, cast, Dict, Callable, Optional
 
 import blosc
 import numpy as np
@@ -26,12 +26,16 @@ import zstandard
 import zstandard as zstd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QDir
+from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QDir, QTimer, QThread
 
 from helab.resources.icons import PercentageIcon
-from helab.utils.cachingSetup import data_ram_cache, fnum, status_cache
-from helab.workers.statusWorker import StatusReport
-
+from helab.utils.caching_setup import data_ram_cache, fnum, status_cache
+from helab.utils.threading_setup import running_workers_ramLoading, thread_pool_load_data_ram, \
+    running_workers_ThrottleDataChangedEmits, emit_data_changed_signal
+from helab.workers.StatusRescanWorker import StatusRescanWorker
+from helab.workers.StatusWorker import StatusWorker
+from helab.models.StatusReport import StatusReport
+from helab.models.HelabFileSystemModel import HelabFileSystemModel
 
 class LoadFolderToRamWorkerSignals(QObject):
     finished = pyqtSignal(str, dict, list, list, int, int, int, int, object)
@@ -41,8 +45,8 @@ class LoadFolderToRamWorkerSignals(QObject):
 
 class LoadFolderToRamWorker(QRunnable):
 
-    _TIMEDELTA_SEC_UPDATE_PROGRESS_MIN = timedelta(seconds=0.5)
-    _TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM = timedelta(seconds=0.5)
+    _TIMEDELTA_SEC_UPDATE_PROGRESS_MIN = timedelta(seconds=1.0)
+    _TIMEDELTA_SEC_UPDATE_PROGRESS_STREAM = timedelta(seconds=1.0)
 
     CANCEL_MSG_ALREADY_CACHED_AND_NO_LONGER_SELECTED = "cancelled - already cached and no longer selected (user changed selection, cancelled decompress request)"
     CANCEL_MSG_SHUTDOWN_REQUESTED = "cancelled - shutdown requested"
@@ -303,9 +307,103 @@ class LoadFolderToRamWorker(QRunnable):
 
     @staticmethod
     def valide_cached_health() -> None:
+        logging.warn("valide_cached_health is not implemented yet")
         warnings.warn("valide_cached_health is not implemented yet", RuntimeWarning)
         warnings.warn("should move this to a separate class", RuntimeWarning)
-        logging.warn("valide_cached_health is not implemented yet")
+
+    @staticmethod
+    def load_to_ram_cache(folder_path: str,
+                          on_finished: Optional[Callable[[str, object, List[int], Optional[List[int]], int, int, int, int, Optional[datetime]], None]] = None,
+                          on_loading: Optional[Callable[[str, float], None]] = None,
+                          on_error: Optional[Callable[[str, str], None]] = None
+                          ) -> None:
+        if folder_path in running_workers_ramLoading:
+            logging.warning(f"load_to_ram_cache: already running {folder_path = }")
+            # self.on_load_folder_to_ram_finished(folder_path, [], None)
+            return
+
+        check, status_report = StatusReport.get_valid_status_report(folder_path)
+        if check != 0:
+            logging.debug(f"load_to_ram_cache: called on not-data-folder path: {folder_path}")
+            return
+        if status_report is None:
+            logging.critical(f"load_to_ram_cache: Impossible logic case status_report is None at {folder_path = }")
+            return
+        # status_report.extra_icons.append('loading')
+        # status_cache[folder_path] = status_report
+        status_report.set_loading_ram_status()
+
+        def func_on_finished(p: str, d: object, dk: List[int], pt: Optional[List[int]], ok: int, tr: int, dds: int, dcs: int, lt: Optional[datetime]) -> None:
+            LoadFolderToRamWorker.on_load_folder_to_ram_finished(p, d, dk, pt, ok, tr, dds, dcs, lt)
+            if on_finished is not None:
+                QTimer.singleShot(0, lambda: on_finished(p, d, dk, pt, ok, tr, dds, dcs, lt))       # type: ignore[reportOptionalCall, unused-ignore]
+        def func_on_loading(p: str, prog: float) -> None:
+            LoadFolderToRamWorker.on_load_folder_to_ram_loading(p, prog)
+            if on_loading is not None:
+                QTimer.singleShot(0, lambda: on_loading(p, prog))                                   # type: ignore[reportOptionalCall, unused-ignore]
+        def func_on_error(p: str, e: str) -> None:
+            LoadFolderToRamWorker.on_load_folder_to_ram_error(p, e)
+            if on_error is not None:
+                QTimer.singleShot(0, lambda: on_error(p, e))                                        # type: ignore[reportOptionalCall, unused-ignore]
+
+        worker = LoadFolderToRamWorker(folder_path)
+        worker.signals.finished.connect(func_on_finished)
+        worker.signals.loading.connect(func_on_loading)
+        worker.signals.error.connect(func_on_error)
+        worker.setAutoDelete(True)
+        running_workers_ramLoading[folder_path] = worker
+        # self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value)
+        QTimer.singleShot(10, lambda: thread_pool_load_data_ram.start(worker,
+                                      priority=QThread.Priority.IdlePriority.value))  # type: ignore[call-overload]
+        pass
+
+    @staticmethod
+    def on_load_folder_to_ram_finished(folder_path: str,
+                                       data: object,
+                                       dict_keys: List[int],
+                                       problematic_txy_ns: Optional[List[int]],
+                                       ok_txy_files_count: int,
+                                       total_txy_rows: int,
+                                       data_dict_size: int,
+                                       data_comp_size: int,
+                                       loaded_time: Optional[datetime],
+                                       ) -> None:
+        logging.debug(f"on_load_folder_to_ram_finished: {folder_path = }"
+                      f", {problematic_txy_ns = }, {ok_txy_files_count = }, {total_txy_rows = }"
+                      f", {data_dict_size = }, {data_comp_size = }, {loaded_time = }")
+        emit_data_changed_signal(folder_path)
+        running_workers_ramLoading.pop(folder_path, None)
+        pass
+
+    @staticmethod
+    def on_load_folder_to_ram_error(folder_path: str, error: str) -> None:
+        logging.error(f"on_load_folder_to_ram_error: {folder_path = }, {error = }")
+        running_workers_ramLoading.pop(folder_path, None)
+        status_report = status_cache.get(folder_path, None)
+        status_report_exist = isinstance(status_report, StatusReport)
+        if not status_report_exist:
+            logging.error(f"on_load_folder_to_ram_error: not cached in in status_cache {folder_path = }")
+
+        if error in [LoadFolderToRamWorker.CANCEL_MSG_NOTHING_HERE,
+                     LoadFolderToRamWorker.CANCEL_MSG_ALREADY_CACHED_AND_NO_LONGER_SELECTED]:
+            if status_report_exist:
+                status_report.cancel_loading_ram_status()
+                emit_data_changed_signal(folder_path)
+            return
+        else:
+            status_cache.pop(folder_path, None)
+            StatusReport.fetch_status(folder_path)
+            data_ram_cache.pop(folder_path, None)
+
+    @staticmethod
+    def on_load_folder_to_ram_loading(folder_path: str, progress: float) -> None:
+        status_report = status_cache.get(folder_path)
+        if status_report is not None and isinstance(status_report, StatusReport):
+            status_report.set_loading_ram_progress(progress)
+            emit_data_changed_signal(folder_path)
+        pass
+
+
 
 class CompressionAlgorithmsDumpsite:
     @staticmethod

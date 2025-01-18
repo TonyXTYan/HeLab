@@ -3,7 +3,7 @@ from collections import OrderedDict
 
 # tests/test_cachingSetup.py
 
-from helab.utils.cachingSetup import (
+from helab.utils.caching_setup import (
     load_cache_param,
     fnum,
     cache_status_string,

@@ -9,18 +9,19 @@ from typing import Tuple, List, Dict, Any
 from PIL.TiffTags import lookup
 from PyQt6.QtCore import QDir, QThreadPool, Qt, QSize, QTimer
 from PyQt6.QtWidgets import QTabWidget, QWidget, QMessageBox, QTabBar, QAbstractItemView
-from cachetools import LRUCache, TTLCache
-from matplotlib.backend_bases import CloseEvent
+# from cachetools import LRUCache, TTLCache
+# from matplotlib.backend_bases import CloseEvent
 
 from helab.utils.constants import *
-from helab.utils.threadingSetup import *
-from helab.utils.cachingSetup import *
-from helab.models.helabFileSystemModel import helabFileSystemModel
-from helab.views.folderExplorer import FolderExplorer
-from helab.workers.directoryCheckWorker import DirectoryCheckWorker
-from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
-from helab.workers.statusDeepWorker import StatusDeepWorker
-from helab.workers.statusWorker import StatusWorker
+from helab.utils.threading_setup import *
+from helab.utils.caching_setup import *
+from helab.models.HelabFileSystemModel import HelabFileSystemModel
+from helab.views.FolderExplorer import FolderExplorer
+from helab.workers.DirectoryCheckWorker import DirectoryCheckWorker
+from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
+from helab.workers.StatusDeepWorker import StatusDeepWorker
+from helab.workers.StatusWorker import StatusWorker
+from helab.models.StatusReport import StatusReport
 
 
 class FolderTabWidget(QTabWidget):
@@ -123,11 +124,11 @@ class FolderTabWidget(QTabWidget):
             view_path = QDir.rootPath()
 
         columns_to_show = [
-            helabFileSystemModel.COLUMN_NAME,
-            helabFileSystemModel.COLUMN_DATE_MODIFIED,
-            helabFileSystemModel.COLUMN_STATUS_NUMBER,
-            helabFileSystemModel.COLUMN_STATUS_ICON,
-            helabFileSystemModel.COLUMN_RIGHTFILL
+            HelabFileSystemModel.COLUMN_NAME,
+            HelabFileSystemModel.COLUMN_DATE_MODIFIED,
+            HelabFileSystemModel.COLUMN_STATUS_NUMBER,
+            HelabFileSystemModel.COLUMN_STATUS_ICON,
+            HelabFileSystemModel.COLUMN_RIGHTFILL
         ]
 
         logging.debug(f"folderTabsWidget.add_new_folder_explorer_tab: cleaned {model_root_path = }, {target_path = }, {view_path = }")
@@ -189,7 +190,7 @@ class FolderTabWidget(QTabWidget):
     def update_folder_explorer_tab_title_on_selection_change(self, selected: List[str], deselected: List[str]) -> None:
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
-            selected_path = current_folder_explorer.selected_path
+            selected_path = current_folder_explorer.selected_path_globally
             if selected_path:
                 # self.setTabText(self.currentIndex(), os.path.basename(selected_path))
                 self.update_folder_explorer_tab_title_on_root_change(selected_path, self.currentIndex())
@@ -237,8 +238,15 @@ class FolderTabWidget(QTabWidget):
         self.update_tab_titles()
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
-            logging.debug(f"Current tab dir_path: {current_folder_explorer.model_root_path}, view_path: {current_folder_explorer.view_path}, target_path: {current_folder_explorer.target_path}")
+            currently_selected_path = current_folder_explorer.get_selected_path_from_model()
+            logging.debug(f"Current tab dir_path: {current_folder_explorer.model_root_path}"
+                          f", view_path: {current_folder_explorer.view_path}"
+                          f", target_path: {current_folder_explorer.target_path}"
+                          f", selected_path = {currently_selected_path}"
+                          # f", {current_folder_explorer.get_selected_path() = }"
+                          )
         else:
+            currently_selected_path = ""
             if index == -1:
                 logging.debug("folderTabWidget.on_current_tab_changed: index is -1")
             else:
@@ -247,6 +255,36 @@ class FolderTabWidget(QTabWidget):
         # if isinstance(current_folder_explorer, FolderExplorer):
         #     current_folder_explorer.update_back_button_state()
         #     self.tab_back_button_enabled = current_folder_explorer.back_button_enabled
+
+        for ii in range(self.count()):
+            logging.debug(f"folderTabWidget.on_current_tab_changed: checking tab {ii}")
+            if ii == index:
+                continue
+            other_folder_explorer = self.widget(ii)
+            if isinstance(other_folder_explorer, FolderExplorer):
+                logging.debug(f"folderTabWidget.on_current_tab_changed: {ii = }, {other_folder_explorer.folder_opened_path = }")
+                if (other_folder_explorer.folder_opened_path is not None and
+                    other_folder_explorer.folder_opened_path != currently_selected_path):
+                    other_sr = status_cache.get(other_folder_explorer.folder_opened_path, None)
+                    if isinstance(other_sr, StatusReport):
+                        logging.debug(f"{other_sr.status = }, {other_sr.extra_icons = }")
+                        other_sr.update_ram_status()
+                        emit_data_changed_signal(other_folder_explorer.folder_opened_path)
+                    else:
+                        logging.warning(f"folderTabWidget.on_current_tab_changed: other_sr is not a StatusReport instance. {other_sr = }")
+                    other_folder_explorer.folder_opened_data = None
+                    other_folder_explorer.folder_opened_path = None
+                # other_folder_explorer.clear_selection()
+            else:
+                logging.warning("folderTabWidget.on_current_tab_changed: other tab is not a FolderExplorer instance.")
+
+    def update_all_path_selection(self, path: str) -> None:
+        for index in range(self.count()):
+            current_folder_explorer = self.widget(index)
+            if isinstance(current_folder_explorer, FolderExplorer):
+                current_folder_explorer.selected_path_globally = path
+            else:
+                logging.warning("Current tab is not a FolderExplorer instance.")
 
     def on_stop_button_clicked(self) -> None:
         current_folder_explorer = self.currentWidget()

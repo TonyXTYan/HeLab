@@ -16,8 +16,8 @@ import pyqtgraph.opengl as gl
 from PyQt6.QtCore import QRectF
 
 from helab.scripts.pg_simple_densities import compute_range
-from helab.utils.cachingSetup import data_ram_cache
-from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
+from helab.utils.caching_setup import data_ram_cache
+from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
 
 
 
@@ -150,7 +150,7 @@ class ScatterPlot3DWidget(QtWidgets.QWidget):
     #         if event.button() == QtCore.Qt.MouseButton.RightButton:
     #             pass
     #             # print("Press!")
-    #     # return super(MainWindow, self).eventFilter(source, event)
+    #     # return super(HelabMainWindow, self).eventFilter(source, event)
     #     # return False
     #
     # def pan(self, dx, dy, dz, relative='view'):

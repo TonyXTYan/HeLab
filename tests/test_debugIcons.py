@@ -8,8 +8,8 @@ from PyQt6.QtWidgets import QListWidget, QWidget
 from pytestqt.qtbot import QtBot
 
 from helab.resources.icons import StatusIcons, ToolIcons, PercentageIcon, IconsInitUtil
-from helab.views.debugIcons import DebugIconsWindow
-from helab.views.settingsDialog import SettingsDialog
+from helab.views.DebugIconsWindow import DebugIconsWindow
+from helab.views.SettingsDialog import SettingsDialog
 
 
 

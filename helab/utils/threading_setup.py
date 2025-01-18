@@ -1,4 +1,4 @@
-# helab/utils/threadingSetup.py
+# helab/utils/threading_setup.py
 from __future__ import annotations
 import logging
 import os
@@ -11,20 +11,20 @@ from humanfriendly.terminal import message
 
 from helab.utils.synchronised_dict import SynchronisedDict
 
-logging.warn("threadingSetup.py: initializing...")
+logging.warn("threading_setup.py: initializing...")
 
 if TYPE_CHECKING:
-    from helab.workers.directoryCheckWorker import DirectoryCheckWorker
-    from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
-    from helab.workers.statusDeepWorker import StatusDeepWorker
-    from helab.workers.statusWorker import StatusWorker
-    from helab.workers.helabFSModelThrottleDataChangedEmit import HeLabFSModelThrottleDataChangedEmit
+    from helab.workers.DirectoryCheckWorker import DirectoryCheckWorker
+    from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
+    from helab.workers.StatusDeepWorker import StatusDeepWorker
+    from helab.workers.StatusWorker import StatusWorker
+    from helab.workers.HelabFSModelThrottleDataChangedEmit import HelabFSModelThrottleDataChangedEmit
 
 running_workers_status: SynchronisedDict[str, StatusWorker] = SynchronisedDict()
 running_workers_deep: SynchronisedDict[str, StatusDeepWorker] = SynchronisedDict()
 running_workers_hasChildren: SynchronisedDict[str, DirectoryCheckWorker] = SynchronisedDict()
 running_workers_ramLoading: SynchronisedDict[str, LoadFolderToRamWorker] = SynchronisedDict()
-running_workers_ThrottleDataChangedEmits: SynchronisedDict[str, HeLabFSModelThrottleDataChangedEmit] = SynchronisedDict()
+running_workers_ThrottleDataChangedEmits: SynchronisedDict[str, HelabFSModelThrottleDataChangedEmit] = SynchronisedDict()
 
 os_cpu_count = psutil.cpu_count(logical=False)
 if os_cpu_count is None: os_cpu_count = 1
@@ -86,6 +86,10 @@ def single_run_pools_total_activeThreadCount() -> int:
     return  thread_pool_general.activeThreadCount() + \
             thread_pool_load_data_ram.activeThreadCount()
 
+def emit_data_changed_signal(path: str) -> None:
+    for e in running_workers_ThrottleDataChangedEmits.values():
+        e.add_update(path)
+
 def clear_all_thread_pools() -> None:
     # QThreadPool.globalInstance().clear()
     getattr(QThreadPool.globalInstance(), 'clear', lambda: None)()  # emm ya just trying this way to do it 
@@ -112,7 +116,7 @@ def cancel_all_workers() -> None:
         workerC.cancel()
     running_workers_hasChildren.clear()
 
-    from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker   # FIXME I don't like this
+    from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker   # FIXME I don't like this
     for workerL in running_workers_ramLoading.values():
         workerL.cancel(message=LoadFolderToRamWorker.CANCEL_MSG_SHUTDOWN_REQUESTED)
     running_workers_ramLoading.clear()

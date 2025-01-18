@@ -7,13 +7,14 @@ import logging
 
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, Qt, QModelIndex
 
-# from helab.models.helabFileSystemModel import helabFileSystemModel
-from helab.utils.cachingSetup import status_cache
-from helab.utils.threadingSetup import all_pools_total_activeThreadCount
-from helab.workers.statusWorker import StatusReport, StatusWorker
+# from helab.models.HelabFileSystemModel import HelabFileSystemModel
+from helab.utils.caching_setup import status_cache
+from helab.utils.threading_setup import all_pools_total_activeThreadCount
+from helab.workers.StatusWorker import StatusWorker
+from helab.models.StatusReport import StatusReport
 
 if TYPE_CHECKING:
-    from helab.models.helabFileSystemModel import helabFileSystemModel
+    from helab.models.HelabFileSystemModel import HelabFileSystemModel
 
 class StatusRescanWorkerSignals(QObject):
     finished = pyqtSignal(bool)
@@ -21,7 +22,7 @@ class StatusRescanWorkerSignals(QObject):
 
 class StatusRescanWorker(QRunnable):
     def __init__(self,
-                 # model: helabFileSystemModel,
+                 # model: HelabFileSystemModel,
                  rows: List[Tuple[QModelIndex, str]],
                  model_folder_opened_path: Optional[str] = None,
                  user_requested_scan: bool = False,
@@ -83,7 +84,7 @@ class StatusRescanWorker(QRunnable):
                 logging.warning(f"StatusRescanWorker: missing attributes in {path = }, {status_report = }")
                 warnings.warn(f"StatusRescanWorker: missing attributes in {path = }, {status_report = }", RuntimeWarning)
                 status_cache.pop(path)
-        StatusWorker.fetch_status(path)
+        StatusReport.fetch_status(path)
 
     def cancel(self, allow_retry_scan: bool = True) -> None:
         self._is_cancelled = True

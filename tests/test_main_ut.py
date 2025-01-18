@@ -8,7 +8,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from helab.resources.icons import IconsInitUtil
-from helab.views.helabMainWindow import MainWindow
+from helab.views.HelabMainWindow import HelabMainWindow
 
 import pytest
 import os
@@ -38,7 +38,7 @@ class TestMainWindow(unittest.TestCase):
 
     def setUp(self) -> None:
         IconsInitUtil.initialise_icons()
-        self.main_window = MainWindow()
+        self.main_window = HelabMainWindow()
         # QThreadPool.globalInstance().waitForDone()
         self.main_window.show()
         # QTest.qWaitForWindowExposed(self.main_window)
@@ -68,8 +68,8 @@ class TestMainWindow(unittest.TestCase):
     #     self.assertTrue("HeLab" in self.main_window.windowTitle())
 
     # def test_default_size(self) -> None:
-    #     self.assertEqual(self.main_window.width(), MainWindow.DEFAULT_WIDTH)
-    #     self.assertEqual(self.main_window.height(), MainWindow.DEFAULT_HEIGHT)
+    #     self.assertEqual(self.main_window.width(), HelabMainWindow.DEFAULT_WIDTH)
+    #     self.assertEqual(self.main_window.height(), HelabMainWindow.DEFAULT_HEIGHT)
 
     # def test_menus_created(self) -> None:
     #     menus = self.main_window.menu_bar.actions()
@@ -90,8 +90,8 @@ class TestMainWindow(unittest.TestCase):
     #     self.assertTrue("HeLab" in self.main_window.windowTitle())
 
     # def test_default_size(self) -> None:
-    #     self.assertEqual(self.main_window.width(), MainWindow.DEFAULT_WIDTH)
-    #     self.assertEqual(self.main_window.height(), MainWindow.DEFAULT_HEIGHT)
+    #     self.assertEqual(self.main_window.width(), HelabMainWindow.DEFAULT_WIDTH)
+    #     self.assertEqual(self.main_window.height(), HelabMainWindow.DEFAULT_HEIGHT)
     #     # QThreadPool.globalInstance().waitForDone()
     #
     # def test_menus_created(self) -> None:

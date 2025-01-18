@@ -17,12 +17,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
-from helab.scripts.pg_simple_densities import *
+from helab.scripts.dev.pg_simple_densities import *
 import numpy as np
 import numpy.typing as npt
 
-from helab.utils.cachingSetup import data_ram_cache
-from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
+from helab.utils.caching_setup import data_ram_cache
+from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
 
 
 class MainWindow(QMainWindow):

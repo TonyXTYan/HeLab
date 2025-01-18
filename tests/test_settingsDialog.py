@@ -2,7 +2,7 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
-from helab.views.settingsDialog import SettingsDialog
+from helab.views.SettingsDialog import SettingsDialog
 
 @pytest.fixture
 def app(qapp: QApplication) -> QApplication:

@@ -25,9 +25,9 @@ from PyQt6.QtWidgets import QApplication
 
 from helab.resources.icons import StatusIcons, ToolIcons, IconsInitUtil
 from helab.utils.constants import *
-from helab.utils.cachingSetup import *
-from helab.views.helabMainWindow import MainWindow
-from helab.utils.threadingSetup import *
+from helab.utils.caching_setup import *
+from helab.views.HelabMainWindow import HelabMainWindow
+from helab.utils.threading_setup import *
 
 
 if __name__ == "__main__":
@@ -62,7 +62,7 @@ if __name__ == "__main__":
 
     IconsInitUtil.initialise_icons()
 
-    main_window = MainWindow()
+    main_window = HelabMainWindow()
     main_window.show()
 
     sys.exit(app.exec())

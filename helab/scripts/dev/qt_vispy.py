@@ -5,8 +5,8 @@ from PyQt6.QtWidgets import QApplication, QMainWindow
 from vispy import scene
 from vispy.scene import visuals
 
-from helab.utils.cachingSetup import data_ram_cache
-from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
+from helab.utils.caching_setup import data_ram_cache
+from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
 
 
 class MainWindow(QMainWindow):

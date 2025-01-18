@@ -9,6 +9,7 @@ import sys
 import tempfile
 import types
 from datetime import datetime, timedelta
+from sys import getsizeof
 from typing import List, Optional
 
 import psutil
@@ -22,18 +23,18 @@ from numpy.f2py.crackfortran import include_paths
 from typing_extensions import no_type_check
 
 from helab.resources.icons import ToolIcons
-from helab.utils.cachingSetup import *
+from helab.utils.caching_setup import *
 from helab.utils.constants import *
 # from helab.utils.os_cached import , os_scandir_cache, os_isdir_cache, os_listdir, os_scandir, os_isdir, os_scandir_cache
 from helab.utils.os_cached import *
-from helab.utils.cachingSetup import *
-from helab.utils.threadingSetup import *
-from helab.views.folderExplorer import FolderExplorer
-from helab.views.folderTabsWidget import FolderTabWidget
-from helab.views.memoryUsageWindow import MemoryUsageWindow
-from helab.views.settingsDialog import SettingsDialog
-from helab.views.debugIcons import DebugIconsWindow
-from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
+from helab.utils.caching_setup import *
+from helab.utils.threading_setup import *
+from helab.views.FolderExplorer import FolderExplorer
+from helab.views.FolderTabWidget import FolderTabWidget
+from helab.views.MemoryUsageWindow import MemoryUsageWindow
+from helab.views.SettingsDialog import SettingsDialog
+from helab.views.DebugIconsWindow import DebugIconsWindow
+from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
 
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 # sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
@@ -43,24 +44,27 @@ import pyqtgraph as pg
 import pyqtgraph.parametertree as ptree
 
 
-class MainWindow(QMainWindow):
+class HelabMainWindow(QMainWindow):
     DEFAULT_WIDTH = 1600
     DEFAULT_HEIGHT = 900
 
-    
+    INTERVAL_UPDATE_STATUS_BAR_LEFT = 100
+    INTERVAL_UPDATE_STATUS_BAR_RIGHT = 1000
+
+    STATUS_LEFT_MISSED_REFRESH_HANG_THRESHOLD_COUNTS = 10
+    STATUS_LEFT_MISSED_REFRESH_HANG_THRESHOLD_SECS = 10
+    STATUS_LEFT_DEBUG_PRINT_HANG_THRESHOLD_MS = 999
+
     def __init__(self) -> None:
         super().__init__()
         # logging.debug(f"Current directory is {CURRENT_WORKING_DIRECTORY}")
         if not os.path.exists(DIR_TEMPS): os.makedirs(DIR_TEMPS)
 
         self.current_tracking_folder_path = '/'
-        self.named_temp_files: List[tempfile._TemporaryFileWrapper[bytes]] = []
-
+        self.named_temp_files: List[tempfile._TemporaryFileWrapper[bytes]] = [] #TODO: dev code, remove these in prod
 
         signal.signal(signal.SIGINT, self.handle_exit)
         signal.signal(signal.SIGTERM, self.handle_exit)
-
-        # current directory is
 
         self.process = psutil.Process()
         icon_path = os.path.abspath("./helab/resources/ai-icon.icns")
@@ -77,6 +81,7 @@ class MainWindow(QMainWindow):
         self._setup_central_widgets()
 
         self.status_bar = QStatusBar()
+        self._create_status_bar()
 
         # Create Menubar
         menubar = self.menuBar()
@@ -86,18 +91,18 @@ class MainWindow(QMainWindow):
         self.menu_bar: QMenuBar = menubar
         self.create_menus()
 
+        # Create Left Panel (File Tree View)
+        self.tab_widget.currentChanged.connect(self.on_current_tab_changed)
+
+        # Delay the execution of add_new_folder_explorer_tab until the GUI is loaded
+        QTimer.singleShot(10, self.add_new_folder_explorer_tab)
+        QTimer.singleShot(50, self.update_tool_enabled_state)
+        # QTimer.singleShot(20, self.on_folder_explorer_selection_changed)
+        QTimer.singleShot(100, self.action_tab_refresh.trigger)
+
+    def _create_status_bar(self) -> None:
         # Create Status Bar
         self.status_bar.setStyleSheet("QStatusBar { border-top: 1px solid #d8d8d8; }")
-
-        # status_bar_padding = QWidget()
-        # status_bar_padding.setMaximumWidth(2)
-        # self.status_bar.addWidget(status_bar_padding)
-        #
-        # self.status_bar_checkbox = QCheckBox("")
-        # self.status_bar_checkbox.setChecked(True)
-        # self.status_bar_checkbox.setToolTip("Toggle threads status pop up info visibility")
-        # self.status_bar.addWidget(self.status_bar_checkbox)
-
 
         self.setStatusBar(self.status_bar)
         self.status_bar_message_left = QLabel("...")
@@ -105,60 +110,20 @@ class MainWindow(QMainWindow):
         self.status_bar_message_right = QLabel(f"Please wait. GUI loading... v{APP_VERSION} ({APP_COMMIT_HASH})")
         self.status_bar_message_last_update = datetime.now()
 
-        # status_bar_left_spacer = QWidget()
-        # status_bar_left_spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        # self.status_bar.addWidget(status_bar_left_spacer)
-
-        # self.status_bar_message_middle = QLabel(f"HeLab v{APP_VERSION} ({APP_COMMIT_HASH})")
-        # self.status_bar_message_middle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # self.status_bar.addWidget(self.status_bar_message_middle)
-
-        # status_bar_right_spacer = QWidget()
-        # status_bar_right_spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        # self.status_bar.addWidget(status_bar_right_spacer)
-
-        # self.status_bar_message_right = QLabel("GUI initialising...")
         self.status_bar.addPermanentWidget(self.status_bar_message_right)
         self.status_bar_message_right.setToolTip("(App resource usage) / (system total resource usage)")
-
-        # self.status_bar_message_left.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-        # self.status_bar_message_middle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        # self.status_bar_message_right.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-
 
         # Setup a timer to update the status bar with thread status
         self.status_timer_thread_status = QTimer(self)
         self.status_timer_thread_status.timeout.connect(self.update_status_bar_left)
-        self.status_timer_thread_status.start(200)  # Update every 200ms
+        self.status_timer_thread_status.start(self.INTERVAL_UPDATE_STATUS_BAR_LEFT)
         self.status_timer_threadpool_hang_counts = 0
         self.status_timer_threadpool_hang_timestamp: Optional[QDateTime] = None
 
 
         self.status_timer_cpu_ram = QTimer(self)
         self.status_timer_cpu_ram.timeout.connect(self.update_status_bar_right)
-        self.status_timer_cpu_ram.start(1000)  # Update every 1000ms
-
-        # self.status_icon_loading = QPixmap(TablerIcons.load(OutlineIcon.LOADER_2,color='000000').toqpixmap().scaled(128, 128, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        # self.status_icon_loading_angle = 0
-        # self.status_icon_checked = QPixmap(TablerIcons.load(OutlineIcon.CIRCLE_CHECK, color='005500').toqpixmap().scaled(128, 128, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        # self.status_icon = QLabel()
-        # self.status_bar.addPermanentWidget(self.status_icon)
-
-        # self.update_status_bar_left()
-        # self.update_status_bar_right()
-
-        # Create Left Panel (File Tree View)
-        # self.setup_file_tree_view()
-        self.tab_widget.currentChanged.connect(self.on_current_tab_changed)
-        # self.tab_widget.add_new_folder_explorer_tab()
-        # self.add_new_folder_explorer_tab()
-        # Delay the execution of add_new_folder_explorer_tab until the GUI is loaded
-        QTimer.singleShot(10, self.add_new_folder_explorer_tab)
-        QTimer.singleShot(50, self.update_tool_enabled_state)
-        # QTimer.singleShot(20, self.on_folder_explorer_selection_changed)
-        QTimer.singleShot(100, self.action_tab_refresh.trigger)
-
-
+        self.status_timer_cpu_ram.start(self.INTERVAL_UPDATE_STATUS_BAR_RIGHT)
 
     def update_status_bar_left(self) -> None:
         active_threads_all = all_pools_total_activeThreadCount()
@@ -170,16 +135,6 @@ class MainWindow(QMainWindow):
 
         if not self.isActiveWindow():
             QToolTip.hideText()
-
-        # def _cache_status_stirng_old_cachetools() -> str:
-        #     # return "TODO"
-        #     cache_str = "Cache status:\n"
-        #     cache_str += f"  tab_widget.status_cache:      {len(self.tab_widget.status_cache)} items\n"
-        #     cache_str += f"  tab_widget.hasChildren_cache: {len(self.tab_widget.hasChildren_cache)} items\n"
-        #     cache_str += f"  os_listdir_cache: {os_listdir.cache_info()}\n"           # type: ignore[attr-defined]
-        #     cache_str += f"  os_scandir_cache: {os_scandir_list.cache_info()}\n"      # type: ignore[attr-defined]
-        #     cache_str += f"  os_isdir_cache:   {os_isdir.cache_info()}\n"             # type: ignore[attr-defined]
-        #     return cache_str
 
         tooltip_string = "Threadpool status: "
         if sum(queue_depths) > 0:
@@ -218,7 +173,6 @@ class MainWindow(QMainWindow):
             tooltip_string += cache_status_string()
 
             self.status_bar_message_left.setToolTip(tooltip_string)
-            # self.status_bar_message_left.installEventFilter(self)
             tooltip_string_num_lines = len(tooltip_string.split("\n"))
 
             if self.status_timer_threadpool_hang_counts == 0:
@@ -228,9 +182,9 @@ class MainWindow(QMainWindow):
             if (self.isActiveWindow()
                 # and self.status_bar_checkbox.isChecked()
                 and self.view_toggle_thread_status.isChecked()  # type: ignore[has-type] # I personally guarantee this is fine
-                and (self.status_timer_threadpool_hang_counts >= 10
+                and (self.status_timer_threadpool_hang_counts >= self.STATUS_LEFT_MISSED_REFRESH_HANG_THRESHOLD_COUNTS
                   or  (self.status_timer_threadpool_hang_timestamp is not None
-                    and QDateTime.currentDateTime().toSecsSinceEpoch() - self.status_timer_threadpool_hang_timestamp.toSecsSinceEpoch() > 3)
+                    and QDateTime.currentDateTime().toSecsSinceEpoch() - self.status_timer_threadpool_hang_timestamp.toSecsSinceEpoch() > self.STATUS_LEFT_MISSED_REFRESH_HANG_THRESHOLD_SECS)
             )):
                 QToolTip.showText(self.status_bar_message_left.mapToGlobal(
                     QPoint(40, -60 + self.status_bar_message_left.height() - round(tooltip_string_num_lines * 15) ) ),
@@ -263,7 +217,7 @@ class MainWindow(QMainWindow):
                 self.set_tools_and_tabs_enable()
         datetime_now = datetime.now()
         time_delta = datetime_now - self.status_bar_message_last_update
-        if time_delta > timedelta(milliseconds=999):
+        if time_delta > timedelta(milliseconds=self.STATUS_LEFT_DEBUG_PRINT_HANG_THRESHOLD_MS):
             # self.status_bar_message_left.setText(f" {INDICATOR_DOTS[self.status_timer_threadpool_hang_counts % 10]} Active: {active_threads_all}, Queued: {queue_depths}")
             logging.critical(f"update_status_bar_left: GUI DID\'T RESPOND for {1e-6*time_delta.microseconds:.1f}s {active_threads_all = }, {queue_depths = }")
         self.status_bar_message_last_update = datetime.now()
@@ -415,30 +369,53 @@ class MainWindow(QMainWindow):
 
             menu_debug.addSeparator()
 
-            action_debug_3 = QAction('Debug 3', self)
-            action_debug_3.triggered.connect(self.action_debug_3_run)
+            action_debug_3 = QAction('Debug - validate tab status', self)
+            action_debug_3.triggered.connect(self.action_debug_validate_tab_status)
             menu_debug.addAction(action_debug_3)
 
 
-            action_debug_4 = QAction('Debug 4', self)
-            action_debug_4.triggered.connect(self.action_debug_4_run)
+            action_debug_4 = QAction('Debug - show current visible rows', self)
+            action_debug_4.triggered.connect(self.action_debug_show_current_visible_rows)
             menu_debug.addAction(action_debug_4)
 
             action_debug_gc_collect = QAction('gc.collect()', self)
             action_debug_gc_collect.triggered.connect(gc.collect)
             menu_debug.addAction(action_debug_gc_collect)
 
+            action_debug_6 = QAction('Debug - 6', self)
+            action_debug_6.triggered.connect(lambda: logging.debug("Debug action 6"))
+            menu_debug.addAction(action_debug_6)
+
 
 
         else:
             logging.error("menu_debug is None")
             
-    def action_debug_3_run(self) -> None:
-        logging.info("action_debug_3_run: called")
+    def action_debug_validate_tab_status(self) -> None:
+        logging.info("action_debug_validate_tab_status: called")
+        logging.info(f"  {self.current_tracking_folder_path = }")
+        logging.info(f"  {self.tab_widget.count() = }")
+        logging.info(f"  {self.tab_widget.currentIndex() = }")
+        ic = self.tab_widget.currentIndex()
+        for i in range(self.tab_widget.count()):
+            tab = self.tab_widget.widget(i)
+            if isinstance(tab, FolderExplorer):
+                ps = tab.selected_path_globally
+                op = tab.folder_opened_path
+                od = tab.folder_opened_data
+                logging.info(f"  tab {i}: {ps = }, {op = }, {fnum(getsizeof(od)) = }B")
+                assert_warn(ps == self.current_tracking_folder_path, f"tab {i} {ps = } != {self.current_tracking_folder_path = }")
+                if i == ic:
+                    assert_warn(op == self.current_tracking_folder_path, f"tab {i} {op = } != {self.current_tracking_folder_path = }")
+                    assert_warn(ps == self.current_tracking_folder_path, f"tab {i} {ps = } != {self.current_tracking_folder_path = }")
+                    assert_warn(od is not None, f"tab {i} {od = } is None")
+
+            else:
+                logging.warning(f"action_debug_validate_tab_status: tab {i} is not a FolderExplorer")
 
         pass
 
-    def action_debug_4_run(self) -> None:
+    def action_debug_show_current_visible_rows(self) -> None:
         current_file_explorer = self.tab_widget.currentWidget()
         if isinstance(current_file_explorer, FolderExplorer):
             logging.info(f"{current_file_explorer.model.rootPath() = }")
@@ -726,27 +703,6 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.right_panel)
 
 
-    # REVIEW: these can be moved somewhere else
-    # def plotly_to_dock_widget(self, plotly_fig: plotly.graph_objs.Figure, dock_widget_title: str) -> (tempfile.NamedTemporaryFile, QDockWidget):
-    def _setup_legacy_plotly_to_dock_widget(self, plotly_fig: plotly.graph_objs.Figure, dock_widget_title: str) -> None:
-        from PyQt6.QtWebEngineWidgets import QWebEngineView
-        plotly_fig_html = plotly_fig.to_html()
-        plotly_view = QWebEngineView()
-        plotly_temp = tempfile.NamedTemporaryFile(prefix="plotly_", suffix='.html', dir=DIR_TEMPS, delete=False)
-        self.named_temp_files.append(plotly_temp)
-        plotly_temp.write(plotly_fig_html.encode('utf-8'))
-        plotly_temp_html_filename = plotly_temp.name
-        logging.debug(f"plotly_to_dock_widget: title: {dock_widget_title}, tempfile: {plotly_temp_html_filename}")
-        plotly_view.load(QUrl.fromLocalFile(plotly_temp_html_filename))
-        plotly_dock_widget = QDockWidget(dock_widget_title, self)
-        plotly_dock_widget.setWidget(plotly_view)
-        # return plotly_temp, plotly_dock_widget
-        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, plotly_dock_widget)
-        self.dock_widgets.append(plotly_dock_widget)
-        # self.named_temp_files.append(plotly_temp)
-        # plotly_temp.close()
-        # os.remove(plotly_temp_html_filename)
-        # QTimer.singleShot(10*1000, lambda: os.remove(plotly_temp_html_filename))
 
     def _setup_middle_area(self) -> None:
         # Middle area (main content area)
@@ -820,9 +776,40 @@ class MainWindow(QMainWindow):
         # Initial check to set placeholder visibility
         self.update_placeholder_visibility()
 
+    def update_placeholder_visibility(self) -> None:
+        # Check if any dock widgets are visible
+        logging.debug(f"update_placeholder_visibility: called")
+        any_visible = any(dock_widget.isVisible() for dock_widget in self.dock_widgets)
+        if any_visible:
+            self.central_placeholder.hide()
+        else:
+            self.central_placeholder.show()
+
+    # REVIEW: these can be moved somewhere else
+    # def plotly_to_dock_widget(self, plotly_fig: plotly.graph_objs.Figure, dock_widget_title: str) -> (tempfile.NamedTemporaryFile, QDockWidget):
+    def _setup_legacy_plotly_to_dock_widget(self, plotly_fig: plotly.graph_objs.Figure, dock_widget_title: str) -> None:
+        from PyQt6.QtWebEngineWidgets import QWebEngineView
+        plotly_fig_html = plotly_fig.to_html()
+        plotly_view = QWebEngineView()
+        plotly_temp = tempfile.NamedTemporaryFile(prefix="plotly_", suffix='.html', dir=DIR_TEMPS, delete=False)
+        self.named_temp_files.append(plotly_temp)
+        plotly_temp.write(plotly_fig_html.encode('utf-8'))
+        plotly_temp_html_filename = plotly_temp.name
+        logging.debug(f"plotly_to_dock_widget: title: {dock_widget_title}, tempfile: {plotly_temp_html_filename}")
+        plotly_view.load(QUrl.fromLocalFile(plotly_temp_html_filename))
+        plotly_dock_widget = QDockWidget(dock_widget_title, self)
+        plotly_dock_widget.setWidget(plotly_view)
+        # return plotly_temp, plotly_dock_widget
+        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, plotly_dock_widget)
+        self.dock_widgets.append(plotly_dock_widget)
+        # self.named_temp_files.append(plotly_temp)
+        # plotly_temp.close()
+        # os.remove(plotly_temp_html_filename)
+        # QTimer.singleShot(10*1000, lambda: os.remove(plotly_temp_html_filename))
+
     @no_type_check
     def _setup_simple_test_pyqtgraph(self) -> None:
-        import helab.scripts.pg_simple_densities as pgsd
+        import helab.scripts.dev.pg_simple_densities as pgsd
         win = pgsd.make_three_density_plots(
             LoadFolderToRamWorker.default_algorithm_decompress(data_ram_cache[list(data_ram_cache)[0]]))
 
@@ -864,14 +851,7 @@ class MainWindow(QMainWindow):
         self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_widget)
         self.dock_widgets.append(dock_widget)
 
-    def update_placeholder_visibility(self) -> None:
-        # Check if any dock widgets are visible
-        logging.debug(f"update_placeholder_visibility: called")
-        any_visible = any(dock_widget.isVisible() for dock_widget in self.dock_widgets)
-        if any_visible:
-            self.central_placeholder.hide()
-        else:
-            self.central_placeholder.show()
+
 
 
     def toggle_left_panel(self, checked: bool) -> None:
@@ -1002,9 +982,11 @@ class MainWindow(QMainWindow):
         # Update the window title with the selected path
         current_folder_explorer = self.tab_widget.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
-            selected_path = current_folder_explorer.selected_path
+            selected_path = current_folder_explorer.selected_path_globally
+            # note this selected_path_globally is updated first by the signal in FolderExplorer
             file_info = QFileInfo(selected_path)
             if file_info.isDir():
+                self.tab_widget.update_all_path_selection(selected_path)
                 folder_name = file_info.fileName()
                 logging.debug(f"on_folder_explorer_selection_changed: {selected_path = }, {folder_name = }")
                 self.current_tracking_folder_path = selected_path
@@ -1017,7 +999,7 @@ class MainWindow(QMainWindow):
                 logging.warning(f"on_folder_explorer_selection_changed: not a directory: {selected_path}")
         else:
             self.setWindowTitle(    f"HeLab    No Folder Selected")
-        logging.debug(f"on_folder_explorer_selection_changed: done")
+        # logging.debug(f"on_folder_explorer_selection_changed: done")
 
     def add_new_folder_explorer_tab(self,
                                     model_root_path: str|None = None,
@@ -1036,7 +1018,7 @@ class MainWindow(QMainWindow):
         current_folder_explorer = self.tab_widget.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.rootPathChanged.connect(self.update_tool_enabled_state)
-            logging.debug(f"add_new_folder_explorer_tab: {current_folder_explorer.selected_path = }")
+            logging.debug(f"add_new_folder_explorer_tab: {current_folder_explorer.selected_path_globally = }")
             selection_model = current_folder_explorer.get_selection_model()
             selection_model.selectionChanged.connect(self.on_folder_explorer_selection_changed)
         else:
@@ -1115,21 +1097,21 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(100, lambda: self.setUpdatesEnabled(True))
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
-        logging.info("MainWindow closeEvent")
+        logging.info("HelabMainWindow closeEvent")
 
-        QTimer.singleShot(0, cancel_all_workers)
+        cancel_all_workers()
 
         for temp_file in self.named_temp_files:
-            QTimer.singleShot(0, temp_file.close)
-            QTimer.singleShot(10, lambda: os.remove(temp_file.name))
+            temp_file.close()
+            os.remove(temp_file.name)
 
         for dock_widget in self.dock_widgets:
-            QTimer.singleShot(0, dock_widget.close)
+            dock_widget.close()
 
-        QTimer.singleShot(0, lambda: self.tab_widget.closeEvent(a0))
+        self.tab_widget.closeEvent(a0)
 
         # Save the status cache
-        QTimer.singleShot(0, close_all_caches)
+        close_all_caches()
 
         # Save settings
         # settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
@@ -1137,7 +1119,7 @@ class MainWindow(QMainWindow):
         # settings.setValue("windowState", self.saveState())
         # super().closeEvent(a0)
 
-        logging.info("MainWindow closeEvent done")
+        logging.info("HelabMainWindow closeEvent done")
         QApplication.quit()
         pass
 
