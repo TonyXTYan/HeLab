@@ -234,11 +234,11 @@ class FolderExplorer(QWidget):
             file_path = self.model.filePath(si)
             self.selected_path_globally = file_path
             logging.info(f"folderExplorer.on_selection_changed: selected {file_path = }")
-            if self.auto_load_ram:
-                self.load_to_ram_cache(self.model.fileInfo(si))
-                logging.debug(f"folderExplorer.on_selection_changed: load_to_ram_cache requested at {file_path = }")
-            else:
-                logging.debug(f"folderExplorer.on_selection_changed: auto_load_ram disabled at {file_path = }")
+            # if self.auto_load_ram:
+            #     self.load_to_ram_cache(self.model.fileInfo(si))
+            #     logging.debug(f"folderExplorer.on_selection_changed: load_to_ram_cache requested at {file_path = }")
+            # else:
+            #     logging.debug(f"folderExplorer.on_selection_changed: auto_load_ram disabled at {file_path = }")
             break
         # else:
         #     logging.debug(f"folderExplorer.on_selection_changed: auto_load_ram disabled")
@@ -633,6 +633,10 @@ class FolderExplorer(QWidget):
     def load_to_ram_cache(self, file_info: QFileInfo) -> None:
         folder_path = file_info.absoluteFilePath()
         LoadFolderToRamWorker.load_to_ram_cache(folder_path, on_finished=self.on_load_folder_to_ram_finished_helper)
+        logging.warning(f"FolderExplorer.load_to_ram_cache: is depreciated")
+        warnings.warn("FolderExplorer.load_to_ram_cache: is depreciated", DeprecationWarning)
+
+
 
     def on_load_folder_to_ram_finished_helper(self, folder_path: str,
                                               data: object,

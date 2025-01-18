@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import types
+import warnings
 from datetime import datetime, timedelta
 from sys import getsizeof
 from typing import List, Optional
@@ -17,11 +18,15 @@ from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelecti
     QDir, QDateTime, QSettings, QStorageInfo
 from PyQt6.QtGui import QAction, QIcon, QCloseEvent, QPixmap, QResizeEvent
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
-    QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget
+    QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget, QHBoxLayout, \
+    QPushButton, QTreeWidget, QTreeWidgetItem
 from humanfriendly.terminal import message
 from numpy.f2py.crackfortran import include_paths
+from pyqtgraph.parametertree import ParameterTree, Parameter
 from typing_extensions import no_type_check
 
+from helab.models.ScriptTreeSelector import TreePanelWidget, ParamTreeTabWidget
+from helab.models.StatusReport import StatusReport
 from helab.resources.icons import ToolIcons
 from helab.utils.caching_setup import *
 from helab.utils.constants import *
@@ -50,6 +55,7 @@ class HelabMainWindow(QMainWindow):
 
     INTERVAL_UPDATE_STATUS_BAR_LEFT = 100
     INTERVAL_UPDATE_STATUS_BAR_RIGHT = 1000
+    INTERVAL_UPDATE_CENTRAL_LOADING_INDICATOR = 100
 
     STATUS_LEFT_MISSED_REFRESH_HANG_THRESHOLD_COUNTS = 10
     STATUS_LEFT_MISSED_REFRESH_HANG_THRESHOLD_SECS = 10
@@ -138,7 +144,7 @@ class HelabMainWindow(QMainWindow):
 
         tooltip_string = "Threadpool status: "
         if sum(queue_depths) > 0:
-            indicator_dot = INDICATOR_DOTS[self.status_timer_threadpool_hang_counts % 10]
+            indicator_dot = INDICATOR_DOTS[self.status_timer_threadpool_hang_counts % len(INDICATOR_DOTS)]
 
             self.status_bar_message_left.setText(f" {indicator_dot} Active: {active_threads_one_run}, Queued: {queue_depths}")
             self.action_tab_cancel.setEnabled(True)
@@ -656,37 +662,13 @@ class HelabMainWindow(QMainWindow):
 
         # right_top_widget = QLabel("Right Top Placeholder")
         # right_top_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
+        self.panel_right_top_params_tab_widget = ParamTreeTabWidget(parent=self)
+        self.panel_right_top_params_tab_widget.add_example_tab()
 
-        params = [
-            {'name': 'Parameter 1', 'type': 'int', 'value': 10},
-            {'name': 'Parameter 2', 'type': 'float', 'value': 0.5},
-            {'name': 'Parameter 3', 'type': 'bool', 'value': True},
-            {'name': 'Parameter 4', 'type': 'str', 'value': 'default'},
-            {'name': 'Advanced Settings', 'type': 'group', 'children': [
-                {'name': 'Sub-Parameter 1', 'type': 'int', 'value': 5},
-                {'name': 'Sub-Parameter 2', 'type': 'float', 'value': 1.5},
-                {'name': 'Sub-Parameter 3', 'type': 'bool', 'value': False},
-            ]},
-            {'name': 'Parameter 5', 'type': 'list', 'value': [1, 2, 3]},
-        ]
-        param_tree = ptree.ParameterTree()
-        param_tree.setParameters(ptree.Parameter.create(name='params', type='group', children=params), showTop=False)
+        self.panel_right_bottom_script_selector = TreePanelWidget(helab_main_window=self)
+        self.panel_right_bottom_script_selector.add_example_groups_and_items()
 
-        tab_widget = QTabWidget()
-        tab_widget.addTab(param_tree, "Parameters")
-
-        right_top_widget = tab_widget
-
-
-        # Right bottom panel
-        self.panel_right_bottom = QWidget()
-        self.panel_layout_right_bottom = QVBoxLayout(self.panel_right_bottom)
-        self.panel_layout_right_bottom.setContentsMargins(0, 0, 0, 0)
-        self.panel_label_right_bottom = QLabel("Right Bottom Placeholder")
-        self.panel_label_right_bottom.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.panel_layout_right_bottom.addWidget(self.panel_label_right_bottom)
-        self.panel_right_bottom.setVisible(True)
+        self.panel_right_bottom_script_selector.setVisible(True)
         # Add the bottom panel to the right_layout
         # Add a button to the bottom of sidebar_toolbar_right
         toggle_right_bottom_panel_action = QAction(ToolIcons.ICON_BOTTOM_EXPAND, "Toggle Right Bottom Panel", self)
@@ -695,23 +677,44 @@ class HelabMainWindow(QMainWindow):
         toggle_right_bottom_panel_action.triggered.connect(self.toggle_right_bottom_panel)
         self.sidebar_toolbar_right.addAction(toggle_right_bottom_panel_action)
 
-        self.right_splitter.addWidget(right_top_widget)
-        self.right_splitter.addWidget(self.panel_right_bottom)
+        self.right_splitter.addWidget(self.panel_right_top_params_tab_widget)
+        self.right_splitter.addWidget(self.panel_right_bottom_script_selector)
         self.right_splitter.setSizes([400, 300])
 
         # Add the right panel to the splitter
         self.splitter.addWidget(self.right_panel)
 
 
-
     def _setup_middle_area(self) -> None:
+        self.middle_mainwindow = QMainWindow()
+        # Set a central widget for the middle main window
+        self.central_placeholder = QLabel("Select a data folder to begin")
+        self.central_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.middle_mainwindow.setCentralWidget(self.central_placeholder)
+        self.dock_widgets: List[QDockWidget] = []
+
+
+        self.central_placeholder_timer = QTimer(self)
+        self.central_placeholder_timer.timeout.connect(self._central_placeholder_loading_indicator)
+        self.central_placeholder_timer.start(self.INTERVAL_UPDATE_CENTRAL_LOADING_INDICATOR)
+        self.current_tracking_folder_path_is_loading: Optional[bool] = None
+        """ True is loading, False is loaded, None is not loadable"""
+
+        # Add the middle main window to the splitter
+        self.splitter.addWidget(self.middle_mainwindow)
+
+        self.update_placeholder_visibility()
+
+    def _setup_middle_area_deprecated(self) -> None:
+        logging.warning("_setup_middle_area_deprecated is deprecated. Use _setup_middle_area instead.")
+        warnings.warn("_setup_middle_area_deprecated is deprecated. Use _setup_middle_area instead.", DeprecationWarning)
         # Middle area (main content area)
         self.middle_mainwindow = QMainWindow()
         # Set a central widget for the middle main window
         self.central_placeholder = QLabel("Main Content Area")
         self.central_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.middle_mainwindow.setCentralWidget(self.central_placeholder)
-        self.dock_widgets: List[QDockWidget] = []
+        self.dock_widgets = []
 
         try:
             from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density, fig_txy_3d, fig_shots_scan, fig_pulse_eff_fitted, fig_shots_transfer
@@ -953,10 +956,10 @@ class HelabMainWindow(QMainWindow):
 
     def toggle_right_bottom_panel(self, checked: bool) -> None:
         if checked:
-            self.panel_right_bottom.setVisible(True)
+            self.panel_right_bottom_script_selector.setVisible(True)
             self.sidebar_toolbar_right.actions()[-1].setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
         else:
-            self.panel_right_bottom.setVisible(False)
+            self.panel_right_bottom_script_selector.setVisible(False)
             self.sidebar_toolbar_right.actions()[-1].setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
 
     def on_back_button_clicked(self) -> None:
@@ -985,6 +988,8 @@ class HelabMainWindow(QMainWindow):
             selected_path = current_folder_explorer.selected_path_globally
             # note this selected_path_globally is updated first by the signal in FolderExplorer
             file_info = QFileInfo(selected_path)
+            if file_info.absoluteFilePath() != selected_path:
+                logging.error(f"on_folder_explorer_selection_changed: {file_info.absoluteFilePath() = } != {selected_path = }")
             if file_info.isDir():
                 self.tab_widget.update_all_path_selection(selected_path)
                 folder_name = file_info.fileName()
@@ -994,12 +999,60 @@ class HelabMainWindow(QMainWindow):
                     self.setWindowTitle(f"HeLab  -  {selected_path}")
                 else:
                     self.setWindowTitle(f"HeLab  -  {folder_name}")
+
+                if self.view_toggle_auto_load_ram.isChecked():
+                    self.load_folder_to_ram(current_folder_explorer, file_info)
+                    logging.debug(f"HelabMainWindow.on_folder_explorer_selection_changed: auto loading to ram for {selected_path = }")
+                else:
+                    logging.debug(f"HelabMainWindow.on_folder_explorer_selection_changed: auto_load_ram is off at {selected_path = }")
             else:
                 self.setWindowTitle(f"HeLab    Invalid Path (?)")
                 logging.warning(f"on_folder_explorer_selection_changed: not a directory: {selected_path}")
         else:
             self.setWindowTitle(    f"HeLab    No Folder Selected")
         # logging.debug(f"on_folder_explorer_selection_changed: done")
+
+    def load_folder_to_ram(self, current_folder_explorer: FolderExplorer, file_info: QFileInfo) -> None:
+        launched = LoadFolderToRamWorker.load_to_ram_cache(file_info.absoluteFilePath(), on_finished=lambda p, d, dk, pt, ok, tr, dds, dcs, lt:
+                self.on_load_folder_to_ram_finished(current_folder_explorer, p, d, dk, pt, ok, tr, dds, dcs, lt)
+        )
+        assert_warn(self.current_tracking_folder_path == file_info.absoluteFilePath(), f"{self.current_tracking_folder_path = } != {file_info.absoluteFilePath() = }")
+        if launched:
+            self.central_placeholder.setText(f"Loading \n.../{file_info.fileName()}")
+            self.current_tracking_folder_path_is_loading = True
+        else:
+            self.central_placeholder.setText(f"Current selection \n{file_info.absoluteFilePath()}\n is not a data path")
+            self.current_tracking_folder_path_is_loading = None
+
+    def on_load_folder_to_ram_finished(self, fe: FolderExplorer,
+            p: str, f: object,
+            dk: List[int], pt: Optional[List[int]],
+            ok: int, tr: int, dds: int,  dcs: int, lt: Optional[datetime]
+        ) -> None:
+        pi = QFileInfo(p)
+        self.central_placeholder.setText(f"Loaded \n.../{pi.fileName()}\n raw size: {fnum(dds)}B (compressed {fnum(dcs)}B)")
+        self.current_tracking_folder_path_is_loading = False
+        fe.on_load_folder_to_ram_finished_helper(p, f, dk, pt, ok, tr, dds, dcs, lt)
+
+        data = fe.folder_opened_data
+
+        logging.critical(f"on_load_folder_to_ram_finished: loaded {fnum(dds)}B ({fnum(dcs)})B) at {p = }")
+
+        self.update_placeholder_visibility()
+        pass
+
+    def _central_placeholder_loading_indicator(self) -> None:
+        if self.current_tracking_folder_path_is_loading:
+            file_info = QFileInfo(self.current_tracking_folder_path)
+            set_text = f"Loading \n.../{file_info.fileName()}"
+            status_report = StatusReport.fetch_status(self.current_tracking_folder_path)
+            if status_report.payload_progress_ram is not None:
+                set_text += f"\n current progress: {status_report.payload_progress_ram*100:.2f}%"
+            else:
+                set_text += f"\n current progress: unknown"
+            # set_text += f"\n"
+            # set_text += INDICATOR_DOT_RANDOM(10)
+            self.central_placeholder.setText(set_text)
 
     def add_new_folder_explorer_tab(self,
                                     model_root_path: str|None = None,
@@ -1127,9 +1180,4 @@ class HelabMainWindow(QMainWindow):
         # self.closeEvent(None)
         logging.info("handle_exit: called")
         self.close()
-
-
-
-
-
 

@@ -160,7 +160,11 @@ DIR_CACHES_CANDIDATES = [
 
 INDICATOR_DOTS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 INDICATOR_DOTS_ALL = "⠃⠅⠆⠇⠉⠊⠋⠌⠍⠎⠏⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟⠡⠢⠣⠤⠥⠦⠧⠨⠩⠪⠫⠬⠭⠮⠯⠰⠱⠲⠳⠴⠵⠶⠷⠸⠹⠺⠻⠼⠽⠾⠿"
-INDICATOR_DOT_RANDOM = lambda: random.choice(INDICATOR_DOTS)
+def INDICATOR_DOT_RANDOM(n: int = 1) -> str:
+    if not (1 <= n <= len(INDICATOR_DOTS)):
+        raise ValueError(f"n must be between 1 and {len(INDICATOR_DOTS)}, inclusive.")
+    return ''.join(random.sample(INDICATOR_DOTS, n))
+
 
 def get_path_from_setting_or_use_default(key: str, candidates: List[str], sandbox_app: Optional[str] = None) -> str:
     """

@@ -9,6 +9,11 @@ from helab.utils.synchronised_dict import SynchronisedDict
 
 
 class DashServer:
+
+    HOST_NAME = "127.0.0.1"
+    HOST_PORT = 8050
+
+
     def __init__(self) -> None:
         self.app = dash.Dash(__name__, suppress_callback_exceptions=True)
         self.plots: SynchronisedDict[str, Figure] = SynchronisedDict()
@@ -37,4 +42,13 @@ class DashServer:
 
     def run_server(self) -> None:
         # self.app.run_server(host="192.168.1.23", port=8050, debug=False, use_reloader=False)
-        self.app.run_server(host="127.0.0.1", port=8050, debug=False, use_reloader=False)
+        self.app.run_server(host=self.HOST_NAME, port=self.HOST_PORT, debug=False, use_reloader=False)
+
+    @property
+    def url(self) -> str:
+        return f"http://{self.HOST_NAME}:{self.HOST_PORT}"
+
+    def plot_url(self, plot_id: str) -> str:
+        return f"{self.url}/plot/{plot_id}"
+
+dash_server = DashServer()

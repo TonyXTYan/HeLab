@@ -316,19 +316,19 @@ class LoadFolderToRamWorker(QRunnable):
                           on_finished: Optional[Callable[[str, object, List[int], Optional[List[int]], int, int, int, int, Optional[datetime]], None]] = None,
                           on_loading: Optional[Callable[[str, float], None]] = None,
                           on_error: Optional[Callable[[str, str], None]] = None
-                          ) -> None:
+                          ) -> bool:
         if folder_path in running_workers_ramLoading:
             logging.warning(f"load_to_ram_cache: already running {folder_path = }")
             # self.on_load_folder_to_ram_finished(folder_path, [], None)
-            return
+            return False
 
         check, status_report = StatusReport.get_valid_status_report(folder_path)
         if check != 0:
             logging.debug(f"load_to_ram_cache: called on not-data-folder path: {folder_path}")
-            return
+            return False
         if status_report is None:
             logging.critical(f"load_to_ram_cache: Impossible logic case status_report is None at {folder_path = }")
-            return
+            return False
         # status_report.extra_icons.append('loading')
         # status_cache[folder_path] = status_report
         status_report.set_loading_ram_status()
@@ -355,7 +355,7 @@ class LoadFolderToRamWorker(QRunnable):
         # self.thread_pool.start(worker, priority=QThread.Priority.LowPriority.value)
         QTimer.singleShot(10, lambda: thread_pool_load_data_ram.start(worker,
                                       priority=QThread.Priority.IdlePriority.value))  # type: ignore[call-overload]
-        pass
+        return True
 
     @staticmethod
     def on_load_folder_to_ram_finished(folder_path: str,

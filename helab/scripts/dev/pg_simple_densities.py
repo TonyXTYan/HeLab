@@ -17,7 +17,7 @@ from PyQt6.QtCore import QObject, QEvent, QRectF
 from PyQt6.QtGui import QMouseEvent, QPainter, QColor
 
 
-def compute_range(
+def compute_range_old(
     data: npt.NDArray[np.float64],
     specified_range: Optional[Tuple[float, float]] = None,
     nsigs: float = 3,
@@ -37,7 +37,6 @@ def compute_range(
         max(three_sigma_range[0], data_min),
         min(three_sigma_range[1], data_max)
     )
-
 
 def make_three_density_plots(
     data: Dict[int, npt.NDArray[np.float64]],
