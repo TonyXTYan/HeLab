@@ -7,7 +7,8 @@ import argparse
 client = OpenAI(
     # base_url="http://150.203.177.251:1234/v1/",
     # base_url = "http://192.168.1.39:1234/v1/",
-    base_url="http://192.168.1.171:1234/v1/",
+    # base_url="http://192.168.1.171:1234/v1/",
+    base_url="http://169.254.44.245:1234/v1/",
     # base_url = "https://kg2ttl3v-1234.aue.devtunnels.ms/v1/",
     # base_url = "https://45kzmdx4-1234.aue.devtunnels.ms/v1/",
     # base_url = "https://45kzmdx4-1235.aue.devtunnels.ms/v1/",
@@ -121,7 +122,7 @@ if __name__ == "__main__":
     parser.add_argument('context_filess', nargs='*',
                         default=[
                             # "/Users/tonyyan/Documents/_ANU/_PhD_Thesis/main.tex",
-                            "/Users/tonyyan/Documents/_ANU/_PhD_Thesis/chapters/introduction.tex",
+                            "/Users/tonyyan/Documents/_ANU/_PhD_Thesis/chapters/coc.tex",
                             # "/Users/tonyyan/Documents/_ANU/_PhD_Thesis/chapters/he44.tex",
                             "/Users/tonyyan/Documents/_ANU/_PhD_Thesis/chapters/he34.tex",
                             "/Users/tonyyan/Documents/_ANU/_PhD_Thesis/chapters/csl.tex",

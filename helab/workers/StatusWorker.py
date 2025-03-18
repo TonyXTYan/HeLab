@@ -24,6 +24,7 @@ from helab.utils.constants import *
 from helab.workers.DirectoryCheckWorker import DirectoryCheckWorker
 
 
+
 # Define WorkerSignals to communicate between threads
 class StatusWorkerSignals(QObject):
     # finished = pyqtSignal(str, str, int, list)  # path, status, count, extra_icons
