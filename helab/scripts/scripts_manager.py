@@ -12,7 +12,22 @@ class ScriptLoadError(Exception):
     pass
 
 class ScriptsManager:
-    """Manages loading and organizing HeLab analysis scripts"""
+    """Manages loading and organizing HeLab analysis scripts.
+    
+    This class is responsible for:
+    1. Loading Python script files containing HeLab analysis scripts
+    2. Organizing scripts into groups for easy management
+    3. Maintaining metadata about each script
+    4. Providing access to script classes and their metadata
+    
+    The manager maintains three main data structures:
+    - _scripts: Maps file paths to script classes
+    - _metadata: Maps file paths to script metadata
+    - _groups: Maps group names to lists of script file paths
+    
+    Scripts must be subclasses of HelabAnalysisScript and provide valid metadata
+    through the get_metadata() method including a name and group.
+    """
 
     def __init__(self) -> None:
         self._scripts: Dict[str, Type[HelabAnalysisScript]] = {}
@@ -20,7 +35,26 @@ class ScriptsManager:
         self._groups: Dict[str, List[str]] = {}  # group -> list of script paths
 
     def load_directory(self, directory: str) -> None:
-        """Load all Python files from a directory that contain valid analysis scripts"""
+        """Load all Python files from a directory that contain valid analysis scripts.
+        
+        This method:
+        1. Scans the given directory for .py files
+        2. Clears any existing scripts from this directory
+        3. Attempts to load each .py file as a script
+        4. Organizes loaded scripts into groups
+        
+        Scripts must:
+        - Be a .py file
+        - Contain a class that inherits from HelabAnalysisScript
+        - Provide valid metadata through get_metadata()
+        
+        Args:
+            directory: Path to directory containing Python script files
+            
+        Raises:
+            ValueError: If directory doesn't exist
+            ScriptLoadError: If script loading fails
+        """
         if not os.path.isdir(directory):
             raise ValueError(f"Not a directory: {directory}")
 
