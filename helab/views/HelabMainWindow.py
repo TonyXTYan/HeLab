@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWid
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget, QHBoxLayout, \
     QPushButton, QTreeWidget, QTreeWidgetItem
 from humanfriendly.terminal import message
-from numpy.f2py.crackfortran import include_paths
+# from numpy.f2py.crackfortran import include_paths
 from pyqtgraph.parametertree import ParameterTree, Parameter
 from typing_extensions import no_type_check
 

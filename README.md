@@ -86,7 +86,7 @@ Comparison with existing software:
   - GUI built from Qt Designer, instead of programmatically generated GUI (hard to debug and add features).
 
 
---- 
+---
 random useful notes:
 - https://www.pythonguis.com/faq/built-in-qicons-pyqt/
 - https://github.com/niklashenning/pytablericons  https://tabler.io/icons https://github.com/tabler/tabler-icons
@@ -133,6 +133,12 @@ pip install -e .
 ```bash
 python -m cProfile -o helab_main.prof  helab/main.py
 snakeviz helab_main.pro
+```
+
+
+
+```
+conda create -n HeLab python=3.12
 ```
 
 
@@ -192,11 +198,11 @@ pytest
 - [ ] cache github actions
 
     
+- [ ]  hasChildren() scan at root is taking time
 
-
+- [ ] File reading system is blocking the main thread (?)
 
 - [ ] Code validation check in pipeline
-
 
 
 

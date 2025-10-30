@@ -4,10 +4,13 @@ import os
 from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal
 
 from PyQt6.QtCore import Qt, pyqtSignal
+# from uuid import uuid4
+
+# Import QWidget types first to avoid forward references
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QLabel, QPushButton, QTreeWidget, QVBoxLayout, 
+    QWidget, QHBoxLayout, QLabel, QPushButton, QTreeWidget, QVBoxLayout,
     QTreeWidgetItem, QHeaderView, QTabWidget, QDockWidget, QFileDialog,
-    QComboBox, QMainWindow
+    QComboBox, QMainWindow, QTabBar
 )
 from pyqtgraph.parametertree import Parameter
 import pyqtgraph.parametertree as ptree
@@ -21,7 +24,82 @@ if TYPE_CHECKING:
 
 import numpy.typing as npt
 import numpy as np
-ExampleGroup = List[Tuple[str, Callable[[], None], Callable[[], None]]]
+
+class LinkedAnalysisInstance:
+    """Manages a linked pair of dock widget and parameter tab.
+    
+    This class handles:
+    - Unique instance identification
+    - Synchronized closing of linked UI components
+    - Cleanup of resources when either component is closed
+    
+    Args:
+        name: Base name of the analysis (used for display)
+        instance_id: Unique identifier for this instance
+        main_window: Reference to main window for cleanup
+    """
+    
+    def __init__(self, name: str, instance_id: str, main_window: Optional['HelabMainWindow']):
+        self.name = name
+        self.instance_id = instance_id
+        self.main_window = main_window
+        self.dock_widget: Optional[QDockWidget] = None
+        self.param_tab: Optional[QWidget] = None
+        self.param_tab_index: int = -1
+        self.is_closed = False
+        
+    def setup_dock_widget(self, content: QWidget) -> None:
+        """Create and setup the dock widget."""
+        if not self.main_window:
+            return
+            
+        self.dock_widget = QDockWidget(f"{self.name} ({self.instance_id})", self.main_window)
+        self.dock_widget.setStyleSheet(QDOCKWIDGET_STYLESHEET)
+        self.dock_widget.setWidget(content)
+        self.dock_widget.visibilityChanged.connect(self._on_dock_closed)
+        
+    def setup_param_tab(self, param_tree: QWidget) -> None:
+        """Create and setup the parameter tab."""
+        if not self.main_window:
+            return
+            
+        self.param_tab = param_tree
+        self.param_tab_index = self.main_window.panel_right_top_params_tab_widget.addTab(
+            param_tree,
+            f"{self.name} ({self.instance_id})"
+        )
+        tab_bar = self.main_window.panel_right_top_params_tab_widget.tabBar()
+        if tab_bar:
+            tab_bar.setTabData(
+                self.param_tab_index,
+                self.instance_id
+            )
+        
+    def _on_dock_closed(self, visible: bool) -> None:
+        """Handle dock widget being closed."""
+        if not visible and not self.is_closed:
+            self.close()
+            
+    def close(self) -> None:
+        """Close and cleanup both components."""
+        if self.is_closed:
+            return
+            
+        self.is_closed = True
+        
+        if self.main_window:
+            # Remove dock widget
+            if self.dock_widget:
+                self.main_window.middle_mainwindow.removeDockWidget(self.dock_widget)
+                if self.dock_widget in self.main_window.dock_widgets:
+                    self.main_window.dock_widgets.remove(self.dock_widget)
+                self.dock_widget.deleteLater()
+                
+            # Remove parameter tab
+            if self.param_tab and self.param_tab_index >= 0:
+                self.main_window.panel_right_top_params_tab_widget.removeTab(self.param_tab_index)
+                self.param_tab.deleteLater()
+ExampleGroup = List[Tuple[str, Callable[[], None]]]
 
 GroupType = Literal["dynamic", "example"]
 
@@ -80,6 +158,10 @@ class TreePanelWidget(QWidget):
         # Group tracking
         self.groups: Dict[str, GroupData] = {}
         self.current_group: Optional[GroupData] = None
+        
+        # Analysis instance tracking
+        self._instance_counter = 0
+        self._analysis_instances: Dict[str, LinkedAnalysisInstance] = {}
 
         # Layout for the right-bottom panel
         self.panel_layout_right_bottom = QVBoxLayout(self)
@@ -104,8 +186,8 @@ class TreePanelWidget(QWidget):
 
         # Tree list widget
         self.tree_widget = QTreeWidget()
-        self.tree_widget.setHeaderLabels(["Script", "Action 1", "Action 2"])
-        self.tree_widget.setColumnCount(3)
+        self.tree_widget.setHeaderLabels(["Script", "Run"])
+        self.tree_widget.setColumnCount(2)
         header = self.tree_widget.header()
         if header:
             header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -327,25 +409,19 @@ class TreePanelWidget(QWidget):
             if group_name == "Basic Analysis":
                 # Recreate Basic Analysis items
                 items: ExampleGroup = [
-                    ("Example 1",
-                     lambda: logging.info("Example 1 Analyze clicked"),
-                     lambda: logging.info("Example 1 Plot clicked"))
+                    ("Example 1", lambda: self._show_example_analysis("Basic Example 1"))
                 ]
-                for name, callback1, callback2 in items:
+                for name, callback1 in items:
                     item = QTreeWidgetItem(group_item, [name])
-                    self.tree_widget.setItemWidget(item, 1, self.create_button("Action 1", callback1))
-                    self.tree_widget.setItemWidget(item, 2, self.create_button("Action 2", callback2))
+                    self.tree_widget.setItemWidget(item, 1, self.create_button("Run", callback1))
             elif group_name == "Advanced Analysis":
                 # Recreate Advanced Analysis items
                 items: ExampleGroup = [
-                    ("Example 2",
-                     lambda: logging.info("Example 2 Process clicked"),
-                     lambda: logging.info("Example 2 Visualize clicked"))
+                    ("Example 2", lambda: self._show_example_analysis("Advanced Example 2"))
                 ]
-                for name, callback1, callback2 in items:
+                for name, callback1 in items:
                     item = QTreeWidgetItem(group_item, [name])
-                    self.tree_widget.setItemWidget(item, 1, self.create_button("Action 1", callback1))
-                    self.tree_widget.setItemWidget(item, 2, self.create_button("Action 2", callback2))
+                    self.tree_widget.setItemWidget(item, 1, self.create_button("Run", callback1))
 
         group_item.setExpanded(True)
         group_data.is_loaded = True
@@ -393,17 +469,71 @@ class TreePanelWidget(QWidget):
         group_data.tree_item = group_item
 
         # Add items under the group
-        for name, callback1, callback2 in items:
+        for name, callback1 in items:
             item = QTreeWidgetItem(group_item, [name])
             try:
-                self.tree_widget.setItemWidget(item, 1, self.create_button("Action 1", callback1))
-                self.tree_widget.setItemWidget(item, 2, self.create_button("Action 2", callback2))
+                self.tree_widget.setItemWidget(item, 1, self.create_button("Load", callback1))
             except Exception as e:
                 logging.error(f"Error creating buttons for {name}: {e}")
                 item.setForeground(0, Qt.GlobalColor.red)
 
         group_item.setExpanded(True)
         group_data.is_loaded = True
+
+    def _show_example_analysis(self, name: str) -> None:
+        """Create a new instance of an example analysis.
+        
+        Creates and links:
+        1. A dock widget showing the analysis view
+        2. A parameter tab for configuring the analysis
+        
+        Multiple instances of the same analysis can be created,
+        with each instance having its own unique ID.
+        
+        Args:
+            name: Name of the example analysis
+        """
+        if not self.helab_main_window:
+            logging.error("No main window reference")
+            return
+            
+        # Generate unique instance ID
+        self._instance_counter += 1
+        instance_id = f"{self._instance_counter}"
+        
+        # Create instance
+        instance = LinkedAnalysisInstance(name, instance_id, self.helab_main_window)
+        
+        # Create content for dock widget
+        content = QLabel(f"Analysis view for {name}")
+        content.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Setup dock widget
+        instance.setup_dock_widget(content)
+        if instance.dock_widget:
+            self.helab_main_window.middle_mainwindow.addDockWidget(
+                Qt.DockWidgetArea.LeftDockWidgetArea,
+                instance.dock_widget
+            )
+            self.helab_main_window.dock_widgets.append(instance.dock_widget)
+        
+        # Create parameter tab
+        params = [
+            {'name': 'Analysis Type', 'type': 'str', 'value': name},
+            {'name': 'Parameter 1', 'type': 'int', 'value': 10},
+            {'name': 'Parameter 2', 'type': 'float', 'value': 0.5}
+        ]
+        param_tree = ptree.ParameterTree()
+        param_tree.setParameters(
+            Parameter.create(name='params', type='group', children=params),
+            showTop=False
+        )
+        
+        # Setup parameter tab
+        instance.setup_param_tab(param_tree)
+        
+        # Store instance
+        self._analysis_instances[instance_id] = instance
 
     def add_example_groups_and_items(self) -> None:
         """Add example groups and items to the tree widget."""
@@ -452,6 +582,44 @@ class ParamTreeTabWidget(QTabWidget):
     
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
+        self.tabCloseRequested.connect(self._on_tab_close)
+        
+    def _on_tab_close(self, index: int) -> None:
+        """Handle tab close requests by finding and closing the associated instance."""
+        tab_bar = self.tabBar()
+        if not tab_bar:
+            return
+            
+        instance_id = tab_bar.tabData(index)
+        if not instance_id:
+            # If no instance ID, just remove the tab
+            self.removeTab(index)
+            return
+        
+        # Find the HelabMainWindow and access the TreePanelWidget through it
+        from helab.views.HelabMainWindow import HelabMainWindow
+        parent_window = None
+        parent = self.parent()
+        
+        # Find the parent main window
+        while parent:
+            if isinstance(parent, HelabMainWindow):
+                parent_window = parent
+                break
+            parent = parent.parent()
+        
+        if parent_window and hasattr(parent_window, 'panel_right_bottom_script_selector'):
+            tree_panel = parent_window.panel_right_bottom_script_selector
+            
+            # Now we can access the TreePanelWidget's instance dictionary
+            if instance_id in tree_panel._analysis_instances:
+                instance = tree_panel._analysis_instances[instance_id]
+                instance.close()
+                del tree_panel._analysis_instances[instance_id]
+                return
+        
+        # If we couldn't find the instance or tree panel, just remove the tab
+        self.removeTab(index)
 
     def add_example_tab(self) -> None:
         params = [
@@ -468,7 +636,12 @@ class ParamTreeTabWidget(QTabWidget):
         ]
         param_tree = ptree.ParameterTree()
         param_tree.setParameters(Parameter.create(name='params', type='group', children=params), showTop=False)
-        self.addTab(param_tree, "Parameters")
+        tab_index = self.addTab(param_tree, "Info")
+        # Info tab should not be closeable
+        self.setTabsClosable(True)
+        tab_bar = self.tabBar()
+        if tab_bar is not None:
+            tab_bar.setTabButton(tab_index, QTabBar.ButtonPosition.RightSide, None)
 
     def add_example_todo_tab(self) -> None:
         todo = QLabel("TODO: Add a tab with a parameter tree.")
