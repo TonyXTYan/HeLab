@@ -105,9 +105,10 @@ jobs:
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/test-results-action@v1
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          report_type: test_results
 
       - name: Run test with code coverage report
         if: matrix.python3-version == '12' && matrix.os == 'macos'
