@@ -311,6 +311,7 @@ jobs:
   release:
     name: Create Release on Tag
     needs: [get-version, test, build]
+    if: needs.get-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download macOS Build Artifact
@@ -347,7 +348,6 @@ jobs:
           zip -r -9 HeLab-ubuntu.zip HeLab
 
       - name: Prepare Release Body
-        if: needs.get-version.outputs.should_release == 'true'
         run: |
           RELEASE_BODY="## Release ${{ needs.get-version.outputs.tag_name }}
 
@@ -373,7 +373,6 @@ jobs:
           echo "$RELEASE_BODY"
 
       - name: Create Release and Upload Assets on Version Bump
-        if: needs.get-version.outputs.should_release == 'true'
         uses: ncipollo/release-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
