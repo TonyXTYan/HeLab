@@ -14,6 +14,19 @@ from typing import Any
 MAGIC = b"SRS_RGA_DATA_FILE\r\n\x00"
 BLOCK_MARKER = struct.pack("<I", 0x12345678)
 
+COMMON_GAS_PEAKS: tuple[tuple[float, str], ...] = (
+    (2, "H2"),
+    (3, "He3"),
+    (4, "He4"),
+    (14, "N+"),
+    (16, "O+"),
+    (18, "H2O"),
+    (28, "N2/CO"),
+    (32, "O2"),
+    (40, "Ar"),
+    (44, "CO2"),
+)
+
 
 @dataclass(frozen=True)
 class Scan:
@@ -50,6 +63,9 @@ def _read_u32(data: bytes, offset: int) -> int:
 
 
 def _expected_points(config: dict[str, Any]) -> int:
+    for key in ("startMass", "stopMass", "pointsPerAmu"):
+        if key not in config:
+            raise ValueError(f"Scan configuration is missing '{key}'")
     start = float(config["startMass"])
     stop = float(config["stopMass"])
     points_per_amu = int(config["pointsPerAmu"])

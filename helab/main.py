@@ -30,8 +30,7 @@ from helab.views.HelabMainWindow import HelabMainWindow
 from helab.utils.threading_setup import *
 
 
-if __name__ == "__main__":
-
+def main() -> None:
     # setup_logging()
     logging.debug("this is a debugging message")
     logging.info("this is an informational message")
@@ -66,3 +65,7 @@ if __name__ == "__main__":
     main_window.show()
 
     sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

@@ -41,8 +41,8 @@ class DashServer:
         self.plots[plot_id] = fig
 
     def run_server(self) -> None:
-        # self.app.run_server(host="192.168.1.23", port=8050, debug=False, use_reloader=False)
-        self.app.run_server(host=self.HOST_NAME, port=self.HOST_PORT, debug=False, use_reloader=False)
+        # self.app.run(host="192.168.1.23", port=8050, debug=False, use_reloader=False)
+        self.app.run(host=self.HOST_NAME, port=self.HOST_PORT, debug=False, use_reloader=False)
 
     @property
     def url(self) -> str:

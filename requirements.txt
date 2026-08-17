@@ -16,6 +16,7 @@ pyinstaller
 psutil
 coloredlogs
 plotly
+dash
 numpy
 PyQt6-WebEngine
 matplotlib

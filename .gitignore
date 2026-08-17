@@ -104,3 +104,5 @@ profile.json
 junit.xml
 _server alias/
 .ai/temp/
+venv
+side_projects/rga_visualiser/RGAData
