@@ -51,7 +51,7 @@ pytablericons==1.0.1
 pytest @ file:///home/conda/feedstock_root/build_artifacts/pytest_1725977232342/work
 python-dateutil @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_66ud1l42_h/croot/python-dateutil_1716495741162/work
 pyzmq @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_43pxpbos3z/croot/pyzmq_1705605108344/work
-setuptools==75.1.0
+setuptools==78.1.1
 shiboken6==6.8.0.1
 simpy @ file:///home/conda/feedstock_root/build_artifacts/simpy_1699893122875/work
 six @ file:///tmp/build/80754af9/six_1644875935023/work
