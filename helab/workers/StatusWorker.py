@@ -57,7 +57,7 @@ class StatusWorker(QRunnable):
         if self._is_cancelled:
             logging.debug(f"StatusWorker canceled for: {self.path}")
             # self.signals.finished.emit(StatusReport(self.path, 'canceled', -1, []))
-            self._finished_emit_helper(StatusReport(self.path, 'canceled', -1, []))
+            self._finished_emit_helper(StatusReport(self.path, 'cancelled', -1, []))
             return True
         else: return False
 

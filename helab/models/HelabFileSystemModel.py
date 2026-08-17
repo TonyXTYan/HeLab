@@ -365,26 +365,32 @@ class HelabFileSystemModel(QFileSystemModel):
         :return:
         """
 
-        indexes = []
+        groups: Dict[str, List[QModelIndex]] = {}
         for path in paths:
             idxL = self.index(path, self.COLUMN_STATUS_NUMBER)
             idxR = self.index(path, self.COLUMN_STATUS_ICON)
             if idxL.isValid() and idxR.isValid():
-                indexes.extend([idxL, idxR])
-        if not indexes:
+                groups.setdefault(os.path.dirname(path), []).extend([idxL, idxR])
+        if not groups:
             return
 
-        min_row = min(i.row() for i in indexes)
-        max_row = max(i.row() for i in indexes)
-        min_col = min(i.column() for i in indexes)
-        max_col = max(i.column() for i in indexes)
+        # Batches may span multiple parents (nested directories), so each
+        # parent's indexes must be emitted separately: self.index(row, col)
+        # resolves against the invisible root by default, which would target
+        # the wrong rows for any non-top-level path.
+        for indexes in groups.values():
+            min_row = min(i.row() for i in indexes)
+            max_row = max(i.row() for i in indexes)
+            min_col = min(i.column() for i in indexes)
+            max_col = max(i.column() for i in indexes)
 
-        top_left = self.index(min_row, min_col)
-        bottom_right = self.index(max_row, max_col)
-        # self.dataChanged.emit(top_left, bottom_right,
-        #     [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE, self.HAS_CHILDREN_ROLE]
-        # )
-        self.dataChanged.emit(top_left, bottom_right)
+            parent = indexes[0].parent()
+            top_left = self.index(min_row, min_col, parent)
+            bottom_right = self.index(max_row, max_col, parent)
+            # self.dataChanged.emit(top_left, bottom_right,
+            #     [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole, self.STATUS_EXTRA_ICONS_ROLE, self.HAS_CHILDREN_ROLE]
+            # )
+            self.dataChanged.emit(top_left, bottom_right)
 
         # time_delta = datetime.now() - time_start
         # logging.debug(f"_bulk_data_changed: {len(paths)} paths emitted in {round(1e-3*time_delta.microseconds)}ms")

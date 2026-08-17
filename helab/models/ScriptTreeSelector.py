@@ -186,8 +186,8 @@ class TreePanelWidget(QWidget):
 
         # Tree list widget
         self.tree_widget = QTreeWidget()
-        self.tree_widget.setHeaderLabels(["Script", "Run"])
-        self.tree_widget.setColumnCount(2)
+        self.tree_widget.setHeaderLabels(["Script", "Run", "Run"])
+        self.tree_widget.setColumnCount(3)
         header = self.tree_widget.header()
         if header:
             header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
