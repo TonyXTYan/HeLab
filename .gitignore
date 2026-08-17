@@ -106,3 +106,4 @@ _server alias/
 .ai/temp/
 venv
 side_projects/rga_visualiser/RGAData
+venv.nosync

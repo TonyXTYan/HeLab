@@ -13,6 +13,8 @@ pip install -e .
 git submodule update --init --recursive   # legacy/tdc_autoconverter
 ```
 
+`venv/` may be a symlink to `venv.nosync/` (keeps it out of iCloud Drive sync on macOS) — both names are gitignored and activation/imports behave identically either way.
+
 ## Running
 
 ```bash

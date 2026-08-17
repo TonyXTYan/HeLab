@@ -116,6 +116,11 @@ source venv/bin/activate # for unix
 venv\Scripts\activate # for windows
 ```
 
+On macOS with iCloud Drive syncing this folder, `venv` can be created as `venv.nosync`
+and symlinked to `venv` (`ln -s venv.nosync venv`) to keep it out of iCloud sync — venv
+files churn constantly and aren't worth uploading. Activation and imports work the same
+either way.
+
 ```bash
 pip install -r requirements.txt
 ```

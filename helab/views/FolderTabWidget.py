@@ -226,7 +226,11 @@ class FolderTabWidget(QTabWidget):
             logging.warning("Current tab is not a FolderExplorer instance.")
 
     def rescan_current_folder_explorer(self, user_intend: bool = False) -> None:
-        current_folder_explorer = self.currentWidget()
+        try:
+            current_folder_explorer = self.currentWidget()
+        except RuntimeError:
+            logging.debug("FolderTabWidget.rescan_current_folder_explorer: widget has been deleted, skipping deferred rescan.")
+            return
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.rescan(user_intend)
             logging.debug("FolderTabWidget.rescan_current_folder_explorer() returned.")
