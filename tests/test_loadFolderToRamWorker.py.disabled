@@ -1,0 +1,431 @@
+import os
+import pytest
+import pandas as pd
+from unittest.mock import patch, MagicMock
+from PyQt6.QtCore import QDir
+
+from helab.workers.loadFolderToRamWorker import LoadFolderToRamWorker
+from helab.workers.loadFolderToRamWorker import data_ram_cache
+
+
+@pytest.fixture
+def worker():
+    """Basic fixture to instantiate the worker with a default test folder."""
+    return LoadFolderToRamWorker("test_folder")
+
+
+#
+# Example: if `fnum` is used to format bytes in the worker, you can also patch it
+#          or provide a stub. If your project doesn't need it, remove or adapt.
+#
+@pytest.fixture
+def mock_fnum():
+    """Simple fnum stub to consistently return the same strings for testing."""
+    def _fnum(bytes_size: int) -> str:
+        # Stub: 2<<30 => 2147483648 => '2.00GB'
+        if bytes_size >= (2 << 30):
+            return "2.00GB"
+        return f"{bytes_size}B"
+    return _fnum
+
+
+@patch('helab.workers.loadFolderToRamWorker.data_ram_cache', new_callable=MagicMock)
+def test_run_load_from_cache(mock_data_ram_cache, worker):
+    mock_data_ram_cache.__getitem__.return_value = b'compressed_data'
+    worker.decompress_dataframe = MagicMock(
+        return_value=pd.DataFrame({'t': [1], 'x': [2], 'y': [3]})
+    )
+    signals = MagicMock()
+    worker.signals = signals
+
+    worker.run()
+
+    # Asserts, etc.
+    signals.finished.emit.assert_called_once()
+
+
+@patch('helab.workers.loadFolderToRamWorker.data_ram_cache', new_callable=MagicMock)
+@patch('helab.workers.loadFolderToRamWorker.glob.glob')
+@patch('helab.workers.loadFolderToRamWorker.os.path.getsize')
+@patch('helab.workers.loadFolderToRamWorker.pd.read_csv')
+def test_run_load_from_files(mock_read_csv, mock_getsize, mock_glob, mock_data_ram_cache, worker):
+    # Force KeyError => "nothing in cache"
+    mock_data_ram_cache.__getitem__.side_effect = KeyError
+
+    # Return two file paths
+    mock_glob.return_value = ["test_folder/d_txy_forc1.txt", "test_folder/d_txy_forc2.txt"]
+    mock_getsize.return_value = 500
+    mock_read_csv.side_effect = [
+        pd.DataFrame({'t': [1], 'x': [2], 'y': [3]}),
+        pd.DataFrame({'t': [4], 'x': [5], 'y': [6]})
+    ]
+
+    signals = MagicMock()
+    worker.signals = signals
+    worker.run()
+
+    signals.finished.emit.assert_called_once()
+    # Additional asserts...
+
+
+@patch('helab.workers.loadFolderToRamWorker.data_ram_cache', new_callable=MagicMock)
+def test_cancel(mock_data_ram_cache, worker):
+    signals = MagicMock()
+    worker.signals = signals
+    worker.cancel("Test cancellation")
+    worker.run()
+    signals.error.emit.assert_called_once_with("test_folder", "Test cancellation")
+    signals.finished.emit.assert_not_called()
+
+
+@patch('helab.workers.loadFolderToRamWorker.pq.write_table')
+@patch('helab.workers.loadFolderToRamWorker.zstd.ZstdCompressor.compress', return_value=b"some_bytes")
+def test_compress_dataframe(mock_compress, mock_write_table, worker):
+    df = pd.DataFrame({'t': [1], 'x': [2], 'y': [3]})
+    result = worker.compress_dataframe(df)
+    # The mock_compress now returns b"some_bytes"
+    assert isinstance(result, bytes)
+    assert result == b"some_bytes"
+    mock_write_table.assert_called_once()
+    mock_compress.assert_called_once()
+
+@patch('helab.workers.loadFolderToRamWorker.time.sleep', return_value=None)
+@patch('helab.workers.loadFolderToRamWorker.data_ram_cache')
+@patch('helab.workers.loadFolderToRamWorker.glob.glob')
+@patch('helab.workers.loadFolderToRamWorker.os.path.getsize')
+@patch('helab.workers.loadFolderToRamWorker.pd.read_csv')
+def test_run_load_from_cache(
+    mock_read_csv: MagicMock,
+    mock_getsize: MagicMock,
+    mock_glob: MagicMock,
+    mock_data_ram_cache: MagicMock,
+    mock_sleep: MagicMock,
+    worker: LoadFolderToRamWorker
+) -> None:
+    """
+    If data_ram_cache already has compressed data, the worker should
+    skip reading from disk and immediately emit `finished` with the decompressed DataFrame.
+    """
+    # Setup cache to return compressed data
+    mock_data_ram_cache.__getitem__.return_value = b'compressed_data'
+    # Mock the decompress to return a known DataFrame
+    worker.decompress_dataframe = MagicMock(
+        return_value=pd.DataFrame({'t': [1], 'x': [2], 'y': [3]})
+    )
+
+    signals = MagicMock()
+    worker.signals = signals
+
+    worker.run()
+
+    # Check that it tried to load from cache and then decompressed
+    mock_data_ram_cache.__getitem__.assert_called_with("test_folder")
+    worker.decompress_dataframe.assert_called_once_with(b'compressed_data')
+
+    # Check that it emits `finished` with the correct DataFrame
+    signals.finished.emit.assert_called_once_with(
+        "test_folder",
+        [],
+        pd.DataFrame({'t': [1], 'x': [2], 'y': [3]})
+    )
+
+
+@patch('helab.workers.loadFolderToRamWorker.time.sleep', return_value=None)
+@patch('helab.workers.loadFolderToRamWorker.data_ram_cache')
+@patch('helab.workers.loadFolderToRamWorker.glob.glob')
+@patch('helab.workers.loadFolderToRamWorker.os.path.getsize')
+@patch('helab.workers.loadFolderToRamWorker.pd.read_csv')
+def test_run_load_from_files(
+    mock_read_csv: MagicMock,
+    mock_getsize: MagicMock,
+    mock_glob: MagicMock,
+    mock_data_ram_cache: MagicMock,
+    mock_sleep: MagicMock,
+    worker: LoadFolderToRamWorker
+) -> None:
+    """
+    If the cache is empty (KeyError), the worker should read from disk
+    and emit a concatenated DataFrame.
+    """
+    # Make sure cache lookups fail initially
+    mock_data_ram_cache.__getitem__.side_effect = KeyError
+
+    # Pretend we found two files on disk
+    mock_glob.return_value = ["test_folder/d_txy_forc1.txt", "test_folder/d_txy_forc2.txt"]
+    # Pretend each file is only 500 bytes
+    mock_getsize.return_value = 500
+
+    # read_csv returning two small dataframes
+    mock_read_csv.side_effect = [
+        pd.DataFrame({'t': [1], 'x': [2], 'y': [3]}),
+        pd.DataFrame({'t': [4], 'x': [5], 'y': [6]})
+    ]
+
+    signals = MagicMock()
+    worker.signals = signals
+
+    worker.run()
+
+    # We should have read both files
+    assert mock_glob.called
+    assert mock_read_csv.call_count == 2
+
+    # The final finished.emit call
+    signals.finished.emit.assert_called_once()
+    (called_folder, called_problems, called_df), _ = signals.finished.emit.call_args
+
+    # Validate folder path
+    assert called_folder == "test_folder"
+    # No problems
+    assert called_problems == []
+
+    # Validate the combined DataFrame
+    expected_df = pd.concat([
+        pd.DataFrame({'t': [1], 'x': [2], 'y': [3]}).assign(file_number=1),
+        pd.DataFrame({'t': [4], 'x': [5], 'y': [6]}).assign(file_number=2)
+    ]).set_index('file_number').sort_index()
+    pd.testing.assert_frame_equal(called_df, expected_df)
+
+
+@patch('helab.workers.loadFolderToRamWorker.time.sleep', return_value=None)
+@patch('helab.workers.loadFolderToRamWorker.data_ram_cache')
+@patch('helab.workers.loadFolderToRamWorker.glob.glob')
+def test_run_no_files_found(
+    mock_glob: MagicMock,
+    mock_data_ram_cache: MagicMock,
+    mock_sleep: MagicMock,
+    worker: LoadFolderToRamWorker
+):
+    """
+    If there are no matching files in the folder, the worker should emit an error
+    with CANCEL_MSG_NOTHING_HERE.
+    """
+    # Make cache lookups fail
+    mock_data_ram_cache.__getitem__.side_effect = KeyError
+    # Return no files
+    mock_glob.return_value = []
+
+    signals = MagicMock()
+    worker.signals = signals
+
+    worker.run()
+
+    signals.error.emit.assert_called_once_with(
+        "test_folder",
+        LoadFolderToRamWorker.CANCEL_MSG_NOTHING_HERE
+    )
+
+
+@patch('helab.workers.loadFolderToRamWorker.time.sleep', return_value=None)
+@patch('helab.workers.loadFolderToRamWorker.data_ram_cache')
+@patch('helab.workers.loadFolderToRamWorker.glob.glob')
+@patch('helab.workers.loadFolderToRamWorker.os.path.getsize')
+def test_run_folder_too_large(
+    mock_getsize: MagicMock,
+    mock_glob: MagicMock,
+    mock_data_ram_cache: MagicMock,
+    mock_sleep: MagicMock,
+    worker: LoadFolderToRamWorker,
+    mock_fnum  # if you have a fixture for fnum, or remove if not needed
+):
+    """
+    If the total size exceeds 1GB, the worker should emit an error and not proceed.
+    """
+    # Make cache fail
+    mock_data_ram_cache.__getitem__.side_effect = KeyError
+
+    # One single huge file
+    mock_glob.return_value = ["test_folder/d_txy_forc1.txt"]
+    # Pretend the file is 2GB
+    mock_getsize.return_value = 2 << 30
+
+    signals = MagicMock()
+    worker.signals = signals
+
+    with patch('helab.workers.loadFolderToRamWorker.fnum', mock_fnum):
+        worker.run()
+
+    signals.error.emit.assert_called_once()
+    (folder_arg, error_msg), _ = signals.error.emit.call_args
+    assert folder_arg == "test_folder"
+    assert "Folder too large" in error_msg
+    assert "2.00GB" in error_msg  # depends on your fnum stub
+
+
+@patch('helab.workers.loadFolderToRamWorker.time.sleep', return_value=None)
+@patch('helab.workers.loadFolderToRamWorker.data_ram_cache')
+@patch('helab.workers.loadFolderToRamWorker.glob.glob')
+@patch('helab.workers.loadFolderToRamWorker.os.path.getsize')
+@patch('helab.workers.loadFolderToRamWorker.pd.read_csv')
+def test_run_with_parser_error(
+    mock_read_csv: MagicMock,
+    mock_getsize: MagicMock,
+    mock_glob: MagicMock,
+    mock_data_ram_cache: MagicMock,
+    mock_sleep: MagicMock,
+    worker: LoadFolderToRamWorker
+):
+    """
+    If one file fails to parse, that file-number is added to 'problematic' and excluded from the final DataFrame.
+    If all files fail, the final DataFrame is empty (not None).
+    """
+    mock_data_ram_cache.__getitem__.side_effect = KeyError
+    mock_glob.return_value = ["test_folder/d_txy_forc1.txt", "test_folder/d_txy_forc2.txt"]
+    mock_getsize.return_value = 500
+
+    # Let the first file raise a ParserError, second file loads okay
+    mock_read_csv.side_effect = [
+        pd.errors.ParserError("Error parsing file"),  # fails
+        pd.DataFrame({'t': [4], 'x': [5], 'y': [6]})  # succeeds
+    ]
+
+    signals = MagicMock()
+    worker.signals = signals
+
+    worker.run()
+
+    # We do not call signals.error for individual file parse failures;
+    # they are aggregated into 'problematic_txy_ns'.
+    signals.error.emit.assert_not_called()
+
+    signals.finished.emit.assert_called_once()
+    (folder_arg, problematic_list, final_df), _ = signals.finished.emit.call_args
+
+    assert folder_arg == "test_folder"
+    # The first file had number=1 => 'd_txy_forc1.txt', so it is problematic
+    assert problematic_list == [1]
+
+    # The second file loaded okay => final_df has that data (file_number=2)
+    assert not final_df.empty
+    assert 2 in final_df.index
+
+
+@patch('helab.workers.loadFolderToRamWorker.time.sleep', return_value=None)
+@patch('helab.workers.loadFolderToRamWorker.data_ram_cache')
+def test_cancel(
+    mock_data_ram_cache: MagicMock,
+    mock_sleep: MagicMock,
+    worker: LoadFolderToRamWorker
+):
+    """
+    If the worker is cancelled, it should emit an error with the provided message
+    instead of finishing or loading data.
+    """
+    signals = MagicMock()
+    worker.signals = signals
+
+    # Cancel before run
+    worker.cancel("Test cancellation")
+    worker.run()
+
+    signals.error.emit.assert_called_once_with("test_folder", "Test cancellation")
+    # No other signals should be emitted
+    signals.finished.emit.assert_not_called()
+
+
+@patch('helab.workers.loadFolderToRamWorker.pq.write_table')
+@patch('helab.workers.loadFolderToRamWorker.zstd.ZstdCompressor.compress')
+def test_compress_dataframe(
+    mock_compress: MagicMock,
+    mock_write_table: MagicMock,
+    worker: LoadFolderToRamWorker
+):
+    """
+    Ensure compress_dataframe calls Arrow and Zstd to produce a bytes object.
+    """
+    df = pd.DataFrame({'t': [1], 'x': [2], 'y': [3]})
+    result = worker.compress_dataframe(df)
+    assert isinstance(result, bytes)
+    mock_write_table.assert_called_once()
+    mock_compress.assert_called_once()
+
+
+@patch('helab.workers.loadFolderToRamWorker.pq.read_table')
+@patch('helab.workers.loadFolderToRamWorker.zstd.ZstdDecompressor.decompress')
+def test_decompress_dataframe(
+    mock_decompress: MagicMock,
+    mock_read_table: MagicMock,
+    worker: LoadFolderToRamWorker
+):
+    """
+    Ensure decompress_dataframe uses Zstd and Arrow to return a valid DataFrame.
+    """
+    mock_decompress.return_value = b'decompressed_data'
+    mock_df = pd.DataFrame({'t': [1], 'x': [2], 'y': [3]})
+    mock_table = MagicMock()
+    mock_table.to_pandas.return_value = mock_df
+    mock_read_table.return_value = mock_table
+
+    df = worker.decompress_dataframe(b'compressed_data')
+
+    mock_decompress.assert_called_once_with(b'compressed_data')
+    mock_read_table.assert_called_once()
+    pd.testing.assert_frame_equal(df, mock_df)
+
+
+#
+# Optional "integration-ish" tests using real local folders:
+# you can remove if not needed, or skip if not present.
+#
+
+@pytest.mark.skipif(
+    not os.path.isdir("tests_sample_data/goodish"),
+    reason="No real test data folder found."
+)
+@patch('helab.workers.loadFolderToRamWorker.data_ram_cache', new_callable=MagicMock)
+def test_run_with_real_data_goodish(mock_data_ram_cache, worker):
+    """
+    Example of a test that tries to load from an actual test folder on disk.
+    Only runs if 'tests_sample_data/goodish' is present.
+    """
+    folder_path = "tests_sample_data/goodish"
+    worker.folder_path = folder_path
+
+    # Cache is empty for this run
+    mock_data_ram_cache.__getitem__.side_effect = KeyError
+    signals = MagicMock()
+    worker.signals = signals
+
+    worker.run()
+
+    # Should have finished (not error)
+    signals.error.emit.assert_not_called()
+    signals.finished.emit.assert_called_once()
+    (folder_arg, problems, final_df), _ = signals.finished.emit.call_args
+
+    # Check minimal expectations
+    assert folder_arg == folder_path
+    assert isinstance(final_df, pd.DataFrame)
+    assert not final_df.empty
+
+
+@pytest.mark.skipif(
+    not os.path.isdir("tests_sample_data/bad"),
+    reason="No real test data folder found."
+)
+@patch('helab.workers.loadFolderToRamWorker.data_ram_cache', new_callable=MagicMock)
+def test_run_with_real_data_bad(mock_data_ram_cache, worker):
+    """
+    Another example if there's a 'bad' data folder with partial or broken files.
+    """
+    folder_path = "tests_sample_data/bad"
+    worker.folder_path = folder_path
+
+    mock_data_ram_cache.__getitem__.side_effect = KeyError
+    signals = MagicMock()
+    worker.signals = signals
+
+    worker.run()
+
+    signals.error.emit.assert_not_called()
+    signals.finished.emit.assert_called_once()
+    (folder_arg, problems, final_df), _ = signals.finished.emit.call_args
+
+    assert folder_arg == folder_path
+    # Possibly some files are bad => some indexes in `problems`
+    assert isinstance(problems, list)
+
+    assert isinstance(final_df, pd.DataFrame)
+    # Even if partial, we expect final_df to exist (unless *all* files failed).
+    # If everything was broken, final_df might be empty but not None.
+    # So we just check type here.

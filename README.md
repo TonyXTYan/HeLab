@@ -64,17 +64,29 @@ here are some more random badges because they look cool
 
 ---
 
+For 'downstairs' and 'upstairs' lab deployment (most stable version) use: https://github.com/HeBECANU/HeLab
+
+Development branch: (all sorts of bugs and features) see: https://github.com/TonyXTYan/HeLab 
+
+
+---
+
 I'm targeting Python3.12 for its new typing features. As of now this builds on python 3.11, 3.12 and 3.13. I'll try to maintain compatibility with 3.12 and 3.13 but might use newer features and drop support for lower python versions. For more information about which python version are supported, see the CI runs [here](https://github.com/TonyXTYan/HeLab/actions)
 <!-- maybe it would also work on Python 3.11? See CI run [here](https://github.com/TonyXTYan/HELIUM/actions/runs/11605700722) -->
 
 
 
-Comparison with 
+Comparison with existing software:
 - https://pypi.org/project/argos/ 
+  - wants datafiles to be in a single file (e.g. HDF5)
+  - doesn't allow different analysis plots, so not general enough for multiple purposes in one app.
 - https://github.com/adareau/HAL
+  - data need to be arranged in a particular format
+  - difficult to do multiple analysis in one app. 
+  - GUI built from Qt Designer, instead of programmatically generated GUI (hard to debug and add features).
 
 
---- 
+---
 random useful notes:
 - https://www.pythonguis.com/faq/built-in-qicons-pyqt/
 - https://github.com/niklashenning/pytablericons  https://tabler.io/icons https://github.com/tabler/tabler-icons
@@ -95,7 +107,7 @@ Na, apparently github action is free for public repos, also much easier to setup
 
 
 
-## Other random scripts
+## Notes of other random scripts
 
 
 ```bash
@@ -103,6 +115,11 @@ python -m venv venv
 source venv/bin/activate # for unix
 venv\Scripts\activate # for windows
 ```
+
+On macOS with iCloud Drive syncing this folder, `venv` can be created as `venv.nosync`
+and symlinked to `venv` (`ln -s venv.nosync venv`) to keep it out of iCloud sync — venv
+files churn constantly and aren't worth uploading. Activation and imports work the same
+either way.
 
 ```bash
 pip install -r requirements.txt
@@ -112,9 +129,40 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+```bash
+git submodule update --init --recursive # legacy/tdc_autoconverter (HeBECANU/tdc_autoconverter, MATLAB, reference only)
+```
+
 ```PowerShell
 .\venv\Scripts\activate
 ```
+
+
+
+```bash
+python -m cProfile -o helab_main.prof  helab/main.py
+snakeviz helab_main.pro
+```
+
+
+
+```
+conda create -n HeLab python=3.12
+```
+
+
+
+## Notes on plotting libraries 
+
+* `Matplotlib` ok for publication quality
+* `Plotly` ok, but have html file caveats 
+* `PyQtGraphs` panning and plot range issues (?), maybe will try to use this to write a fast update code. 
+* `PyVista` panning and plot range issues (?)
+* `VisPy` missing data points on large data file ()
+* `Manim` emmm no (too much configuration), not real time
+
+
+
 
 
 ## Dumps
@@ -130,11 +178,19 @@ We use [mypy]() and [pyright]() to enforce strict typing for this package.
 pytest
 ```
 
-```
-pytest
+Tests launch real Qt windows by default. To run headless (no windows popping up, e.g. over SSH or while doing other work), prefix with `QT_QPA_PLATFORM=offscreen` — this only affects that one command, not your shell session:
+
+```bash
+QT_QPA_PLATFORM=offscreen pytest
 ```
 
+The same env var works for running the app itself headlessly:
 
+```bash
+QT_QPA_PLATFORM=offscreen helab
+```
+
+/Users/tonyyan/Library/Preferences/com.anu.HeLab.plist
 
 
 ---
@@ -159,7 +215,8 @@ pytest
 - [ ] cache github actions
 
     
+- [ ]  hasChildren() scan at root is taking time
 
-
+- [ ] File reading system is blocking the main thread (?)
 
 - [ ] Code validation check in pipeline

@@ -31,7 +31,7 @@ class TestIcons(unittest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         if cls.app:
-            while not cls.thread_pool.activeThreadCount() == 0: time.sleep(0.05)
+            while cls.thread_pool.activeThreadCount() > 0: time.sleep(0.05)
             cls.app.quit()
             del cls.app
 
@@ -51,5 +51,27 @@ class TestIcons(unittest.TestCase):
         except Exception as e:
             self.fail(f"Failed to initialise StatusIcons: {e}")
 
+    def test_icons_status_not_empty(self) -> None:
+        self.assertTrue(StatusIcons.ICONS_STATUS)
+        for name, icon in StatusIcons.ICONS_STATUS.items():
+            self.assertIsInstance(icon, QIcon, msg=f"{name} icon is not QIcon")
+
+    def test_icons_extra_not_empty(self) -> None:
+        self.assertTrue(StatusIcons.ICONS_EXTRA)
+        for name, icon in StatusIcons.ICONS_EXTRA.items():
+            self.assertIsInstance(icon, QIcon, msg=f"{name} icon is not QIcon")
+
+    def test_known_status_names(self) -> None:
+        for name in StatusIcons.STATUS_ICONS_NAME:
+            self.assertIn(name, StatusIcons.ICONS_STATUS, msg=f"Missing status icon for {name}")
+
+    def test_known_extra_names(self) -> None:
+        for name in StatusIcons.STATUS_ICONS_EXTRA_NAME:
+            self.assertIn(name, StatusIcons.ICONS_EXTRA, msg=f"Missing extra icon for {name}")
+
+    def test_known_extra_names_sort_keys(self) -> None:
+        for name in StatusIcons.STATUS_ICONS_EXTRA_NAME_SORT_KEY:
+            self.assertIn(name, StatusIcons.ICONS_EXTRA, msg=f"Missing extra icon for {name}")
+            
 if __name__ == '__main__':
     unittest.main()

@@ -72,7 +72,7 @@ CMakeLists.txt.user*
 *.dll
 *.exe
 
-.idea
+# .idea
 .qtcreator
 env
 HELIUM.pyproject*
@@ -86,3 +86,24 @@ Icon?
 helab.egg-info
 coverage.xml
 .coverage
+helab_tempfiles
+helab_caches
+helab_temps
+*.ipynb
+coverage.xml
+helab_main.prof
+*.log
+mprofile_*.dat
+profile.html
+profile.json
+.pytest_cache
+.idea/misc.xml
+.idea/modules.xml
+.coverage.*
+.coverage*
+junit.xml
+_server alias/
+.ai/temp/
+venv
+side_projects/rga_visualiser/RGAData
+venv.nosync

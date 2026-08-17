@@ -294,6 +294,7 @@ class CustomFileSystemModel(QFileSystemModel):
             # Create and start the worker
             worker = StatusWorker(folder_path)
             worker.signals.finished.connect(self.handle_status_computed)
+            worker.setAutoDelete(True)
             self.thread_pool.start(worker)
             # self.running_workers.add(worker)
             self.running_workers_status[folder_path] = worker
