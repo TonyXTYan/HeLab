@@ -1147,7 +1147,13 @@ class HelabMainWindow(QMainWindow):
     def resizeEvent(self, a0: QResizeEvent | None) -> None:
         self.setUpdatesEnabled(False)
         super().resizeEvent(a0)
-        QTimer.singleShot(100, lambda: self.setUpdatesEnabled(True))
+        QTimer.singleShot(100, self._reenable_updates_after_resize)
+
+    def _reenable_updates_after_resize(self) -> None:
+        try:
+            self.setUpdatesEnabled(True)
+        except RuntimeError:
+            logging.debug("HelabMainWindow._reenable_updates_after_resize: window has been deleted, skipping.")
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         logging.info("HelabMainWindow closeEvent")

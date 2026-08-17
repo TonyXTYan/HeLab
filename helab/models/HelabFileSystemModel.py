@@ -599,7 +599,13 @@ class HelabFileSystemModel(QFileSystemModel):
         else:
             logging.debug("HelabFileSystemModel.rescan: starting")
 
-        worker = StatusRescanWorker(rows=self.get_visible_rows(), model_folder_opened_path=self.folder_opened_path, user_requested_scan=user_requested_scan)
+        try:
+            visible_rows = self.get_visible_rows()
+        except RuntimeError:
+            logging.debug("HelabFileSystemModel.rescan: model has been deleted, skipping deferred rescan.")
+            return
+
+        worker = StatusRescanWorker(rows=visible_rows, model_folder_opened_path=self.folder_opened_path, user_requested_scan=user_requested_scan)
         worker.signals.finished.connect(self.on_rescan_finished)
         worker.signals.cancelled.connect(self.on_rescan_cancelled)
         if user_requested_scan:

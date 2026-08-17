@@ -11,6 +11,7 @@ pytest-cov
 pytest-qt
 pytest-xdist
 pytest-rerunfailures
+pytest-timeout
 pympler
 pyinstaller
 psutil

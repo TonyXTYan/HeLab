@@ -178,8 +178,16 @@ We use [mypy]() and [pyright]() to enforce strict typing for this package.
 pytest
 ```
 
+Tests launch real Qt windows by default. To run headless (no windows popping up, e.g. over SSH or while doing other work), prefix with `QT_QPA_PLATFORM=offscreen` — this only affects that one command, not your shell session:
+
+```bash
+QT_QPA_PLATFORM=offscreen pytest
 ```
-pytest
+
+The same env var works for running the app itself headlessly:
+
+```bash
+QT_QPA_PLATFORM=offscreen helab
 ```
 
 /Users/tonyyan/Library/Preferences/com.anu.HeLab.plist

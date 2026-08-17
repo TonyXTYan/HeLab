@@ -11,6 +11,7 @@ jobs:
     # name: Test on ${{ matrix.os }} - Python ${{ matrix.python-version }}
     name: Test on ${{ matrix.os }} py3.${{ matrix.python3-version }}
     runs-on: ${{ matrix.os }}-latest
+    timeout-minutes: 20
     # continue-on-error: true  # Allow continue to build even if tests fail
     continue-on-error: ${{ matrix.python3-version != '12' }}
     strategy:
@@ -24,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # - name: Cache pip
       #   uses: actions/cache@v4
@@ -64,7 +65,7 @@ jobs:
           echo "No dependencies to install on Windows."
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: 3.${{ matrix.python3-version }}
           cache: 'pip'
@@ -91,13 +92,13 @@ jobs:
           else
             source venv/bin/activate
           fi
-            pytest -n 4 --verbose --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy --reruns 5 --reruns-delay 2 
+            pytest -n 4 --verbose --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy --reruns 5 --reruns-delay 2 --timeout=120 --timeout-method=thread
 
 #          pytest -n 1 -v --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy
 #          pytest -n 8 -v --cache-clear --cov=helab --junit-xml=pytest-report.xml
       
       - name: Upload Test Results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.os }}-py3${{ matrix.python3-version }}
           path: junit.xml
@@ -112,11 +113,11 @@ jobs:
         if: matrix.python3-version == '12' && matrix.os == 'macos'
         run: |  
           source venv/bin/activate
-          pytest --cov=helab --cov-report=xml --cov-report=term --ignore=tests/test_typing.py --cache-clear 
+          pytest --cov=helab --cov-report=xml --cov-report=term --ignore=tests/test_typing.py --cache-clear --timeout=120 --timeout-method=thread
 
       - name: Upload Code Coverage Report
         if: matrix.python3-version == '12' && matrix.os == 'macos'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
@@ -139,7 +140,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # - name: Cache pip
       #   uses: actions/cache@v4
@@ -179,7 +180,7 @@ jobs:
             libopengl0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: 3.${{ matrix.python3-version }}
           cache: 'pip'
@@ -209,7 +210,7 @@ jobs:
           pyinstaller HeLab.spec --clean -y
 
       - name: Archive build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-${{ matrix.os }}-py3${{ matrix.python3-version }}
           # name: build-${{ matrix.os }}-py${{ format('{0}', matrix.python-version) | replace('.','') }}
@@ -228,19 +229,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download macOS Build Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-macos-py312
           path: dist/macos
 
       - name: Download Windows Build Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-windows-py312
           path: dist/windows
 
       - name: Download Ubuntu Build Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-ubuntu-py312
           path: dist/ubuntu
