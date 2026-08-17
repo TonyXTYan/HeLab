@@ -155,6 +155,8 @@ class RGAComparisonWindow(QMainWindow):
         self.normalise_checkbox = QCheckBox("Normalise each trace to its maximum")
         self.gas_markers_checkbox = QCheckBox("Show common gas markers")
         self.gas_markers_checkbox.setChecked(True)
+        self.log_scale_checkbox = QCheckBox("Log Y scale")
+        self.log_scale_checkbox.setChecked(True)
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
 
@@ -171,6 +173,7 @@ class RGAComparisonWindow(QMainWindow):
         controls_layout.addWidget(self.scan_list)
         controls_layout.addWidget(self.normalise_checkbox)
         controls_layout.addWidget(self.gas_markers_checkbox)
+        controls_layout.addWidget(self.log_scale_checkbox)
         controls_layout.addWidget(self.status_label)
 
         self.plot_view = QWebEngineView()
@@ -194,6 +197,7 @@ class RGAComparisonWindow(QMainWindow):
         self.scan_list.itemChanged.connect(self._scan_check_state_changed)
         self.normalise_checkbox.stateChanged.connect(self._normalise_changed)
         self.gas_markers_checkbox.stateChanged.connect(self._gas_markers_changed)
+        self.log_scale_checkbox.stateChanged.connect(self._log_scale_changed)
         self.plot_view.loadFinished.connect(self._plot_loaded)
 
         self._set_configuration_enabled(False)
@@ -337,6 +341,9 @@ class RGAComparisonWindow(QMainWindow):
     def _gas_markers_changed(self, _state: int) -> None:
         self._update_plot()
 
+    def _log_scale_changed(self, _state: int) -> None:
+        self._update_plot()
+
     def _mode_changed(self, _index: int) -> None:
         if self._updating_controls:
             return
@@ -406,6 +413,7 @@ class RGAComparisonWindow(QMainWindow):
         figure = go.Figure()
         errors: list[str] = []
         normalise = self.normalise_checkbox.isChecked()
+        log_scale = self.log_scale_checkbox.isChecked()
         trace_count = 0
         mass_min: float | None = None
         mass_max: float | None = None
@@ -417,9 +425,11 @@ class RGAComparisonWindow(QMainWindow):
                 values = reduce_scans(data, selection)
                 if normalise:
                     values = normalise_spectrum(values)
-                plotted_values: list[float | None] = [
-                    value if value > 0 else None for value in values
-                ]
+                plotted_values: list[float | None] = (
+                    [value if value > 0 else None for value in values]
+                    if log_scale
+                    else list(values)
+                )
                 figure.add_trace(
                     go.Scatter(
                         x=data.masses,
@@ -465,17 +475,20 @@ class RGAComparisonWindow(QMainWindow):
             template="plotly_white",
             xaxis_title="Mass-to-charge ratio (amu/e)",
             yaxis_title=y_title,
-            yaxis_type="log",
+            yaxis_type="log" if log_scale else "linear",
             hovermode="x unified",
             legend=dict(
                 title_text="File and scan reduction",
-                orientation="h",
+                orientation="v",
                 yanchor="top",
-                y=-0.18,
-                xanchor="center",
-                x=0.5,
+                y=0.99,
+                xanchor="right",
+                x=0.99,
+                bgcolor="rgba(255,255,255,0.85)",
+                bordercolor="#cccccc",
+                borderwidth=1,
             ),
-            margin=dict(l=75, r=25, t=90, b=110),
+            margin=dict(l=75, r=25, t=90, b=65),
         )
         if trace_count == 0:
             figure.add_annotation(
