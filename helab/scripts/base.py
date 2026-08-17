@@ -10,6 +10,7 @@ class ScriptMetadata:
     description: str
     group: str
     file_path: str
+    script_id: str = ""
 
 class HelabAnalysisScript(ABC):
     """Base class for HeLab analysis scripts.

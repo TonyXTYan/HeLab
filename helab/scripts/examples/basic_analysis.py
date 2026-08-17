@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from typing import List
+from typing import Any, List
 
 from helab.scripts.base import HelabAnalysisScript, ScriptMetadata
 
@@ -18,7 +18,7 @@ class BasicAnalysisScript(HelabAnalysisScript):
     def get_actions(self) -> List[str]:
         return ["Analyze", "Plot"]
         
-    def execute_action(self, action_name: str, **kwargs) -> None:
+    def execute_action(self, action_name: str, **kwargs: Any) -> None:
         if action_name == "Analyze":
             self._analyze()
         elif action_name == "Plot":
@@ -52,7 +52,7 @@ class AnotherAnalysisScript(HelabAnalysisScript):
     def get_actions(self) -> List[str]:
         return ["Process", "Visualize"]
         
-    def execute_action(self, action_name: str, **kwargs) -> None:
+    def execute_action(self, action_name: str, **kwargs: Any) -> None:
         if action_name == "Process":
             self._process()
         elif action_name == "Visualize":

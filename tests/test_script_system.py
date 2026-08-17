@@ -1,20 +1,24 @@
 import os
+from typing import List, cast
+
 import pytest
-from PyQt6.QtWidgets import QApplication, QMainWindow, QTreeWidgetItem
+from PyQt6.QtWidgets import QApplication, QDockWidget, QMainWindow, QTreeWidgetItem
 from PyQt6.QtCore import Qt
+from pytestqt.qtbot import QtBot
 
 from helab.scripts.base import HelabAnalysisScript, ScriptMetadata
 from helab.scripts.scripts_manager import ScriptsManager
 from helab.models import TreePanelWidget
+from helab.views.HelabMainWindow import HelabMainWindow
 
 # Mock HelabMainWindow for testing
 class MockHelabMainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.middle_mainwindow = QMainWindow()
-        self.dock_widgets = []
+        self.dock_widgets: List[QDockWidget] = []
 
-def test_script_loading(qtbot):
+def test_script_loading(qtbot: QtBot) -> None:
     """Test loading and managing analysis scripts"""
     manager = ScriptsManager()
     
@@ -37,11 +41,11 @@ def test_script_loading(qtbot):
     assert len(advanced_scripts) == 1
     assert advanced_scripts[0].name == "Advanced Analysis"
 
-def test_tree_panel_widget(qtbot):
+def test_tree_panel_widget(qtbot: QtBot) -> None:
     """Test TreePanelWidget functionality"""
     # Create mock main window
     mock_main = MockHelabMainWindow()
-    widget = TreePanelWidget(mock_main)
+    widget = TreePanelWidget(cast(HelabMainWindow, mock_main))
     qtbot.addWidget(widget)
     
     # Load example scripts

@@ -21,9 +21,13 @@ class ScriptsManager:
     4. Providing access to script classes and their metadata
     
     The manager maintains three main data structures:
-    - _scripts: Maps file paths to script classes
-    - _metadata: Maps file paths to script metadata
-    - _groups: Maps group names to lists of script file paths
+    - _scripts: Maps script ids to script classes
+    - _metadata: Maps script ids to script metadata
+    - _groups: Maps group names to lists of script ids
+
+    A script id uniquely identifies a HelabAnalysisScript subclass, since a
+    single file may define more than one script class (and thus share a
+    file_path).
     
     Scripts must be subclasses of HelabAnalysisScript and provide valid metadata
     through the get_metadata() method including a name and group.
@@ -58,6 +62,10 @@ class ScriptsManager:
         if not os.path.isdir(directory):
             raise ValueError(f"Not a directory: {directory}")
 
+        # Normalize so re-loading the same directory via a differently
+        # spelled (but equivalent) path is recognized as the same directory.
+        directory = os.path.normpath(os.path.abspath(directory))
+
         # Clear existing scripts from this directory
         self._clear_directory_scripts(directory)
 
@@ -75,25 +83,25 @@ class ScriptsManager:
 
     def _clear_directory_scripts(self, directory: str) -> None:
         """Remove all scripts from the specified directory"""
-        to_remove = []
-        for path in self._scripts.keys():
-            if os.path.dirname(path) == directory:
-                to_remove.append(path)
+        to_remove = [
+            script_id for script_id, metadata in self._metadata.items()
+            if os.path.dirname(metadata.file_path) == directory
+        ]
 
-        for path in to_remove:
-            self._remove_script(path)
+        for script_id in to_remove:
+            self._remove_script(script_id)
 
-    def _remove_script(self, path: str) -> None:
+    def _remove_script(self, script_id: str) -> None:
         """Remove a script and its metadata"""
-        if path in self._scripts:
-            metadata = self._metadata.get(path)
+        if script_id in self._scripts:
+            metadata = self._metadata.get(script_id)
             if metadata and metadata.group in self._groups:
-                self._groups[metadata.group].remove(path)
+                self._groups[metadata.group].remove(script_id)
                 if not self._groups[metadata.group]:
                     del self._groups[metadata.group]
-            del self._scripts[path]
-            if path in self._metadata:
-                del self._metadata[path]
+            del self._scripts[script_id]
+            if script_id in self._metadata:
+                del self._metadata[script_id]
 
     def _load_script_file(self, file_path: str) -> None:
         """Load and validate a single script file"""
@@ -109,33 +117,40 @@ class ScriptsManager:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
 
-            # Find HelabAnalysisScript subclasses
+            # Find HelabAnalysisScript subclasses. A single file may define
+            # more than one script class, so all matches are loaded.
+            found_any = False
             for name, obj in inspect.getmembers(module):
-                if (inspect.isclass(obj) and 
-                    issubclass(obj, HelabAnalysisScript) and 
-                    obj != HelabAnalysisScript):
-                    
+                if (inspect.isclass(obj) and
+                    issubclass(obj, HelabAnalysisScript) and
+                    obj != HelabAnalysisScript and
+                    obj.__module__ == module.__name__):
+
                     # Create instance to get metadata
                     script = obj()
                     metadata = script.get_metadata()
-                    
+
                     # Validate metadata
                     if not metadata.name or not metadata.group:
                         raise ScriptLoadError("Script metadata missing name or group")
-                    
+
+                    found_any = True
+                    script_id = f"{file_path}::{obj.__qualname__}"
+                    metadata.script_id = script_id
+
                     # Store script class and metadata
-                    self._scripts[file_path] = obj
-                    self._metadata[file_path] = metadata
-                    
+                    self._scripts[script_id] = obj
+                    self._metadata[script_id] = metadata
+
                     # Update groups
                     if metadata.group not in self._groups:
                         self._groups[metadata.group] = []
-                    self._groups[metadata.group].append(file_path)
-                    
-                    logging.info(f"Loaded script {metadata.name} from {file_path}")
-                    return
+                    self._groups[metadata.group].append(script_id)
 
-            raise ScriptLoadError("No HelabAnalysisScript subclass found")
+                    logging.info(f"Loaded script {metadata.name} from {file_path}")
+
+            if not found_any:
+                raise ScriptLoadError("No HelabAnalysisScript subclass found")
 
         except Exception as e:
             raise ScriptLoadError(f"Failed to load script: {e}")
@@ -150,10 +165,10 @@ class ScriptsManager:
             return []
         return [self._metadata[path] for path in self._groups[group]]
 
-    def get_script(self, file_path: str) -> Optional[Type[HelabAnalysisScript]]:
-        """Get script class by file path"""
-        return self._scripts.get(file_path)
+    def get_script(self, script_id: str) -> Optional[Type[HelabAnalysisScript]]:
+        """Get script class by script id"""
+        return self._scripts.get(script_id)
 
-    def get_script_metadata(self, file_path: str) -> Optional[ScriptMetadata]:
-        """Get script metadata by file path"""
-        return self._metadata.get(file_path)
+    def get_script_metadata(self, script_id: str) -> Optional[ScriptMetadata]:
+        """Get script metadata by script id"""
+        return self._metadata.get(script_id)

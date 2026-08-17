@@ -384,7 +384,7 @@ class TreePanelWidget(QWidget):
         if group_data.type == "dynamic":
             # Load dynamic scripts
             for metadata in self.script_manager.get_scripts_in_group(group_name):
-                script_class = self.script_manager.get_script(metadata.file_path)
+                script_class = self.script_manager.get_script(metadata.script_id)
                 if script_class:
                     try:
                         script = script_class()
@@ -416,7 +416,7 @@ class TreePanelWidget(QWidget):
                     self.tree_widget.setItemWidget(item, 1, self.create_button("Run", callback1))
             elif group_name == "Advanced Analysis":
                 # Recreate Advanced Analysis items
-                items: ExampleGroup = [
+                items = [
                     ("Example 2", lambda: self._show_example_analysis("Advanced Example 2"))
                 ]
                 for name, callback1 in items:

@@ -3,7 +3,7 @@ from typing import Optional, Dict, Any
 
 import dash
 from dash import html, Output, Input, dcc
-from dash.html import Figure
+from plotly.graph_objs import Figure
 
 from helab.utils.synchronised_dict import SynchronisedDict
 
@@ -26,7 +26,7 @@ class DashServer:
             html.Div(id='page-content')
         ])
 
-        @self.app.callback(Output('page-content', 'children'),  # type: ignore
+        @self.app.callback(Output('page-content', 'children'),
                            Input('url', 'pathname'))
         def display_page(pathname: Optional[str]) -> Any:
             print(f"{pathname = }")

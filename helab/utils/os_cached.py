@@ -25,7 +25,7 @@ def os_listdir(path: str, invalidate_cache:bool=False) -> List[str]:
         os_file_system_cache.pop(_os_listdir.__cache_key__(path))
     return _os_listdir(path)    # type: ignore[no-any-return]
 
-@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_listdir")  # type: ignore[misc]
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_listdir")  # type: ignore[untyped-decorator]
 def _os_listdir(path: str) -> List[str]:
     with os.scandir(path) as entries:
         return [entry.name for entry in entries]
@@ -43,7 +43,7 @@ def os_listdir_filtered(path: str, invalidate_cache:bool=False) -> List[str]:
     return _os_listdir_filtered(path) # type: ignore[no-any-return]
 
 
-@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_listdir_filtered")  # type: ignore[misc]
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_listdir_filtered")  # type: ignore[untyped-decorator]
 def _os_listdir_filtered(path: str) -> List[str]:
     return [
         entry for entry in os_listdir(path)
@@ -58,7 +58,7 @@ def os_listdirdir(path: str, invalidate_cache:bool=False) -> List[str]:
         os_file_system_cache.pop(_os_listdirdir.__cache_key__(path))
     return _os_listdirdir(path) # type: ignore[no-any-return]
 
-@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_listdirdir")  # type: ignore[misc]
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_listdirdir")  # type: ignore[untyped-decorator]
 def _os_listdirdir(path: str) -> List[str]:
     # return [
     #     entry for entry in os_listdir(path)
@@ -82,7 +82,7 @@ def os_has_children(path: str, invalidate_cache:bool=False) -> bool:
         os_file_system_cache.pop(_os_has_children.__cache_key__(path))
     return _os_has_children(path) # type: ignore[no-any-return]
 
-@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_has_children")  # type: ignore[misc]
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_has_children")  # type: ignore[untyped-decorator]
 def _os_has_children(path: str) -> bool:
     with os.scandir(path) as entries:
         return any(
@@ -90,7 +90,7 @@ def _os_has_children(path: str) -> bool:
             for entry in entries
         )
 
-@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_scandir_dic")  # type: ignore[misc]
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_scandir_dic")  # type: ignore[untyped-decorator]
 def _os_scandir_dic(path: str) -> List[Dict[str, Any]]:
     return [
         {
@@ -128,7 +128,7 @@ def os_scandir_dic(path: str, invalidate_cache:bool=False) -> List[Dict[str, Any
         os_file_system_cache.pop(_os_scandir_dic.__cache_key__(path))
     return _os_scandir_dic(path) # type: ignore[no-any-return]
 
-@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_scandir_sns")  # type: ignore[misc]
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_scandir_sns")  # type: ignore[untyped-decorator]
 def _os_scandir_sns(path: str) -> List[SimpleNamespace]:
     return [
         SimpleNamespace(
@@ -159,7 +159,7 @@ def os_scandir_sns(path: str, invalidate_cache:bool=False) -> List[SimpleNamespa
     return _os_scandir_sns(path) # type: ignore[no-any-return]
 
 
-@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_isdir")    # type: ignore[misc]
+@os_file_system_cache.memoize(expire=OS_DIR_CACHE_TTL, tag="os_isdir")    # type: ignore[untyped-decorator]
 def _os_isdir(path: str) -> bool:
     return os.path.isdir(path)
 

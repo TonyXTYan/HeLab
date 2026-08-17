@@ -187,7 +187,7 @@ class HelabMainWindow(QMainWindow):
 
             if (self.isActiveWindow()
                 # and self.status_bar_checkbox.isChecked()
-                and self.view_toggle_thread_status.isChecked()  # type: ignore[has-type] # I personally guarantee this is fine
+                and self.view_toggle_thread_status.isChecked()  # I personally guarantee this is fine
                 and (self.status_timer_threadpool_hang_counts >= self.STATUS_LEFT_MISSED_REFRESH_HANG_THRESHOLD_COUNTS
                   or  (self.status_timer_threadpool_hang_timestamp is not None
                     and QDateTime.currentDateTime().toSecsSinceEpoch() - self.status_timer_threadpool_hang_timestamp.toSecsSinceEpoch() > self.STATUS_LEFT_MISSED_REFRESH_HANG_THRESHOLD_SECS)
@@ -748,7 +748,7 @@ class HelabMainWindow(QMainWindow):
             self.dock_widgets.append(dock_widget3)
 
         try:
-            self._setup_matplotlib_to_dock_widget() # type: ignore
+            self._setup_matplotlib_to_dock_widget()
         except Exception as e:
             logging.error(f"_setup_middle_area: Failed to load matplotlib {e}")
 
@@ -759,7 +759,7 @@ class HelabMainWindow(QMainWindow):
             logging.error(f"_setup_middle_area: Failed to load pyqtgraphs lib {e}")
 
         try:
-            self._setup_simple_test_pyqtgraph()     # type: ignore
+            self._setup_simple_test_pyqtgraph()
         except Exception as e:
             logging.error(f"_setup_middle_area: Failed to load pg_simple_densities {e}")
 

@@ -101,5 +101,5 @@ class Plotly3DScatter(QWidget):
             return (mu - nsigs * sigma, mu + nsigs * sigma)
         except:
             # Fallback to simple statistics if fit fails
-            mean, std = np.mean(data), np.std(data)
+            mean, std = float(np.mean(data)), float(np.std(data))
             return (mean - nsigs * std, mean + nsigs * std)
