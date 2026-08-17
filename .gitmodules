@@ -1,0 +1,4 @@
+[submodule "legacy/tdc_autoconverter"]
+	path = legacy/tdc_autoconverter
+	url = https://github.com/HeBECANU/tdc_autoconverter
+	branch = master

@@ -102,3 +102,5 @@ profile.json
 .coverage.*
 .coverage*
 junit.xml
+_server alias/
+.ai/temp/
