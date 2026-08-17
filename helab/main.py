@@ -30,8 +30,26 @@ from helab.views.HelabMainWindow import HelabMainWindow
 from helab.utils.threading_setup import *
 
 
+def _raise_fd_limit(target: int = 10240) -> None:
+    # macOS's default launchd/Finder-launch environment caps RLIMIT_NOFILE at 256
+    # (vs. a typical interactive shell's much higher ulimit), which HeLab's
+    # directory-scanning worker pools can exhaust, aborting Qt's event dispatcher.
+    if sys.platform == "win32":
+        return
+    import resource
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        new_soft = target if hard == resource.RLIM_INFINITY else min(target, hard)
+        if new_soft > soft:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+            logging.info(f"Raised file-descriptor limit (RLIMIT_NOFILE): {soft} -> {new_soft} (hard={hard})")
+    except (ValueError, OSError) as e:
+        logging.warning(f"Could not raise RLIMIT_NOFILE: {e}")
+
+
 def main() -> None:
     # setup_logging()
+    _raise_fd_limit()
     logging.debug("this is a debugging message")
     logging.info("this is an informational message")
     logging.warning("this is a warning message")
