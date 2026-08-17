@@ -124,6 +124,10 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+```bash
+git submodule update --init --recursive # legacy/tdc_autoconverter (HeBECANU/tdc_autoconverter, MATLAB, reference only)
+```
+
 ```PowerShell
 .\venv\Scripts\activate
 ```
