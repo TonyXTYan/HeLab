@@ -340,7 +340,7 @@ jobs:
       - name: Compress Windows Build Artifact
         run: |
           cd dist/windows
-          zip -r -9 HeLab-windows.zip HeLab.exe
+          zip -r -9 HeLab-windows.zip HeLab
           
       - name: Compress Ubuntu Build Artifact
         run: |
