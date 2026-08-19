@@ -7,14 +7,13 @@ import argparse
 import math
 import struct
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import TYPE_CHECKING, Iterable, Optional, Sequence
 
 import plotly.graph_objects as go
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -32,13 +31,39 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PyQt6.QtWebEngineWidgets import QWebEngineView
 
+from .plotly_view import PlotlyPlotView
 from .rga_visualiser import COMMON_GAS_PEAKS, RGAData, parse_rgadata
 
-DEFAULT_RGADATA_FOLDER = Path(
-    "/Volumes/100.123.123.201-1/Users/helium/Documents/RGAData"
-)
+if TYPE_CHECKING:
+    from .rgadata_diff import ScanDiffWindow
+
+_RGADATA_HOST = "100.123.123.201"
+_RGADATA_SUBPATH = Path("Users/helium/Documents/RGAData")
+
+
+def _detect_default_rgadata_folder() -> Path:
+    """Locate the lab's RGAData share under ``/Volumes``.
+
+    The share is mounted by Tailscale IP, and macOS appends a ``-1``,
+    ``-2``, ... suffix to disambiguate it from other mounts of the same
+    name; which suffix ends up on the actual data share depends on mount
+    order, not on anything stable. Instead of assuming a suffix, try
+    every ``100.123.123.201*`` volume and use the first one that really
+    contains the RGAData folder.
+    """
+
+    volumes = Path("/Volumes")
+    candidates = sorted(volumes.glob(f"{_RGADATA_HOST}*")) if volumes.is_dir() else []
+    for candidate in candidates:
+        target = candidate / _RGADATA_SUBPATH
+        if target.is_dir():
+            return target
+    first = candidates[0] if candidates else volumes / f"{_RGADATA_HOST}-1"
+    return first / _RGADATA_SUBPATH
+
+
+DEFAULT_RGADATA_FOLDER = _detect_default_rgadata_folder()
 
 
 class ReductionMode(Enum):
@@ -134,10 +159,10 @@ class RGAComparisonWindow(QMainWindow):
         self._data_cache: dict[Path, RGAData] = {}
         self._selections: dict[Path, TraceSelection] = {}
         self._updating_controls = False
-        self._plot_path: Path | None = None
-        self._obsolete_plot_paths: list[Path] = []
+        self._diff_window: ScanDiffWindow | None = None
 
         self.open_folder_button = QPushButton("Open folder…")
+        self.compare_scans_button = QPushButton("Compare two scans…")
         self.folder_label = QLabel("No folder selected")
         self.folder_label.setWordWrap(True)
         self.file_list = QListWidget()
@@ -163,6 +188,7 @@ class RGAComparisonWindow(QMainWindow):
         controls = QWidget()
         controls_layout = QVBoxLayout(controls)
         controls_layout.addWidget(self.open_folder_button)
+        controls_layout.addWidget(self.compare_scans_button)
         controls_layout.addWidget(self.folder_label)
         controls_layout.addWidget(QLabel("Files"))
         controls_layout.addWidget(self.file_list, 1)
@@ -176,7 +202,7 @@ class RGAComparisonWindow(QMainWindow):
         controls_layout.addWidget(self.log_scale_checkbox)
         controls_layout.addWidget(self.status_label)
 
-        self.plot_view = QWebEngineView()
+        self.plot_view = PlotlyPlotView()
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(controls)
         splitter.addWidget(self.plot_view)
@@ -191,6 +217,7 @@ class RGAComparisonWindow(QMainWindow):
         self.setCentralWidget(container)
 
         self.open_folder_button.clicked.connect(self._choose_folder)
+        self.compare_scans_button.clicked.connect(self._open_diff_window)
         self.file_list.currentItemChanged.connect(self._current_file_changed)
         self.file_list.itemChanged.connect(self._file_check_state_changed)
         self.mode_combo.currentIndexChanged.connect(self._mode_changed)
@@ -198,7 +225,6 @@ class RGAComparisonWindow(QMainWindow):
         self.normalise_checkbox.stateChanged.connect(self._normalise_changed)
         self.gas_markers_checkbox.stateChanged.connect(self._gas_markers_changed)
         self.log_scale_checkbox.stateChanged.connect(self._log_scale_changed)
-        self.plot_view.loadFinished.connect(self._plot_loaded)
 
         self._set_configuration_enabled(False)
         self._update_plot()
@@ -224,6 +250,15 @@ class RGAComparisonWindow(QMainWindow):
         )
         if selected:
             self.load_folder(Path(selected))
+
+    def _open_diff_window(self) -> None:
+        from .rgadata_diff import ScanDiffWindow
+
+        if self._diff_window is None:
+            self._diff_window = ScanDiffWindow(self._folder or DEFAULT_RGADATA_FOLDER)
+        self._diff_window.show()
+        self._diff_window.raise_()
+        self._diff_window.activateWindow()
 
     def load_folder(self, folder: Path) -> None:
         """Load the non-recursive file list for *folder*."""
@@ -506,41 +541,15 @@ class RGAComparisonWindow(QMainWindow):
             if errors
             else f"Plotting {trace_count} file{'s' if trace_count != 1 else ''}."
         )
-        self._show_figure(figure)
-
-    def _show_figure(self, figure: go.Figure) -> None:
-        html = figure.to_html(
-            full_html=True,
-            include_plotlyjs=True,
-            config={"displaylogo": False, "responsive": True},
-        )
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            prefix="rgadata_comparison_",
-            suffix=".html",
-            delete=False,
-        ) as handle:
-            handle.write(html)
-            new_path = Path(handle.name)
-
-        if self._plot_path is not None:
-            self._obsolete_plot_paths.append(self._plot_path)
-        self._plot_path = new_path
-        self.plot_view.load(QUrl.fromLocalFile(str(new_path)))
-
-    def _plot_loaded(self, _success: bool) -> None:
-        obsolete, self._obsolete_plot_paths = self._obsolete_plot_paths, []
-        for path in obsolete:
-            path.unlink(missing_ok=True)
+        self.plot_view.show_figure(figure)
 
     def closeEvent(  # noqa: N802 - Qt API name
         self,
         event: Optional[QCloseEvent],
     ) -> None:
-        for path in [*self._obsolete_plot_paths, self._plot_path]:
-            if path is not None:
-                path.unlink(missing_ok=True)
+        self.plot_view.cleanup()
+        if self._diff_window is not None:
+            self._diff_window.close()
         super().closeEvent(event)
 
 
