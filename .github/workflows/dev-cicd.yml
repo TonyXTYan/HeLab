@@ -26,7 +26,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.13'
 
       - name: Install packaging
         run: pip install packaging
@@ -97,13 +97,13 @@ jobs:
     runs-on: ${{ matrix.os }}-latest
     timeout-minutes: 15
     # continue-on-error: true  # Allow continue to build even if tests fail
-    continue-on-error: ${{ matrix.python3-version != '12' }}
+    continue-on-error: ${{ matrix.python3-version != '13' }}
     strategy:
       matrix:
         os: [macos, windows, ubuntu]
         # os: [macos, windows]
-        # python3-version: ["9", "10", "11", "12", "13"]
-        python3-version: ["10", "11", "12", "13"]
+        # python3-version: ["9", "10", "11", "12", "13", "14"]
+        python3-version: ["11", "12", "13", "14"]
     env:
       QT_QPA_PLATFORM: offscreen
 
@@ -195,19 +195,19 @@ jobs:
           report_type: test_results
 
       - name: Run test with code coverage report
-        if: matrix.python3-version == '12' && matrix.os == 'macos'
+        if: matrix.python3-version == '13' && matrix.os == 'macos'
         run: |  
           source venv/bin/activate
           pytest --cov=helab --cov-report=xml --cov-report=term --ignore=tests/test_typing.py --cache-clear --timeout=120 --timeout-method=thread
 
       - name: Upload Code Coverage Report
-        if: matrix.python3-version == '12' && matrix.os == 'macos'
+        if: matrix.python3-version == '13' && matrix.os == 'macos'
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
-      - name: Check Python 3.12 Test Results
-        if: matrix.python3-version == '12' && failure()
+      - name: Check Python 3.13 Test Results
+        if: matrix.python3-version == '13' && failure()
         run: exit 1
 
   build:
@@ -215,14 +215,14 @@ jobs:
     # needs: test # speed up parallel jobs
     name: Build on ${{ matrix.os }} py3.${{ matrix.python3-version }}
     # continue-on-error: true 
-    continue-on-error: ${{ matrix.python3-version != '12' }}
+    continue-on-error: ${{ matrix.python3-version != '13' }}
     runs-on: ${{ matrix.os }}-latest
     timeout-minutes: 15
     strategy:
       matrix:
         os: [macos, windows, ubuntu]
         # os: [macos, windows]
-        python3-version: ["11", "12", "13"]
+        python3-version: ["11", "12", "13", "14"]
 
     steps:
       - name: Checkout code
@@ -305,8 +305,8 @@ jobs:
           path: |
             dist/
           retention-days: 1
-      - name: Check Python 3.12 Test Results
-        if: matrix.python3-version == '12' && failure()
+      - name: Check Python 3.13 Test Results
+        if: matrix.python3-version == '13' && failure()
         run: exit 1
 
   release:
@@ -318,19 +318,19 @@ jobs:
       - name: Download macOS Build Artifact
         uses: actions/download-artifact@v8
         with:
-          name: build-macos-py312
+          name: build-macos-py313
           path: dist/macos
 
       - name: Download Windows Build Artifact
         uses: actions/download-artifact@v8
         with:
-          name: build-windows-py312
+          name: build-windows-py313
           path: dist/windows
 
       - name: Download Ubuntu Build Artifact
         uses: actions/download-artifact@v8
         with:
-          name: build-ubuntu-py312
+          name: build-ubuntu-py313
           path: dist/ubuntu
 
       - name: Compress macOS Build Artifact
@@ -360,9 +360,9 @@ jobs:
 
           ### Build Artifacts
 
-          - **macOS ARM64** build (Python 3.12)
-          - **Windows Intel64** build (Python 3.12)
-          - **Ubuntu Intel64** build (Python 3.12)
+          - **macOS ARM64** build (Python 3.13)
+          - **Windows Intel64** build (Python 3.13)
+          - **Ubuntu Intel64** build (Python 3.13)
 
           **Note:** This is an automated release. Please verify builds before production use."
 
