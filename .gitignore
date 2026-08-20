@@ -108,3 +108,5 @@ venv
 side_projects/rga_visualiser/RGAData
 venv.nosync
 legacy/tdc_launcher/*
+
+*.lnk
