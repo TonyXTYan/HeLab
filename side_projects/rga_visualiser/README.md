@@ -18,7 +18,7 @@ before accepting a file.
 Activate the HeLab environment, then launch the comparison window:
 
 ```bash
-source .venv/bin/activate
+source venv/bin/activate
 python -m side_projects.rga_visualiser.rgadata_compare
 ```
 
@@ -38,6 +38,33 @@ Use **Open folder…** to list `.rgadata` files directly inside a folder. Tick
 files to add them to the Plotly graph. Highlight a file to choose one scan, the
 mean of every scan, or the mean of a checked subset. Normalisation is applied
 independently to each displayed trace when enabled.
+
+### View automated Analog history
+
+The automated `Analog` archive can be viewed as a time–mass heat map or as a
+rotatable Plotly 3D surface. Each scan becomes one time row; the acquisition
+time is taken from the filename and the scan's elapsed time. Ion current uses
+a base-10 logarithmic colour/height scale by default. Most of the Viridis
+colour range is allocated to the strongest four decades (the maximum down to
+`maximum / 10,000`); weaker signals retain a smaller dark colour variation. The
+3D height remains the unmodified `log10(current)`. The 3D view has a
+**Flatten to top-down view** action and remains freely rotatable with the mouse.
+Common residual-gas masses are labelled by default and can be hidden with the
+**Show common gas labels** checkbox. In the 3D view, normal numeric AMU ticks
+remain on the mass axis while the gas names form a separate angled annotation
+row along the far side of that axis, at the plot floor.
+
+```bash
+source venv/bin/activate
+python -m side_projects.rga_visualiser.analog_heatmap_visualiser
+```
+
+The window defaults to the mounted lab share's `RGAData/Analog` directory.
+Loading runs in a background worker. It displays exactly the newest 30 scans
+by default and stops reading older files once it has enough data; set the scan
+limit to **All** to load the full archive.
+It is also available from **View Analog history heat map…** in the comparison
+window.
 
 ### Compare two scans
 

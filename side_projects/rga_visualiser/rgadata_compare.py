@@ -36,6 +36,7 @@ from .plotly_view import PlotlyPlotView
 from .rga_visualiser import COMMON_GAS_PEAKS, RGAData, parse_rgadata
 
 if TYPE_CHECKING:
+    from .analog_heatmap_visualiser import AnalogHeatmapWindow
     from .rgadata_diff import ScanDiffWindow
 
 _RGADATA_HOST = "100.123.123.201"
@@ -160,9 +161,11 @@ class RGAComparisonWindow(QMainWindow):
         self._selections: dict[Path, TraceSelection] = {}
         self._updating_controls = False
         self._diff_window: ScanDiffWindow | None = None
+        self._heatmap_window: AnalogHeatmapWindow | None = None
 
         self.open_folder_button = QPushButton("Open folder…")
         self.compare_scans_button = QPushButton("Compare two scans…")
+        self.heatmap_button = QPushButton("View Analog history heat map…")
         self.folder_label = QLabel("No folder selected")
         self.folder_label.setWordWrap(True)
         self.file_list = QListWidget()
@@ -189,6 +192,7 @@ class RGAComparisonWindow(QMainWindow):
         controls_layout = QVBoxLayout(controls)
         controls_layout.addWidget(self.open_folder_button)
         controls_layout.addWidget(self.compare_scans_button)
+        controls_layout.addWidget(self.heatmap_button)
         controls_layout.addWidget(self.folder_label)
         controls_layout.addWidget(QLabel("Files"))
         controls_layout.addWidget(self.file_list, 1)
@@ -218,6 +222,7 @@ class RGAComparisonWindow(QMainWindow):
 
         self.open_folder_button.clicked.connect(self._choose_folder)
         self.compare_scans_button.clicked.connect(self._open_diff_window)
+        self.heatmap_button.clicked.connect(self._open_heatmap_window)
         self.file_list.currentItemChanged.connect(self._current_file_changed)
         self.file_list.itemChanged.connect(self._file_check_state_changed)
         self.mode_combo.currentIndexChanged.connect(self._mode_changed)
@@ -259,6 +264,24 @@ class RGAComparisonWindow(QMainWindow):
         self._diff_window.show()
         self._diff_window.raise_()
         self._diff_window.activateWindow()
+
+    def _open_heatmap_window(self) -> None:
+        from .analog_heatmap_visualiser import (
+            DEFAULT_ANALOG_FOLDER,
+            AnalogHeatmapWindow,
+        )
+
+        initial_folder = DEFAULT_ANALOG_FOLDER
+        if self._folder is not None:
+            if self._folder.name.casefold() == "analog":
+                initial_folder = self._folder
+            elif (self._folder / "Analog").is_dir():
+                initial_folder = self._folder / "Analog"
+        if self._heatmap_window is None:
+            self._heatmap_window = AnalogHeatmapWindow(initial_folder)
+        self._heatmap_window.show()
+        self._heatmap_window.raise_()
+        self._heatmap_window.activateWindow()
 
     def load_folder(self, folder: Path) -> None:
         """Load the non-recursive file list for *folder*."""
@@ -550,6 +573,8 @@ class RGAComparisonWindow(QMainWindow):
         self.plot_view.cleanup()
         if self._diff_window is not None:
             self._diff_window.close()
+        if self._heatmap_window is not None:
+            self._heatmap_window.close()
         super().closeEvent(event)
 
 
