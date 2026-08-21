@@ -1,9 +1,16 @@
 # tests/conftest.py
+import os
 from typing import Iterator
 
 import pytest
 
 from helab.utils.threading_setup import cancel_all_workers
+
+# Run Qt headless (offscreen) by default so tests don't pop up windows.
+# Set HELAB_SHOW_GUI=1 to force a real, visible display (e.g. when a test
+# genuinely needs to be watched/debugged interactively).
+if not os.environ.get("HELAB_SHOW_GUI") and "QT_QPA_PLATFORM" not in os.environ:
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 
 @pytest.fixture(autouse=True)
