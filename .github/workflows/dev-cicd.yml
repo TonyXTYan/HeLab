@@ -1,9 +1,8 @@
-# .github/workflows/sh-cicd.yml
 name: CI CD
 
 on:
   push:
-    branches: "*"
+    branches: "**"
     tags: 'v*.*.*'
 
 permissions:
