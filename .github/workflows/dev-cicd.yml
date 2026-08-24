@@ -175,7 +175,7 @@ jobs:
           else
             source venv/bin/activate
           fi
-            pytest -n 4 --verbose --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy --reruns 5 --reruns-delay 2 --timeout=120 --timeout-method=thread
+            pytest -n 4 --verbose --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
 
 #          pytest -n 1 -v --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy
 #          pytest -n 8 -v --cache-clear --cov=helab --junit-xml=pytest-report.xml

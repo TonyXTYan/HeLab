@@ -195,8 +195,26 @@ def get_path_from_setting_or_use_default(key: str, candidates: List[str], sandbo
     return new_value
 
 
-DIR_TEMPS = get_path_from_setting_or_use_default("dir_temps", DIR_TEMPS_CANDIDATES)
-DIR_CACHES = get_path_from_setting_or_use_default("dir_caches", DIR_CACHES_CANDIDATES)
+# QSettings persists dir_temps/dir_caches across processes and reuses
+# whatever path was saved last time, so concurrent processes (e.g. pytest-xdist
+# workers) that each expect a private cache dir would otherwise all resolve to
+# the same on-disk FanoutCache and race each other's .clear()/writes. These
+# overrides let a test process opt out of the persisted/shared path and force
+# its own private directory instead.
+_dir_temps_override = os.environ.get("HELAB_DIR_TEMPS_OVERRIDE")
+_dir_caches_override = os.environ.get("HELAB_DIR_CACHES_OVERRIDE")
+
+if _dir_temps_override:
+    os.makedirs(_dir_temps_override, exist_ok=True)
+    DIR_TEMPS = _dir_temps_override
+else:
+    DIR_TEMPS = get_path_from_setting_or_use_default("dir_temps", DIR_TEMPS_CANDIDATES)
+
+if _dir_caches_override:
+    os.makedirs(_dir_caches_override, exist_ok=True)
+    DIR_CACHES = _dir_caches_override
+else:
+    DIR_CACHES = get_path_from_setting_or_use_default("dir_caches", DIR_CACHES_CANDIDATES)
 
 if DIR_TEMPS != DIR_TEMPS_CANDIDATES[0]:
     os.rmdir(DIR_TEMPS_CANDIDATES[0])
