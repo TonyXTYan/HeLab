@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 import json
 import os
 import subprocess
@@ -12,11 +13,13 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QLabel, QTabWidget
 
 from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService
 from helab.views.FolderExplorer import FolderExplorer
+from helab.views.HelabMainWindow import HelabMainWindow
 from helab.io_helper import load, scan
 from helab.resources.icons import IconsInitUtil, StatusIcons
 
@@ -128,6 +131,118 @@ def test_inflight_scan_and_load_survive_one_tab_cancellation(
     finish_load(cache, path)
     assert second.folder_opened_data is not None
     second.close_cleanup()
+    service.shutdown()
+
+
+def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = service_for_test(monkeypatch)
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    cache, path = get_folder_cache(service), str(tmp_path)
+    first = explorer_for_test(qtbot, path)
+    tabs = QTabWidget()
+    qtbot.addWidget(tabs)
+    tabs.addTab(first, "First")
+    # Exercise the central message with real widgets, without creating native
+    # settings, a watchdog, or a full main window and its startup jobs.
+    window: Any = SimpleNamespace(_closing=False, tab_widget=tabs, central_placeholder=QLabel(tabs))
+    qtbot.waitUntil(lambda: ("scan", path) in cache.jobs)
+    finish_scan(cache, path)
+    qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
+    request = producer(cache, path, "load")
+    assert first.loading_message == "Queued"
+    assert first.scan_label.text() == "Queued"
+    assert first.progress.toolTip() == f"Queued\n\nQueued folders:\n{path}"
+    HelabMainWindow._central_placeholder_loading_indicator(window)
+    assert window.central_placeholder.text() == f"{tmp_path.name}\nQueued"
+    assert window.central_placeholder.toolTip() == first.progress.toolTip()
+    service.pending.remove(request)
+    service.resultReady.emit(request, {"kind": "started"})
+    assert first.loading_message == "Preparing…"
+    service.resultReady.emit(request, {"kind": "progress", "progress": 123 / 456,
+                                       "loaded_files": 123, "total_files": 456, "failed_files": 0})
+    message = "123 of 456 files loaded (27%)"
+    assert first.loading_message == message
+    assert first.progress.toolTip() == message
+    assert message not in first.scan_label.text()
+    assert first.progress.value() == 27
+    HelabMainWindow._central_placeholder_loading_indicator(window)
+    assert window.central_placeholder.text().endswith(f"Loading {tmp_path.name}\n{message}")
+    assert window.central_placeholder.toolTip() == message
+    second = explorer_for_test(qtbot, path)
+    qtbot.waitUntil(lambda: second.loading)
+    assert second.loading_message == message  # Join an already-running shared load.
+    other = str(tmp_path / "other")
+    cache.submit("tab-c", 0, other, "load")
+    first._update_activity()
+    assert first.progress.toolTip() == f"{message}\n\nQueued folders:\n{other}"
+    cache.cancel("tab-c")
+    first._update_activity()
+    assert first.progress.toolTip() == message
+    service.resultReady.emit(request, {"kind": "queued", "retry": True, "attempt": 2})
+    for explorer in (first, second):
+        assert explorer.loading and not explorer.load_error
+        assert explorer.load_progress is None and explorer.load_total_files is None
+        assert explorer.load_files == 0 and explorer.load_attempt == 2
+    service.resultReady.emit(request, {"kind": "started", "attempt": 2})
+    assert first.loading_message == "Retrying… (attempt 2 of 3)"
+    first.close_cleanup()
+    second.close_cleanup()
+    service.shutdown()
+
+
+@pytest.mark.parametrize("operation", ["scan", "load"])
+def test_timeout_retry_resets_scan_and_resumes_files_for_shared_subscribers(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, operation: str,
+) -> None:
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_run", lambda request: None)
+    cache, path = get_folder_cache(service), str(tmp_path)
+    events: list[dict[str, Any]] = []
+    cache.resultReady.connect(lambda request, event: events.append(event) if request.owner == "tab-b" else None)
+    cache.submit("tab-a", 0, path, operation)
+    cache.submit("tab-b", 0, path, operation)
+    request = service.active[0]
+    job = cache.jobs[(operation, path)]
+    if operation == "scan":
+        service.messages.put((request, {"kind": "entries", "entries": [{"path": path + "/old", "modified": 0}]}))
+        service.messages.put((request, {"kind": "status", "signature": "old"}))
+    else:
+        service.messages.put((request, {"kind": "shot", "shot": 1, "array": np.array([[1.0, 2, 3]]),
+                                       "fingerprint": [1, 10, 100], "problematic": True}))
+        service.messages.put((request, {"kind": "progress", "progress": 0.5, "loaded_files": 1, "total_files": 2}))
+    service._tick()
+    assert job.entries or job.data
+    request.started = request.last_activity = time.monotonic() - request.timeout - 1
+    service._tick()
+    assert job.state == "queued" and job.attempt == 2
+    assert not job.entries and not job.data and job.status is None and job.progress is None
+    cache.cancel("tab-a")
+    assert len(job.subscribers) == 1 and service.pending  # The other tab still needs this retry.
+    service.messages.put((request, {"kind": "done"}))  # Late success from the discarded attempt.
+    service.messages.put((request, {"kind": "exit"}))
+    service._tick()
+    retry = service.active[0]
+    if operation == "scan":
+        service.messages.put((retry, {"kind": "entries", "entries": [{"path": path + "/new", "modified": 0}]}))
+        service.messages.put((retry, {"kind": "status", "status": "ok", "count": 1, "raw": [1],
+                                     "txy": [1], "modified": 0, "signature": "v1"}))
+        service.messages.put((retry, {"kind": "done"}))
+        service._tick()
+        snapshot = cache.snapshot(path)
+        assert snapshot is not None and [entry["path"] for entry in snapshot.entries] == [path + "/new"]
+    else:
+        assert retry.payload["memory"] == [[1, 10, 100]]
+        service.messages.put((retry, {"kind": "shot", "shot": 2, "array": np.array([[4.0, 5, 6]])}))
+        service.messages.put((retry, {"kind": "loaded", "signature": "v1", "bytes": 24,
+                                     "rows": 1, "files": 1, "problematic": [], "memory_shots": [1]}))
+        service._tick()
+        dataset = cache.current_dataset(path)
+        assert dataset is not None and list(dataset.data) == [1, 2]
+        assert loaded_event(events)["files"] == 2 and loaded_event(events)["problematic"] == [1]
+    assert not any(event["kind"] == "error" for event in events)
     service.shutdown()
 
 

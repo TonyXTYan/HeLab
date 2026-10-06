@@ -183,6 +183,8 @@ def load(path: str, output: str, send: Emit = emit,
         cache_reason = ""
     source = "updated" if in_memory else "disk" if cached else "merged" if reused else "files"
     send({"kind": "load_source", "source": source, "cache_reason": cache_reason})
+    send({"kind": "progress", "progress": 0.0, "loaded_files": 0,
+          "total_files": len(files), "failed_files": 0})
     rows = size = loaded = 0
     last_progress = 0.0
 
@@ -195,6 +197,7 @@ def load(path: str, output: str, send: Emit = emit,
         return array
 
     for i, (shot, filename) in enumerate(files):
+        send({"kind": "file_started", "filename": filename})
         try:
             array = None
             if shot in in_memory:
@@ -210,12 +213,16 @@ def load(path: str, output: str, send: Emit = emit,
                 rows += len(array)
                 size += array.nbytes
                 loaded += 1
-                send({"kind": "shot", "shot": shot, "artifact": artifact})
+                send({"kind": "shot", "shot": shot, "artifact": artifact,
+                      "fingerprint": fingerprint[i], "problematic": shot in problematic})
         except (OSError, ValueError, pd.errors.ParserError):
             problematic.append(shot)
+        send({"kind": "file_finished", "filename": filename})
         now = time.monotonic()
         if now - last_progress >= 0.1 or i + 1 == len(files):
-            send({"kind": "progress", "progress": (i + 1) / len(files)})
+            send({"kind": "progress", "progress": (i + 1) / len(files),
+                  "loaded_files": loaded, "total_files": len(files),
+                  "failed_files": i + 1 - loaded})
             last_progress = now
     if not loaded:
         raise ValueError("No readable TXY files in this folder")
@@ -244,10 +251,12 @@ def load(path: str, output: str, send: Emit = emit,
     try:
         for shot, filename in files:
             if shot in in_memory and shot not in data:
+                send({"kind": "file_started", "filename": filename})
                 try:
                     read_txy(shot, filename)
                 except (OSError, ValueError, pd.errors.ParserError):
                     problematic.append(shot)
+                send({"kind": "file_finished", "filename": filename})
         if changed():
             return
         import blosc

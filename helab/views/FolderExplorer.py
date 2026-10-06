@@ -70,6 +70,11 @@ class FolderExplorer(QWidget):
         self.closed = False
         self.loading = False
         self.load_progress: float | None = None
+        self.load_queued = False
+        self.load_attempt = 1
+        self.load_files = 0
+        self.load_total_files: int | None = None
+        self.load_failed_files = 0
         self.load_source = ""
         self.load_cache_reason = ""
         self.load_cache_warning = ""
@@ -146,7 +151,7 @@ class FolderExplorer(QWidget):
         if not self.closed:
             self.scan_label.setText("Finding default folder…")
             self.model.cache.submit(self.model.owner, self.model.generation, self.target_path,
-                                      "resolve", {"candidates": candidates}, priority=True, timeout=5.0)
+                                      "resolve", {"candidates": candidates}, priority=True)
 
     def open_to_path(self, path: str) -> None:
         if self.closed or not path.strip():
@@ -215,6 +220,10 @@ class FolderExplorer(QWidget):
             return True
         self.model.cache.cancel(self.model.owner, "load")
         self.loading, self.load_progress, self.load_error = True, None, ""
+        self.load_queued = True
+        self.load_attempt = 1
+        self.load_files = self.load_failed_files = 0
+        self.load_total_files = None
         self.load_source = ""
         self.load_cache_reason = ""
         self.load_cache_warning = ""
@@ -228,7 +237,7 @@ class FolderExplorer(QWidget):
                  "params": dict(load_cache_param("data_ram_cache"))}
         accepted = self.model.cache.submit(self.model.owner, self.model.generation, path, "load",
                                            {"cache": cache, "signature": node.signature if node else ""},
-                                           priority=True, timeout=300.0)
+                                           priority=True)
         if not accepted:
             self.loading = False
             self.load_error = "Load queue full — Retry"
@@ -266,8 +275,21 @@ class FolderExplorer(QWidget):
             return
         if request.operation != "load" or request.path != self._load_path:
             return
-        if kind == "progress":
+        if kind in ("queued", "started"):
+            self.load_queued = kind == "queued"
+            self.load_attempt = event.get("attempt", self.load_attempt)
+            if event.get("retry"):
+                self.load_progress = None
+                self.load_files = self.load_failed_files = 0
+                self.load_total_files = None
+                self.load_source = self.load_cache_reason = self.load_cache_warning = ""
+        elif kind == "file_started":
+            self.load_attempt = event.get("attempt", self.load_attempt)
+        elif kind == "progress":
             self.load_progress = event["progress"]
+            self.load_files = event.get("loaded_files", self.load_files)
+            self.load_total_files = event.get("total_files", self.load_total_files)
+            self.load_failed_files = event.get("failed_files", self.load_failed_files)
         elif kind == "load_source":
             self.load_source = event["source"]
             self.load_cache_reason = event.get("cache_reason", "")
@@ -309,6 +331,7 @@ class FolderExplorer(QWidget):
             if node:
                 node.loading = False
                 self.model.changed(node)
+        self._update_activity()
         self.loadStateChanged.emit()
 
     def _shared_dataset_changed(self, path: str) -> None:
@@ -321,6 +344,35 @@ class FolderExplorer(QWidget):
                 # Keep the previous arrays/plots until a successful replacement.
             elif node and dataset.signature == node.signature and self.auto_load_ram:
                 self.selectionPathChanged.emit(path)
+
+    @property
+    def loading_message(self) -> str:
+        if self.load_queued:
+            return "Queued"
+        if self.load_progress is None:
+            if self.load_attempt > 1:
+                return f"Retrying… (attempt {self.load_attempt} of 3)"
+            return "Preparing…"
+        percent = f"{self.load_progress:.0%}"
+        if self.load_total_files is None:
+            return percent
+        message = f"{self.load_files} of {self.load_total_files} files loaded ({percent})"
+        if self.load_failed_files:
+            message += f" · {self.load_failed_files} unreadable"
+        return message
+
+    @property
+    def loading_tooltip(self) -> str:
+        parts = [self.loading_message] if self.loading else []
+        if self.loading and self.load_attempt > 1:
+            parts.append(f"Attempt {self.load_attempt} of 3")
+        paths = self.model.service.queued_load_paths()
+        if paths:
+            parts.append("Queued folders:\n" + "\n".join(paths))
+        reason = self.load_cache_warning or self.load_cache_reason
+        if reason:
+            parts.append(reason)
+        return "\n\n".join(parts)
 
     def _update_activity(self) -> None:
         if self.closed:
@@ -347,10 +399,13 @@ class FolderExplorer(QWidget):
                 # The merge counts are long; they stay in the tooltip only.
                 if self.load_cache_reason and self.load_source not in ("merged", "updated"):
                     ready += f" · {self.load_cache_reason}"
-        action = ("Finding default folder…" if resolving else loading_action if self.loading
+        action = ("Queued" if self.loading and self.load_queued else
+                  "Finding default folder…" if resolving else loading_action if self.loading
                   else "Checking for changes" if scans and node and node.loaded else "Scanning folders")
-        self.scan_label.setText(error or root_error or (f"{action} · {queued} queued" if requests or self.loading else ready))
-        self.scan_label.setToolTip(self.load_cache_warning or self.load_cache_reason)
+        status = "Queued" if self.loading and self.load_queued else f"{action} · {queued} queued"
+        self.scan_label.setText(error or root_error or (status if requests or self.loading else ready))
+        self.scan_label.setToolTip(self.loading_tooltip)
+        self.progress.setToolTip(self.loading_tooltip)
         busy = self.loading or bool(active or queued)
         self.spinner_label.setVisible(busy)
         if busy:

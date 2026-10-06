@@ -34,14 +34,21 @@ class IORequest:
     process: subprocess.Popen[str] | None = None
     started: float = 0.0
     output: str | None = None
+    attempt: int = 1
+    completed: bool = False
+    last_activity: float = 0.0
+    current_file: str | None = None
+    file_attempts: dict[str, int] = field(default_factory=dict)
 
 
 class IOService(QObject):
     resultReady = pyqtSignal(object, object)
     activityChanged = pyqtSignal()
     MAX_ACTIVE = 2
+    MAX_ACTIVE_LOADS = 1
     MAX_PENDING = 128
     MAX_RETIRED = 2
+    TIMEOUTS: tuple[float, ...] = (15.0, 20.0, 30.0)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -66,14 +73,16 @@ class IOService(QObject):
         if any((r.owner, r.generation, r.path, r.operation) == (owner, generation, path, operation)
                for r in (*self.active, *self.pending)):
             return True
-        if len(self.pending) >= self.MAX_PENDING:
+        # Reserve pending capacity for active requests that may need a retry.
+        if len(self.pending) + len(self.active) >= self.MAX_PENDING:
             return False
         request = IORequest(owner, generation, path, operation, payload or {}, timeout)
-        if priority:
+        # Folder loads wait in submission order, including across tabs.
+        if priority and operation != "load":
             self.pending.appendleft(request)
         else:
             self.pending.append(request)
-        self.resultReady.emit(request, {"kind": "queued"})
+        self.resultReady.emit(request, {"kind": "queued", "attempt": request.attempt})
         self._dispatch()
         self.activityChanged.emit()
         return True
@@ -81,12 +90,26 @@ class IOService(QObject):
     def _dispatch(self) -> None:
         while (self.pending and len(self.active) < self.MAX_ACTIVE
                and len(self.retired) < self.MAX_RETIRED and not self.closed):
-            request = self.pending.popleft()
+            loads = sum(r.operation == "load" for r in (*self.active, *self.retired))
+            # Skip blocked loads so directory navigation can still use a slot.
+            request = next((r for r in self.pending
+                            if (r.operation != "load" or loads < self.MAX_ACTIVE_LOADS)
+                            and not any((old.owner, old.generation, old.path, old.operation)
+                                        == (r.owner, r.generation, r.path, r.operation)
+                                        for old in self.retired)), None)
+            if request is None:
+                break
+            self.pending.remove(request)
             request.started = time.monotonic()
+            request.last_activity = request.started
             self.active.append(request)
-            self.resultReady.emit(request, {"kind": "started"})
+            self.resultReady.emit(request, {"kind": "started", "attempt": request.attempt})
             threading.Thread(target=self._run, args=(request,), daemon=True,
                              name=f"HeLab-{request.operation}").start()
+
+    def queued_load_paths(self) -> list[str]:
+        """Queued folders in dispatch order, without filesystem access."""
+        return list(dict.fromkeys(r.path for r in self.pending if r.operation == "load"))
 
     def _put(self, request: IORequest, event: dict[str, Any]) -> None:
         while not self.closed:
@@ -220,11 +243,6 @@ class IOService(QObject):
 
     def _tick(self) -> None:
         start = time.monotonic()
-        for request in list(self.active):
-            if start - request.started > request.timeout:
-                self._retire(request)
-                logging.warning("I/O timeout: %s %s", request.operation, request.path)
-                self.resultReady.emit(request, {"kind": "error", "message": "Request timed out — Retry", "timeout": True})
         for _ in range(64):
             if time.monotonic() - start > 0.008:
                 break
@@ -239,7 +257,53 @@ class IOService(QObject):
                     self.retired.remove(request)
                 self.activityChanged.emit()
             elif not request.cancelled.is_set() and not self.closed:
+                kind = event["kind"]
+                if request.operation == "load" and kind in ("file_started", "file_finished", "shot", "load_source"):
+                    request.last_activity = time.monotonic()
+                    if kind == "file_started":
+                        request.current_file = event["filename"]
+                        request.attempt = request.file_attempts.get(event["filename"], 1)
+                        request.timeout = self.TIMEOUTS[request.attempt - 1]
+                        event = {**event, "attempt": request.attempt}
+                    elif kind == "file_finished":
+                        request.file_attempts.pop(event["filename"], None)
+                        request.current_file = None
+                        request.attempt = 1
+                        request.timeout = self.TIMEOUTS[0]
+                if event["kind"] in ("loaded", "resolved", "done", "error"):
+                    request.completed = True
                 self.resultReady.emit(request, event)
+        now = time.monotonic()
+        for request in list(self.active):
+            deadline_start = request.last_activity if request.operation == "load" else request.started
+            if now - deadline_start <= request.timeout:
+                continue
+            self._retire(request)
+            if request.completed:
+                # Data may already be delivered while the helper writes its
+                # disk cache. Never restart or fail a successful request.
+                self.resultReady.emit(request, {"kind": "done"})
+                continue
+            logging.warning("I/O timeout (attempt %s/%s): %s %s", request.attempt,
+                            len(self.TIMEOUTS), request.operation, request.path)
+            if request.attempt < len(self.TIMEOUTS):
+                file_attempts = dict(request.file_attempts)
+                if request.current_file is not None:
+                    file_attempts[request.current_file] = request.attempt + 1
+                retry = IORequest(request.owner, request.generation, request.path,
+                                  request.operation, dict(request.payload), self.TIMEOUTS[request.attempt],
+                                  attempt=request.attempt + 1, current_file=request.current_file,
+                                  file_attempts=file_attempts)
+                self.pending.appendleft(retry)
+                self.resultReady.emit(retry, {"kind": "queued", "retry": True,
+                                             "attempt": retry.attempt})
+            else:
+                message = (f"File timed out after 3 attempts: {os.path.basename(request.current_file)} — Retry"
+                           if request.current_file else "Request timed out after 3 attempts — Retry")
+                self.resultReady.emit(request, {"kind": "error", "timeout": True,
+                                               "attempt": request.attempt,
+                                               "message": message})
+            self.activityChanged.emit()
         self._dispatch()
 
     def shutdown(self) -> None:

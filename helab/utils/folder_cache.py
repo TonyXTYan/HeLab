@@ -44,6 +44,10 @@ class SharedJob:
     status: dict[str, Any] | None = None
     data: dict[int, npt.NDArray[np.float64]] = field(default_factory=dict)
     state: str = "queued"
+    progress: dict[str, Any] | None = None
+    attempt: int = 1
+    fingerprints: dict[int, tuple[int, int, int]] = field(default_factory=dict)
+    problematic: set[int] = field(default_factory=set)
     base: Dataset | None = None
 
 
@@ -207,7 +211,9 @@ class FolderCache(QObject):
         job = self.jobs.get(job_key)
         if job:
             job.subscribers[(owner, generation)] = request
-            self.resultReady.emit(request, {"kind": job.state})
+            self.resultReady.emit(request, {"kind": job.state, "attempt": job.attempt})
+            if job.progress is not None:
+                self.resultReady.emit(request, job.progress)
             return True
         if operation == "invalidate":
             self._set_disk_cached(path, False)
@@ -268,6 +274,24 @@ class FolderCache(QObject):
     def _forget_job(self, job: SharedJob) -> None:
         self.jobs.pop((job.operation, job.path), None)
         self._producers.pop(job.owner, None)
+
+    def _resume_load(self, job: SharedJob, producer: IORequest) -> None:
+        """Keep completed shots as the retry's RAM base, validated by the helper."""
+        if not job.fingerprints:
+            return
+        data = dict(job.base.data) if job.base else {}
+        fingerprints = {int(entry[0]): tuple(entry) for entry in job.base.metadata["fingerprint"]} if job.base else {}
+        problematic = set(job.base.metadata.get("problematic", ())) if job.base else set()
+        for shot, fingerprint in job.fingerprints.items():
+            data[shot] = job.data[shot]
+            fingerprints[shot] = fingerprint
+            problematic.discard(shot)
+        problematic.update(job.problematic)
+        metadata = {"fingerprint": list(fingerprints.values()), "problematic": sorted(problematic)}
+        job.base = Dataset(job.path, "", data, metadata, job.epoch)
+        memory = [list(entry) for shot, entry in fingerprints.items() if shot in data]
+        producer.payload["memory"] = memory
+        job.payload = dict(producer.payload)
 
     def _cancel_replays(self, path: str) -> None:
         for request in list(self._deliveries):
@@ -339,6 +363,16 @@ class FolderCache(QObject):
         kind = event["kind"]
         if kind in ("queued", "started"):
             job.state = kind
+            job.attempt = event.get("attempt", job.attempt)
+            if event.get("retry"):
+                if job.operation == "load":
+                    self._resume_load(job, producer)
+                job.entries.clear()
+                job.status = None
+                job.data.clear()
+                job.fingerprints.clear()
+                job.problematic.clear()
+                job.progress = None
         if job.operation == "scan":
             if kind == "entries":
                 for entry in event["entries"]:
@@ -371,10 +405,23 @@ class FolderCache(QObject):
                     self._replay(request, snapshot)
                 return
         elif job.operation == "load":
+            if kind == "file_started":
+                attempt = event.get("attempt", job.attempt)
+                if attempt == job.attempt:
+                    return
+                job.attempt = attempt
+            if kind == "file_finished":
+                return
+            if kind == "progress":
+                job.progress = event
             if kind == "shot":
                 array = event["array"]
                 array.setflags(write=False)
                 job.data[event["shot"]] = array
+                if "fingerprint" in event:
+                    job.fingerprints[event["shot"]] = tuple(event["fingerprint"])
+                if event.get("problematic"):
+                    job.problematic.add(event["shot"])
                 return
             if kind == "loaded":
                 source_snapshot = self.snapshot(job.path)

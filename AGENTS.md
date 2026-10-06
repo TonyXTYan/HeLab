@@ -58,6 +58,8 @@ The `.spec` file produces `HeLab.app` on macOS (bundle ID `au.edu.anu.he-bec-lab
 
 **Responsive filesystem I/O:** The active folder browser uses `IOService` (`helab/utils/io_service.py`) and isolated `helab/io_helper.py` processes. Requests are deduplicated, queues and concurrency are bounded, and cancellation/deadlines never wait on the GUI thread. Daemon reader threads deliver results through a bounded queue; a Qt timer applies small batches. Source folders are never queried by the GUI model. The frozen helper entry point in `helab/main.py` must run before imports that initialize GUI services, caches, or Dash. `GUIWatchdog` records event-loop stalls and dumps thread stacks independently of GUI timers.
 
+Folder loads run one at a time across tabs, with no overall folder deadline. Each file has 15-, 20-, and 30-second timeout attempts; successful file progress resets the timer for the next file. Timed-out helpers restart using completed shots from RAM after fingerprint validation. Other I/O requests use the same three timeout attempts for the request. Cancellation stops retries, and retries wait for the previous helper to exit.
+
 **Threading:** Three `QThreadPool` instances in `helab/utils/threading_setup.py`:
 - `thread_pool_general` — general tasks (½ CPU count)
 - `thread_pool_load_data_ram` — data loading (¼ CPU count)

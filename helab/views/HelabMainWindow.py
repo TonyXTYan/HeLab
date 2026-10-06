@@ -147,8 +147,9 @@ class HelabMainWindow(QMainWindow):
         self.status_bar_message_left.setText(
             f"Scanning {scans} folders · Loading {loads} datasets · {queued} queued"
             if scans or loads or queued else "Ready")
+        queued_folders = service.queued_load_paths()
         self.status_bar_message_left.setToolTip(
-            "Filesystem work runs in isolated processes. Navigation stays available.")
+            "Queued folders:\n" + "\n".join(queued_folders) if queued_folders else "")
         self.action_tab_cancel.setEnabled(bool(scans or loads or queued))
         self.tab_widget.set_tab_switching_enable()
         if not self.action_tab_live_checked:
@@ -187,7 +188,7 @@ class HelabMainWindow(QMainWindow):
                 self._drive_owner = f"drives-{id(self)}"
                 service = get_io_service()
                 service.resultReady.connect(self._on_drive_result)
-                QTimer.singleShot(0, lambda: service.submit(self._drive_owner, 0, "", "drives", timeout=5.0))
+                QTimer.singleShot(0, lambda: service.submit(self._drive_owner, 0, "", "drives"))
 
             menu_file.addSeparator()
 
@@ -910,10 +911,11 @@ class HelabMainWindow(QMainWindow):
             return
         self.current_tracking_folder_path_is_loading = explorer.loading
         name = os.path.basename(explorer.selected_path_globally)
+        self.central_placeholder.setToolTip(explorer.loading_tooltip if explorer.loading else "")
         if explorer.loading:
             frame = INDICATOR_DOTS[int(time.monotonic() * 10) % len(INDICATOR_DOTS)]
-            progress = f"{explorer.load_progress:.0%}" if explorer.load_progress is not None else "Preparing…"
-            self.central_placeholder.setText(f"{frame} Loading {name}\n{progress}")
+            title = name if explorer.load_queued else f"{frame} Loading {name}"
+            self.central_placeholder.setText(f"{title}\n{explorer.loading_message}")
         elif explorer.load_error:
             self.central_placeholder.setText(f"{name}\n{explorer.load_error}")
         elif explorer.folder_opened_path == explorer.selected_path_globally:
