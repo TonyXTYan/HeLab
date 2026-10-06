@@ -28,14 +28,16 @@ def scan(path: str, send: Emit = emit) -> None:
     entries: list[dict[str, Any]] = []
     has_dirs = False
     fingerprint: list[tuple[int, int, int]] = []
-    # Do not follow symlinks into another volume or recursively probe children.
+    # Do not traverse directory symlinks or recursively probe children.
     with os.scandir(path) as directory:
         for entry in directory:
             if match := RAW.fullmatch(entry.name):
                 raw.add(int(match.group(1)))
             if match := TXY.fullmatch(entry.name):
                 txy.add(int(match.group(1)))
-                info = entry.stat(follow_symlinks=False)
+                # Match load()'s fingerprint of the actual converted file,
+                # including when the file itself is a symlink.
+                info = entry.stat()
                 fingerprint.append((int(match.group(1)), info.st_size, info.st_mtime_ns))
             if entry.is_dir(follow_symlinks=False):
                 has_dirs = True
@@ -85,6 +87,7 @@ def load(path: str, output: str, send: Emit = emit,
     if total_size > 1 << 30:
         raise ValueError("Folder exceeds the 1 GiB input limit")
     cache = None
+    cache_epoch: Any = None
     data: dict[int, Any] = {}
     cached = False
     problematic: list[int] = []
@@ -95,6 +98,7 @@ def load(path: str, output: str, send: Emit = emit,
             import pickle
             cache = FanoutCache(cache_options["directory"], **cache_options["params"])
             with cache.transact():
+                cache_epoch = cache.get(("snapshot-epoch", path))
                 saved_fingerprint = cache.get(("snapshot-fingerprint", path))
                 packed = cache.get(path) if saved_fingerprint == fingerprint else None
                 previous = cache.get(("snapshot-problematic", path), [])
@@ -140,6 +144,12 @@ def load(path: str, output: str, send: Emit = emit,
             last_progress = now
     if not loaded:
         raise ValueError("No readable TXY files in this folder")
+    final_fingerprint = [(shot, info.st_size, info.st_mtime_ns)
+                         for shot, filename in files for info in (os.stat(filename),)]
+    if final_fingerprint != fingerprint:
+        if cache is not None:
+            cache.close()
+        raise ValueError("Folder changed while loading — Refresh to retry")
     if cache is not None:
         try:
             if not cached:
@@ -149,7 +159,7 @@ def load(path: str, output: str, send: Emit = emit,
                 packed = blosc.compress(pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL),
                                         typesize=8, cname="zstd", clevel=9, shuffle=blosc.NOSHUFFLE)
                 with cache.transact():
-                    if cache.set(path, packed):
+                    if cache.get(("snapshot-epoch", path)) == cache_epoch and cache.set(path, packed):
                         cache.set(("snapshot-fingerprint", path), fingerprint)
                         cache.set(("snapshot-problematic", path), problematic)
         except Exception as exc:
@@ -185,6 +195,9 @@ def main() -> None:
             options = request["cache"]
             with FanoutCache(options["directory"], **options["params"]) as cache:
                 with cache.transact():
+                    # A load started before clearing cannot repopulate this entry.
+                    from uuid import uuid4
+                    cache.set(("snapshot-epoch", request["path"]), uuid4().hex)
                     for key in (request["path"], ("snapshot-fingerprint", request["path"]),
                                 ("snapshot-problematic", request["path"])):
                         cache.pop(key, None)

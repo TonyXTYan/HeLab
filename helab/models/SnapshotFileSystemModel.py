@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 import os
+import time
 from typing import Any, Iterator, cast, overload
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ from PyQt6.QtWidgets import QTreeView
 from helab.models.StatusReport import StatusReport
 from helab.resources.icons import StatusIcons
 from helab.utils.io_service import IORequest, IOService, get_io_service
+from helab.utils.folder_cache import get_folder_cache
 
 
 @dataclass(eq=False)
@@ -34,6 +36,7 @@ class FolderNode:
     seen: set[str] = field(default_factory=set)
     signature: str = ""
     loading: bool = False
+    checked_at: float = 0
 
 
 class SnapshotFileSystemModel(QAbstractItemModel):
@@ -54,6 +57,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
     def __init__(self, parent: QObject | None = None, service: IOService | None = None) -> None:
         super().__init__(parent)
         self.service = service or get_io_service()
+        self.cache = get_folder_cache(self.service)
         self.owner = uuid4().hex
         self.generation = 0
         self.root: FolderNode | None = None
@@ -62,7 +66,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.closed = False
         self._refresh_sequence = 0
         self.folder_opened_path: str | None = None
-        self.service.resultReady.connect(self._on_event)
+        self.cache.resultReady.connect(self._on_event)
+        self.cache.snapshotChanged.connect(self._shared_snapshot_changed)
+        self.cache.datasetChanged.connect(self._shared_dataset_changed)
 
     def node(self, index: QModelIndex) -> FolderNode | None:
         return cast(FolderNode, index.internalPointer()) if index.isValid() else None
@@ -122,12 +128,16 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if role == self.BUSY_ROLE:
             return node.loading or node.state in ("queued", "running")
         if role == int(Qt.ItemDataRole.ToolTipRole):
+            cached = "\nShared RAM dataset available (read-only arrays)" if self.cache.current_dataset(node.path) else ""
+            verification = ("\nCached snapshot; checking for changes" if node.loaded and node.state in ("queued", "running")
+                            else "\nCached snapshot; validation on next access" if node.loaded and time.monotonic() - node.checked_at >= self.cache.FRESH_SECONDS
+                            else "")
             if node.error:
-                return f"{node.path}\n{node.error}\nPrevious results retained; Retry to refresh."
+                return f"{node.path}\n{node.error}\nPrevious results retained; Retry to refresh.{cached}"
             report = node.report
             details = (f"\nStatus: {report.status}\nRaw shots: {len(report.d_dld_shots or [])}"
                        f"\nConverted shots: {len(report.d_txy_shots or [])}" if report else "")
-            return f"{node.path}\n{'Loading dataset' if node.loading else node.state}{details}"
+            return f"{node.path}\n{'Loading dataset' if node.loading else node.state}{details}{cached}{verification}"
         if role == int(Qt.ItemDataRole.ForegroundRole) and node.error:
             return QColor("#b86c1d")
         if role == int(Qt.ItemDataRole.DisplayRole):
@@ -144,7 +154,11 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 return StatusIcons.ICONS_STATUS.get(node.report.status)
         if role == self.STATUS_EXTRA_ICONS_ROLE:
             # Build icons from in-memory values; never call methods that update caches.
-            return [StatusIcons.ICONS_EXTRA[k] for k in (node.report.extra_icons if node.report else [])
+            extras = [k for k in (node.report.extra_icons if node.report else [])
+                      if k not in ("ram", "ram_single", "ram_opened")]
+            if self.cache.current_dataset(node.path):
+                extras.append("ram_opened")
+            return [StatusIcons.ICONS_EXTRA[k] for k in extras
                     if k in StatusIcons.ICONS_EXTRA]
         return None
 
@@ -166,7 +180,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         return self.root.path if self.root else ""
 
     def setRootPath(self, path: str, *, scan: bool = True) -> QModelIndex:
-        self.service.cancel(self.owner)
+        self.cache.cancel(self.owner)
         self.generation += 1
         self.beginResetModel()
         self.root = FolderNode(os.path.abspath(path))
@@ -187,13 +201,18 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.dataChanged.emit(self.path_index(node.path), self.path_index(node.path, 6))
         self.activityChanged.emit()
 
-    def request_scan(self, path: str, *, priority: bool = False) -> None:
+    def request_scan(self, path: str, *, priority: bool = False, force: bool = False) -> None:
         node = self.nodes.get(path)
-        if self.closed or node is None or node.state in ("queued", "running"):
+        if self.closed or node is None:
             return
+        if node.state in ("queued", "running"):
+            if force and ("scan", path) not in self.cache.jobs:
+                self.cache.cancel(self.owner, "scan", path)
+            else:
+                return
         node.seen.clear()
         node.error = ""
-        if not self.service.submit(self.owner, self.generation, path, "scan", priority=priority):
+        if not self.cache.submit(self.owner, self.generation, path, "scan", priority=priority, force=force):
             node.state, node.error = "error", "Scan queue full — Retry"
             self.changed(node)
 
@@ -214,6 +233,14 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 child = self.nodes.get(path)
                 if child is None:
                     child = FolderNode(path, node, len(node.children) + len(new), modified=entry["modified"])
+                    cached = self.cache.snapshot(path)
+                    if cached:
+                        status = cached.status
+                        child.report = StatusReport(path, status["status"], status["count"], [],
+                                                    list(status["raw"]), list(status["txy"]), datetime.now())
+                        child.signature = status.get("signature", "")
+                        child.checked_at = cached.checked_at
+                        child.loaded = not cached.entries
                     new.append(child)
                     self.nodes[path] = child
                 else:
@@ -223,11 +250,12 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 node.children.extend(new)
                 self.endInsertRows()
         elif kind == "status":
-            extras = node.report.extra_icons if node.report else []
+            extras = list(node.report.extra_icons) if node.report else []
             node.report = StatusReport(node.path, event["status"], event["count"], extras,
-                                       event["raw"], event["txy"], datetime.now())
+                                       list(event["raw"]), list(event["txy"]), datetime.now())
             node.modified = event["modified"]
             node.signature = event.get("signature", "")
+            node.checked_at = event.get("checked_at", time.monotonic())
             self.statusReady.emit(node.path)
         elif kind == "done":
             node.state, node.loaded = "idle", True
@@ -247,6 +275,16 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             node.state = "error" if kind == "error" else "cancelled"
             node.error = event.get("message", "Cancelled — Retry")
         self.changed(node)
+
+    def _shared_snapshot_changed(self, path: str) -> None:
+        if path in self.nodes and not self.cache.has_request(self.owner, "scan", path):
+            snapshot = self.cache.snapshot(path)
+            self.request_scan(path, force=bool(snapshot and snapshot.checked_at == 0))
+
+    def _shared_dataset_changed(self, path: str) -> None:
+        node = self.nodes.get(path)
+        if node:
+            self.changed(node)
 
     def _forget(self, node: FolderNode) -> None:
         self.nodes.pop(node.path, None)
@@ -274,7 +312,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
 
     def rescan(self, user_requested_scan: bool = False) -> None:
         if self.root:
-            self.request_scan(self.root.path, priority=True)
+            self.request_scan(self.root.path, priority=True, force=True)
         self._refresh_sequence += 1
         sequence, generation = self._refresh_sequence, self.generation
         rows = self._visible_rows()
@@ -288,7 +326,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                     return
                 index, path = row
                 if self.view is not None and self.view.isExpanded(index):
-                    self.request_scan(path)
+                    self.request_scan(path, force=True)
             QTimer.singleShot(0, batch)
 
         QTimer.singleShot(0, batch)
@@ -298,12 +336,14 @@ class SnapshotFileSystemModel(QAbstractItemModel):
 
     def stop_all_scans(self) -> None:
         self._refresh_sequence += 1
-        self.service.cancel(self.owner)
+        self.cache.cancel(self.owner)
 
     def close_cleanup(self) -> None:
         if self.closed:
             return
         self.closed = True
         self.generation += 1
-        self.service.cancel(self.owner)
-        self.service.resultReady.disconnect(self._on_event)
+        self.cache.cancel(self.owner)
+        self.cache.resultReady.disconnect(self._on_event)
+        self.cache.snapshotChanged.disconnect(self._shared_snapshot_changed)
+        self.cache.datasetChanged.disconnect(self._shared_dataset_changed)

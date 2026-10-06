@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QLineEdit, QMenu
 from helab.models.SnapshotFileSystemModel import FolderNode, SnapshotFileSystemModel
 from helab.models.StatusReport import StatusReport
 from helab.utils.io_service import IORequest
+from helab.utils.folder_cache import Dataset
 from helab.utils.caching_setup import load_cache_param
 from helab.utils.constants import DIR_CACHES
 
@@ -72,7 +73,6 @@ class FolderExplorer(QWidget):
         self.load_bytes = 0
         self._load_path: str | None = None
         self._loading_data: dict[int, npt.NDArray[np.float64]] = {}
-        self._loaded_request: IORequest | None = None
         self._loaded_signature = ""
         self._deep: list[tuple[Iterator[FolderNode], int]] = []
         self._deep_depth: dict[str, int] = {}
@@ -123,7 +123,8 @@ class FolderExplorer(QWidget):
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
         self.model.statusReady.connect(self._status_ready)
         self.model.directoryLoaded.connect(self._directory_loaded)
-        self.model.service.resultReady.connect(self._io_event)
+        self.model.cache.resultReady.connect(self._io_event)
+        self.model.cache.datasetChanged.connect(self._shared_dataset_changed)
         self.model.activityChanged.connect(self._update_activity)
         self.animation = QTimer(self)
         self.animation.timeout.connect(self._animate)
@@ -140,7 +141,7 @@ class FolderExplorer(QWidget):
     def _resolve_default(self, candidates: list[str]) -> None:
         if not self.closed:
             self.scan_label.setText("Finding default folder…")
-            self.model.service.submit(self.model.owner, self.model.generation, self.target_path,
+            self.model.cache.submit(self.model.owner, self.model.generation, self.target_path,
                                       "resolve", {"candidates": candidates}, priority=True, timeout=5.0)
 
     def open_to_path(self, path: str) -> None:
@@ -168,12 +169,12 @@ class FolderExplorer(QWidget):
         if self.load_error:
             self.load_to_ram_cache(self.selected_path_globally)
         else:
-            self.model.request_scan(self.selected_path_globally, priority=True)
+            self.model.request_scan(self.selected_path_globally, priority=True, force=True)
             self.model.rescan(True)
 
     def _expanded(self, index: QModelIndex) -> None:
         node = self.model.node(index)
-        if node and not node.loaded:
+        if node:
             self.model.request_scan(node.path, priority=True)
         self.itemExpandedSignal.emit(index)
 
@@ -182,7 +183,7 @@ class FolderExplorer(QWidget):
         if indexes:
             path = self.model.filePath(indexes[0])
             if path != self.selected_path_globally:
-                self.model.service.cancel(self.model.owner, "load")
+                self.model.cache.cancel(self.model.owner, "load")
                 self._load_path = None
                 self._loading_data.clear()
                 self.loading = False
@@ -208,7 +209,7 @@ class FolderExplorer(QWidget):
             return False
         if self.loading and self._load_path == path:
             return True
-        self.model.service.cancel(self.model.owner, "load")
+        self.model.cache.cancel(self.model.owner, "load")
         self.loading, self.load_progress, self.load_error = True, None, ""
         self._load_path = path
         self._loading_data.clear()
@@ -218,8 +219,9 @@ class FolderExplorer(QWidget):
             self.model.changed(node)
         cache = {"directory": os.path.join(DIR_CACHES, "data_ram_cache"),
                  "params": dict(load_cache_param("data_ram_cache"))}
-        accepted = self.model.service.submit(self.model.owner, self.model.generation, path, "load",
-                                              {"cache": cache}, priority=True, timeout=300.0)
+        accepted = self.model.cache.submit(self.model.owner, self.model.generation, path, "load",
+                                           {"cache": cache, "signature": node.signature if node else ""},
+                                           priority=True, timeout=300.0)
         if not accepted:
             self.loading = False
             self.load_error = "Load queue full — Retry"
@@ -250,28 +252,24 @@ class FolderExplorer(QWidget):
                 self.load_error = ""
                 if self.folder_opened_path == request.path:
                     self.folder_opened_path = None
-                self.model.request_scan(request.path, priority=True)
+                self.model.request_scan(request.path, priority=True, force=True)
             elif kind == "error":
                 self.load_error = event["message"]
                 self.loadStateChanged.emit()
             return
         if request.operation != "load" or request.path != self._load_path:
             return
-        if kind == "shot":
-            self._loading_data[event["shot"]] = event["array"]
-        elif kind == "progress":
+        if kind == "progress":
             self.load_progress = event["progress"]
         elif kind == "loaded":
-            previous = self._loaded_request
-            self._loaded_request = request
-            self.folder_opened_data = self._loading_data
-            self._loading_data = {}
+            dataset = event["dataset"]
+            assert isinstance(dataset, Dataset)
+            self.model.cache.retain(self.model.owner, dataset)
+            self.folder_opened_data = dict(dataset.data)
             self.folder_opened_path = request.path
             self.model.folder_opened_path = request.path
             self.load_bytes = event["bytes"]
             self.loading = False
-            if previous:
-                self.model.service.release(previous)
             report = self.model.fetch_status(request.path)
             report.problematic_txy_ns = event["problematic"]
             report.loaded_txy_files_count = event["files"]
@@ -289,22 +287,38 @@ class FolderExplorer(QWidget):
             self.loading = False
             self._loading_data.clear()
             self.load_error = event.get("message", "Cancelled — Retry")
-            self.model.service.release(request)
             node = self.model.nodes.get(request.path)
             if node:
                 node.loading = False
                 self.model.changed(node)
         self.loadStateChanged.emit()
 
+    def _shared_dataset_changed(self, path: str) -> None:
+        if path == self.selected_path_globally:
+            node = self.model.nodes.get(path)
+            dataset = self.model.cache.current_dataset(path)
+            if dataset is None:
+                if self.folder_opened_path == path:
+                    self.folder_opened_path = None
+                # Keep the previous arrays/plots until a successful replacement.
+            elif node and dataset.signature == node.signature and self.auto_load_ram:
+                self.selectionPathChanged.emit(path)
+
     def _update_activity(self) -> None:
         if self.closed:
             return
-        active = sum(r.owner == self.model.owner for r in self.model.service.active)
-        queued = sum(r.owner == self.model.owner for r in self.model.service.pending)
+        requests = self.model.cache.requests(self.model.owner)
+        queued = sum(r.operation == "scan" and self.model.nodes.get(r.path) is not None
+                     and self.model.nodes[r.path].state == "queued" for r in requests)
+        active = max(0, len(requests) - queued)
         node = self.model.nodes.get(self.selected_path_globally)
         error = self.load_error or (node.error if node else "")
         root_error = self.model.root.error if self.model.root else ""
-        self.scan_label.setText(error or root_error or (f"Working {active} · {queued} queued" if active or queued else "Ready"))
+        scans = any(r.operation == "scan" for r in requests)
+        resolving = any(r.operation == "resolve" for r in requests)
+        action = ("Finding default folder…" if resolving else "Loading data" if self.loading
+                  else "Checking for changes" if scans and node and node.loaded else "Scanning folders")
+        self.scan_label.setText(error or root_error or (f"{action} · {queued} queued" if requests or self.loading else "Ready"))
         busy = self.loading or bool(active or queued)
         self.spinner_label.setVisible(busy)
         if busy:
@@ -353,7 +367,7 @@ class FolderExplorer(QWidget):
                     self._deep.pop()
                     continue
                 self._deep_depth[node.path] = max(depth, self._deep_depth.get(node.path, 0))
-                self.model.request_scan(node.path)
+                self.model.request_scan(node.path, force=True)
                 break
 
     def context_menu_action_deep_calc_status(self, path: str, max_depth: int = 0,
@@ -374,7 +388,7 @@ class FolderExplorer(QWidget):
         clipboard = QApplication.clipboard()
         if clipboard:
             menu.addAction("Copy Pathname", lambda: clipboard.setText(path))
-        menu.addAction("Retry / Refresh", lambda: self.model.request_scan(path, priority=True))
+        menu.addAction("Retry / Refresh", lambda: self.model.request_scan(path, priority=True, force=True))
         submenu = menu.addMenu("Recalculate Status")
         if submenu:
             for depth in (0, 1, 2, 3, 32768):
@@ -387,11 +401,11 @@ class FolderExplorer(QWidget):
             menu.exec(viewport.mapToGlobal(position))
 
     def clear_data_cache(self, path: str) -> None:
-        self.model.service.cancel(self.model.owner, "load")
+        self.model.cache.cancel(self.model.owner, "load")
         self.load_error = ""
         cache = {"directory": os.path.join(DIR_CACHES, "data_ram_cache"),
                  "params": dict(load_cache_param("data_ram_cache"))}
-        if not self.model.service.submit(self.model.owner, self.model.generation, path, "invalidate",
+        if not self.model.cache.submit(self.model.owner, self.model.generation, path, "invalidate",
                                          {"cache": cache}, priority=True):
             self.load_error = "Cache request queue full — Retry"
         self.loadStateChanged.emit()
@@ -428,7 +442,7 @@ class FolderExplorer(QWidget):
         return self.tab_title_str
 
     def rescan(self, user_intend: bool = False) -> None:
-        self.model.request_scan(self.selected_path_globally, priority=True)
+        self.model.request_scan(self.selected_path_globally, priority=True, force=True)
         self.model.rescan(user_intend)
 
     def refresh(self) -> None:
@@ -449,9 +463,8 @@ class FolderExplorer(QWidget):
         self.animation.stop()
         self.deep_timer.stop()
         self.model.close_cleanup()
-        self.model.service.resultReady.disconnect(self._io_event)
+        self.model.cache.resultReady.disconnect(self._io_event)
+        self.model.cache.datasetChanged.disconnect(self._shared_dataset_changed)
+        self.model.cache.release(self.model.owner)
         self.folder_opened_data = None
         self._loading_data.clear()
-        if self._loaded_request:
-            self.model.service.release(self._loaded_request)
-            self._loaded_request = None

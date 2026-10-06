@@ -14,9 +14,12 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any, Iterator
+from typing import Any, Iterator, TYPE_CHECKING
 
 from PyQt6.QtCore import QCoreApplication, QObject, QTimer, pyqtSignal
+
+if TYPE_CHECKING:
+    from helab.utils.folder_cache import FolderCache
 
 
 @dataclass(eq=False)
@@ -47,6 +50,7 @@ class IOService(QObject):
         self.retired: list[IORequest] = []
         self.messages: queue.Queue[tuple[IORequest, dict[str, Any]]] = queue.Queue(maxsize=256)
         self.closed = False
+        self.folder_cache: FolderCache | None = None
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(20)
@@ -163,8 +167,7 @@ class IOService(QObject):
                 if request.process.stdout is not None:
                     request.process.stdout.close()
             self._put(request, {"kind": "exit"})
-            if request.cancelled.is_set() or self.closed or request.operation != "load":
-                self.release(request)
+            self.release(request)
 
     @staticmethod
     def _file_lines(request: IORequest, filename: str) -> Iterator[str]:
@@ -242,6 +245,8 @@ class IOService(QObject):
     def shutdown(self) -> None:
         if self.closed:
             return
+        if self.folder_cache is not None:
+            self.folder_cache.shutdown()
         for owner in {r.owner for r in (*self.pending, *self.active)}:
             self.cancel(owner)
         self.closed = True

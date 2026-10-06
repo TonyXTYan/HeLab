@@ -876,13 +876,19 @@ class HelabMainWindow(QMainWindow):
             # self.on_folder_explorer_selection_changed(current_folder_explorer.get_selection_model().selection())
 
 
-    def on_folder_explorer_selection_changed(self, selected: QItemSelection) -> None:
-        explorer = self.tab_widget.currentWidget()
+    def on_folder_explorer_selection_changed(self, selected: QItemSelection,
+                                             explorer: FolderExplorer | None = None) -> None:
+        if explorer is None:
+            current = self.tab_widget.currentWidget()
+            if not isinstance(current, FolderExplorer):
+                return
+            explorer = current
         if not isinstance(explorer, FolderExplorer) or explorer.closed or self._closing:
             return
         path = explorer.selected_path_globally
-        self.current_tracking_folder_path = path
-        self.setWindowTitle(f"HeLab — {os.path.basename(path.rstrip(os.sep)) or path}")
+        if explorer is self.tab_widget.currentWidget():
+            self.current_tracking_folder_path = path
+            self.setWindowTitle(f"HeLab — {os.path.basename(path.rstrip(os.sep)) or path}")
         if self.view_toggle_auto_load_ram.isChecked():
             explorer.load_to_ram_cache(path)
         self._central_placeholder_loading_indicator()
@@ -935,10 +941,11 @@ class HelabMainWindow(QMainWindow):
         self.update_tool_enabled_state()
         current_folder_explorer = self.tab_widget.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
+            current_folder_explorer.auto_load_ram = self.view_toggle_auto_load_ram.isChecked()
             current_folder_explorer.rootPathChanged.connect(self.update_tool_enabled_state)
             logging.debug(f"add_new_folder_explorer_tab: {current_folder_explorer.selected_path_globally = }")
             current_folder_explorer.selectionPathChanged.connect(
-                lambda _: self.on_folder_explorer_selection_changed(QItemSelection()))
+                lambda _, fe=current_folder_explorer: self.on_folder_explorer_selection_changed(QItemSelection(), fe))
             current_folder_explorer.loadStateChanged.connect(self._central_placeholder_loading_indicator)
             current_folder_explorer.dataLoaded.connect(
                 lambda p, fe=current_folder_explorer: self._snapshot_data_loaded(fe, p))
@@ -1005,11 +1012,10 @@ class HelabMainWindow(QMainWindow):
     def toggle_auto_load_ram(self) -> None:
         toggled_on = self.view_toggle_auto_load_ram.isChecked()
         logging.debug(f"toggle_auto_load_ram: called {toggled_on = }")
-        current_folder_explorer = self.tab_widget.currentWidget()
-        if isinstance(current_folder_explorer, FolderExplorer):
-            current_folder_explorer.auto_load_ram = toggled_on
-        else:
-            logging.error("toggle_auto_load_ram: current_folder_explorer is not FolderExplorer")
+        for index in range(self.tab_widget.count()):
+            explorer = self.tab_widget.widget(index)
+            if isinstance(explorer, FolderExplorer):
+                explorer.auto_load_ram = toggled_on
 
 
     def resizeEvent(self, a0: QResizeEvent | None) -> None:
