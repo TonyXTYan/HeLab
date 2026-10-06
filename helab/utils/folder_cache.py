@@ -49,6 +49,7 @@ class FolderCache(QObject):
     resultReady = pyqtSignal(object, object)
     snapshotChanged = pyqtSignal(str)
     datasetChanged = pyqtSignal(str)
+    diskCacheChanged = pyqtSignal(str)
     FRESH_SECONDS: float = 10.0
     MAX_SNAPSHOTS: int = 256
     MAX_ENTRIES: int = 100_000
@@ -65,6 +66,7 @@ class FolderCache(QObject):
         self._deliveries: list[IORequest] = []
         self._epochs: dict[str, int] = {}
         self._defaults: OrderedDict[tuple[str, ...], str] = OrderedDict()
+        self._disk_cached_paths: OrderedDict[str, None] = OrderedDict()
         service.resultReady.connect(self._on_event)
 
     @staticmethod
@@ -93,6 +95,22 @@ class FolderCache(QObject):
             return self.dataset(path, snapshot.status.get("signature", ""))
         return next((entry for key, entry in reversed(self.datasets.items())
                      if key[0] == path and entry.epoch == self._epochs.get(path, 0)), None)
+
+    def disk_cached(self, path: str) -> bool:
+        return path in self._disk_cached_paths
+
+    def _set_disk_cached(self, path: str, cached: bool) -> None:
+        previous = self.disk_cached(path)
+        if cached:
+            self._disk_cached_paths[path] = None
+            self._disk_cached_paths.move_to_end(path)
+            while len(self._disk_cached_paths) > self.MAX_ENTRIES:
+                evicted, _ = self._disk_cached_paths.popitem(last=False)
+                self.diskCacheChanged.emit(evicted)
+        else:
+            self._disk_cached_paths.pop(path, None)
+        if previous != self.disk_cached(path):
+            self.diskCacheChanged.emit(path)
 
     def has_request(self, owner: str, operation: str, path: str) -> bool:
         return any(r.owner == owner and r.operation == operation and r.path == path
@@ -147,7 +165,8 @@ class FolderCache(QObject):
                 return False
             entry = self.dataset(path, payload.get("signature", ""))
             if entry:
-                self._deliver(request, {"kind": "loaded", "dataset": entry, **entry.metadata, "cached": True})
+                self._deliver(request, {"kind": "loaded", "dataset": entry, **entry.metadata,
+                                        "cached": True, "source": "memory", "cache_reason": ""})
                 return True
         if operation == "scan" and ("invalidate", path) in self.jobs:
             # Invalidation completion will broadcast a fresh check to models.
@@ -162,7 +181,7 @@ class FolderCache(QObject):
                     return
                 if request in self._deliveries:
                     self._deliveries.remove(request)
-                self.submit(owner, generation, path, "scan", priority=priority, force=True)
+                self.submit(owner, generation, path, "scan", payload, priority=priority, force=True)
             QTimer.singleShot(0, wait_for_clear)
             return True
         if operation == "resolve":
@@ -177,6 +196,7 @@ class FolderCache(QObject):
             self.resultReady.emit(request, {"kind": job.state})
             return True
         if operation == "invalidate":
+            self._set_disk_cached(path, False)
             self._invalidate_data(path)
             snapshot = self.snapshot(path)
             if snapshot:
@@ -223,7 +243,7 @@ class FolderCache(QObject):
             if request in self._deliveries:
                 self._deliveries.remove(request)
             if request.payload.get("revalidate") and not request.cancelled.is_set():
-                self.submit(request.owner, request.generation, request.path, "scan", force=True)
+                self.submit(request.owner, request.generation, request.path, "scan", request.payload, force=True)
         QTimer.singleShot(0, batch)
 
     def _forget_job(self, job: SharedJob) -> None:
@@ -280,6 +300,7 @@ class FolderCache(QObject):
         self.datasets.clear()
         self.snapshots.clear()
         self._defaults.clear()
+        self._disk_cached_paths.clear()
 
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
         job = self._producers.get(producer.owner)
@@ -292,6 +313,9 @@ class FolderCache(QObject):
             job.state = kind
         if job.operation == "scan":
             if kind == "entries":
+                for entry in event["entries"]:
+                    if "disk_cached" in entry:
+                        self._set_disk_cached(entry["path"], bool(entry["disk_cached"]))
                 job.entries.extend(event["entries"])
                 if len(job.entries) > self.MAX_ENTRIES:
                     self._forget_job(job)
@@ -300,6 +324,8 @@ class FolderCache(QObject):
                         self.resultReady.emit(request, {"kind": "error", "message": "Folder exceeds snapshot entry limit"})
                 return
             if kind == "status":
+                if "disk_cached" in event:
+                    self._set_disk_cached(job.path, bool(event["disk_cached"]))
                 job.status = event
                 return
             if kind == "done" and job.status:
@@ -331,6 +357,8 @@ class FolderCache(QObject):
                         source_snapshot.checked_at = 0
                     self.snapshotChanged.emit(job.path)
                     return
+                if "disk_cached" in event:
+                    self._set_disk_cached(job.path, bool(event["disk_cached"]))
                 entry = Dataset(job.path, event["signature"], job.data, event, job.epoch)
                 self.datasets[(job.path, entry.signature, entry.epoch)] = entry
                 event = {**event, "dataset": entry}

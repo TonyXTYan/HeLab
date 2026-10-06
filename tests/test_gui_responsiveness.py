@@ -52,7 +52,8 @@ def test_loader_preserves_shots_and_drops_nan_rows(tmp_path: Path) -> None:
     (source / "d_txy_forc7.txt").write_text("1,2,3\n4,,6\n")
     events: list[dict[str, Any]] = []
     load(str(source), str(output), events.append)
-    np.testing.assert_array_equal(np.load(events[0]["artifact"]), [[1, 2, 3]])
+    shot = next(event for event in events if event["kind"] == "shot")
+    np.testing.assert_array_equal(np.load(shot["artifact"]), [[1, 2, 3]])
     assert events[-1]["problematic"] == [7]
     assert events[-1]["rows"] == 1
 
@@ -74,7 +75,8 @@ def test_compressed_cache_is_reused_and_validated(tmp_path: Path, monkeypatch: p
     events.clear()
     load(str(source), str(output), events.append, options)
     assert events[-1]["kind"] == "loaded"
-    np.testing.assert_array_equal(np.load(events[0]["artifact"]), [[1, 2, 3]])
+    shot = next(event for event in events if event["kind"] == "shot")
+    np.testing.assert_array_equal(np.load(shot["artifact"]), [[1, 2, 3]])
 
 
 def test_rendering_never_reads_filesystem_or_disk_cache(
@@ -83,6 +85,7 @@ def test_rendering_never_reads_filesystem_or_disk_cache(
     service = frozen_service(qtbot, monkeypatch)
     model = SnapshotFileSystemModel(service=service)
     index = model.setRootPath(str(tmp_path))
+    model.cache._set_disk_cached(str(tmp_path), True)
 
     def forbidden(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("GUI rendering performed I/O")
@@ -91,8 +94,12 @@ def test_rendering_never_reads_filesystem_or_disk_cache(
     monkeypatch.setattr(os, "stat", forbidden)
     from helab.utils.caching_setup import status_cache
     monkeypatch.setattr(status_cache, "get", forbidden)
+    from diskcache import FanoutCache
+    monkeypatch.setattr(FanoutCache, "get", forbidden)
+    monkeypatch.setattr(FanoutCache, "__contains__", forbidden)
     for role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole,
-                 Qt.ItemDataRole.ToolTipRole, Qt.ItemDataRole.ForegroundRole):
+                 Qt.ItemDataRole.ToolTipRole, Qt.ItemDataRole.ForegroundRole,
+                 model.STATUS_EXTRA_ICONS_ROLE):
         for column in range(7):
             model.data(model.index(0, column), int(role))
     assert model.hasChildren(index)

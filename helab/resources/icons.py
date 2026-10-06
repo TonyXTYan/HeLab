@@ -6,6 +6,7 @@ from typing import Dict, List
 from PIL.ImageQt import ImageQt
 from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtGui import QIcon, QPixmap, QImage, QPainter, QFont, QColor, QPen, QBrush
+from PyQt6.QtWidgets import QApplication, QStyle
 from pytablericons import TablerIcons, OutlineIcon, FilledIcon
 
 # from helab.utils.constants import helab_mono_font
@@ -80,6 +81,26 @@ class StatusIcons:
         'ram',
         'ram_single',
         'ram_opened',
+        'cached',
+        'device_floppy',
+        'device_sd_card',
+        'device_usb',
+        'server',
+        'server_2',
+        'file_database',
+        'archive',
+        'box',
+        'hard_drive',
+        'optical_disc_drive',
+        'network_drive',
+        'cpu',
+        'cpu_2',
+        'disc',
+        'cylinder',
+        'folder_check',
+        'file_zip',
+        'package',
+        'database_import',
         'live',
         'waiting',
         'loading',
@@ -95,6 +116,26 @@ class StatusIcons:
         'ram':           11,
         'ram_single':    12,
         'ram_opened':    13,
+        'cached':        14,
+        'device_floppy': 14,
+        'device_sd_card': 15,
+        'device_usb':    16,
+        'server':        17,
+        'server_2':      18,
+        'file_database': 19,
+        'archive':       20,
+        'box':           21,
+        'hard_drive':    22,
+        'optical_disc_drive': 23,
+        'network_drive': 24,
+        'cpu':           25,
+        'cpu_2':         26,
+        'disc':          27,
+        'cylinder':      28,
+        'folder_check':  29,
+        'file_zip':      30,
+        'package':       31,
+        'database_import': 32,
         'progress_ram':  11,
         'loading_ram':   10,
         'loading':        0,
@@ -127,6 +168,26 @@ class StatusIcons:
     ICON_RAM = QIcon()
     ICON_RAM_SINGLE = QIcon()
     ICON_RAM_OPENED = QIcon()
+    ICON_CACHED = QIcon()
+    ICON_DEVICE_FLOPPY = QIcon()
+    ICON_DEVICE_SD_CARD = QIcon()
+    ICON_DEVICE_USB = QIcon()
+    ICON_SERVER = QIcon()
+    ICON_SERVER_2 = QIcon()
+    ICON_FILE_DATABASE = QIcon()
+    ICON_ARCHIVE = QIcon()
+    ICON_BOX = QIcon()
+    ICON_HARD_DRIVE = QIcon()
+    ICON_OPTICAL_DISC_DRIVE = QIcon()
+    ICON_NETWORK_DRIVE = QIcon()
+    ICON_CPU = QIcon()
+    ICON_CPU_2 = QIcon()
+    ICON_DISC = QIcon()
+    ICON_CYLINDER = QIcon()
+    ICON_FOLDER_CHECK = QIcon()
+    ICON_FILE_ZIP = QIcon()
+    ICON_PACKAGE = QIcon()
+    ICON_DATABASE_IMPORT = QIcon()
     ICON_CIRCLE = QIcon()
 
     ICONS_EXTRA: Dict[str, QIcon] = {}
@@ -174,6 +235,29 @@ class StatusIcons:
         StatusIcons.ICON_RAM = tablerIcon(OutlineIcon.CONTAINER, '#888888')
         StatusIcons.ICON_RAM_SINGLE = tablerIcon(OutlineIcon.CONTAINER, '#FF44BB')
         StatusIcons.ICON_RAM_OPENED = tablerIcon(OutlineIcon.CONTAINER, '#00FF00')
+        StatusIcons.ICON_CACHED = tablerIcon(OutlineIcon.PACKAGE, '#888888')
+        StatusIcons.ICON_DEVICE_FLOPPY = tablerIcon(OutlineIcon.DEVICE_FLOPPY, '#3989c9')
+        StatusIcons.ICON_DEVICE_SD_CARD = tablerIcon(OutlineIcon.DEVICE_SD_CARD, '#3989c9')
+        StatusIcons.ICON_DEVICE_USB = tablerIcon(OutlineIcon.DEVICE_USB, '#3989c9')
+        StatusIcons.ICON_SERVER = tablerIcon(OutlineIcon.SERVER, '#3989c9')
+        StatusIcons.ICON_SERVER_2 = tablerIcon(OutlineIcon.SERVER_2, '#3989c9')
+        StatusIcons.ICON_FILE_DATABASE = tablerIcon(OutlineIcon.FILE_DATABASE, '#3989c9')
+        StatusIcons.ICON_ARCHIVE = tablerIcon(OutlineIcon.ARCHIVE, '#3989c9')
+        StatusIcons.ICON_BOX = tablerIcon(OutlineIcon.BOX, '#3989c9')
+        style = QApplication.style()
+        if style is None:
+            raise RuntimeError("Icon initialization requires a QApplication")
+        StatusIcons.ICON_HARD_DRIVE = style.standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon)
+        StatusIcons.ICON_OPTICAL_DISC_DRIVE = style.standardIcon(QStyle.StandardPixmap.SP_DriveCDIcon)
+        StatusIcons.ICON_NETWORK_DRIVE = style.standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon)
+        StatusIcons.ICON_CPU = tablerIcon(OutlineIcon.CPU, '#3989c9')
+        StatusIcons.ICON_CPU_2 = tablerIcon(OutlineIcon.CPU_2, '#3989c9')
+        StatusIcons.ICON_DISC = tablerIcon(OutlineIcon.DISC, '#3989c9')
+        StatusIcons.ICON_CYLINDER = tablerIcon(OutlineIcon.CYLINDER, '#3989c9')
+        StatusIcons.ICON_FOLDER_CHECK = tablerIcon(OutlineIcon.FOLDER_CHECK, '#3989c9')
+        StatusIcons.ICON_FILE_ZIP = tablerIcon(OutlineIcon.FILE_ZIP, '#3989c9')
+        StatusIcons.ICON_PACKAGE = tablerIcon(OutlineIcon.PACKAGE, '#3989c9')
+        StatusIcons.ICON_DATABASE_IMPORT = tablerIcon(OutlineIcon.DATABASE_IMPORT, '#3989c9')
         StatusIcons.ICON_CIRCLE = tablerIcon(OutlineIcon.CIRCLE, '#888888')
         StatusIcons.ICONS_EXTRA = {
             'database': StatusIcons.ICON_DATABASE,
@@ -182,6 +266,26 @@ class StatusIcons:
             'ram': StatusIcons.ICON_RAM,
             'ram_single': StatusIcons.ICON_RAM_SINGLE,
             'ram_opened': StatusIcons.ICON_RAM_OPENED,
+            'cached': StatusIcons.ICON_CACHED,
+            'device_floppy': StatusIcons.ICON_DEVICE_FLOPPY,
+            'device_sd_card': StatusIcons.ICON_DEVICE_SD_CARD,
+            'device_usb': StatusIcons.ICON_DEVICE_USB,
+            'server': StatusIcons.ICON_SERVER,
+            'server_2': StatusIcons.ICON_SERVER_2,
+            'file_database': StatusIcons.ICON_FILE_DATABASE,
+            'archive': StatusIcons.ICON_ARCHIVE,
+            'box': StatusIcons.ICON_BOX,
+            'hard_drive': StatusIcons.ICON_HARD_DRIVE,
+            'optical_disc_drive': StatusIcons.ICON_OPTICAL_DISC_DRIVE,
+            'network_drive': StatusIcons.ICON_NETWORK_DRIVE,
+            'cpu': StatusIcons.ICON_CPU,
+            'cpu_2': StatusIcons.ICON_CPU_2,
+            'disc': StatusIcons.ICON_DISC,
+            'cylinder': StatusIcons.ICON_CYLINDER,
+            'folder_check': StatusIcons.ICON_FOLDER_CHECK,
+            'file_zip': StatusIcons.ICON_FILE_ZIP,
+            'package': StatusIcons.ICON_PACKAGE,
+            'database_import': StatusIcons.ICON_DATABASE_IMPORT,
             'live': StatusIcons.ICON_LIVE,
             'waiting': StatusIcons.ICON_WAITING,
             'loading': StatusIcons.ICON_LOADING,

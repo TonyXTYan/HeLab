@@ -1,11 +1,47 @@
 import logging
-import stat
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QSizePolicy, QSplitter
+from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
+                            QHeaderView, QToolButton, QSizePolicy)
 from PyQt6.QtGui import QIcon, QCloseEvent
 
 from helab.resources.icons import StatusIcons, ToolIcons, PercentageIcon
+
+
+class _IconGroup(QWidget):
+    def __init__(self, title: str, expanded: bool) -> None:
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        heading = QHBoxLayout()
+        self.toggle = QToolButton()
+        self.toggle.setText(title)
+        self.toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.toggle.setCheckable(True)
+        self.toggle.setChecked(expanded)
+        heading.addWidget(self.toggle)
+        heading.addStretch()
+        layout.addLayout(heading)
+
+        self.icon_list = QTreeWidget()
+        self.icon_list.setRootIsDecorated(False)
+        self.icon_list.setUniformRowHeights(True)
+        self.icon_list.setIconSize(QSize(20, 20))
+        self.icon_list.setHeaderLabels(["Icon", "Attribute"])
+        header = self.icon_list.header()
+        if header is not None:
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.icon_list)
+        self.toggle.toggled.connect(self._set_expanded)
+        self._set_expanded(expanded)
+
+    def _set_expanded(self, expanded: bool) -> None:
+        self.icon_list.setVisible(expanded)
+        self.toggle.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding,
+                           QSizePolicy.Policy.Expanding if expanded else QSizePolicy.Policy.Maximum)
+
 
 class DebugIconsWindow(QWidget):
     def __init__(self) -> None:
@@ -15,107 +51,60 @@ class DebugIconsWindow(QWidget):
         self.setup_ui()
 
     def setup_ui(self) -> None:
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
+        self.status_group = _IconGroup("Status Icons", expanded=True)
+        self.tool_group = _IconGroup("Tool Icons", expanded=True)
+        self.percentage_group = _IconGroup("Percentage Icons (DO NOT USE)", expanded=False)
+        groups = (self.status_group, self.tool_group, self.percentage_group)
+        for group in groups:
+            layout.addWidget(group)
+        self.status_list = self.status_group.icon_list
+        self.tool_list = self.tool_group.icon_list
+        self.percentage_list = self.percentage_group.icon_list
 
-        splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # Status Icons
-        status_widget = QWidget()
-        status_layout = QVBoxLayout()
-        status_label = QLabel("Status Icons")
-        status_layout.addWidget(status_label)
-
-        self.status_list = QListWidget()
-        self.status_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        status_icons_dir = {**StatusIcons.ICONS_STATUS, **StatusIcons.ICONS_EXTRA}.items()
-        status_icons_dir2 = dir(StatusIcons.ICONS_STATUS)
-        status_icons_dir_len = len(status_icons_dir)
-        for name, icon in status_icons_dir:
-            text = name
+        status_icons = {**StatusIcons.ICONS_STATUS, **StatusIcons.ICONS_EXTRA}
+        for name, icon in status_icons.items():
+            attribute = ""
             for attr in dir(StatusIcons):
-                if attr.startswith('ICON_'):
-                    icon2 = getattr(StatusIcons, attr)
-                    if isinstance(icon2, QIcon):
-                        if icon2 == icon:
-                            text = name + "\t" + attr
-            item = QListWidgetItem()
-            item.setText(text)
-            item.setIcon(icon)
-            self.status_list.addItem(item)
-            
+                if attr.startswith("ICON_"):
+                    candidate = getattr(StatusIcons, attr)
+                    if isinstance(candidate, QIcon) and candidate == icon:
+                        attribute = attr
+            self._add_icon(self.status_list, name, attribute, icon)
 
-
-        status_layout.addWidget(self.status_list)
-        status_widget.setLayout(status_layout)
-        splitter.addWidget(status_widget)
-
-        # Tool Icons
-        tool_widget = QWidget()
-        tool_layout = QVBoxLayout()
-        tool_label = QLabel("Tool Icons")
-        tool_layout.addWidget(tool_label)
-
-        self.tool_list = QListWidget()
-        self.tool_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.tool_list_dir = dir(ToolIcons)
-        self.tool_list_dir_len = 0
-        for attr in self.tool_list_dir:
-            if attr.startswith('ICON_'):
-                self.tool_list_dir_len += 1
+        tool_count = 0
+        for attr in dir(ToolIcons):
+            if attr.startswith("ICON_"):
                 icon = getattr(ToolIcons, attr)
                 if isinstance(icon, QIcon):
-                    item = QListWidgetItem()
-                    item.setText(attr)
-                    item.setIcon(icon)
-                    self.tool_list.addItem(item)
-        tool_layout.addWidget(self.tool_list)
-        tool_widget.setLayout(tool_layout)
-        splitter.addWidget(tool_widget)
+                    self._add_icon(self.tool_list, attr.removeprefix("ICON_").lower(), attr, icon)
+                    tool_count += 1
 
-        # Percentage Icons
-        percentage_widget = QWidget()
-        percentage_layout = QVBoxLayout()
-        percentage_label = QLabel("Percentage Icons (DO NOT USE)")
-        percentage_layout.addWidget(percentage_label)
+        for div, icon in PercentageIcon.ICONS.items():
+            percent = round(div * 100 / PercentageIcon._DIVS_COARSE)
+            degrees = round(div * 360 / PercentageIcon._DIVS_COARSE)
+            item = self._add_icon(self.percentage_list, f"{percent}% circular progress",
+                                  f"PercentageIcon.ICONS[{div}]", icon)
+            item.setToolTip(0, f"{degrees} degrees")
 
-        self.percentage_list = QListWidget()
-        self.percentage_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        # self.percentage_list_dir = dir(PercentageIcon)
-        # self.percentage_list_dir_len = 0
-        # for attr in self.percentage_list_dir:
-        #     if attr.startswith('ICON_'):
-        #         self.percentage_list_dir_len += 1
-        #         icon = getattr(PercentageIcon, attr)
-        #         if isinstance(icon, QIcon):
-        #             item = QListWidgetItem()
-        #             item.setText(attr)
-        #             item.setIcon(icon)
-        #             self.percentage_list.addItem(item)
-        for div, qicon in PercentageIcon.ICONS.items():
-            item = QListWidgetItem()
-            item.setText(f"divID = {div} = {round(div * (360 / PercentageIcon._DIVS_COARSE))}deg ="
-                         f" {round(div * (100 / PercentageIcon._DIVS_COARSE))}%")
-            item.setIcon(qicon)
-            self.percentage_list.addItem(item)
-        self.percentage_list_dir_len = len(PercentageIcon.ICONS)
-        percentage_layout.addWidget(self.percentage_list)
-        percentage_widget.setLayout(percentage_layout)
-        splitter.addWidget(percentage_widget)
+        # All three views share the width required by the longest icon name.
+        for group in groups:
+            group.icon_list.resizeColumnToContents(0)
+        name_width = max(group.icon_list.columnWidth(0) for group in groups)
+        for group in groups:
+            group.icon_list.setColumnWidth(0, name_width)
 
-        # layout.setStretchFactor(self.status_list, status_icons_dir_len)
-        # layout.setStretchFactor(self.tool_list, self.tool_list_dir_len)
-        # layout.setStretchFactor(percentage_label, self.percentage_list_dir_len)
-        #
-        self.status_list.setMinimumHeight(200)
-        self.tool_list.setMinimumHeight(200)
-        self.percentage_list.setMinimumHeight(200)
+        logging.debug("%s status icons, %s tool icons, %s percentage icons",
+                      len(status_icons), tool_count, len(PercentageIcon.ICONS))
 
-        logging.debug(f"{len(status_icons_dir)} status icons, {self.tool_list_dir_len} tool icons, {self.percentage_list_dir_len} percentage icons")
+    @staticmethod
+    def _add_icon(view: QTreeWidget, name: str, attribute: str, icon: QIcon) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([name, attribute])
+        item.setIcon(0, icon)
+        view.addTopLevelItem(item)
+        return item
 
-        layout.addWidget(splitter)
-        self.setLayout(layout)
-
-    def closeEvent(self, a0: QCloseEvent|None) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         logging.debug("DebugIconsWindow.closeEvent")
         super().closeEvent(a0)
         self.deleteLater()

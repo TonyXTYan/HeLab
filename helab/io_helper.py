@@ -22,7 +22,31 @@ def emit(event: dict[str, Any]) -> None:
     print(json.dumps(event, ensure_ascii=True), flush=True)
 
 
-def scan(path: str, send: Emit = emit) -> None:
+def _disk_cached(cache: Any, path: str) -> bool:
+    # Membership reads local metadata, without reading/decompressing array data.
+    try:
+        return cache is not None and path in cache
+    except Exception:
+        return False
+
+
+def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = None) -> None:
+    cache: Any = None
+    if cache_options and os.path.isdir(cache_options["directory"]):
+        try:
+            from diskcache import FanoutCache
+            cache = FanoutCache(cache_options["directory"], **cache_options["params"])
+        except Exception:
+            # Optional cache metadata must not prevent browsing source folders.
+            pass
+    try:
+        _scan(path, send, cache)
+    finally:
+        if cache is not None:
+            cache.close()
+
+
+def _scan(path: str, send: Emit, cache: Any) -> None:
     raw: set[int] = set()
     txy: set[int] = set()
     entries: list[dict[str, Any]] = []
@@ -45,7 +69,8 @@ def scan(path: str, send: Emit = emit) -> None:
                     modified = entry.stat(follow_symlinks=False).st_mtime
                 except OSError:
                     modified = None
-                entries.append({"path": entry.path, "name": entry.name, "modified": modified})
+                entries.append({"path": entry.path, "name": entry.name, "modified": modified,
+                                "disk_cached": _disk_cached(cache, entry.path)})
                 if len(entries) >= 128:
                     send({"kind": "entries", "entries": entries})
                     entries = []
@@ -63,6 +88,7 @@ def scan(path: str, send: Emit = emit) -> None:
         status, count = ("warning", len(raw | txy)) if not raw or not txy else ("critical", 0)
     send({"kind": "status", "status": status, "count": count,
           "raw": sorted(raw), "txy": sorted(txy), "modified": os.stat(path).st_mtime,
+          "disk_cached": _disk_cached(cache, path),
           "signature": hashlib.sha256(json.dumps(sorted(fingerprint)).encode()).hexdigest()})
 
 
@@ -90,6 +116,7 @@ def load(path: str, output: str, send: Emit = emit,
     cache_epoch: Any = None
     data: dict[int, Any] = {}
     cached = False
+    cache_reason = "Disk cache unavailable" if cache_options is None else "No saved cache fingerprint"
     problematic: list[int] = []
     if cache_options:
         try:
@@ -103,6 +130,7 @@ def load(path: str, output: str, send: Emit = emit,
                 packed = cache.get(path) if saved_fingerprint == fingerprint else None
                 previous = cache.get(("snapshot-problematic", path), [])
             if saved_fingerprint == fingerprint:
+                cache_reason = "Cached dataset missing"
                 if isinstance(packed, bytes):
                     data = pickle.loads(blosc.decompress(packed))
                     cached = isinstance(data, dict) and all(
@@ -111,11 +139,20 @@ def load(path: str, output: str, send: Emit = emit,
                         for shot, array in data.items())
                     if not cached:
                         data = {}
+                        cache_reason = "Cached dataset invalid"
                     elif isinstance(previous, list):
                         problematic = [value for value in previous if isinstance(value, int)]
-        except Exception:
+            elif saved_fingerprint is not None:
+                cache_reason = "TXY files changed since caching"
+        except Exception as exc:
             # A cache miss/failure must not prevent loading the actual files.
             data, cached = {}, False
+            cache_reason = f"Cache read failed: {type(exc).__name__}: {exc}"
+            send({"kind": "cache_warning", "message": cache_reason})
+    if cached:
+        cache_reason = ""
+    source = "disk" if cached else "files"
+    send({"kind": "load_source", "source": source, "cache_reason": cache_reason})
     rows = size = loaded = 0
     last_progress = 0.0
     for i, (shot, filename) in enumerate(files):
@@ -150,6 +187,7 @@ def load(path: str, output: str, send: Emit = emit,
         if cache is not None:
             cache.close()
         raise ValueError("Folder changed while loading — Refresh to retry")
+    disk_cached = cached
     if cache is not None:
         try:
             if not cached:
@@ -162,12 +200,16 @@ def load(path: str, output: str, send: Emit = emit,
                     if cache.get(("snapshot-epoch", path)) == cache_epoch and cache.set(path, packed):
                         cache.set(("snapshot-fingerprint", path), fingerprint)
                         cache.set(("snapshot-problematic", path), problematic)
+            disk_cached = _disk_cached(cache, path)
         except Exception as exc:
             send({"kind": "cache_warning", "message": str(exc)})
         finally:
             cache.close()
     send({"kind": "loaded", "rows": rows, "bytes": size, "files": loaded,
           "problematic": sorted(set(problematic)),
+          "source": source, "cached": cached,
+          "disk_cached": disk_cached,
+          "cache_reason": cache_reason,
           "signature": hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest()})
 
 
@@ -187,7 +229,7 @@ def main() -> None:
             else:
                 raise FileNotFoundError("No available default data folder")
         elif operation == "scan":
-            scan(request["path"])
+            scan(request["path"], cache_options=request.get("cache"))
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"))
         elif operation == "invalidate":

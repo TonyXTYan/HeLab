@@ -20,6 +20,8 @@ from helab.models.StatusReport import StatusReport
 from helab.resources.icons import StatusIcons
 from helab.utils.io_service import IORequest, IOService, get_io_service
 from helab.utils.folder_cache import get_folder_cache
+from helab.utils.caching_setup import load_cache_param
+from helab.utils.constants import DIR_CACHES
 
 
 @dataclass(eq=False)
@@ -58,6 +60,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         super().__init__(parent)
         self.service = service or get_io_service()
         self.cache = get_folder_cache(self.service)
+        self._cache_options = {"directory": os.path.join(DIR_CACHES, "data_ram_cache"),
+                               "params": dict(load_cache_param("data_ram_cache"))}
         self.owner = uuid4().hex
         self.generation = 0
         self.root: FolderNode | None = None
@@ -69,6 +73,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.resultReady.connect(self._on_event)
         self.cache.snapshotChanged.connect(self._shared_snapshot_changed)
         self.cache.datasetChanged.connect(self._shared_dataset_changed)
+        self.cache.diskCacheChanged.connect(self._shared_dataset_changed)
 
     def node(self, index: QModelIndex) -> FolderNode | None:
         return cast(FolderNode, index.internalPointer()) if index.isValid() else None
@@ -128,7 +133,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if role == self.BUSY_ROLE:
             return node.loading or node.state in ("queued", "running")
         if role == int(Qt.ItemDataRole.ToolTipRole):
-            cached = "\nShared RAM dataset available (read-only arrays)" if self.cache.current_dataset(node.path) else ""
+            cached = ("\nShared RAM dataset available (read-only arrays)" if self.cache.current_dataset(node.path)
+                      else "\nCached on disk; not loaded into RAM.\nCache freshness is checked when loading."
+                      if self.cache.disk_cached(node.path) else "")
             verification = ("\nCached snapshot; checking for changes" if node.loaded and node.state in ("queued", "running")
                             else "\nCached snapshot; validation on next access" if node.loaded and time.monotonic() - node.checked_at >= self.cache.FRESH_SECONDS
                             else "")
@@ -155,9 +162,11 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if role == self.STATUS_EXTRA_ICONS_ROLE:
             # Build icons from in-memory values; never call methods that update caches.
             extras = [k for k in (node.report.extra_icons if node.report else [])
-                      if k not in ("ram", "ram_single", "ram_opened")]
+                      if k not in ("ram", "ram_single", "ram_opened", "cached")]
             if self.cache.current_dataset(node.path):
                 extras.append("ram_opened")
+            elif self.cache.disk_cached(node.path):
+                extras.append("cached")
             return [StatusIcons.ICONS_EXTRA[k] for k in extras
                     if k in StatusIcons.ICONS_EXTRA]
         return None
@@ -212,7 +221,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 return
         node.seen.clear()
         node.error = ""
-        if not self.cache.submit(self.owner, self.generation, path, "scan", priority=priority, force=force):
+        if not self.cache.submit(self.owner, self.generation, path, "scan", {"cache": self._cache_options},
+                                 priority=priority, force=force):
             node.state, node.error = "error", "Scan queue full — Retry"
             self.changed(node)
 
@@ -347,3 +357,4 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.resultReady.disconnect(self._on_event)
         self.cache.snapshotChanged.disconnect(self._shared_snapshot_changed)
         self.cache.datasetChanged.disconnect(self._shared_dataset_changed)
+        self.cache.diskCacheChanged.disconnect(self._shared_dataset_changed)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 import os
 from typing import Any, Iterator
 
@@ -69,6 +70,9 @@ class FolderExplorer(QWidget):
         self.closed = False
         self.loading = False
         self.load_progress: float | None = None
+        self.load_source = ""
+        self.load_cache_reason = ""
+        self.load_cache_warning = ""
         self.load_error = ""
         self.load_bytes = 0
         self._load_path: str | None = None
@@ -211,6 +215,9 @@ class FolderExplorer(QWidget):
             return True
         self.model.cache.cancel(self.model.owner, "load")
         self.loading, self.load_progress, self.load_error = True, None, ""
+        self.load_source = ""
+        self.load_cache_reason = ""
+        self.load_cache_warning = ""
         self._load_path = path
         self._loading_data.clear()
         node = self.model.nodes.get(path)
@@ -261,7 +268,18 @@ class FolderExplorer(QWidget):
             return
         if kind == "progress":
             self.load_progress = event["progress"]
+        elif kind == "load_source":
+            self.load_source = event["source"]
+            self.load_cache_reason = event.get("cache_reason", "")
+            logging.info("Folder load %s: source=%s; cache=%s; reason=%s", request.path,
+                         self.load_source, request.payload.get("cache", {}).get("directory", ""),
+                         self.load_cache_reason or "cache hit")
+        elif kind == "cache_warning":
+            self.load_cache_warning = event["message"]
+            logging.warning("Folder cache %s: %s", request.path, self.load_cache_warning)
         elif kind == "loaded":
+            self.load_source = event.get("source", "")
+            self.load_cache_reason = event.get("cache_reason", "")
             dataset = event["dataset"]
             assert isinstance(dataset, Dataset)
             self.model.cache.retain(self.model.owner, dataset)
@@ -316,9 +334,19 @@ class FolderExplorer(QWidget):
         root_error = self.model.root.error if self.model.root else ""
         scans = any(r.operation == "scan" for r in requests)
         resolving = any(r.operation == "resolve" for r in requests)
-        action = ("Finding default folder…" if resolving else "Loading data" if self.loading
+        loading_action = {"disk": "Loading from disk cache", "files": "Reading TXY files",
+                          "memory": "Reusing data in memory"}.get(self.load_source, "Checking for cached data")
+        ready = "Ready"
+        if self.folder_opened_path == self.selected_path_globally:
+            origin = {"disk": "disk cache", "files": "TXY files", "memory": "memory"}.get(self.load_source)
+            if origin:
+                ready = f"Ready · Loaded from {origin}"
+                if self.load_cache_reason:
+                    ready += f" · {self.load_cache_reason}"
+        action = ("Finding default folder…" if resolving else loading_action if self.loading
                   else "Checking for changes" if scans and node and node.loaded else "Scanning folders")
-        self.scan_label.setText(error or root_error or (f"{action} · {queued} queued" if requests or self.loading else "Ready"))
+        self.scan_label.setText(error or root_error or (f"{action} · {queued} queued" if requests or self.loading else ready))
+        self.scan_label.setToolTip(self.load_cache_warning or self.load_cache_reason)
         busy = self.loading or bool(active or queued)
         self.spinner_label.setVisible(busy)
         if busy:
