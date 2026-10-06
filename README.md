@@ -190,7 +190,7 @@ The same env var works for running the app itself headlessly:
 QT_QPA_PLATFORM=offscreen helab
 ```
 
-/Users/tonyyan/Library/Preferences/com.anu.HeLab.plist
+/Users/tonyyan/Library/Preferences/com.anu-he-bec-group.HeLab.plist
 
 
 ---

@@ -121,7 +121,6 @@ APP_COMMIT_HASH = get_git_commit_hash()
 
 QSETTINGS_ORG_NAME = "ANU_HE_BEC_GROUP"
 QSETTINGS_APP_NAME = "HeLab"
-QSETTINGS_APP_NAME_SANDBOX = "Helab_SANDBOX"
 
 
 
@@ -166,18 +165,20 @@ def INDICATOR_DOT_RANDOM(n: int = 1) -> str:
     return ''.join(random.sample(INDICATOR_DOTS, n))
 
 
-def get_path_from_setting_or_use_default(key: str, candidates: List[str], sandbox_app: Optional[str] = None) -> str:
+def get_path_from_setting_or_use_default(key: str, candidates: List[str], settings: Optional[QSettings] = None) -> str:
     """
     This function attempts to retrieve a setting value using the provided key. If the value is found and is a valid path,
     it is returned. If the value is not found or is invalid, the function will search through the provided list of 
     candidate paths and return the first valid path. If no valid path is found, an error is raised.
 
-    :param sandbox_app: Optional application name for sandbox settings. Defaults to None.
-    :type sandbox_app: Optional[str]
+    :param settings: Optional QSettings to read/write instead of the app's own (e.g. an
+        ini file in a test's tmp dir). Defaults to None.
+    :type settings: Optional[QSettings]
     :raises NotADirectoryError: If no valid default path is found in the candidates.
     """
-    
-    settings = QSettings(QSETTINGS_ORG_NAME, sandbox_app or QSETTINGS_APP_NAME)
+
+    if settings is None:
+        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
     value = settings.value(key, type=str)
     if value and isinstance(value, str):
         if os.path.exists(value):

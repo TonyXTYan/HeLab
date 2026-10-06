@@ -82,7 +82,7 @@ Cache dirs resolve via `QSettings` with fallback candidates; configured via `DIR
 
 **Legacy submodule:** `legacy/tdc_autoconverter` (git submodule from `HeBECANU/tdc_autoconverter`) is a MATLAB TDC data auto-converter kept for reference/compatibility, not part of the Python package.
 
-**Settings persistence:** Uses `QSettings` with org `ANU_HE_BEC_GROUP`, app `HeLab` (sandbox variant: `Helab_SANDBOX`). macOS plist: `~/Library/Preferences/com.anu.HeLab.plist`.
+**Settings persistence:** Uses `QSettings` with org `ANU_HE_BEC_GROUP`, app `HeLab` (`helab/utils/constants.py`). macOS plist: `~/Library/Preferences/com.anu-he-bec-group.HeLab.plist` (Qt derives the name from the org). Tests must not create native settings stores; pass a tmp-dir `QSettings(path, IniFormat)` instead.
 
 ## CI/CD
 
