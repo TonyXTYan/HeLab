@@ -56,6 +56,10 @@ def finish_load(cache: FolderCache, path: str, signature: str = "v1", value: flo
         cache.service.pending.remove(request)
 
 
+def loaded_event(events: list[dict[str, Any]]) -> dict[str, Any]:
+    return next(event for event in events if event["kind"] == "loaded")
+
+
 def explorer_for_test(qtbot: QtBot, path: str) -> FolderExplorer:
     explorer = FolderExplorer(path, path, path, [0, 4, 5])
     qtbot.addWidget(explorer)
@@ -178,6 +182,51 @@ def test_refresh_propagates_changed_data_to_both_tabs(
     assert first.folder_opened_data[1][0, 0] == 10
     first.close_cleanup()
     second.close_cleanup()
+    service.shutdown()
+
+
+def test_refresh_reuses_open_dataset_and_receives_only_new_shots(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = service_for_test(monkeypatch)
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    cache, path = get_folder_cache(service), str(tmp_path)
+    explorer = explorer_for_test(qtbot, path)
+    qtbot.waitUntil(lambda: ("scan", path) in cache.jobs)
+    finish_scan(cache, path)
+    qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
+    request = producer(cache, path, "load")
+    assert "memory" not in request.payload
+    service.resultReady.emit(request, {"kind": "shot", "shot": 1, "array": np.array([[1.0, 2, 3]])})
+    service.resultReady.emit(request, {"kind": "loaded", "signature": "v1", "bytes": 24, "rows": 1, "files": 1,
+                                       "problematic": [1], "fingerprint": [[1, 10, 100], [9, 0, 100]]})
+    service.resultReady.emit(request, {"kind": "done"})
+    service.pending.remove(request)
+    old = explorer.folder_opened_data
+    assert old is not None
+
+    explorer.refresh()
+    finish_scan(cache, path, signature="v2")
+    qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
+    request = producer(cache, path, "load")
+    # Shot 9 failed to load, so only shot 1 can be reused from RAM.
+    assert request.payload["memory"] == [[1, 10, 100]]
+    service.resultReady.emit(request, {"kind": "shot", "shot": 2, "array": np.array([[4.0, 5, 6], [7, 8, 9]])})
+    service.resultReady.emit(request, {"kind": "loaded", "signature": "v2", "bytes": 48, "rows": 2, "files": 2,
+                                       "problematic": [], "memory_shots": [1], "disk_cached": False,
+                                       "source": "updated", "fingerprint": [[1, 10, 100], [2, 20, 200]]})
+    data = explorer.folder_opened_data
+    assert data is not None and list(data) == [1, 2]
+    assert data[1] is old[1]
+    assert not explorer.loading and explorer.load_source == "updated"
+    assert explorer.model.fetch_status(path).problematic_txy_ns == [1]
+    assert explorer.load_bytes == 72
+    # The helper keeps updating the disk cache without holding the load job.
+    assert ("load", path) not in cache.jobs and not cache.disk_cached(path)
+    service.resultReady.emit(request, {"kind": "disk_cached", "disk_cached": True})
+    service.resultReady.emit(request, {"kind": "done"})
+    assert cache.disk_cached(path) and not cache._finishing
+    explorer.close_cleanup()
     service.shutdown()
 
 
@@ -377,17 +426,109 @@ print(json.dumps(events))
         assert events[0]["kind"] == "load_source"
         assert events[0]["source"] == expected
         assert events[0]["cache_reason"] == ("" if require_cache else "No saved cache fingerprint")
-        assert events[-1]["source"] == expected
-        assert events[-1]["cached"] is require_cache
+        assert loaded_event(events)["source"] == expected
+        assert loaded_event(events)["cached"] is require_cache
         assert not any(event["kind"] == "cache_warning" for event in events)
         np.testing.assert_array_equal(np.load(tmp_path / name / "1.npy"), [[1, 2, 3]])
 
     converted.write_text("100,200,300\n")
     events = run("changed", False)
-    assert events[-1]["source"] == "files"
-    assert events[-1]["cache_reason"] == "TXY files changed since caching"
-    assert events[-1]["cached"] is False
+    assert loaded_event(events)["source"] == "files"
+    assert loaded_event(events)["cache_reason"] == "TXY files changed since caching"
+    assert loaded_event(events)["cached"] is False
     np.testing.assert_array_equal(np.load(tmp_path / "changed" / "1.npy"), [[100, 200, 300]])
+
+
+def test_changed_folder_reads_only_new_or_modified_txy_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import blosc
+    import pickle
+    import pandas as pd
+    from diskcache import FanoutCache
+
+    source = tmp_path / "source"
+    source.mkdir()
+    for shot in (1, 2, 3):
+        (source / f"d_txy_forc{shot}.txt").write_text(f"{shot},{shot},{shot}\n")
+    (source / "d_txy_forc4.txt").write_text("4,nan,4\n5,5,5\n")
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    (tmp_path / "first").mkdir()
+    load(str(source), str(tmp_path / "first"), lambda event: None, options)
+
+    (source / "d_txy_forc2.txt").write_text("20,20,20\n")
+    (source / "d_txy_forc3.txt").unlink()
+    (source / "d_txy_forc5.txt").write_text("50,50,50\n")
+    original_read_csv = pd.read_csv
+    read: list[str] = []
+
+    def record_read_csv(filename: str, *args: Any, **kwargs: Any) -> Any:
+        read.append(os.path.basename(filename))
+        return original_read_csv(filename, *args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_csv", record_read_csv)
+    output = tmp_path / "second"
+    output.mkdir()
+    events: list[dict[str, Any]] = []
+    load(str(source), str(output), events.append, options)
+    assert sorted(read) == ["d_txy_forc2.txt", "d_txy_forc5.txt"]
+    assert events[0] == {"kind": "load_source", "source": "merged",
+                         "cache_reason": "Reused 2 shots from disk cache; read 2 new or changed TXY files"}
+    assert loaded_event(events)["source"] == "merged"
+    assert loaded_event(events)["problematic"] == [4]
+    assert events[-1] == {"kind": "disk_cached", "disk_cached": True}
+    for shot, expected in ((1, [[1, 1, 1]]), (2, [[20, 20, 20]]), (4, [[5, 5, 5]]), (5, [[50, 50, 50]])):
+        np.testing.assert_array_equal(np.load(output / f"{shot}.npy"), expected)
+    assert not (output / "3.npy").exists()
+    with FanoutCache(options["directory"], **options["params"]) as cache:
+        merged = pickle.loads(blosc.decompress(cache.get(str(source))))
+        assert sorted(merged) == [1, 2, 4, 5]
+        assert cache.get(("snapshot-problematic", str(source))) == [4]
+
+    events.clear()
+    (tmp_path / "third").mkdir()
+    load(str(source), str(tmp_path / "third"), events.append, options)
+    assert loaded_event(events)["source"] == "disk"
+    assert sorted(read) == ["d_txy_forc2.txt", "d_txy_forc5.txt"]
+
+
+def test_load_skips_shots_already_in_memory_and_completes_disk_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import blosc
+    import pickle
+    import pandas as pd
+    from diskcache import FanoutCache
+
+    source, output = tmp_path / "source", tmp_path / "output"
+    source.mkdir()
+    output.mkdir()
+    for shot in (1, 2, 3):
+        (source / f"d_txy_forc{shot}.txt").write_text(f"{shot},{shot},{shot}\n")
+    memory = [[shot, info.st_size, info.st_mtime_ns] for shot in (1, 2, 3)
+              for info in ((source / f"d_txy_forc{shot}.txt").stat(),)]
+    (source / "d_txy_forc3.txt").write_text("30,30,30\n")
+    original_read_csv = pd.read_csv
+    read: list[str] = []
+    events: list[dict[str, Any]] = []
+
+    def record_read_csv(filename: str, *args: Any, **kwargs: Any) -> Any:
+        # Before ``loaded`` only changed files are read; afterwards the disk
+        # cache (empty here) is completed in the background.
+        read.append(os.path.basename(filename) + ("" if any(e["kind"] == "loaded" for e in events) else "*"))
+        return original_read_csv(filename, *args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_csv", record_read_csv)
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    load(str(source), str(output), events.append, options, memory)
+    assert read == ["d_txy_forc3.txt*", "d_txy_forc1.txt", "d_txy_forc2.txt"]
+    assert [event["shot"] for event in events if event["kind"] == "shot"] == [3]
+    loaded = loaded_event(events)
+    assert loaded["source"] == "updated" and loaded["memory_shots"] == [1, 2]
+    assert loaded["cache_reason"] == "Reused 2 shots from memory; read 1 new or changed TXY files"
+    assert events[-1] == {"kind": "disk_cached", "disk_cached": True}
+    with FanoutCache(options["directory"], **options["params"]) as cache:
+        assert sorted(pickle.loads(blosc.decompress(cache.get(str(source))))) == [1, 2, 3]
 
 
 def test_scan_reports_cached_children_without_loading_or_probing_them(
@@ -501,8 +642,8 @@ def test_corrupt_disk_cache_reports_failure_and_loads_source(tmp_path: Path) -> 
     load(str(source), str(output), events.append, options)
     warning = next(event for event in events if event["kind"] == "cache_warning")
     assert warning["message"].startswith("Cache read failed:")
-    assert events[-1]["cache_reason"] == warning["message"]
-    assert events[-1]["source"] == "files"
+    assert loaded_event(events)["cache_reason"] == warning["message"]
+    assert loaded_event(events)["source"] == "files"
     np.testing.assert_array_equal(np.load(output / "1.npy"), [[1, 2, 3]])
 
 

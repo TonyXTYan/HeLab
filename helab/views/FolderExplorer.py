@@ -335,13 +335,17 @@ class FolderExplorer(QWidget):
         scans = any(r.operation == "scan" for r in requests)
         resolving = any(r.operation == "resolve" for r in requests)
         loading_action = {"disk": "Loading from disk cache", "files": "Reading TXY files",
+                          "merged": "Reading new TXY files into disk cache",
+                          "updated": "Reading new TXY files",
                           "memory": "Reusing data in memory"}.get(self.load_source, "Checking for cached data")
         ready = "Ready"
         if self.folder_opened_path == self.selected_path_globally:
-            origin = {"disk": "disk cache", "files": "TXY files", "memory": "memory"}.get(self.load_source)
+            origin = {"disk": "disk cache", "files": "TXY files", "merged": "disk cache + new TXY files",
+                      "updated": "memory + new TXY files", "memory": "memory"}.get(self.load_source)
             if origin:
                 ready = f"Ready · Loaded from {origin}"
-                if self.load_cache_reason:
+                # The merge counts are long; they stay in the tooltip only.
+                if self.load_cache_reason and self.load_source not in ("merged", "updated"):
                     ready += f" · {self.load_cache_reason}"
         action = ("Finding default folder…" if resolving else loading_action if self.loading
                   else "Checking for changes" if scans and node and node.loaded else "Scanning folders")

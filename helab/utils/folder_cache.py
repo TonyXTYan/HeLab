@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass, field
+import logging
 import os
 import time
 from typing import Any
@@ -43,6 +44,7 @@ class SharedJob:
     status: dict[str, Any] | None = None
     data: dict[int, npt.NDArray[np.float64]] = field(default_factory=dict)
     state: str = "queued"
+    base: Dataset | None = None
 
 
 class FolderCache(QObject):
@@ -67,6 +69,10 @@ class FolderCache(QObject):
         self._epochs: dict[str, int] = {}
         self._defaults: OrderedDict[tuple[str, ...], str] = OrderedDict()
         self._disk_cached_paths: OrderedDict[str, None] = OrderedDict()
+        # Datasets from before an explicit disk-cache clear are never reused.
+        self._base_floor: dict[str, int] = {}
+        # Load helpers still updating the disk cache after delivering data.
+        self._finishing: dict[str, str] = {}
         service.resultReady.connect(self._on_event)
 
     @staticmethod
@@ -95,6 +101,14 @@ class FolderCache(QObject):
             return self.dataset(path, snapshot.status.get("signature", ""))
         return next((entry for key, entry in reversed(self.datasets.items())
                      if key[0] == path and entry.epoch == self._epochs.get(path, 0)), None)
+
+    def _base(self, path: str) -> Dataset | None:
+        # A dataset an open tab still shows survives signature changes, so a
+        # refresh only needs the shots that are new or changed since then.
+        floor = self._base_floor.get(path, 0)
+        candidates = [entry for entry in (*self.pins.values(), *self.datasets.values())
+                      if entry.path == path and entry.epoch >= floor and "fingerprint" in entry.metadata]
+        return max(candidates, key=lambda entry: entry.epoch, default=None)
 
     def disk_cached(self, path: str) -> bool:
         return path in self._disk_cached_paths
@@ -198,10 +212,15 @@ class FolderCache(QObject):
         if operation == "invalidate":
             self._set_disk_cached(path, False)
             self._invalidate_data(path)
+            self._base_floor[path] = self._epochs[path]
             snapshot = self.snapshot(path)
             if snapshot:
                 snapshot.checked_at = 0
-        job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload)
+        base = self._base(path) if operation == "load" else None
+        if base:
+            payload = {**payload, "memory": [list(entry) for entry in base.metadata["fingerprint"]
+                                             if entry[0] in base.data]}
+        job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload, base=base)
         job.subscribers[(owner, generation)] = request
         self.jobs[job_key] = job
         self._producers[job.owner] = job
@@ -304,6 +323,15 @@ class FolderCache(QObject):
 
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
         job = self._producers.get(producer.owner)
+        if job is None and producer.owner in self._finishing:
+            path = self._finishing[producer.owner]
+            if event["kind"] == "disk_cached":
+                self._set_disk_cached(path, bool(event["disk_cached"]))
+            elif event["kind"] == "cache_warning":
+                logging.warning("Folder cache %s: %s", path, event["message"])
+            elif event["kind"] in ("done", "error", "cancelled"):
+                del self._finishing[producer.owner]
+            return
         if job is None:
             # Non-shared IOService consumers retain their existing protocol.
             self.resultReady.emit(producer, event)
@@ -359,6 +387,21 @@ class FolderCache(QObject):
                     return
                 if "disk_cached" in event:
                     self._set_disk_cached(job.path, bool(event["disk_cached"]))
+                memory_shots = event.get("memory_shots", [])
+                if memory_shots:
+                    assert job.base is not None
+                    for shot in memory_shots:
+                        job.data[shot] = job.base.data[shot]
+                    job.data = dict(sorted(job.data.items()))
+                    problematic = set(event["problematic"]) | (
+                        set(job.base.metadata.get("problematic", ())) & set(memory_shots))
+                    event = {**event, "problematic": sorted(problematic), "files": len(job.data),
+                             "rows": sum(len(array) for array in job.data.values()),
+                             "bytes": sum(array.nbytes for array in job.data.values())}
+                # The helper may still be updating the disk cache; the data is
+                # complete, so later shared loads must not wait for that.
+                self._forget_job(job)
+                self._finishing[job.owner] = job.path
                 entry = Dataset(job.path, event["signature"], job.data, event, job.epoch)
                 self.datasets[(job.path, entry.signature, entry.epoch)] = entry
                 event = {**event, "dataset": entry}
