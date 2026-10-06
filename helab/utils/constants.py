@@ -232,6 +232,7 @@ OS_DIR_CACHE_TTL = 60*60 # seconds
 MAX_DEPTH_INT = 1<<15
 
 DEV_POTENTIAL_DATA_PATHS = [
+    '/Volumes/dld_output',
     '/Volumes/tonyNVME Gold/dld output',
     '/Users/tonyyan/.cache/2024_Momentum_Bells_V2 - 20241200',
     # '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - Testing MS Teams/2024_Momentum_Bells_V2 - 20241200',
@@ -248,7 +249,9 @@ DEV_POTENTIAL_DATA_PATHS = [
     '',
 ]
 
-DEFAULT_DATA_PATH = next((path for path in DEV_POTENTIAL_DATA_PATHS if os.path.exists(path)), '')
+# This is a display hint; availability is resolved by an isolated I/O helper
+# after the window is shown. Never stat a remote mount at module import.
+DEFAULT_DATA_PATH = DEV_POTENTIAL_DATA_PATHS[0]
 
 
 DEV_PATH_TO_MATLAB = "/Applications/MATLAB_R2024b.app"

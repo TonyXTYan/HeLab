@@ -109,6 +109,7 @@ class FolderTabWidget(QTabWidget):
         if view_path is None:
             view_path = model_root_path
 
+        default_candidates = DEV_POTENTIAL_DATA_PATHS if target_path is None else None
         if target_path is None:
             target_path = DEFAULT_DATA_PATH
     
@@ -140,7 +141,8 @@ class FolderTabWidget(QTabWidget):
             target_path = target_path,
             view_path = view_path,
             columns_to_show = columns_to_show,
-            set_initial_expand_to_parent_level = set_initial_expand_to_parent_level
+            set_initial_expand_to_parent_level = False,
+            default_candidates = default_candidates,
         )
         index = self.addTab(folder_explorer, 'File Explorer')
 
@@ -155,7 +157,7 @@ class FolderTabWidget(QTabWidget):
 
         self.setCurrentIndex(index)
 
-        QTimer.singleShot(300, lambda: self.rescan_current_folder_explorer(user_intend = False))
+        # The explorer schedules exactly one initial scan after signal wiring.
         # QTimer.singleShot(600, lambda: self.rescan_current_folder_explorer(user_requested_scan = False))
 
 
@@ -208,7 +210,10 @@ class FolderTabWidget(QTabWidget):
             logging.debug(f"folderTabWidget.on_back_button_clicked: {self.tab_back_button_enabled = }")
 
     def clear_status_cache(self) -> None:
-        self.status_cache.clear()
+        for index in range(self.count()):
+            explorer = self.widget(index)
+            if isinstance(explorer, FolderExplorer):
+                explorer.rescan(True)
         running_workers_status.clear()
         running_workers_deep.clear()
         running_workers_hasChildren.clear()
@@ -269,15 +274,9 @@ class FolderTabWidget(QTabWidget):
                 logging.debug(f"folderTabWidget.on_current_tab_changed: {ii = }, {other_folder_explorer.folder_opened_path = }")
                 if (other_folder_explorer.folder_opened_path is not None and
                     other_folder_explorer.folder_opened_path != currently_selected_path):
-                    other_sr = status_cache.get(other_folder_explorer.folder_opened_path, None)
-                    if isinstance(other_sr, StatusReport):
-                        logging.debug(f"{other_sr.status = }, {other_sr.extra_icons = }")
-                        other_sr.update_ram_status()
-                        emit_data_changed_signal(other_folder_explorer.folder_opened_path)
-                    else:
-                        logging.warning(f"folderTabWidget.on_current_tab_changed: other_sr is not a StatusReport instance. {other_sr = }")
-                    other_folder_explorer.folder_opened_data = None
-                    other_folder_explorer.folder_opened_path = None
+                    # Each tab owns its snapshot and pending requests. Switching
+                    # tabs does not read caches or invalidate another tab's data.
+                    pass
                 # other_folder_explorer.clear_selection()
             else:
                 logging.warning("folderTabWidget.on_current_tab_changed: other tab is not a FolderExplorer instance.")
@@ -303,12 +302,6 @@ class FolderTabWidget(QTabWidget):
         # self.widget(index).close_cleanup
         logging.debug(f"Removing tab at index {index}")
         current_folder_explorer = self.widget(index)
-        queue_depth = single_run_pools_total_activeThreadCount()
-        if queue_depth > 0:
-            QMessageBox.warning(self, "Please wait for background taks to finish",
-                                "There are ongoing background tasks. Please wait for them to complete or cancel them before closing the tab.",
-                                QMessageBox.StandardButton.Ok)
-            return
         if isinstance(current_folder_explorer, FolderExplorer):
             # if current_folder_explorer.is_running_status_worker():
             #     logging.debug(f"Stopping status worker for tab at index {index}")
@@ -325,5 +318,6 @@ class FolderTabWidget(QTabWidget):
         for index in reversed(range(self.count())):
             self.removeTab(0)
 
-        super().closeEvent(a0)
+        if a0 is not None:
+            super().closeEvent(a0)
         logging.debug("FolderTabWidget.closeEvent: finished")

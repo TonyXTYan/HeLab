@@ -1,3 +1,15 @@
+# Frozen I/O helpers must bypass GUI, caches and Dash initialization.
+import sys
+if "--helab-io-helper" in sys.argv:
+    # Windowed PyInstaller executables may have no standard streams. Exchange
+    # requests/results through local files instead of relying on console handles.
+    helper_arg = sys.argv.index("--helab-io-helper")
+    sys.stdin = open(sys.argv[helper_arg + 1], encoding="utf-8")
+    sys.stdout = open(sys.argv[helper_arg + 2], "w", encoding="utf-8")
+    from helab.io_helper import main as io_helper_main
+    io_helper_main()
+    raise SystemExit(0)
+
 # This Python file uses the following encoding: utf-8
 import logging
 import tempfile

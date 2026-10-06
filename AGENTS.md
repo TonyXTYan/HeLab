@@ -56,6 +56,8 @@ The `.spec` file produces `HeLab.app` on macOS (bundle ID `au.edu.anu.he-bec-lab
 
 **Package layout:** `helab/models/`, `helab/views/`, `helab/workers/`, `helab/scripts/`, `helab/utils/`
 
+**Responsive filesystem I/O:** The active folder browser uses `IOService` (`helab/utils/io_service.py`) and isolated `helab/io_helper.py` processes. Requests are deduplicated, queues and concurrency are bounded, and cancellation/deadlines never wait on the GUI thread. Daemon reader threads deliver results through a bounded queue; a Qt timer applies small batches. Source folders are never queried by the GUI model. The frozen helper entry point in `helab/main.py` must run before imports that initialize GUI services, caches, or Dash. `GUIWatchdog` records event-loop stalls and dumps thread stacks independently of GUI timers.
+
 **Threading:** Three `QThreadPool` instances in `helab/utils/threading_setup.py`:
 - `thread_pool_general` — general tasks (½ CPU count)
 - `thread_pool_load_data_ram` — data loading (¼ CPU count)
@@ -70,11 +72,11 @@ Workers are tracked in a `SynchronisedDict` for graceful cancellation on shutdow
 
 Cache dirs resolve via `QSettings` with fallback candidates; configured via `DIR_TEMPS` / `DIR_CACHES` in `helab/utils/constants.py`.
 
-**UI:** Model-View pattern. `HelabFileSystemModel` (`helab/models/HelabFileSystemModel.py`) extends `QFileSystemModel`. The main window (`helab/views/HelabMainWindow.py`) uses dockable panels: left tree view, right properties panel, center plot area. Signals are throttled (`helab/workers/HelabFSModelThrottleDataChangedEmit.py`) to avoid flooding the GUI thread.
+**UI:** Model-View pattern. The active `FolderExplorer` uses `SnapshotFileSystemModel` (`helab/models/SnapshotFileSystemModel.py`), a `QAbstractItemModel` that only reads memory during rendering. Folders load on selection or expansion; refresh traverses the current view's expanded branches in batches. Loading indicators, timeout/retry states, and direct path entry keep navigation available during I/O. The main window (`helab/views/HelabMainWindow.py`) uses dockable panels: left tree view, right properties panel, center plot area. The earlier `HelabFileSystemModel` extending `QFileSystemModel` and its worker/throttling classes remain for compatibility and legacy tests.
 
 **Script system:** Analysis scripts live in `helab/scripts/`. Each script inherits from `HelabAnalysisScript` (`helab/scripts/base.py`) and implements `get_metadata()`, `get_actions()`, `execute_action()`. Scripts are discovered dynamically by `ScriptsManager` (`helab/scripts/scripts_manager.py`) via `importlib.util`, scanning a directory for `.py` files and grouping loaded scripts by their `ScriptMetadata.group`.
 
-**Data loading:** `LoadFolderToRamWorker` (`helab/workers/LoadFolderToRamWorker.py`) lazily loads large datasets with streaming decompression (zstandard, blosc, lz4) and cancellation support.
+**Data loading:** The active browser loads TXY data in `helab/io_helper.py`, streams per-shot results through local artifacts read by daemon threads, and retains the existing dictionary-of-float64-arrays format. It stores compatible Blosc-compressed dictionaries in `data_ram_cache`, with fingerprint metadata to reject stale data. Cache reads/writes and compression run outside the GUI process. `LoadFolderToRamWorker` remains available for legacy consumers.
 
 **Visualization:** Plotly is used for interactive 3D scatter; Matplotlib for publication-quality output. PyQtGraph is available for fast real-time plots. Avoid PyVista/VisPy (known data-point issues with large files). `helab/utils/dash_server.py` runs a background-thread Dash server (`127.0.0.1:8050`) to serve interactive Plotly figures in a browser tab via `/plot/<id>` routes.
 

@@ -142,7 +142,7 @@ def clear_all_thread_pools() -> None:
     logging.info("All thread pools cleared.")
 
 
-def cancel_all_workers() -> None:
+def cancel_all_workers(*, wait: bool = True) -> None:
     for workerE in running_workers_ThrottleDataChangedEmits.values():
         workerE.cancel()
     running_workers_ThrottleDataChangedEmits.clear()
@@ -168,7 +168,8 @@ def cancel_all_workers() -> None:
     thread_pool_load_data_ram.clear()
     thread_pool_gui_update.clear()
 
-    _wait_for_pools_to_drain()
+    if wait:
+        _wait_for_pools_to_drain()
 
     logging.info("All workers cancelled.")
 

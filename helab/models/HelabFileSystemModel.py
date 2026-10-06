@@ -642,7 +642,7 @@ class HelabFileSystemModel(QFileSystemModel):
         self.refresh()
         self.rescan_worker = None
         if retry: QTimer.singleShot(10, lambda: self.rescan(user_requested_scan=was_user_requested_scan))
-        else:     QTimer.singleShot(100, lambda: self.rescan(user_requested_scan=was_user_requested_scan))
+        # Cancellation without retry must stop work, including at shutdown.
 
 
     def on_item_expanded(self, index: QModelIndex) -> None:
