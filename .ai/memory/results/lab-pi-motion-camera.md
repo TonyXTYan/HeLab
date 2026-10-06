@@ -1,12 +1,15 @@
 ---
-date: 2026-08-25
-status: settled
 name: lab-pi-motion-camera
-description: "Lab Raspberry Pi running motion for the webcam stream (see Maestri 'SSH Pi TailScale' for address) — USB/IP camera caps resolution at 640x480, tuning knobs, and a disk-full incident"
-metadata:
+description: "Lab Raspberry Pi running motion for the webcam stream (see Maestri 'SSH Pi TailScale' agent for access) — USB/IP camera caps resolution at 640x480, tuning knobs, and a disk-full incident"
+metadata: 
   node_type: memory
+  date: 2026-09-16
+  status: settled
   type: result
+  originSessionId: 90d4f4df-6e3e-46dd-ae17-2c634f9e4eef
+  modified: 2026-09-16T03:05:52.094Z
 ---
+
 Working notes for the lab's Raspberry Pi that serves a live webcam view via the
 `motion` daemon on port 8081. Address intentionally omitted from this file —
 in Maestri, connect via the "SSH Pi TailScale" agent (passwordless `sudo`
@@ -69,12 +72,36 @@ USB/IP source ever changes.
   frames actually get sent over the stream — separate from `framerate`
   (the capture rate). The default of 1 is easy to miss and looks like
   "pixelation" even though it's really a frame-rate problem.
-- Quality/CPU tradeoff measured on this Pi 2 at 640x480, `stream_maxrate 3`:
-  `stream_quality 100` → ~102-103% CPU (of one core); `stream_quality 95` →
-  ~80-81% CPU, visually indistinguishable from 100. ~20% CPU savings for
-  negligible quality loss — prefer 95 over 100.
-- Settled values (2026-08-25): `framerate 15`, `stream_quality 95`,
-  `stream_maxrate 3`.
+- `framerate` above `stream_maxrate` is wasted capture work — frames get
+  grabbed and thrown away without ever reaching a client. Match the two
+  unless there's a reason to decouple them (e.g. motion-detection wants a
+  higher sampling rate than the stream needs).
+- Camera's driver ceiling at 640x480 (`v4l2-ctl -d /dev/video0
+  --list-formats-ext`): **25 fps**, same for both YUYV and MJPG pixel
+  formats. Untested whether the USB/IP link actually sustains capture at
+  that ceiling — only 10-15fps capture has been validated stable; don't
+  assume 25fps works without watching `dmesg` for `usb_clear_halt`/
+  `usb_unlink_urb` errors (the same failure signature as the resolution
+  ceiling above) and CPU headroom when trying it.
+- Quality/CPU relationship is **not fixed** — it moved when other settings
+  changed, so re-measure rather than trust old numbers across config
+  changes:
+  - At `framerate 15`, `stream_maxrate 3` (2026-08-25): `stream_quality 100`
+    → ~102-103% CPU (of one core); `stream_quality 95` → ~80-81% CPU,
+    visually indistinguishable from 100. Concluded "prefer 95" at the time.
+  - At `framerate 10`, `stream_maxrate 10` (2026-09-16): `stream_quality
+    100` → ~59% CPU, `stream_quality 95` → ~60.5% CPU — statistically the
+    same. Quality stopped being the CPU driver once capture/stream fps
+    dropped to 10; **100 is effectively free at this fps**, no reason to
+    prefer 95 here.
+  - Takeaway: don't generalize a quality/CPU tradeoff figure across
+    different `framerate`/`stream_maxrate` values — the bottleneck shifts.
+- CPU sampling method: `ps -C motion -o %cpu=` is a cumulative average
+  since process start, so sample ~40s after `systemctl restart motion`
+  (not immediately) for a representative reading.
+- Settled values (2026-09-16): `framerate 10`, `stream_quality 100`,
+  `stream_maxrate 10` — ~59-60% CPU of one core (down from ~101-110% at
+  the 2026-08-25 config), quad-core Pi 2 has real headroom again.
 
 ## Disk-full incident (resolved 2026-08-25)
 
@@ -95,6 +122,8 @@ only. If recording is ever wanted again, set up a retention cron
 
 ## Backups
 
-Timestamped `motion.conf.bak.<timestamp>` copies from this session's edits
-are left in `/etc/motion/` — the earliest predates the `flip_axis`/`rotate`
-change, in case any of today's changes need reverting.
+Timestamped `motion.conf.bak.<timestamp>` copies from every session's edits
+are left in `/etc/motion/` — the earliest (2026-08-25) predates the
+`flip_axis`/`rotate` change; three more from 2026-09-16 bracket the
+`stream_maxrate`/`framerate`/`stream_quality` changes in this note, in case
+any of them need reverting.
