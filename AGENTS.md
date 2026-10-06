@@ -4,6 +4,11 @@ HeLab (Helium Experiment Lab Analysis Board) is a PyQt6 desktop GUI application 
 
 Two repos exist: this one (`TonyXTYan/HeLab`) is the development branch; `HeBECANU/HeLab` is the stable lab deployment.
 
+## Working conventions
+
+- Address the user as "🎓Tony" in conversation.
+- Every Git commit must include both a concise subject and a meaningful description in the message body, separated by a blank line. The description should explain what changed and why, and include relevant validation.
+
 ## Setup
 
 ```bash
