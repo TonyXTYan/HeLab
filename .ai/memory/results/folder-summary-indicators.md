@@ -21,7 +21,8 @@ TXY data with almost no visible sign that anything was loaded.
    the selection differs from the viewed path. Deselect returns to viewing the
    path. Its tooltip says what happens to a running or queued load under the
    current load-on-select mode.
-2. **Counts:** e.g. `456 TXY found · 123 loaded (27%)`, `· Not loaded`,
+2. **Counts:** e.g. `456 TXY found · 123 loaded (27%)` (`· Paused` while
+   the current tab browses), `· Not loaded`,
    `· Previous data`, `· Changes detected`, raw-shots-only, empty folder,
    "TXY count not checked · Retry manually". A **Cancel** button (aligned under
    Deselect) appears while loading. While scanning:

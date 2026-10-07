@@ -2,7 +2,7 @@
 
 Date: 2026-10-08
 Baseline: `b40547b` on `dev/v0.0.5a`, plus the large uncommitted folder-browser work (summary panel, shared I/O queue, scan-failure history, stopping display, live-load fix).
-Status: Phases 1–2 committed (`9b169c2`, `e01aeef`). Phase 3 implemented 2026-10-08 (296 passed, mypy --strict and pyright clean, uncommitted); Phase 4 next. Agreed with 🎓Tony in chat on 2026-10-08.
+Status: Phases 1–2 committed (`9b169c2`, `e01aeef`), Phase 3 committed (`6637528`, 296 passed). Phase 4: memory/docs updated 2026-10-08; the per-scan timing log was dropped (Tony: log spam). Agreed with 🎓Tony in chat on 2026-10-08.
 
 ## Context
 

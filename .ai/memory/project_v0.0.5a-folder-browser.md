@@ -1,6 +1,6 @@
 ---
 name: project-v0.0.5a-folder-browser
-description: "Open threads on dev/v0.0.5a folder-browser work (summary panel, shared I/O queue, scan-failure history, io-lanes plan): what is committed, what is next, known bugs"
+description: "Open threads on dev/v0.0.5a folder-browser work (summary panel, I/O lanes, scan-failure history): what is committed, what is open, known bugs"
 metadata:
   node_type: memory
   type: project
@@ -13,10 +13,11 @@ Phases 1–2 (no-progress timeouts, two-step browse). 274 tests passed; mypy
 --strict and pyright clean. Design: [[folder-summary-indicators]],
 [[folder-io-queue]], [[basic-scan-defaults-and-failures]].
 
-Next: io-lanes **Phase 3** (foreground/background lanes, pausing) and
-**Phase 4** (timing log, docs), in
-`.ai/sessions/2026-10-08-claude-io-lanes/plan.md`. Each phase waits for Tony's
-go-ahead.
+Later the same day: `e01aeef` (saved subfolder status at browse, cache dirs
+moved) and `6637528` io-lanes **Phase 3** (foreground/background lanes,
+cooperative pausing; 296 tests). Tony confirmed the app works much better.
+Phase 4 = these memory updates; the per-scan timing log was dropped (log
+spam). Plan: `.ai/sessions/2026-10-08-claude-io-lanes/plan.md`.
 
 Open threads:
 - Undecided: after a names-only listing, re-selecting a folder whose data is
@@ -25,8 +26,13 @@ Open threads:
   the listing's TXY names are unchanged (risk: an in-place modification shows
   only after the details scan).
 - Review findings still open: if the disk cache can't open, automatic scans
-  are skipped silently; folders over 100k entries record a scan failure;
-  `configure_concurrency` hardcodes 32 instead of `MAX_SIMULTANEOUS_IO`.
+  are skipped silently; folders over 100k entries record a scan failure.
+  (`configure_concurrency` now uses `MAX_SIMULTANEOUS_IO`, fixed in Phase 3.)
+- With the default of 1 background lane, folder details and basic scans
+  (including a manual Basic scan) wait until the selected load finishes. As
+  planned; revisit if Tony finds it slow.
+- Status-message review by Codex (2026-10-08): TODO in MEMORY.md, details in
+  `.ai/sessions/2026-10-08-codex-status-message-review/`.
 - Per-row "Retry 2/3" tree state: not chosen; revisit only if Tony asks.
 - An open tooltip doesn't live-refresh "stopping for N s" (Qt limitation;
   accepted).

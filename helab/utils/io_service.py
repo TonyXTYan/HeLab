@@ -52,6 +52,7 @@ class IORequest:
     # Cooperative pause: a ``pause`` file in ``output`` that the helper polls.
     pause_requested: bool = False
     paused: bool = False
+    slow_stop_logged: bool = False
     control: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -123,6 +124,8 @@ class IOService(QObject):
             return True
         # Reserve pending capacity for active requests that may need a retry.
         if len(self.pending) + len(self.active) >= self.MAX_PENDING:
+            logging.warning("I/O queue full (%s requests); not queued: %s %s",
+                            self.MAX_PENDING, self.NOUNS.get(operation, operation), path)
             return False
         request = IORequest(owner, generation, path, operation, payload or {},
                             self.NO_PROGRESS_TIMEOUT if timeout is None else timeout,
@@ -218,6 +221,7 @@ class IOService(QObject):
 
     def _requeue(self, request: IORequest) -> None:
         """Stop a load that left the foreground with no background slot; it restarts from RAM shots."""
+        logging.info("Load moved to the background queue; restarts from loaded shots: %s", request.path)
         self._retire(request, REQUEUED)
         again = IORequest(request.owner, request.generation, request.path, request.operation,
                           dict(request.payload),
@@ -569,13 +573,13 @@ class IOService(QObject):
             except queue.Empty:
                 break
             if event["kind"] == "exit":
-                if request in self.active:
-                    self.active.remove(request)
-                if request in self.retired:
-                    self.retired.remove(request)
-                self.activityChanged.emit()
+                self._forget(request)
             elif not request.cancelled.is_set() and not self.closed:
                 kind = event["kind"]
+                if kind == "error":
+                    # One line per failure; timeouts are logged where they are detected.
+                    logging.warning("%s failed: %s — %s", self.label(request), request.path,
+                                    str(event.get("message", "")).removesuffix(" — Retry"))
                 if kind in ("paused", "resumed"):
                     # The no-progress timer is frozen while the helper waits.
                     request.paused = kind == "paused"
@@ -608,12 +612,15 @@ class IOService(QObject):
         # death is an independent memory-only signal; cleanup cannot hold a slot.
         for request in (*self.active, *self.retired):
             if request.exited.is_set():
-                if request in self.active:
-                    self.active.remove(request)
-                if request in self.retired:
-                    self.retired.remove(request)
-                self.activityChanged.emit()
+                self._forget(request)
         now = time.monotonic()
+        for request in self.retired:
+            age = self.stopping_for(request, now)
+            if not request.slow_stop_logged and age is not None and age >= self.SLOW_STOP_SECONDS:
+                request.slow_stop_logged = True
+                logging.warning("Stopped %s has not exited after %.0f s (%s); its volume may not be "
+                                "responding: %s", self.noun(request), age,
+                                request.retirement_reason or "cancelled", request.path)
         for request in list(self.active):
             if request.paused or now - request.last_activity <= request.timeout:
                 continue
@@ -649,6 +656,17 @@ class IOService(QObject):
             self.activityChanged.emit()
         self._dispatch()
         self._apply_pauses(time.monotonic())
+
+    def _forget(self, request: IORequest) -> None:
+        """Free a slot once the helper's exit is confirmed (duplicates are ignored)."""
+        if request in self.active:
+            self.active.remove(request)
+        if request in self.retired:
+            self.retired.remove(request)
+            age = self.stopping_for(request, time.monotonic())
+            if request.slow_stop_logged and age is not None:
+                logging.warning("Stopped %s exited after %.0f s: %s", self.noun(request), age, request.path)
+        self.activityChanged.emit()
 
     def shutdown(self) -> None:
         if self.closed:

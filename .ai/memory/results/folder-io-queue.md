@@ -2,7 +2,7 @@
 date: 2026-10-08
 status: settled
 name: folder-io-queue
-description: "Folder browser I/O: one shared queue (default 1 slot), 60 s no-progress timeouts (per-file 15/20/30 s load retries), two-step browse, helpers hold slots until confirmed exit, and how stopping helpers are shown"
+description: "Folder browser I/O: one queue with a foreground lane (current tab's browsing + selected load) and background lanes (default 1) that pause cooperatively, 60 s no-progress timeouts (per-file 15/20/30 s load retries), two-step browse, helpers hold slots until confirmed exit, and how stopping/paused helpers are shown"
 metadata:
   node_type: memory
   type: result
@@ -11,17 +11,42 @@ How the active folder browser schedules filesystem I/O, and why. Code:
 `helab/utils/io_service.py` (`IOService`), `helab/io_helper.py` (isolated
 helper processes), `helab/utils/folder_cache.py` (shared jobs per tab).
 
-## One shared queue
+## One queue, foreground and background lanes (2026-10-08, io-lanes Phase 3)
 
-- Folder browsing, basic scans, loads, and cache writes share **one app-wide
-  queue and concurrency limit**. Default **1**, configurable in
-  Settings → General as "Simultaneous folder I/O operations" (max 32).
-  Legacy separate scan/load limits do not override this default.
-  Why: Tony wanted basic scans and loads to stop clogging I/O on the lab's
-  network volumes (2026-10-07).
-- Order: navigation and loads come before bulk scans, FIFO within each group.
-  Explicit promotion of the selected folder's load is kept.
-- Requests are deduplicated by `(owner, generation, path, operation)`.
+- One app-wide queue. Requests are deduplicated by
+  `(owner, generation, path, operation)`. Order: navigation and loads before
+  bulk scans, FIFO within each group; the selected load can be promoted.
+- **Foreground lane** (outside the setting): the current tab's listings
+  (`list`, `resolve`) and its selected load. One listing and one load at once;
+  at most **3** foreground processes including stopping ones, so a dead mount
+  can't pile them up. A listing silent for **3 s** no longer holds the listing
+  slot. In queue mode the tab's queued loads stay foreground, one at a time,
+  so "queue" still means a new selection waits.
+- **Background lanes**: Settings → General "Simultaneous background I/O
+  operations" (key `simultaneous_folder_io_operations`, default **1**, max 32).
+  Background loads, `details`, basic scans (manual and automatic), cache
+  writes, history saves. Why: Tony wanted scans and loads to stop clogging the
+  lab's network volumes (2026-10-07), and then "the GUI comes first": what he
+  is looking at must never wait behind background work (2026-10-08).
+- `FolderCache.foreground_owners` decides the lane; the current
+  `FolderExplorer` claims it (tab switch, first tab, load-mode change).
+  Switching tabs turns the old tab's work into background work.
+- **Pausing** is cooperative: a `pause` file in the helper's private folder,
+  checked between entries/files (a call already in progress finishes), with
+  `paused`/`resumed` events. SIGSTOP was rejected: not on Windows, and it
+  can't stop a call already stuck. While the foreground works, background
+  loads/scans pause and none start; the selected load pauses while the tab
+  lists. Resume **0.5 s** after the foreground goes idle (no stop–start
+  between consecutive expands). A paused helper keeps its slot (cap = the
+  setting) and its no-progress timer is frozen. Tiny history/cache-clear
+  writes don't pause.
+- Selecting B while A loads (finish mode): A takes a free background slot and
+  pauses, or, with none free, is stopped and requeued to restart from its RAM
+  shots.
+- Display: "· Paused" on summary line 2, paused rows show the queued glyph,
+  queue tooltip "Paused while the current tab browses or loads", main status
+  bar "N loads paused" / "N scans paused". Tony confirmed the app "works so
+  much better now" (2026-10-08).
 
 ## Timeouts and retries (changed 2026-10-08, io-lanes Phase 1)
 
@@ -95,7 +120,19 @@ folder and found it confusing. Now:
 - Known limitation: an open tooltip doesn't refresh its seconds counter until
   hovered again.
 
+- A requeued load's row reads "moved to the background queue · stopping ·
+  restarts from the shots already loaded when it exits"; the status line says
+  "Waiting for background load to stop".
+
 ## Not done (Tony's choice, 2026-10-08)
 
 - Per-row "Retry 2/3" state in the tree (suggestion 4) — not chosen.
 - Fast-fail idea: superseded by single 60 s no-progress attempts (Phase 1).
+- Console logging (Tony, 2026-10-08): problems only, never routine browsing.
+  One warning per failure of any operation ("Browse folder failed: <path> —
+  <reason>"), each timeout attempt, a stopped helper still alive after 5 s and
+  when it finally exits (with its stop time), a full queue, and folders over
+  the entry limit; a requeued load is logged at info level.
+- Per-scan timing log (planned io-lanes Phase 4): not added. Tony worried it
+  would spam the log; if ever needed, make it opt-in or one summary line per
+  slow scan.

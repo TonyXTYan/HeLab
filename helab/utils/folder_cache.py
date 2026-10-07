@@ -699,6 +699,9 @@ class FolderCache(QObject):
                         self._observe_cache(entry["path"], entry)
                 job.entries.extend(event["entries"])
                 if len(job.entries) > self.MAX_ENTRIES:
+                    logging.warning("%s failed: %s — Folder exceeds snapshot entry limit (%s entries)",
+                                    self.service.LABELS.get(job.operation, job.operation), job.path,
+                                    f"{self.MAX_ENTRIES:,}")
                     if job.scan_mode == "scan":
                         self._record_scan_outcome(job, {"message": "Folder exceeds snapshot entry limit"})
                     self._forget_job(job)
