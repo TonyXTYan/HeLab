@@ -63,7 +63,7 @@ CACHE_PARAMS_OVERRIDE: Dict[str, Dict[str, Any]] = {
 The default cache parameters for each cache type.
 """
 
-def load_cache_param(cache_name: str) -> OrderedDict[str, Any]:
+def load_cache_param(cache_name: str, settings: QSettings | None = None) -> OrderedDict[str, Any]:
     """
     Load the cache parameters from the settings.
 
@@ -77,7 +77,8 @@ def load_cache_param(cache_name: str) -> OrderedDict[str, Any]:
     :return: An OrderedDict containing the cache parameters.
     :rtype: OrderedDict[str, Any]
     """
-    settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+    if settings is None:
+        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
     base_params = deepcopy(CACHE_PARAMS_DEFAULTS)
 
     for key, val in CACHE_PARAMS_OVERRIDE.get(cache_name, {}).items():
@@ -156,5 +157,4 @@ def close_all_caches() -> None:
 #     # Hash the string using SHA-256
 #     # print(f"custom_key_function: {key_string = }, hash = {hashlib.sha256(key_string.encode()).hexdigest()}")
 #     return hashlib.sha256(key_string.encode()).hexdigest()
-
 

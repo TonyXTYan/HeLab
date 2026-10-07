@@ -141,15 +141,17 @@ class HelabMainWindow(QMainWindow):
         if self._closing:
             return
         service = get_io_service()
-        scans = sum(r.operation in ("scan", "resolve") for r in service.active)
-        loads = sum(r.operation == "load" for r in service.active)
-        queued = len(service.pending)
+        scans = sum(r.operation in ("list", "details", "scan", "resolve") for r in service.active)
+        loads = sum(r.operation == "load" and not r.completed for r in service.active)
+        saving = sum(service.finishing(r) for r in service.active)
+        stopping = service.stopping_summary()
+        queued = len(service.pending) - len(service.held_requests())
         self.status_bar_message_left.setText(
-            f"Scanning {scans} folders · Loading {loads} datasets · {queued} queued"
-            if scans or loads or queued else "Ready")
-        queued_folders = service.queued_load_paths()
-        self.status_bar_message_left.setToolTip(
-            "Queued folders:\n" + "\n".join(queued_folders) if queued_folders else "")
+            " · ".join(filter(None, (f"Scanning {scans} folders", f"Loading {loads} datasets",
+                                     f"Saving {saving} cache{'s' if saving != 1 else ''}" if saving else "",
+                                     stopping, f"{queued} queued")))
+            if scans or loads or saving or stopping or queued else "Ready")
+        self.status_bar_message_left.setToolTip(service.queue_tooltip())
         self._update_cancel_loading_action()
         self.tab_widget.set_tab_switching_enable()
         if not self.action_tab_live_checked:
@@ -241,6 +243,16 @@ class HelabMainWindow(QMainWindow):
             menu_view.addAction(self.view_toggle_thread_status)
 
             menu_view.addSeparator()
+
+            self.view_toggle_auto_scan_visible = QAction('Automatically Basic Scan Folders in View', self)
+            self.view_toggle_auto_scan_visible.setCheckable(True)
+            self.view_toggle_auto_scan_visible.setToolTip(
+                "Scan visible folders that have no saved scan results; use Basic scan / Refresh to recheck cached folders.")
+            self.view_toggle_auto_scan_visible.setChecked(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
+            self.view_toggle_auto_scan_visible.triggered.connect(self.set_auto_scan_visible)
+            menu_view.addAction(self.view_toggle_auto_scan_visible)
+            get_io_service().configure_concurrency(
+                read_io_concurrency(settings))
 
             self.view_toggle_auto_load_ram = QAction('Toggle Auto Load to RAM', self)
             self.view_toggle_auto_load_ram.setCheckable(True)
@@ -369,7 +381,11 @@ class HelabMainWindow(QMainWindow):
         # pass
         self.settings_dialog = SettingsDialog(self)
         self.settings_dialog.exec()
-        self.apply_load_mode(read_load_mode(QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)))
+        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        self.apply_load_mode(read_load_mode(settings))
+        get_io_service().configure_concurrency(
+            read_io_concurrency(settings))
+        self.apply_auto_scan_visible(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
 
     def show_memory_usage_window(self) -> None:
         self.memory_usage_window = MemoryUsageWindow()
@@ -469,6 +485,8 @@ class HelabMainWindow(QMainWindow):
         self.addAction(self.action_tab_cancel)
         self.action_tab_live = QAction(ToolIcons.ICON_LIVE, "Live", self)
         self.action_tab_live.setCheckable(True)
+        # FolderExplorer has no live monitor yet; do not imply that polling is active.
+        self.action_tab_live.setEnabled(False)
         self.action_tab_live_checked = False
         self.action_tab_live_was_left_panel_open_before_clicking_live = True
 
@@ -480,7 +498,7 @@ class HelabMainWindow(QMainWindow):
         self.action_tab_folder_up.setToolTip("Navigate up one directory")
         self.action_tab_rescan.setToolTip("Rescan the current directory")
         self.action_tab_cancel.setToolTip("Cancel loading in this tab (Esc)")
-        self.action_tab_live.setToolTip("Live update the current directory")
+        self.action_tab_live.setToolTip("Live updates unavailable; use Rescan to check for new files")
 
         # action_tab_new.triggered.connect(self.add_new_folder_explorer_tab)
         # action_tab_folder_up.triggered.connect(self.on_back_button_clicked)
@@ -741,11 +759,49 @@ class HelabMainWindow(QMainWindow):
 
         dock_widget = QDockWidget("Simple Test PyqtGraph", self)
         dock_widget.setWidget(win)
+        self._set_plot_source(dock_widget, explorer)
 
         # dock_widget = QDockWidget("Simple Test PyqtGraph", self)
         # dock_widget.setWidget(win)
         self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_widget)
         self.dock_widgets.append(dock_widget)
+
+    def _set_plot_source(self, dock: QDockWidget, explorer: FolderExplorer) -> None:
+        """Attach provenance to a plot at creation, before the selection changes."""
+        dataset = explorer.displayed_dataset
+        content = dock.widget()
+        if dataset is None or content is None:
+            return
+        dock.setProperty("dataSourcePath", dataset.path)
+        dock.setProperty("dataSourceSignature", dataset.signature)
+        wrapper = QWidget(dock)
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(4, 4, 4, 4)
+        label = QLabel(wrapper)
+        label.setObjectName("plot_data_source")
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        layout.addWidget(content, 1)
+        dock.setWidget(wrapper)
+        HelabMainWindow._update_plot_source_label(dock, explorer)
+
+    @staticmethod
+    def _update_plot_source_label(dock: QDockWidget, explorer: FolderExplorer) -> None:
+        path = dock.property("dataSourcePath")
+        if not isinstance(path, str):
+            return
+        label = dock.findChild(QLabel, "plot_data_source")
+        if label is None:
+            return
+        node = explorer.model.nodes.get(explorer.selected_path_globally)
+        # A names-only listing has no signature; the explorer compares shot lists then.
+        current = (path == explorer.selected_path_globally and node is not None
+                   and (not node.signature or dock.property("dataSourceSignature") == node.signature)
+                   and explorer.folder_opened_path == path)
+        prefix = "Data source" if current else "Showing previously loaded data"
+        label.setText(f"{prefix}: {os.path.basename(path.rstrip(os.sep)) or path}")
+        label.setToolTip(path)
 
     @no_type_check
     def _setup_matplotlib_to_dock_widget(self) -> None:
@@ -935,6 +991,8 @@ class HelabMainWindow(QMainWindow):
         explorer = self.tab_widget.currentWidget()
         if not isinstance(explorer, FolderExplorer):
             return
+        for dock in self.dock_widgets:
+            HelabMainWindow._update_plot_source_label(dock, explorer)
         self.current_tracking_folder_path_is_loading = explorer.loading
         name = os.path.basename(explorer.selected_path_globally)
         self.central_placeholder.setToolTip(explorer.loading_tooltip if explorer.loading else "")
@@ -974,6 +1032,7 @@ class HelabMainWindow(QMainWindow):
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.auto_load_ram = self.view_toggle_auto_load_ram.isChecked()
             current_folder_explorer.load_mode = self.load_mode
+            current_folder_explorer.set_auto_scan_visible(self.view_toggle_auto_scan_visible.isChecked())
             current_folder_explorer.rootPathChanged.connect(self.update_tool_enabled_state)
             logging.debug(f"add_new_folder_explorer_tab: {current_folder_explorer.selected_path_globally = }")
             current_folder_explorer.selectionPathChanged.connect(
@@ -1075,6 +1134,17 @@ class HelabMainWindow(QMainWindow):
             explorer = self.tab_widget.widget(index)
             if isinstance(explorer, FolderExplorer):
                 explorer.auto_load_ram = toggled_on
+
+    def set_auto_scan_visible(self, enabled: bool) -> None:
+        QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME).setValue(AUTO_SCAN_VISIBLE_SETTING, enabled)
+        self.apply_auto_scan_visible(enabled)
+
+    def apply_auto_scan_visible(self, enabled: bool) -> None:
+        self.view_toggle_auto_scan_visible.setChecked(enabled)
+        for index in range(self.tab_widget.count()):
+            explorer = self.tab_widget.widget(index)
+            if isinstance(explorer, FolderExplorer):
+                explorer.set_auto_scan_visible(enabled)
 
 
     def resizeEvent(self, a0: QResizeEvent | None) -> None:

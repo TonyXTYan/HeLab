@@ -129,6 +129,21 @@ LOAD_MODE_LABELS = {"cancel": "Cancel the current load",
                     "queue": "Queue folders kept selected for 3 s"}
 DEFAULT_LOAD_MODE = "finish"
 
+SIMULTANEOUS_IO_SETTING = "simultaneous_folder_io_operations"
+AUTO_SCAN_VISIBLE_SETTING = "auto_basic_scan_visible_folders"
+DEFAULT_SIMULTANEOUS_IO = 1
+MAX_SIMULTANEOUS_IO = 32
+
+
+def read_io_concurrency(settings: QSettings) -> int:
+    """Use a safe default for missing or malformed saved limits."""
+    try:
+        # Independent legacy limits do not imply an intended shared limit.
+        value = int(settings.value(SIMULTANEOUS_IO_SETTING, DEFAULT_SIMULTANEOUS_IO))
+    except (TypeError, ValueError, OverflowError):
+        return 1
+    return max(1, min(MAX_SIMULTANEOUS_IO, value))
+
 
 def read_load_mode(settings: QSettings) -> str:
     mode = settings.value(LOAD_MODE_SETTING, DEFAULT_LOAD_MODE, type=str)
@@ -321,8 +336,6 @@ def hash_str_to_int(code: str) -> int:
 def assert_warn(condition: bool, message: str) -> None:
     if not condition:
         logging.warning(message)
-
-
 
 
 

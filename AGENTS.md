@@ -7,7 +7,15 @@ Two repos exist: this one (`TonyXTYan/HeLab`) is the development branch; `HeBECA
 ## Working conventions
 
 - Address the user as "🎓Tony" in conversation.
+- Always ask Tony before running `git commit`. Staging, diffing and reviewing are fine without asking.
 - Every Git commit must include both a concise subject and a meaningful description in the message body, separated by a blank line. The description should explain what changed and why, and include relevant validation.
+
+## AI workspace (`.ai/`)
+
+- `.ai/coding-workspace.md` — shared AI-workspace conventions for Tony's repos (what goes in memory vs sessions, working rules).
+- `.ai/memory/MEMORY.md` — index of project memory. Read it first; load individual files only when relevant. Settled design decisions (with the reasons and Tony's chosen wording/icons) live in `.ai/memory/results/`; this file keeps only the codebase rules.
+- `.ai/sessions/YYYY-MM-DD-<tool>-<title>/` — per-session notes. `.ai/session-export-codex/` and `.ai/session-export-claude/` — raw exported transcripts. Search these for history; don't auto-load them.
+- `.ai/temp/` and `.ai/local/` are gitignored scratch space.
 
 ## Setup
 
@@ -43,11 +51,12 @@ Tests ending in `.disabled` are intentionally skipped (not collected) — don't 
 Strict typing is enforced — everything should be typed.
 
 ```bash
-mypy helab/
-pyright
+mypy helab/ --strict
+mypy tests --strict
+pyright helab tests
 ```
 
-`pyrightconfig.json` and `mypy.ini` exclude `helab/scripts/legacy_plotly/` from type checks.
+`tests/test_typing.py` runs these (plus non-strict mypy) inside `pytest`, so type errors in tests fail the suite. Pass explicit paths to pyright: bare `pyright` also scans `dev/`, `dist/` and `side_projects/` and reports many unrelated errors. `pyrightconfig.json` and `mypy.ini` exclude `helab/scripts/legacy_plotly/` from type checks.
 
 ## Building executables
 
@@ -63,7 +72,11 @@ The `.spec` file produces `HeLab.app` on macOS (bundle ID `au.edu.anu.he-bec-lab
 
 **Responsive filesystem I/O:** The active folder browser uses `IOService` (`helab/utils/io_service.py`) and isolated `helab/io_helper.py` processes. Requests are deduplicated, queues and concurrency are bounded, and cancellation/deadlines never wait on the GUI thread. Daemon reader threads deliver results through a bounded queue; a Qt timer applies small batches. Source folders are never queried by the GUI model. The frozen helper entry point in `helab/main.py` must run before imports that initialize GUI services, caches, or Dash. `GUIWatchdog` records event-loop stalls and dumps thread stacks independently of GUI timers.
 
-Folder loads run one at a time across tabs, with no overall folder deadline. Each file has 15-, 20-, and 30-second timeout attempts; successful file progress resets the timer for the next file. Timed-out helpers restart using completed shots from RAM after fingerprint validation. Other I/O requests use the same three timeout attempts for the request. Cancellation stops retries, and retries wait for the previous helper to exit.
+Rules for the shared I/O queue (decisions, timings and the stopping-helper display: `.ai/memory/results/folder-io-queue.md`):
+- Folder browsing, basic scans, loads, and cache writes share **one app-wide queue and concurrency limit** (Settings → General, default 1). Navigation and loads precede bulk scans; FIFO within each group.
+- A helper occupies its slot **until its exit is confirmed** by the daemon reaper's in-memory exit flag — including cancelled/timed-out helpers and background cache writers. Never free a slot on message delivery or reader completion; duplicate exit notifications are matched by request identity.
+- Browsing is two steps. `list` (one scandir, names only: no per-entry stat or per-subfolder cache lookup) gives counts and status at once. `details` (the full scan) follows in the background for the signature, dates and subfolder details, and is skipped while a load of that folder runs — the load sends and saves the same folder summary. A listing never writes to the cache and never clears a scan failure; a listing error records one. An empty `signature` means unknown, never "changed".
+- Timeouts measure **time without progress**; helpers send heartbeats while listing or checking files. Listings, scans and a load's listing phase get one 60 s attempt with no retry (a timeout is one scan failure). Only a load's per-file reads retry, with 15/20/30 s attempts per file. Right-click Retry / Refresh and the status-line Retry list one folder with no timeout, showing elapsed time and a Cancel action; a load retry keeps its per-file timeouts. **A retry never runs beside the attempt it replaces** — it is held until that helper exits. Cancellation stops retries. Timed-out loads restart from completed RAM shots after fingerprint validation.
 
 **Threading:** Three `QThreadPool` instances in `helab/utils/threading_setup.py`:
 - `thread_pool_general` — general tasks (½ CPU count)
@@ -79,9 +92,11 @@ Workers are tracked in a `SynchronisedDict` for graceful cancellation on shutdow
 
 Cache dirs resolve via `QSettings` with fallback candidates; configured via `DIR_TEMPS` / `DIR_CACHES` in `helab/utils/constants.py`.
 
-The active browser additionally uses session-only `FolderCache` (`helab/utils/folder_cache.py`), shared by models using the same IOService. Completed directory snapshots have a 10-second freshness window; explicit refresh bypasses it. Shared scan/load/resolve jobs have per-tab subscriptions, so closing one tab does not cancel another's work. Datasets share read-only NumPy arrays with private dictionaries per tab; analysis code that intentionally modifies an array must call `.copy()`. The 512 MiB array-data budget evicts unused datasets, while open tabs pin their current datasets. Directory snapshots are bounded to 256 folders and 100,000 retained entries. This memory store supplements the existing compressed disk cache and never reads disk during rendering.
+The active browser additionally uses session-only `FolderCache` (`helab/utils/folder_cache.py`), shared by models using the same IOService. Completed directory snapshots have a 10-second freshness window; explicit refresh bypasses it. Shared scan/load/resolve jobs have per-tab subscriptions, so closing one tab does not cancel another's work. Datasets share read-only NumPy arrays with private dictionaries per tab; analysis code that intentionally modifies an array must call `.copy()`. The 512 MiB array-data budget evicts unused datasets, while open tabs pin their current datasets. Directory snapshots are bounded to 256 folders and 100,000 retained entries. This memory store supplements the compressed disk cache and **never reads disk during rendering**.
 
-**UI:** Model-View pattern. The active `FolderExplorer` uses `SnapshotFileSystemModel` (`helab/models/SnapshotFileSystemModel.py`), a `QAbstractItemModel` that only reads memory during rendering. Folders load on selection or expansion; refresh traverses the current view's expanded branches in batches. Loading indicators, timeout/retry states, and direct path entry keep navigation available during I/O. The main window (`helab/views/HelabMainWindow.py`) uses dockable panels: left tree view, right properties panel, center plot area. The earlier `HelabFileSystemModel` extending `QFileSystemModel` and its worker/throttling classes remain for compatibility and legacy tests.
+Persisted folder metadata lives in `data_ram_cache` under versioned keys, separate from arrays, and is **written only by isolated helpers**: compact basic-scan summaries (counts, status, signature, scan date) and basic-scan failure history (`helab/utils/scan_history.py`, `folder-scan-history-v1`). A failure is the final outcome after all attempts; cancellation, queue rejection and metadata-save errors are not failures. **Every automatic basic-scan entry point must honour the failure flag**, and only a fresh successful scan clears it. Defaults, edge cases and display: `.ai/memory/results/basic-scan-defaults-and-failures.md`.
+
+**UI:** Model-View pattern. The active `FolderExplorer` uses `SnapshotFileSystemModel` (`helab/models/SnapshotFileSystemModel.py`), a `QAbstractItemModel` that only reads memory during rendering — badges, tooltips, summaries and relative ages must never touch the source filesystem, the disk cache, or submit I/O. Directory contents are scanned on selection or expansion; automatic basic scanning of visible folders is off by default and never rescans folders with saved results. Freshness indicators are hints only and never schedule scans or loads. Navigation and direct path entry stay available during I/O. The folder summary panel, cache-freshness icons and their wording are described in `.ai/memory/results/folder-summary-indicators.md`. The main window (`helab/views/HelabMainWindow.py`) uses dockable panels: left tree view, right properties panel, center plot area. The earlier `HelabFileSystemModel` extending `QFileSystemModel` and its worker/throttling classes remain for compatibility and legacy tests.
 
 **Script system:** Analysis scripts live in `helab/scripts/`. Each script inherits from `HelabAnalysisScript` (`helab/scripts/base.py`) and implements `get_metadata()`, `get_actions()`, `execute_action()`. Scripts are discovered dynamically by `ScriptsManager` (`helab/scripts/scripts_manager.py`) via `importlib.util`, scanning a directory for `.py` files and grouping loaded scripts by their `ScriptMetadata.group`.
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from dataclasses import dataclass, field
 import logging
+import math
 import os
 import time
 from typing import Any
@@ -14,6 +15,12 @@ import numpy.typing as npt
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from helab.utils.io_service import IORequest, IOService
+from helab.utils.scan_history import ScanHistory, empty_history, parse_history, apply_outcome, for_identity, folder_identity
+
+
+# Folder checks that list a folder: browse step 1 (names only), browse step 2
+# (``details``, the full scan in the background) and a basic scan.
+SCANS = ("list", "details", "scan")
 
 
 @dataclass
@@ -33,6 +40,12 @@ class Dataset:
 
 
 @dataclass
+class CacheStatus:
+    info: dict[str, Any] = field(default_factory=dict)
+    error: str = ""
+
+
+@dataclass
 class SharedJob:
     owner: str
     path: str
@@ -49,6 +62,10 @@ class SharedJob:
     fingerprints: dict[int, tuple[int, int, int]] = field(default_factory=dict)
     problematic: set[int] = field(default_factory=set)
     base: Dataset | None = None
+    scan_mode: str = "scan"
+    history_saved: bool = False
+    completed_scan: FolderSnapshot | None = None
+    created: float = field(default_factory=time.monotonic)
 
 
 class FolderCache(QObject):
@@ -56,6 +73,7 @@ class FolderCache(QObject):
     snapshotChanged = pyqtSignal(str)
     datasetChanged = pyqtSignal(str)
     diskCacheChanged = pyqtSignal(str)
+    scanHistoryChanged = pyqtSignal(str)
     FRESH_SECONDS: float = 10.0
     MAX_SNAPSHOTS: int = 256
     MAX_ENTRIES: int = 100_000
@@ -77,6 +95,17 @@ class FolderCache(QObject):
         self._base_floor: dict[str, int] = {}
         # Load helpers still updating the disk cache after delivering data.
         self._finishing: dict[str, str] = {}
+        self._disk_cache_writers: set[str] = set()
+        self._finishing_epochs: dict[str, int] = {}
+        self._cache_states: OrderedDict[str, CacheStatus] = OrderedDict()
+        # When each folder's disk cache was last cleared; older scans saw stale entries.
+        self._cleared_at: OrderedDict[str, float] = OrderedDict()
+        self.scan_summaries: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self.metadata_notifications: set[str] = set()
+        self.scan_histories: OrderedDict[str, ScanHistory] = OrderedDict()
+        self.scan_history_errors: dict[str, str] = {}
+        self._history_identity_dates: dict[str, float] = {}
+        self._history_writes: dict[str, str] = {}
         service.resultReady.connect(self._on_event)
 
     @staticmethod
@@ -91,6 +120,78 @@ class FolderCache(QObject):
             self.snapshots.move_to_end(key)
         return snapshot
 
+    def remember_scan(self, path: str, status: dict[str, Any]) -> None:
+        previous = self.scan_summaries.get(path)
+        if previous and previous.get("scanned_at", 0) > status.get("scanned_at", 0):
+            return
+        self.scan_summaries[path] = dict(status)
+        self.scan_summaries.move_to_end(path)
+        while len(self.scan_summaries) > self.MAX_SNAPSHOTS:
+            self.scan_summaries.popitem(last=False)
+
+    def scan_history(self, path: str) -> ScanHistory:
+        return self.scan_histories.get(self.key(path), empty_history())
+
+    def remember_history(self, path: str, value: object, *, identity: object = None,
+                         observed_at: float = 0) -> None:
+        path = self.key(path)
+        current = self.scan_histories.get(path)
+        observed = folder_identity(identity)
+        if observed is not None:
+            if observed_at < self._history_identity_dates.get(path, 0):
+                return
+            self._history_identity_dates[path] = observed_at
+            if current is not None:
+                current = for_identity(current, observed)
+                self.scan_histories[path] = current
+        if value is None and current is None:
+            return
+        history = parse_history(value) if value is not None else current
+        if history is None:
+            return
+        if observed is not None:
+            history = for_identity(history, observed)
+        if current is not None and (current["revision"] > history["revision"] or
+                current["identity"] is not None and history["identity"] is not None
+                and current["identity"] != history["identity"]):
+            return
+        self.scan_histories[path] = history
+        self.scan_histories.move_to_end(path)
+        while len(self.scan_histories) > 4096:
+            removed, _ = self.scan_histories.popitem(last=False)
+            self.scan_history_errors.pop(removed, None)
+            self._history_identity_dates.pop(removed, None)
+        self.scanHistoryChanged.emit(path)
+
+    def _record_scan_outcome(self, job: SharedJob, event: dict[str, Any], *, success: bool = False) -> None:
+        history = self.scan_history(job.path)
+        outcome = {"operation_id": job.owner, "revision": job.payload["scan_revision"],
+            "kind": "success" if success else "timeout" if event.get("timeout") else "io_error",
+            "at": job.status.get("scanned_at", time.time()) if success and job.status else time.time(),
+            "attempts": event.get("attempt", job.attempt),
+            "reason": event.get("message", "Basic scan failed").removesuffix(" — Retry"),
+            "identity": job.status.get("identity") if success and job.status else job.payload.get("identity")}
+        if (not success and history["identity"] is not None and outcome["identity"] is not None
+                and history["identity"] != outcome["identity"]):
+            return  # The failed job belonged to a directory replaced at this path.
+        self.remember_history(job.path, apply_outcome(history, outcome))
+        # Successful helpers persist their result before done. Compatibility
+        # producers only need a write when recovering an existing failure.
+        if job.history_saved or success and not history["failures"]:
+            return
+        options = job.payload.get("cache")
+        if not options:
+            self.scan_history_errors[job.path] = "Scan history could not be saved; suppression is session-only."
+            return
+        owner = uuid4().hex
+        self._history_writes[owner] = job.path
+        if not self.service.submit(owner, 0, job.path, "scan_history", {"cache": options, "outcome": outcome},
+                                   priority=True):
+            self._history_writes.pop(owner, None)
+            self.scan_history_errors[job.path] = "Scan history save queue full; suppression is session-only."
+            logging.warning("Scan history %s: %s", job.path, self.scan_history_errors[job.path])
+            self.scanHistoryChanged.emit(job.path)
+
     def dataset(self, path: str, signature: str) -> Dataset | None:
         key = (self.key(path), signature, self._epochs.get(self.key(path), 0))
         entry = self.datasets.get(key)
@@ -101,8 +202,9 @@ class FolderCache(QObject):
     def current_dataset(self, path: str) -> Dataset | None:
         path = self.key(path)
         snapshot = self.snapshots.get(path)
-        if snapshot:
-            return self.dataset(path, snapshot.status.get("signature", ""))
+        # A names-only listing has no signature yet; show the latest dataset meanwhile.
+        if snapshot and snapshot.status.get("signature"):
+            return self.dataset(path, snapshot.status["signature"])
         return next((entry for key, entry in reversed(self.datasets.items())
                      if key[0] == path and entry.epoch == self._epochs.get(path, 0)), None)
 
@@ -117,7 +219,34 @@ class FolderCache(QObject):
     def disk_cached(self, path: str) -> bool:
         return path in self._disk_cached_paths
 
-    def _set_disk_cached(self, path: str, cached: bool) -> None:
+    def disk_cache_saving(self, path: str) -> bool:
+        return any(self._finishing.get(owner) == path and self._finishing_epochs.get(owner) ==
+                   self._epochs.get(path, 0) for owner in self._disk_cache_writers)
+
+    def disk_cache_known(self, path: str) -> bool:
+        snapshot = self.snapshots.get(path)
+        dataset = self.current_dataset(path)
+        return (path in self._cache_states or self.disk_cached(path) or bool(snapshot and "disk_cached" in snapshot.status)
+                or bool(dataset and "disk_cached" in dataset.metadata))
+
+    def cache_status(self, path: str) -> CacheStatus:
+        """Last helper observation, with no disk reads during GUI rendering."""
+        return self._cache_states.get(path, CacheStatus())
+
+    def _observe_cache(self, path: str, event: dict[str, Any]) -> None:
+        state = self._cache_states.setdefault(path, CacheStatus())
+        info = event.get("cache_info", {})
+        # A scan that started before a save can report the previous date.
+        if info and info.get("saved_at", 0) >= state.info.get("saved_at", 0):
+            state.info = dict(info)
+        if not event.get("disk_cached") and not self.disk_cache_saving(path):
+            state.info = {}
+        self._cache_states.move_to_end(path)
+        while len(self._cache_states) > self.MAX_ENTRIES:
+            self._cache_states.popitem(last=False)
+        self._set_disk_cached(path, bool(event.get("disk_cached")))
+
+    def _set_disk_cached(self, path: str, cached: bool, *, notify: bool = False) -> None:
         previous = self.disk_cached(path)
         if cached:
             self._disk_cached_paths[path] = None
@@ -127,7 +256,7 @@ class FolderCache(QObject):
                 self.diskCacheChanged.emit(evicted)
         else:
             self._disk_cached_paths.pop(path, None)
-        if previous != self.disk_cached(path):
+        if previous != self.disk_cached(path) or notify:
             self.diskCacheChanged.emit(path)
 
     def has_request(self, owner: str, operation: str, path: str) -> bool:
@@ -162,18 +291,28 @@ class FolderCache(QObject):
 
     def submit(self, owner: str, generation: int, path: str, operation: str,
                payload: dict[str, Any] | None = None, *, priority: bool = False,
-               timeout: float = 15.0, force: bool = False) -> bool:
+               timeout: float | None = None, force: bool = False) -> bool:
+        """``timeout`` is seconds without progress (default: IOService's); ``math.inf`` for none."""
         if self.service.closed:
             return False
         path = self.key(path)
         payload = payload or {}
         if self.has_request(owner, operation, path):
             return True
-        request = IORequest(owner, generation, path, operation, payload, timeout)
-        snapshot = self.snapshot(path) if operation == "scan" else None
+        request = IORequest(owner, generation, path, operation, payload,
+                            self.service.NO_PROGRESS_TIMEOUT if timeout is None else timeout)
+        snapshot = self.snapshot(path) if operation in SCANS else None
+        if snapshot and operation != "list" and not snapshot.status.get("details"):
+            snapshot = None  # A names-only listing cannot answer a full scan.
+        manual = bool(payload.get("scan_manual", force))
+        blocked = self.scan_history(path)["blocked"]
+        if operation in ("scan", "details") and blocked and not manual:
+            # Browsing still lists a blocked folder; only full scans are skipped.
+            self._deliver(request, {"kind": "scan_mode", "mode": "skipped"})
+            return True
         if snapshot and not force:
             self._replay(request, snapshot, priority=priority)
-            if time.monotonic() - snapshot.checked_at < self.FRESH_SECONDS:
+            if blocked or time.monotonic() - snapshot.checked_at < self.FRESH_SECONDS:
                 return True
             # Complete cached content first, then validate it once in a helper.
             request.payload = {**payload, "revalidate": True}
@@ -184,9 +323,13 @@ class FolderCache(QObject):
             entry = self.dataset(path, payload.get("signature", ""))
             if entry:
                 self._deliver(request, {"kind": "loaded", "dataset": entry, **entry.metadata,
-                                        "cached": True, "source": "memory", "cache_reason": ""})
+                                        "cached": True, "source": "memory", "cache_reason": "",
+                                        "disk_cache_pending": False,
+                                        "load_counts": {"reused_memory": len(entry.data), "reused_disk": 0,
+                                                        "read": 0, "new": 0, "modified": 0, "removed": 0,
+                                                        "new_loaded": 0, "modified_loaded": 0}})
                 return True
-        if operation == "scan" and ("invalidate", path) in self.jobs:
+        if operation in SCANS and ("invalidate", path) in self.jobs:
             # Invalidation completion will broadcast a fresh check to models.
             self._deliveries.append(request)
             self.resultReady.emit(request, {"kind": "queued"})
@@ -199,7 +342,7 @@ class FolderCache(QObject):
                     return
                 if request in self._deliveries:
                     self._deliveries.remove(request)
-                self.submit(owner, generation, path, "scan", payload, priority=priority, force=True)
+                self.submit(owner, generation, path, operation, payload, priority=priority, force=True)
             QTimer.singleShot(0, wait_for_clear)
             return True
         if operation == "resolve":
@@ -210,12 +353,21 @@ class FolderCache(QObject):
         job_key = (operation, path)
         job = self.jobs.get(job_key)
         if job:
+            if priority and operation != "load":
+                self.service.promote(job.owner)
+            if timeout is not None and math.isinf(timeout):
+                self.service.set_timeout(job.owner, timeout)
             job.subscribers[(owner, generation)] = request
             self.resultReady.emit(request, {"kind": job.state, "attempt": job.attempt})
             if job.progress is not None:
                 self.resultReady.emit(request, job.progress)
             return True
         if operation == "invalidate":
+            self._cleared_at[path] = time.monotonic()
+            self._cleared_at.move_to_end(path)
+            while len(self._cleared_at) > self.MAX_SNAPSHOTS:
+                self._cleared_at.popitem(last=False)
+            self._cache_states[path] = CacheStatus()
             self._set_disk_cached(path, False)
             self._invalidate_data(path)
             self._base_floor[path] = self._epochs[path]
@@ -227,6 +379,9 @@ class FolderCache(QObject):
             payload = {**payload, "memory": [list(entry) for entry in base.metadata["fingerprint"]
                                              if entry[0] in base.data]}
         job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload, base=base)
+        if operation in SCANS:
+            job.payload = payload = {**payload, "scan_operation_id": job.owner,
+                                     "scan_revision": time.time_ns(), "scan_manual": manual}
         job.subscribers[(owner, generation)] = request
         self.jobs[job_key] = job
         self._producers[job.owner] = job
@@ -263,6 +418,7 @@ class FolderCache(QObject):
                 QTimer.singleShot(0, batch)
                 return
             self.resultReady.emit(request, {**snapshot.status, "cached": True,
+                                           "metadata_only": bool(request.payload.get("metadata_only")),
                                            "checked_at": snapshot.checked_at})
             self.resultReady.emit(request, {"kind": "done", "cached": True})
             if request in self._deliveries:
@@ -270,7 +426,10 @@ class FolderCache(QObject):
             if request.payload.get("revalidate") and not request.cancelled.is_set():
                 # The check itself must not request another check when it completes.
                 payload = {k: v for k, v in request.payload.items() if k != "revalidate"}
-                self.submit(request.owner, request.generation, request.path, "scan", payload,
+                payload.update(scan_manual=False, automatic=True)
+                if self.scan_history(request.path)["blocked"]:
+                    return
+                self.submit(request.owner, request.generation, request.path, request.operation, payload,
                             priority=priority, force=True)
         QTimer.singleShot(0, batch)
 
@@ -296,9 +455,22 @@ class FolderCache(QObject):
         producer.payload["memory"] = memory
         job.payload = dict(producer.payload)
 
+    def _cleared_since(self, job: SharedJob, path: str) -> bool:
+        """A scan that started before a cache clear may report the cleared entry."""
+        return job.created < self._cleared_at.get(path, float("-inf"))
+
+    def _adopt_load_summary(self, path: str, status: dict[str, Any]) -> None:
+        """A load's listing and fingerprint complete a names-only listing of the same files."""
+        self.remember_scan(path, status)
+        snapshot = self.snapshots.get(path)
+        if (snapshot and not snapshot.status.get("signature")
+                and snapshot.status.get("txy") == status["txy"] and snapshot.status.get("raw") == status["raw"]):
+            snapshot.status = {**snapshot.status, **{key: status[key] for key in (
+                "signature", "identity", "modified", "details")}}
+
     def _cancel_replays(self, path: str) -> None:
         for request in list(self._deliveries):
-            if request.path == path and request.operation == "scan":
+            if request.path == path and request.operation in SCANS:
                 self._deliveries.remove(request)
                 request.cancelled.set()
                 self.resultReady.emit(request, {"kind": "cancelled"})
@@ -372,17 +544,56 @@ class FolderCache(QObject):
         self.snapshots.clear()
         self._defaults.clear()
         self._disk_cached_paths.clear()
+        self._disk_cache_writers.clear()
+        self._finishing_epochs.clear()
+        self._cache_states.clear()
+        self._cleared_at.clear()
+        self.scan_summaries.clear()
+        self.metadata_notifications.clear()
+        self.scan_histories.clear()
+        self.scan_history_errors.clear()
+        self._history_identity_dates.clear()
 
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        if producer.owner in self._history_writes:
+            path = self._history_writes[producer.owner]
+            if event["kind"] == "scan_history_saved":
+                self.scan_history_errors.pop(path, None)
+                self.remember_history(path, event["history"])
+            elif event["kind"] in ("error", "cancelled"):
+                self.scan_history_errors[path] = "Scan history save failed; suppression is session-only."
+                logging.warning("Scan history %s: %s", path, event.get("message", "Save cancelled"))
+                self.scanHistoryChanged.emit(path)
+            if event["kind"] in ("done", "error", "cancelled"):
+                self._history_writes.pop(producer.owner, None)
+            return
         job = self._producers.get(producer.owner)
         if job is None and producer.owner in self._finishing:
             path = self._finishing[producer.owner]
-            if event["kind"] == "disk_cached":
-                self._set_disk_cached(path, bool(event["disk_cached"]))
-            elif event["kind"] == "cache_warning":
+            kind = event["kind"]
+            valid = self._finishing_epochs.get(producer.owner) == self._epochs.get(path, 0)
+            was_saving = producer.owner in self._disk_cache_writers
+            if kind in ("cache_saved", "cache_save_failed", "disk_cached", "cache_warning", "done", "error", "cancelled"):
+                self._disk_cache_writers.discard(producer.owner)
+            if valid and kind == "cache_saved":
+                state = self._cache_states.setdefault(path, CacheStatus())
+                state.info, state.error = dict(event["cache_info"]), ""
+                for entry in self.datasets.values():
+                    if entry.path == path and entry.signature == state.info.get("signature"):
+                        entry.metadata.update(cache_info=state.info, disk_cached=True, disk_cache_pending=False)
+                self._set_disk_cached(path, True, notify=True)
+            elif valid and kind == "disk_cached":
+                self._set_disk_cached(path, bool(event["disk_cached"]), notify=was_saving)
+            elif valid and (kind == "cache_save_failed" or was_saving and kind in (
+                    "cache_warning", "done", "error", "cancelled")):
+                state = self._cache_states.setdefault(path, CacheStatus())
+                state.error = event.get("message", "Cache save did not complete")
+                self.diskCacheChanged.emit(path)
+            if kind == "cache_warning":
                 logging.warning("Folder cache %s: %s", path, event["message"])
-            elif event["kind"] in ("done", "error", "cancelled"):
+            if kind in ("done", "error", "cancelled"):
                 del self._finishing[producer.owner]
+                self._finishing_epochs.pop(producer.owner, None)
             return
         if job is None:
             # Non-shared IOService consumers retain their existing protocol.
@@ -401,37 +612,84 @@ class FolderCache(QObject):
                 job.fingerprints.clear()
                 job.problematic.clear()
                 job.progress = None
-        if job.operation == "scan":
+        if job.operation in SCANS:
+            if kind == "scan_history":
+                self.remember_history(job.path, event.get("history"))
+                if event.get("revision"):
+                    job.payload["scan_revision"] = producer.payload["scan_revision"] = event["revision"]
+                job.history_saved |= bool(event.get("saved"))
+                return
+            if kind == "scan_history_warning":
+                self.scan_history_errors[job.path] = event["message"]
+                logging.warning("Scan history %s: %s", job.path, event["message"])
+                self.scanHistoryChanged.emit(job.path)
+                return
+            if kind == "scan_mode":
+                job.scan_mode = event["mode"]
+            if kind == "scan_cached":
+                self.remember_scan(job.path, event["status"])
+                for request in tuple(job.subscribers.values()):
+                    self.resultReady.emit(request, event)
+                return
             if kind == "entries":
                 for entry in event["entries"]:
-                    if "disk_cached" in entry:
-                        self._set_disk_cached(entry["path"], bool(entry["disk_cached"]))
+                    self.remember_history(entry["path"], entry.get("scan_history"), identity=entry.get("identity"),
+                                          observed_at=entry.get("modified_observed_at", time.time()))
+                    if entry.get("scan_status"):
+                        self.remember_scan(entry["path"], entry["scan_status"])
+                    if "disk_cached" in entry and not self._cleared_since(job, entry["path"]):
+                        self._observe_cache(entry["path"], entry)
                 job.entries.extend(event["entries"])
                 if len(job.entries) > self.MAX_ENTRIES:
+                    if job.scan_mode == "scan":
+                        self._record_scan_outcome(job, {"message": "Folder exceeds snapshot entry limit"})
                     self._forget_job(job)
                     self.service.cancel(job.owner)
                     for request in tuple(job.subscribers.values()):
                         self.resultReady.emit(request, {"kind": "error", "message": "Folder exceeds snapshot entry limit"})
                 return
             if kind == "status":
-                if "disk_cached" in event:
-                    self._set_disk_cached(job.path, bool(event["disk_cached"]))
+                self.remember_history(job.path, None, identity=event.get("identity"),
+                                      observed_at=event.get("scanned_at", time.time()))
+                if "disk_cached" in event and not self._cleared_since(job, job.path):
+                    self._observe_cache(job.path, event)
                 job.status = event
+                job.completed_scan = FolderSnapshot(tuple(job.entries), event, time.monotonic())
                 return
+            if kind == "error" and job.completed_scan is not None:
+                self.scan_history_errors[job.path] = "Basic scan completed, but saving its metadata failed."
+                job.status = job.completed_scan.status
+                job.entries = list(job.completed_scan.entries)
+                kind = "done"
             if kind == "done" and job.status:
+                # Only a full scan clears a failure; a listing does not check files.
+                if job.operation != "list":
+                    self._record_scan_outcome(job, event, success=True)
                 old = self.snapshot(job.path)
-                if old and old.status.get("signature") != job.status.get("signature"):
+                signature = job.status.get("signature")
+                if old and signature and old.status.get("signature") not in (None, "", signature):
                     self._invalidate_data(job.path)
-                snapshot = FolderSnapshot(tuple(job.entries), job.status, time.monotonic())
+                checked_at = time.monotonic() - max(0, time.time() - job.status.get("scanned_at", time.time()))
+                snapshot = FolderSnapshot(tuple(job.entries), job.status, checked_at)
+                self.remember_scan(job.path, job.status)
                 self._cancel_replays(job.path)
                 self.snapshots[job.path] = snapshot
                 self.snapshots.move_to_end(job.path)
                 self._evict()
-                self.snapshotChanged.emit(job.path)
+                if job.payload.get("metadata_only"):
+                    self.metadata_notifications.add(job.path)
+                try:
+                    self.snapshotChanged.emit(job.path)
+                finally:
+                    self.metadata_notifications.discard(job.path)
                 self._forget_job(job)
                 for request in tuple(job.subscribers.values()):
                     self._replay(request, snapshot)
                 return
+            if kind == "done" and job.scan_mode != "scan":
+                event = {**event, "scan_skipped": job.scan_mode == "skipped"}
+            if kind == "error" and job.scan_mode == "scan":
+                self._record_scan_outcome(job, event)
         elif job.operation == "load":
             if kind == "file_started":
                 attempt = event.get("attempt", job.attempt)
@@ -442,6 +700,9 @@ class FolderCache(QObject):
                 return
             if kind == "progress":
                 job.progress = event
+            if kind == "scan_summary":
+                self._adopt_load_summary(job.path, event["status"])
+                return
             if kind == "shot":
                 array = event["array"]
                 array.setflags(write=False)
@@ -452,16 +713,17 @@ class FolderCache(QObject):
                     job.problematic.add(event["shot"])
                 return
             if kind == "loaded":
+                event = {"loaded_at": time.time(), **event}
                 source_snapshot = self.snapshot(job.path)
-                if job.epoch != self._epochs.get(job.path, 0) or (
-                    source_snapshot and event.get("signature") != source_snapshot.status.get("signature")):
+                expected = source_snapshot.status.get("signature") if source_snapshot else None
+                if job.epoch != self._epochs.get(job.path, 0) or (expected and event.get("signature") != expected):
                     self._cancel_job(job)
                     if source_snapshot:
                         source_snapshot.checked_at = 0
                     self.snapshotChanged.emit(job.path)
                     return
                 if "disk_cached" in event:
-                    self._set_disk_cached(job.path, bool(event["disk_cached"]))
+                    self._observe_cache(job.path, event)
                 memory_shots = event.get("memory_shots", [])
                 if memory_shots:
                     assert job.base is not None
@@ -477,6 +739,10 @@ class FolderCache(QObject):
                 # complete, so later shared loads must not wait for that.
                 self._forget_job(job)
                 self._finishing[job.owner] = job.path
+                self._finishing_epochs[job.owner] = job.epoch
+                if event.get("disk_cache_pending"):
+                    self._disk_cache_writers.add(job.owner)
+                    self._cache_states.setdefault(job.path, CacheStatus()).error = ""
                 entry = Dataset(job.path, event["signature"], job.data, event, job.epoch)
                 self.datasets[(job.path, entry.signature, entry.epoch)] = entry
                 event = {**event, "dataset": entry}

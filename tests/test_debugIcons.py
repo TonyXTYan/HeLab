@@ -30,7 +30,18 @@ def test_initial_state_debug_icons_window(debug_icons_window: DebugIconsWindow) 
 
 
 def test_status_list_population(debug_icons_window: DebugIconsWindow) -> None:
-    assert debug_icons_window.status_list.topLevelItemCount() == len({**StatusIcons.ICONS_STATUS, **StatusIcons.ICONS_EXTRA})
+    assert debug_icons_window.status_list.topLevelItemCount() == (
+        len({**StatusIcons.ICONS_STATUS, **StatusIcons.ICONS_EXTRA}) + len(StatusIcons.ICONS_STATUS_OLDER))
+
+
+def test_scan_failure_option_b_is_in_status_group(debug_icons_window: DebugIconsWindow) -> None:
+    view = debug_icons_window.status_list
+    items = [view.topLevelItem(row) for row in range(view.topLevelItemCount())]
+    item = next(item for item in items if item is not None and item.text(0) == "scan_failed")
+    assert item is not None and item.text(1) == "ICON_SCAN_FAILED"
+    assert not item.icon(0).isNull()
+    assert "Magnifying glass + exclamation mark" in item.toolTip(0)
+    assert "retry manually" in item.toolTip(1)
 
 
 def test_tool_list_population(debug_icons_window: DebugIconsWindow) -> None:

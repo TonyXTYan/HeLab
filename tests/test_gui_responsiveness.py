@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import math
 import os
+import io
 from pathlib import Path
 import subprocess
+import threading
 import sys
 import time
 from typing import Any
@@ -41,7 +44,8 @@ def test_scan_matches_shots_without_probing_children(tmp_path: Path) -> None:
     assert events[-1]["status"] == "fixable"
     assert events[-1]["count"] == 1
     assert events[-1]["raw"] == [1, 2]
-    assert events[0]["entries"][0]["path"] == str(tmp_path / "experiment")
+    entries = next(event for event in events if event["kind"] == "entries")
+    assert entries["entries"][0]["path"] == str(tmp_path / "experiment")
 
 
 def test_loader_preserves_shots_and_drops_nan_rows(tmp_path: Path) -> None:
@@ -132,6 +136,30 @@ def test_scope_and_stale_results(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, 
     service.shutdown()
 
 
+def test_helpers_send_heartbeats_while_listing_and_checking_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from helab import io_helper
+    monkeypatch.setattr(io_helper.Heartbeat, "INTERVAL", 0.0)
+    source = tmp_path / "source"
+    source.mkdir()
+    for shot in (1, 2, 3):
+        (source / f"d_txy_forc{shot}.txt").write_text("1,2,3\n")
+    events: list[dict[str, Any]] = []
+    scan(str(source), events.append)
+    assert [(e["phase"], e["entries"]) for e in events if e["kind"] == "heartbeat"] == [
+        ("listing", 1), ("listing", 2), ("listing", 3)]
+    events.clear()
+    output = tmp_path / "output"
+    output.mkdir()
+    load(str(source), str(output), events.append)
+    beats = [(e["phase"], e["entries"]) for e in events if e["kind"] == "heartbeat"]
+    assert beats == [(phase, count) for phase in ("listing", "checking", "verifying") for count in (1, 2, 3)]
+    # Listing and stat heartbeats arrive before the first file's read timer starts.
+    kinds = [e.get("phase", e["kind"]) for e in events]
+    assert kinds.index("file_started") > max(i for i, k in enumerate(kinds) if k == "checking")
+
+
 def test_stalled_process_keeps_heartbeat_and_shutdown_responsive(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -141,7 +169,6 @@ def test_stalled_process_keeps_heartbeat_and_shutdown_responsive(
         return original([sys.executable, "-c", "import time; time.sleep(60)"], **kwargs)
 
     monkeypatch.setattr(subprocess, "Popen", stalled)
-    monkeypatch.setattr(IOService, "TIMEOUTS", (0.15, 0.20, 0.30))
     service = IOService()
     events: list[dict[str, Any]] = []
     service.resultReady.connect(lambda request, event: events.append(event))
@@ -153,8 +180,10 @@ def test_stalled_process_keeps_heartbeat_and_shutdown_responsive(
     assert service.submit("test", 0, "/unresponsive", "scan", timeout=0.15)
     assert len(service.active) == 1  # Duplicate requests coalesce.
     qtbot.waitUntil(lambda: any(e.get("timeout") for e in events), timeout=3000)
-    assert [e["attempt"] for e in events if e["kind"] == "started"] == [1, 2, 3]
-    assert len([e for e in events if e["kind"] == "error"]) == 1
+    # A stalled listing makes one attempt; retries did not help a hung volume.
+    assert [e["attempt"] for e in events if e["kind"] == "started"] == [1]
+    errors = [e for e in events if e["kind"] == "error"]
+    assert len(errors) == 1 and "without progress" in errors[0]["message"]
     assert len(beats) >= 3
     assert max(b - a for a, b in zip(beats, beats[1:])) < 0.2
     qtbot.waitUntil(lambda: not service.retired, timeout=3000)
@@ -162,6 +191,101 @@ def test_stalled_process_keeps_heartbeat_and_shutdown_responsive(
     start = time.monotonic()
     service.shutdown()
     assert time.monotonic() - start < 0.2
+
+
+@pytest.mark.parametrize("limit", [1, 2])
+def test_timeout_retry_releases_dead_helper_slot_while_artifact_reader_is_blocked(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, limit: int,
+) -> None:
+    import json
+
+    artifact = tmp_path / "shot.npy"
+    np.save(artifact, np.array([[1.0, 2.0, 3.0]]))
+    reading, release_reader = threading.Event(), threading.Event()
+    original_load, original_process = np.load, subprocess.Popen
+    processes: list[subprocess.Popen[str]] = []
+
+    def blocked_read(*args: Any, **kwargs: Any) -> Any:
+        reading.set()
+        if not release_reader.wait(5):
+            raise AssertionError("Artifact reader was not released")
+        return original_load(*args, **kwargs)
+
+    def helper(command: Any, **kwargs: Any) -> subprocess.Popen[str]:
+        script = "import time; time.sleep(60)"
+        if not processes:
+            started = json.dumps({"kind": "file_started", "filename": "/slow-reader/d_txy_forc1.txt"})
+            event = json.dumps({"kind": "shot", "shot": 1, "artifact": str(artifact)})
+            script = f"import time; print({started!r}); print({event!r}, flush=True); time.sleep(60)"
+        process = original_process([sys.executable, "-c", script], **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(np, "load", blocked_read)
+    monkeypatch.setattr(subprocess, "Popen", helper)
+    service = IOService()
+    started: list[IORequest] = []
+    service.resultReady.connect(lambda r, e: started.append(r) if e["kind"] == "started" else None)
+    try:
+        service.submit("tab", 0, "/slow-reader", "load")
+        qtbot.waitUntil(reading.is_set, timeout=3000)
+        old = service.active[0]
+        qtbot.waitUntil(lambda: old.current_file is not None, timeout=3000)
+        old.started = old.last_activity = time.monotonic() - old.timeout - 1
+        service._tick()
+        service.configure_concurrency(limit)
+        # The process is killed, but the daemon reader is still in np.load.
+        # Waiting for that reader's finally block used to strand this retry.
+        qtbot.waitUntil(lambda: len(started) == 2, timeout=1500)
+        retry = started[1]
+        assert processes[0].poll() is not None
+        assert not release_reader.is_set() and old.output is not None
+        assert retry.attempt == 2 and service.active == [retry]
+        assert not service.pending and not service.retired
+        release_reader.set()
+        qtbot.waitUntil(lambda: old.output is None, timeout=3000)
+        service._tick()
+        assert service.active == [retry]  # Late old-reader exit is harmless.
+    finally:
+        release_reader.set()
+        service.shutdown()
+        qtbot.waitUntil(lambda: all(p.poll() is not None for p in processes), timeout=3000)
+
+
+def test_output_close_failure_cannot_leave_dead_helper_in_active_queue(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    class BrokenClose(io.StringIO):
+        def close(self) -> None:
+            if not self.closed:
+                super().close()
+                raise OSError("Output cleanup failed")
+
+    original_process = subprocess.Popen
+    processes: list[subprocess.Popen[str]] = []
+
+    def helper(command: Any, **kwargs: Any) -> subprocess.Popen[str]:
+        process = original_process([sys.executable, "-c", "import time; time.sleep(60)"], **kwargs)
+        assert process.stdout is not None
+        process.stdout.close()
+        stream = BrokenClose if not processes else io.StringIO
+        process.stdout = stream('{"kind":"done"}\n')
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", helper)
+    service = IOService()
+    done: list[str] = []
+    service.resultReady.connect(lambda r, e: done.append(r.path) if e["kind"] == "done" else None)
+    try:
+        service.submit("first-tab", 0, "/first", "scan")
+        service.submit("second-tab", 0, "/second", "scan")
+        qtbot.waitUntil(lambda: done == ["/first", "/second"] and not service.active, timeout=3000)
+        assert not service.pending and not service.retired
+        assert "Could not close I/O helper output" in caplog.text
+    finally:
+        service.shutdown()
+        qtbot.waitUntil(lambda: all(p.poll() is not None for p in processes), timeout=3000)
 
 
 def test_pending_queue_is_bounded(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -175,8 +299,8 @@ def test_pending_queue_is_bounded(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch)
     service.shutdown()
 
 
-@pytest.mark.parametrize("operation", ["scan", "load"])
-def test_timeout_retries_use_three_deadlines_and_ignore_old_attempts(
+@pytest.mark.parametrize("operation", ["scan", "resolve", "load"])
+def test_stalled_listing_times_out_once_after_no_progress(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, operation: str,
 ) -> None:
     service = IOService()
@@ -185,8 +309,58 @@ def test_timeout_retries_use_three_deadlines_and_ignore_old_attempts(
     events: list[dict[str, Any]] = []
     service.resultReady.connect(lambda request, event: events.append(event))
     service.submit("tab", 0, "/slow", operation)
+    request = service.active[0]
+    assert request.timeout == service.NO_PROGRESS_TIMEOUT == 60.0
+    # A slow listing that keeps reporting entries never times out.
+    for entries in (1000, 2000, 3000):
+        request.last_activity = time.monotonic() - 59
+        service.messages.put((request, {"kind": "heartbeat", "phase": "listing", "entries": entries}))
+        service._tick()
+        assert service.active == [request] and not request.cancelled.is_set()
+    request.started = time.monotonic() - 600
+    request.last_activity = time.monotonic() - 61
+    service._tick()
+    assert request.cancelled.is_set() and request in service.retired
+    assert not service.pending  # No retry: retries did not help a hung volume.
+    errors = [event for event in events if event["kind"] == "error"]
+    assert len(errors) == 1 and errors[0]["timeout"] and errors[0]["attempt"] == 1
+    assert errors[0]["message"] == "Timed out after 60 s without progress — Retry"
+    service.shutdown()
+
+
+def test_no_timeout_request_runs_until_cancelled(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_run", lambda request: None)
+    events: list[dict[str, Any]] = []
+    service.resultReady.connect(lambda request, event: events.append(event))
+    service.submit("tab", 0, "/hung", "scan")
+    request = service.active[0]
+    service.set_timeout("tab", math.inf)
+    request.started = request.last_activity = time.monotonic() - 3600
+    service._tick()
+    assert service.active == [request] and not any(event["kind"] == "error" for event in events)
+    service.cancel("tab")
+    assert request.cancelled.is_set() and request in service.retired
+    assert [event["kind"] for event in events][-1] == "cancelled"
+    service.shutdown()
+
+
+def test_load_file_retries_use_three_deadlines_and_ignore_old_attempts(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_run", lambda request: None)
+    events: list[dict[str, Any]] = []
+    service.resultReady.connect(lambda request, event: events.append(event))
+    service.submit("tab", 0, "/slow", "load")
     for attempt, timeout in enumerate((15.0, 20.0, 30.0), 1):
         request = service.active[0]
+        # Each attempt lists the folder under the no-progress limit first.
+        assert (request.attempt, request.timeout) == (attempt, service.NO_PROGRESS_TIMEOUT)
+        service.messages.put((request, {"kind": "file_started", "filename": "/slow/d_txy_forc1.txt"}))
+        service._tick()
         assert (request.attempt, request.timeout) == (attempt, timeout)
         request.started = request.last_activity = time.monotonic() - timeout - 1
         service._tick()
@@ -206,6 +380,7 @@ def test_timeout_retries_use_three_deadlines_and_ignore_old_attempts(
             assert not service.active
     errors = [event for event in events if event["kind"] == "error"]
     assert len(errors) == 1 and errors[0]["attempt"] == 3 and errors[0]["timeout"]
+    assert errors[0]["message"] == "File timed out after 3 attempts: d_txy_forc1.txt — Retry"
     assert not any(event.get("stale") for event in events)
     service.shutdown()
 
@@ -219,6 +394,8 @@ def test_stopping_a_timeout_retry_prevents_restart(
     monkeypatch.setattr(service, "_run", lambda request: None)
     service.submit("tab", 0, "/slow", "load")
     request = service.active[0]
+    service.messages.put((request, {"kind": "file_started", "filename": "/slow/d_txy_forc1.txt"}))
+    service._tick()
     request.started = request.last_activity = time.monotonic() - request.timeout - 1
     service._tick()
     assert len(service.pending) == 1
@@ -264,6 +441,8 @@ def test_full_queue_reserves_space_for_automatic_retry(
     monkeypatch.setattr(service, "_run", lambda request: None)
     service.submit("tab", 0, "/slow", "load")
     request = service.active[0]
+    service.messages.put((request, {"kind": "file_started", "filename": "/slow/d_txy_forc1.txt"}))
+    service._tick()
     monkeypatch.setattr(service, "_dispatch", lambda: None)
     for index in range(service.MAX_PENDING - 1):
         assert service.submit("other", 0, f"/folder-{index}", "load")
@@ -340,7 +519,7 @@ def test_file_has_three_attempts_and_next_file_gets_a_fresh_budget(
     service.shutdown()
 
 
-def test_loads_are_serial_fifo_while_scans_can_bypass_them(
+def test_loads_and_scans_share_one_slot_with_fifo_loads(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = IOService()
@@ -353,7 +532,8 @@ def test_loads_are_serial_fifo_while_scans_can_bypass_them(
     assert service.queued_load_paths() == ["/second", "/third"]
     assert all(request.started == 0 for request in service.pending)
     assert service.submit("browser", 0, "/browse", "scan")
-    assert [(r.path, r.operation) for r in service.active] == [("/first", "load"), ("/browse", "scan")]
+    assert [(r.path, r.operation) for r in service.active] == [("/first", "load")]
+    assert service.queued_operations() == [("load", "/second"), ("load", "/third"), ("scan", "/browse")]
     service.messages.put((first, {"kind": "exit"}))
     service._tick()
     assert [r.path for r in service.active if r.operation == "load"] == ["/second"]
@@ -381,6 +561,85 @@ def test_cancelled_load_keeps_slot_until_helper_exits(
     service._tick()
     assert [r.path for r in service.active] == ["/second"]
     service.shutdown()
+
+
+def test_shared_scan_and_load_limits_change_without_interrupting_work(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_run", lambda request: None)
+    try:
+        for i in range(4):
+            service.submit(f"scan-tab-{i}", 0, f"/scan-{i}", "scan")
+            service.submit(f"load-tab-{i}", 0, f"/load-{i}", "load")
+        assert [(r.path, r.operation) for r in service.active] == [("/scan-0", "scan")]
+        service.configure_concurrency(5)
+        assert sum(r.operation == "scan" for r in service.active) == 1
+        assert sum(r.operation == "load" for r in service.active) == 4
+        running = list(service.active)
+        service.configure_concurrency(1)
+        assert service.active == running
+        assert not any(r.cancelled.is_set() for r in running)
+        for request in running:
+            service.messages.put((request, {"kind": "exit"}))
+        service._tick()
+        assert [(r.path, r.operation) for r in service.active] == [("/scan-1", "scan")]
+        assert not service.queued_load_paths()
+    finally:
+        service.shutdown()
+
+
+def test_cancelled_scan_retains_shared_slot_until_exit(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_run", lambda request: None)
+    try:
+        service.submit("first-tab", 0, "/first", "scan")
+        first = service.active[0]
+        service.submit("second-tab", 0, "/second", "scan")
+        assert len(service.pending) == 1
+        service.cancel("first-tab", "scan")
+        service.submit("load-tab", 0, "/data", "load")
+        assert first in service.retired
+        assert not service.active
+        assert service.queued_operations() == [("load", "/data"), ("scan", "/second")]
+        service.messages.put((first, {"kind": "exit"}))
+        service._tick()
+        assert [(r.path, r.operation) for r in service.active] == [("/data", "load")]
+        service.messages.put((service.active[0], {"kind": "exit"}))
+        service._tick()
+        assert [(r.path, r.operation) for r in service.active] == [("/second", "scan")]
+    finally:
+        service.shutdown()
+
+
+def test_navigation_and_loads_precede_bulk_scans_in_stable_order(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_run", lambda request: None)
+    try:
+        service.submit("running", 0, "/running", "scan")
+        first = service.active[0]
+        service.submit("bulk-a", 0, "/bulk-a", "scan", {"metadata_only": True})
+        service.submit("bulk-b", 0, "/bulk-b", "scan", {"metadata_only": True})
+        service.submit("browser", 0, "/browse", "scan", priority=True)
+        service.submit("loader", 0, "/data", "load")
+        service.submit("resolver", 0, "/default", "resolve", priority=True)
+        expected = [("scan", "/browse"), ("load", "/data"), ("resolve", "/default"),
+                    ("scan", "/bulk-a"), ("scan", "/bulk-b")]
+        assert service.queued_operations() == expected
+        assert service.active == [first] and not first.cancelled.is_set()
+        for operation, path in expected:
+            service.messages.put((service.active[0], {"kind": "exit"}))
+            service._tick()
+            assert [(r.operation, r.path) for r in service.active] == [(operation, path)]
+    finally:
+        service.shutdown()
 
 
 @pytest.mark.parametrize("reuse", ["files", "disk", "memory"])

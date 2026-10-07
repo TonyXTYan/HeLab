@@ -15,8 +15,9 @@ from helab.utils.constants import *
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None, *, settings: QSettings | None = None) -> None:
         super().__init__(parent)
+        self.settings = settings if settings is not None else QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
         self.setWindowTitle("Settings")
         self.setMinimumSize(800, 500)
         self.main_layout = QVBoxLayout(self)
@@ -55,6 +56,19 @@ class SettingsDialog(QDialog):
         self.general_layout.addSpacerItem(QSpacerItem(0, 10))
         self.general_layout.addWidget(QLabel("When selecting another folder:"))
         self.general_layout.addWidget(self.load_mode_combo)
+
+        folder_io_form = QFormLayout()
+        self.simultaneous_io_spin = QSpinBox()
+        self.simultaneous_io_spin.setRange(1, MAX_SIMULTANEOUS_IO)
+        self.simultaneous_io_spin.setToolTip(
+            "Shared across all tabs for browsing, basic scans, loading and cache writes. "
+            "Navigation and loads run before bulk scans. Running work finishes when the limit is lowered.")
+        folder_io_form.addRow("Simultaneous folder I/O operations:", self.simultaneous_io_spin)
+        self.general_layout.addLayout(folder_io_form)
+        self.auto_scan_visible_checkbox = QCheckBox("Automatically basic scan folders in view")
+        self.auto_scan_visible_checkbox.setToolTip(
+            "Scan visible folders that have no saved scan results. Cached results are kept until a manual scan or refresh.")
+        self.general_layout.addWidget(self.auto_scan_visible_checkbox)
 
 
         # DIR_TEMPS and DIR_CACHES
@@ -236,7 +250,7 @@ class SettingsDialog(QDialog):
             # form_layout.addRow(QLabel(f"<b>{cache_name}</b>"), QLabel(""))
             self.cache_params_ui[cache_name] = {}
             param_keys = CACHE_PARAMS_DEFAULTS.keys()
-            existing_params = load_cache_param(cache_name)
+            existing_params = load_cache_param(cache_name, self.settings)
             for pkey in param_keys:
                 lbl = QLabel(pkey)
                 if pkey == "statistics":
@@ -337,21 +351,27 @@ class SettingsDialog(QDialog):
 
 
     def load_settings(self) -> None:
-        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        settings = self.settings
         self.example_checkbox.setChecked(settings.value("example_checkbox", False, type=bool))
         self.example_text.setText(settings.value("example_text", "", type=str))
         self.dir_temps_edit.setText(settings.value("dir_temps", DIR_TEMPS, type=str))
         self.dir_caches_edit.setText(settings.value("dir_caches", DIR_CACHES, type=str))
         self.load_mode_combo.setCurrentIndex(self.load_mode_combo.findData(read_load_mode(settings)))
+        self.simultaneous_io_spin.setValue(read_io_concurrency(settings))
+        self.auto_scan_visible_checkbox.setChecked(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
         logging.debug("Settings loaded")
 
     def save_settings(self) -> None:
-        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        settings = self.settings
         settings.setValue("example_checkbox", self.example_checkbox.isChecked())
         settings.setValue("example_text", self.example_text.text())
         settings.setValue("dir_temps", self.dir_temps_edit.text())
         settings.setValue("dir_caches", self.dir_caches_edit.text())
         settings.setValue(LOAD_MODE_SETTING, self.load_mode_combo.currentData())
+        settings.setValue(SIMULTANEOUS_IO_SETTING, self.simultaneous_io_spin.value())
+        settings.remove("simultaneous_folder_scans")
+        settings.remove("simultaneous_folder_loads")
+        settings.setValue(AUTO_SCAN_VISIBLE_SETTING, self.auto_scan_visible_checkbox.isChecked())
 
         # Save DiskCache parameters overrides
         for cache_name, param_widgets in self.cache_params_ui.items():
@@ -428,7 +448,7 @@ class SettingsDialog(QDialog):
         self.deleteLater()
 
     def reset_settings(self) -> None:
-        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        settings = self.settings
         settings.clear()
         self.load_settings()
         logging.debug("Settings reset to default")

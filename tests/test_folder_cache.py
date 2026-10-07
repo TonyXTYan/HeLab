@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 import json
+import math
 import os
 import subprocess
 import time
@@ -38,10 +39,11 @@ def producer(cache: FolderCache, path: str, operation: str) -> IORequest:
 
 def finish_scan(cache: FolderCache, path: str, signature: str = "v1",
                 children: list[str] | None = None) -> None:
-    request = producer(cache, path, "scan")
+    request = producer(cache, path, "list" if ("list", path) in cache.jobs else "scan")
     cache.service.resultReady.emit(request, {"kind": "entries", "entries": [
         {"path": p, "modified": None} for p in (children or [])]})
-    cache.service.resultReady.emit(request, {"kind": "status", "status": "ok", "count": 1,
+    # A complete status, as a details scan or load supplies it: no step 2 follows.
+    cache.service.resultReady.emit(request, {"kind": "status", "status": "ok", "count": 1, "details": True,
                                            "raw": [1], "txy": [1], "modified": 0, "signature": signature})
     cache.service.resultReady.emit(request, {"kind": "done"})
     if request in cache.service.pending:
@@ -77,7 +79,7 @@ def test_two_tabs_share_snapshot_arrays_and_default_resolution(
     monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
     cache, path = get_folder_cache(service), str(tmp_path)
     first = explorer_for_test(qtbot, path)
-    qtbot.waitUntil(lambda: ("scan", path) in cache.jobs)
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
     finish_scan(cache, path, children=[str(tmp_path / "child")])
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
     finish_load(cache, path)
@@ -146,14 +148,14 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     tabs.addTab(first, "First")
     # Exercise the central message with real widgets, without creating native
     # settings, a watchdog, or a full main window and its startup jobs.
-    window: Any = SimpleNamespace(_closing=False, tab_widget=tabs, central_placeholder=QLabel(tabs))
-    qtbot.waitUntil(lambda: ("scan", path) in cache.jobs)
+    window: Any = SimpleNamespace(_closing=False, tab_widget=tabs, central_placeholder=QLabel(tabs), dock_widgets=[])
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
     finish_scan(cache, path)
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
     request = producer(cache, path, "load")
     assert first.loading_message == "Queued"
-    assert first.scan_label.text() == "Queued"
-    assert first.progress.toolTip() == f"Queued\n\nQueued folders:\n{path}"
+    assert first.scan_label.text() == "Queued · 1 queued"
+    assert first.progress.toolTip() == f"Queued\n\nQueued folders (next first):\nLoad data: {path}"
     HelabMainWindow._central_placeholder_loading_indicator(window)
     assert window.central_placeholder.text() == f"{tmp_path.name}\nQueued"
     assert window.central_placeholder.toolTip() == first.progress.toolTip()
@@ -164,6 +166,7 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
                                        "loaded_files": 123, "total_files": 456, "failed_files": 0})
     message = "123 of 456 files loaded (27%)"
     assert first.loading_message == message
+    assert first.folder_summary_label.text() == "456 TXY found · 123 loaded (27%)"
     assert first.progress.toolTip() == message
     assert message not in first.scan_label.text()
     assert first.progress.value() == 27
@@ -176,7 +179,7 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     other = str(tmp_path / "other")
     cache.submit("tab-c", 0, other, "load")
     first._update_activity()
-    assert first.progress.toolTip() == f"{message}\n\nQueued folders:\n{other}"
+    assert first.progress.toolTip() == f"{message}\n\nQueued folders (next first):\nLoad data: {other}"
     cache.cancel("tab-c")
     first._update_activity()
     assert first.progress.toolTip() == message
@@ -187,14 +190,151 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
         assert explorer.load_files == 0 and explorer.load_attempt == 2
     service.resultReady.emit(request, {"kind": "started", "attempt": 2})
     assert first.loading_message == "Retrying… (attempt 2 of 3)"
+    # The listing phase reports entries before the first file starts.
+    service.resultReady.emit(request, {"kind": "heartbeat", "phase": "listing", "entries": 3200})
+    assert first.loading_message == "Retrying… (attempt 2 of 3) · Listing files… 3,200"
     first.close_cleanup()
     second.close_cleanup()
     service.shutdown()
 
 
-@pytest.mark.parametrize("operation", ["scan", "load"])
-def test_timeout_retry_resets_scan_and_resumes_files_for_shared_subscribers(
-    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, operation: str,
+def test_queue_tooltip_covers_scans_loads_and_navigation_across_tabs_when_idle(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = service_for_test(monkeypatch)
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    cache, path = get_folder_cache(service), str(tmp_path)
+    first = explorer_for_test(qtbot, path)
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    first.auto_load_ram = False
+    finish_scan(cache, path)
+    assert not first.loading
+    bulk, data, browse = (str(tmp_path / name) for name in ("bulk", "data", "browse"))
+    cache.submit("other-tab", 0, bulk, "scan", {"metadata_only": True})
+    cache.submit("other-tab", 0, data, "load")
+    cache.submit("other-tab", 0, browse, "list", priority=True)
+    first._update_activity()
+    expected = (f"Queued folders (next first):\nLoad data: {data}\nBrowse folder: {browse}"
+                f"\nBasic scan: {bulk}")
+    assert first.scan_label.text().endswith("3 queued")
+    assert first.scan_label.toolTip() == expected
+    assert first.progress.toolTip() == expected
+    assert expected in first.folder_summary_label.toolTip()
+    # The pending list is global and deduplicated despite multiple subscribers.
+    cache.submit("third-tab", 0, data, "load")
+    assert len(service.queued_operations()) == 3
+    cache.cancel("other-tab")
+    first._update_activity()
+    assert first.scan_label.text().endswith("1 queued")
+    assert first.progress.toolTip() == f"Queued folders (next first):\nLoad data: {data}"
+    cache.cancel("third-tab")
+    first._update_activity()
+    assert "queued" not in first.scan_label.text().lower()
+    assert "Queued folders" not in first.folder_summary_label.toolTip()
+    first.close_cleanup()
+    service.shutdown()
+
+
+def test_queue_explains_waiting_for_timed_out_operation_to_stop(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = service_for_test(monkeypatch)
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    cache, path = get_folder_cache(service), str(tmp_path)
+    explorer = explorer_for_test(qtbot, path)
+    explorer.auto_load_ram = False
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    old = producer(cache, path, "list")
+    service.pending.remove(old)
+    old.retirement_reason = "timed out"
+    old.retired_at = time.monotonic() - 42
+    old.cancelled.set()
+    service.retired.append(old)
+    # A listing is not retried automatically, so nothing is held behind it.
+    rerun = IORequest(old.owner, old.generation, path, "list", old.payload, 60.0)
+    service.pending.append(rerun)
+    explorer._update_activity()
+    # One phrase for the stuck helper and the request it holds; that request is not counted twice.
+    assert explorer.scan_label.text() == "Waiting for timed-out folder listing to stop (42 s)"
+    tooltip = explorer.scan_label.toolTip()
+    assert (f"Browse folder: {path} — timed out after 60 s without progress · stopping for 42 s"
+            " · requested again; starts when it exits") in tooltip
+    assert "volume is not responding" in tooltip and "Queued folders" not in tooltip
+    assert "Other queued I/O" not in tooltip  # Only the held request is waiting.
+    assert "Stopping operations" in explorer.folder_summary_label.toolTip()
+    # The main status bar must expose the same queue, including basic scans.
+    monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)
+    global_label = QLabel(explorer)
+    window: Any = SimpleNamespace(
+        _closing=False, status_bar_message_left=global_label, action_tab_live_checked=True,
+        _update_cancel_loading_action=lambda: None,
+        tab_widget=SimpleNamespace(set_tab_switching_enable=lambda: None),
+    )
+    HelabMainWindow.update_status_bar_left(window)
+    assert global_label.text() == ("Scanning 0 folders · Loading 0 datasets · "
+                                   "Waiting for timed-out folder listing to stop (42 s) · 0 queued")
+    assert global_label.toolTip() == explorer.scan_label.toolTip()
+    service.messages.put((old, {"kind": "exit"}))
+    service._tick()
+    explorer._update_activity()
+    assert "waiting for timed-out" not in explorer.scan_label.text()
+    writer = IORequest("writer", 0, path, "load", {}, 120.0, completed=True)
+    service.active.append(writer)
+    HelabMainWindow.update_status_bar_left(window)
+    assert "Saving 1 cache" in global_label.text() and "Loading 0 datasets" in global_label.text()
+    assert "stopping" not in global_label.text()
+    explorer.close_cleanup()
+    service.shutdown()
+
+
+def test_manual_retry_lists_without_timeout_shows_elapsed_and_can_be_cancelled(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = service_for_test(monkeypatch)
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    cache, path = get_folder_cache(service), str(tmp_path)
+    explorer = explorer_for_test(qtbot, path)
+    explorer.auto_load_ram = False
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    first = producer(cache, path, "list")
+    assert first.timeout == service.NO_PROGRESS_TIMEOUT
+    service.pending.remove(first)
+    service.resultReady.emit(first, {"kind": "error", "timeout": True, "attempt": 1,
+                                     "message": "Timed out after 60 s without progress — Retry"})
+    explorer._update_activity()
+    # A listing timeout is a scan failure.
+    assert explorer.folder_summary_label.text() == "TXY count not checked · Retry manually"
+    assert cache.scan_history(path)["blocked"]
+    assert not explorer.retry_button.isHidden() and explorer.cancel_load_button.isHidden()
+    # The status-line Retry lists the selected folder with no timeout.
+    explorer._retry()
+    retry = producer(cache, path, "list")
+    assert retry.timeout == math.inf
+    node = explorer.model.nodes[path]
+    assert node.retry_since is not None
+    node.retry_since -= 80
+    service.resultReady.emit(retry, {"kind": "heartbeat", "phase": "listing", "entries": 3200})
+    explorer._update_activity()
+    assert explorer.folder_summary_label.text() == "Retrying… 1 min 20 s · 3,200 entries"
+    assert not explorer.cancel_load_button.isHidden() and explorer.can_cancel_loading
+    assert explorer.cancel_load_button.toolTip() == "Cancel the folder listing retry (Esc)"
+    explorer.cancel_loading()
+    assert retry.cancelled.is_set() and ("list", path) not in cache.jobs
+    assert node.state == "cancelled" and node.retry_since is None
+    assert explorer.cancel_load_button.isHidden() and explorer.retrying_scan is None
+    # Right-click Retry / Refresh joins a running listing and lifts its limit.
+    assert explorer.model.request_scan(path, force=True)
+    bulk = producer(cache, path, "list")
+    assert bulk.timeout == service.NO_PROGRESS_TIMEOUT
+    assert explorer.model.request_scan(path, priority=True, force=True, no_timeout=True)
+    assert producer(cache, path, "list") is bulk and bulk.timeout == math.inf
+    assert explorer.retrying_scan is node
+    explorer.close_cleanup()
+    service.shutdown()
+
+
+def test_scan_timeout_fails_once_for_shared_subscribers(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     service = IOService()
     service.timer.stop()
@@ -202,48 +342,58 @@ def test_timeout_retry_resets_scan_and_resumes_files_for_shared_subscribers(
     cache, path = get_folder_cache(service), str(tmp_path)
     events: list[dict[str, Any]] = []
     cache.resultReady.connect(lambda request, event: events.append(event) if request.owner == "tab-b" else None)
-    cache.submit("tab-a", 0, path, operation)
-    cache.submit("tab-b", 0, path, operation)
+    cache.submit("tab-a", 0, path, "scan")
+    cache.submit("tab-b", 0, path, "scan")
     request = service.active[0]
-    job = cache.jobs[(operation, path)]
-    if operation == "scan":
-        service.messages.put((request, {"kind": "entries", "entries": [{"path": path + "/old", "modified": 0}]}))
-        service.messages.put((request, {"kind": "status", "signature": "old"}))
-    else:
-        service.messages.put((request, {"kind": "shot", "shot": 1, "array": np.array([[1.0, 2, 3]]),
-                                       "fingerprint": [1, 10, 100], "problematic": True}))
-        service.messages.put((request, {"kind": "progress", "progress": 0.5, "loaded_files": 1, "total_files": 2}))
+    request.started = request.last_activity = time.monotonic() - request.timeout - 1
     service._tick()
-    assert job.entries or job.data
+    assert ("scan", path) not in cache.jobs and not service.pending
+    errors = [event for event in events if event["kind"] == "error"]
+    assert len(errors) == 1 and errors[0]["message"] == "Timed out after 60 s without progress — Retry"
+    service.shutdown()
+
+
+def test_load_timeout_retry_resumes_files_for_shared_subscribers(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_run", lambda request: None)
+    cache, path = get_folder_cache(service), str(tmp_path)
+    events: list[dict[str, Any]] = []
+    cache.resultReady.connect(lambda request, event: events.append(event) if request.owner == "tab-b" else None)
+    cache.submit("tab-a", 0, path, "load")
+    cache.submit("tab-b", 0, path, "load")
+    request = service.active[0]
+    job = cache.jobs[("load", path)]
+    first, second = (os.path.join(path, f"d_txy_forc{shot}.txt") for shot in (1, 2))
+    service.messages.put((request, {"kind": "file_started", "filename": first}))
+    service.messages.put((request, {"kind": "shot", "shot": 1, "array": np.array([[1.0, 2, 3]]),
+                                   "fingerprint": [1, 10, 100], "problematic": True}))
+    service.messages.put((request, {"kind": "file_finished", "filename": first}))
+    service.messages.put((request, {"kind": "progress", "progress": 0.5, "loaded_files": 1, "total_files": 2}))
+    service.messages.put((request, {"kind": "file_started", "filename": second}))
+    service._tick()
+    assert job.data
     request.started = request.last_activity = time.monotonic() - request.timeout - 1
     service._tick()
     assert job.state == "queued" and job.attempt == 2
-    assert not job.entries and not job.data and job.status is None and job.progress is None
+    assert not job.data and job.progress is None
     cache.cancel("tab-a")
     assert len(job.subscribers) == 1 and service.pending  # The other tab still needs this retry.
     service.messages.put((request, {"kind": "done"}))  # Late success from the discarded attempt.
     service.messages.put((request, {"kind": "exit"}))
     service._tick()
     retry = service.active[0]
-    if operation == "scan":
-        service.messages.put((retry, {"kind": "entries", "entries": [{"path": path + "/new", "modified": 0}]}))
-        service.messages.put((retry, {"kind": "status", "status": "ok", "count": 1, "raw": [1],
-                                     "txy": [1], "modified": 0, "signature": "v1"}))
-        service.messages.put((retry, {"kind": "done"}))
-        service._tick()
-        snapshot = cache.snapshot(path)
-        assert snapshot is not None and [entry["path"] for entry in snapshot.entries] == [path + "/new"]
-    else:
-        assert retry.payload["memory"] == [[1, 10, 100]]
-        service.messages.put((retry, {"kind": "shot", "shot": 2, "array": np.array([[4.0, 5, 6]])}))
-        service.messages.put((retry, {"kind": "loaded", "signature": "v1", "bytes": 24,
-                                     "rows": 1, "files": 1, "problematic": [], "memory_shots": [1]}))
-        service._tick()
-        dataset = cache.current_dataset(path)
-        assert dataset is not None and list(dataset.data) == [1, 2]
-        assert loaded_event(events)["files"] == 2 and loaded_event(events)["problematic"] == [1]
+    assert retry.payload["memory"] == [[1, 10, 100]]
+    service.messages.put((retry, {"kind": "shot", "shot": 2, "array": np.array([[4.0, 5, 6]])}))
+    service.messages.put((retry, {"kind": "loaded", "signature": "v1", "bytes": 24,
+                                 "rows": 1, "files": 1, "problematic": [], "memory_shots": [1]}))
+    service._tick()
+    dataset = cache.current_dataset(path)
+    assert dataset is not None and list(dataset.data) == [1, 2]
+    assert loaded_event(events)["files"] == 2 and loaded_event(events)["problematic"] == [1]
     assert not any(event["kind"] == "error" for event in events)
-    service.shutdown()
 
 
 def test_expired_snapshot_is_visible_during_failed_background_check(
@@ -261,10 +411,10 @@ def test_expired_snapshot_is_visible_during_failed_background_check(
     snapshot.checked_at = time.monotonic() - cache.FRESH_SECONDS - 1
     second = SnapshotFileSystemModel(service=service)
     second.setRootPath(path)
-    qtbot.waitUntil(lambda: bool(second.root and second.root.loaded) and ("scan", path) in cache.jobs)
+    qtbot.waitUntil(lambda: bool(second.root and second.root.loaded) and ("list", path) in cache.jobs)
     assert child in second.nodes
     assert len(service.pending) == 1
-    request = producer(cache, path, "scan")
+    request = producer(cache, path, "list")
     service.resultReady.emit(request, {"kind": "entries", "entries": [{"path": str(tmp_path / "partial"), "modified": None}]})
     service.resultReady.emit(request, {"kind": "error", "message": "offline"})
     assert cache.snapshot(path) is snapshot
@@ -282,7 +432,7 @@ def test_refresh_propagates_changed_data_to_both_tabs(
     monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
     cache, path = get_folder_cache(service), str(tmp_path)
     first, second = explorer_for_test(qtbot, path), explorer_for_test(qtbot, path)
-    qtbot.waitUntil(lambda: ("scan", path) in cache.jobs)
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
     finish_scan(cache, path)
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs and len(cache.jobs[("load", path)].subscribers) == 2)
     finish_load(cache, path)
@@ -307,7 +457,7 @@ def test_refresh_reuses_open_dataset_and_receives_only_new_shots(
     monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
     cache, path = get_folder_cache(service), str(tmp_path)
     explorer = explorer_for_test(qtbot, path)
-    qtbot.waitUntil(lambda: ("scan", path) in cache.jobs)
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
     finish_scan(cache, path)
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
     request = producer(cache, path, "load")
@@ -352,7 +502,7 @@ def test_invalidation_rejects_late_load_results_and_rechecks(
     monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
     cache, path = get_folder_cache(service), str(tmp_path)
     first = explorer_for_test(qtbot, path)
-    qtbot.waitUntil(lambda: ("scan", path) in cache.jobs)
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
     finish_scan(cache, path)
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
     old = producer(cache, path, "load")
@@ -364,7 +514,7 @@ def test_invalidation_rejects_late_load_results_and_rechecks(
     clear = producer(cache, path, "invalidate")
     service.resultReady.emit(clear, {"kind": "done"})
     service.pending.remove(clear)
-    qtbot.waitUntil(lambda: ("scan", path) in cache.jobs)
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
     finish_scan(cache, path)
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
     finish_load(cache, path)
@@ -477,19 +627,32 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
     first = explorer_for_test(qtbot, str(tmp_path))
     qtbot.waitUntil(lambda: first.folder_opened_data is not None, timeout=15000)
     assert first.load_source == "files"
-    assert operations == ["scan", "load"]
+    qtbot.waitUntil(lambda: bool(first.model.cache.cache_status(str(tmp_path)).info), timeout=15000)
+    first_saved_at = first.model.cache.cache_status(str(tmp_path)).info["saved_at"]
+    assert first.folder_cache_label.text().startswith("Cache created ")
+    # The load lists and fingerprints the folder, so the details scan is skipped.
+    assert operations == ["list", "load"]
     second = explorer_for_test(qtbot, str(tmp_path))
     qtbot.waitUntil(lambda: second.folder_opened_data is not None)
     assert second.load_source == "memory"
-    assert operations == ["scan", "load"]  # No helper for warm memory reuse.
+    assert second.folder_cache_label.text().startswith("Cached data loaded · Cached ")
+    assert second.model.cache.cache_status(str(tmp_path)).info["saved_at"] == first_saved_at
+    assert second.load_counts["reused_memory"] == 1 and second.load_counts["read"] == 0
+    assert operations == ["list", "load"]  # No helper for warm memory reuse.
     assert first.folder_opened_data is not None and second.folder_opened_data is not None
     assert first.folder_opened_data[1] is second.folder_opened_data[1]
     source.write_text("10,20,30\n")
     first.refresh()
     qtbot.waitUntil(lambda: second.folder_opened_data is not None and second.folder_opened_data[1][0, 0] == 10,
                    timeout=15000)
-    assert operations == ["scan", "load", "scan", "load"]
+    # The listing finds the same names; the details scan finds the modified file.
+    assert operations == ["list", "load", "list", "details", "load"]
     assert first.folder_opened_data[1] is second.folder_opened_data[1]
+    qtbot.waitUntil(lambda: first.model.cache.cache_status(str(tmp_path)).info.get("saved_at", 0)
+                   > first_saved_at, timeout=15000)
+    updated_at = first.model.cache.cache_status(str(tmp_path)).info["saved_at"]
+    assert first.folder_cache_label.text().startswith("Cache updated ")
+    assert "1 modified file loaded" in first.folder_cache_label.toolTip()
     first.close_cleanup()
     second.close_cleanup()
     service.shutdown()
@@ -500,6 +663,8 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
     reopened = explorer_for_test(qtbot, str(tmp_path))
     qtbot.waitUntil(lambda: reopened.folder_opened_data is not None, timeout=15000)
     assert reopened.load_source == "disk"
+    assert reopened.model.cache.cache_status(str(tmp_path)).info["saved_at"] == updated_at
+    assert reopened.folder_cache_label.text().startswith("Cached data loaded · Cached ")
     qtbot.waitUntil(lambda: not reopened.model.cache.requests(reopened.model.owner))
     reopened._update_activity()
     assert reopened.scan_label.text() == "Ready · Loaded from disk cache"
@@ -538,9 +703,11 @@ print(json.dumps(events))
 
     for name, require_cache, expected in (("cold", False, "files"), ("restart", True, "disk")):
         events = run(name, require_cache)
-        assert events[0]["kind"] == "load_source"
-        assert events[0]["source"] == expected
-        assert events[0]["cache_reason"] == ("" if require_cache else "No saved cache fingerprint")
+        # The folder summary comes first, before any cache or file read.
+        assert events[0]["kind"] == "scan_summary" and events[0]["status"]["txy"] == [1]
+        source_event = next(event for event in events if event["kind"] == "load_source")
+        assert source_event["source"] == expected
+        assert source_event["cache_reason"] == ("" if require_cache else "No saved cache fingerprint")
         assert loaded_event(events)["source"] == expected
         assert loaded_event(events)["cached"] is require_cache
         assert not any(event["kind"] == "cache_warning" for event in events)
@@ -587,10 +754,14 @@ def test_changed_folder_reads_only_new_or_modified_txy_files(
     events: list[dict[str, Any]] = []
     load(str(source), str(output), events.append, options)
     assert sorted(read) == ["d_txy_forc2.txt", "d_txy_forc5.txt"]
-    assert events[0] == {"kind": "load_source", "source": "merged",
+    assert next(event for event in events if event["kind"] == "load_source") == {"kind": "load_source", "source": "merged",
                          "cache_reason": "Reused 2 shots from disk cache; read 2 new or changed TXY files"}
     assert loaded_event(events)["source"] == "merged"
     assert loaded_event(events)["problematic"] == [4]
+    assert loaded_event(events)["load_counts"] == {
+        "reused_memory": 0, "reused_disk": 2, "new": 1, "modified": 1, "removed": 1,
+        "read": 2, "new_loaded": 1, "modified_loaded": 1,
+    }
     assert events[-1] == {"kind": "disk_cached", "disk_cached": True}
     for shot, expected in ((1, [[1, 1, 1]]), (2, [[20, 20, 20]]), (4, [[5, 5, 5]]), (5, [[50, 50, 50]])):
         np.testing.assert_array_equal(np.load(output / f"{shot}.npy"), expected)
@@ -640,6 +811,10 @@ def test_load_skips_shots_already_in_memory_and_completes_disk_cache(
     assert [event["shot"] for event in events if event["kind"] == "shot"] == [3]
     loaded = loaded_event(events)
     assert loaded["source"] == "updated" and loaded["memory_shots"] == [1, 2]
+    assert loaded["load_counts"] == {
+        "reused_memory": 2, "reused_disk": 0, "new": 0, "modified": 1, "removed": 0,
+        "read": 1, "new_loaded": 0, "modified_loaded": 1,
+    }
     assert loaded["cache_reason"] == "Reused 2 shots from memory; read 1 new or changed TXY files"
     assert events[-1] == {"kind": "disk_cached", "disk_cached": True}
     with FanoutCache(options["directory"], **options["params"]) as cache:
@@ -673,11 +848,11 @@ def test_scan_reports_cached_children_without_loading_or_probing_them(
     events: list[dict[str, Any]] = []
     scan(str(root), events.append, options)
     assert scanned == [str(root)]
-    assert events[0]["entries"][0]["disk_cached"] is True
-    assert events[-1]["disk_cached"] is False
+    assert next(e for e in events if e["kind"] == "entries")["entries"][0]["disk_cached"] is True
+    assert next(e for e in events if e["kind"] == "status")["disk_cached"] is False
     events.clear()
     scan(str(source), events.append, options)
-    assert events[-1]["disk_cached"] is True
+    assert next(e for e in events if e["kind"] == "status")["disk_cached"] is True
 
 
 def test_disk_badge_after_restart_ram_load_eviction_and_clear(qtbot: QtBot, tmp_path: Path) -> None:
@@ -700,7 +875,8 @@ def test_disk_badge_after_restart_ram_load_eviction_and_clear(qtbot: QtBot, tmp_
     def badges() -> object:
         return model.data(index, model.STATUS_EXTRA_ICONS_ROLE)
 
-    assert badges() == [StatusIcons.ICON_CACHED]
+    # Subfolder cache lookups come with the root's background details scan.
+    qtbot.waitUntil(lambda: badges() == [StatusIcons.ICON_CACHED], timeout=15000)
     assert model.cache.current_dataset(path) is None
     assert "Cached on disk; not loaded into RAM" in str(model.data(index, int(Qt.ItemDataRole.ToolTipRole)))
     model.request_scan(path, priority=True)
@@ -738,6 +914,103 @@ def test_disk_clear_epoch_prevents_older_load_from_repopulating_cache(tmp_path: 
     with FanoutCache(options["directory"], **options["params"]) as cache:
         assert cache.get(str(source)) is None
         assert cache.get(("snapshot-fingerprint", str(source))) is None
+
+
+def test_save_date_persists_and_cache_reuse_does_not_rewrite_it(tmp_path: Path) -> None:
+    from diskcache import FanoutCache
+    source, output = tmp_path / "source", tmp_path / "output"
+    source.mkdir()
+    output.mkdir()
+    (source / "d_txy_forc1.txt").write_text("1,2,3\n")
+    path = str(source)
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    events: list[dict[str, Any]] = []
+    load(path, str(output), events.append, options)
+    saved = next(event["cache_info"] for event in events if event["kind"] == "cache_saved")
+    assert saved["action"] == "created"
+    assert saved["saved_at"] > 0
+    with FanoutCache(options["directory"], **options["params"]) as cache:
+        assert cache.get(("snapshot-cache-info", path)) == saved
+    events.clear()
+    scan(path, events.append, options)
+    assert next(e for e in events if e["kind"] == "status")["cache_info"] == saved
+    events.clear()
+    load(path, str(output), events.append, options)
+    assert loaded_event(events)["cache_info"] == saved
+    assert loaded_event(events)["load_counts"]["reused_disk"] == 1
+    assert not any(event["kind"] == "cache_saved" for event in events)
+    # A legacy cache remains readable without inventing its save date.
+    with FanoutCache(options["directory"], **options["params"]) as cache:
+        cache.pop(("snapshot-cache-info", path))
+    events.clear()
+    load(path, str(output), events.append, options)
+    assert loaded_event(events)["source"] == "disk"
+    assert loaded_event(events)["cache_info"] == {}
+
+
+@pytest.mark.parametrize("failed_key", ["data", "snapshot-fingerprint", "snapshot-cache-info"])
+def test_failed_save_rolls_back_bytes_fingerprint_and_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_key: str,
+) -> None:
+    from diskcache import FanoutCache
+    source, output = tmp_path / "source", tmp_path / "output"
+    source.mkdir()
+    output.mkdir()
+    path = str(source)
+    converted = source / "d_txy_forc1.txt"
+    converted.write_text("1,2,3\n")
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    load(path, str(output), lambda event: None, options)
+    keys = [path, ("snapshot-fingerprint", path), ("snapshot-cache-info", path)]
+    with FanoutCache(options["directory"], **options["params"]) as cache:
+        before = [cache.get(key) for key in keys]
+    converted.write_text("10,20,30\n")
+    original_set = FanoutCache.set
+
+    def fail_set(self: Any, key: Any, value: Any, *args: Any, **kwargs: Any) -> bool:
+        if key == (path if failed_key == "data" else (failed_key, path)):
+            return False
+        return bool(original_set(self, key, value, *args, **kwargs))
+
+    monkeypatch.setattr(FanoutCache, "set", fail_set)
+    events: list[dict[str, Any]] = []
+    load(path, str(output), events.append, options)
+    assert loaded_event(events)["files"] == 1
+    assert any(event["kind"] == "cache_save_failed" for event in events)
+    assert not any(event["kind"] == "cache_saved" for event in events)
+    with FanoutCache(options["directory"], **options["params"]) as cache:
+        assert [cache.get(key) for key in keys] == before
+    np.testing.assert_array_equal(np.load(output / "1.npy"), [[10, 20, 30]])
+
+
+def test_new_file_during_background_save_caches_loaded_shots_as_possibly_old(tmp_path: Path) -> None:
+    from diskcache import FanoutCache
+    from helab.utils.cache_freshness import CacheFreshness, cache_freshness, data_as_of
+    source, output = tmp_path / "source", tmp_path / "output"
+    source.mkdir()
+    output.mkdir()
+    path = str(source)
+    (source / "d_txy_forc1.txt").write_text("1,2,3\n")
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    events: list[dict[str, Any]] = []
+
+    def add_after_load(event: dict[str, Any]) -> None:
+        events.append(event)
+        if event["kind"] == "loaded":
+            time.sleep(0.02)  # The new shot's folder mtime must follow the load's file listing.
+            (source / "d_txy_forc2.txt").write_text("4,5,6\n")
+
+    load(path, str(output), add_after_load, options)
+    saved = next(event for event in events if event["kind"] == "cache_saved")["cache_info"]
+    assert not any(event["kind"] == "cache_save_failed" for event in events)
+    with FanoutCache(options["directory"], **options["params"]) as cache:
+        fingerprint = cache.get(("snapshot-fingerprint", path))
+        assert isinstance(fingerprint, list) and [entry[0] for entry in fingerprint] == [1]
+    # Saved after the shot arrived, but compared from the file listing, so it is not shown as current.
+    modified = source.stat().st_mtime
+    assert saved["saved_at"] > modified > saved["snapshot_at"]
+    assert data_as_of(saved) == saved["snapshot_at"]
+    assert cache_freshness(data_as_of(saved), modified) == CacheFreshness.POSSIBLY_OLD
 
 
 def test_corrupt_disk_cache_reports_failure_and_loads_source(tmp_path: Path) -> None:
@@ -781,6 +1054,36 @@ def test_changed_source_during_load_is_not_published_to_disk_cache(tmp_path: Pat
         assert cache.get(str(source)) is None
 
 
+def test_shot_added_during_live_load_is_left_for_the_next_load(tmp_path: Path) -> None:
+    from diskcache import FanoutCache
+    source, output = tmp_path / "source", tmp_path / "output"
+    source.mkdir()
+    output.mkdir()
+    for shot in (1, 2):
+        (source / f"d_txy_forc{shot}.txt").write_text("1,2,3\n")
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    events: list[dict[str, Any]] = []
+
+    def next_shot_arrives(event: dict[str, Any]) -> None:
+        events.append(event)
+        if event["kind"] == "shot" and not (source / "d_txy_forc3.txt").exists():
+            (source / "d_txy_forc3.txt").write_text("4,5,6\n")
+
+    load(str(source), str(output), next_shot_arrives, options)
+    assert loaded_event(events)["files"] == 2
+    assert any(e["kind"] == "cache_saved" for e in events)
+    assert not any(e["kind"] == "cache_save_failed" for e in events)
+    with FanoutCache(options["directory"], **options["params"]) as cache:
+        saved = cache.get(("snapshot-fingerprint", str(source)))
+        assert isinstance(saved, list) and [entry[0] for entry in saved] == [1, 2]
+    # The next load reads only the new shot and reuses the cached ones.
+    events.clear()
+    (output / "next").mkdir()
+    load(str(source), str(output / "next"), events.append, options)
+    counts = loaded_event(events)["load_counts"]
+    assert (loaded_event(events)["files"], counts["new_loaded"], counts["reused_disk"]) == (3, 1, 2)
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="Creating symlinks can require Windows privileges")
 def test_scan_and_load_use_same_fingerprint_for_symlinked_data(tmp_path: Path) -> None:
     source, output = tmp_path / "source", tmp_path / "output"
@@ -795,3 +1098,49 @@ def test_scan_and_load_use_same_fingerprint_for_symlinked_data(tmp_path: Path) -
     events.clear()
     load(str(source), str(output), events.append)
     assert events[-1]["signature"] == signature
+
+
+def test_stopping_rows_merge_held_requests_and_cover_cancelled_final_and_cache_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_for_test(monkeypatch)
+    now = time.monotonic()
+
+    def stopped(path: str, operation: str, reason: str, age: float | None, **kwargs: Any) -> IORequest:
+        request = IORequest("tab", 0, path, operation, kwargs.pop("payload", {}), kwargs.pop("timeout", 15.0), **kwargs)
+        request.retirement_reason, request.retired_at = reason, None if age is None else now - age
+        service.retired.append(request)
+        return request
+
+    stopped("/a", "load", "cancelled", 2)
+    again = IORequest("tab", 0, "/a", "load", {}, 15.0)  # Same folder requested again after Cancel.
+    stopped("/b", "scan", "timed out", 70, payload={"metadata_only": True}, timeout=60.0)
+    stopped("/c", "load", "timed out", None, completed=True)  # Cache writer; no recorded stop time.
+    other = IORequest("other-tab", 0, "/a", "load", {}, 15.0)  # Same path, different owner: not held.
+    service.pending.extend([again, other])
+    tooltip = service.queue_tooltip()
+    assert "Load data: /a — cancelled · stopping for 2 s · requested again; starts when it exits" in tooltip
+    assert "Basic scan: /b — timed out after 60 s without progress · stopping for 1 min 10 s\n" in tooltip
+    assert "Save data cache: /c — timed out while saving the data cache · stopping\n" in tooltip
+    assert "Other queued I/O also waits" in tooltip  # The unrelated request needs a held slot.
+    assert tooltip.endswith("Queued folders (next first):\nLoad data: /a")
+    assert service.held_requests() == [again] and service.blocker(other) is None
+    assert service.queued_operations(include_held=False) == [("load", "/a")]
+    # The longest-stopping helper leads the one-line status.
+    assert service.stopping_summary() == "Waiting for timed-out basic scan to stop (1 min 10 s) · 2 more stopping"
+    service.pending.remove(other)
+    assert "Other queued I/O" not in service.queue_tooltip()
+    load = IORequest("tab", 0, "/e", "load", {}, 20.0, attempt=2, current_file="/e/d_txy_forc12.txt")
+    load.retirement_reason, load.retired_at = "timed out", now
+    assert ("attempt 2 of 3 timed out after 20 s without progress on d_txy_forc12.txt"
+            in service._stopping_row(load, now))
+    # Only a load's per-file reads are retried; the retry is described with the helper it waits for.
+    service.retired[:] = [load]
+    service.pending.clear()
+    service.pending.append(IORequest("tab", 0, "/e", "load", {}, 60.0, attempt=3))
+    assert service.stopping_summary() == "Retry 3 of 3 waiting for timed-out load to stop (0 s)"
+    assert "· attempt 3 of 3 starts when it exits" in service._stopping_row(load, now)
+    load.attempt = 3
+    service.pending.clear()
+    assert service._stopping_row(load, now).endswith("· no retries left")
+    service.shutdown()

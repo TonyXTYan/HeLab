@@ -111,3 +111,4 @@ venv.nosync
 legacy/tdc_launcher/*
 
 *.lnk
+.ai/session-export-*/

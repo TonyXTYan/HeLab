@@ -9,16 +9,18 @@ from typing import Any
 import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
-from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtCore import QSettings, QTimer, Qt
 from PyQt6.QtGui import QAction, QCloseEvent
 from PyQt6.QtWidgets import QDialog, QMainWindow, QPushButton, QTabWidget
 
 from helab.utils.constants import DEFAULT_LOAD_MODE, LOAD_MODE_LABELS, LOAD_MODE_SETTING, read_load_mode
+from helab.utils.constants import AUTO_SCAN_VISIBLE_SETTING, SIMULTANEOUS_IO_SETTING
 from helab.utils.folder_cache import FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.HelabMainWindow import HelabMainWindow
+from helab.views.SettingsDialog import SettingsDialog
 
 
 def service_for_test(monkeypatch: pytest.MonkeyPatch) -> IOService:
@@ -47,10 +49,11 @@ def retire(cache: FolderCache, request: IORequest) -> None:
 
 
 def scan_folder(cache: FolderCache, path: str, children: list[str] | None = None, data: bool = True) -> None:
-    request = producer(cache, "scan", path)
+    request = producer(cache, "list" if ("list", path) in cache.jobs else "scan", path)
     cache.service.resultReady.emit(request, {"kind": "entries", "entries": [
         {"path": p, "modified": None} for p in (children or [])]})
-    cache.service.resultReady.emit(request, {"kind": "status", "status": "ok", "count": 1, "raw": [1],
+    # A complete status, as a details scan or load supplies it: no step 2 follows.
+    cache.service.resultReady.emit(request, {"kind": "status", "status": "ok", "count": 1, "raw": [1], "details": True,
                                            "txy": [1] if data else [], "modified": 0, "signature": "v1"})
     cache.service.resultReady.emit(request, {"kind": "done"})
     retire(cache, request)
@@ -86,7 +89,7 @@ def make_explorer(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
     root = str(tmp_path)
     explorer = explorer_for_test(qtbot, root)
     explorer.load_mode = mode
-    qtbot.waitUntil(lambda: ("scan", root) in cache.jobs)
+    qtbot.waitUntil(lambda: ("list", root) in cache.jobs)
     paths = [os.path.join(root, name) for name in "abcde"]
     # The root holds no data, so opening it does not start a load.
     scan_folder(cache, root, paths, data=False)
@@ -233,7 +236,7 @@ def test_cancel_loading_preserves_scans_shared_load_and_explicit_retry(
     qtbot.waitUntil(lambda: len(cache.jobs[("load", a)].subscribers) == 2)
     assert first.queue_load(b) and first.queue_load(c)
     first.model.request_scan(a, force=True)
-    scan_request = producer(cache, "scan", a)
+    scan_request = producer(cache, "list", a)
 
     first.cancel_loading()
 
@@ -294,6 +297,52 @@ class CancelTestWindow(HelabMainWindow):
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         QMainWindow.closeEvent(self, a0)
+
+
+def test_folder_io_menu_and_settings_apply_to_existing_and_new_tabs(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    settings.setValue(SIMULTANEOUS_IO_SETTING, 2)
+    monkeypatch.setattr("helab.views.HelabMainWindow.QSettings", lambda *args: settings)
+    service = service_for_test(monkeypatch)
+    monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    window = CancelTestWindow()
+    qtbot.addWidget(window)
+    first = explorer_for_test(qtbot, str(tmp_path))
+    second = explorer_for_test(qtbot, str(tmp_path))
+    window.tab_widget.addTab(first, "First")
+    window.tab_widget.addTab(second, "Second")
+    assert service.max_operations == 2
+    action = window.view_toggle_auto_scan_visible
+    assert not action.isChecked() and not first.auto_scan_visible and not second.auto_scan_visible
+    action.trigger()
+    assert first.auto_scan_visible and second.auto_scan_visible
+    assert settings.value(AUTO_SCAN_VISIBLE_SETTING, type=bool)
+
+    # Exercise the real Save dialog and main-window application after it closes.
+    def save_dialog() -> None:
+        dialog = window.settings_dialog
+        dialog.simultaneous_io_spin.setValue(4)
+        dialog.auto_scan_visible_checkbox.setChecked(False)
+        dialog.save_button.click()
+
+    monkeypatch.setattr("helab.views.HelabMainWindow.SettingsDialog",
+                        lambda parent: SettingsDialog(parent, settings=settings))
+    QTimer.singleShot(0, save_dialog)
+    window.show_settings_dialog()
+    assert service.max_operations == 4
+    assert not action.isChecked() and not first.auto_scan_visible and not second.auto_scan_visible
+    action.trigger()
+    window.add_new_folder_explorer_tab(target_path=str(tmp_path))
+    third = window.tab_widget.currentWidget()
+    assert isinstance(third, FolderExplorer) and third.auto_scan_visible
+    action.trigger()
+    assert not first.auto_scan_visible and not second.auto_scan_visible and not third.auto_scan_visible
+    for explorer in (first, second, third):
+        explorer.close_cleanup()
+    service.shutdown()
 
 
 @pytest.mark.parametrize("control", ["toolbar", "menu", "shortcut"])
@@ -389,7 +438,7 @@ def test_revalidation_scan_is_prioritised_and_runs_once(
     service.shutdown()
 
 
-def test_finishing_load_keeps_writing_and_does_not_block_next_load(
+def test_finishing_load_retains_shared_slot_until_cache_writer_exits(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = IOService()
@@ -405,7 +454,15 @@ def test_finishing_load_keeps_writing_and_does_not_block_next_load(
     service.submit("tab", 0, "/second", "load")
     service.submit("browser", 0, "/browse", "scan")
     service._tick()
-    assert [r.path for r in service.active] == ["/first", "/second", "/browse"]
+    assert [r.path for r in service.active] == ["/first"]
+    assert service.queued_operations() == [("load", "/second"), ("scan", "/browse")]
+    assert first.timeout == service.FINISH_TIMEOUT and not first.cancelled.is_set()
+    service.messages.put((first, {"kind": "cache_saved"}))
+    service._tick()
+    assert service.active == [first]
+    service.messages.put((first, {"kind": "exit"}))
+    service._tick()
+    assert [r.path for r in service.active] == ["/second"]
     service.shutdown()
 
 

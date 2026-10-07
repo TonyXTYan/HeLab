@@ -36,6 +36,21 @@ def tablerIcon(icon: OutlineIcon | FilledIcon, color: str, size: int=128) -> QIc
     return QIcon(pixmap)
 
 
+def _badged_icon(base: QIcon, badge: QIcon) -> QIcon:
+    """Keep the familiar cache glyph with a readable freshness badge."""
+    pixmap = QPixmap(128, 128)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    base.paint(painter, QRect(0, 0, 112, 112))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor("white"))
+    painter.drawEllipse(QRect(62, 62, 66, 66))
+    badge.paint(painter, QRect(64, 64, 64, 64))
+    painter.end()
+    return QIcon(pixmap)
+
+
 class StatusIcons:
     """
     A class to manage and cache icons representing different statuses.
@@ -82,6 +97,9 @@ class StatusIcons:
         'ram_single',
         'ram_opened',
         'cached',
+        'cached_older',
+        'status_cache_older',
+        'scan_failed',
         'device_floppy',
         'device_sd_card',
         'device_usb',
@@ -117,6 +135,9 @@ class StatusIcons:
         'ram_single':    12,
         'ram_opened':    13,
         'cached':        14,
+        'cached_older':  15,
+        'status_cache_older': 16,
+        'scan_failed': 10,
         'device_floppy': 14,
         'device_sd_card': 15,
         'device_usb':    16,
@@ -160,6 +181,7 @@ class StatusIcons:
     ICON_BUG = QIcon()
 
     ICONS_STATUS: Dict[str, QIcon] = {}
+    ICONS_STATUS_OLDER: Dict[str, QIcon] = {}
 
     ICON_WAITING = QIcon()
     ICON_DATABASE = QIcon()
@@ -169,6 +191,9 @@ class StatusIcons:
     ICON_RAM_SINGLE = QIcon()
     ICON_RAM_OPENED = QIcon()
     ICON_CACHED = QIcon()
+    ICON_CACHED_OLDER = QIcon()
+    ICON_STATUS_CACHE_OLDER = QIcon()
+    ICON_SCAN_FAILED = QIcon()
     ICON_DEVICE_FLOPPY = QIcon()
     ICON_DEVICE_SD_CARD = QIcon()
     ICON_DEVICE_USB = QIcon()
@@ -228,6 +253,11 @@ class StatusIcons:
             'maybe': StatusIcons.ICON_MAYBE,
             'bug': StatusIcons.ICON_BUG,
         }
+        clock = tablerIcon(OutlineIcon.CLOCK, '#c48618')
+        StatusIcons.ICON_STATUS_CACHE_OLDER = clock
+        StatusIcons.ICONS_STATUS_OLDER = {
+            name: _badged_icon(icon, clock) for name, icon in StatusIcons.ICONS_STATUS.items()
+        }
         StatusIcons.ICON_WAITING = tablerIcon(OutlineIcon.HOURGLASS, '#888888')
         StatusIcons.ICON_DATABASE = tablerIcon(OutlineIcon.DATABASE, '#888888')
         StatusIcons.ICON_REPORT = tablerIcon(OutlineIcon.REPORT_ANALYTICS, '#888888')
@@ -236,6 +266,9 @@ class StatusIcons:
         StatusIcons.ICON_RAM_SINGLE = tablerIcon(OutlineIcon.CONTAINER, '#FF44BB')
         StatusIcons.ICON_RAM_OPENED = tablerIcon(OutlineIcon.CONTAINER, '#00FF00')
         StatusIcons.ICON_CACHED = tablerIcon(OutlineIcon.PACKAGE, '#888888')
+        StatusIcons.ICON_SCAN_FAILED = tablerIcon(OutlineIcon.ZOOM_EXCLAMATION, '#c48618')
+        StatusIcons.ICON_CACHED_OLDER = _badged_icon(
+            StatusIcons.ICON_CACHED, clock)
         StatusIcons.ICON_DEVICE_FLOPPY = tablerIcon(OutlineIcon.DEVICE_FLOPPY, '#3989c9')
         StatusIcons.ICON_DEVICE_SD_CARD = tablerIcon(OutlineIcon.DEVICE_SD_CARD, '#3989c9')
         StatusIcons.ICON_DEVICE_USB = tablerIcon(OutlineIcon.DEVICE_USB, '#3989c9')
@@ -267,6 +300,9 @@ class StatusIcons:
             'ram_single': StatusIcons.ICON_RAM_SINGLE,
             'ram_opened': StatusIcons.ICON_RAM_OPENED,
             'cached': StatusIcons.ICON_CACHED,
+            'cached_older': StatusIcons.ICON_CACHED_OLDER,
+            'status_cache_older': StatusIcons.ICON_STATUS_CACHE_OLDER,
+            'scan_failed': StatusIcons.ICON_SCAN_FAILED,
             'device_floppy': StatusIcons.ICON_DEVICE_FLOPPY,
             'device_sd_card': StatusIcons.ICON_DEVICE_SD_CARD,
             'device_usb': StatusIcons.ICON_DEVICE_USB,

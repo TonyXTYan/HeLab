@@ -70,7 +70,32 @@ class DebugIconsWindow(QWidget):
                     candidate = getattr(StatusIcons, attr)
                     if isinstance(candidate, QIcon) and candidate == icon:
                         attribute = attr
-            self._add_icon(self.status_list, name, attribute, icon)
+            item = self._add_icon(self.status_list, name, attribute, icon)
+            if name == "cached_older":
+                tooltip = ("Package + clock: folder modification time is newer than the cache save time.\n"
+                           "Data cache may be outdated, or a later basic scan confirmed changed TXY fingerprints.\n"
+                           "Use Load data to validate and update the data cache.")
+                item.setToolTip(0, tooltip)
+                item.setToolTip(1, tooltip)
+            elif name == "status_cache_older":
+                tooltip = ("Amber clock badge: folder modification time is newer than the last basic scan.\n"
+                           "Cached counts and status may be outdated. Use Basic scan / Refresh to recheck.")
+                item.setToolTip(0, tooltip)
+                item.setToolTip(1, tooltip)
+            elif name == "scan_failed":
+                tooltip = ("Magnifying glass + exclamation mark: the last basic scan failed.\n"
+                           "Automatic basic scans are skipped. Use Basic scan / Refresh to retry manually.\n"
+                           "Previous counts, status and loaded data remain available.")
+                item.setToolTip(0, tooltip)
+                item.setToolTip(1, tooltip)
+
+        for name, icon in StatusIcons.ICONS_STATUS_OLDER.items():
+            item = self._add_icon(self.status_list, f"{name} (older status cache)",
+                                  f'StatusIcons.ICONS_STATUS_OLDER["{name}"]', icon)
+            tooltip = (f"Preserves the '{name}' status icon with an amber clock for possibly outdated scan results.\n"
+                       "Use Basic scan / Refresh to recheck counts and status.")
+            item.setToolTip(0, tooltip)
+            item.setToolTip(1, tooltip)
 
         tool_count = 0
         for attr in dir(ToolIcons):
@@ -87,7 +112,7 @@ class DebugIconsWindow(QWidget):
                                   f"PercentageIcon.ICONS[{div}]", icon)
             item.setToolTip(0, f"{degrees} degrees")
 
-        # All three views share the width required by the longest icon name.
+        # All views share the width required by the longest icon name.
         for group in groups:
             group.icon_list.resizeColumnToContents(0)
         name_width = max(group.icon_list.columnWidth(0) for group in groups)
@@ -95,7 +120,7 @@ class DebugIconsWindow(QWidget):
             group.icon_list.setColumnWidth(0, name_width)
 
         logging.debug("%s status icons, %s tool icons, %s percentage icons",
-                      len(status_icons), tool_count, len(PercentageIcon.ICONS))
+                      len(status_icons) + len(StatusIcons.ICONS_STATUS_OLDER), tool_count, len(PercentageIcon.ICONS))
 
     @staticmethod
     def _add_icon(view: QTreeWidget, name: str, attribute: str, icon: QIcon) -> QTreeWidgetItem:
