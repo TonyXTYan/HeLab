@@ -1,6 +1,5 @@
 # FILE: helab/views/test_settingsDialog.py
 import pytest
-from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QTreeWidget, QWidget
 from pytestqt.qtbot import QtBot
@@ -43,8 +42,8 @@ def test_percentage_list_population(debug_icons_window: DebugIconsWindow) -> Non
     assert debug_icons_window.percentage_list.topLevelItemCount() == PercentageIcon._DIVS_COARSE + 1
 
 
-def test_all_icon_groups_have_same_row_height(debug_icons_window: DebugIconsWindow, qtbot: QtBot) -> None:
-    qtbot.mouseClick(debug_icons_window.percentage_group.toggle, Qt.MouseButton.LeftButton)
+def test_all_icon_groups_have_same_row_height(debug_icons_window: DebugIconsWindow) -> None:
+    debug_icons_window.percentage_group.toggle.click()
     heights: set[int] = set()
     views = (debug_icons_window.status_list, debug_icons_window.tool_list, debug_icons_window.percentage_list)
     for icons in views:
@@ -57,11 +56,11 @@ def test_all_icon_groups_have_same_row_height(debug_icons_window: DebugIconsWind
     assert len({view.columnWidth(0) for view in views}) == 1
 
 
-def test_group_headings_toggle_each_view(debug_icons_window: DebugIconsWindow, qtbot: QtBot) -> None:
+def test_group_headings_toggle_each_view(debug_icons_window: DebugIconsWindow) -> None:
     for group in (debug_icons_window.status_group, debug_icons_window.tool_group,
                   debug_icons_window.percentage_group):
         expanded = group.toggle.isChecked()
-        qtbot.mouseClick(group.toggle, Qt.MouseButton.LeftButton)
+        group.toggle.click()
         assert group.icon_list.isHidden() is expanded
-        qtbot.mouseClick(group.toggle, Qt.MouseButton.LeftButton)
+        group.toggle.click()
         assert group.icon_list.isVisible() is expanded
