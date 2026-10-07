@@ -9,14 +9,15 @@ from typing import Any
 import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
-from PyQt6.QtCore import QSettings
-from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QTabWidget
+from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtGui import QAction, QCloseEvent
+from PyQt6.QtWidgets import QDialog, QMainWindow, QPushButton, QTabWidget
 
 from helab.utils.constants import DEFAULT_LOAD_MODE, LOAD_MODE_LABELS, LOAD_MODE_SETTING, read_load_mode
 from helab.utils.folder_cache import FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService
 from helab.views.FolderExplorer import FolderExplorer
+from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.HelabMainWindow import HelabMainWindow
 
 
@@ -214,10 +215,157 @@ def test_background_queue_is_capped_and_cancel_clears_it(
     assert list(explorer._bg_paths) == [c, d] and ("load", b) not in cache.jobs
     select(explorer, e)
     assert explorer.load_waiting and list(explorer._bg_paths) == [c, d, a]
-    explorer.on_stop_button_clicked()
+    explorer.cancel_loading()
     assert not explorer._bg_paths and not explorer.load_waiting
     assert not explorer.model.load_states
     assert not any(operation == "load" for operation, _ in cache.jobs)
+    finish(explorer, service)
+
+
+def test_cancel_loading_preserves_scans_shared_load_and_explicit_retry(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service, cache, first, (a, b, c, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "cancel")
+    select(first, a)
+    request = start_load(cache, a)
+    second = explorer_for_test(qtbot, a)
+    second.load_mode = "cancel"
+    qtbot.waitUntil(lambda: len(cache.jobs[("load", a)].subscribers) == 2)
+    assert first.queue_load(b) and first.queue_load(c)
+    first.model.request_scan(a, force=True)
+    scan_request = producer(cache, "scan", a)
+
+    first.cancel_loading()
+
+    assert not first.can_cancel_loading and first._load_path is None
+    assert not first.model.load_states and not first._bg_paths
+    assert not scan_request.cancelled.is_set() and scan_request in service.pending
+    assert not request.cancelled.is_set() and request in service.active
+    assert list(cache.jobs[("load", a)].subscribers) == [(second.model.owner, second.model.generation)]
+    assert ("load", b) not in cache.jobs and ("load", c) not in cache.jobs
+    # Scan completion and another tab's completed dataset must not undo Cancel.
+    scan_folder(cache, a)
+    complete_load(cache, a)
+    qtbot.wait(50)
+    assert not first.can_cancel_loading and first.folder_opened_data is None
+    assert second.folder_opened_path == a and second.folder_opened_data is not None
+    first._retry()
+    qtbot.waitUntil(lambda: first.folder_opened_path == a)
+    assert first.folder_opened_data is not None
+    second.close_cleanup()
+    finish(first, service)
+
+
+def test_cancel_loading_keeps_previous_dataset_and_allows_new_selection(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service, cache, explorer, (a, b, c, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "cancel")
+    select(explorer, a)
+    start_load(cache, a)
+    complete_load(cache, a)
+    data = explorer.folder_opened_data
+    select(explorer, b)
+    request = start_load(cache, b)
+    explorer.cancel_loading()
+    assert request.cancelled.is_set() and request not in service.active
+    assert explorer.folder_opened_data is data and explorer.folder_opened_path == a
+    assert not explorer.can_cancel_loading
+    assert not explorer.load_to_ram_cache(b)
+    select(explorer, c)
+    assert explorer.loading and explorer._load_path == c
+    finish(explorer, service)
+
+
+class CancelTestWindow(HelabMainWindow):
+    """Use the real toolbar/menu setup without application startup or shutdown."""
+
+    def __init__(self) -> None:
+        QMainWindow.__init__(self)
+        self._closing = False
+        self._setup_left_toolbar()
+        self.tab_widget = FolderTabWidget(self)
+        self.setCentralWidget(self.tab_widget)
+        menu_bar = self.menuBar()
+        assert menu_bar is not None
+        self.menu_bar = menu_bar
+        self.menu_bar.setNativeMenuBar(False)
+        self.create_menus()
+        self.tab_widget.currentChanged.connect(self._update_cancel_loading_action)
+
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
+        QMainWindow.closeEvent(self, a0)
+
+
+@pytest.mark.parametrize("control", ["toolbar", "menu", "shortcut"])
+def test_cancel_controls_target_current_tab_only(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, control: str,
+) -> None:
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr("helab.views.HelabMainWindow.QSettings", lambda *args: settings)
+    service, cache, first, (a, b, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "cancel")
+    monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)
+    second = explorer_for_test(qtbot, b)
+    second.load_mode = "cancel"
+    qtbot.waitUntil(lambda: second.loading)
+    select(first, a)
+    start_load(cache, a)
+    window = CancelTestWindow()
+    qtbot.addWidget(window)
+    window.tab_widget.addTab(first, "First")
+    window.tab_widget.addTab(second, "Second")
+    for explorer in (first, second):
+        explorer.loadStateChanged.connect(window._update_cancel_loading_action)
+    window.show()
+    window.activateWindow()
+    first.path_edit.setFocus()
+    qtbot.waitUntil(window.isActiveWindow)
+    action = window.action_tab_cancel
+    assert action.isEnabled()
+    assert all(button.text() != "Cancel" for button in first.findChildren(QPushButton))
+    file_menu = window.menu_bar.actions()[0].menu()
+    assert file_menu is not None and action in file_menu.actions()
+    if control == "toolbar":
+        button = window.sidebar_toolbar_left.widgetForAction(action)
+        assert button is not None
+        qtbot.mouseClick(button, Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
+    elif control == "menu":
+        next(item for item in file_menu.actions() if item.text() == "Cancel Loading").trigger()
+    else:
+        window.sidebar_toolbar_left.hide()
+        qtbot.keyClick(first.path_edit, Qt.Key.Key_Escape)  # type: ignore[no-untyped-call]
+    qtbot.waitUntil(lambda: not first.can_cancel_loading)
+    assert not action.isEnabled() and second.loading
+    assert ("load", a) not in cache.jobs and ("load", b) in cache.jobs
+    window.tab_widget.setCurrentIndex(1)
+    assert action.isEnabled()
+    second.cancel_loading()
+    assert not action.isEnabled()
+    first.close_cleanup()
+    second.close_cleanup()
+    service.shutdown()
+
+
+def test_escape_closes_dialog_without_cancelling_load(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr("helab.views.HelabMainWindow.QSettings", lambda *args: settings)
+    service, cache, explorer, (a, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "cancel")
+    monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)
+    select(explorer, a)
+    window = CancelTestWindow()
+    qtbot.addWidget(window)
+    window.tab_widget.addTab(explorer, "Tab")
+    window.show()
+    dialog = QDialog(window)
+    qtbot.addWidget(dialog)
+    dialog.setModal(True)
+    dialog.show()
+    dialog.activateWindow()
+    qtbot.waitUntil(dialog.isActiveWindow)
+    qtbot.keyClick(dialog, Qt.Key.Key_Escape)  # type: ignore[no-untyped-call]
+    assert not dialog.isVisible()
+    assert explorer.loading and ("load", a) in cache.jobs
     finish(explorer, service)
 
 

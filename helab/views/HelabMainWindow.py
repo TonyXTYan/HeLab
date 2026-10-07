@@ -20,7 +20,7 @@ from typing import Any, List, Optional
 import psutil
 from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
     QDir, QDateTime, QSettings, QStorageInfo
-from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QPixmap, QResizeEvent
+from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QPixmap, QResizeEvent, QKeySequence
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget, QHBoxLayout, \
     QPushButton, QTreeWidget, QTreeWidgetItem, QInputDialog
@@ -150,7 +150,7 @@ class HelabMainWindow(QMainWindow):
         queued_folders = service.queued_load_paths()
         self.status_bar_message_left.setToolTip(
             "Queued folders:\n" + "\n".join(queued_folders) if queued_folders else "")
-        self.action_tab_cancel.setEnabled(bool(scans or loads or queued))
+        self._update_cancel_loading_action()
         self.tab_widget.set_tab_switching_enable()
         if not self.action_tab_live_checked:
             self.set_tools_and_tabs_enable()
@@ -189,6 +189,10 @@ class HelabMainWindow(QMainWindow):
                 service = get_io_service()
                 service.resultReady.connect(self._on_drive_result)
                 QTimer.singleShot(0, lambda: service.submit(self._drive_owner, 0, "", "drives"))
+
+            menu_file.addSeparator()
+
+            menu_file.addAction(self.action_tab_cancel)
 
             menu_file.addSeparator()
 
@@ -455,7 +459,14 @@ class HelabMainWindow(QMainWindow):
         self.action_tab_folder_up = QAction(ToolIcons.ICON_FOLDER_UP, "Up Dir", self)
         self.action_tab_refresh = QAction(ToolIcons.ICON_REFRESH, "Refresh", self)
         self.action_tab_rescan = QAction(ToolIcons.ICON_ZOOM_REPLACE, "Rescan", self)
-        self.action_tab_cancel = QAction(ToolIcons.ICON_ZOOM_CANCEL, "Cancel", self)
+        self.action_tab_cancel = QAction(ToolIcons.ICON_ZOOM_CANCEL, "Cancel Loading", self)
+        self.action_tab_cancel.setShortcut(QKeySequence(Qt.Key.Key_Escape))
+        self.action_tab_cancel.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+        self.action_tab_cancel.setAutoRepeat(False)
+        self.action_tab_cancel.setEnabled(False)
+        self.action_tab_cancel.triggered.connect(self._cancel_current_tab_loading)
+        # Keep Esc available when the toolbar is hidden.
+        self.addAction(self.action_tab_cancel)
         self.action_tab_live = QAction(ToolIcons.ICON_LIVE, "Live", self)
         self.action_tab_live.setCheckable(True)
         self.action_tab_live_checked = False
@@ -468,7 +479,7 @@ class HelabMainWindow(QMainWindow):
         self.action_tab_refresh.setToolTip("Refresh file list view")
         self.action_tab_folder_up.setToolTip("Navigate up one directory")
         self.action_tab_rescan.setToolTip("Rescan the current directory")
-        self.action_tab_cancel.setToolTip("Cancel background tasks")
+        self.action_tab_cancel.setToolTip("Cancel loading in this tab (Esc)")
         self.action_tab_live.setToolTip("Live update the current directory")
 
         # action_tab_new.triggered.connect(self.add_new_folder_explorer_tab)
@@ -508,7 +519,6 @@ class HelabMainWindow(QMainWindow):
         self.action_tab_refresh.triggered.connect(self.tab_widget.refresh_current_folder_explorer)
         self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
         self.action_tab_rescan.triggered.connect(lambda: self.tab_widget.rescan_current_folder_explorer(user_intend = True))
-        self.action_tab_cancel.triggered.connect(cancel_all_workers)
         self.action_tab_live.triggered.connect(self.on_live_button_clicked)
 
         self.sidebar_toolbar_left.addSeparator()
@@ -969,12 +979,27 @@ class HelabMainWindow(QMainWindow):
             current_folder_explorer.selectionPathChanged.connect(
                 lambda _, fe=current_folder_explorer: self.on_folder_explorer_selection_changed(QItemSelection(), fe))
             current_folder_explorer.loadStateChanged.connect(self._central_placeholder_loading_indicator)
+            current_folder_explorer.loadStateChanged.connect(self._update_cancel_loading_action)
             current_folder_explorer.dataLoaded.connect(
                 lambda p, fe=current_folder_explorer: self._snapshot_data_loaded(fe, p))
         else:
             logging.error("add_new_folder_explorer_tab: current_folder_explorer is not FolderExplorer")
 
+    def _cancel_current_tab_loading(self) -> None:
+        if QApplication.activeModalWidget() is not None:
+            return
+        explorer = self.tab_widget.currentWidget()
+        if isinstance(explorer, FolderExplorer):
+            explorer.cancel_loading()
+        self._update_cancel_loading_action()
+
+    def _update_cancel_loading_action(self) -> None:
+        explorer = self.tab_widget.currentWidget()
+        self.action_tab_cancel.setEnabled(
+            isinstance(explorer, FolderExplorer) and explorer.can_cancel_loading)
+
     def update_tool_enabled_state(self) -> None:
+        self._update_cancel_loading_action()
         current_folder_explorer = self.tab_widget.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.update_back_button_state()

@@ -94,6 +94,7 @@ class FolderExplorer(QWidget):
         self.load_error = ""
         self.load_bytes = 0
         self._load_path: str | None = None
+        self._cancelled_load_path: str | None = None
         self._loading_data: dict[int, npt.NDArray[np.float64]] = {}
         self._loaded_signature = ""
         self._deep: list[tuple[Iterator[FolderNode], int]] = []
@@ -123,8 +124,6 @@ class FolderExplorer(QWidget):
         self.path_edit.returnPressed.connect(self._navigate_input)
         self.back_button = QPushButton("Up", self)
         self.back_button.clicked.connect(self.on_back_button_clicked)
-        self.stop_button = QPushButton("Cancel", self)
-        self.stop_button.clicked.connect(self.on_stop_button_clicked)
         self.retry_button = QPushButton("Retry", self)
         self.retry_button.clicked.connect(self._retry)
         self.scan_label = QLabel(self)
@@ -135,7 +134,7 @@ class FolderExplorer(QWidget):
         self.progress.setMaximumWidth(150)
         self.progress.hide()
         controls = QHBoxLayout()
-        for widget in (self.back_button, self.path_edit, self.retry_button, self.stop_button):
+        for widget in (self.back_button, self.path_edit, self.retry_button):
             controls.addWidget(widget)
         status = QHBoxLayout()
         status.addWidget(self.spinner_label)
@@ -180,6 +179,7 @@ class FolderExplorer(QWidget):
         self._deep.clear()
         self._deep_depth.clear()
         self._release_load()
+        self._cancelled_load_path = None
         self.target_path = self.view_path = self.model_root_path = os.path.abspath(os.path.expanduser(path))
         self.selected_path_globally = self.view_path
         self.path_edit.setText(self.view_path)
@@ -211,6 +211,7 @@ class FolderExplorer(QWidget):
             path = self.model.filePath(indexes[0])
             if path != self.selected_path_globally:
                 self._release_load()
+                self._cancelled_load_path = None
                 self.selected_path_globally = path
             self.model.request_scan(path, priority=True)
             self.selectionPathChanged.emit(path)
@@ -227,6 +228,10 @@ class FolderExplorer(QWidget):
     def load_waiting(self) -> bool:
         """The selected folder will be queued if it stays selected."""
         return self._dwell.isActive()
+
+    @property
+    def can_cancel_loading(self) -> bool:
+        return not self.closed and bool(self.loading or self.load_waiting or self._bg_paths)
 
     def _stop_dwell(self) -> None:
         self._dwell.stop()
@@ -287,6 +292,11 @@ class FolderExplorer(QWidget):
 
     def load_to_ram_cache(self, path: str, *, dwell: bool = True) -> bool:
         """Show this folder's data, loading it as the tab's visible load."""
+        # A scan finishing after Cancel must not restart automatic loading.
+        if dwell and path == self._cancelled_load_path:
+            return False
+        if not dwell:
+            self._cancelled_load_path = None
         if not self._has_data(path):
             return False
         if self.folder_opened_path == path and self.folder_opened_data is not None:
@@ -339,6 +349,7 @@ class FolderExplorer(QWidget):
             return False
         self._trim_background()
         self._update_activity()
+        self.loadStateChanged.emit()
         return True
 
     def _background_event(self, request: IORequest, event: dict[str, Any]) -> None:
@@ -356,6 +367,7 @@ class FolderExplorer(QWidget):
         else:
             return
         self._update_activity()
+        self.loadStateChanged.emit()
 
     def _io_event(self, request: IORequest, event: dict[str, Any]) -> None:
         if not self.closed and request.owner == self.bg_owner:
@@ -539,8 +551,6 @@ class FolderExplorer(QWidget):
             painter.end()
             self.spinner_label.setPixmap(pixmap)
         self.retry_button.setVisible(bool(error or root_error))
-        self.stop_button.setEnabled(bool(active or queued or self._deep or self.loading
-                                         or background or self.load_waiting))
         self.progress.setVisible(busy)
         if not self.loading and (active or queued or background):
             self.progress.setRange(0, 0)
@@ -604,7 +614,9 @@ class FolderExplorer(QWidget):
                 submenu.addAction("All subfolders" if depth == 32768 else f"Depth {depth}", lambda checked=False, d=depth: self.context_menu_action_deep_calc_status(path, d))
         menu.addAction("Load data", lambda: self.queue_load(path))
         menu.addAction("Clear loaded data cache", lambda: self.clear_data_cache(path))
-        menu.addAction("Cancel", self.on_stop_button_clicked)
+        cancel_action = menu.addAction("Cancel Loading", self.cancel_loading)
+        if cancel_action:
+            cancel_action.setEnabled(self.can_cancel_loading)
         viewport = self.tree.viewport()
         if viewport:
             menu.exec(viewport.mapToGlobal(position))
@@ -659,15 +671,33 @@ class FolderExplorer(QWidget):
 
     def _cancel_background(self) -> None:
         self._stop_dwell()
-        self.model.cache.cancel(self.bg_owner)
+        self.model.cache.cancel(self.bg_owner, "load")
         for path in self._bg_paths:
             self.model.set_load_state(path, "")
         self._bg_paths.clear()
 
+    def cancel_loading(self) -> None:
+        """Cancel this tab's load subscriptions, keeping scans and other tabs alive."""
+        if not self.can_cancel_loading:
+            return
+        visible_load = self.loading or self.load_waiting
+        self._cancelled_load_path = self.selected_path_globally
+        self._cancel_background()
+        self.model.cache.cancel(self.model.owner, "load")
+        if self._load_path is not None:
+            self.model.set_load_state(self._load_path, "")
+        self._load_path = None
+        self.loading = self.load_queued = False
+        self._loading_data.clear()
+        if visible_load:
+            self.load_error = "Cancelled — Retry"
+        self._update_activity()
+        self.loadStateChanged.emit()
+
     def on_stop_button_clicked(self) -> None:
         self._deep.clear()
         self._deep_depth.clear()
-        self._cancel_background()
+        self.cancel_loading()
         self.model.stop_all_scans()
         self.loading = False
         self._loading_data.clear()
