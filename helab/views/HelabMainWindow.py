@@ -20,7 +20,7 @@ from typing import Any, List, Optional
 import psutil
 from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
     QDir, QDateTime, QSettings, QStorageInfo
-from PyQt6.QtGui import QAction, QIcon, QCloseEvent, QPixmap, QResizeEvent
+from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QPixmap, QResizeEvent
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget, QHBoxLayout, \
     QPushButton, QTreeWidget, QTreeWidgetItem, QInputDialog
@@ -244,6 +244,21 @@ class HelabMainWindow(QMainWindow):
             self.view_toggle_auto_load_ram.triggered.connect(self.toggle_auto_load_ram)
             menu_view.addAction(self.view_toggle_auto_load_ram)
 
+            menu_load_mode = menu_view.addMenu('When Selecting Another Folder')
+            self.load_mode_group = QActionGroup(self)
+            self.load_mode_actions: dict[str, QAction] = {}
+            for mode, label in LOAD_MODE_LABELS.items():
+                action = QAction(label, self)
+                action.setCheckable(True)
+                action.triggered.connect(lambda checked=False, m=mode: self.set_load_mode(m))
+                self.load_mode_group.addAction(action)
+                if menu_load_mode:
+                    menu_load_mode.addAction(action)
+                self.load_mode_actions[mode] = action
+            # Tabs do not exist yet; new tabs take this mode when added.
+            self.load_mode = read_load_mode(settings)
+            self.load_mode_actions[self.load_mode].setChecked(True)
+
             menu_view.addSeparator()
 
             self.view_toggle_left_panel = QAction('Toggle Left Panel', self)
@@ -350,6 +365,7 @@ class HelabMainWindow(QMainWindow):
         # pass
         self.settings_dialog = SettingsDialog(self)
         self.settings_dialog.exec()
+        self.apply_load_mode(read_load_mode(QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)))
 
     def show_memory_usage_window(self) -> None:
         self.memory_usage_window = MemoryUsageWindow()
@@ -918,6 +934,9 @@ class HelabMainWindow(QMainWindow):
             self.central_placeholder.setText(f"{title}\n{explorer.loading_message}")
         elif explorer.load_error:
             self.central_placeholder.setText(f"{name}\n{explorer.load_error}")
+        elif explorer.load_waiting:
+            self.central_placeholder.setText(
+                f"{name}\nQueues if still selected after {explorer.DWELL_MS // 1000} s")
         elif explorer.folder_opened_path == explorer.selected_path_globally:
             self.central_placeholder.setText(f"Loaded {name}\n{fnum(explorer.load_bytes)}B")
         else:
@@ -944,6 +963,7 @@ class HelabMainWindow(QMainWindow):
         current_folder_explorer = self.tab_widget.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.auto_load_ram = self.view_toggle_auto_load_ram.isChecked()
+            current_folder_explorer.load_mode = self.load_mode
             current_folder_explorer.rootPathChanged.connect(self.update_tool_enabled_state)
             logging.debug(f"add_new_folder_explorer_tab: {current_folder_explorer.selected_path_globally = }")
             current_folder_explorer.selectionPathChanged.connect(
@@ -1010,6 +1030,18 @@ class HelabMainWindow(QMainWindow):
         if isinstance(current_folder_explorer, FolderExplorer):
             # current_folder_explorer.toggle_live_update()
             pass
+
+    def set_load_mode(self, mode: str) -> None:
+        QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME).setValue(LOAD_MODE_SETTING, mode)
+        self.apply_load_mode(mode)
+
+    def apply_load_mode(self, mode: str) -> None:
+        self.load_mode = mode if mode in LOAD_MODE_LABELS else DEFAULT_LOAD_MODE
+        self.load_mode_actions[self.load_mode].setChecked(True)
+        for index in range(self.tab_widget.count()):
+            explorer = self.tab_widget.widget(index)
+            if isinstance(explorer, FolderExplorer):
+                explorer.load_mode = self.load_mode
 
     def toggle_auto_load_ram(self) -> None:
         toggled_on = self.view_toggle_auto_load_ram.isChecked()

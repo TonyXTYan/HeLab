@@ -1,6 +1,7 @@
 """Folder browser backed by isolated I/O and memory snapshots."""
 from __future__ import annotations
 
+from collections import OrderedDict
 from datetime import datetime
 import logging
 import os
@@ -18,7 +19,7 @@ from helab.models.StatusReport import StatusReport
 from helab.utils.io_service import IORequest
 from helab.utils.folder_cache import Dataset
 from helab.utils.caching_setup import load_cache_param
-from helab.utils.constants import DIR_CACHES
+from helab.utils.constants import DEFAULT_LOAD_MODE, DIR_CACHES
 
 
 def paint_spinner(painter: QPainter, rect: QRect, angle: int, selected: bool = False) -> None:
@@ -29,6 +30,14 @@ def paint_spinner(painter: QPainter, rect: QRect, angle: int, selected: bool = F
     painter.restore()
 
 
+def paint_queued(painter: QPainter, rect: QRect, selected: bool = False) -> None:
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor("white" if selected else "#8a8a8a"), 1.5, Qt.PenStyle.DotLine))
+    painter.drawEllipse(rect)
+    painter.restore()
+
+
 class ScanDelegate(QStyledItemDelegate):
     angle = 0
 
@@ -36,10 +45,12 @@ class ScanDelegate(QStyledItemDelegate):
         if painter is None or option is None:
             return
         super().paint(painter, option, index)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        rect = QRect(option.rect.left() + 7, option.rect.top() + (option.rect.height() - 10) // 2, 10, 10)
         if index.data(SnapshotFileSystemModel.BUSY_ROLE):
-            selected = bool(option.state & QStyle.StateFlag.State_Selected)
-            rect = QRect(option.rect.left() + 7, option.rect.top() + (option.rect.height() - 10) // 2, 10, 10)
             paint_spinner(painter, rect, self.angle, selected)
+        elif index.data(SnapshotFileSystemModel.LOAD_QUEUED_ROLE):
+            paint_queued(painter, rect, selected)
         extras = index.data(SnapshotFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
         if isinstance(extras, list):
             for i, icon in enumerate(extras):
@@ -54,6 +65,8 @@ class FolderExplorer(QWidget):
     selectionPathChanged = pyqtSignal(str)
     loadStateChanged = pyqtSignal()
     dataLoaded = pyqtSignal(str)
+    DWELL_MS = 3000
+    MAX_BACKGROUND_LOADS = 8
 
     def __init__(self, model_root_path: str, target_path: str, view_path: str,
                  columns_to_show: list[int], parent: QWidget | None = None,
@@ -85,7 +98,15 @@ class FolderExplorer(QWidget):
         self._loaded_signature = ""
         self._deep: list[tuple[Iterator[FolderNode], int]] = []
         self._deep_depth: dict[str, int] = {}
+        self.load_mode = DEFAULT_LOAD_MODE
+        # Loads this tab no longer shows, in queue order; they only fill the caches.
+        self._bg_paths: OrderedDict[str, None] = OrderedDict()
+        self._dwell = QTimer(self)
+        self._dwell.setSingleShot(True)
+        self._dwell.timeout.connect(self._dwell_elapsed)
+        self._dwell_path: str | None = None
         self.model = SnapshotFileSystemModel(self)
+        self.bg_owner = f"{self.model.owner}:bg"
         self.tree = QTreeView(self)
         self.tree.setModel(self.model)
         self.model.view = self.tree
@@ -158,10 +179,7 @@ class FolderExplorer(QWidget):
             return
         self._deep.clear()
         self._deep_depth.clear()
-        self.loading = False
-        self._loading_data.clear()
-        self._load_path = None
-        self.load_error = ""
+        self._release_load()
         self.target_path = self.view_path = self.model_root_path = os.path.abspath(os.path.expanduser(path))
         self.selected_path_globally = self.view_path
         self.path_edit.setText(self.view_path)
@@ -176,7 +194,7 @@ class FolderExplorer(QWidget):
 
     def _retry(self) -> None:
         if self.load_error:
-            self.load_to_ram_cache(self.selected_path_globally)
+            self.load_to_ram_cache(self.selected_path_globally, dwell=False)
         else:
             self.model.request_scan(self.selected_path_globally, priority=True, force=True)
             self.model.rescan(True)
@@ -192,11 +210,7 @@ class FolderExplorer(QWidget):
         if indexes:
             path = self.model.filePath(indexes[0])
             if path != self.selected_path_globally:
-                self.model.cache.cancel(self.model.owner, "load")
-                self._load_path = None
-                self._loading_data.clear()
-                self.loading = False
-                self.load_error = ""
+                self._release_load()
                 self.selected_path_globally = path
             self.model.request_scan(path, priority=True)
             self.selectionPathChanged.emit(path)
@@ -209,16 +223,46 @@ class FolderExplorer(QWidget):
                 self.folder_opened_path = None
             self.selectionPathChanged.emit(path)
 
-    def load_to_ram_cache(self, path: str) -> bool:
-        report = self.model.fetch_status(path)
-        if report.status not in StatusReport.STATUS_CONTAINS_DATA_HERE or not report.d_txy_shots:
-            return False
-        if self.folder_opened_path == path and self.folder_opened_data is not None:
-            self.dataLoaded.emit(path)
-            return False
-        if self.loading and self._load_path == path:
-            return True
+    @property
+    def load_waiting(self) -> bool:
+        """The selected folder will be queued if it stays selected."""
+        return self._dwell.isActive()
+
+    def _stop_dwell(self) -> None:
+        self._dwell.stop()
+        self._dwell_path = None
+
+    def _dwell_elapsed(self) -> None:
+        path, self._dwell_path = self._dwell_path, None
+        if not self.closed and path is not None and path == self.selected_path_globally:
+            self.load_to_ram_cache(path, dwell=False)
+        self.loadStateChanged.emit()
+
+    def _release_load(self) -> None:
+        """Stop showing the current load; depending on the mode it continues in the background."""
+        self._stop_dwell()
+        path = self._load_path
+        if path is not None and self.loading and (
+                self.load_mode == "queue" or (self.load_mode == "finish" and not self.load_queued)):
+            self._bg_paths[path] = None
+            if self.model.cache.transfer(self.model.owner, self.model.generation, path, self.bg_owner, 0):
+                self._trim_background()
+            else:
+                del self._bg_paths[path]
         self.model.cache.cancel(self.model.owner, "load")
+        if path is not None and path not in self._bg_paths:
+            self.model.set_load_state(path, "")
+        self._load_path = None
+        self._loading_data.clear()
+        self.loading = False
+        self.load_error = ""
+
+    def _trim_background(self) -> None:
+        queued = [p for p in self._bg_paths if self.model.load_states.get(p) == "queued"]
+        for path in queued[:max(0, len(queued) - self.MAX_BACKGROUND_LOADS)]:
+            self.model.cache.cancel(self.bg_owner, "load", path)
+
+    def _begin_load(self, path: str) -> None:
         self.loading, self.load_progress, self.load_error = True, None, ""
         self.load_queued = True
         self.load_attempt = 1
@@ -229,24 +273,94 @@ class FolderExplorer(QWidget):
         self.load_cache_warning = ""
         self._load_path = path
         self._loading_data.clear()
+        self.model.set_load_state(path, "queued")
+
+    def _load_payload(self, path: str) -> dict[str, Any]:
         node = self.model.nodes.get(path)
-        if node:
-            node.loading = True
-            self.model.changed(node)
         cache = {"directory": os.path.join(DIR_CACHES, "data_ram_cache"),
                  "params": dict(load_cache_param("data_ram_cache"))}
+        return {"cache": cache, "signature": node.signature if node else ""}
+
+    def _has_data(self, path: str) -> bool:
+        report = self.model.fetch_status(path)
+        return report.status in StatusReport.STATUS_CONTAINS_DATA_HERE and bool(report.d_txy_shots)
+
+    def load_to_ram_cache(self, path: str, *, dwell: bool = True) -> bool:
+        """Show this folder's data, loading it as the tab's visible load."""
+        if not self._has_data(path):
+            return False
+        if self.folder_opened_path == path and self.folder_opened_data is not None:
+            self.dataLoaded.emit(path)
+            return False
+        if self.loading and self._load_path == path:
+            return True
+        node = self.model.nodes.get(path)
+        in_memory = node is not None and self.model.cache.dataset(path, node.signature) is not None
+        if (dwell and self.load_mode == "queue" and path not in self._bg_paths
+                and not in_memory and self.model.service.load_busy()):
+            # Browsing past folders must not fill the queue.
+            if self._dwell_path != path or not self._dwell.isActive():
+                self._dwell_path = path
+                self._dwell.start(self.DWELL_MS)
+                self._update_activity()
+                self.loadStateChanged.emit()
+            return True
+        self._release_load()
+        self._begin_load(path)
+        if path in self._bg_paths:
+            del self._bg_paths[path]
+            if self.model.cache.transfer(self.bg_owner, 0, path, self.model.owner, self.model.generation):
+                self.model.cache.promote(path)
+                self.loadStateChanged.emit()
+                return True
         accepted = self.model.cache.submit(self.model.owner, self.model.generation, path, "load",
-                                           {"cache": cache, "signature": node.signature if node else ""},
-                                           priority=True)
+                                           self._load_payload(path), priority=True)
+        if accepted and self.load_mode != "cancel":
+            self.model.cache.promote(path)
         if not accepted:
             self.loading = False
             self.load_error = "Load queue full — Retry"
-            if node:
-                node.loading = False
+            self.model.set_load_state(path, "")
         self.loadStateChanged.emit()
         return accepted
 
+    def queue_load(self, path: str) -> bool:
+        """Explicit load: never cancels another load; runs now when idle, otherwise queues."""
+        if path == self.selected_path_globally:
+            return self.load_to_ram_cache(path, dwell=False)
+        if path in self._bg_paths or (self.loading and self._load_path == path):
+            return True
+        if not self._has_data(path):
+            return False
+        self._bg_paths[path] = None
+        if not self.model.cache.submit(self.bg_owner, 0, path, "load", self._load_payload(path), priority=True):
+            self._bg_paths.pop(path, None)
+            self.model.set_load_state(path, "")
+            return False
+        self._trim_background()
+        self._update_activity()
+        return True
+
+    def _background_event(self, request: IORequest, event: dict[str, Any]) -> None:
+        path = request.path
+        if request.operation != "load" or path not in self._bg_paths:
+            return
+        kind = event["kind"]
+        if kind in ("queued", "started"):
+            self.model.set_load_state(path, "queued" if kind == "queued" else "loading")
+        elif kind in ("loaded", "error", "cancelled"):
+            del self._bg_paths[path]
+            self.model.set_load_state(path, "")
+            if kind == "error":
+                logging.warning("Background load %s: %s", path, event.get("message", ""))
+        else:
+            return
+        self._update_activity()
+
     def _io_event(self, request: IORequest, event: dict[str, Any]) -> None:
+        if not self.closed and request.owner == self.bg_owner:
+            self._background_event(request, event)
+            return
         if self.closed or request.owner != self.model.owner or request.generation != self.model.generation:
             return
         kind = event["kind"]
@@ -277,6 +391,7 @@ class FolderExplorer(QWidget):
             return
         if kind in ("queued", "started"):
             self.load_queued = kind == "queued"
+            self.model.set_load_state(request.path, "queued" if self.load_queued else "loading")
             self.load_attempt = event.get("attempt", self.load_attempt)
             if event.get("retry"):
                 self.load_progress = None
@@ -317,9 +432,9 @@ class FolderExplorer(QWidget):
             report.time_load_ram = datetime.now()
             report.data_dict_bytes = event["bytes"]
             report.extra_icons = ["ram_opened"]
+            self.model.set_load_state(request.path, "")
             node = self.model.nodes.get(request.path)
             if node:
-                node.loading = False
                 self._loaded_signature = event.get("signature", node.signature)
                 self.model.changed(node)
             self.dataLoaded.emit(request.path)
@@ -327,10 +442,7 @@ class FolderExplorer(QWidget):
             self.loading = False
             self._loading_data.clear()
             self.load_error = event.get("message", "Cancelled — Retry")
-            node = self.model.nodes.get(request.path)
-            if node:
-                node.loading = False
-                self.model.changed(node)
+            self.model.set_load_state(request.path, "")
         self._update_activity()
         self.loadStateChanged.emit()
 
@@ -366,9 +478,13 @@ class FolderExplorer(QWidget):
         parts = [self.loading_message] if self.loading else []
         if self.loading and self.load_attempt > 1:
             parts.append(f"Attempt {self.load_attempt} of 3")
+        if self.load_waiting:
+            parts.append(f"Queues this folder if it stays selected for {self.DWELL_MS // 1000} s")
         paths = self.model.service.queued_load_paths()
         if paths:
             parts.append("Queued folders:\n" + "\n".join(paths))
+        if self._bg_paths:
+            parts.append("Loading in the background:\n" + "\n".join(self._bg_paths))
         reason = self.load_cache_warning or self.load_cache_reason
         if reason:
             parts.append(reason)
@@ -403,10 +519,15 @@ class FolderExplorer(QWidget):
                   "Finding default folder…" if resolving else loading_action if self.loading
                   else "Checking for changes" if scans and node and node.loaded else "Scanning folders")
         status = "Queued" if self.loading and self.load_queued else f"{action} · {queued} queued"
-        self.scan_label.setText(error or root_error or (status if requests or self.loading else ready))
+        background = len(self._bg_paths)
+        text = " · ".join(filter(None, (
+            status if requests or self.loading else "" if self.load_waiting else ready,
+            f"Waiting {self.DWELL_MS // 1000} s before queueing" if self.load_waiting else "",
+            f"{background} loading in background" if background else "")))
+        self.scan_label.setText(error or root_error or text)
         self.scan_label.setToolTip(self.loading_tooltip)
         self.progress.setToolTip(self.loading_tooltip)
-        busy = self.loading or bool(active or queued)
+        busy = self.loading or bool(active or queued or background)
         self.spinner_label.setVisible(busy)
         if busy:
             pixel_ratio = self.spinner_label.devicePixelRatioF()
@@ -418,9 +539,10 @@ class FolderExplorer(QWidget):
             painter.end()
             self.spinner_label.setPixmap(pixmap)
         self.retry_button.setVisible(bool(error or root_error))
-        self.stop_button.setEnabled(bool(active or queued or self._deep or self.loading))
+        self.stop_button.setEnabled(bool(active or queued or self._deep or self.loading
+                                         or background or self.load_waiting))
         self.progress.setVisible(busy)
-        if not self.loading and (active or queued):
+        if not self.loading and (active or queued or background):
             self.progress.setRange(0, 0)
         if self.loading:
             if self.load_progress is None:
@@ -480,7 +602,7 @@ class FolderExplorer(QWidget):
         if submenu:
             for depth in (0, 1, 2, 3, 32768):
                 submenu.addAction("All subfolders" if depth == 32768 else f"Depth {depth}", lambda checked=False, d=depth: self.context_menu_action_deep_calc_status(path, d))
-        menu.addAction("Load data", lambda: self.load_to_ram_cache(path))
+        menu.addAction("Load data", lambda: self.queue_load(path))
         menu.addAction("Clear loaded data cache", lambda: self.clear_data_cache(path))
         menu.addAction("Cancel", self.on_stop_button_clicked)
         viewport = self.tree.viewport()
@@ -535,9 +657,17 @@ class FolderExplorer(QWidget):
     def refresh(self) -> None:
         self.rescan(True)
 
+    def _cancel_background(self) -> None:
+        self._stop_dwell()
+        self.model.cache.cancel(self.bg_owner)
+        for path in self._bg_paths:
+            self.model.set_load_state(path, "")
+        self._bg_paths.clear()
+
     def on_stop_button_clicked(self) -> None:
         self._deep.clear()
         self._deep_depth.clear()
+        self._cancel_background()
         self.model.stop_all_scans()
         self.loading = False
         self._loading_data.clear()
@@ -546,6 +676,7 @@ class FolderExplorer(QWidget):
     def close_cleanup(self) -> None:
         if self.closed:
             return
+        self._cancel_background()
         self.closed = True
         self.animation.stop()
         self.deep_timer.stop()

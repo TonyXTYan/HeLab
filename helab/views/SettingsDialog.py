@@ -49,6 +49,13 @@ class SettingsDialog(QDialog):
         self.general_layout.addWidget(QLabel("Example Text:"))
         self.general_layout.addWidget(self.example_text)
 
+        self.load_mode_combo = QComboBox()
+        for mode, label in LOAD_MODE_LABELS.items():
+            self.load_mode_combo.addItem(label, mode)
+        self.general_layout.addSpacerItem(QSpacerItem(0, 10))
+        self.general_layout.addWidget(QLabel("When selecting another folder:"))
+        self.general_layout.addWidget(self.load_mode_combo)
+
 
         # DIR_TEMPS and DIR_CACHES
         self.general_layout.addSpacerItem(QSpacerItem(0, 10))
@@ -335,6 +342,7 @@ class SettingsDialog(QDialog):
         self.example_text.setText(settings.value("example_text", "", type=str))
         self.dir_temps_edit.setText(settings.value("dir_temps", DIR_TEMPS, type=str))
         self.dir_caches_edit.setText(settings.value("dir_caches", DIR_CACHES, type=str))
+        self.load_mode_combo.setCurrentIndex(self.load_mode_combo.findData(read_load_mode(settings)))
         logging.debug("Settings loaded")
 
     def save_settings(self) -> None:
@@ -343,6 +351,7 @@ class SettingsDialog(QDialog):
         settings.setValue("example_text", self.example_text.text())
         settings.setValue("dir_temps", self.dir_temps_edit.text())
         settings.setValue("dir_caches", self.dir_caches_edit.text())
+        settings.setValue(LOAD_MODE_SETTING, self.load_mode_combo.currentData())
 
         # Save DiskCache parameters overrides
         for cache_name, param_widgets in self.cache_params_ui.items():

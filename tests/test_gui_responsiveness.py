@@ -246,6 +246,10 @@ def test_completed_results_are_not_retried_when_helper_cleanup_times_out(
     request.started = request.last_activity = time.monotonic() - request.timeout - 1
     service.messages.put((request, {"kind": kind}))
     service._tick()
+    # Writing the disk cache after completion gets the longer finishing deadline.
+    assert service.active == [request] and request.timeout == service.FINISH_TIMEOUT
+    request.last_activity = time.monotonic() - service.FINISH_TIMEOUT - 1
+    service._tick()
     assert not service.pending and not service.active
     assert request in service.retired
     assert not any(event.get("retry") or event.get("timeout") for event in events)

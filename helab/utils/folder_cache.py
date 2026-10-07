@@ -172,7 +172,7 @@ class FolderCache(QObject):
         request = IORequest(owner, generation, path, operation, payload, timeout)
         snapshot = self.snapshot(path) if operation == "scan" else None
         if snapshot and not force:
-            self._replay(request, snapshot)
+            self._replay(request, snapshot, priority=priority)
             if time.monotonic() - snapshot.checked_at < self.FRESH_SECONDS:
                 return True
             # Complete cached content first, then validate it once in a helper.
@@ -247,7 +247,7 @@ class FolderCache(QObject):
                 self._deliveries.remove(request)
         QTimer.singleShot(0, send)
 
-    def _replay(self, request: IORequest, snapshot: FolderSnapshot) -> None:
+    def _replay(self, request: IORequest, snapshot: FolderSnapshot, *, priority: bool = False) -> None:
         self._deliveries.append(request)
         position = 0
         self.resultReady.emit(request, {"kind": "queued", "cached": True})
@@ -268,7 +268,10 @@ class FolderCache(QObject):
             if request in self._deliveries:
                 self._deliveries.remove(request)
             if request.payload.get("revalidate") and not request.cancelled.is_set():
-                self.submit(request.owner, request.generation, request.path, "scan", request.payload, force=True)
+                # The check itself must not request another check when it completes.
+                payload = {k: v for k, v in request.payload.items() if k != "revalidate"}
+                self.submit(request.owner, request.generation, request.path, "scan", payload,
+                            priority=priority, force=True)
         QTimer.singleShot(0, batch)
 
     def _forget_job(self, job: SharedJob) -> None:
@@ -334,6 +337,31 @@ class FolderCache(QObject):
             if not job.subscribers:
                 self._forget_job(job)
                 self.service.cancel(job.owner)
+
+    def transfer(self, owner: str, generation: int, path: str,
+                 new_owner: str, new_generation: int) -> bool:
+        """Move a load subscription to another owner without interrupting the shared job."""
+        job = self.jobs.get(("load", self.key(path)))
+        old = job.subscribers.get((owner, generation)) if job else None
+        if job is None or old is None:
+            return False
+        del job.subscribers[(owner, generation)]
+        old.cancelled.set()
+        replaced = job.subscribers.get((new_owner, new_generation))
+        if replaced:
+            replaced.cancelled.set()
+        request = IORequest(new_owner, new_generation, old.path, "load", old.payload, old.timeout)
+        job.subscribers[(new_owner, new_generation)] = request
+        self.resultReady.emit(request, {"kind": job.state, "attempt": job.attempt})
+        if job.progress is not None:
+            self.resultReady.emit(request, job.progress)
+        return True
+
+    def promote(self, path: str) -> None:
+        """Run this folder's queued load before other queued loads."""
+        job = self.jobs.get(("load", self.key(path)))
+        if job:
+            self.service.promote(job.owner)
 
     def shutdown(self) -> None:
         for owner in {r.owner for job in self.jobs.values() for r in job.subscribers.values()} | {

@@ -37,7 +37,6 @@ class FolderNode:
     report: StatusReport | None = None
     seen: set[str] = field(default_factory=set)
     signature: str = ""
-    loading: bool = False
     checked_at: float = 0
 
 
@@ -51,6 +50,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
     COLUMN_RIGHTFILL = 6
     STATUS_EXTRA_ICONS_ROLE = int(Qt.ItemDataRole.UserRole) + 1
     BUSY_ROLE = int(Qt.ItemDataRole.UserRole) + 10
+    LOAD_QUEUED_ROLE = int(Qt.ItemDataRole.UserRole) + 11
     statusReady = pyqtSignal(str)
     directoryLoaded = pyqtSignal(str)
     rootPathChanged = pyqtSignal(str)
@@ -70,6 +70,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.closed = False
         self._refresh_sequence = 0
         self.folder_opened_path: str | None = None
+        # Dataset loads by path ("queued" or "loading"); kept across root changes
+        # because background loads outlive the visible tree.
+        self.load_states: dict[str, str] = {}
         self.cache.resultReady.connect(self._on_event)
         self.cache.snapshotChanged.connect(self._shared_snapshot_changed)
         self.cache.datasetChanged.connect(self._shared_dataset_changed)
@@ -130,8 +133,11 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if node is None:
             return None
         column = index.column()
+        load_state = self.load_states.get(node.path, "")
         if role == self.BUSY_ROLE:
-            return node.loading or node.state in ("queued", "running")
+            return load_state == "loading" or node.state in ("queued", "running")
+        if role == self.LOAD_QUEUED_ROLE:
+            return load_state == "queued"
         if role == int(Qt.ItemDataRole.ToolTipRole):
             cached = ("\nShared RAM dataset available (read-only arrays)" if self.cache.current_dataset(node.path)
                       else "\nCached on disk; not loaded into RAM.\nCache freshness is checked when loading."
@@ -144,7 +150,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             report = node.report
             details = (f"\nStatus: {report.status}\nRaw shots: {len(report.d_dld_shots or [])}"
                        f"\nConverted shots: {len(report.d_txy_shots or [])}" if report else "")
-            return f"{node.path}\n{'Loading dataset' if node.loading else node.state}{details}{cached}{verification}"
+            activity = {"loading": "Loading dataset", "queued": "Queued to load dataset"}.get(load_state, node.state)
+            return f"{node.path}\n{activity}{details}{cached}{verification}"
         if role == int(Qt.ItemDataRole.ForegroundRole) and node.error:
             return QColor("#b86c1d")
         if role == int(Qt.ItemDataRole.DisplayRole):
@@ -157,7 +164,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             if column == self.COLUMN_STATUS_ICON and node.error:
                 return "Unavailable" if node.state == "error" else "Cancelled"
         if role == int(Qt.ItemDataRole.DecorationRole) and column == self.COLUMN_STATUS_ICON:
-            if not node.loading and node.state not in ("queued", "running") and node.report:
+            if not load_state and node.state not in ("queued", "running") and node.report:
                 return StatusIcons.ICONS_STATUS.get(node.report.status)
         if role == self.STATUS_EXTRA_ICONS_ROLE:
             # Build icons from in-memory values; never call methods that update caches.
@@ -205,6 +212,15 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if node and node.report:
             return node.report
         return StatusReport(path, "loading" if node and node.state in ("queued", "running") else "unknown", -1, [])
+
+    def set_load_state(self, path: str, state: str) -> None:
+        if state:
+            self.load_states[path] = state
+        elif self.load_states.pop(path, None) is None:
+            return
+        node = self.nodes.get(path)
+        if node:
+            self.changed(node)
 
     def changed(self, node: FolderNode) -> None:
         self.dataChanged.emit(self.path_index(node.path), self.path_index(node.path, 6))

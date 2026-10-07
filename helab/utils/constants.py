@@ -122,6 +122,18 @@ APP_COMMIT_HASH = get_git_commit_hash()
 QSETTINGS_ORG_NAME = "ANU_HE_BEC_GROUP"
 QSETTINGS_APP_NAME = "HeLab"
 
+# What happens to a folder's load when another folder is selected.
+LOAD_MODE_SETTING = "load_on_select_mode"
+LOAD_MODE_LABELS = {"cancel": "Cancel the current load",
+                    "finish": "Finish the current load in the background",
+                    "queue": "Queue folders kept selected for 3 s"}
+DEFAULT_LOAD_MODE = "finish"
+
+
+def read_load_mode(settings: QSettings) -> str:
+    mode = settings.value(LOAD_MODE_SETTING, DEFAULT_LOAD_MODE, type=str)
+    return mode if mode in LOAD_MODE_LABELS else DEFAULT_LOAD_MODE
+
 
 
 OS_WORKING_DIRECTORY: str = os.getcwd()

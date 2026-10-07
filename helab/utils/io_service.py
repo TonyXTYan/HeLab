@@ -48,7 +48,10 @@ class IOService(QObject):
     MAX_ACTIVE_LOADS = 1
     MAX_PENDING = 128
     MAX_RETIRED = 2
+    MAX_FINISHING = 2
     TIMEOUTS: tuple[float, ...] = (15.0, 20.0, 30.0)
+    # Compressing a large dataset into the disk cache sends no progress.
+    FINISH_TIMEOUT = 120.0
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -87,13 +90,21 @@ class IOService(QObject):
         self.activityChanged.emit()
         return True
 
+    @staticmethod
+    def finishing(request: IORequest) -> bool:
+        """A load that delivered its data and may still be writing the disk cache."""
+        return request.operation == "load" and request.completed
+
     def _dispatch(self) -> None:
-        while (self.pending and len(self.active) < self.MAX_ACTIVE
-               and len(self.retired) < self.MAX_RETIRED and not self.closed):
-            loads = sum(r.operation == "load" for r in (*self.active, *self.retired))
+        while self.pending and len(self.retired) < self.MAX_RETIRED and not self.closed:
+            finishing = sum(map(self.finishing, self.active))
+            if len(self.active) - finishing >= self.MAX_ACTIVE:
+                break
+            loads = sum(r.operation == "load" and not self.finishing(r) for r in (*self.active, *self.retired))
             # Skip blocked loads so directory navigation can still use a slot.
             request = next((r for r in self.pending
-                            if (r.operation != "load" or loads < self.MAX_ACTIVE_LOADS)
+                            if (r.operation != "load" or (loads < self.MAX_ACTIVE_LOADS
+                                                          and finishing < self.MAX_FINISHING))
                             and not any((old.owner, old.generation, old.path, old.operation)
                                         == (r.owner, r.generation, r.path, r.operation)
                                         for old in self.retired)), None)
@@ -106,6 +117,19 @@ class IOService(QObject):
             self.resultReady.emit(request, {"kind": "started", "attempt": request.attempt})
             threading.Thread(target=self._run, args=(request,), daemon=True,
                              name=f"HeLab-{request.operation}").start()
+
+    def load_busy(self) -> bool:
+        """Whether a load is running or waiting, without filesystem access."""
+        return any(r.operation == "load" and not r.completed for r in (*self.active, *self.pending))
+
+    def promote(self, owner: str) -> None:
+        """Move an owner's pending requests ahead of other pending requests."""
+        promoted = [r for r in self.pending if r.owner == owner]
+        for request in reversed(promoted):
+            self.pending.remove(request)
+            self.pending.appendleft(request)
+        if promoted:
+            self.activityChanged.emit()
 
     def queued_load_paths(self) -> list[str]:
         """Queued folders in dispatch order, without filesystem access."""
@@ -260,22 +284,25 @@ class IOService(QObject):
                 kind = event["kind"]
                 if request.operation == "load" and kind in ("file_started", "file_finished", "shot", "load_source"):
                     request.last_activity = time.monotonic()
-                    if kind == "file_started":
+                    # Files re-read for the disk cache keep the finishing deadline.
+                    if kind == "file_started" and not request.completed:
                         request.current_file = event["filename"]
                         request.attempt = request.file_attempts.get(event["filename"], 1)
                         request.timeout = self.TIMEOUTS[request.attempt - 1]
                         event = {**event, "attempt": request.attempt}
-                    elif kind == "file_finished":
+                    elif kind == "file_finished" and not request.completed:
                         request.file_attempts.pop(event["filename"], None)
                         request.current_file = None
                         request.attempt = 1
                         request.timeout = self.TIMEOUTS[0]
                 if event["kind"] in ("loaded", "resolved", "done", "error"):
                     request.completed = True
+                    request.last_activity = time.monotonic()
+                    request.timeout = self.FINISH_TIMEOUT
                 self.resultReady.emit(request, event)
         now = time.monotonic()
         for request in list(self.active):
-            deadline_start = request.last_activity if request.operation == "load" else request.started
+            deadline_start = request.last_activity if request.operation == "load" or request.completed else request.started
             if now - deadline_start <= request.timeout:
                 continue
             self._retire(request)
