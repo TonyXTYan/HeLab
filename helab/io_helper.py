@@ -279,9 +279,12 @@ def main() -> None:
         request = json.loads(sys.stdin.readline())
         operation = request["operation"]
         if operation == "drives":
-            import ctypes
-            mask = ctypes.windll.kernel32.GetLogicalDrives()  # type: ignore[attr-defined]
-            emit({"kind": "drives", "paths": [f"{chr(65 + i)}:\\" for i in range(26) if mask & (1 << i)]})
+            if sys.platform == "win32":
+                import ctypes
+                mask = ctypes.windll.kernel32.GetLogicalDrives()
+                emit({"kind": "drives", "paths": [f"{chr(65 + i)}:\\" for i in range(26) if mask & (1 << i)]})
+            else:
+                raise OSError("Drive enumeration is only supported on Windows")
         elif operation == "resolve":
             for path in request["candidates"]:
                 if path and os.path.isdir(path):
