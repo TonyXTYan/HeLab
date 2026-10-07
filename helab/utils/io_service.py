@@ -15,10 +15,11 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any, Iterator, TYPE_CHECKING
+from typing import Any, Callable, Iterator, TYPE_CHECKING
 
 from PyQt6.QtCore import QCoreApplication, QObject, QTimer, pyqtSignal
 
+from helab.utils.constants import MAX_SIMULTANEOUS_IO
 from helab.utils.time_format import duration
 
 if TYPE_CHECKING:
@@ -46,6 +47,17 @@ class IORequest:
     retirement_reason: str = ""
     retired_at: float | None = None
     exited: threading.Event = field(default_factory=threading.Event)
+    # "foreground" (the current tab's browsing and selected load) or "background", set at dispatch.
+    lane: str = ""
+    # Cooperative pause: a ``pause`` file in ``output`` that the helper polls.
+    pause_requested: bool = False
+    paused: bool = False
+    control: threading.Lock = field(default_factory=threading.Lock)
+
+
+FOREGROUND = "foreground"
+BACKGROUND = "background"
+REQUEUED = "moved to the background queue"
 
 
 class IOService(QObject):
@@ -62,6 +74,17 @@ class IOService(QObject):
     FINISH_TIMEOUT = 120.0
     # A killed helper normally exits at once; longer means it is stuck in a filesystem call.
     SLOW_STOP_SECONDS = 5.0
+    # The foreground lane runs the current tab's listing and selected load beside
+    # the background lanes, up to this many processes including stopping ones.
+    FOREGROUND_CAP = 3
+    # A listing silent this long no longer holds the listing slot or pauses others:
+    # pausing cannot help a hung volume.
+    STALLED_LISTING = 3.0
+    # Paused work resumes this long after the foreground goes idle, so consecutive
+    # expands do not stop and start it.
+    RESUME_DELAY = 0.5
+    LISTINGS = ("list", "resolve")
+    PAUSABLE = ("load", "list", "details", "scan")
     LABELS = {"load": "Load data", "list": "Browse folder", "details": "Folder details",
               "scan": "Basic scan", "resolve": "Browse folder", "invalidate": "Clear data cache",
               "scan_history": "Save scan history"}
@@ -78,6 +101,10 @@ class IOService(QObject):
         self.closed = False
         self.folder_cache: FolderCache | None = None
         self.max_operations = 1
+        # Set by FolderCache: whether a request is the current tab's browsing or selected load.
+        self.is_foreground: Callable[[IORequest], bool] = lambda request: False
+        self._foreground_busy_at = -math.inf
+        self._listing_busy_at = -math.inf
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(20)
@@ -129,26 +156,133 @@ class IOService(QObject):
 
     def configure_concurrency(self, operations: int) -> None:
         """Apply shared limits without interrupting already running helpers."""
-        self.max_operations = max(1, min(32, operations))
+        self.max_operations = max(1, min(MAX_SIMULTANEOUS_IO, operations))
         self._dispatch()
         self.activityChanged.emit()
 
+    def reschedule(self) -> None:
+        """Apply a change of foreground (tab switch or load mode) at once."""
+        self._dispatch()
+        self._apply_pauses(time.monotonic())
+        self.activityChanged.emit()
+
+    def wants_foreground(self, request: IORequest) -> bool:
+        # A load writing the disk cache after delivering its data is background work.
+        return not request.completed and self.is_foreground(request)
+
+    def _listing_progressing(self, request: IORequest, now: float) -> bool:
+        return request.operation != "load" and now - request.last_activity < self.STALLED_LISTING
+
+    def _foreground_room(self, request: IORequest, now: float) -> bool:
+        """One listing and one load; stopping and stalled helpers count only toward the cap."""
+        if sum(r.lane == FOREGROUND for r in (*self.active, *self.retired)) >= self.FOREGROUND_CAP:
+            return False
+        running = [r for r in self.active if r.lane == FOREGROUND]
+        if request.operation == "load":
+            return not any(r.operation == "load" for r in running)
+        return not any(self._listing_progressing(r, now) for r in running)
+
+    def _background_room(self) -> bool:
+        # Cache writers, paused and cancelled helpers still occupy slots until exit.
+        return (sum(r.lane != FOREGROUND for r in (*self.active, *self.retired)) < self.max_operations
+                and sum(r.lane != FOREGROUND for r in self.retired) < self.MAX_RETIRED)
+
+    def _foreground_busy(self, now: float) -> bool:
+        return any(r.lane == FOREGROUND and not r.completed
+                   and (r.operation == "load" or self._listing_progressing(r, now)) for r in self.active)
+
+    def hold_background(self, now: float | None = None) -> bool:
+        """Background loads and scans pause, and none start, while the foreground works."""
+        now = time.monotonic() if now is None else now
+        if self._foreground_busy(now):
+            self._foreground_busy_at = now
+        return now - self._foreground_busy_at < self.RESUME_DELAY
+
+    def _hold_foreground_load(self, now: float) -> bool:
+        """The selected load pauses while the current tab lists a folder."""
+        if any(r.lane == FOREGROUND and self._listing_progressing(r, now) for r in self.active):
+            self._listing_busy_at = now
+        return now - self._listing_busy_at < self.RESUME_DELAY
+
+    def _update_lanes(self, now: float) -> None:
+        for request in list(self.active):
+            foreground = self.wants_foreground(request)
+            if request.lane == FOREGROUND and not foreground:
+                if request.operation == "load" and not request.completed and not self._background_room():
+                    self._requeue(request)
+                else:
+                    # Listings and cache writes finish here even when over the limit.
+                    request.lane = BACKGROUND
+            elif request.lane == BACKGROUND and foreground and self._foreground_room(request, now):
+                request.lane = FOREGROUND
+
+    def _requeue(self, request: IORequest) -> None:
+        """Stop a load that left the foreground with no background slot; it restarts from RAM shots."""
+        self._retire(request, REQUEUED)
+        again = IORequest(request.owner, request.generation, request.path, request.operation,
+                          dict(request.payload),
+                          request.timeout if math.isinf(request.timeout) else self.NO_PROGRESS_TIMEOUT,
+                          attempt=request.attempt, file_attempts=dict(request.file_attempts),
+                          priority=request.priority)
+        self.pending.appendleft(again)
+        self.resultReady.emit(again, {"kind": "queued", "retry": True, "requeued": True,
+                                      "attempt": again.attempt})
+
+    def _start(self, request: IORequest, lane: str) -> None:
+        self.pending.remove(request)
+        request.lane = lane
+        request.started = time.monotonic()
+        request.last_activity = request.started
+        self.active.append(request)
+        self.resultReady.emit(request, {"kind": "started", "attempt": request.attempt})
+        threading.Thread(target=self._run, args=(request,), daemon=True,
+                         name=f"HeLab-{request.operation}").start()
+
     def _dispatch(self) -> None:
-        while self.pending and len(self.retired) < self.MAX_RETIRED and not self.closed:
-            # Cache writers and cancelled helpers still occupy I/O slots until exit.
-            if len(self.active) + len(self.retired) >= self.max_operations:
+        if self.closed:
+            return
+        now = time.monotonic()
+        self._update_lanes(now)
+        # A retry never runs beside its predecessor; it waits for confirmed exit.
+        # The current tab's listing and selected load never wait for background work.
+        for request in list(self.pending):
+            if (self.blocker(request) is None and self.wants_foreground(request)
+                    and self._foreground_room(request, now)):
+                self._start(request, FOREGROUND)
+        hold = self.hold_background(now)
+        for request in list(self.pending):
+            if self.blocker(request) is not None or self.wants_foreground(request):
+                continue
+            if not self._background_room():
                 break
-            # A retry never runs beside its predecessor; it waits for confirmed exit.
-            request = next((r for r in self.pending if self.blocker(r) is None), None)
-            if request is None:
-                break
-            self.pending.remove(request)
-            request.started = time.monotonic()
-            request.last_activity = request.started
-            self.active.append(request)
-            self.resultReady.emit(request, {"kind": "started", "attempt": request.attempt})
-            threading.Thread(target=self._run, args=(request,), daemon=True,
-                             name=f"HeLab-{request.operation}").start()
+            if hold and request.operation in self.PAUSABLE:
+                continue
+            self._start(request, BACKGROUND)
+
+    def _apply_pauses(self, now: float) -> None:
+        hold_background = self.hold_background(now)
+        hold_load = self._hold_foreground_load(now)
+        for request in self.active:
+            pause = (request.operation in self.PAUSABLE and not request.completed
+                     and (hold_background if request.lane != FOREGROUND
+                          else request.operation == "load" and hold_load))
+            if pause != request.pause_requested:
+                with request.control:
+                    request.pause_requested = pause
+                    if request.output:
+                        self._write_pause(request.output, pause)
+
+    @staticmethod
+    def _write_pause(output: str, pause: bool) -> None:
+        # A local temp file; the helper checks it between files and entries.
+        flag = os.path.join(output, "pause")
+        try:
+            if pause:
+                Path(flag).touch()
+            else:
+                os.remove(flag)
+        except OSError:
+            pass
 
     def load_busy(self) -> bool:
         """Whether a load is running or waiting, without filesystem access."""
@@ -218,7 +352,9 @@ class IOService(QObject):
         age = self.stopping_for(old, now)
         details.append("stopping" if age is None else f"stopping for {duration(age)}")
         waiting = self.waiting_for(old)
-        if waiting is not None:
+        if waiting is not None and old.retirement_reason == REQUEUED:
+            details.append("restarts from the shots already loaded when it exits")
+        elif waiting is not None:
             details.append(f"attempt {waiting.attempt} of {attempts} starts when it exits"
                            if waiting.attempt > old.attempt else "requested again; starts when it exits")
         elif (old.retirement_reason == "timed out" and not self.finishing(old) and self.retries(old)
@@ -232,7 +368,7 @@ class IOService(QObject):
             return ""
         now = time.monotonic()
         old = min(self.retired, key=lambda r: now if r.retired_at is None else r.retired_at)
-        reason = "timed-out" if old.retirement_reason == "timed out" else "cancelled"
+        reason = {"timed out": "timed-out", REQUEUED: "background"}.get(old.retirement_reason, "cancelled")
         age = self.stopping_for(old, now)
         text = f"{reason} {self.noun(old)} to stop" + ("" if age is None else f" ({duration(age)})")
         waiting = self.waiting_for(old)
@@ -255,12 +391,13 @@ class IOService(QObject):
                    for r in self.retired):
                 notes.append("A stopped helper has not exited yet. This usually means the folder's volume "
                              "is not responding, and the system cannot end the helper until it does.")
-            slots_full = (len(self.active) + len(self.retired) >= self.max_operations
-                          or len(self.retired) >= self.MAX_RETIRED)
-            if slots_full and any(self.blocker(r) is None for r in self.pending):
+            if not self._background_room() and any(self.blocker(r) is None for r in self.pending):
                 notes.append("Other queued I/O also waits: stopping helpers keep their I/O slots until they exit.")
             if notes:
                 parts.append("\n".join(notes))
+        paused = [f"{self.label(r)}: {r.path}" for r in self.active if r.paused]
+        if paused:
+            parts.append("Paused while the current tab browses or loads:\n" + "\n".join(paused))
         rows: dict[tuple[str, str], str] = {}
         for request in self.pending:
             if self.blocker(request) is None:
@@ -286,13 +423,15 @@ class IOService(QObject):
             if request.cancelled.is_set():
                 return
             payload = {**request.payload, "operation": request.operation, "path": request.path}
-            if request.operation == "load":
-                request.output = tempfile.mkdtemp(prefix="helab_data_")
-                payload["output"] = request.output
+            # Every helper gets a private folder: load artifacts, the frozen app's
+            # request/response files, and the pause flag.
+            with request.control:
+                request.output = tempfile.mkdtemp(prefix="helab_data_" if request.operation == "load" else "helab_io_")
+                if request.pause_requested:
+                    self._write_pause(request.output, True)
+            payload["output"] = payload["control"] = request.output
             response_file: str | None = None
             if getattr(sys, "frozen", False):
-                if request.output is None:
-                    request.output = tempfile.mkdtemp(prefix="helab_io_")
                 input_file = os.path.join(request.output, "request.json")
                 response_file = os.path.join(request.output, "response.jsonl")
                 Path(input_file).write_text(json.dumps(payload) + "\n", encoding="utf-8")
@@ -392,7 +531,8 @@ class IOService(QObject):
 
     @staticmethod
     def release(request: IORequest) -> None:
-        output, request.output = request.output, None
+        with request.control:
+            output, request.output = request.output, None
         if output:
             threading.Thread(target=shutil.rmtree, args=(output,), kwargs={"ignore_errors": True},
                              daemon=True, name="HeLab-artifact-cleanup").start()
@@ -436,6 +576,10 @@ class IOService(QObject):
                 self.activityChanged.emit()
             elif not request.cancelled.is_set() and not self.closed:
                 kind = event["kind"]
+                if kind in ("paused", "resumed"):
+                    # The no-progress timer is frozen while the helper waits.
+                    request.paused = kind == "paused"
+                    request.last_activity = time.monotonic()
                 # Any helper event, including heartbeats, is progress, except that
                 # while a file is read only file events count: a repeated
                 # percentage must not hide a stalled file.
@@ -471,7 +615,7 @@ class IOService(QObject):
                 self.activityChanged.emit()
         now = time.monotonic()
         for request in list(self.active):
-            if now - request.last_activity <= request.timeout:
+            if request.paused or now - request.last_activity <= request.timeout:
                 continue
             self._retire(request, "timed out")
             if request.completed:
@@ -504,6 +648,7 @@ class IOService(QObject):
                                                "message": message})
             self.activityChanged.emit()
         self._dispatch()
+        self._apply_pauses(time.monotonic())
 
     def shutdown(self) -> None:
         if self.closed:

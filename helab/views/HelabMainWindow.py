@@ -141,16 +141,21 @@ class HelabMainWindow(QMainWindow):
         if self._closing:
             return
         service = get_io_service()
-        scans = sum(r.operation in ("list", "details", "scan", "resolve") for r in service.active)
-        loads = sum(r.operation == "load" and not r.completed for r in service.active)
+        running = [r for r in service.active if not r.paused]
+        scans = sum(r.operation in ("list", "details", "scan", "resolve") for r in running)
+        loads = sum(r.operation == "load" and not r.completed for r in running)
+        paused_loads = sum(r.operation == "load" and r.paused for r in service.active)
+        paused_scans = sum(r.operation != "load" and r.paused for r in service.active)
         saving = sum(service.finishing(r) for r in service.active)
         stopping = service.stopping_summary()
         queued = len(service.pending) - len(service.held_requests())
         self.status_bar_message_left.setText(
             " · ".join(filter(None, (f"Scanning {scans} folders", f"Loading {loads} datasets",
+                                     f"{paused_loads} load{'s' if paused_loads != 1 else ''} paused" if paused_loads else "",
+                                     f"{paused_scans} scan{'s' if paused_scans != 1 else ''} paused" if paused_scans else "",
                                      f"Saving {saving} cache{'s' if saving != 1 else ''}" if saving else "",
                                      stopping, f"{queued} queued")))
-            if scans or loads or saving or stopping or queued else "Ready")
+            if scans or loads or paused_loads or paused_scans or saving or stopping or queued else "Ready")
         self.status_bar_message_left.setToolTip(service.queue_tooltip())
         self._update_cancel_loading_action()
         self.tab_widget.set_tab_switching_enable()

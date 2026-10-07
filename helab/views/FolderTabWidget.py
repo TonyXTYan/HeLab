@@ -247,6 +247,8 @@ class FolderTabWidget(QTabWidget):
         self.update_tab_titles()
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
+            # The current tab's browsing and selected load use the foreground I/O lane.
+            current_folder_explorer.claim_foreground()
             currently_selected_path = current_folder_explorer.get_selected_path_from_model()
             logging.debug(f"Current tab dir_path: {current_folder_explorer.model_root_path}"
                           f", view_path: {current_folder_explorer.view_path}"

@@ -21,6 +21,8 @@ from helab.utils.scan_history import ScanHistory, empty_history, parse_history, 
 # Folder checks that list a folder: browse step 1 (names only), browse step 2
 # (``details``, the full scan in the background) and a basic scan.
 SCANS = ("list", "details", "scan")
+# The current tab's work that runs in the foreground I/O lane.
+FOREGROUND_OPERATIONS = ("list", "resolve", "load")
 
 
 @dataclass
@@ -66,6 +68,7 @@ class SharedJob:
     history_saved: bool = False
     completed_scan: FolderSnapshot | None = None
     created: float = field(default_factory=time.monotonic)
+    paused: bool = False
 
 
 class FolderCache(QObject):
@@ -106,7 +109,22 @@ class FolderCache(QObject):
         self.scan_history_errors: dict[str, str] = {}
         self._history_identity_dates: dict[str, float] = {}
         self._history_writes: dict[str, str] = {}
+        # Subscriber owners of the current tab (its model, and in queue mode its
+        # background loads); their listings and loads use the foreground lane.
+        self.foreground_owners: set[str] = set()
+        service.is_foreground = self._is_foreground
         service.resultReady.connect(self._on_event)
+
+    def _is_foreground(self, request: IORequest) -> bool:
+        job = self._producers.get(request.owner)
+        return (job is not None and job.operation in FOREGROUND_OPERATIONS
+                and any(r.owner in self.foreground_owners for r in job.subscribers.values()))
+
+    def set_foreground(self, owners: set[str]) -> None:
+        """Make these subscribers' work the foreground; the previous tab's becomes background."""
+        if owners != self.foreground_owners:
+            self.foreground_owners = set(owners)
+            self.service.reschedule()
 
     @staticmethod
     def key(path: str) -> str:
@@ -358,9 +376,8 @@ class FolderCache(QObject):
             if timeout is not None and math.isinf(timeout):
                 self.service.set_timeout(job.owner, timeout)
             job.subscribers[(owner, generation)] = request
-            self.resultReady.emit(request, {"kind": job.state, "attempt": job.attempt})
-            if job.progress is not None:
-                self.resultReady.emit(request, job.progress)
+            self._catch_up(job, request)
+            self.service.reschedule()
             return True
         if operation == "invalidate":
             self._cleared_at[path] = time.monotonic()
@@ -525,10 +542,17 @@ class FolderCache(QObject):
             replaced.cancelled.set()
         request = IORequest(new_owner, new_generation, old.path, "load", old.payload, old.timeout)
         job.subscribers[(new_owner, new_generation)] = request
+        self._catch_up(job, request)
+        # Leaving or joining the current tab moves the load between I/O lanes.
+        self.service.reschedule()
+        return True
+
+    def _catch_up(self, job: SharedJob, request: IORequest) -> None:
         self.resultReady.emit(request, {"kind": job.state, "attempt": job.attempt})
         if job.progress is not None:
             self.resultReady.emit(request, job.progress)
-        return True
+        if job.paused:
+            self.resultReady.emit(request, {"kind": "paused"})
 
     def promote(self, path: str) -> None:
         """Run this folder's queued load before other queued loads."""
@@ -601,7 +625,10 @@ class FolderCache(QObject):
             self.resultReady.emit(producer, event)
             return
         kind = event["kind"]
+        if kind in ("paused", "resumed"):
+            job.paused = kind == "paused"
         if kind in ("queued", "started"):
+            job.paused = False
             job.state = kind
             job.attempt = event.get("attempt", job.attempt)
             if event.get("retry"):

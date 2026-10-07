@@ -106,6 +106,8 @@ class FolderExplorer(QWidget):
         self.loading = False
         self.load_progress: float | None = None
         self.load_queued = False
+        # The selected load waits while this tab lists a folder (cooperative pause).
+        self.load_paused = False
         self.load_attempt = 1
         # Listing/stat heartbeats before the first file, e.g. "Listing files… 3,200".
         self.load_listing = ""
@@ -131,7 +133,7 @@ class FolderExplorer(QWidget):
         self._basic_result = ""
         self._visible_seen: set[str] = set()
         self.auto_scan_visible = False
-        self.load_mode = DEFAULT_LOAD_MODE
+        self._load_mode = DEFAULT_LOAD_MODE
         # Loads this tab no longer shows, in queue order; they only fill the caches.
         self._bg_paths: OrderedDict[str, None] = OrderedDict()
         self._dwell = QTimer(self)
@@ -140,6 +142,9 @@ class FolderExplorer(QWidget):
         self._dwell_path: str | None = None
         self.model = SnapshotFileSystemModel(self)
         self.bg_owner = f"{self.model.owner}:bg"
+        if not self.model.cache.foreground_owners:
+            # The first tab; FolderTabWidget hands the foreground to the current tab.
+            self.claim_foreground()
         self.tree = QTreeView(self)
         self.tree.setModel(self.model)
         self.model.view = self.tree
@@ -296,6 +301,33 @@ class FolderExplorer(QWidget):
         else:
             QTimer.singleShot(0, lambda: self.open_to_path(self.target_path))
 
+    @property
+    def load_mode(self) -> str:
+        return self._load_mode
+
+    @load_mode.setter
+    def load_mode(self, mode: str) -> None:
+        self._load_mode = mode
+        if self.is_foreground:
+            self.claim_foreground()
+
+    def foreground_owners(self) -> set[str]:
+        """In queue mode this tab's queued loads run one by one in the foreground lane."""
+        return {self.model.owner} | ({self.bg_owner} if self.load_mode == "queue" else set())
+
+    @property
+    def is_foreground(self) -> bool:
+        return not self.closed and self.model.owner in self.model.cache.foreground_owners
+
+    def claim_foreground(self) -> None:
+        """Run this tab's browsing and selected load in the foreground I/O lane.
+
+        Called when the tab becomes current or its load mode changes; the
+        previous tab's work continues as background work.
+        """
+        if not self.closed:
+            self.model.cache.set_foreground(self.foreground_owners())
+
     def _resolve_default(self, candidates: list[str]) -> None:
         if not self.closed:
             self.scan_label.setText("Finding default folder…")
@@ -442,7 +474,7 @@ class FolderExplorer(QWidget):
             self.model.set_load_state(path, "")
         self._load_path = None
         self._loading_data.clear()
-        self.loading = False
+        self.loading = self.load_paused = False
         self.load_error = ""
 
     def _trim_background(self) -> None:
@@ -453,6 +485,7 @@ class FolderExplorer(QWidget):
     def _begin_load(self, path: str) -> None:
         self.loading, self.load_progress, self.load_error = True, None, ""
         self.load_queued = True
+        self.load_paused = False
         self.load_attempt = 1
         self.load_listing = ""
         self.load_files = self.load_failed_files = 0
@@ -542,8 +575,10 @@ class FolderExplorer(QWidget):
         if request.operation != "load" or path not in self._bg_paths:
             return
         kind = event["kind"]
-        if kind in ("queued", "started"):
+        if kind in ("queued", "started", "resumed"):
             self.model.set_load_state(path, "queued" if kind == "queued" else "loading")
+        elif kind == "paused":
+            self.model.set_load_state(path, "paused")
         elif kind in ("loaded", "error", "cancelled"):
             del self._bg_paths[path]
             self.model.set_load_state(path, "")
@@ -590,8 +625,13 @@ class FolderExplorer(QWidget):
             return
         if request.operation != "load" or request.path != self._load_path:
             return
-        if kind in ("queued", "started"):
+        if kind in ("paused", "resumed"):
+            self.load_paused = kind == "paused"
+            if not self.load_queued:
+                self.model.set_load_state(request.path, "paused" if self.load_paused else "loading")
+        elif kind in ("queued", "started"):
             self.load_queued = kind == "queued"
+            self.load_paused = False
             self.model.set_load_state(request.path, "queued" if self.load_queued else "loading")
             self.load_attempt = event.get("attempt", self.load_attempt)
             if event.get("retry"):
@@ -621,6 +661,7 @@ class FolderExplorer(QWidget):
             self.load_cache_warning = event["message"]
             logging.warning("Folder cache %s: %s", request.path, self.load_cache_warning)
         elif kind == "loaded":
+            self.load_paused = False
             self.load_source = event.get("source", "")
             self.load_counts = dict(event.get("load_counts", {}))
             self._load_cache_pending = bool(event.get("disk_cache_pending"))
@@ -647,7 +688,7 @@ class FolderExplorer(QWidget):
                 self.model.changed(node)
             self.dataLoaded.emit(request.path)
         elif kind in ("error", "cancelled"):
-            self.loading = False
+            self.loading = self.load_paused = False
             self._loading_data.clear()
             self.load_error = event.get("message", "Cancelled — Retry")
             self.model.set_load_state(request.path, "")
@@ -670,17 +711,18 @@ class FolderExplorer(QWidget):
     def loading_message(self) -> str:
         if self.load_queued:
             return "Queued"
+        paused = " · Paused" if self.load_paused else ""
         if self.load_progress is None:
             parts = [f"Retrying… (attempt {self.load_attempt} of 3)"] if self.load_attempt > 1 else []
             parts.append(self.load_listing or ("" if parts else "Preparing…"))
-            return " · ".join(filter(None, parts))
+            return " · ".join(filter(None, parts)) + paused
         percent = f"{self.load_progress:.0%}"
         if self.load_total_files is None:
-            return percent
+            return percent + paused
         message = f"{self.load_files} of {self.load_total_files} files loaded ({percent})"
         if self.load_failed_files:
             message += f" · {self.load_failed_files} unreadable"
-        return message
+        return message + paused
 
     @property
     def loading_tooltip(self) -> str:
@@ -839,6 +881,8 @@ class FolderExplorer(QWidget):
                     text += f" · {self.load_files:,} loaded ({self.load_progress:.0%})"
                     if self.load_failed_files:
                         text += f" · {self.load_failed_files:,} unreadable"
+                    if self.load_paused:
+                        text += " · Paused"
             elif dataset and dataset.path == path:
                 loaded = int(dataset.metadata["files"])
                 text += f" · {loaded:,} loaded"
@@ -1217,7 +1261,7 @@ class FolderExplorer(QWidget):
         if self._load_path is not None:
             self.model.set_load_state(self._load_path, "")
         self._load_path = None
-        self.loading = self.load_queued = False
+        self.loading = self.load_queued = self.load_paused = False
         self._loading_data.clear()
         if visible_load:
             self.load_error = "Cancelled — Retry"
@@ -1235,6 +1279,8 @@ class FolderExplorer(QWidget):
     def close_cleanup(self) -> None:
         if self.closed:
             return
+        if self.is_foreground:
+            self.model.cache.set_foreground(set())
         self._cancel_background()
         self.closed = True
         self.visible_timer.stop()

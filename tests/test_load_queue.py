@@ -498,3 +498,44 @@ def test_load_mode_setting_and_menu_apply_to_tabs(qtbot: QtBot, tmp_path: Path, 
     HelabMainWindow.apply_load_mode(window, "unknown")
     assert explorer.load_mode == DEFAULT_LOAD_MODE
     finish(explorer, service)
+
+
+def test_paused_selected_load_is_shown_in_summary_and_row(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service, cache, explorer, (a, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "finish")
+    assert explorer.is_foreground
+    select(explorer, a)
+    request = start_load(cache, a)
+    service.resultReady.emit(request, {"kind": "progress", "progress": 0.37, "loaded_files": 456,
+                                       "total_files": 1234})
+    service.resultReady.emit(request, {"kind": "paused"})
+    explorer._update_activity()
+    assert explorer.loading_message == "456 of 1234 files loaded (37%) · Paused"
+    assert "1,234 TXY found · 456 loaded (37%) · Paused" in explorer.folder_summary_label.text()
+    index = explorer.model.path_index(a)
+    assert explorer.model.data(index, explorer.model.LOAD_QUEUED_ROLE)
+    service.resultReady.emit(request, {"kind": "resumed"})
+    explorer._update_activity()
+    assert "Paused" not in explorer.folder_summary_label.text()
+    assert explorer.model.load_states[a] == "loading"
+    finish(explorer, service)
+    assert not cache.foreground_owners
+
+
+def test_queue_mode_keeps_queued_loads_in_the_foreground(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service, cache, explorer, _ = make_explorer(qtbot, monkeypatch, tmp_path, "finish")
+    assert cache.foreground_owners == {explorer.model.owner}
+    explorer.load_mode = "queue"
+    assert cache.foreground_owners == {explorer.model.owner, explorer.bg_owner}
+    other = FolderExplorer(str(tmp_path), str(tmp_path), str(tmp_path), [0])
+    qtbot.addWidget(other)
+    assert not other.is_foreground  # The first tab keeps it until another becomes current.
+    other.claim_foreground()
+    assert other.is_foreground and not explorer.is_foreground
+    explorer.load_mode = "finish"
+    assert cache.foreground_owners == {other.model.owner}
+    other.close_cleanup()
+    finish(explorer, service)

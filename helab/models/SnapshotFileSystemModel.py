@@ -85,7 +85,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.closed = False
         self._refresh_sequence = 0
         self.folder_opened_path: str | None = None
-        # Dataset loads by path ("queued" or "loading"); kept across root changes
+        # Dataset loads by path ("queued", "loading" or "paused"); kept across root changes
         # because background loads outlive the visible tree.
         self.load_states: dict[str, str] = {}
         self.cache.resultReady.connect(self._on_event)
@@ -172,7 +172,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if role == self.BUSY_ROLE:
             return load_state == "loading" or node.state in ("queued", "running")
         if role == self.LOAD_QUEUED_ROLE:
-            return load_state == "queued"
+            # A paused load waits like a queued one.
+            return load_state in ("queued", "paused")
         if role == int(Qt.ItemDataRole.ToolTipRole):
             from helab.utils.scan_history import history_tooltip
             cached = ("\nShared RAM dataset available (read-only arrays)" if self.cache.current_dataset(node.path)
@@ -206,7 +207,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 return f"{node.path}\n{node.error}\nPrevious results retained; Retry to refresh.{scan_age}{cached}{freshness}"
             details = (f"\nStatus: {report.status}\nRaw shots: {node.raw_count}"
                        f"\nConverted shots: {node.txy_count}" if report else "")
-            activity = {"loading": "Loading dataset", "queued": "Queued to load dataset"}.get(load_state, node.state)
+            activity = {"loading": "Loading dataset", "queued": "Queued to load dataset",
+                        "paused": "Loading paused while the current tab browses or loads"}.get(load_state, node.state)
             return f"{node.path}\n{activity}{details}{scan_age}{cached}{verification}{freshness}"
         if role == int(Qt.ItemDataRole.ForegroundRole) and node.error:
             return QColor("#b86c1d")

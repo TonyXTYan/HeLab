@@ -61,9 +61,10 @@ class SettingsDialog(QDialog):
         self.simultaneous_io_spin = QSpinBox()
         self.simultaneous_io_spin.setRange(1, MAX_SIMULTANEOUS_IO)
         self.simultaneous_io_spin.setToolTip(
-            "Shared across all tabs for browsing, basic scans, loading and cache writes. "
-            "Navigation and loads run before bulk scans. Running work finishes when the limit is lowered.")
-        folder_io_form.addRow("Simultaneous folder I/O operations:", self.simultaneous_io_spin)
+            "Shared across all tabs for background loads, folder details, basic scans and cache writes. "
+            "One extra lane is reserved for browsing and the selected folder's load in the current tab; "
+            "background work pauses while it runs. Running work finishes when the limit is lowered.")
+        folder_io_form.addRow("Simultaneous background I/O operations:", self.simultaneous_io_spin)
         self.general_layout.addLayout(folder_io_form)
         self.auto_scan_visible_checkbox = QCheckBox("Automatically basic scan folders in view")
         self.auto_scan_visible_checkbox.setToolTip(

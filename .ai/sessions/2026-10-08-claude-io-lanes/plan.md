@@ -2,7 +2,7 @@
 
 Date: 2026-10-08
 Baseline: `b40547b` on `dev/v0.0.5a`, plus the large uncommitted folder-browser work (summary panel, shared I/O queue, scan-failure history, stopping display, live-load fix).
-Status: Phases 1–2 done 2026-10-08 (274 passed, mypy --strict and pyright clean, uncommitted); Phase 3 awaits Tony's go-ahead. Agreed with 🎓Tony in chat on 2026-10-08.
+Status: Phases 1–2 committed (`9b169c2`, `e01aeef`). Phase 3 implemented 2026-10-08 (296 passed, mypy --strict and pyright clean, uncommitted); Phase 4 next. Agreed with 🎓Tony in chat on 2026-10-08.
 
 ## Context
 
@@ -114,6 +114,13 @@ Implementation notes:
   - Summary line 2 / status line: `… · 456 loaded (37%) · Paused`.
   - Queue tooltip rows: "Paused" for paused helpers, plus foreground/background grouping.
   - Main status bar counts paused loads separately.
+
+Implementation notes (Phase 3):
+- `IORequest.lane` is set at dispatch; `IOService.is_foreground` is `FolderCache._is_foreground`: a `list`/`resolve`/`load` job with a subscriber in `FolderCache.foreground_owners`. `FolderExplorer.claim_foreground()` sets `{model.owner}` (plus `bg_owner` in queue mode) when the tab becomes current (`FolderTabWidget.on_current_tab_changed`), when the first explorer is created, and when its load mode changes; `close_cleanup` clears it.
+- `_dispatch`: `_update_lanes` first (a load leaving the foreground takes a background slot or is requeued with reason `REQUEUED`, same attempt and file attempts; other work finishes as overflow), then foreground starts, then background if `_background_room()` and, for pausable operations, not `hold_background()`.
+- `_apply_pauses` each tick writes/removes `<output>/pause`; every helper now gets a private folder (`payload["control"]`). `io_helper.Pause.checkpoint` runs in `Heartbeat` and before each load file. A paused request's timeout check is skipped; `resumed` refreshes `last_activity`.
+- Display: `FolderExplorer.load_paused` → `loading_message`/summary "· Paused"; row load state `paused` shows the queued glyph; queue tooltip section "Paused while the current tab browses or loads"; main status bar "N loads paused"/"N scans paused"; requeued helpers show "background load to stop" / "restarts from the shots already loaded when it exits".
+- Tests: `tests/test_io_lanes.py`; explorer display and load-mode tests at the end of `tests/test_load_queue.py`. A real-helper check paused a 2,000-file background load within ~40 ms of a foreground listing and resumed it 0.5 s later.
 
 ## Phase 4: measurement and docs
 

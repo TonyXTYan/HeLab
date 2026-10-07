@@ -23,6 +23,36 @@ def emit(event: dict[str, Any]) -> None:
     print(json.dumps(event, ensure_ascii=True), flush=True)
 
 
+class Pause:
+    """Cooperative pause: the parent creates ``pause`` in the request's private
+    folder while the current tab browses or loads, and removes it to resume.
+
+    Checked between files and entries, so a call already in progress finishes.
+    """
+    CHECK_INTERVAL = 0.02
+    POLL = 0.05
+    flag: str | None = None
+    last_check = 0.0
+
+    @classmethod
+    def configure(cls, control: str | None) -> None:
+        cls.flag = os.path.join(control, "pause") if control else None
+        cls.last_check = 0.0
+
+    @classmethod
+    def checkpoint(cls, send: Emit) -> None:
+        now = time.monotonic()
+        if cls.flag is None or now - cls.last_check < cls.CHECK_INTERVAL:
+            return
+        cls.last_check = now
+        if not os.path.exists(cls.flag):
+            return
+        send({"kind": "paused"})
+        while os.path.exists(cls.flag):
+            time.sleep(cls.POLL)
+        send({"kind": "resumed"})
+
+
 class Heartbeat:
     """Tell the parent a slow listing is still progressing (resets its no-progress timer)."""
     INTERVAL = 1.0
@@ -32,6 +62,7 @@ class Heartbeat:
         self.last = time.monotonic()
 
     def __call__(self, count: int = 1) -> None:
+        Pause.checkpoint(self.send)
         self.count += count
         now = time.monotonic()
         if now - self.last >= self.INTERVAL:
@@ -433,6 +464,7 @@ def load(path: str, output: str, send: Emit = emit,
         return array
 
     for i, (shot, filename) in enumerate(files):
+        Pause.checkpoint(send)
         send({"kind": "file_started", "filename": filename})
         try:
             array = None
@@ -496,6 +528,7 @@ def load(path: str, output: str, send: Emit = emit,
     try:
         for shot, filename in files:
             if shot in in_memory and shot not in data:
+                Pause.checkpoint(send)
                 send({"kind": "file_started", "filename": filename})
                 try:
                     read_txy(shot, filename)
@@ -533,6 +566,7 @@ def main() -> None:
     try:
         request = json.loads(sys.stdin.readline())
         operation = request["operation"]
+        Pause.configure(request.get("control"))
         if operation == "drives":
             if sys.platform == "win32":
                 import ctypes
