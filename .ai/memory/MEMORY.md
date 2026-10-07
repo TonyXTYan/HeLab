@@ -11,3 +11,7 @@ See `.ai/coding-workspace.md` for what belongs here vs `.ai/sessions/`.
 - [Folder summary indicators](results/folder-summary-indicators.md) — 4-line summary under the path bar, Deselect/Cancel, "Cached data found/loaded" wording, package+clock / amber-clock freshness icons
 - [Basic scan defaults & failures](results/basic-scan-defaults-and-failures.md) — auto basic scan off by default and never rescans; persisted failure history suppresses auto scans; magnifying-glass ! badge replaces "Unavailable"
 - [v0.0.5a folder-browser open threads](project_v0.0.5a-folder-browser.md) — committed 2026-10-08; io-lanes Phases 3–4 next, undecided signature-carry fix; cache dirs now in ~/Library/Caches/HeLab
+
+## TODO
+
+- [ ] [Make status messages reflect actual operations and states](../sessions/2026-10-08-codex-status-message-review/review.md) — prioritise current errors over old scan results; distinguish queued/running/paused work and load phases; correct file-progress percentages, background counts and cache-writing indicators. Keep "Scanning: checking file counts and status…" for running scans. Full message inventory and reproduced cases are in the linked review (2026-10-08).

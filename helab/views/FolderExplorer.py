@@ -776,7 +776,7 @@ class FolderExplorer(QWidget):
                     ready += f" · {self.load_cache_reason}"
         action = ("Queued" if self.loading and self.load_queued else
                   "Finding default folder…" if resolving else loading_action if self.loading
-                  else "Checking for changes" if scans and node and node.loaded else "Scanning folders")
+                  else "Scanning: checking file counts and status…" if scans else "Scanning folders")
         status = "Queued" if self.loading and self.load_queued else action
         background = len(self._bg_paths)
         text = " · ".join(filter(None, (
@@ -919,7 +919,7 @@ class FolderExplorer(QWidget):
             elif retrying:
                 text += f" · {self.retry_message(retrying)}"
             elif scanning:
-                text += " · Checking for changes…"
+                text += " · Checking file counts and status…"
         self.folder_summary_label.setText(text)
         load_details = ""
         if shown and dataset is not None:
