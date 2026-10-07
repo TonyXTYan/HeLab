@@ -30,8 +30,11 @@ Open threads:
 - Per-row "Retry 2/3" tree state: not chosen; revisit only if Tony asks.
 - An open tooltip doesn't live-refresh "stopping for N s" (Qt limitation;
   accepted).
-- **Latent bug:** `get_path_from_setting_or_use_default` in
-  `helab/utils/constants.py` checks a saved cache/temp path with
-  `os.path.exists` only, not `os.access(..., os.W_OK)`. On the Lab Main PC a
-  non-writable saved path crashes HeLab at import (see
-  [[lab-main-pc-caveats]]). Still present on 2026-10-08.
+- Fixed 2026-10-08 (after the big commit): default cache/temp folders moved
+  from the system temp dir to `~/Library/Caches/HeLab` (macOS) /
+  `%LOCALAPPDATA%\HeLab` (Windows); unwritable saved paths fall back instead
+  of crashing (see [[lab-main-pc-caveats]]). Tony's 634 MB cache was moved
+  there by the launch-time rename.
+- 485 `helab_*` folders sit in macOS `$TMPDIR`, mostly from test runs
+  (`helab_test_*` from conftest, `helab_data_*`/`helab_io_*` from helpers).
+  The OS cleans them eventually; not deleted (Tony didn't ask).

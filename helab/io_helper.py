@@ -102,10 +102,13 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                 identity: object = None) -> None:
     """Browse step 1: names only, so a slow volume shows subfolders and counts first.
 
-    One scandir with no per-entry stat (``is_dir`` uses the listing's file type) and no
-    per-subfolder cache lookup. Signature, dates and subfolder details come from the
-    ``details`` scan (step 2) or from a load of this folder. Nothing is written.
+    One scandir with no per-entry stat (``is_dir`` uses the listing's file type).
+    Each subfolder's saved summary, scan history and cache flags are read from the
+    local cache, never the source, so saved badges appear with the names; their
+    identity is checked by the ``details`` scan (step 2), which also adds the
+    signature and dates. Nothing is written.
     """
+    from helab.utils.scan_history import read_history
     cache = _open_cache(cache_options)
     try:
         _send_saved(cache, path, send, identity)
@@ -126,7 +129,13 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                     txy.add(int(match.group(1)))
                 elif entry.is_dir(follow_symlinks=False):
                     has_dirs = True
-                    entries.append({"path": entry.path, "name": entry.name})
+                    child: dict[str, Any] = {"path": entry.path, "name": entry.name}
+                    if cache is not None:
+                        child.update(scan_history=read_history(cache, entry.path),
+                                     scan_status=_scan_info(cache, entry.path),
+                                     disk_cached=_disk_cached(cache, entry.path),
+                                     cache_info=_cache_info(cache, entry.path))
+                    entries.append(child)
                     if len(entries) >= 128:
                         send({"kind": "entries", "entries": entries})
                         entries = []
@@ -326,8 +335,9 @@ def load(path: str, output: str, send: Emit = emit,
     total_size = sum(size for _, size, _ in fingerprint)
     if total_size > 1 << 30:
         raise ValueError("Folder exceeds the 1 GiB input limit")
-    # This listing and fingerprint are a complete status check, so browsing skips
-    # its own details scan (step 2) while this load runs. Sent and saved before any
+    # This listing and fingerprint are a complete status check of this folder, so
+    # browsing skips its details scan (step 2) while this load runs, unless the
+    # folder has subfolders (their dates come from step 2). Sent and saved before any
     # file is read; a basic scan's success is still needed to clear a failure.
     summary = _summary(path, raw, {shot for shot, _ in files}, has_dirs, False, fingerprint, listed_at)
     send({"kind": "scan_summary", "status": summary})

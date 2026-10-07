@@ -1,4 +1,6 @@
 import os
+import sys
+import tempfile
 from pathlib import Path
 from typing import Callable
 
@@ -86,3 +88,83 @@ def test_setting_with_mixed_valid_and_invalid_candidates(cleanup_settings: Calla
 
     result = get_path_from_setting_or_use_default("test_key", candidates, settings=settings)
     assert result == str(valid_candidate)
+
+@pytest.mark.parametrize("platform, env, expected", [
+    ("darwin", {}, ("Library", "Caches", "HeLab", "caches")),
+    ("win32", {"LOCALAPPDATA": "LOCAL"}, ("LOCAL", "HeLab", "caches")),
+    ("win32", {}, ("AppData", "Local", "HeLab", "caches")),
+    ("linux", {"XDG_CACHE_HOME": "XDG"}, ("XDG", "HeLab", "caches")),
+    ("linux", {}, (".cache", "HeLab", "caches")),
+])
+def test_default_app_dir_is_a_persistent_per_user_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, platform: str, env: dict[str, str], expected: tuple[str, ...],
+) -> None:
+    monkeypatch.setattr("sys.platform", platform)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    for name in ("LOCALAPPDATA", "XDG_CACHE_HOME"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, str(tmp_path / value))
+    assert Path(default_app_dir("caches")) == tmp_path.joinpath(*expected)
+
+
+def test_missing_default_folder_is_created(cleanup_settings: Callable[[], QSettings], tmp_path: Path) -> None:
+    target = tmp_path / "HeLab" / "caches"
+    settings = cleanup_settings()
+    assert get_path_from_setting_or_use_default("dir_caches", [str(target)], settings, create=True) == str(target)
+    assert target.is_dir() and settings.value("dir_caches") == str(target)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="chmod cannot make a Windows folder read-only")
+def test_read_only_saved_folder_is_replaced(cleanup_settings: Callable[[], QSettings], tmp_path: Path) -> None:
+    # E.g. a cache path saved by an elevated session; it used to crash HeLab at import.
+    locked, fallback = tmp_path / "locked", tmp_path / "fallback"
+    locked.mkdir()
+    locked.chmod(0o500)
+    try:
+        settings = cleanup_settings()
+        settings.setValue("dir_caches", str(locked))
+        assert get_path_from_setting_or_use_default("dir_caches", [str(fallback)], settings, create=True) == str(fallback)
+    finally:
+        locked.chmod(0o700)
+
+
+def legacy_folder(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str) -> Path:
+    system_temp = tmp_path / "system-temp"
+    system_temp.mkdir()
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(system_temp))
+    folder = system_temp / name
+    folder.mkdir()
+    (folder / "data_ram_cache").mkdir()
+    return folder
+
+
+def test_legacy_temp_cache_is_moved_to_the_persistent_folder(
+    cleanup_settings: Callable[[], QSettings], monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    old = legacy_folder(monkeypatch, tmp_path, "helab_caches_wbnee1u8")
+    target = tmp_path / "Library" / "Caches" / "HeLab" / "caches"
+    settings = cleanup_settings()
+    settings.setValue("dir_caches", str(old))
+    migrate_legacy_temp_dir("dir_caches", "caches", settings, str(target))
+    assert not old.exists() and (target / "data_ram_cache").is_dir()
+    assert settings.value("dir_caches") == str(target)
+
+
+@pytest.mark.parametrize("case", ["user folder", "target exists", "rename fails"])
+def test_legacy_move_never_loses_or_overwrites_a_cache(
+    cleanup_settings: Callable[[], QSettings], monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: str,
+) -> None:
+    old = legacy_folder(monkeypatch, tmp_path, "my_caches" if case == "user folder" else "helab_caches_x")
+    target = tmp_path / "HeLab" / "caches"
+    if case == "target exists":
+        target.mkdir(parents=True)
+    if case == "rename fails":
+        def fail(*args: object) -> None:
+            raise OSError("cross-device link")
+        monkeypatch.setattr(os, "rename", fail)
+    settings = cleanup_settings()
+    settings.setValue("dir_caches", str(old))
+    migrate_legacy_temp_dir("dir_caches", "caches", settings, str(target))
+    assert (old / "data_ram_cache").is_dir() and settings.value("dir_caches") == str(old)

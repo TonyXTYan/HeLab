@@ -67,8 +67,13 @@ returns. With the default of 1 slot, all other I/O waits meanwhile.
 - `list`: one scandir, names only, gives counts/status at once; "Listing… N
   entries" in the summary. `details`: the full scan, in the background after
   the listing, for signature, dates and subfolder badges.
-- `details` is skipped while a load of that folder runs; the load sends and
-  saves the same folder summary. Empty signature = unknown, never "changed".
+- The listing also reads each subfolder's saved summary/history/cache flags
+  from the local cache (never the source). Fixed 2026-10-08: without this, a
+  loading root skipped step 2, so `/Volumes/dld_output`'s 67 subfolders showed
+  no saved status and auto visible scans rescanned them one by one.
+- `details` is skipped while a load runs only for folders without
+  subfolders; the load sends and saves the same folder summary. Empty
+  signature = unknown, never "changed".
 
 ## How stopping helpers are shown (decided 2026-10-08)
 

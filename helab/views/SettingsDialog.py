@@ -100,8 +100,9 @@ class SettingsDialog(QDialog):
         self.dir_caches_browse_btn.clicked.connect(self.browse_dir_caches)
         self.dir_temps_open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.dir_temps_edit.text())))
         self.dir_caches_open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.dir_caches_edit.text())))
-        self.dir_temps_reset_btn.clicked.connect(lambda: self.dir_temps_edit.setText(get_path_from_setting_or_use_default("dir_temps", DIR_TEMPS_CANDIDATES)))
-        self.dir_caches_reset_btn.clicked.connect(lambda: self.dir_caches_edit.setText(get_path_from_setting_or_use_default("dir_caches", DIR_CACHES_CANDIDATES)))
+        # Reset shows the persistent default; it is saved (and created on next launch) with Save.
+        self.dir_temps_reset_btn.clicked.connect(lambda: self.dir_temps_edit.setText(default_app_dir("temps")))
+        self.dir_caches_reset_btn.clicked.connect(lambda: self.dir_caches_edit.setText(default_app_dir("caches")))
 
 
 

@@ -99,8 +99,11 @@ def test_listing_reads_names_only_and_never_writes(tmp_path: Path, monkeypatch: 
     assert (status["status"], status["count"], status["raw"], status["txy"]) == ("ok", 2, [1, 2], [1, 2])
     assert not status["details"] and not status["empty"] and status["has_dirs"]
     assert not {"signature", "modified", "identity"} & set(status)
-    assert [entry for event in events if event["kind"] == "entries" for entry in event["entries"]] == [
-        {"path": str(source / "run"), "name": "run"}]
+    entries = [entry for event in events if event["kind"] == "entries" for entry in event["entries"]]
+    assert [(entry["path"], entry["name"]) for entry in entries] == [(str(source / "run"), "run")]
+    # Saved cache metadata comes along; dates and identities need a stat (step 2).
+    assert {"scan_history", "scan_status", "disk_cached", "cache_info"} <= set(entries[0])
+    assert not {"modified", "identity"} & set(entries[0])
     # The folder's own saved summary is restored; nothing is written.
     assert next(event for event in events if event["kind"] == "scan_cached")["status"] == saved
     with FanoutCache(options["directory"], **options["params"]) as disk:
@@ -146,9 +149,10 @@ def test_load_of_the_selected_folder_replaces_details_and_saves_its_summary(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     service = frozen_service(monkeypatch)
-    data_folder(tmp_path, subfolder=False)
+    source = tmp_path / "source"
+    data_folder(source, subfolder=False)
     (tmp_path / "artifacts").mkdir()
-    path = str(tmp_path)
+    path = str(source)
     explorer = FolderExplorer(path, path, path, [0, 4, 5])
     qtbot.addWidget(explorer)
     explorer.selectionPathChanged.connect(lambda p: explorer.load_to_ram_cache(p, dwell=False))
@@ -156,7 +160,8 @@ def test_load_of_the_selected_folder_replaces_details_and_saves_its_summary(
     options = explorer.model._cache_options
     qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
     replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
-    # The listing's counts start the load; the load lists and fingerprints the folder itself.
+    # The listing's counts start the load. Without subfolders, the load lists and
+    # fingerprints everything step 2 would.
     assert ("load", path) in cache.jobs and ("details", path) not in cache.jobs
     replay(qtbot, cache, path, "load", lambda send: load(path, str(tmp_path / "artifacts"), send, options))
     dataset = explorer.displayed_dataset
@@ -212,4 +217,67 @@ def test_scan_started_before_a_cache_clear_cannot_restore_the_cached_flag(
     cache.submit("other", 0, path, "scan", {}, force=True)
     service.resultReady.emit(producer(cache, path, "scan"), status)
     assert cache.disk_cached(path)
+    service.shutdown()
+
+
+def test_startup_restores_saved_subfolder_status_without_rescanning(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A loading root with saved subfolder summaries: badges appear with the names,
+    automatic visible scans have nothing to do, and the root's details still run
+    for subfolder dates."""
+    service = frozen_service(monkeypatch)
+    data_folder(tmp_path, subfolder=False)
+    children = [tmp_path / f"run_{i}" for i in range(3)]
+    for child in children:
+        data_folder(child, subfolder=False)
+    path = str(tmp_path)
+    explorer = FolderExplorer(path, path, path, [0, 4, 5])
+    qtbot.addWidget(explorer)
+    explorer.selectionPathChanged.connect(lambda p: explorer.load_to_ram_cache(p, dwell=False))
+    cache = explorer.model.cache
+    options = explorer.model._cache_options
+    for child in children:
+        scan(str(child), lambda event: None, options)  # Saved by a previous session.
+    explorer.resize(420, 350)
+    explorer.show()
+    explorer.set_auto_scan_visible(True)
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    nodes = [explorer.model.nodes[str(child)] for child in children]
+    assert all(node.report is not None and node.txy_count == 2 and node.cached_report for node in nodes)
+    explorer._check_visible_folders()
+    assert not [r for r in service.pending if r.operation == "scan"]
+    # The root loads (it has TXY files) and still gets details for its subfolders.
+    assert ("load", path) in cache.jobs and ("details", path) in cache.jobs
+    replay(qtbot, cache, path, "details", lambda send: scan(path, send, options))
+    assert all(node.modified is not None and node.identity is not None for node in nodes)
+    assert all(node.report is not None for node in nodes)
+    explorer.close_cleanup()
+    service.shutdown()
+
+
+def test_saved_summary_of_a_replaced_folder_is_dropped_by_details(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = frozen_service(monkeypatch)
+    child = tmp_path / "run"
+    data_folder(child, subfolder=False)
+    path = str(tmp_path)
+    explorer = FolderExplorer(path, path, path, [0, 4, 5])
+    qtbot.addWidget(explorer)
+    cache = explorer.model.cache
+    options = explorer.model._cache_options
+    scan(str(child), lambda event: None, options)
+    # The folder is replaced by another one with the same name.
+    os.rename(child, tmp_path / "old-run")
+    data_folder(child, subfolder=False)
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    node = explorer.model.nodes[str(child)]
+    assert node.report is not None  # Saved summary shown provisionally.
+    replay(qtbot, cache, path, "details", lambda send: scan(path, send, options))
+    stat = child.stat()
+    assert node.identity == [stat.st_dev, stat.st_ino] and node.report is None
+    explorer.close_cleanup()
     service.shutdown()

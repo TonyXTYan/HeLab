@@ -24,6 +24,7 @@ from helab.utils.folder_cache import SCANS, get_folder_cache
 from helab.utils.caching_setup import load_cache_param
 from helab.utils.constants import DIR_CACHES
 from helab.utils.time_format import relative_age
+from helab.utils.scan_history import folder_identity
 from helab.utils.cache_freshness import CacheFreshness, cache_freshness, data_as_of, freshness_tooltip, metadata_date
 
 
@@ -336,12 +337,20 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         """Browse step 2 in the background: signature, dates and subfolder details."""
         key = self.cache.key(node.path)
         snapshot = self.cache.snapshots.get(key)
-        # A load of this folder lists and fingerprints it and saves its summary.
-        if (snapshot and snapshot.status.get("details") or ("load", key) in self.cache.jobs
+        # A load of a folder without subfolders lists and fingerprints everything a
+        # details scan would, and saves the summary. Subfolder dates need step 2.
+        loading = ("load", key) in self.cache.jobs and not node.children
+        if (snapshot and snapshot.status.get("details") or loading
                 or self.cache.has_request(self.owner, "details", key)):
             return
         payload = {"cache": self._cache_options, "scan_manual": manual, "identity": node.identity}
         self.cache.submit(self.owner, self.generation, node.path, "details", payload)
+
+    @staticmethod
+    def _same_folder(node: FolderNode, summary: dict[str, Any]) -> bool:
+        """A saved summary for another directory at this path must not be restored."""
+        saved = folder_identity(summary.get("identity"))
+        return saved is None or node.identity is None or saved == node.identity
 
     def _restore_summary(self, node: FolderNode, status: dict[str, Any]) -> None:
         node.scanned_at = metadata_date(status.get("scanned_at"))
@@ -414,6 +423,10 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                         child.loaded = not cached.entries
                     elif summary := entry.get("scan_status") or self.cache.scan_summaries.get(path):
                         self._restore_summary(child, summary)
+                        if child.identity is None:
+                            # Provisional until a details entry reports the folder's identity;
+                            # a different folder at this path then drops the saved summary.
+                            child.identity = folder_identity(summary.get("identity"))
                     new.append(child)
                     self.nodes[path] = child
                 else:
@@ -424,8 +437,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                     child.identity = entry.get("identity", child.identity)
                     if "modified" in entry:
                         self._observe_modified(child, entry["modified"], entry.get("modified_observed_at"))
-                    if child.report is None and (summary := entry.get("scan_status")
-                                                 or self.cache.scan_summaries.get(path)):
+                    summary = entry.get("scan_status") or self.cache.scan_summaries.get(path)
+                    if child.report is None and summary and self._same_folder(child, summary):
                         self._restore_summary(child, summary)
                     self.changed(child)
             if new:

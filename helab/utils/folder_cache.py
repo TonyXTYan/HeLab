@@ -465,8 +465,9 @@ class FolderCache(QObject):
         snapshot = self.snapshots.get(path)
         if (snapshot and not snapshot.status.get("signature")
                 and snapshot.status.get("txy") == status["txy"] and snapshot.status.get("raw") == status["raw"]):
+            # Subfolder dates and identities still need the details scan.
             snapshot.status = {**snapshot.status, **{key: status[key] for key in (
-                "signature", "identity", "modified", "details")}}
+                "signature", "identity", "modified")}, "details": not status["has_dirs"]}
 
     def _cancel_replays(self, path: str) -> None:
         for request in list(self._deliveries):

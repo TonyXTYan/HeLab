@@ -89,12 +89,16 @@ Two diagnostics worth knowing:
   (`C:\Users\BECMAC~1\AppData\Local\Temp`); an SSH session's is the long form
   (`C:\Users\BEC Machine\...`).
 
-**Latent code bug behind all this:**
-`get_path_from_setting_or_use_default` in `helab/utils/constants.py` validates a
-stored path with `os.path.exists(value)` only. Adding
-`os.access(value, os.W_OK)` would make HeLab fall back to a fresh temp dir
-instead of crashing at import with an error that names neither the directory
-nor the permission problem.
+**Code bug behind all this — fixed 2026-10-08:**
+`get_path_from_setting_or_use_default` used to accept any existing stored path.
+It now writes a probe file (`usable_directory`; `os.access` would not do, it
+ignores Windows ACLs) and falls back to `%LOCALAPPDATA%\HeLab\caches`, so a
+poisoned path no longer crashes at import. Defaults also moved out of `Temp`
+then: a launch renames an old `Temp\helab_caches_*` folder to
+`%LOCALAPPDATA%\HeLab\caches` (an admin-owned one fails to rename, logs a
+warning and is skipped). Launching over SSH is still a bad idea — an elevated
+launch could create an admin-owned `%LOCALAPPDATA%\HeLab` too; HeLab would then
+fall back to `Temp\helab_caches`.
 
 ## Shortcuts
 
