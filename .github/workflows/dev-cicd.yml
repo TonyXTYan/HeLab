@@ -95,14 +95,15 @@ jobs:
     name: Test on ${{ matrix.os }} py3.${{ matrix.python3-version }}
     runs-on: ${{ matrix.os }}-latest
     timeout-minutes: 15
-    # continue-on-error: true  # Allow continue to build even if tests fail
+    # Python 3.13 is required; other versions provide non-blocking compatibility checks.
     continue-on-error: ${{ matrix.python3-version != '13' }}
     strategy:
+      fail-fast: false
       matrix:
         os: [macos, windows, ubuntu]
         # os: [macos, windows]
         # python3-version: ["9", "10", "11", "12", "13", "14"]
-        python3-version: ["11", "12", "13"]
+        python3-version: ["11", "12", "13", "14"]
     env:
       QT_QPA_PLATFORM: offscreen
 
@@ -213,15 +214,16 @@ jobs:
     # name: Build on ${{ matrix.os }} - Python ${{ matrix.python-version }}
     # needs: test # speed up parallel jobs
     name: Build on ${{ matrix.os }} py3.${{ matrix.python3-version }}
-    # continue-on-error: true 
+    # Python 3.13 is required; other versions provide non-blocking compatibility checks.
     continue-on-error: ${{ matrix.python3-version != '13' }}
     runs-on: ${{ matrix.os }}-latest
     timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
         os: [macos, windows, ubuntu]
         # os: [macos, windows]
-        python3-version: ["11", "12", "13"]
+        python3-version: ["11", "12", "13", "14"]
 
     steps:
       - name: Checkout code
