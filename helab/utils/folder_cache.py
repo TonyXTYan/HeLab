@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+import base64
 from dataclasses import dataclass, field
 import logging
 import math
@@ -13,6 +14,7 @@ from uuid import uuid4
 import numpy as np
 import numpy.typing as npt
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtGui import QIcon, QPixmap
 
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.scan_history import ScanHistory, empty_history, parse_history, apply_outcome, for_identity, folder_identity
@@ -77,6 +79,8 @@ class FolderCache(QObject):
     datasetChanged = pyqtSignal(str)
     diskCacheChanged = pyqtSignal(str)
     scanHistoryChanged = pyqtSignal(str)
+    folderIconChanged = pyqtSignal(str)
+    MAX_FOLDER_ICONS = 4096
     FRESH_SECONDS: float = 10.0
     MAX_SNAPSHOTS: int = 256
     MAX_ENTRIES: int = 100_000
@@ -107,6 +111,8 @@ class FolderCache(QObject):
         self.metadata_notifications: set[str] = set()
         self.scan_histories: OrderedDict[str, ScanHistory] = OrderedDict()
         self.scan_history_errors: dict[str, str] = {}
+        # Native icons (including unsuccessful lookups) are session-only and bounded.
+        self.folder_icons: OrderedDict[str, QIcon] = OrderedDict()
         self._history_identity_dates: dict[str, float] = {}
         self._history_writes: dict[str, str] = {}
         # Subscriber owners of the current tab (its model, and in queue mode its
@@ -284,6 +290,29 @@ class FolderCache(QObject):
     def requests(self, owner: str) -> list[IORequest]:
         return [r for job in self.jobs.values() for r in job.subscribers.values() if r.owner == owner] + [
             r for r in self._deliveries if r.owner == owner and not r.cancelled.is_set()]
+
+    def remember_folder_icon(self, path: str, png: str = "") -> None:
+        pixmap = QPixmap()
+        try:
+            pixmap.loadFromData(base64.b64decode(png, validate=True), "PNG")
+        except ValueError:
+            pass
+        # Transport 32 physical pixels for the view's 16-pixel icon at 2x scale.
+        pixmap.setDevicePixelRatio(2)
+        self.folder_icons[path] = QIcon(pixmap)
+        self.folder_icons.move_to_end(path)
+        while len(self.folder_icons) > self.MAX_FOLDER_ICONS:
+            self.folder_icons.popitem(last=False)
+        self.folderIconChanged.emit(path)
+
+    def refresh_folder_icons(self, paths: list[str]) -> None:
+        targets = set(paths)
+        for job in list(self.jobs.values()):
+            if job.operation == "icons" and targets.intersection(job.payload["paths"]):
+                self._cancel_job(job)
+        for path in paths:
+            if self.folder_icons.pop(path, None) is not None:
+                self.folderIconChanged.emit(path)
 
     def retain(self, owner: str, dataset: Dataset) -> None:
         self.pins[owner] = dataset
@@ -577,6 +606,7 @@ class FolderCache(QObject):
         self.metadata_notifications.clear()
         self.scan_histories.clear()
         self.scan_history_errors.clear()
+        self.folder_icons.clear()
         self._history_identity_dates.clear()
 
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
@@ -780,6 +810,13 @@ class FolderCache(QObject):
                 self.datasetChanged.emit(job.path)
                 self._evict()
                 return
+        elif job.operation == "icons":
+            if kind == "folder_icon" and event["path"] in job.payload["paths"]:
+                self.remember_folder_icon(event["path"], event.get("png", ""))
+            elif kind in ("done", "error"):
+                for path in job.payload["paths"]:
+                    if path not in self.folder_icons:
+                        self.remember_folder_icon(path)
         elif job.operation == "resolve" and kind == "resolved":
             candidates = tuple(job.payload["candidates"])
             self._defaults[candidates] = event["path"]

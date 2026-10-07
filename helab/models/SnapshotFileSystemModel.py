@@ -1,7 +1,7 @@
 """A filesystem tree whose Qt queries only read memory.
 
 Directory discovery and status computation belong to IOService's helper
-processes. There is no QFileSystemModel gatherer or filesystem icon provider.
+processes. Native icons are supplied by a separate helper and held in memory.
 """
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from typing import Any, Iterator, cast, overload
 from uuid import uuid4
 
 from PyQt6.QtCore import QAbstractItemModel, QModelIndex, QObject, QPoint, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QTreeView
+from PyQt6.QtGui import QColor, QIcon
+from PyQt6.QtWidgets import QApplication, QStyle, QTreeView
 
 from helab.models.StatusReport import StatusReport
 from helab.resources.icons import StatusIcons
@@ -75,6 +75,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         super().__init__(parent)
         self.service = service or get_io_service()
         self.cache = get_folder_cache(self.service)
+        style = QApplication.style()
+        self._folder_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon) if style else QIcon()
         self._cache_options: dict[str, Any] = {"directory": os.path.join(DIR_CACHES, "data_ram_cache"),
                                                "params": dict(load_cache_param("data_ram_cache"))}
         self.owner = uuid4().hex
@@ -93,6 +95,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.datasetChanged.connect(self._shared_dataset_changed)
         self.cache.diskCacheChanged.connect(self._shared_dataset_changed)
         self.cache.scanHistoryChanged.connect(self._shared_dataset_changed)
+        self.cache.folderIconChanged.connect(self._folder_icon_changed)
 
     def node(self, index: QModelIndex) -> FolderNode | None:
         return cast(FolderNode, index.internalPointer()) if index.isValid() else None
@@ -224,6 +227,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                     return "Cancelled"
                 # The scan-failed badge says this; the error stays in the tooltip.
                 return "" if self.cache.scan_history(node.path)["blocked"] else "Unavailable"
+        if role == int(Qt.ItemDataRole.DecorationRole) and column == self.COLUMN_NAME:
+            icon = self.cache.folder_icons.get(node.path)
+            return icon if icon is not None and not icon.isNull() else self._folder_icon
         if role == int(Qt.ItemDataRole.DecorationRole) and column == self.COLUMN_STATUS_ICON:
             if not load_state and node.state not in ("queued", "running") and node.report:
                 icons = (StatusIcons.ICONS_STATUS_OLDER if self.status_freshness(node) == CacheFreshness.POSSIBLY_OLD
@@ -293,6 +299,22 @@ class SnapshotFileSystemModel(QAbstractItemModel):
     def changed(self, node: FolderNode) -> None:
         self.dataChanged.emit(self.path_index(node.path), self.path_index(node.path, 6))
         self.activityChanged.emit()
+
+    def request_folder_icons(self, paths: list[str]) -> bool:
+        """Called after viewport changes, never by data() or other render queries."""
+        if self.closed or self.root is None:
+            return False
+        missing = [path for path in dict.fromkeys(paths)
+                   if path in self.nodes and path not in self.cache.folder_icons][:64]
+        if not missing:
+            return True
+        return self.cache.submit(self.owner, self.generation, self.root.path, "icons",
+                                 {"paths": missing}, timeout=5.0)
+
+    def _folder_icon_changed(self, path: str) -> None:
+        if not self.closed and path in self.nodes:
+            index = self.path_index(path)
+            self.dataChanged.emit(index, index, [int(Qt.ItemDataRole.DecorationRole)])
 
     def request_scan(self, path: str, *, priority: bool = False, force: bool = False,
                      metadata_only: bool = False, automatic: bool = False, no_timeout: bool = False) -> bool:
@@ -545,6 +567,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
 
     def rescan(self, user_requested_scan: bool = False) -> None:
         if self.root:
+            self.cache.refresh_folder_icons([self.root.path, *self.viewport_paths()])
             self.request_scan(self.root.path, priority=True, force=True)
         self._refresh_sequence += 1
         sequence, generation = self._refresh_sequence, self.generation
@@ -580,3 +603,4 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.snapshotChanged.disconnect(self._shared_snapshot_changed)
         self.cache.datasetChanged.disconnect(self._shared_dataset_changed)
         self.cache.diskCacheChanged.disconnect(self._shared_dataset_changed)
+        self.cache.folderIconChanged.disconnect(self._folder_icon_changed)

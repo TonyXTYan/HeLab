@@ -84,13 +84,13 @@ class IOService(QObject):
     # expands do not stop and start it.
     RESUME_DELAY = 0.5
     LISTINGS = ("list", "resolve")
-    PAUSABLE = ("load", "list", "details", "scan")
+    PAUSABLE = ("load", "list", "details", "scan", "icons")
     LABELS = {"load": "Load data", "list": "Browse folder", "details": "Folder details",
               "scan": "Basic scan", "resolve": "Browse folder", "invalidate": "Clear data cache",
-              "scan_history": "Save scan history"}
+              "scan_history": "Save scan history", "icons": "Folder icons"}
     NOUNS = {"load": "load", "list": "folder listing", "details": "folder details scan",
              "scan": "basic scan", "resolve": "folder lookup", "invalidate": "cache clear",
-             "scan_history": "scan-history save"}
+             "scan_history": "scan-history save", "icons": "folder icon lookup"}
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)

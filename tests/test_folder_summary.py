@@ -767,13 +767,13 @@ def test_visible_folder_scans_default_off_and_can_be_disabled(
     qtbot.wait(200)
     assert not browser.auto_scan_visible
     browser._check_visible_folders()
-    assert not browser.model.cache.requests(browser.model.owner)
+    assert all(request.operation == "icons" for request in browser.model.cache.requests(browser.model.owner))
     browser.set_auto_scan_visible(True)
     assert browser.visible_timer.isActive()
     browser.set_auto_scan_visible(False)
     assert not browser.visible_timer.isActive()
     browser._check_visible_folders()
-    assert not browser.model.cache.requests(browser.model.owner)
+    assert all(request.operation == "icons" for request in browser.model.cache.requests(browser.model.owner))
 
 
 @pytest.mark.parametrize("limit", [1, 3])

@@ -287,6 +287,9 @@ class FolderExplorer(QWidget):
         self.visible_timer = QTimer(self)
         self.visible_timer.setSingleShot(True)
         self.visible_timer.timeout.connect(self._check_visible_folders)
+        self.icon_timer = QTimer(self)
+        self.icon_timer.setSingleShot(True)
+        self.icon_timer.timeout.connect(self._load_visible_icons)
         scroll_bar = self.tree.verticalScrollBar()
         if scroll_bar:
             scroll_bar.valueChanged.connect(self._schedule_visible_checks)
@@ -596,6 +599,10 @@ class FolderExplorer(QWidget):
         if self.closed or request.owner != self.model.owner or request.generation != self.model.generation:
             return
         kind = event["kind"]
+        if request.operation == "icons":
+            if kind in ("done", "error", "cancelled"):
+                self._schedule_visible_checks()
+            return
         if request.operation == "resolve":
             if kind == "resolved":
                 self.open_to_path(event["path"])
@@ -1022,8 +1029,17 @@ class FolderExplorer(QWidget):
         return super().eventFilter(a0, a1)
 
     def _schedule_visible_checks(self, *args: Any) -> None:
+        if not self.closed:
+            self.icon_timer.start(150)
         if not self.closed and self.auto_scan_visible:
             self.visible_timer.start(150)
+
+    def _load_visible_icons(self) -> None:
+        if self.closed or not self.isVisible():
+            return
+        paths = [self.model.rootPath(), *self._viewport_paths()]
+        if not self.model.request_folder_icons(paths):
+            self.icon_timer.start(250)
 
     def set_auto_scan_visible(self, enabled: bool) -> None:
         self.auto_scan_visible = enabled
@@ -1284,6 +1300,7 @@ class FolderExplorer(QWidget):
         self._cancel_background()
         self.closed = True
         self.visible_timer.stop()
+        self.icon_timer.stop()
         self.cancel_basic_scan()
         self.animation.stop()
         self.deep_timer.stop()
