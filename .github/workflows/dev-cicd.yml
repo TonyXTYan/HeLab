@@ -209,6 +209,25 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
+      - name: Report Python 3.13 test failure
+        if: matrix.python3-version == '13' && failure() && !cancelled()
+        shell: bash
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          PYTHON_MINOR: ${{ matrix.python3-version }}
+        run: |
+          echo "::error title=Python 3.${PYTHON_MINOR} test failed on ${MATRIX_OS}::Required test job failed on ${MATRIX_OS}-latest (${RUNNER_OS}/${RUNNER_ARCH}) with Python 3.${PYTHON_MINOR}. Cancelling the workflow; inspect this job's failed step for the cause."
+          {
+            echo "### Required test job failed"
+            echo ""
+            echo "- **OS target:** ${MATRIX_OS}-latest"
+            echo "- **Python target:** 3.${PYTHON_MINOR}"
+            echo "- **Runner:** ${RUNNER_OS} / ${RUNNER_ARCH}"
+            echo ""
+            echo "This failure triggers workflow cancellation. Inspect **Test on ${MATRIX_OS} py3.${PYTHON_MINOR}** in the [job logs](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}) for the failed step."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Report first so the failure summary is uploaded before cancellation.
       # Matrix fail-fast only stops tests; also cancel parallel builds.
       - name: Cancel workflow on Python 3.13 failure
         if: matrix.python3-version == '13' && failure() && !cancelled()
@@ -316,6 +335,25 @@ jobs:
           path: |
             dist/
           retention-days: 1
+      - name: Report Python 3.13 build failure
+        if: matrix.python3-version == '13' && failure() && !cancelled()
+        shell: bash
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          PYTHON_MINOR: ${{ matrix.python3-version }}
+        run: |
+          echo "::error title=Python 3.${PYTHON_MINOR} build failed on ${MATRIX_OS}::Required build job failed on ${MATRIX_OS}-latest (${RUNNER_OS}/${RUNNER_ARCH}) with Python 3.${PYTHON_MINOR}. Cancelling the workflow; inspect this job's failed step for the cause."
+          {
+            echo "### Required build job failed"
+            echo ""
+            echo "- **OS target:** ${MATRIX_OS}-latest"
+            echo "- **Python target:** 3.${PYTHON_MINOR}"
+            echo "- **Runner:** ${RUNNER_OS} / ${RUNNER_ARCH}"
+            echo ""
+            echo "This failure triggers workflow cancellation. Inspect **Build on ${MATRIX_OS} py3.${PYTHON_MINOR}** in the [job logs](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}) for the failed step."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Report first so the failure summary is uploaded before cancellation.
       # Matrix fail-fast only stops builds; also cancel parallel tests.
       - name: Cancel workflow on Python 3.13 failure
         if: matrix.python3-version == '13' && failure() && !cancelled()
