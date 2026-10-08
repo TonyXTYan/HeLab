@@ -32,7 +32,6 @@ psutil @ file:///Users/builder/cbouss/perseverance-python-buildout/croot/psutil_
 ptyprocess @ file:///tmp/build/80754af9/ptyprocess_1609355006118/work/dist/ptyprocess-0.7.0-py2.py3-none-any.whl
 pure_eval @ file:///home/conda/feedstock_root/build_artifacts/pure_eval_1721585709575/work
 py2app==0.28.8
-pygame==2.6.1
 Pygments @ file:///home/conda/feedstock_root/build_artifacts/pygments_1714846767233/work
 pyinstaller @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_49c1q2s_32/croot/pyinstaller_1721682845377/work
 pyinstaller-hooks-contrib @ file:///home/conda/feedstock_root/build_artifacts/pyinstaller-hooks-contrib_1723275433583/work
