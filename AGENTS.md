@@ -13,6 +13,7 @@ Two repos exist: this one (`TonyXTYan/HeLab`) is the development branch; `HeBECA
 ## AI workspace (`.ai/`)
 
 - `.ai/coding-workspace.md` — shared AI-workspace conventions for Tony's repos (what goes in memory vs sessions, working rules).
+- `ROADMAP.md` (repo root) — the single to-do list: current work, known issues, planned features. Add new open items there, not to README or memory.
 - `.ai/memory/MEMORY.md` — index of project memory. Read it first; load individual files only when relevant. Settled design decisions (with the reasons and Tony's chosen wording/icons) live in `.ai/memory/results/`; this file keeps only the codebase rules.
 - `.ai/sessions/YYYY-MM-DD-<tool>-<title>/` — per-session notes. `.ai/session-export-codex/` and `.ai/session-export-claude/` — raw exported transcripts. Search these for history; don't auto-load them.
 - `.ai/temp/` and `.ai/local/` are gitignored scratch space.

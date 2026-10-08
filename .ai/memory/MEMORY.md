@@ -16,4 +16,4 @@ See `.ai/coding-workspace.md` for what belongs here vs `.ai/sessions/`.
 
 ## TODO
 
-- [ ] [Make status messages reflect actual operations and states](../sessions/2026-10-08-codex-status-message-review/review.md) — 2026-10-08 status-bar merge fixed the main-bar counts, cache-writing indicator, background-load and basic-scan states, and old results hiding errors. Still open: load-phase labels (merged/updated sources), progress % counting unreadable files, queued vs running scans in the counts line, central-message items. Keep "Scanning: checking file counts and status…" for running scans. Full message inventory and reproduced cases are in the linked review (2026-10-08).
+Open work, known issues and planned features: [ROADMAP.md](../../ROADMAP.md) at the repo root.

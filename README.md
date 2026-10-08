@@ -214,27 +214,4 @@ QT_QPA_PLATFORM=offscreen helab
 ---
 # TODO
 
-- [ ] Add auto scan button 
-
-- [x] Add cancel recursive scan button
-  - [ ] probably should lock the tree view while scanning
-  - [ ] variable recursive scan depth
-  
-- [ ] nothing folder should be ligher gray, and hidden folder with data is black 
-
-- [ ] typing
-
-- [ ] unit tests
-
-    - [ ] some test experiment data
-
-- [ ] auto build? maybe?
-
-- [ ] cache github actions
-
-    
-- [ ]  hasChildren() scan at root is taking time
-
-- [ ] File reading system is blocking the main thread (?)
-
-- [ ] Code validation check in pipeline
+Open work, known issues and planned features are tracked in [ROADMAP.md](ROADMAP.md).
