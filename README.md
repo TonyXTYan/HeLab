@@ -8,7 +8,7 @@
 
 <!-- **H**elium **E**xperiment **L**ab **I**nformation **U**nified **M**anager -->
 
-[![python](https://img.shields.io/badge/python-3.12-blue.svg?style=flat&logo=python&logoColor=white)](https://docs.python.org/3/whatsnew/3.12.html)
+[![python](https://img.shields.io/badge/python-3.13-blue.svg?style=flat&logo=python&logoColor=white)](https://docs.python.org/3/whatsnew/3.13.html)
 [![pyqt6](https://img.shields.io/badge/pyqt-6-000000.svg?style=flat&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/static/Docs/PyQt6/introduction.html)
 
 [![latest release](https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=latest%20release)](https://github.com/TonyXTYan/HeLab/releases/latest)
@@ -71,7 +71,60 @@ Development branch: (all sorts of bugs and features) see: https://github.com/Ton
 
 ---
 
-I'm targeting Python3.12 for its new typing features. As of now this builds on python 3.11, 3.12 and 3.13. I'll try to maintain compatibility with 3.12 and 3.13 but might use newer features and drop support for lower python versions. For more information about which python version are supported, see the CI runs [here](https://github.com/TonyXTYan/HeLab/actions)
+HeLab targets **Python 3.13**: CI requires 3.13 to pass, and other versions (3.10–3.12) run as non-blocking compatibility checks. See the CI runs [here](https://github.com/TonyXTYan/HeLab/actions).
+
+## Setup (any machine)
+
+These steps use [uv](https://docs.astral.sh/uv/), which installs Python 3.13 by itself, so you don't need a system Python, conda, or admin rights.
+
+**1. Install uv** (once per machine):
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+```PowerShell
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Then open a **new** terminal so `uv` is on your `PATH`.
+
+**2. Clone, then create the Python 3.13 environment:**
+
+```bash
+git clone --recurse-submodules https://github.com/HeBECANU/HeLab.git   # or TonyXTYan/HeLab for dev
+cd HeLab
+uv python install 3.13
+uv venv --seed --python 3.13 venv
+```
+
+`--seed` puts `pip` inside the venv. Without it, a bare `pip install` in the activated venv can fall through to another Python on your `PATH`. If a `venv` folder already exists from an older setup, rename or delete it first.
+
+**3. Activate the environment and install HeLab:**
+
+```bash
+source venv/bin/activate       # macOS / Linux
+venv\Scripts\activate          # Windows (cmd or PowerShell)
+uv pip install -r requirements.txt -e .
+```
+
+**4. Run:**
+
+```bash
+helab              # or: python -m helab
+```
+
+On later runs, just activate `venv` and run `helab`. Without activating, run `venv/bin/helab` (macOS/Linux) or `venv\Scripts\helab` (Windows).
+
+Notes:
+- Bare `python` on lab PCs is often an old interpreter (for example Python 2.7). Use the one in `venv`.
+- On Windows, start HeLab from the desktop, not over SSH. An SSH session as an administrator runs elevated, and it can leave cache folders that a normal launch can't write to.
+- The submodule (`legacy/tdc_autoconverter`) is MATLAB reference code only. HeLab runs without it. In an existing clone, fetch it with `git submodule update --init --recursive`.
+- Without uv: if Python 3.13 is already installed, `python3.13 -m venv venv` then `pip install -r requirements.txt -e .` also works. With conda: `conda create -n HeLab python=3.13`, `conda activate HeLab`, then the same `pip install`.
+- macOS with iCloud Drive syncing this folder: create the environment as `venv.nosync` and symlink it (`ln -s venv.nosync venv`), which keeps the constantly changing venv files out of iCloud. Activation and imports work the same either way.
+
 <!-- maybe it would also work on Python 3.11? See CI run [here](https://github.com/TonyXTYan/HELIUM/actions/runs/11605700722) -->
 
 
@@ -107,47 +160,12 @@ Na, apparently github action is free for public repos, also much easier to setup
 
 
 
-## Notes of other random scripts
-
-
-```bash
-python -m venv venv
-source venv/bin/activate # for unix
-venv\Scripts\activate # for windows
-```
-
-On macOS with iCloud Drive syncing this folder, `venv` can be created as `venv.nosync`
-and symlinked to `venv` (`ln -s venv.nosync venv`) to keep it out of iCloud sync — venv
-files churn constantly and aren't worth uploading. Activation and imports work the same
-either way.
+## Profiling
 
 ```bash
-pip install -r requirements.txt
-```
-
-```bash
-pip install -e .
-```
-
-```bash
-git submodule update --init --recursive # legacy/tdc_autoconverter (HeBECANU/tdc_autoconverter, MATLAB, reference only)
-```
-
-```PowerShell
-.\venv\Scripts\activate
-```
-
-
-
-```bash
-python -m cProfile -o helab_main.prof  helab/main.py
-snakeviz helab_main.pro
-```
-
-
-
-```
-conda create -n HeLab python=3.12
+uv pip install snakeviz        # not in requirements.txt
+python -m cProfile -o helab_main.prof helab/main.py
+snakeviz helab_main.prof
 ```
 
 

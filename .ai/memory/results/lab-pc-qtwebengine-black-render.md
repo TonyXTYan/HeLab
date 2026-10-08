@@ -61,22 +61,9 @@ inlines the JS, so no network is needed. This renders correctly on that machine.
 
 ## Other gotchas on this box
 
-- Bare `python` is **Python 2.7.12** from `C:\Python27`, which shadows the real
-  3.12.10 install at
-  `C:\Users\helium\AppData\Local\Programs\Python\Python312\python.exe`.
-  Always invoke `venv\Scripts\python.exe` explicitly; never rely on `python`,
-  and `py` is not installed.
-- GUI apps launched over SSH run in a non-interactive session and are invisible
-  on the console desktop — they appear to hang. GPU diagnostics run over SSH
-  also report misleading `Failed to create shared context for virtualization`
-  errors that do not occur at the console. Qt/GPU issues must be tested by a
-  human sitting at the machine.
-- The lab's `RGAData` share lives here: `C:\Users\helium\Documents\RGAData`,
-  with `Analog/` (432+ sweep files), `Histogram/`, `LeakTest/`,
-  `PressurevsTime/`. The README's default `/Volumes/100.123.123.201*` path is
-  macOS-only and will not resolve on Windows.
-- The RGA visualiser only parses mass-sweep files. `LeakTest/` and
-  `PressurevsTime/` use `mode: 4` configs with no
-  `startMass`/`stopMass`/`pointsPerAmu`, so `_expected_points` in
-  `side_projects/rga_visualiser/rga_visualiser.py` rejects them. Both folders
-  hold recent data; supporting them is unimplemented work, not a bug.
+GPU diagnostics run over SSH report misleading `Failed to create shared context
+for virtualization` errors that do not occur at the console. Qt/GPU issues must
+be tested by a person sitting at the machine.
+
+Python setup, interpreters, git, SSH/Maestri and RGAData notes for this machine
+are in [[lab-side-pc-caveats]].

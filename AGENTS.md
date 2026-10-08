@@ -19,10 +19,12 @@ Two repos exist: this one (`TonyXTYan/HeLab`) is the development branch; `HeBECA
 
 ## Setup
 
+Python 3.13 is the required version (CI gates on it). Use uv, as the README's "Setup (any machine)" guide does:
+
 ```bash
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
+uv python install 3.13
+uv venv --seed --python 3.13 venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+uv pip install -r requirements.txt -e .
 git submodule update --init --recursive   # legacy/tdc_autoconverter
 ```
 
