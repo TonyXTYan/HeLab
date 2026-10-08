@@ -80,6 +80,21 @@ def test_cached_read_never_touches_the_source_folder(monkeypatch: pytest.MonkeyP
     assert result["files"] == result["total_files"] == 2
 
 
+def test_cached_partial_load_progress_counts_unreadable_files(tmp_path: Path) -> None:
+    source = source_folder(tmp_path)
+    (source / "d_txy_forc2.txt").write_text("not,numeric,data\n")
+    first = loaded(run_load(source, tmp_path))
+    assert first["files"] == 1 and first["failed_files"] == 1
+    output = tmp_path / "cached"
+    output.mkdir()
+    events: list[dict[str, Any]] = []
+    read_cached(str(source), str(output), events.append, cache_options(tmp_path))
+    progress = [event for event in events if event["kind"] == "progress"]
+    assert progress[-1] == {"kind": "progress", "progress": 1.0, "checked_files": 2,
+                               "loaded_files": 1, "total_files": 2, "failed_files": 1,
+                               "unsettled_files": 0}
+
+
 def test_check_of_cached_data_is_one_folder_stat_until_the_folder_changes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
@@ -118,10 +133,20 @@ def test_files_still_being_written_are_left_for_the_next_load(
     assert [event["shot"] for event in events if event["kind"] == "shot"] == [1]
     assert result["files"] == 1 and result["total_files"] == 2 and result["unsettled_files"] == 1
     assert result["failed_files"] == 0
+    progress = [event for event in events if event["kind"] == "progress"]
+    assert progress[0]["checked_files"] == 1 and progress[0]["unsettled_files"] == 1
+    assert progress[-1] == {"kind": "progress", "progress": 1.0, "checked_files": 2,
+                           "loaded_files": 1, "total_files": 2, "failed_files": 0, "unsettled_files": 1}
     summary = next(event for event in events if event["kind"] == "scan_summary")["status"]
     assert summary["txy"] == [1, 2] and summary["unsettled"] == 1
     saved = next(event for event in events if event["kind"] == "cache_saved")["cache_info"]
     assert saved["unsettled"] == 1
+    output = tmp_path / "cached-unsettled"
+    output.mkdir()
+    cached_events: list[dict[str, Any]] = []
+    read_cached(str(source), str(output), cached_events.append, cache_options(tmp_path))
+    cached_progress = [event for event in cached_events if event["kind"] == "progress"][-1]
+    assert cached_progress == progress[-1]
     # A cache with unsettled files is always checked fully, even if the folder is unmodified.
     memory = [list(entry) for entry in result["fingerprint"]]
     os.utime(source, (old, old))
@@ -149,6 +174,9 @@ def test_file_growing_while_read_is_not_kept(monkeypatch: pytest.MonkeyPatch, tm
     result = loaded(events)
     assert [event["shot"] for event in events if event["kind"] == "shot"] == [1]
     assert result["files"] == 1 and result["unsettled_files"] == 1 and result["failed_files"] == 0
+    progress = [event for event in events if event["kind"] == "progress"][-1]
+    assert progress["checked_files"] == 2 and progress["unsettled_files"] == 1
+    assert progress["failed_files"] == 0
     # Its earlier fingerprint is kept, so the finished file reads as modified next time.
     assert [entry[0] for entry in result["fingerprint"]] == [1, 2]
     monkeypatch.undo()

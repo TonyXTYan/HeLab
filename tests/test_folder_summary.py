@@ -60,7 +60,7 @@ def run_helper(explorer: FolderExplorer, qtbot: QtBot, path: str, operation: str
 
 def complete_scan(explorer: FolderExplorer, qtbot: QtBot, path: str,
                   options: dict[str, Any] | None = None, *, details: bool = True) -> None:
-    """Browse (list, then the background details scan) or finish a basic scan."""
+    """Browse (list, then the background details scan) or finish a folder status check."""
     cache = explorer.model.cache
     if ("list", path) in cache.jobs:
         run_helper(explorer, qtbot, path, "list", options)
@@ -90,7 +90,7 @@ def test_non_data_folder_summary(
         (child / "d_txy_forc1.txt").write_text("1,2,3\n")
     elif contents == "raw":
         (tmp_path / "d1.txt").write_text("")
-    assert browser.folder_summary_label.text() == "Scanning folder content for TXY files…"
+    assert browser.folder_summary_label.text() == "Scan queued"
     assert browser.folder_freshness_label.text() == "Live updates off"
     assert browser.folder_cache_label.text() == "Cache not checked"
     complete_scan(browser, qtbot, str(tmp_path))
@@ -99,6 +99,40 @@ def test_non_data_folder_summary(
     assert browser.selected_folder_label.isHidden()
     assert browser.deselect_button.isHidden()
     assert browser.folder_cache_label.text() == "No data to cache"
+
+
+@pytest.mark.parametrize("known_counts", [False, True])
+def test_scan_states_agree_in_summary_and_central_message(
+    browser: FolderExplorer, qtbot: QtBot, tmp_path: Path, known_counts: bool,
+) -> None:
+    path = str(tmp_path)
+    browser.auto_load_ram = False
+    if known_counts:
+        (tmp_path / "d_txy_forc1.txt").write_text("1,2,3\n")
+        complete_scan(browser, qtbot, path)
+        assert browser.model.request_scan(path, force=True, metadata_only=True)
+    operation = "scan" if known_counts else "list"
+    request = request_for(browser.model.cache, path, operation)
+    window: Any = SimpleNamespace(
+        _closing=False, tab_widget=SimpleNamespace(currentWidget=lambda: browser),
+        central_placeholder=QLabel(browser), dock_widgets=[])
+
+    def assert_message(message: str) -> None:
+        browser._update_activity()
+        HelabMainWindow._central_placeholder_loading_indicator(window)
+        assert browser.folder_summary_label.text().endswith(message)
+        assert window.central_placeholder.text().endswith(message)
+
+    assert_message("Scan queued")
+    browser.model.service.resultReady.emit(request, {"kind": "started"})
+    assert_message("Scanning: checking file counts and status…" if known_counts else "Listing folder…")
+    browser.model.service.resultReady.emit(request, {"kind": "heartbeat", "phase": "listing", "entries": 3210})
+    if not known_counts:
+        assert_message("Listing folder… 3,210 entries")
+    browser.model.service.resultReady.emit(request, {"kind": "paused"})
+    assert_message("Scan paused")
+    browser.model.service.resultReady.emit(request, {"kind": "resumed"})
+    assert_message("Scanning: checking file counts and status…" if known_counts else "Listing folder… 3,210 entries")
 
 
 def test_successful_and_partial_load_counts_survive_memory_reuse(
@@ -165,7 +199,7 @@ def test_cached_scan_age_and_failed_refresh_retain_counts(
     cache.service.pending.remove(request)
     assert browser.model.nodes[path].checked_at == checked_at
     assert browser.folder_summary_label.text() == "1 TXY found · Not loaded · Refresh failed · Retry"
-    assert browser.folder_freshness_label.text() == "Basic scan failed just now · Retry manually"
+    assert browser.folder_freshness_label.text() == "Folder status check failed just now · Retry manually"
     assert "Volume disconnected" in browser.folder_summary_label.toolTip()
 
 
@@ -174,7 +208,7 @@ def test_unchecked_folder_failure_does_not_claim_empty(browser: FolderExplorer, 
     browser.model.service.resultReady.emit(request, {"kind": "error", "message": "Permission denied"})
     browser.model.service.pending.remove(request)
     assert browser.folder_summary_label.text() == "TXY count not checked · Retry manually"
-    assert browser.folder_freshness_label.text() == "Basic scan failed just now · Retry manually"
+    assert browser.folder_freshness_label.text() == "Folder status check failed just now · Retry manually"
 
 
 def test_subfolder_scope_and_retained_plot_source(
@@ -664,7 +698,7 @@ def test_basic_recursive_scan_checks_exact_depth_without_loading_data(
     assert visited == [str(folder) for folder in folders[:depth + 1]]
     assert not browser._basic_active
     assert browser._basic_completed == depth + 1
-    assert "Basic scan complete" in browser.activity_text
+    assert "Folder status check complete" in browser.activity_text
     assert browser.folder_opened_data is None
     assert not any(r.operation == "load" for r in browser.model.service.pending)
 
@@ -680,7 +714,7 @@ def test_cancel_basic_scan_keeps_other_tabs_scan_subscription(
     cache = browser.model.cache
     request = request_for(cache, path, "scan")
     cache.submit("other-tab", 0, path, "scan", {}, force=True)
-    browser.basic_scan_button.click()  # Primary button switches to cancellation.
+    browser.cancel_basic_scan()
     assert not browser._basic_active and not browser._deep_depth
     assert not request.cancelled.is_set()
     assert cache.has_request("other-tab", "scan", path)
@@ -879,7 +913,7 @@ def test_auto_scan_keeps_persisted_results_until_manual_basic_scan(
     assert not browser.model.cache.requests(browser.model.owner)
     tooltip = browser.model.data(browser.model.path_index(str(cached_child)), int(Qt.ItemDataRole.ToolTipRole))
     assert isinstance(tooltip, str) and "Scan results cached 2h ago" in tooltip
-    assert "Last scan:" in tooltip and "Basic scan / Refresh" in tooltip
+    assert "Last scan:" in tooltip and "Check folder status" in tooltip
     assert node.txy_count == 1
     browser.deep_timer.stop()
     browser.context_menu_action_deep_calc_status(str(cached_child))
@@ -968,7 +1002,7 @@ def test_data_and_status_cache_freshness_indicators_are_independent(
         assert ("May be outdated" in browser.folder_freshness_label.text()) == status_old
         tooltip = str(browser.model.data(index, int(Qt.ItemDataRole.ToolTipRole)))
         assert "Data cache saved:" in tooltip and "Status scan:" in tooltip and "Observed folder modified:" in tooltip
-        assert "Use Load data" in tooltip and "Use Basic scan / Refresh" in tooltip
+        assert "Use Load data" in tooltip and "Use Check folder status" in tooltip
         if data_age is None or folder_age is None:
             assert "Freshness unknown" in browser.folder_cache_label.text()
         if scan_age is None or folder_age is None:

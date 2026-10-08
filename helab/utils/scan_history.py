@@ -155,16 +155,16 @@ def write_outcome(cache: Any, path: str, outcome: dict[str, Any]) -> ScanHistory
 def history_tooltip(history: ScanHistory, now: float) -> str:
     if not history["failures"]:
         return ""
-    lines = ["Automatic basic scans are skipped until a successful manual scan."
+    lines = ["Automatic folder status checks are skipped until a successful manual scan."
              if history["blocked"] else "Previous scan failures; a later scan succeeded."]
     success = metadata_date(history["last_success_at"])
     if success is not None:
-        lines.append(f"Last successful basic scan: {datetime.fromtimestamp(success).astimezone():%Y-%m-%d %H:%M:%S %Z}")
-    lines.append("Recent basic-scan failures (newest first):")
+        lines.append(f"Last successful folder status check: {datetime.fromtimestamp(success).astimezone():%Y-%m-%d %H:%M:%S %Z}")
+    lines.append("Recent folder-status-check failures (newest first):")
     for failure in reversed(history["failures"]):
         date = datetime.fromtimestamp(failure["failed_at"]).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
         # Scans now make one attempt; older records may count three.
         attempts = f" · {failure['attempts']} attempts" if failure["attempts"] > 1 else ""
         lines.append(f"{date} ({relative_age(now - failure['failed_at'])}){attempts} · {failure['reason']}")
-    lines.append("Use Basic scan / Refresh to retry. Load data remains available.")
+    lines.append("Use Check folder status to retry. Load data remains available.")
     return "\n".join(lines)

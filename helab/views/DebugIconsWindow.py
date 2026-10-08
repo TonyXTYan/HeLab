@@ -73,18 +73,18 @@ class DebugIconsWindow(QWidget):
             item = self._add_icon(self.status_list, name, attribute, icon)
             if name == "cached_older":
                 tooltip = ("Package + clock: folder modification time is newer than the cache save time.\n"
-                           "Data cache may be outdated, or a later basic scan confirmed changed TXY fingerprints.\n"
+                           "Data cache may be outdated, or a later folder status check confirmed changed TXY fingerprints.\n"
                            "Use Load data to validate and update the data cache.")
                 item.setToolTip(0, tooltip)
                 item.setToolTip(1, tooltip)
             elif name == "status_cache_older":
-                tooltip = ("Amber clock badge: folder modification time is newer than the last basic scan.\n"
-                           "Cached counts and status may be outdated. Use Basic scan / Refresh to recheck.")
+                tooltip = ("Amber clock badge: folder modification time is newer than the last folder status check.\n"
+                           "Cached counts and status may be outdated. Use Check folder status to recheck.")
                 item.setToolTip(0, tooltip)
                 item.setToolTip(1, tooltip)
             elif name == "scan_failed":
-                tooltip = ("Magnifying glass + exclamation mark: the last basic scan failed.\n"
-                           "Automatic basic scans are skipped. Use Basic scan / Refresh to retry manually.\n"
+                tooltip = ("Magnifying glass + exclamation mark: the last folder status check failed.\n"
+                           "Automatic folder status checks are skipped. Use Check folder status to retry manually.\n"
                            "Previous counts, status and loaded data remain available.")
                 item.setToolTip(0, tooltip)
                 item.setToolTip(1, tooltip)
@@ -93,7 +93,7 @@ class DebugIconsWindow(QWidget):
             item = self._add_icon(self.status_list, f"{name} (older status cache)",
                                   f'StatusIcons.ICONS_STATUS_OLDER["{name}"]', icon)
             tooltip = (f"Preserves the '{name}' status icon with an amber clock for possibly outdated scan results.\n"
-                       "Use Basic scan / Refresh to recheck counts and status.")
+                       "Use Check folder status to recheck counts and status.")
             item.setToolTip(0, tooltip)
             item.setToolTip(1, tooltip)
 

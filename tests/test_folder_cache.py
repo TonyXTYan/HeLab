@@ -23,7 +23,7 @@ from helab.utils.io_service import IORequest, IOService
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.HelabMainWindow import HelabMainWindow
-from helab.io_helper import load, scan
+from helab.io_helper import list_folder, load, scan
 from helab.resources.icons import IconsInitUtil, StatusIcons
 
 
@@ -178,9 +178,9 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     assert first.loading_message == "Preparing…"
     service.resultReady.emit(request, {"kind": "progress", "progress": 123 / 456,
                                        "loaded_files": 123, "total_files": 456, "failed_files": 0})
-    message = "123 of 456 files loaded (27%)"
+    message = "123 of 456 files checked (27%) · 123 loaded"
     assert first.loading_message == message
-    assert first.folder_summary_label.text() == "456 TXY found · 123 loaded (27%)"
+    assert first.folder_summary_label.text() == f"456 TXY found · {message}"
     assert first.loading_tooltip == message
     HelabMainWindow.update_status_bar_left(status)
     assert status.status_bar_message_left.text() == "Ready"  # The fake service runs nothing.
@@ -206,10 +206,42 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
         assert explorer.load_progress is None and explorer.load_total_files is None
         assert explorer.load_files == 0 and explorer.load_attempt == 2
     service.resultReady.emit(request, {"kind": "started", "attempt": 2})
-    assert first.loading_message == "Retrying… (attempt 2 of 3)"
+    assert first.loading_message == "Preparing…"
     # The listing phase reports entries before the first file starts.
     service.resultReady.emit(request, {"kind": "heartbeat", "phase": "listing", "entries": 3200})
-    assert first.loading_message == "Retrying… (attempt 2 of 3) · Listing files… 3,200"
+    assert first.loading_message == "Listing folder… 3,200 entries"
+    service.resultReady.emit(request, {"kind": "progress", "progress": 0.5,
+                                       "checked_files": 1, "loaded_files": 1, "total_files": 2})
+    service.resultReady.emit(request, {"kind": "file_started", "attempt": 2,
+                                       "filename": str(tmp_path / "d_txy_forc2.txt")})
+    assert first.loading_message == "Retrying file… (attempt 2 of 3) · 1 of 2 files checked (50%) · 1 loaded"
+    assert "Attempt 2 of 3 for this file" in first.loading_tooltip
+    assert "d_txy_forc2.txt" in first.loading_tooltip
+    third = explorer_for_test(qtbot, path)
+    qtbot.waitUntil(lambda: third.loading)
+    assert third.loading_message == first.loading_message
+    service.resultReady.emit(request, {"kind": "file_finished", "filename": str(tmp_path / "d_txy_forc2.txt")})
+    for explorer in (first, second, third):
+        assert "Retrying" not in explorer.loading_message
+        assert explorer.load_attempt == 1
+    service.resultReady.emit(request, {"kind": "progress", "progress": 1.0,
+                                       "checked_files": 2, "loaded_files": 1, "total_files": 2, "failed_files": 1})
+    message = "2 of 2 files checked (100%) · 1 loaded · 1 unreadable"
+    assert first.loading_message == message
+    assert first.folder_summary_label.text() == f"2 TXY found · {message}"
+    service.resultReady.emit(request, {"kind": "heartbeat", "phase": "verifying", "entries": 2})
+    assert first.loading_message == f"Verifying files… 2 · {message}"
+    fourth = explorer_for_test(qtbot, path)
+    qtbot.waitUntil(lambda: fourth.loading)
+    assert fourth.loading_message == first.loading_message
+    HelabMainWindow._central_placeholder_loading_indicator(window)
+    assert "Verifying files… 2" in window.central_placeholder.text()
+    service.resultReady.emit(request, {"kind": "paused"})
+    HelabMainWindow._central_placeholder_loading_indicator(window)
+    assert window.central_placeholder.text().startswith(f"Loading paused: {tmp_path.name}\n")
+    assert window.central_placeholder.text().endswith(" · Paused")
+    third.close_cleanup()
+    fourth.close_cleanup()
     first.close_cleanup()
     second.close_cleanup()
     service.shutdown()
@@ -235,7 +267,7 @@ def test_queue_tooltip_covers_scans_loads_and_navigation_across_tabs_when_idle(
     status = status_window(first, first)
     HelabMainWindow.update_status_bar_left(status)
     expected = (f"Queued folders (next first):\nLoad data: {data}\nBrowse folder: {browse}"
-                f"\nBasic scan: {bulk}")
+                f"\nCheck folder status: {bulk}")
     assert status.status_bar_message_left.text() == "3 operations queued"
     assert status.status_bar_message_left.toolTip() == expected
     assert first.loading_tooltip == expected
@@ -334,6 +366,9 @@ def test_manual_retry_lists_without_timeout_shows_elapsed_and_can_be_cancelled(
     node = explorer.model.nodes[path]
     assert node.retry_since is not None
     node.retry_since -= 80
+    explorer._update_activity()
+    assert explorer.folder_summary_label.text() == "Retry queued 1 min 20 s"
+    service.resultReady.emit(retry, {"kind": "started"})
     service.resultReady.emit(retry, {"kind": "heartbeat", "phase": "listing", "entries": 3200})
     explorer._update_activity()
     assert explorer.folder_summary_label.text() == "Retrying… 1 min 20 s · 3,200 entries"
@@ -446,7 +481,7 @@ def test_expired_snapshot_is_visible_during_failed_background_check(
     service.shutdown()
 
 
-def test_refresh_propagates_changed_data_to_both_tabs(
+def test_rescan_propagates_changed_data_to_both_tabs(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     service = service_for_test(monkeypatch)
@@ -457,7 +492,7 @@ def test_refresh_propagates_changed_data_to_both_tabs(
     finish_scan(cache, path)
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs and len(cache.jobs[("load", path)].subscribers) == 2)
     finish_load(cache, path)
-    first.refresh()
+    first.rescan(True)
     assert len(service.pending) == 1
     finish_scan(cache, path, signature="v2")
     assert first.folder_opened_data is not None  # Keep old displayed data.
@@ -471,7 +506,7 @@ def test_refresh_propagates_changed_data_to_both_tabs(
     service.shutdown()
 
 
-def test_refresh_reuses_open_dataset_and_receives_only_new_shots(
+def test_rescan_reuses_open_dataset_and_receives_only_new_shots(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     service = service_for_test(monkeypatch)
@@ -491,7 +526,7 @@ def test_refresh_reuses_open_dataset_and_receives_only_new_shots(
     old = explorer.folder_opened_data
     assert old is not None
 
-    explorer.refresh()
+    explorer.rescan(True)
     finish_scan(cache, path, signature="v2")
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
     request = producer(cache, path, "load")
@@ -513,6 +548,86 @@ def test_refresh_reuses_open_dataset_and_receives_only_new_shots(
     service.resultReady.emit(request, {"kind": "done"})
     assert cache.disk_cached(path) and not cache._finishing
     explorer.close_cleanup()
+    service.shutdown()
+
+
+def test_refresh_relists_expanded_branches_without_checks_or_loads_in_any_tab(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = service_for_test(monkeypatch)
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    cache, root = get_folder_cache(service), str(tmp_path)
+    expanded, collapsed = tmp_path / "expanded", tmp_path / "collapsed"
+    expanded.mkdir()
+    collapsed.mkdir()
+    old_child = expanded / "old"
+    old_child.mkdir()
+    (tmp_path / "d1.txt").write_text("")
+    (tmp_path / "d_txy_forc1.txt").write_text("1,2,3\n")
+    cache.remember_scan(str(collapsed), {
+        "kind": "status", "status": "ok", "count": 1, "details": True,
+        "raw": [1], "txy": [1], "signature": "collapsed-v1", "scanned_at": time.time()})
+    first = explorer_for_test(qtbot, root)
+    qtbot.waitUntil(lambda: ("list", root) in cache.jobs)
+    finish_scan(cache, root, children=[str(expanded), str(collapsed)])
+    qtbot.waitUntil(lambda: ("load", root) in cache.jobs)
+    finish_load(cache, root)
+    second = explorer_for_test(qtbot, root)
+    qtbot.waitUntil(lambda: second.folder_opened_data is not None)
+    first.show()
+    first.tree.expand(first.model.path_index(str(expanded)))
+    qtbot.waitUntil(lambda: ("list", str(expanded)) in cache.jobs)
+    finish_scan(cache, str(expanded), children=[str(old_child)])
+    qtbot.waitUntil(lambda: first.model.nodes[str(expanded)].loaded and not cache._deliveries)
+    first.tree.setCurrentIndex(first.model.path_index(str(collapsed)))
+    assert first.selected_path_globally == str(collapsed)
+    finish_scan(cache, str(collapsed), signature="collapsed-v1")
+    qtbot.waitUntil(lambda: ("load", str(collapsed)) in cache.jobs)
+    finish_load(cache, str(collapsed), signature="collapsed-v1")
+    qtbot.waitUntil(lambda: not cache._deliveries)
+    monkeypatch.setattr(first.model, "viewport_paths",
+                        lambda: [str(expanded), str(old_child), str(collapsed)])
+    collapsed_node = first.model.nodes[str(collapsed)]
+    collapsed_report = collapsed_node.report
+    summaries = {path: dict(cache.scan_summaries[path]) for path in (root, str(expanded), str(collapsed))}
+    checked = [(explorer.model.nodes[root].signature, explorer.model.nodes[root].scanned_at,
+                explorer.model.nodes[root].checked_at) for explorer in (first, second)]
+    arrays = [explorer.folder_opened_data for explorer in (first, second)]
+    # A changed shot list would normally restart the selected root's load in tab 2.
+    (tmp_path / "d_txy_forc2.txt").write_text("4,5,6\n")
+    new_root = tmp_path / "new_root"
+    new_root.mkdir()
+    old_child.rmdir()
+    new_child = expanded / "new_child"
+    new_child.mkdir()
+    first.refresh()
+    assert {request.path for request in service.pending if request.operation == "list"} == {
+        root, str(expanded)}
+    for path in (root, str(expanded)):
+        request = producer(cache, path, "list")
+        assert request.payload["listing_only"]
+        list_folder(path, lambda event: service.resultReady.emit(request, event), first.model._cache_options)
+        service.resultReady.emit(request, {"kind": "done"})
+        service.pending.remove(request)
+        qtbot.waitUntil(lambda: not cache._deliveries)
+    assert str(new_root) in first.model.nodes and str(new_root) in second.model.nodes
+    assert str(new_child) in first.model.nodes and str(old_child) not in first.model.nodes
+    assert first.tree.isExpanded(first.model.path_index(str(expanded)))
+    assert first.selected_path_globally == str(collapsed)
+    assert first.model.nodes[str(collapsed)] is collapsed_node
+    assert collapsed_node.report is collapsed_report
+    assert summaries == {path: dict(cache.scan_summaries[path]) for path in summaries}
+    for i, explorer in enumerate((first, second)):
+        node = explorer.model.nodes[root]
+        assert (node.signature, node.scanned_at, node.checked_at) == checked[i]
+        assert explorer.folder_opened_data is arrays[i]
+    assert not [request for request in service.pending if request.operation in ("list", "scan", "load")]
+    # Afterwards only folders with new subfolders get details, for their dates.
+    qtbot.waitUntil(lambda: any(request.operation == "details" for request in service.pending))
+    assert {request.path for request in service.pending if request.operation == "details"} == {
+        root, str(expanded)}
+    first.close_cleanup()
+    second.close_cleanup()
     service.shutdown()
 
 
@@ -663,7 +778,7 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
     assert first.folder_opened_data is not None and second.folder_opened_data is not None
     assert first.folder_opened_data[1] is second.folder_opened_data[1]
     source.write_text("10,20,30\n")
-    first.refresh()
+    first.rescan(True)
     qtbot.waitUntil(lambda: second.folder_opened_data is not None and second.folder_opened_data[1][0, 0] == 10,
                    timeout=15000)
     # The listing finds the same names; the details scan finds the modified file.
@@ -1142,14 +1257,14 @@ def test_stopping_rows_merge_held_requests_and_cover_cancelled_final_and_cache_s
     service.pending.extend([again, other])
     tooltip = service.queue_tooltip()
     assert "Load data: /a — cancelled · stopping for 2 s · requested again; starts when it exits" in tooltip
-    assert "Basic scan: /b — timed out after 60 s without progress · stopping for 1 min 10 s\n" in tooltip
+    assert "Check folder status: /b — timed out after 60 s without progress · stopping for 1 min 10 s\n" in tooltip
     assert "Save data cache: /c — timed out while saving the data cache · stopping\n" in tooltip
     assert "Other queued I/O also waits" in tooltip  # The unrelated request needs a held slot.
     assert tooltip.endswith("Queued folders (next first):\nLoad data: /a")
     assert service.held_requests() == [again] and service.blocker(other) is None
     assert service.queued_operations(include_held=False) == [("load", "/a")]
     # The longest-stopping helper leads the one-line status.
-    assert service.stopping_summary() == "Waiting for timed-out basic scan to stop (1 min 10 s) · 2 more stopping"
+    assert service.stopping_summary() == "Waiting for timed-out folder status check to stop (1 min 10 s) · 2 more stopping"
     service.pending.remove(other)
     assert "Other queued I/O" not in service.queue_tooltip()
     load = IORequest("tab", 0, "/e", "load", {}, 20.0, attempt=2, current_file="/e/d_txy_forc12.txt")

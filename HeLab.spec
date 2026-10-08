@@ -45,7 +45,7 @@ a = Analysis(
     ['helab/main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('helab/resources/menu-right.svg', 'helab/resources')],
     hiddenimports=["helab.io_helper"],
     hookspath=[],
     hooksconfig={},

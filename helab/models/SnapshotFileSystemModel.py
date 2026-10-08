@@ -41,7 +41,6 @@ class FolderNode:
     modified_observed_at: float | None = None
     scanned_at: float | None = None
     report: StatusReport | None = None
-    seen: set[str] = field(default_factory=set)
     signature: str = ""
     checked_at: float = 0
     empty: bool | None = None
@@ -70,6 +69,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
     directoryLoaded = pyqtSignal(str)
     rootPathChanged = pyqtSignal(str)
     activityChanged = pyqtSignal()
+    refreshStateChanged = pyqtSignal()
 
     def __init__(self, parent: QObject | None = None, service: IOService | None = None) -> None:
         super().__init__(parent)
@@ -86,6 +86,14 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.view: QTreeView | None = None
         self.closed = False
         self._refresh_sequence = 0
+        self._refresh_paths: set[str] = set()
+        self._refresh_submitting = False
+        # Folder names each request has listed; None when it joined a running job
+        # and missed earlier names, so it must not prune children.
+        self._scan_seen: dict[IORequest, set[str] | None] = {}
+        self._tree_requests: dict[str, IORequest] = {}
+        # Folders whose details (browse step 2) wait for Refresh to finish.
+        self._refresh_details: set[str] = set()
         self.folder_opened_path: str | None = None
         # Dataset loads by path ("queued", "loading" or "paused"); kept across root changes
         # because background loads outlive the visible tree.
@@ -190,9 +198,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                       else "\nCached on disk; not loaded into RAM.\nCache freshness is checked when loading."
                       if self.cache.disk_cached(node.path) else "")
             verification = ("\nPrevious scan; checking for changes" if node.cached_report and node.state in ("queued", "running")
-                            else "\nPrevious scan; use Basic scan / Refresh to recheck" if node.cached_report
+                            else "\nPrevious scan; use Check folder status to recheck" if node.cached_report
                             else "\nCached snapshot; checking for changes" if node.loaded and node.state in ("queued", "running")
-                            else "\nCached snapshot; use Basic scan / Refresh to recheck" if node.loaded and time.monotonic() - node.checked_at >= self.cache.FRESH_SECONDS
+                            else "\nCached snapshot; use Check folder status to recheck" if node.loaded and time.monotonic() - node.checked_at >= self.cache.FRESH_SECONDS
                             else "")
             report = node.report
             scan_age = (f"\nScan results cached {relative_age(time.monotonic() - node.checked_at)}"
@@ -202,7 +210,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             freshness = ""
             if report:
                 freshness += "\n" + freshness_tooltip("Status scan", node.scanned_at, node.modified,
-                    self.status_freshness(node), "Use Basic scan / Refresh to recheck counts and status.")
+                    self.status_freshness(node), "Use Check folder status to recheck counts and status.")
             if self.cache.disk_cached(node.path):
                 info = self.cache.cache_status(node.path).info
                 freshness += "\n" + freshness_tooltip("Data cache saved", info.get("saved_at"), node.modified,
@@ -278,6 +286,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
 
     def setRootPath(self, path: str, *, scan: bool = True) -> QModelIndex:
         self.cache.cancel(self.owner)
+        self._reset_refresh()
+        self._scan_seen.clear()
+        self._tree_requests.clear()
         self.generation += 1
         self.beginResetModel()
         self.root = FolderNode(os.path.abspath(path))
@@ -324,18 +335,30 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             self.dataChanged.emit(index, index, [int(Qt.ItemDataRole.DecorationRole)])
 
     def request_scan(self, path: str, *, priority: bool = False, force: bool = False,
-                     metadata_only: bool = False, automatic: bool = False, no_timeout: bool = False) -> bool:
+                     metadata_only: bool = False, automatic: bool = False, no_timeout: bool = False,
+                     listing_only: bool = False) -> bool:
         """Browse a folder (list names, then details in the background) or, with
-        ``metadata_only``, run a basic scan. ``no_timeout`` is for a manual retry of
-        one folder: it runs until done or cancelled.
+        ``metadata_only``, run a folder status check. ``no_timeout`` is for a manual retry of
+        one folder: it runs until done or cancelled. ``listing_only`` refreshes
+        tree entries without details, status updates or automatic dataset loads.
         """
         node = self.nodes.get(path)
         if self.closed or node is None:
             return False
-        metadata_only = metadata_only or path in self.cache.metadata_notifications
+        listing_only = listing_only or path in self.cache.listing_notifications
+        metadata_only = not listing_only and (metadata_only or path in self.cache.metadata_notifications)
+        if no_timeout and self.refresh_pending(path):
+            return False
+        if self.refreshing and not listing_only and (automatic or metadata_only and not force):
+            return False
         operation = "scan" if metadata_only else "list"
+        job = self.cache.jobs.get((operation, self.cache.key(path)))
+        if force and not automatic and not listing_only and job:
+            # A manual check joining automatic work is now a manual subscription.
+            for request in self.cache.requests(self.owner):
+                if request.path == path and request.operation == operation:
+                    request.payload.update(scan_manual=True, automatic=False)
         if node.state in ("queued", "running"):
-            job = self.cache.jobs.get((operation, self.cache.key(path)))
             if priority and job:
                 self.service.promote(job.owner)
             if no_timeout and job:
@@ -346,16 +369,15 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 self.changed(node)
             if force and (operation, path) not in self.cache.jobs:
                 self.cache.cancel(self.owner, operation, path)
-            else:
+            elif self.cache.has_request(self.owner, operation, path) or job is None:
                 return True
-        node.seen.clear()
         node.error = ""
         node.scan_skipped = False
         node.listed = 0
         node.retry_since = time.monotonic() if no_timeout else None
         payload = {"cache": self._cache_options, "metadata_only": metadata_only,
                    "scan_manual": force and not automatic, "automatic": automatic or metadata_only and not force,
-                   "identity": node.identity}
+                   "identity": node.identity, "listing_only": listing_only}
         if not self.cache.submit(self.owner, self.generation, path, operation, payload,
                                  priority=priority, force=force, timeout=math.inf if no_timeout else None):
             node.state, node.error = "error", "Scan queue full — Retry"
@@ -366,6 +388,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
 
     def _request_details(self, node: FolderNode, *, manual: bool) -> None:
         """Browse step 2 in the background: signature, dates and subfolder details."""
+        if self.refreshing and not manual:
+            self._refresh_details.add(node.path)
+            return
         key = self.cache.key(node.path)
         snapshot = self.cache.snapshots.get(key)
         # A load of a folder without subfolders lists and fingerprints everything a
@@ -402,9 +427,34 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 or request.operation not in SCANS):
             return
         node = self.nodes.get(request.path)
-        if node is None:
-            return
         kind = event["kind"]
+        if (request.operation == "list" and kind in ("done", "error", "cancelled")
+                and request.payload.get("refresh_sequence") == self._refresh_sequence):
+            if request.path in self._refresh_paths:
+                self._refresh_paths.discard(request.path)
+                self._refresh_changed()
+        if node is None:
+            self._scan_seen.pop(request, None)
+            return
+        if kind == "queued":
+            if request not in self._scan_seen:
+                self._tree_requests[node.path] = request
+            self._scan_seen[request] = set()
+        elif kind == "started" and request not in self._scan_seen:
+            # Joined another tab's running job: it is now this row's activity.
+            self._tree_requests[node.path] = request
+            self._scan_seen[request] = None
+        seen = self._scan_seen.get(request)
+        if kind in ("done", "error", "cancelled"):
+            self._scan_seen.pop(request, None)
+        owns_tree = self._tree_requests.get(node.path) is request
+        if kind == "cancelled" and request.payload.get("refresh_cancelled"):
+            # Refresh discards optional automatic work without presenting a failure.
+            if owns_tree:
+                self._release_row(node)
+            node.error = ""
+            self.changed(node)
+            return
         if request.operation == "details":
             # Browse step 2 runs in the background: it fills in the listing but is
             # not the row's activity, and its completion does not prune children.
@@ -424,15 +474,19 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if kind == "heartbeat":
             node.listed = int(event.get("entries", node.listed))
         elif kind in ("queued", "started"):
-            node.state = "queued" if kind == "queued" else "running"
+            if owns_tree:
+                node.state = "queued" if kind == "queued" else "running"
         elif kind == "scan_cached":
             if node.report is None:
                 self._restore_summary(node, event["status"])
         elif kind == "entries":
+            if seen is not None:
+                seen.update(entry["path"] for entry in event["entries"])
+            if not owns_tree:
+                return  # A newer listing/check owns the folder names in this view.
             new: list[FolderNode] = []
             for entry in event["entries"]:
                 path = entry["path"]
-                node.seen.add(path)
                 child = self.nodes.get(path)
                 if child is None:
                     # A names-only listing has no dates; the details scan adds them.
@@ -476,7 +530,14 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 self.beginInsertRows(self.path_index(node.path), len(node.children), len(node.children) + len(new) - 1)
                 node.children.extend(new)
                 self.endInsertRows()
+                if self.refreshing and request.payload.get("listing_only"):
+                    self._refresh_details.add(node.path)  # Dates for the new subfolders.
         elif kind == "status":
+            if request.payload.get("listing_only"):
+                # Refresh changes the tree, not the last checked status or dataset.
+                node.empty = event.get("empty", node.empty)
+                self.changed(node)
+                return
             node.cached_report = False
             node.identity = event.get("identity", node.identity)
             node.raw_count, node.txy_count = len(event["raw"]), len(event["txy"])
@@ -495,28 +556,57 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 self.statusReady.emit(node.path)
         elif kind == "done":
             if node.scan_skipped or event.get("scan_skipped"):
-                node.state = "idle"
+                if owns_tree:
+                    self._release_row(node)
+                elif node.path not in self._tree_requests:
+                    node.state = "idle"
                 self.changed(node)
                 return
-            node.state, node.loaded = "idle", True
+            if owns_tree:
+                node.loaded = True
+                self._release_row(node)
             # Preserve stable nodes/selection during refresh; remove vanished
             # branches after the complete scan, never on a failed partial scan.
-            for row in range(len(node.children) - 1, -1, -1):
-                child = node.children[row]
-                if child.path not in node.seen:
-                    self.beginRemoveRows(self.path_index(node.path), row, row)
-                    removed = node.children.pop(row)
-                    self._forget(removed)
-                    self.endRemoveRows()
+            # A request that joined a running job missed earlier names.
+            if owns_tree and seen is not None:
+                for row in range(len(node.children) - 1, -1, -1):
+                    child = node.children[row]
+                    if child.path not in seen:
+                        self.beginRemoveRows(self.path_index(node.path), row, row)
+                        removed = node.children.pop(row)
+                        self._forget(removed)
+                        self.endRemoveRows()
             for row, child in enumerate(node.children):
                 child.row = row
-            self.directoryLoaded.emit(node.path)
-            if request.operation == "list":
+            if not request.payload.get("listing_only"):
+                self.directoryLoaded.emit(node.path)
+            if request.operation == "list" and not request.payload.get("listing_only"):
                 self._request_details(node, manual=bool(request.payload.get("scan_manual")))
         elif kind in ("error", "cancelled"):
             node.state = "error" if kind == "error" else "cancelled"
             node.error = event.get("message", "Cancelled — Retry")
         self.changed(node)
+
+    def _release_row(self, node: FolderNode) -> None:
+        """The row's request ended: the newest of this tab's other active requests
+        for the folder (e.g. a check still running after Refresh's listing) takes
+        the row, else it is idle."""
+        active = self.cache.requests(self.owner)
+        # A request FolderCache replaced (e.g. resubmitted after a cache clear)
+        # never finishes; it must not take the row back.
+        for stale in [r for r in self._scan_seen if r.path == node.path and r not in active]:
+            del self._scan_seen[stale]
+        previous = next((r for r in reversed(self._scan_seen)
+                         if r.path == node.path and not r.cancelled.is_set()), None)
+        if previous is None:
+            self._tree_requests.pop(node.path, None)
+            node.state = "idle"
+            return
+        self._tree_requests[node.path] = previous
+        job = self.cache.jobs.get((previous.operation, node.path))
+        # Details (browse step 2) fill in names and dates but are not the row's activity.
+        node.state = ("idle" if previous.operation == "details"
+                      else "running" if job and job.state == "started" else "queued")
 
     def _shared_snapshot_changed(self, path: str) -> None:
         if path in self.nodes and not any(self.cache.has_request(self.owner, operation, path) for operation in SCANS):
@@ -535,6 +625,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
 
     def _forget(self, node: FolderNode) -> None:
         self.nodes.pop(node.path, None)
+        self._tree_requests.pop(node.path, None)
         for child in node.children:
             self._forget(child)
 
@@ -592,11 +683,88 @@ class SnapshotFileSystemModel(QAbstractItemModel):
 
         QTimer.singleShot(0, batch)
 
+    @property
+    def refreshing(self) -> bool:
+        return self._refresh_submitting or bool(self._refresh_paths)
+
+    def refresh_pending(self, path: str) -> bool:
+        return path in self._refresh_paths
+
+    def _reset_refresh(self) -> None:
+        self._refresh_sequence += 1
+        self._refresh_paths.clear()
+        self._refresh_details.clear()
+        self._refresh_submitting = False
+        self.refreshStateChanged.emit()
+
+    def _refresh_changed(self) -> None:
+        if not self.refreshing and self._refresh_details:
+            # After the finishing listing's own event (it may still prune children).
+            QTimer.singleShot(0, self._request_refresh_details)
+        self.refreshStateChanged.emit()
+
+    def _request_refresh_details(self) -> None:
+        """Details cancelled or deferred by Refresh, and folders it found new
+        subfolders in, get their dates, signature and identities."""
+        if self.closed or self.refreshing:
+            return
+        paths, self._refresh_details = self._refresh_details, set()
+        for path in paths:
+            node = self.nodes.get(path)
+            if node is not None and node.state != "error":
+                self._request_details(node, manual=False)
+
     def refresh(self) -> None:
-        self.rescan(True)
+        """Relist the root and expanded branches on screen, without checking files."""
+        if self.closed or self.root is None:
+            return
+        root_path = self.root.path
+        visible = self.viewport_paths()
+        self.cache.refresh_folder_icons([root_path, *visible])
+        paths = {root_path: None}
+        for path in visible:
+            node = self.nodes.get(path)
+            while node is not None and node is not self.root:
+                if self.view is not None and self.view.isExpanded(self.path_index(node.path)):
+                    paths[node.path] = None
+                node = node.parent
+        self._refresh_sequence += 1
+        sequence, generation = self._refresh_sequence, self.generation
+        self._refresh_submitting = True
+        self._refresh_details.update(request.path for request in self.cache.cancel_automatic_scans(self.owner)
+                                     if request.operation == "details")
+        self._refresh_paths = set(paths)
+        self.refreshStateChanged.emit()
+        rows = list(paths)
+        position = 0
+
+        def batch() -> None:
+            nonlocal position
+            if self.closed or self.service.closed or sequence != self._refresh_sequence or generation != self.generation:
+                return
+            for _ in range(16):
+                if position >= len(rows):
+                    self._refresh_submitting = False
+                    self._refresh_changed()
+                    return
+                if len(self.service.pending) >= 16:
+                    QTimer.singleShot(50, batch)
+                    return
+                path = rows[position]
+                position += 1
+                if path not in self.nodes or not self.request_scan(
+                        path, priority=path == root_path, force=True, listing_only=True):
+                    self._refresh_paths.discard(path)
+                else:
+                    for request in self.cache.requests(self.owner):
+                        if request.path == path and request.operation == "list":
+                            request.payload["refresh_sequence"] = sequence
+            QTimer.singleShot(0, batch)
+
+        batch()
 
     def stop_all_scans(self) -> None:
-        self._refresh_sequence += 1
+        self._reset_refresh()
         for operation in SCANS:
             self.cache.cancel(self.owner, operation)
 
@@ -604,6 +772,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if self.closed:
             return
         self.closed = True
+        self._reset_refresh()
+        self._scan_seen.clear()
+        self._tree_requests.clear()
         self.generation += 1
         self.cache.cancel(self.owner)
         self.cache.resultReady.disconnect(self._on_event)

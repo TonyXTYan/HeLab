@@ -299,7 +299,7 @@ def test_visible_folder_restores_failure_before_selection_load_and_manual_recove
     service.pending.remove(request)
     assert cache.current_dataset(path) is not None and cache.scan_history(path)["blocked"]
     explorer._update_activity()
-    assert explorer.folder_freshness_label.text() == "Basic scan failed 2h ago · Retry manually"
+    assert explorer.folder_freshness_label.text() == "Folder status check failed 2h ago · Retry manually"
     assert "3 attempts" in explorer.folder_freshness_label.toolTip()  # Recorded before single attempts.
     assert "1 loaded" in explorer.folder_summary_label.text()
     assert datetime_date(cache.scan_history(path)["failures"][0]["failed_at"]) in explorer.folder_freshness_label.toolTip()
@@ -312,7 +312,7 @@ def test_visible_folder_restores_failure_before_selection_load_and_manual_recove
         extras = explorer.model.data(index, explorer.model.STATUS_EXTRA_ICONS_ROLE)
         tooltip = explorer.model.data(index, int(Qt.ItemDataRole.ToolTipRole))
         assert isinstance(extras, list) and StatusIcons.ICON_SCAN_FAILED in extras
-        assert isinstance(tooltip, str) and "Automatic basic scans are skipped" in tooltip
+        assert isinstance(tooltip, str) and "Automatic folder status checks are skipped" in tooltip
         explorer._update_activity()
     explorer.deep_timer.stop()
     explorer.context_menu_action_deep_calc_status(path)
@@ -370,7 +370,7 @@ def test_failure_badge_replaces_unavailable_text_and_cancelled_text_follows_badg
     cache.remember_history(path, apply_outcome(empty_history(), failure("timed-out", 5)))
     assert model.data(index, display) == ""
     tooltip = model.data(index, int(Qt.ItemDataRole.ToolTipRole))
-    assert isinstance(tooltip, str) and node.error in tooltip and "Automatic basic scans are skipped" in tooltip
+    assert isinstance(tooltip, str) and node.error in tooltip and "Automatic folder status checks are skipped" in tooltip
     node.state = "cancelled"  # A cancelled manual retry keeps its text beside the badge.
     assert model.data(index, display) == "Cancelled"
     pixmap = QPixmap(150, 20)

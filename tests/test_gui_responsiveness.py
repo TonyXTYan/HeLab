@@ -31,6 +31,7 @@ def frozen_service(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> IOService:
 
 def deliver(service: IOService, model: SnapshotFileSystemModel, path: str, event: dict[str, Any]) -> None:
     request = IORequest(model.owner, model.generation, path, "scan", {}, 15.0)
+    service.resultReady.emit(request, {"kind": "queued"})
     service.resultReady.emit(request, event)
 
 
@@ -663,10 +664,10 @@ def test_load_progress_counts_cached_files_and_reports_unreadable_files(
     expected_files = [str(source / f"d_txy_forc{shot}.txt") for shot in (1, 2)]
     assert [event["filename"] for event in events if event["kind"] == "file_started"] == expected_files
     assert [event["filename"] for event in events if event["kind"] == "file_finished"] == expected_files
-    assert progress[0] == {"kind": "progress", "progress": 0.0, "loaded_files": 0,
-                           "total_files": 2, "failed_files": 0}
-    assert progress[-1] == {"kind": "progress", "progress": 1.0, "loaded_files": 1,
-                            "total_files": 2, "failed_files": 1}
+    assert progress[0] == {"kind": "progress", "progress": 0.0, "checked_files": 0, "loaded_files": 0,
+                           "total_files": 2, "failed_files": 0, "unsettled_files": 0}
+    assert progress[-1] == {"kind": "progress", "progress": 1.0, "checked_files": 2, "loaded_files": 1,
+                            "total_files": 2, "failed_files": 1, "unsettled_files": 0}
     loaded = next(event for event in events if event["kind"] == "loaded")
     assert loaded["files"] == 1
     assert loaded["problematic"] == [2]

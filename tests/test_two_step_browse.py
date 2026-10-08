@@ -12,6 +12,7 @@ from diskcache import FanoutCache
 from pytestqt.qtbot import QtBot
 
 from helab.io_helper import list_folder, load, scan
+from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.utils.folder_cache import FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.scan_history import apply_outcome, empty_history
@@ -126,7 +127,7 @@ def test_browse_shows_counts_first_and_details_fill_dates_and_signature(
     service.resultReady.emit(request, {"kind": "started"})
     service.resultReady.emit(request, {"kind": "heartbeat", "phase": "listing", "entries": 3200})
     explorer._update_activity()
-    assert explorer.folder_summary_label.text() == "Listing… 3,200 entries"
+    assert explorer.folder_summary_label.text() == "Listing folder… 3,200 entries"
     replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
     root = explorer.model.nodes[path]
     explorer._update_activity()
@@ -143,6 +144,359 @@ def test_browse_shows_counts_first_and_details_fill_dates_and_signature(
     assert not cache.jobs
     explorer.close_cleanup()
     service.shutdown()
+
+
+def test_refresh_does_not_complete_a_running_folder_status_check(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = frozen_service(monkeypatch)
+    data_folder(tmp_path)
+    path = str(tmp_path)
+    explorer = FolderExplorer(path, path, path, [0, 4, 5])
+    qtbot.addWidget(explorer)
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    replay(qtbot, cache, path, "details", lambda send: scan(path, send, options))
+    explorer.start_basic_scan("current")
+    explorer._dispatch_deep()
+    check = producer(cache, path, "scan")
+    explorer.refresh()
+    replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    assert explorer._basic_active and path in explorer._deep_depth
+    assert explorer._basic_completed == 0 and not check.cancelled.is_set()
+    replay(qtbot, cache, path, "scan", lambda send: scan(path, send, options))
+    explorer._dispatch_deep()
+    assert not explorer._basic_active and explorer._basic_completed == 1
+    explorer.close_cleanup()
+    service.shutdown()
+
+
+@pytest.fixture
+def checked_browser(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+                    ) -> Iterator[tuple[IOService, FolderExplorer, str]]:
+    service = frozen_service(monkeypatch)
+    data_folder(tmp_path)
+    path = str(tmp_path)
+    explorer = FolderExplorer(path, path, path, [0, 4, 5])
+    explorer.auto_load_ram = False
+    qtbot.addWidget(explorer)
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    replay(qtbot, cache, path, "details", lambda send: scan(path, send, options))
+    yield service, explorer, path
+    explorer.close_cleanup()
+    service.shutdown()
+
+
+@pytest.mark.parametrize("outcome", ["done", "error", "cancelled"])
+def test_refresh_disables_only_its_folder_retry_until_terminal_outcome(
+    qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str],
+    tmp_path: Path, outcome: str,
+) -> None:
+    service, explorer, path = checked_browser
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    (tmp_path / "d_txy_forc3.txt").write_text("3,2,3\n")
+    explorer.refresh()
+    qtbot.waitUntil(lambda: not explorer.model._refresh_submitting)
+    assert explorer.model.refresh_pending(path) and not explorer.retry_button.isEnabled()
+    refresh = producer(cache, path, "list")
+    assert not explorer.model.request_scan(path, priority=True, force=True, no_timeout=True)
+    assert refresh.timeout == service.NO_PROGRESS_TIMEOUT
+    assert explorer.model.request_scan(str(tmp_path / "run"), force=True, no_timeout=True)
+    explorer.load_error = "Load failed"
+    explorer._update_activity()
+    assert explorer.retry_button.isEnabled()  # Load Retry remains independent.
+    explorer.load_error = ""
+    if outcome == "done":
+        replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+        assert explorer.model.nodes[path].txy_count == 2  # Refresh preserves checked counts.
+    elif outcome == "error":
+        service.resultReady.emit(refresh, {"kind": "error", "message": "Disconnected"})
+        service.pending.remove(refresh)
+    else:
+        cache.cancel(explorer.model.owner, "list", path)
+    assert not explorer.model.refreshing and explorer.retry_button.isEnabled()
+    explorer._retry()
+    assert producer(cache, path, "list").timeout == float("inf")
+    replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    replay(qtbot, cache, path, "details", lambda send: scan(path, send, options))
+    assert explorer.model.nodes[path].txy_count == 3
+
+
+@pytest.mark.parametrize("completion_order", ["check_first", "refresh_first", "during_replay"])
+def test_manual_check_cannot_restore_children_removed_by_a_newer_refresh(
+    qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str],
+    tmp_path: Path, completion_order: str,
+) -> None:
+    service, explorer, path = checked_browser
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    explorer.start_basic_scan("current")
+    explorer._dispatch_deep()
+    check = producer(cache, path, "scan")
+    check_events: list[dict[str, Any]] = []
+    scan(path, check_events.append, options)
+    explorer.refresh()
+    assert not check.cancelled.is_set() and explorer._basic_active
+    old = tmp_path / "run"
+    old.rmdir()
+
+    def finish_check() -> None:
+        for event in check_events:
+            service.resultReady.emit(check, event)
+        service.resultReady.emit(check, {"kind": "done"})
+        service.pending.remove(check)
+        qtbot.waitUntil(lambda: not cache._deliveries)
+
+    if completion_order == "check_first":
+        finish_check()
+    if completion_order == "during_replay":
+        refresh = producer(cache, path, "list")
+        list_folder(path, lambda event: service.resultReady.emit(refresh, event), options)
+        service.resultReady.emit(refresh, {"kind": "done"})
+        service.pending.remove(refresh)
+        finish_check()
+    else:
+        replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    assert str(old) not in explorer.model.nodes
+    if completion_order == "refresh_first":
+        assert explorer._basic_active
+        finish_check()
+    explorer._dispatch_deep()
+    assert str(old) not in explorer.model.nodes and not explorer._basic_active
+    assert explorer._basic_completed == 1
+    assert not explorer.model.refreshing
+    assert str(old) not in {entry["path"] for entry in cache.snapshots[path].entries}
+    later = SnapshotFileSystemModel(service=service)
+    later.setRootPath(path)
+    qtbot.waitUntil(lambda: not cache._deliveries)
+    assert str(old) not in later.nodes
+    later.close_cleanup()
+
+
+def test_refresh_cancels_only_automatic_subscriptions_and_suppresses_new_checks(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+    checked_browser: tuple[IOService, FolderExplorer, str], tmp_path: Path,
+) -> None:
+    service, explorer, path = checked_browser
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    child = str(tmp_path / "run")
+    explorer.show()
+    monkeypatch.setattr(explorer, "_viewport_paths", lambda: [child])
+    explorer.set_auto_scan_visible(True)
+    explorer._check_visible_folders()
+    automatic = producer(cache, child, "scan")
+    assert cache.submit("other-tab", 0, child, "scan", {"scan_manual": True}, force=True)
+    explorer.model._request_details(explorer.model.nodes[child], manual=False)
+    details = producer(cache, child, "details")
+    explorer.start_basic_scan("current")
+    explorer._dispatch_deep()
+    manual = producer(cache, path, "scan")
+    explorer.refresh()
+    assert not cache.has_request(explorer.model.owner, "scan", child)
+    assert cache.has_request("other-tab", "scan", child) and not automatic.cancelled.is_set()
+    assert details.cancelled.is_set() and not manual.cancelled.is_set()
+    assert explorer.model.nodes[child].state == "idle" and not explorer.model.nodes[child].error
+    assert not explorer.visible_timer.isActive()
+    explorer._check_visible_folders()
+    explorer.model._request_details(explorer.model.nodes[child], manual=False)
+    assert not cache.has_request(explorer.model.owner, "scan", child)
+    assert ("details", child) not in cache.jobs
+    replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    assert not explorer.model.refreshing
+    # The details Refresh cancelled run again once it finishes.
+    assert cache.has_request(explorer.model.owner, "details", child)
+    cache.cancel(explorer.model.owner, "details", child)
+    service.max_operations = 2  # The surviving manual check still occupies one slot.
+    explorer._check_visible_folders()
+    assert cache.has_request(explorer.model.owner, "scan", child)
+    cache.cancel("other-tab")
+
+
+def test_refresh_requests_details_for_new_subfolders_after_it_finishes(
+    qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str], tmp_path: Path,
+) -> None:
+    service, explorer, path = checked_browser
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    added = tmp_path / "run2"
+    added.mkdir()
+    explorer.refresh()
+    qtbot.waitUntil(lambda: not explorer.model._refresh_submitting)
+    replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    assert not explorer.model.refreshing
+    assert explorer.model.nodes[str(added)].modified is None
+    replay(qtbot, cache, path, "details", lambda send: scan(path, send, options))
+    assert explorer.model.nodes[str(added)].modified is not None
+
+
+def test_refresh_cancelling_work_resubmitted_after_a_cache_clear_leaves_the_row_idle(
+    qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str], tmp_path: Path,
+) -> None:
+    service, explorer, _ = checked_browser
+    cache, child = explorer.model.cache, str(tmp_path / "run")
+    node = explorer.model.nodes[child]
+    assert cache.submit("other-tab", 0, child, "invalidate", {})
+    # Parked behind the clear: this request is replaced, never finished.
+    explorer.model._request_details(node, manual=False)
+    parked = next(r for r in explorer.model._scan_seen if r.path == child and r.operation == "details")
+    clear = producer(cache, child, "invalidate")
+    service.resultReady.emit(clear, {"kind": "done"})
+    service.pending.remove(clear)
+    qtbot.waitUntil(lambda: ("details", child) in cache.jobs)
+    explorer.refresh()
+    assert node.state == "idle" and parked not in explorer.model._scan_seen
+    assert explorer.model._tree_requests.get(child) is not parked
+
+
+def test_joining_another_tabs_running_listing_shows_the_row_running(
+    qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str],
+) -> None:
+    service, explorer, path = checked_browser
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    node = explorer.model.nodes[path]
+    assert cache.submit("other-tab", 0, path, "list", {}, force=True)
+    service.resultReady.emit(producer(cache, path, "list"), {"kind": "started"})
+    # Joining late delivers "started", not "queued".
+    assert explorer.model.request_scan(path, force=True)
+    assert node.state == "running"
+    replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    assert node.state == "idle" and [child.path for child in node.children] == [str(Path(path) / "run")]
+
+
+def test_row_returns_to_a_running_status_check_when_refresh_listing_finishes(
+    qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str],
+) -> None:
+    service, explorer, path = checked_browser
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    node = explorer.model.nodes[path]
+    explorer.start_basic_scan("current")
+    explorer._dispatch_deep()
+    service.resultReady.emit(producer(cache, path, "scan"), {"kind": "started"})
+    explorer.refresh()
+    replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    assert not explorer.model.refreshing and node.state == "running"
+    replay(qtbot, cache, path, "scan", lambda send: scan(path, send, options))
+    assert node.state == "idle" and node.children
+
+
+# Known issue (ROADMAP.md, Known issues): while a tab refreshes, it ignores
+# results other tabs finish. `_shared_snapshot_changed` applies them through
+# `request_scan(automatic=True)`, which Refresh blocks so it starts no new
+# checks; that also blocks results already in memory, which need no I/O. The
+# planned fix is a separate no-I/O path for in-memory results, built with
+# cache-only browsing (ROADMAP.md, Later and ideas). Remove these markers then;
+# strict xfail fails as soon as the behaviour is fixed.
+SHARED_RESULTS_DURING_REFRESH = pytest.mark.xfail(
+    strict=True, reason="Refresh blocks other tabs' in-memory results; fixed with cache-only browsing (ROADMAP.md)")
+
+
+def check_in_other_tab(qtbot: QtBot, cache: FolderCache, path: str, options: dict[str, Any]) -> None:
+    assert cache.submit("other-tab", 0, path, "scan", {"metadata_only": True}, force=True)
+    replay(qtbot, cache, path, "scan", lambda send: scan(path, send, options))
+
+
+@SHARED_RESULTS_DURING_REFRESH
+def test_other_tabs_finished_check_shows_while_this_tab_refreshes(
+    qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str], tmp_path: Path,
+) -> None:
+    _, explorer, _ = checked_browser
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    child = str(tmp_path / "run")
+    (tmp_path / "run" / "d_txy_forc9.txt").write_text("9,2,3\n")
+    explorer.refresh()  # The root listing stays pending.
+    assert explorer.model.refreshing
+    check_in_other_tab(qtbot, cache, child, options)
+    assert explorer.model.nodes[child].txy_count == 1
+
+
+@SHARED_RESULTS_DURING_REFRESH
+def test_other_tabs_finished_check_of_an_off_screen_row_shows_after_refresh(
+    qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str], tmp_path: Path,
+) -> None:
+    _, explorer, path = checked_browser
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    run, inner = tmp_path / "run", tmp_path / "run" / "inner"
+    inner.mkdir()
+    # "run" is listed but collapsed: Refresh relists only the root, not "inner"'s parent.
+    assert explorer.model.request_scan(str(run))
+    replay(qtbot, cache, str(run), "list", lambda send: list_folder(str(run), send, options))
+    assert str(inner) in explorer.model.nodes
+    (inner / "d_txy_forc9.txt").write_text("9,2,3\n")
+    explorer.refresh()
+    check_in_other_tab(qtbot, cache, str(inner), options)
+    replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    qtbot.waitUntil(lambda: not explorer.model.refreshing)
+    assert explorer.model.nodes[str(inner)].txy_count == 1
+
+
+@pytest.mark.parametrize("row_state", ["queued", "idle"])
+def test_manual_check_joining_automatic_work_survives_refresh(
+    checked_browser: tuple[IOService, FolderExplorer, str],
+    row_state: str,
+) -> None:
+    _, explorer, path = checked_browser
+    cache = explorer.model.cache
+    cache.snapshots.pop(path)  # Simulate automatic work that cannot use a saved snapshot.
+    explorer.model.request_scan(path, metadata_only=True)
+    automatic = producer(cache, path, "scan")
+    explorer.model.nodes[path].state = row_state
+    explorer.start_basic_scan("current")
+    explorer._dispatch_deep()
+    explorer.refresh()
+    assert not automatic.cancelled.is_set()
+    subscriber = next(request for request in cache.requests(explorer.model.owner)
+                      if request.operation == "scan")
+    assert subscriber.payload["scan_manual"] and not subscriber.payload["automatic"]
+
+
+def test_refresh_superseding_cached_replay_keeps_retry_disabled(
+    qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str],
+) -> None:
+    _, explorer, path = checked_browser
+    cache = explorer.model.cache
+    assert explorer.model.request_scan(path)  # Replay has not been delivered yet.
+    explorer.refresh()
+    qtbot.waitUntil(lambda: not explorer.model._refresh_submitting)
+    assert explorer.model.refresh_pending(path) and not explorer.retry_button.isEnabled()
+    assert producer(cache, path, "list").payload["listing_only"]
+
+
+def test_refresh_joins_another_tabs_listing_while_its_manual_check_is_active(
+    qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str],
+) -> None:
+    _, explorer, path = checked_browser
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    explorer.start_basic_scan("current")
+    explorer._dispatch_deep()
+    assert cache.submit("other-tab", 0, path, "list", {}, force=True)
+    explorer.refresh()
+    assert cache.has_request(explorer.model.owner, "list", path)
+    replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    assert not explorer.model.refreshing and explorer._basic_active
+
+
+def test_refresh_batch_waiting_for_queue_space_is_abandoned_on_navigation(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+    checked_browser: tuple[IOService, FolderExplorer, str], tmp_path: Path,
+) -> None:
+    service, explorer, path = checked_browser
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    branches = [str(tmp_path / f"branch-{i}") for i in range(18)]
+    for branch in branches:
+        Path(branch).mkdir()
+    explorer.model.request_scan(path, force=True)
+    replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
+    replay(qtbot, cache, path, "details", lambda send: scan(path, send, options))
+    monkeypatch.setattr(explorer.model, "viewport_paths", lambda: branches)
+    monkeypatch.setattr(explorer.tree, "isExpanded", lambda index: True)
+    explorer.refresh()
+    assert len(service.pending) == 16 and explorer.model._refresh_submitting
+    assert all(explorer.model.refresh_pending(branch) for branch in branches)
+    explorer.open_to_path(str(tmp_path / "elsewhere"))
+    qtbot.wait(80)
+    assert not explorer.model.refreshing
+    assert not any(request.payload.get("listing_only") for request in service.pending)
 
 
 def test_load_of_the_selected_folder_replaces_details_and_saves_its_summary(

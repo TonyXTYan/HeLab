@@ -92,10 +92,10 @@ class IOService(QObject):
     LOCAL_CAP = 2
     PAUSABLE = ("load", "list", "details", "scan", "icons")
     LABELS = {"load": "Load data", "cached": "Read cached data", "list": "Browse folder", "details": "Folder details",
-              "scan": "Basic scan", "resolve": "Browse folder", "invalidate": "Clear data cache",
+              "scan": "Check folder status", "resolve": "Browse folder", "invalidate": "Clear data cache",
               "scan_history": "Save scan history", "icons": "Folder icons"}
     NOUNS = {"load": "load", "cached": "cached data read", "list": "folder listing", "details": "folder details scan",
-             "scan": "basic scan", "resolve": "folder lookup", "invalidate": "cache clear",
+             "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup"}
 
     def __init__(self, parent: QObject | None = None) -> None:

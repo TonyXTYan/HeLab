@@ -232,13 +232,13 @@ def test_failures_slow_stops_and_full_queue_are_logged_once(
     scan.retired_at = time.monotonic() - service.SLOW_STOP_SECONDS - 1
     service._tick()
     service._tick()
-    assert caplog.text.count("Stopped basic scan has not exited after 6 s (cancelled)") == 1
+    assert caplog.text.count("Stopped folder status check has not exited after 6 s (cancelled)") == 1
     exit_helper(service, scan)
     exit_helper(service, scan)  # Duplicate exit notifications log nothing more.
-    assert caplog.text.count("Stopped basic scan exited after 6 s: /hung") == 1
+    assert caplog.text.count("Stopped folder status check exited after 6 s: /hung") == 1
     monkeypatch.setattr(service, "_dispatch", lambda: None)
     for index in range(service.MAX_PENDING):
         service.submit("bulk", 0, f"/folder-{index}", "scan")
     assert not service.submit("bulk", 0, "/overflow", "scan")
-    assert "I/O queue full (128 requests); not queued: basic scan /overflow" in caplog.text
+    assert "I/O queue full (128 requests); not queued: folder status check /overflow" in caplog.text
     service.shutdown()

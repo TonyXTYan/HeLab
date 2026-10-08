@@ -23,7 +23,7 @@ from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelecti
 from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QPainter, QPixmap, QResizeEvent, QKeySequence
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget, QHBoxLayout, \
-    QPushButton, QTreeWidget, QTreeWidgetItem, QInputDialog, QProgressBar
+    QPushButton, QTreeWidget, QTreeWidgetItem, QInputDialog, QProgressBar, QToolButton
 from humanfriendly.terminal import message
 # from numpy.f2py.crackfortran import include_paths
 from pyqtgraph.parametertree import ParameterTree, Parameter
@@ -39,6 +39,7 @@ from helab.utils.os_cached import *
 from helab.utils.caching_setup import *
 from helab.utils.threading_setup import *
 from helab.views.ElidedLabel import ElidedLabel
+from helab.views.HoverMenuToolButton import HoverMenuToolButton
 from helab.views.FolderExplorer import FolderExplorer, paint_spinner
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
@@ -57,6 +58,13 @@ import pyqtgraph.parametertree as ptree
 class HelabMainWindow(QMainWindow):
     DEFAULT_WIDTH = 1600
     DEFAULT_HEIGHT = 900
+
+    FOLDER_STATUS_TOOLTIP = (
+        "Check folder status\n"
+        "Check counts and status without loading TXY data.\n"
+        "Icon: check folders in view.\n"
+        "Arrow below: choose which folders to check."
+    )
 
     INTERVAL_UPDATE_STATUS_BAR_LEFT = 100
     INTERVAL_UPDATE_STATUS_BAR_RIGHT = 1000
@@ -275,10 +283,10 @@ class HelabMainWindow(QMainWindow):
 
             menu_view.addSeparator()
 
-            self.view_toggle_auto_scan_visible = QAction('Automatically Basic Scan Folders in View', self)
+            self.view_toggle_auto_scan_visible = QAction('Automatically Check Folder Status in View', self)
             self.view_toggle_auto_scan_visible.setCheckable(True)
             self.view_toggle_auto_scan_visible.setToolTip(
-                "Scan visible folders that have no saved scan results; use Basic scan / Refresh to recheck cached folders.")
+                "Scan visible folders that have no saved scan results; use Check folder status to recheck cached folders.")
             self.view_toggle_auto_scan_visible.setChecked(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
             self.view_toggle_auto_scan_visible.triggered.connect(self.set_auto_scan_visible)
             menu_view.addAction(self.view_toggle_auto_scan_visible)
@@ -505,7 +513,14 @@ class HelabMainWindow(QMainWindow):
         self.action_tab_new = QAction(ToolIcons.ICON_PLUS, "New Tab", self)
         self.action_tab_folder_up = QAction(ToolIcons.ICON_FOLDER_UP, "Up Dir", self)
         self.action_tab_refresh = QAction(ToolIcons.ICON_REFRESH, "Refresh", self)
-        self.action_tab_rescan = QAction(ToolIcons.ICON_ZOOM_REPLACE, "Rescan", self)
+        self.action_tab_rescan = QAction(ToolIcons.ICON_ZOOM_SCAN, "Check folder status", self)
+        self.action_tab_rescan.setEnabled(False)
+        self.action_tab_rescan.triggered.connect(self._check_folder_status_clicked)
+        self.folder_status_menu = QMenu(self)
+        self.folder_status_menu.addAction("Folders in view", lambda: self._check_folder_status("view"))
+        self.folder_status_menu.addAction("Current folder", lambda: self._check_folder_status("current"))
+        self.folder_status_menu.addAction("Recursive depth…", self._choose_folder_status_depth)
+        self.folder_status_menu.addAction("All subfolders", lambda: self._check_folder_status("recursive", 32768))
         self.action_tab_cancel = QAction(ToolIcons.ICON_ZOOM_CANCEL, "Cancel Loading", self)
         self.action_tab_cancel.setShortcut(QKeySequence(Qt.Key.Key_Escape))
         self.action_tab_cancel.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
@@ -525,11 +540,13 @@ class HelabMainWindow(QMainWindow):
         self.action_tab_new.setWhatsThis(
             "New Tab??? plz let me know if you see this text")  # literally don't know where this will show up memm
         # self.action_tab_new.set
-        self.action_tab_refresh.setToolTip("Refresh file list view")
+        self.action_tab_refresh.setToolTip(
+            "Refresh folder list\nUpdate folder names and expanded folders in view.\n"
+            "Use Check folder status to update counts and status.")
         self.action_tab_folder_up.setToolTip("Navigate up one directory")
-        self.action_tab_rescan.setToolTip("Rescan the current directory")
+        self.action_tab_rescan.setToolTip(self.FOLDER_STATUS_TOOLTIP)
         self.action_tab_cancel.setToolTip("Cancel loading in this tab (Esc)")
-        self.action_tab_live.setToolTip("Live updates unavailable; use Rescan to check for new files")
+        self.action_tab_live.setToolTip("Live updates unavailable\nUse Check folder status to check for new files.")
 
         # action_tab_new.triggered.connect(self.add_new_folder_explorer_tab)
         # action_tab_folder_up.triggered.connect(self.on_back_button_clicked)
@@ -546,7 +563,36 @@ class HelabMainWindow(QMainWindow):
         self.sidebar_toolbar_left.addAction(self.action_tab_new)
         self.sidebar_toolbar_left.addAction(self.action_tab_folder_up)
         self.sidebar_toolbar_left.addAction(self.action_tab_refresh)
-        self.sidebar_toolbar_left.addAction(self.action_tab_rescan)
+        # Separate widgets keep both click targets and hover feedback independent
+        # across native styles, without adding another toolbar column.
+        status_control = QWidget(self.sidebar_toolbar_left)
+        status_layout = QVBoxLayout(status_control)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(0)
+        self.folder_status_button = QToolButton(status_control)
+        self.folder_status_button.setAutoRaise(True)
+        self.folder_status_button.setDefaultAction(self.action_tab_rescan)
+        self.folder_status_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.folder_status_button.setIconSize(self.sidebar_toolbar_left.iconSize())
+        up_button = self.sidebar_toolbar_left.widgetForAction(self.action_tab_folder_up)
+        button_size = up_button.sizeHint() if up_button is not None else QSize(32, 32)
+        self.folder_status_button.setFixedSize(button_size)
+        self.folder_status_scope_button = HoverMenuToolButton(status_control)
+        arrow_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "menu-right.svg")
+        self.folder_status_scope_button.setIcon(QIcon(arrow_path))
+        self.folder_status_scope_button.setIconSize(QSize(6, 8))
+        self.folder_status_scope_button.setFixedSize(button_size.width(), 12)
+        self.folder_status_scope_button.setMenu(self.folder_status_menu)
+        self.folder_status_scope_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.folder_status_scope_button.setToolTip(
+            "Choose folders to check\nHover or click to open the status check options.")
+        self.folder_status_scope_button.setAccessibleName("Choose folders to check")
+        self.action_tab_rescan.changed.connect(
+            lambda: self.folder_status_scope_button.setEnabled(self.action_tab_rescan.isEnabled()))
+        self.folder_status_scope_button.setEnabled(self.action_tab_rescan.isEnabled())
+        status_layout.addWidget(self.folder_status_button)
+        status_layout.addWidget(self.folder_status_scope_button)
+        self.sidebar_toolbar_left.addWidget(status_control)
         self.sidebar_toolbar_left.addAction(self.action_tab_cancel)
         self.sidebar_toolbar_left.addAction(self.action_tab_live)
 
@@ -567,7 +613,6 @@ class HelabMainWindow(QMainWindow):
         self.action_tab_folder_up.triggered.connect(self.on_back_button_clicked)
         self.action_tab_refresh.triggered.connect(self.tab_widget.refresh_current_folder_explorer)
         self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
-        self.action_tab_rescan.triggered.connect(lambda: self.tab_widget.rescan_current_folder_explorer(user_intend = True))
         self.action_tab_live.triggered.connect(self.on_live_button_clicked)
 
         self.sidebar_toolbar_left.addSeparator()
@@ -1029,7 +1074,8 @@ class HelabMainWindow(QMainWindow):
         self.central_placeholder.setToolTip(explorer.loading_tooltip if explorer.loading else "")
         if explorer.loading:
             frame = INDICATOR_DOTS[int(time.monotonic() * 10) % len(INDICATOR_DOTS)]
-            title = name if explorer.load_queued else f"{frame} Loading {name}"
+            title = (name if explorer.load_queued else f"Loading paused: {name}" if explorer.load_paused
+                     else f"{frame} Loading {name}")
             self.central_placeholder.setText(f"{title}\n{explorer.loading_message}")
         elif explorer.load_error:
             self.central_placeholder.setText(f"{name}\n{explorer.load_error}")
@@ -1040,7 +1086,7 @@ class HelabMainWindow(QMainWindow):
             self.central_placeholder.setText(f"Loaded {name}\n{fnum(explorer.load_bytes)}B")
         else:
             node = explorer.model.nodes.get(explorer.selected_path_globally)
-            state = node.error if node and node.error else "Scanning…" if node and node.state in ("queued", "running") else "Select a data folder"
+            state = node.error if node and node.error else explorer.scan_message or "Select a data folder"
             self.central_placeholder.setText(f"{name}\n{state}")
 
     def add_new_folder_explorer_tab(self,
@@ -1087,6 +1133,42 @@ class HelabMainWindow(QMainWindow):
         explorer = self.tab_widget.currentWidget()
         self.action_tab_cancel.setEnabled(
             isinstance(explorer, FolderExplorer) and explorer.can_cancel_loading)
+        self._update_folder_status_action()
+
+    def _check_folder_status_clicked(self) -> None:
+        explorer = self.tab_widget.currentWidget()
+        if isinstance(explorer, FolderExplorer) and explorer._basic_active:
+            explorer.cancel_basic_scan()
+            self._update_folder_status_action()
+        else:
+            self._check_folder_status("view")
+
+    def _check_folder_status(self, scope: str, depth: int = 0) -> None:
+        explorer = self.tab_widget.currentWidget()
+        if isinstance(explorer, FolderExplorer) and not explorer.closed:
+            explorer.start_basic_scan(scope, depth)
+        self._update_folder_status_action()
+
+    def _choose_folder_status_depth(self) -> None:
+        explorer = self.tab_widget.currentWidget()
+        if isinstance(explorer, FolderExplorer) and not explorer.closed:
+            explorer._choose_scan_depth()
+        self._update_folder_status_action()
+
+    def _update_folder_status_action(self) -> None:
+        explorer = self.tab_widget.currentWidget()
+        available = isinstance(explorer, FolderExplorer) and not explorer.closed
+        active = isinstance(explorer, FolderExplorer) and not explorer.closed and explorer._basic_active
+        self.action_tab_rescan.setEnabled(available)
+        title = "Cancel check" if active else "Check folder status"
+        if self.action_tab_rescan.text() != title:
+            self.action_tab_rescan.setText(title)
+            self.action_tab_rescan.setIcon(ToolIcons.ICON_ZOOM_CANCEL if active else ToolIcons.ICON_ZOOM_SCAN)
+            self.action_tab_rescan.setToolTip(
+                "Cancel check\nCancel this tab's folder status check.\n"
+                "Arrow below: choose which folders to check."
+                if active else self.FOLDER_STATUS_TOOLTIP)
+        self.folder_status_menu.setEnabled(available)
 
     def update_tool_enabled_state(self) -> None:
         self._update_cancel_loading_action()

@@ -395,6 +395,9 @@ def read_cached(path: str, output: str, send: Emit = emit,
     rows = size = 0
     last_progress = 0.0
     shots = sorted(shot for shot in data if shot in by_shot)
+    failed = len(fingerprint) - len(shots)
+    unsettled = int(info.get("unsettled", 0) or 0)
+    total = len(fingerprint) + unsettled
     for i, shot in enumerate(shots):
         array = data[shot]
         artifact = os.path.join(output, f"{shot}.npy")
@@ -405,8 +408,10 @@ def read_cached(path: str, output: str, send: Emit = emit,
               "problematic": shot in problematic})
         now = time.monotonic()
         if now - last_progress >= 0.1 or i + 1 == len(shots):
-            send({"kind": "progress", "progress": (i + 1) / len(shots), "loaded_files": i + 1,
-                  "total_files": len(fingerprint), "failed_files": 0})
+            checked = i + 1 + failed + unsettled
+            send({"kind": "progress", "progress": checked / total, "checked_files": checked,
+                  "loaded_files": i + 1, "total_files": total, "failed_files": failed,
+                  "unsettled_files": unsettled})
             last_progress = now
     if not shots:
         raise ValueError("No cached data for this folder")
@@ -604,8 +609,9 @@ def load(path: str, output: str, send: Emit = emit,
         cache_reason = ""
     source = "updated" if in_memory else "disk" if cached else "merged" if reused else "files"
     send({"kind": "load_source", "source": source, "cache_reason": cache_reason})
-    send({"kind": "progress", "progress": 0.0, "loaded_files": 0,
-          "total_files": len(files), "failed_files": 0})
+    send({"kind": "progress", "progress": len(young) / (len(files) + len(young)),
+          "checked_files": len(young), "loaded_files": 0,
+          "total_files": len(files) + len(young), "failed_files": 0, "unsettled_files": len(young)})
     rows = size = loaded = 0
     last_progress = 0.0
     # Files that changed while being read: still being written. They keep their
@@ -661,8 +667,9 @@ def load(path: str, output: str, send: Emit = emit,
         send({"kind": "file_finished", "filename": filename})
         now = time.monotonic()
         if now - last_progress >= 0.1 or i + 1 == len(files):
-            send({"kind": "progress", "progress": (i + 1) / len(files),
-                  "loaded_files": loaded, "total_files": len(files),
+            send({"kind": "progress", "progress": (i + 1 + len(young)) / (len(files) + len(young)),
+                  "checked_files": i + 1 + len(young), "loaded_files": loaded,
+                  "total_files": len(files) + len(young), "unsettled_files": len(young) + len(late),
                   "failed_files": i + 1 - loaded - len(late)})
             last_progress = now
     if not loaded:
@@ -679,7 +686,7 @@ def load(path: str, output: str, send: Emit = emit,
     if changed():
         if cache is not None:
             cache.close()
-        raise ValueError("Folder changed while loading — Refresh to retry")
+        raise ValueError("Folder changed while loading — Retry")
     send({"kind": "loaded", "rows": rows, "bytes": size, "files": loaded,
           "loaded_at": time.time(),
           "total_files": len(files) + len(young), "failed_files": len(files) - loaded - len(late),

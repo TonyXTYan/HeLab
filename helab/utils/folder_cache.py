@@ -32,6 +32,7 @@ class FolderSnapshot:
     entries: tuple[dict[str, Any], ...]
     status: dict[str, Any]
     checked_at: float
+    listed_at: float = 0.0
 
 
 @dataclass(eq=False)
@@ -62,6 +63,7 @@ class SharedJob:
     data: dict[int, npt.NDArray[np.float64]] = field(default_factory=dict)
     state: str = "queued"
     progress: dict[str, Any] | None = None
+    load_status: dict[str, Any] | None = None
     attempt: int = 1
     fingerprints: dict[int, tuple[int, int, int]] = field(default_factory=dict)
     problematic: set[int] = field(default_factory=set)
@@ -109,6 +111,7 @@ class FolderCache(QObject):
         self._cleared_at: OrderedDict[str, float] = OrderedDict()
         self.scan_summaries: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.metadata_notifications: set[str] = set()
+        self.listing_notifications: set[str] = set()
         self.scan_histories: OrderedDict[str, ScanHistory] = OrderedDict()
         self.scan_history_errors: dict[str, str] = {}
         # Native icons (including unsuccessful lookups) are session-only and bounded.
@@ -193,7 +196,7 @@ class FolderCache(QObject):
             "kind": "success" if success else "timeout" if event.get("timeout") else "io_error",
             "at": job.status.get("scanned_at", time.time()) if success and job.status else time.time(),
             "attempts": event.get("attempt", job.attempt),
-            "reason": event.get("message", "Basic scan failed").removesuffix(" — Retry"),
+            "reason": event.get("message", "Folder status check failed").removesuffix(" — Retry"),
             "identity": job.status.get("identity") if success and job.status else job.payload.get("identity")}
         if (not success and history["identity"] is not None and outcome["identity"] is not None
                 and history["identity"] != outcome["identity"]):
@@ -578,6 +581,19 @@ class FolderCache(QObject):
                 request.cancelled.set()
         self.datasetChanged.emit(path)
 
+    def cancel_automatic_scans(self, owner: str) -> list[IORequest]:
+        """Drop only this tab's automatic status work; shared/manual work survives."""
+        cancelled = []
+        for request in tuple(self.requests(owner)):
+            if (request.operation in SCANS and not request.payload.get("listing_only")
+                    and not request.payload.get("scan_manual") and (
+                    request.payload.get("automatic") or request.payload.get("revalidate")
+                    or request.operation in ("scan", "details"))):
+                request.payload["refresh_cancelled"] = True
+                self.cancel(owner, request.operation, request.path)
+                cancelled.append(request)
+        return cancelled
+
     def cancel(self, owner: str, operation: str | None = None, path: str | None = None) -> None:
         for request in list(self._deliveries):
             if request.owner == owner and (operation is None or request.operation == operation) and (path is None or request.path == path):
@@ -617,6 +633,8 @@ class FolderCache(QObject):
         self.resultReady.emit(request, {"kind": job.state, "attempt": job.attempt})
         if job.progress is not None:
             self.resultReady.emit(request, job.progress)
+        if job.load_status is not None:
+            self.resultReady.emit(request, job.load_status)
         if job.paused:
             self.resultReady.emit(request, {"kind": "paused"})
 
@@ -641,6 +659,7 @@ class FolderCache(QObject):
         self._cleared_at.clear()
         self.scan_summaries.clear()
         self.metadata_notifications.clear()
+        self.listing_notifications.clear()
         self.scan_histories.clear()
         self.scan_history_errors.clear()
         self.folder_icons.clear()
@@ -707,6 +726,7 @@ class FolderCache(QObject):
                 job.fingerprints.clear()
                 job.problematic.clear()
                 job.progress = None
+                job.load_status = None
         if job.operation in SCANS:
             if kind == "scan_history":
                 self.remember_history(job.path, event.get("history"))
@@ -755,7 +775,7 @@ class FolderCache(QObject):
                 job.completed_scan = FolderSnapshot(tuple(job.entries), event, time.monotonic())
                 return
             if kind == "error" and job.completed_scan is not None:
-                self.scan_history_errors[job.path] = "Basic scan completed, but saving its metadata failed."
+                self.scan_history_errors[job.path] = "Folder status check completed, but saving its metadata failed."
                 job.status = job.completed_scan.status
                 job.entries = list(job.completed_scan.entries)
                 kind = "done"
@@ -768,18 +788,28 @@ class FolderCache(QObject):
                 if old and signature and old.status.get("signature") not in (None, "", signature):
                     self._invalidate_data(job.path)
                 checked_at = time.monotonic() - max(0, time.time() - job.status.get("scanned_at", time.time()))
-                snapshot = FolderSnapshot(tuple(job.entries), job.status, checked_at)
-                self.remember_scan(job.path, job.status)
-                self._cancel_replays(job.path)
+                # A late status check must not replace a newer refresh's names,
+                # including snapshots used by tabs opened after both jobs finish.
+                newer_listing = old is not None and old.listed_at > job.created
+                entries = old.entries if old is not None and newer_listing else tuple(job.entries)
+                listed_at = old.listed_at if old is not None and newer_listing else job.created
+                snapshot = FolderSnapshot(entries, job.status, checked_at, listed_at)
+                if not job.payload.get("listing_only"):
+                    self.remember_scan(job.path, job.status)
+                if not newer_listing:
+                    self._cancel_replays(job.path)
                 self.snapshots[job.path] = snapshot
                 self.snapshots.move_to_end(job.path)
                 self._evict()
                 if job.payload.get("metadata_only"):
                     self.metadata_notifications.add(job.path)
+                if job.payload.get("listing_only"):
+                    self.listing_notifications.add(job.path)
                 try:
                     self.snapshotChanged.emit(job.path)
                 finally:
                     self.metadata_notifications.discard(job.path)
+                    self.listing_notifications.discard(job.path)
                 self._forget_job(job)
                 for request in tuple(job.subscribers.values()):
                     self._replay(request, snapshot)
@@ -791,13 +821,21 @@ class FolderCache(QObject):
         elif job.operation in ("load", "cached"):
             if kind == "file_started":
                 attempt = event.get("attempt", job.attempt)
-                if attempt == job.attempt:
+                job.load_status = event if attempt > 1 else None
+                if attempt == job.attempt and attempt == 1:
                     return
                 job.attempt = attempt
             if kind == "file_finished":
-                return
+                job.load_status = None
+                if job.attempt == 1:
+                    return
+                job.attempt = 1
+            if kind == "heartbeat":
+                job.load_status = event
             if kind == "progress":
                 job.progress = event
+                if job.load_status is not None and job.load_status["kind"] == "heartbeat":
+                    job.load_status = None
             if kind == "scan_summary":
                 self._adopt_load_summary(job.path, event["status"])
                 return

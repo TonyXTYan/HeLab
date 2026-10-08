@@ -11,8 +11,9 @@ import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6.QtCore import QSettings, QTimer, Qt
 from PyQt6.QtGui import QAction, QCloseEvent
-from PyQt6.QtWidgets import QDialog, QMainWindow, QPushButton, QTabWidget
+from PyQt6.QtWidgets import QDialog, QMainWindow, QPushButton, QTabWidget, QToolButton
 
+from helab.resources.icons import IconsInitUtil
 from helab.utils.constants import DEFAULT_LOAD_MODE, LOAD_MODE_LABELS, LOAD_MODE_SETTING, read_load_mode
 from helab.utils.constants import AUTO_SCAN_VISIBLE_SETTING, SIMULTANEOUS_IO_SETTING
 from helab.utils.folder_cache import FolderCache, get_folder_cache
@@ -299,6 +300,89 @@ class CancelTestWindow(HelabMainWindow):
         QMainWindow.closeEvent(self, a0)
 
 
+def test_folder_status_toolbar_keeps_scope_cancel_and_up_out_of_path_row(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    IconsInitUtil.initialise_icons()
+    service, cache, first, (a, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "finish")
+    first.deep_timer.stop()
+    first.auto_load_ram = False
+    window = CancelTestWindow()
+    qtbot.addWidget(window)
+    window.tab_widget.addTab(first, "First")
+    second = explorer_for_test(qtbot, a)
+    second.deep_timer.stop()
+    second.auto_load_ram = False
+    window.tab_widget.addTab(second, "Second")
+    first_layout = first.layout()
+    assert first_layout is not None
+    path_row = first_layout.itemAt(0)
+    assert path_row is not None and path_row.widget() is first.path_edit
+    button = window.folder_status_button
+    scope_button = window.folder_status_scope_button
+    assert isinstance(button, QToolButton)
+    assert button.menu() is None
+    assert button.autoRaise() and scope_button.autoRaise()
+    assert scope_button.popupMode() == QToolButton.ToolButtonPopupMode.InstantPopup
+    assert button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+    menu = scope_button.menu()
+    assert menu is not None
+    assert [action.text() for action in menu.actions()] == [
+        "Folders in view", "Current folder", "Recursive depth…", "All subfolders"]
+    window.show()
+    qtbot.waitUntil(button.isVisible)
+    up_button = window.sidebar_toolbar_left.widgetForAction(window.action_tab_folder_up)
+    assert up_button is not None
+    assert button.width() <= up_button.width()
+    assert scope_button.width() == button.width()
+    assert scope_button.geometry().top() > button.geometry().bottom()
+    assert scope_button.geometry().center().x() == button.geometry().center().x()
+    assert len(button.toolTip().splitlines()) == 4
+    opened: list[bool] = []
+    menu.aboutToShow.connect(lambda: opened.append(True))
+    QTimer.singleShot(0, menu.close)
+    qtbot.mouseClick(scope_button, Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
+    assert opened and not first._basic_active
+
+    def click_primary() -> None:
+        menu_opens = len(opened)
+        # Close an unexpected popup so a regression fails instead of hanging.
+        QTimer.singleShot(0, menu.close)
+        qtbot.mouseClick(button, Qt.MouseButton.LeftButton,  # type: ignore[no-untyped-call]
+                         pos=button.rect().center())
+        assert len(opened) == menu_opens
+
+    select(first, a)
+    menu.actions()[1].trigger()
+    assert first._basic_roots == {a} and first._basic_active
+    assert window.action_tab_rescan.text() == "Cancel check"
+    first._dispatch_deep()
+    cache.submit("other-tab", 0, a, "scan", {}, force=True)
+    window.tab_widget.setCurrentWidget(second)
+    assert window.action_tab_rescan.text() == "Check folder status"
+    window.tab_widget.setCurrentWidget(first)
+    assert window.action_tab_rescan.text() == "Cancel check"
+    click_primary()
+    assert not first._basic_active and cache.has_request("other-tab", "scan", a)
+    assert window.action_tab_rescan.text() == "Check folder status"
+    cache.cancel("other-tab")
+    # The primary icon still checks folders in view, and toggles to cancellation.
+    click_primary()
+    assert first._basic_active and str(tmp_path) in first._basic_roots
+    click_primary()
+    assert not first._basic_active
+    window.action_tab_folder_up.triggered.connect(window.on_back_button_clicked)
+    first.open_to_path(a)
+    window.update_tool_enabled_state()
+    assert window.action_tab_folder_up.isEnabled()
+    window.action_tab_folder_up.trigger()
+    assert first.view_path == str(tmp_path)
+    window.action_tab_rescan.setEnabled(False)
+    assert not button.isEnabled() and not scope_button.isEnabled()
+    second.close_cleanup()
+    finish(first, service)
+
+
 def test_folder_io_menu_and_settings_apply_to_existing_and_new_tabs(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
@@ -507,12 +591,12 @@ def test_paused_selected_load_is_shown_in_summary_and_row(
     assert explorer.is_foreground
     select(explorer, a)
     request = start_load(cache, a)
-    service.resultReady.emit(request, {"kind": "progress", "progress": 0.37, "loaded_files": 456,
+    service.resultReady.emit(request, {"kind": "progress", "progress": 456 / 1234, "loaded_files": 456,
                                        "total_files": 1234})
     service.resultReady.emit(request, {"kind": "paused"})
     explorer._update_activity()
-    assert explorer.loading_message == "456 of 1234 files loaded (37%) · Paused"
-    assert "1,234 TXY found · 456 loaded (37%) · Paused" in explorer.folder_summary_label.text()
+    assert explorer.loading_message == "456 of 1234 files checked (37%) · 456 loaded · Paused"
+    assert "1,234 TXY found · 456 of 1234 files checked (37%) · 456 loaded · Paused" in explorer.folder_summary_label.text()
     index = explorer.model.path_index(a)
     assert explorer.model.data(index, explorer.model.LOAD_QUEUED_ROLE)
     service.resultReady.emit(request, {"kind": "resumed"})

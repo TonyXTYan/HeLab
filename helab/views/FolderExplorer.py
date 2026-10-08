@@ -109,11 +109,14 @@ class FolderExplorer(QWidget):
         # The selected load waits while this tab lists a folder (cooperative pause).
         self.load_paused = False
         self.load_attempt = 1
-        # Listing/stat heartbeats before the first file, e.g. "Listing files… 3,200".
+        # Current listing/checking/verification phase, including after file reads.
         self.load_listing = ""
+        self.load_filename = ""
+        self.load_checked_files = 0
         self.load_files = 0
         self.load_total_files: int | None = None
         self.load_failed_files = 0
+        self.load_unsettled_files = 0
         self.load_source = ""
         self.load_counts: dict[str, int] = {}
         self._load_cache_pending = False
@@ -164,19 +167,6 @@ class FolderExplorer(QWidget):
         self.tree.setItemDelegateForColumn(self.model.COLUMN_STATUS_ICON, self.delegate)
         self.path_edit = QLineEdit(self.view_path, self)
         self.path_edit.returnPressed.connect(self._navigate_input)
-        self.back_button = QPushButton("Up", self)
-        self.basic_scan_button = QToolButton(self)
-        self.basic_scan_button.setText("Basic scan")
-        self.basic_scan_button.setToolTip("Check folder counts and status without loading TXY data")
-        self.basic_scan_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        scan_menu = QMenu(self.basic_scan_button)
-        scan_menu.addAction("Folders in view", lambda: self.start_basic_scan("view"))
-        scan_menu.addAction("Current folder", lambda: self.start_basic_scan("current"))
-        scan_menu.addAction("Recursive depth…", self._choose_scan_depth)
-        scan_menu.addAction("All subfolders", lambda: self.start_basic_scan("recursive", 32768))
-        self.basic_scan_button.setMenu(scan_menu)
-        self.basic_scan_button.clicked.connect(self._basic_scan_clicked)
-        self.back_button.clicked.connect(self.on_back_button_clicked)
         # Tab activity (basic scans, background loads) is shown in the main window's status bar.
         self.activity_text = ""
         self.activity_tooltip = ""
@@ -244,13 +234,9 @@ class FolderExplorer(QWidget):
         summary_layout.addWidget(self.folder_freshness_label)
         self.summary_widget.setFixedHeight(3 * line_height)
         self.summary_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        controls = QHBoxLayout()
-        controls.addWidget(self.basic_scan_button)
-        controls.addWidget(self.back_button)
-        controls.addWidget(self.path_edit)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addLayout(controls)
+        layout.addWidget(self.path_edit)
         layout.addWidget(self.summary_widget)
         layout.addWidget(self.tree, 1)
         self.get_selection_model().selectionChanged.connect(self.on_selection_changed)
@@ -275,6 +261,7 @@ class FolderExplorer(QWidget):
         self.icon_timer = QTimer(self)
         self.icon_timer.setSingleShot(True)
         self.icon_timer.timeout.connect(self._load_visible_icons)
+        self.model.refreshStateChanged.connect(self._refresh_state_changed)
         scroll_bar = self.tree.verticalScrollBar()
         if scroll_bar:
             scroll_bar.valueChanged.connect(self._schedule_visible_checks)
@@ -348,8 +335,14 @@ class FolderExplorer(QWidget):
         if self.load_error:
             self.load_to_ram_cache(self.selected_path_globally, dwell=False)
         else:
-            self.model.request_scan(self.selected_path_globally, priority=True, force=True, no_timeout=True)
-            self.model.rescan(True)
+            self.model.request_scan(self.listing_retry_path, priority=True, force=True, no_timeout=True)
+
+    @property
+    def listing_retry_path(self) -> str:
+        node = self.model.nodes.get(self.selected_path_globally)
+        if not (node and node.error) and self.model.root and self.model.root.error:
+            return self.view_path
+        return self.selected_path_globally
 
     def _expanded(self, index: QModelIndex) -> None:
         node = self.model.node(index)
@@ -421,7 +414,8 @@ class FolderExplorer(QWidget):
     @staticmethod
     def retry_message(node: FolderNode) -> str:
         assert node.retry_since is not None
-        text = f"Retrying… {duration(time.monotonic() - node.retry_since)}"
+        action = "Retry queued" if node.state == "queued" else "Retrying…"
+        text = f"{action} {duration(time.monotonic() - node.retry_since)}"
         return text + (f" · {node.listed:,} entries" if node.listed else "")
 
     @property
@@ -485,6 +479,8 @@ class FolderExplorer(QWidget):
         self.load_paused = False
         self.load_attempt = 1
         self.load_listing = ""
+        self.load_filename = ""
+        self.load_checked_files = self.load_unsettled_files = 0
         self.load_files = self.load_failed_files = 0
         self.load_total_files = None
         if not self._checking(path):
@@ -698,6 +694,8 @@ class FolderExplorer(QWidget):
                 self.loadStateChanged.emit()
             return
         if request.operation in ("list", "details", "scan"):
+            if request.payload.get("listing_only") and kind == "done":
+                self._schedule_visible_checks()
             if request.operation == "scan" and kind in ("error", "cancelled"):
                 self._finish_basic_folder(request.path, failed=True)
             return
@@ -715,20 +713,34 @@ class FolderExplorer(QWidget):
             if event.get("retry"):
                 self.load_progress = None
                 self.load_listing = ""
+                self.load_filename = ""
+                self.load_checked_files = self.load_unsettled_files = 0
                 self.load_files = self.load_failed_files = 0
                 self.load_total_files = None
                 self.load_source = self.load_cache_reason = self.load_cache_warning = ""
         elif kind == "file_started":
             self.load_attempt = event.get("attempt", self.load_attempt)
+            self.load_filename = event.get("filename", "")
+            self.load_listing = ""
+        elif kind == "file_finished":
+            self.load_attempt = 1
+            self.load_filename = ""
         elif kind == "heartbeat":
-            if self.load_progress is None:
-                verb = "Listing" if event.get("phase") == "listing" else "Checking"
-                self.load_listing = f"{verb} files… {int(event.get('entries', 0)):,}"
+            count = int(event.get("entries", 0))
+            phase = event.get("phase")
+            self.load_listing = (f"Listing folder… {count:,} entries" if phase == "listing" else
+                                 f"Verifying files… {count:,}" if phase == "verifying" else
+                                 f"Checking files… {count:,}")
         elif kind == "progress":
-            self.load_progress = event["progress"]
+            self.load_listing = ""
+            progress: float = event["progress"]
+            self.load_progress = progress
             self.load_files = event.get("loaded_files", self.load_files)
             self.load_total_files = event.get("total_files", self.load_total_files)
             self.load_failed_files = event.get("failed_files", self.load_failed_files)
+            self.load_checked_files = event.get("checked_files", round(
+                progress * self.load_total_files) if self.load_total_files is not None else 0)
+            self.load_unsettled_files = event.get("unsettled_files", self.load_unsettled_files)
         elif kind == "load_source":
             if not self._checking(request.path):
                 self.load_source = event["source"]
@@ -787,23 +799,34 @@ class FolderExplorer(QWidget):
         if self.load_queued:
             return "Queued"
         paused = " · Paused" if self.load_paused else ""
-        if self.load_progress is None:
-            parts = [f"Retrying… (attempt {self.load_attempt} of 3)"] if self.load_attempt > 1 else []
-            parts.append(self.load_listing or ("" if parts else "Preparing…"))
-            return " · ".join(filter(None, parts)) + paused
+        parts = [f"Retrying file… (attempt {self.load_attempt} of 3)"] \
+            if self.load_attempt > 1 and self.load_filename else []
+        if self.load_listing:
+            parts.append(self.load_listing)
+        if self.load_progress is not None:
+            parts.append(self.loading_progress_message)
+        return " · ".join(parts or ["Preparing…"]) + paused
+
+    @property
+    def loading_progress_message(self) -> str:
+        assert self.load_progress is not None
         percent = f"{self.load_progress:.0%}"
         if self.load_total_files is None:
-            return percent + paused
-        message = f"{self.load_files} of {self.load_total_files} files loaded ({percent})"
+            return f"Loading… {percent}"
+        message = (f"{self.load_checked_files} of {self.load_total_files} files checked ({percent})"
+                   f" · {self.load_files} loaded")
         if self.load_failed_files:
             message += f" · {self.load_failed_files} unreadable"
-        return message + paused
+        if self.load_unsettled_files:
+            message += f" · {self.load_unsettled_files} still being written"
+        return message
 
     @property
     def loading_tooltip(self) -> str:
         parts = [self.loading_message] if self.loading else []
-        if self.loading and self.load_attempt > 1:
-            parts.append(f"Attempt {self.load_attempt} of 3")
+        if self.loading and self.load_attempt > 1 and self.load_filename:
+            parts.append(f"Retrying file: {os.path.basename(self.load_filename)}\n"
+                         f"Attempt {self.load_attempt} of 3 for this file")
         if self.load_waiting:
             parts.append(f"Queues this folder if it stays selected for {self.DWELL_MS // 1000} s")
         queue_details = self.model.service.queue_tooltip()
@@ -821,7 +844,6 @@ class FolderExplorer(QWidget):
         if self.closed:
             return
         self._update_folder_summary()
-        self.basic_scan_button.setText("Cancel scan" if self._basic_active else "Basic scan")
         requests = self.model.cache.requests(self.model.owner)
         parts: list[str] = []
         if any(r.operation == "resolve" for r in requests):
@@ -853,7 +875,7 @@ class FolderExplorer(QWidget):
                 queued += 1
         counts = ((self._basic_completed, "scanned"), (scanning, "scanning"), (paused, "paused"),
                   (queued, "queued"), (self._basic_failed, "failed"))
-        return "Basic scan: " + " · ".join(f"{count:,} {label}" for count, label in counts
+        return "Checking folder status: " + " · ".join(f"{count:,} {label}" for count, label in counts
                                            if count or label == "scanned")
 
     def _background_summary(self) -> str:
@@ -862,6 +884,24 @@ class FolderExplorer(QWidget):
                  if states.count(state)]
         noun = "background load" if len(states) == 1 else "background loads"
         return f"{len(states)} {noun}: " + ", ".join(terms)
+
+    @property
+    def scan_message(self) -> str:
+        """Selected-folder scan activity from memory, shared by summary and centre."""
+        path = self.selected_path_globally
+        node = self.model.nodes.get(path)
+        job = next((job for operation in ("list", "scan")
+                    if (job := self.model.cache.jobs.get((operation, path))) is not None), None)
+        if job is not None and job.paused:
+            return "Scan paused"
+        state = job.state if job is not None else node.state if node else "idle"
+        if state == "queued":
+            return "Scan queued"
+        if state not in ("started", "running"):
+            return ""
+        if job is not None and job.operation == "list":
+            return f"Listing folder… {node.listed:,} entries" if node and node.listed else "Listing folder…"
+        return "Scanning: checking file counts and status…"
 
     def _update_folder_summary(self) -> None:
         """Describe the active folder from memory; never probe the filesystem."""
@@ -883,9 +923,12 @@ class FolderExplorer(QWidget):
             else "Cancel loading in this tab (Esc)")
         self.retry_button.setVisible(bool(self.load_error or scan_error or root_error) and not (
             self.loading or self.load_waiting or retrying))
+        retry_path = self.listing_retry_path
+        self.retry_button.setEnabled(bool(self.load_error) or not self.model.refresh_pending(retry_path))
         self.retry_button.setToolTip("Load this folder again" if self.load_error else
+                                     "Wait for this folder's refresh to finish" if not self.retry_button.isEnabled() else
                                      "List this folder again, without a time limit")
-        scanning = node is not None and node.state in ("queued", "running")
+        scan_message = self.scan_message
         history = self.model.cache.scan_history(path)
         dataset = self.displayed_dataset
         shown = dataset is not None and dataset.path == path
@@ -916,21 +959,13 @@ class FolderExplorer(QWidget):
                     f"Loading · {self.loading_message}" if self.loading and self._load_path == path else
                     "TXY count not checked · Retry manually" if history["blocked"] or node and node.scan_skipped else
                     "Could not check folder · Retry" if scan_error else
-                    f"Listing… {node.listed:,} entries" if node and scanning and node.listed else
-                    "Scanning folder content for TXY files…")
+                    scan_message or "TXY count not checked")
         elif report.d_txy_shots or node and node.txy_count:
             found = (self.load_total_files if self.loading and self._load_path == path
                      and self.load_total_files is not None else node.txy_count if node else len(report.d_txy_shots or []))
             text = f"{found:,} TXY found"
             if self.loading and self._load_path == path:
-                if self.load_queued or self.load_progress is None:
-                    text += f" · {self.loading_message}"
-                else:
-                    text += f" · {self.load_files:,} loaded ({self.load_progress:.0%})"
-                    if self.load_failed_files:
-                        text += f" · {self.load_failed_files:,} unreadable"
-                    if self.load_paused:
-                        text += " · Paused"
+                text += f" · {self.loading_message}"
             elif dataset and dataset.path == path:
                 loaded = int(dataset.metadata["files"])
                 text += f" · {loaded:,} loaded"
@@ -959,8 +994,8 @@ class FolderExplorer(QWidget):
                 text += " · Refresh failed · Retry"
             elif retrying:
                 text += f" · {self.retry_message(retrying)}"
-            elif scanning:
-                text += " · Checking file counts and status…"
+            elif scan_message:
+                text += f" · {scan_message}"
         self.folder_summary_label.setText(text)
         self._fit_selected_label()
         load_details = ""
@@ -991,11 +1026,11 @@ class FolderExplorer(QWidget):
         if history["blocked"]:
             failed_at = history["failures"][-1]["failed_at"]
             self.folder_freshness_label.setText(
-                f"Basic scan failed {self._relative_age(time.time() - failed_at)} · Retry manually")
+                f"Folder status check failed {self._relative_age(time.time() - failed_at)} · Retry manually")
         self.folder_freshness_label.setToolTip("\n".join(filter(None, (history_tooltip(history, time.time()),
             self.model.cache.scan_history_errors.get(path), freshness_tooltip(
             "Last successful status scan", node.scanned_at if node else None, node.modified if node else None,
-            status_freshness, "Use Basic scan / Refresh to recheck counts and status.")))))
+            status_freshness, "Use Check folder status to recheck counts and status.")))))
 
     def _fit_selected_label(self) -> None:
         """Share line 1: the selected path gets its full width or at least 2/5 of the free space."""
@@ -1095,8 +1130,19 @@ class FolderExplorer(QWidget):
     def _schedule_visible_checks(self, *args: Any) -> None:
         if not self.closed:
             self.icon_timer.start(150)
-        if not self.closed and self.auto_scan_visible:
+        if not self.closed and self.auto_scan_visible and not self.model.refreshing:
             self.visible_timer.start(150)
+
+    def _refresh_state_changed(self) -> None:
+        if self.closed:
+            return
+        if self.model.refreshing:
+            self.visible_timer.stop()
+            self._visible_seen.clear()
+        else:
+            self._schedule_visible_checks()
+        self._update_activity()
+        self.loadStateChanged.emit()
 
     def _load_visible_icons(self) -> None:
         if self.closed or not self.isVisible():
@@ -1118,7 +1164,7 @@ class FolderExplorer(QWidget):
         return self.model.viewport_paths()
 
     def _check_visible_folders(self) -> None:
-        if self.closed or not self.auto_scan_visible or not self.isVisible():
+        if self.closed or self.model.refreshing or not self.auto_scan_visible or not self.isVisible():
             return
         paths = self._viewport_paths()
         self._visible_seen.intersection_update(paths)
@@ -1140,17 +1186,11 @@ class FolderExplorer(QWidget):
             if self.model.request_scan(path, metadata_only=True):
                 self._visible_seen.add(path)
 
-    def _basic_scan_clicked(self) -> None:
-        if self._basic_active:
-            self.cancel_basic_scan()
-        else:
-            self.start_basic_scan("view")
-
     def _choose_scan_depth(self) -> None:
         self._choose_scan_depth_for(self.selected_path_globally)
 
     def _choose_scan_depth_for(self, path: str) -> None:
-        depth, accepted = QInputDialog.getInt(self, "Basic scan", "Subfolder levels (0 = current folder):", 1, 0, 32768)
+        depth, accepted = QInputDialog.getInt(self, "Check folder status", "Subfolder levels (0 = current folder):", 1, 0, 32768)
         if accepted:
             self.context_menu_action_deep_calc_status(path, depth)
 
@@ -1178,9 +1218,8 @@ class FolderExplorer(QWidget):
         for path in paths:
             self.model.cache.cancel(self.model.owner, "scan", path)
         if active:
-            self._basic_result = f"Basic scan cancelled · {self._basic_completed:,} scanned"
-        if hasattr(self, "basic_scan_button"):
-            self._update_activity()
+            self._basic_result = f"Folder status check cancelled · {self._basic_completed:,} scanned"
+        self._update_activity()
 
     def _directory_loaded(self, path: str) -> None:
         self._finish_basic_folder(path)
@@ -1216,7 +1255,7 @@ class FolderExplorer(QWidget):
                 break
         if not self._deep and not self._deep_depth:
             self._basic_active = False
-            self._basic_result = f"Basic scan complete · {self._basic_completed:,} scanned · {self._basic_failed:,} failed"
+            self._basic_result = f"Folder status check complete · {self._basic_completed:,} scanned · {self._basic_failed:,} failed"
         self._update_activity()
 
     def context_menu_action_deep_calc_status(self, path: str, max_depth: int = 0,
@@ -1243,9 +1282,11 @@ class FolderExplorer(QWidget):
         if clipboard:
             menu.addAction("Copy Pathname", lambda: clipboard.setText(path))
         # One folder the user asked for: no timeout, with elapsed time and Cancel.
-        menu.addAction("Retry / Refresh", lambda: self.model.request_scan(path, priority=True, force=True,
-                                                                         no_timeout=True))
-        submenu = menu.addMenu("Basic scan")
+        retry = menu.addAction("Retry / Refresh", lambda: self.model.request_scan(path, priority=True, force=True,
+                                                                                 no_timeout=True))
+        if retry:
+            retry.setEnabled(not self.model.refresh_pending(path))
+        submenu = menu.addMenu("Check folder status")
         if submenu:
             for depth in (0, 1, 2, 3, 32768):
                 submenu.addAction("All subfolders" if depth == 32768 else f"Depth {depth}", lambda checked=False, d=depth: self.context_menu_action_deep_calc_status(path, d))
@@ -1277,7 +1318,6 @@ class FolderExplorer(QWidget):
 
     def update_back_button_state(self) -> None:
         self.back_button_enabled = os.path.dirname(self.view_path) != self.view_path
-        self.back_button.setEnabled(self.back_button_enabled)
 
     def get_selection_model(self) -> QItemSelectionModel:
         selection = self.tree.selectionModel()
@@ -1315,7 +1355,7 @@ class FolderExplorer(QWidget):
         self.model.rescan(user_intend)
 
     def refresh(self) -> None:
-        self.rescan(True)
+        self.model.refresh()
 
     def _cancel_background(self) -> None:
         self._stop_dwell()

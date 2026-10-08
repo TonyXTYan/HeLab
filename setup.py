@@ -14,6 +14,7 @@ setup(
     url="https://github.com/TonyXTYan/HeLab",
     packages=find_packages(),
     include_package_data=True,
+    package_data={"helab.resources": ["*.svg"]},
     install_requires=[
         "PyQt6>=6.7.1",
         "pytablericons>=1.0.1",
