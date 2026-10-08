@@ -4,6 +4,7 @@ import logging
 import os
 import platform
 import sys
+from types import ModuleType
 from typing import Tuple, List, Dict, Any
 
 from PIL.TiffTags import lookup
@@ -22,6 +23,20 @@ from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
 from helab.workers.StatusDeepWorker import StatusDeepWorker
 from helab.workers.StatusWorker import StatusWorker
 from helab.models.StatusReport import StatusReport
+
+
+def root_on_target_drive(model_root_path: str, target_path: str, path: ModuleType = os.path) -> str:
+    """Root a tab on the target's drive when it differs from the default root.
+
+    On Windows QDir.rootPath() is C:/, so a target on a mapped drive (Y:\\) or a
+    UNC share would otherwise fail validation and fall back to C:. POSIX paths
+    have no drive, so they are returned unchanged.
+    """
+    target_drive: str = path.splitdrive(target_path)[0]
+    sep: str = path.sep
+    if target_drive and path.normcase(target_drive) != path.normcase(path.splitdrive(model_root_path)[0]):
+        return target_drive + sep
+    return model_root_path
 
 
 class FolderTabWidget(QTabWidget):
@@ -106,13 +121,15 @@ class FolderTabWidget(QTabWidget):
         if model_root_path is None:
             model_root_path = QDir.rootPath()
 
-        if view_path is None:
-            view_path = model_root_path
-
         default_candidates = DEV_POTENTIAL_DATA_PATHS if target_path is None else None
         if target_path is None:
             target_path = DEFAULT_DATA_PATH
-    
+
+        model_root_path = root_on_target_drive(model_root_path, target_path)
+
+        if view_path is None:
+            view_path = model_root_path
+
         try:
             if not os.path.commonpath([model_root_path, target_path]) == os.path.abspath(model_root_path):
                 logging.warning(
