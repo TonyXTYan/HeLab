@@ -58,6 +58,8 @@ class IORequest:
 
 FOREGROUND = "foreground"
 BACKGROUND = "background"
+# Reads of the local disk cache only; they never touch source folders.
+LOCAL = "local"
 REQUEUED = "moved to the background queue"
 
 
@@ -85,11 +87,14 @@ class IOService(QObject):
     # expands do not stop and start it.
     RESUME_DELAY = 0.5
     LISTINGS = ("list", "resolve")
+    # Operations in the local lane: they never wait for or pause with source-folder I/O.
+    LOCAL_OPERATIONS = ("cached",)
+    LOCAL_CAP = 2
     PAUSABLE = ("load", "list", "details", "scan", "icons")
-    LABELS = {"load": "Load data", "list": "Browse folder", "details": "Folder details",
+    LABELS = {"load": "Load data", "cached": "Read cached data", "list": "Browse folder", "details": "Folder details",
               "scan": "Basic scan", "resolve": "Browse folder", "invalidate": "Clear data cache",
               "scan_history": "Save scan history", "icons": "Folder icons"}
-    NOUNS = {"load": "load", "list": "folder listing", "details": "folder details scan",
+    NOUNS = {"load": "load", "cached": "cached data read", "list": "folder listing", "details": "folder details scan",
              "scan": "basic scan", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup"}
 
@@ -187,8 +192,12 @@ class IOService(QObject):
 
     def _background_room(self) -> bool:
         # Cache writers, paused and cancelled helpers still occupy slots until exit.
-        return (sum(r.lane != FOREGROUND for r in (*self.active, *self.retired)) < self.max_operations
-                and sum(r.lane != FOREGROUND for r in self.retired) < self.MAX_RETIRED)
+        background = [r for r in (*self.active, *self.retired) if r.lane not in (FOREGROUND, LOCAL)]
+        return (len(background) < self.max_operations
+                and sum(r.lane not in (FOREGROUND, LOCAL) for r in self.retired) < self.MAX_RETIRED)
+
+    def _local_room(self) -> bool:
+        return sum(r.lane == LOCAL for r in (*self.active, *self.retired)) < self.LOCAL_CAP
 
     def _foreground_busy(self, now: float) -> bool:
         return any(r.lane == FOREGROUND and not r.completed
@@ -250,12 +259,17 @@ class IOService(QObject):
         # A retry never runs beside its predecessor; it waits for confirmed exit.
         # The current tab's listing and selected load never wait for background work.
         for request in list(self.pending):
-            if (self.blocker(request) is None and self.wants_foreground(request)
-                    and self._foreground_room(request, now)):
+            if self.blocker(request) is not None:
+                continue
+            if request.operation in self.LOCAL_OPERATIONS:
+                if self._local_room():
+                    self._start(request, LOCAL)
+            elif self.wants_foreground(request) and self._foreground_room(request, now):
                 self._start(request, FOREGROUND)
         hold = self.hold_background(now)
         for request in list(self.pending):
-            if self.blocker(request) is not None or self.wants_foreground(request):
+            if (self.blocker(request) is not None or self.wants_foreground(request)
+                    or request.operation in self.LOCAL_OPERATIONS):
                 continue
             if not self._background_room():
                 break
@@ -385,7 +399,7 @@ class IOService(QObject):
         return text
 
     # Status-bar phrases for running operations other than scans and loads.
-    ACTIVITIES = {"resolve": "Finding default folder", "invalidate": "Clearing data cache",
+    ACTIVITIES = {"resolve": "Finding default folder", "cached": "Reading cached data", "invalidate": "Clearing data cache",
                   "scan_history": "Saving scan history", "icons": "Fetching folder icons",
                   "drives": "Listing drives"}
 
@@ -460,7 +474,8 @@ class IOService(QObject):
             # Every helper gets a private folder: load artifacts, the frozen app's
             # request/response files, and the pause flag.
             with request.control:
-                request.output = tempfile.mkdtemp(prefix="helab_data_" if request.operation == "load" else "helab_io_")
+                request.output = tempfile.mkdtemp(
+                    prefix="helab_data_" if request.operation in ("load", "cached") else "helab_io_")
                 if request.pause_requested:
                     self._write_pause(request.output, True)
             payload["output"] = payload["control"] = request.output

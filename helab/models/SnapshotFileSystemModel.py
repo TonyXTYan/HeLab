@@ -158,6 +158,13 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                        and node.signature != info["signature"])
         return cache_freshness(as_of, node.modified, changed=changed)
 
+    def observe_modified(self, path: str, modified: object, observed_at: object) -> None:
+        """A folder modification time seen outside browsing, e.g. by a load's check."""
+        node = self.nodes.get(path)
+        if node is not None:
+            self._observe_modified(node, modified, observed_at)
+            self.changed(node)
+
     @staticmethod
     def _observe_modified(node: FolderNode, modified: object, observed_at: object) -> None:
         observed = metadata_date(observed_at)

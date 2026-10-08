@@ -31,6 +31,9 @@ if not os.environ.get("HELAB_SHOW_GUI") and "QT_QPA_PLATFORM" not in os.environ:
 _worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
 os.environ["HELAB_DIR_TEMPS_OVERRIDE"] = tempfile.mkdtemp(prefix=f"helab_test_temps_{_worker_id}_")
 os.environ["HELAB_DIR_CACHES_OVERRIDE"] = tempfile.mkdtemp(prefix=f"helab_test_caches_{_worker_id}_")
+# Tests write TXY files and load them at once; helpers would otherwise treat
+# them as still being written. Settling has its own tests.
+os.environ["HELAB_SETTLE_SECONDS"] = "0"
 
 from helab.utils.threading_setup import cancel_all_workers
 

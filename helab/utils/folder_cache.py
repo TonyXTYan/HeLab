@@ -232,6 +232,12 @@ class FolderCache(QObject):
         return next((entry for key, entry in reversed(self.datasets.items())
                      if key[0] == path and entry.epoch == self._epochs.get(path, 0)), None)
 
+    def latest_dataset(self, path: str) -> Dataset | None:
+        """This folder's most recent dataset in memory, whether or not it matches the folder now."""
+        path = self.key(path)
+        return next((entry for key, entry in reversed(self.datasets.items())
+                     if key[0] == path and entry.epoch == self._epochs.get(path, 0)), None)
+
     def _base(self, path: str) -> Dataset | None:
         # A dataset an open tab still shows survives signature changes, so a
         # refresh only needs the shots that are new or changed since then.
@@ -239,6 +245,21 @@ class FolderCache(QObject):
         candidates = [entry for entry in (*self.pins.values(), *self.datasets.values())
                       if entry.path == path and entry.epoch >= floor and "fingerprint" in entry.metadata]
         return max(candidates, key=lambda entry: entry.epoch, default=None)
+
+    @staticmethod
+    def verified(dataset: Dataset) -> bool:
+        """False for data read from the disk cache that has not been checked against its folder."""
+        return bool(dataset.metadata.get("verified", True))
+
+    def holds(self, dataset: Dataset) -> bool:
+        """Whether this dataset is still kept (not cleared, replaced or evicted)."""
+        return any(entry is dataset for entry in self.datasets.values())
+
+    def confirmed(self, dataset: Dataset) -> bool:
+        """Checked data whose signature matches this session's scan of the folder."""
+        snapshot = self.snapshots.get(dataset.path)
+        return (self.verified(dataset) and snapshot is not None
+                and snapshot.status.get("signature") == dataset.signature)
 
     def disk_cached(self, path: str) -> bool:
         return path in self._disk_cached_paths
@@ -368,10 +389,20 @@ class FolderCache(QObject):
             # Complete cached content first, then validate it once in a helper.
             request.payload = {**payload, "revalidate": True}
             return True
+        if operation == "cached" and ("invalidate", path) in self.jobs:
+            return False
         if operation == "load":
             if ("invalidate", path) in self.jobs:
                 return False
             entry = self.dataset(path, payload.get("signature", ""))
+            if entry and not self.verified(entry):
+                # Cached data not checked against the folder yet: only this
+                # session's own scan of the folder can confirm it.
+                snapshot = self.snapshots.get(path)
+                if snapshot and snapshot.status.get("signature") == entry.signature:
+                    entry.metadata["verified"] = True
+                else:
+                    entry = None
             if entry:
                 self._deliver(request, {"kind": "loaded", "dataset": entry, **entry.metadata,
                                         "cached": True, "source": "memory", "cache_reason": "",
@@ -427,7 +458,8 @@ class FolderCache(QObject):
         base = self._base(path) if operation == "load" else None
         if base:
             payload = {**payload, "memory": [list(entry) for entry in base.metadata["fingerprint"]
-                                             if entry[0] in base.data]}
+                                             if entry[0] in base.data],
+                       "base_signature": base.signature}
         job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload, base=base)
         if operation in SCANS:
             job.payload = payload = {**payload, "scan_operation_id": job.owner,
@@ -535,13 +567,14 @@ class FolderCache(QObject):
 
     def _invalidate_data(self, path: str) -> None:
         self._epochs[path] = self._epochs.get(path, 0) + 1
-        job = self.jobs.get(("load", path))
-        if job:
-            self._cancel_job(job)
+        for operation in ("load", "cached"):
+            job = self.jobs.get((operation, path))
+            if job:
+                self._cancel_job(job)
         for key in [key for key in self.datasets if key[0] == path]:
             del self.datasets[key]
         for request in self._deliveries:
-            if request.operation == "load" and request.path == path:
+            if request.operation in ("load", "cached") and request.path == path:
                 request.cancelled.set()
         self.datasetChanged.emit(path)
 
@@ -755,7 +788,7 @@ class FolderCache(QObject):
                 event = {**event, "scan_skipped": job.scan_mode == "skipped"}
             if kind == "error" and job.scan_mode == "scan":
                 self._record_scan_outcome(job, event)
-        elif job.operation == "load":
+        elif job.operation in ("load", "cached"):
             if kind == "file_started":
                 attempt = event.get("attempt", job.attempt)
                 if attempt == job.attempt:
@@ -781,7 +814,9 @@ class FolderCache(QObject):
                 event = {"loaded_at": time.time(), **event}
                 source_snapshot = self.snapshot(job.path)
                 expected = source_snapshot.status.get("signature") if source_snapshot else None
-                if job.epoch != self._epochs.get(job.path, 0) or (expected and event.get("signature") != expected):
+                # Cached data is shown unchecked, even if the folder has changed since.
+                if job.epoch != self._epochs.get(job.path, 0) or (
+                        job.operation == "load" and expected and event.get("signature") != expected):
                     self._cancel_job(job)
                     if source_snapshot:
                         source_snapshot.checked_at = 0

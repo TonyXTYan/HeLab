@@ -2,7 +2,7 @@
 date: 2026-10-08
 status: settled
 name: folder-io-queue
-description: "Folder browser I/O: one queue with a foreground lane (current tab's browsing + selected load) and background lanes (default 1) that pause cooperatively, 60 s no-progress timeouts (per-file 15/20/30 s load retries), two-step browse, helpers hold slots until confirmed exit, and how stopping/paused helpers are shown"
+description: "Folder browser I/O: cache-first display via a local lane (one-stat check when unmodified, files still being written skipped); one queue with a foreground lane (current tab's browsing + selected load) and background lanes (default 1) that pause cooperatively, 60 s no-progress timeouts (per-file 15/20/30 s load retries), two-step browse, helpers hold slots until confirmed exit, and how stopping/paused helpers are shown"
 metadata:
   node_type: memory
   type: result
@@ -10,6 +10,33 @@ metadata:
 How the active folder browser schedules filesystem I/O, and why. Code:
 `helab/utils/io_service.py` (`IOService`), `helab/io_helper.py` (isolated
 helper processes), `helab/utils/folder_cache.py` (shared jobs per tab).
+
+## Cache first (2026-10-08)
+
+Tony: "cache shouldn't need to queue behind IO tasks". Cached results were not
+showing because selection listed the folder, then the load waited for a
+foreground slot, paused while the tab listed anything, and listed and statted
+every TXY file before reading the cache. On a slow `/Volumes/dld_output`
+nothing appeared.
+
+- A **local lane** (`LOCAL_CAP` 2) runs `cached` reads: local disk cache only,
+  never paused, never waits for source I/O. The data shows as unchecked:
+  line 1 `… loaded (cached)`, cache line `Checking for changes…`.
+- The check is the usual load with the shown dataset as its RAM base. If the
+  cache has no unsettled files and the folder's mtime is not newer than the
+  cache's `snapshot_at`, the helper answers with **one folder stat**
+  (`unchanged`). Tony chose the plain mtime comparison: lab clocks are
+  internet-synced, so no skew margin. Otherwise it lists and merges.
+- Selecting a folder with saved counts and a disk cache skips the listing.
+- Check failure keeps the cached data: `Check failed`, error on line 1, Retry.
+- **Files still being written:** TXY written once and never modified, but
+  another PC may be writing one right now. Files modified within 5 s, or whose
+  size/mtime changes while read, are not read or cached; loads and scans leave
+  them out of signatures (otherwise scan and load disagree and the data is
+  dropped and reloaded until the file settles). Line 1:
+  `N still being written`; the cache's `unsettled` count forces a full check
+  next time, because a growing file does not change the folder's mtime.
+- Live updates are still not implemented ("we will implement live update later").
 
 ## One queue, foreground and background lanes (2026-10-08, io-lanes Phase 3)
 

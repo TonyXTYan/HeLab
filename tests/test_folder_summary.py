@@ -235,6 +235,15 @@ def test_subfolder_scope_and_retained_plot_source(
         HelabMainWindow._update_plot_source_label(dock, browser)
 
 
+def fail_cached_read(browser: FolderExplorer, qtbot: QtBot, path: str) -> None:
+    """A known disk cache is read first; failing that read makes the load read the files."""
+    cache = browser.model.cache
+    request = request_for(cache, path, "cached")
+    cache.service.resultReady.emit(request, {"kind": "error", "message": "No cached data for this folder"})
+    cache.service.pending.remove(request)
+    qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
+
+
 def deliver_load(browser: FolderExplorer, path: str, shot: int, *, saving: bool = False) -> IORequest:
     cache = browser.model.cache
     request = request_for(cache, path, "load")
@@ -300,8 +309,11 @@ def test_deselect_activates_data_in_displayed_path(browser: FolderExplorer, qtbo
     deliver_load(browser, str(child), 1)
     assert browser.displayed_dataset is not None and browser.displayed_dataset.path == str(child)
     browser.deselect_button.click()
+    # Data in memory shows at once, while the displayed path is listed again.
     qtbot.waitUntil(lambda: browser.folder_opened_path == path)
     assert browser.displayed_dataset is not None and browser.displayed_dataset.path == path
+    qtbot.waitUntil(lambda: browser.model.nodes[path].state == "idle")
+    browser._update_activity()
     assert browser.folder_summary_label.text() == "1 TXY found · 1 loaded"
     assert browser.selected_folder_label.isHidden()
 
@@ -405,6 +417,7 @@ def test_failed_update_keeps_previous_date_and_clear_ignores_late_save(
     old_info = {"saved_at": saved_at, "signature": "previous", "action": "created"}
     cache._observe_cache(path, {"disk_cached": True, "cache_info": old_info})
     browser.load_to_ram_cache(path, dwell=False)
+    fail_cached_read(browser, qtbot, path)
     request = deliver_load(browser, path, 1, saving=True)
     browser._update_activity()
     assert browser.folder_cache_label.text() == "Updating cache… · Changes detected"
@@ -1047,6 +1060,7 @@ def test_ram_badge_does_not_hide_outdated_disk_cache(
     browser.model.cache._observe_cache(path, {"disk_cached": True, "cache_info": {
         "saved_at": time.time() - 3600, "signature": node.signature}})
     browser.load_to_ram_cache(path, dwell=False)
+    fail_cached_read(browser, qtbot, path)
     request = deliver_load(browser, path, 1, saving=True)
     index = browser.model.path_index(path)
     assert browser.model.data(index, browser.model.STATUS_EXTRA_ICONS_ROLE) == [

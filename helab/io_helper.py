@@ -18,6 +18,9 @@ from typing import Any, Callable
 Emit = Callable[[dict[str, Any]], None]
 RAW = re.compile(r"^d(\d+)\.txt$")
 TXY = re.compile(r"^d_txy_forc(\d+)\.txt$")
+# Another computer may still be writing a file modified this recently; it is
+# left for the next load rather than read half-written. Tests set it to 0.
+SETTLE_SECONDS = float(os.environ.get("HELAB_SETTLE_SECONDS", "5"))
 
 
 def emit(event: dict[str, Any]) -> None:
@@ -311,7 +314,11 @@ def _scan(path: str, send: Emit, cache: Any) -> dict[str, Any]:
                     entries = []
     if entries:
         send({"kind": "entries", "entries": entries})
-    report = {**_summary(path, raw, txy, has_dirs, empty, fingerprint, time.time()),
+    # Like load(), files that may still be being written are not in the signature,
+    # so a scan during acquisition agrees with the data loaded meanwhile.
+    settled = _settled(fingerprint)
+    report = {**_summary(path, raw, txy, has_dirs, empty, settled, time.time()),
+              "unsettled": len(fingerprint) - len(settled),
               "disk_cached": _disk_cached(cache, path), "cache_info": _cache_info(cache, path)}
     # Publish the completed source check before optional cache writes, so even a
     # stalled cache writer cannot turn it into a failed basic scan.
@@ -321,15 +328,155 @@ def _scan(path: str, send: Emit, cache: Any) -> dict[str, Any]:
     return report
 
 
+def _settled(fingerprint: list[tuple[int, int, int]]) -> list[tuple[int, int, int]]:
+    """Fingerprints of files not modified within SETTLE_SECONDS (nor in the future)."""
+    if SETTLE_SECONDS <= 0:
+        return fingerprint
+    settle_after = time.time() - SETTLE_SECONDS
+    return [item for item in fingerprint if item[2] / 1e9 <= settle_after]
+
+
+def _unpack(packed: Any) -> dict[int, Any] | None:
+    """A cached dataset: Blosc-compressed pickle of ``{shot: float64 array (n, 3)}``."""
+    import blosc
+    import numpy as np
+    import pickle
+    if not isinstance(packed, bytes):
+        return None
+    unpacked = pickle.loads(blosc.decompress(packed))
+    valid = isinstance(unpacked, dict) and all(
+        isinstance(shot, int) and isinstance(array, np.ndarray) and array.ndim == 2 and array.shape[1] == 3
+        for shot, array in unpacked.items())
+    return unpacked if valid else None
+
+
+def _fingerprint_signature(fingerprint: Any) -> str:
+    return hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest()
+
+
+def _as_of(info: dict[str, Any]) -> float | None:
+    """When a cached dataset's file list was taken (older caches: when it was saved)."""
+    for key in ("snapshot_at", "saved_at"):
+        value = info.get(key)
+        if isinstance(value, (int, float)) and math.isfinite(value) and value > 0:
+            return float(value)
+    return None
+
+
+def read_cached(path: str, output: str, send: Emit = emit,
+                cache_options: dict[str, Any] | None = None) -> None:
+    """Send a folder's dataset from the local disk cache, never touching the source folder.
+
+    The caller shows it as not yet checked; a later ``load`` with it as the RAM
+    base checks the folder.
+    """
+    import numpy as np
+    cache = _open_cache(cache_options)
+    if cache is None:
+        raise ValueError("Disk cache unavailable")
+    try:
+        with cache.transact():
+            saved: Any = cache.get(("snapshot-fingerprint", path))
+            packed = cache.get(path) if saved is not None else None
+            previous = cache.get(("snapshot-problematic", path), [])
+            info = _cache_info(cache, path)
+    finally:
+        cache.close()
+    data = _unpack(packed) if isinstance(saved, (list, tuple)) else None
+    if data is None or not isinstance(saved, (list, tuple)):
+        raise ValueError("No cached data for this folder")
+    fingerprint = [list(entry) for entry in saved]
+    by_shot = {int(entry[0]): entry for entry in fingerprint}
+    problematic = {value for value in previous if isinstance(value, int)} if isinstance(previous, list) else set()
+    send({"kind": "load_source", "source": "disk", "cache_reason": ""})
+    rows = size = 0
+    last_progress = 0.0
+    shots = sorted(shot for shot in data if shot in by_shot)
+    for i, shot in enumerate(shots):
+        array = data[shot]
+        artifact = os.path.join(output, f"{shot}.npy")
+        np.save(artifact, array, allow_pickle=False)
+        rows += len(array)
+        size += array.nbytes
+        send({"kind": "shot", "shot": shot, "artifact": artifact, "fingerprint": by_shot[shot],
+              "problematic": shot in problematic})
+        now = time.monotonic()
+        if now - last_progress >= 0.1 or i + 1 == len(shots):
+            send({"kind": "progress", "progress": (i + 1) / len(shots), "loaded_files": i + 1,
+                  "total_files": len(fingerprint), "failed_files": 0})
+            last_progress = now
+    if not shots:
+        raise ValueError("No cached data for this folder")
+    send({"kind": "loaded", "rows": rows, "bytes": size, "files": len(shots), "loaded_at": time.time(),
+          "total_files": len(fingerprint) + int(info.get("unsettled", 0) or 0),
+          "failed_files": len(fingerprint) - len(shots),
+          "unsettled_files": int(info.get("unsettled", 0) or 0),
+          "problematic": sorted(problematic & set(shots)), "source": "disk", "cached": True,
+          "disk_cached": True, "disk_cache_pending": False, "cache_info": info,
+          "load_counts": {"reused_memory": 0, "reused_disk": len(shots), "new": 0, "modified": 0,
+                          "removed": 0, "read": 0, "new_loaded": 0, "modified_loaded": 0},
+          "cache_reason": "", "fingerprint": fingerprint, "memory_shots": [], "verified": False,
+          "signature": info.get("signature") or _fingerprint_signature(saved)})
+
+
+def _unchanged_since_cache(path: str, send: Emit, cache_options: dict[str, Any],
+                           base_signature: str, memory: list[list[int]]) -> bool:
+    """One folder stat instead of listing and checking every file.
+
+    When the caller holds the cached dataset (``base_signature``), the cache has
+    no files that were still being written, and the folder has not been modified
+    since the dataset's file list was taken, nothing can have been added or
+    removed: ``loaded`` names the caller's shots and True is returned.
+    """
+    cache = _open_cache(cache_options)
+    if cache is None:
+        return False
+    try:
+        with cache.transact():
+            info = _cache_info(cache, path)
+            saved: Any = cache.get(("snapshot-fingerprint", path))
+            previous = cache.get(("snapshot-problematic", path), [])
+    finally:
+        cache.close()
+    as_of = _as_of(info)
+    if (info.get("signature") != base_signature or info.get("unsettled") or as_of is None
+            or not isinstance(saved, (list, tuple))):
+        return False
+    modified = os.stat(path).st_mtime
+    if modified > as_of:
+        return False
+    fingerprint = [list(entry) for entry in saved]
+    held = sorted({int(entry[0]) for entry in memory} & {int(entry[0]) for entry in fingerprint})
+    problematic = [value for value in previous if isinstance(value, int) and value in held] \
+        if isinstance(previous, list) else []
+    send({"kind": "load_source", "source": "memory", "cache_reason": ""})
+    send({"kind": "loaded", "rows": 0, "bytes": 0, "files": len(held), "loaded_at": time.time(),
+          "total_files": len(fingerprint), "failed_files": len(fingerprint) - len(held), "unsettled_files": 0,
+          "problematic": problematic, "source": "memory", "cached": True, "disk_cached": True,
+          "disk_cache_pending": False, "cache_info": info, "unchanged": True, "modified": modified,
+          "modified_observed_at": time.time(),
+          "load_counts": {"reused_memory": len(held), "reused_disk": 0, "new": 0, "modified": 0,
+                          "removed": 0, "read": 0, "new_loaded": 0, "modified_loaded": 0},
+          "cache_reason": "Folder not modified since cached", "fingerprint": fingerprint,
+          "memory_shots": held, "signature": base_signature})
+    return True
+
+
 def load(path: str, output: str, send: Emit = emit,
          cache_options: dict[str, Any] | None = None,
-         memory: list[list[int]] | None = None) -> None:
+         memory: list[list[int]] | None = None, base_signature: str = "",
+         expected: str = "") -> None:
     """Load converted TXY files, reusing unchanged shots from RAM and disk cache.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for shots the caller already holds
     in RAM. Unchanged ones are neither read nor sent; ``loaded`` names them in
     ``memory_shots``. The disk cache is updated after ``loaded`` is sent.
+    ``base_signature`` names the dataset those shots belong to; if it is the cached
+    dataset and the folder is unmodified since, one folder stat is the whole check.
     """
+    if (base_signature and cache_options and memory and expected in ("", base_signature)
+            and _unchanged_since_cache(path, send, cache_options, base_signature, memory)):
+        return
     # These imports are deliberately local: scanning does not initialize numpy,
     # pandas, any HeLab caches, or a QApplication.
     import numpy as np
@@ -364,6 +511,14 @@ def load(path: str, output: str, send: Emit = emit,
         return result
 
     fingerprint = stat_files("checking")
+    # Files another computer may still be writing are left out entirely (not in
+    # the fingerprint), so the next load sees them as new and reads them whole.
+    young = {item[0] for item in fingerprint} - {item[0] for item in _settled(fingerprint)}
+    if young:
+        files = [item for item in files if item[0] not in young]
+        fingerprint = [item for item in fingerprint if item[0] not in young]
+        if not files:
+            raise ValueError("TXY files are still being written — Retry")
     total_size = sum(size for _, size, _ in fingerprint)
     if total_size > 1 << 30:
         raise ValueError("Folder exceeds the 1 GiB input limit")
@@ -371,7 +526,8 @@ def load(path: str, output: str, send: Emit = emit,
     # browsing skips its details scan (step 2) while this load runs, unless the
     # folder has subfolders (their dates come from step 2). Sent and saved before any
     # file is read; a basic scan's success is still needed to clear a failure.
-    summary = _summary(path, raw, {shot for shot, _ in files}, has_dirs, False, fingerprint, listed_at)
+    summary = _summary(path, raw, {shot for shot, _ in files} | young, has_dirs, False, fingerprint, listed_at)
+    summary["unsettled"] = len(young)
     send({"kind": "scan_summary", "status": summary})
     current = {shot: (size, modified) for shot, size, modified in fingerprint}
     in_memory = {int(shot) for shot, size, modified in memory or ()
@@ -388,8 +544,6 @@ def load(path: str, output: str, send: Emit = emit,
     if cache_options:
         try:
             from diskcache import FanoutCache
-            import blosc
-            import pickle
             cache = FanoutCache(cache_options["directory"], **cache_options["params"])
             _save_summary(cache, path, summary)
             with cache.transact():
@@ -404,16 +558,12 @@ def load(path: str, output: str, send: Emit = emit,
                 if isinstance(previous, list) else []
 
             def unpack() -> dict[int, Any] | None:
-                if not isinstance(packed, bytes):
-                    return None
-                unpacked = pickle.loads(blosc.decompress(packed))
-                valid = isinstance(unpacked, dict) and all(
-                    isinstance(shot, int) and isinstance(array, np.ndarray)
-                    and array.ndim == 2 and array.shape[1] == 3
-                    for shot, array in unpacked.items())
-                return unpacked if valid else None
+                return _unpack(packed)
 
-            if saved_fingerprint == fingerprint:
+            if saved_fingerprint == fingerprint and packed is not None and in_memory >= set(current):
+                # The caller already holds every shot: no need to decompress the cache.
+                cached, problematic = True, previous
+            elif saved_fingerprint == fingerprint:
                 cache_reason = "Cached dataset missing" if packed is None else "Cached dataset invalid"
                 unpacked = unpack()
                 if unpacked is not None:
@@ -455,6 +605,14 @@ def load(path: str, output: str, send: Emit = emit,
           "total_files": len(files), "failed_files": 0})
     rows = size = loaded = 0
     last_progress = 0.0
+    # Files that changed while being read: still being written. They keep their
+    # earlier fingerprint, which differs from the finished file, so the next
+    # load reads them again; their data is not kept.
+    late: set[int] = set()
+
+    def unchanged(index: int, filename: str) -> bool:
+        info = os.stat(filename)
+        return (info.st_size, info.st_mtime_ns) == fingerprint[index][1:]
 
     def read_txy(shot: int, filename: str) -> Any:
         frame = pd.read_csv(filename, sep=",", names=["t", "x", "y"], dtype=np.float64)
@@ -476,7 +634,14 @@ def load(path: str, output: str, send: Emit = emit,
                 array = data[shot]
             elif not cached:
                 load_counts["read"] += 1
-                array = read_txy(shot, filename)
+                if unchanged(i, filename):
+                    array = read_txy(shot, filename)
+                    if not unchanged(i, filename):
+                        data.pop(shot, None)
+                        array = None
+                if array is None:
+                    late.add(shot)
+                    problematic[:] = [value for value in problematic if value != shot]
             if array is not None:
                 artifact = os.path.join(output, f"{shot}.npy")
                 np.save(artifact, array, allow_pickle=False)
@@ -495,15 +660,18 @@ def load(path: str, output: str, send: Emit = emit,
         if now - last_progress >= 0.1 or i + 1 == len(files):
             send({"kind": "progress", "progress": (i + 1) / len(files),
                   "loaded_files": loaded, "total_files": len(files),
-                  "failed_files": i + 1 - loaded})
+                  "failed_files": i + 1 - loaded - len(late)})
             last_progress = now
     if not loaded:
-        raise ValueError("No readable TXY files in this folder")
+        raise ValueError("TXY files are still being written — Retry" if late
+                         else "No readable TXY files in this folder")
+    unsettled = len(young) + len(late)
 
     def changed() -> bool:
         # Only the loaded files must be unchanged. Shots added during a live run
         # are left for the next load (their scan signature shows the change).
-        return fingerprint != stat_files("verifying")
+        settled = [item for item in fingerprint if item[0] not in late]
+        return settled != [item for item in stat_files("verifying") if item[0] not in late]
 
     if changed():
         if cache is not None:
@@ -511,7 +679,8 @@ def load(path: str, output: str, send: Emit = emit,
         raise ValueError("Folder changed while loading — Refresh to retry")
     send({"kind": "loaded", "rows": rows, "bytes": size, "files": loaded,
           "loaded_at": time.time(),
-          "total_files": len(files), "failed_files": len(files) - loaded,
+          "total_files": len(files) + len(young), "failed_files": len(files) - loaded - len(late),
+          "unsettled_files": unsettled,
           "problematic": sorted(set(problematic)),
           "source": source, "cached": cached,
           "disk_cached": cached or _disk_cached(cache, path),
@@ -547,7 +716,8 @@ def load(path: str, output: str, send: Emit = emit,
                 raise ValueError("Cache was cleared before saving completed")
             action = "updated" if _disk_cached(cache, path) else "created"
             info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(
-                json.dumps(fingerprint).encode()).hexdigest(), "action": action, "counts": load_counts}
+                json.dumps(fingerprint).encode()).hexdigest(), "action": action, "counts": load_counts,
+                "unsettled": unsettled}
             # A failed set must roll back bytes, fingerprints AND the save date.
             for key, value in ((path, packed), (("snapshot-fingerprint", path), fingerprint),
                                (("snapshot-problematic", path), sorted(set(problematic))),
@@ -629,7 +799,10 @@ def main() -> None:
                 emit({"kind": "scan_history_saved", "history": history})
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
-                 memory=request.get("memory"))
+                 memory=request.get("memory"), base_signature=request.get("base_signature", ""),
+                 expected=request.get("signature", ""))
+        elif operation == "cached":
+            read_cached(request["path"], request["output"], cache_options=request.get("cache"))
         elif operation == "invalidate":
             from diskcache import FanoutCache
             options = request["cache"]

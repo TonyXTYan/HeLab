@@ -121,6 +121,11 @@ class FolderExplorer(QWidget):
         self.load_cache_warning = ""
         self.load_error = ""
         self.load_bytes = 0
+        # Folder whose displayed data came from memory or the disk cache and has
+        # not been checked against the folder since it was selected.
+        self._unchecked_path: str | None = None
+        # The disk cache is read at most once per selection of a folder.
+        self._cache_read_path: str | None = None
         self._load_path: str | None = None
         self._cancelled_load_path: str | None = None
         self._loading_data: dict[int, npt.NDArray[np.float64]] = {}
@@ -325,7 +330,7 @@ class FolderExplorer(QWidget):
         self._basic_result = ""
         self._visible_seen.clear()
         self._release_load()
-        self._cancelled_load_path = None
+        self._cancelled_load_path = self._cache_read_path = None
         self.target_path = self.view_path = self.model_root_path = os.path.abspath(os.path.expanduser(path))
         self.selected_path_globally = self.view_path
         self.path_edit.setText(self.view_path)
@@ -359,10 +364,19 @@ class FolderExplorer(QWidget):
             path = self.model.filePath(indexes[0])
             if path != self.selected_path_globally:
                 self._release_load()
-                self._cancelled_load_path = None
+                self._cancelled_load_path = self._cache_read_path = None
                 self.selected_path_globally = path
-            self.model.request_scan(path, priority=True)
+            if not self._check_replaces_listing(path):
+                self.model.request_scan(path, priority=True)
             self.selectionPathChanged.emit(path)
+
+    def _check_replaces_listing(self, path: str) -> bool:
+        """Selecting a folder with saved counts and a disk cache does not list it:
+        the cached data is shown, and loading checks the folder (one stat when
+        unmodified). Expanding a folder still lists it."""
+        node = self.model.nodes.get(path)
+        return (self.auto_load_ram and node is not None and node.report is not None
+                and self.model.cache.disk_cached(path))
 
     def _status_ready(self, path: str) -> None:
         if path == self.selected_path_globally and not (
@@ -452,6 +466,7 @@ class FolderExplorer(QWidget):
             else:
                 del self._bg_paths[path]
         self.model.cache.cancel(self.model.owner, "load")
+        self.model.cache.cancel(self.model.owner, "cached")
         if path is not None and path not in self._bg_paths:
             self.model.set_load_state(path, "")
         self._load_path = None
@@ -472,12 +487,18 @@ class FolderExplorer(QWidget):
         self.load_listing = ""
         self.load_files = self.load_failed_files = 0
         self.load_total_files = None
-        self.load_source = ""
-        self.load_cache_reason = ""
+        if not self._checking(path):
+            # A check of shown data keeps that data's source until it completes.
+            self.load_source = ""
+            self.load_cache_reason = ""
         self.load_cache_warning = ""
         self._load_path = path
         self._loading_data.clear()
         self.model.set_load_state(path, "queued")
+
+    def _checking(self, path: str) -> bool:
+        """Whether this folder's shown data came from memory or the disk cache and awaits its check."""
+        return self.folder_opened_path == path and self._unchecked_path == path
 
     def _load_payload(self, path: str) -> dict[str, Any]:
         node = self.model.nodes.get(path)
@@ -499,9 +520,16 @@ class FolderExplorer(QWidget):
             return False
         if not dwell:
             self._cancelled_load_path = None
-        if not explicit and not self._has_data(path):
+        cached = self.model.cache.disk_cached(path)
+        if self.folder_opened_path != path or self.folder_opened_data is None:
+            # Show data from memory or the local disk cache at once; it never
+            # waits for source-folder I/O. The check below follows the usual rules.
+            if self._show_cached(path):
+                return True
+        if not explicit and not cached and not self._has_data(path):
             return False
-        if self.folder_opened_path == path and self.folder_opened_data is not None:
+        if (self.folder_opened_path == path and self.folder_opened_data is not None
+                and self._unchecked_path != path):
             self.dataLoaded.emit(path)
             return False
         if self.loading and self._load_path == path:
@@ -535,6 +563,68 @@ class FolderExplorer(QWidget):
             self.model.set_load_state(path, "")
         self.loadStateChanged.emit()
         return accepted
+
+    def _show_cached(self, path: str) -> bool:
+        """Display this folder's dataset from memory, or start reading it from the
+        disk cache. True while that read is pending: the check waits for it, so
+        it can reuse the shots instead of reading files."""
+        cache = self.model.cache
+        if cache.has_request(self.model.owner, "cached", path):
+            return True
+        dataset = cache.current_dataset(path) or cache.latest_dataset(path)
+        if dataset is not None:
+            self.load_source, self.load_cache_reason, self._load_cache_pending = "memory", "", False
+            self.load_counts = {"reused_memory": len(dataset.data), "reused_disk": 0, "read": 0}
+            # Data matching this session's scan of the folder needs no check,
+            # as when a load is answered from memory.
+            node = self.model.nodes.get(path)
+            matches = cache.confirmed(dataset) or (cache.verified(dataset) and node is not None
+                                                   and node.signature == dataset.signature)
+            self._display(path, dataset, {"verified": matches})
+            return False
+        if not cache.disk_cached(path) or path == self._cache_read_path:
+            return False  # Read (or unreadable) already: the check loads the files.
+        self._cache_read_path = path
+        return cache.submit(self.model.owner, self.model.generation, path, "cached",
+                            {"cache": self._load_payload(path)["cache"]}, priority=True)
+
+    def _display(self, path: str, dataset: Dataset, event: dict[str, Any] | None = None) -> None:
+        """Show a dataset; data not from a completed load stays unchecked until one completes."""
+        self.model.cache.retain(self.model.owner, dataset)
+        self.displayed_dataset = dataset
+        self.folder_opened_data = dict(dataset.data)
+        self.folder_opened_path = path
+        self.model.folder_opened_path = path
+        self.load_bytes = int(dataset.metadata.get("bytes", 0))
+        self._unchecked_path = path if event is None or event.get("verified") is False else None
+        report = self.model.fetch_status(path)
+        report.problematic_txy_ns = list(dataset.metadata.get("problematic", []))
+        report.loaded_txy_files_count = int(dataset.metadata.get("files", 0))
+        report.loaded_txy_rows_count = int(dataset.metadata.get("rows", 0))
+        report.time_load_ram = datetime.now()
+        report.data_dict_bytes = self.load_bytes
+        report.extra_icons = ["ram_opened"]
+        node = self.model.nodes.get(path)
+        if node:
+            self.model.changed(node)
+        self.dataLoaded.emit(path)
+
+    def _cached_event(self, request: IORequest, event: dict[str, Any]) -> None:
+        kind, path = event["kind"], request.path
+        if kind == "loaded":
+            checked = self.folder_opened_path == path and self._unchecked_path != path
+            if path == self.selected_path_globally and not checked:
+                self.load_source, self.load_cache_reason, self._load_cache_pending = "disk", "", False
+                self.load_counts = dict(event.get("load_counts", {}))
+                self._display(path, event["dataset"], event)
+        elif kind == "error":
+            logging.info("Cached data %s: %s", path, event.get("message", ""))
+        if kind in ("loaded", "error") and path == self.selected_path_globally and self.auto_load_ram:
+            # Now check the folder, reusing the shots just shown.
+            QTimer.singleShot(0, lambda: self.selected_path_globally == path and not self.closed
+                              and self.load_to_ram_cache(path))
+        self._update_activity()
+        self.loadStateChanged.emit()
 
     def queue_load(self, path: str) -> bool:
         """Explicit load: never cancels another load; runs now when idle, otherwise queues."""
@@ -581,6 +671,9 @@ class FolderExplorer(QWidget):
         if request.operation == "icons":
             if kind in ("done", "error", "cancelled"):
                 self._schedule_visible_checks()
+            return
+        if request.operation == "cached":
+            self._cached_event(request, event)
             return
         if request.operation == "resolve":
             if kind == "resolved":
@@ -637,41 +730,35 @@ class FolderExplorer(QWidget):
             self.load_total_files = event.get("total_files", self.load_total_files)
             self.load_failed_files = event.get("failed_files", self.load_failed_files)
         elif kind == "load_source":
-            self.load_source = event["source"]
-            self.load_cache_reason = event.get("cache_reason", "")
+            if not self._checking(request.path):
+                self.load_source = event["source"]
+                self.load_cache_reason = event.get("cache_reason", "")
             logging.info("Folder load %s: source=%s; cache=%s; reason=%s", request.path,
-                         self.load_source, request.payload.get("cache", {}).get("directory", ""),
-                         self.load_cache_reason or "cache hit")
+                         event["source"], request.payload.get("cache", {}).get("directory", ""),
+                         event.get("cache_reason", "") or "cache hit")
         elif kind == "cache_warning":
             self.load_cache_warning = event["message"]
             logging.warning("Folder cache %s: %s", request.path, self.load_cache_warning)
         elif kind == "loaded":
             self.load_paused = False
-            self.load_source = event.get("source", "")
-            self.load_counts = dict(event.get("load_counts", {}))
+            if not (event.get("unchanged") and self._checking(request.path)):
+                # An unchanged folder keeps the shown data's source and counts.
+                self.load_source = event.get("source", "")
+                self.load_counts = dict(event.get("load_counts", {}))
+                self.load_cache_reason = event.get("cache_reason", "")
             self._load_cache_pending = bool(event.get("disk_cache_pending"))
-            self.load_cache_reason = event.get("cache_reason", "")
+            if "modified" in event:
+                self.model.observe_modified(request.path, event["modified"],
+                                            event.get("modified_observed_at", time.time()))
             dataset = event["dataset"]
             assert isinstance(dataset, Dataset)
-            self.model.cache.retain(self.model.owner, dataset)
-            self.displayed_dataset = dataset
-            self.folder_opened_data = dict(dataset.data)
-            self.folder_opened_path = request.path
-            self.model.folder_opened_path = request.path
-            self.load_bytes = event["bytes"]
             self.loading = False
-            report = self.model.fetch_status(request.path)
-            report.problematic_txy_ns = event["problematic"]
-            report.loaded_txy_files_count = event["files"]
-            report.loaded_txy_rows_count = event["rows"]
-            report.time_load_ram = datetime.now()
-            report.data_dict_bytes = event["bytes"]
-            report.extra_icons = ["ram_opened"]
             self.model.set_load_state(request.path, "")
+            self._display(request.path, dataset, event)
             node = self.model.nodes.get(request.path)
-            if node:
-                self.model.changed(node)
-            self.dataLoaded.emit(request.path)
+            if node and node.cached_report and not event.get("unchanged"):
+                # The folder changed since its saved counts; list it for the tree.
+                self.model.request_scan(request.path, priority=True)
         elif kind in ("error", "cancelled"):
             self.loading = self.load_paused = False
             self._loading_data.clear()
@@ -685,7 +772,10 @@ class FolderExplorer(QWidget):
             node = self.model.nodes.get(path)
             dataset = self.model.cache.current_dataset(path)
             if dataset is None:
-                if self.folder_opened_path == path:
+                # Only when the shown data was dropped (cache cleared, folder changed);
+                # cached data shown before its check is not the folder's current dataset.
+                shown = self.displayed_dataset
+                if self.folder_opened_path == path and (shown is None or not self.model.cache.holds(shown)):
                     self.folder_opened_path = None
                 # Keep the previous arrays/plots until a successful replacement.
             elif (node and dataset.signature == node.signature and self.auto_load_ram
@@ -801,14 +891,20 @@ class FolderExplorer(QWidget):
         shown = dataset is not None and dataset.path == path
         changed = bool(shown and node and report and not node.cached_report and
                        self._changed_since_load(node, dataset)) if dataset else False
-        if shown and dataset is not None and not (self.loading and self._load_path == path):
+        unchecked = shown and self.folder_opened_path == path and self._unchecked_path == path
+        # Data shown before its check keeps its counts while the check runs.
+        if shown and dataset is not None and (unchecked or not (self.loading and self._load_path == path)):
             failed = int(dataset.metadata.get("failed_files", 0))
+            unsettled = int(dataset.metadata.get("unsettled_files", 0))
             loaded = int(dataset.metadata["files"])
             found = (len(report.d_txy_shots or []) if changed and report else
-                     int(dataset.metadata.get("total_files", loaded + failed)))
-            text = f"{found:,} TXY found · {loaded:,} {'previously loaded' if changed else 'loaded'}"
+                     int(dataset.metadata.get("total_files", loaded + failed + unsettled)))
+            label = "previously loaded" if changed else "loaded (cached)" if unchecked else "loaded"
+            text = f"{found:,} TXY found · {loaded:,} {label}"
             if failed:
                 text += f" · {failed:,} unreadable"
+            if unsettled:
+                text += f" · {unsettled:,} still being written"
             if changed:
                 text += " · Changes detected"
             elif self.folder_opened_path != path:
@@ -932,6 +1028,7 @@ class FolderExplorer(QWidget):
             return
         dataset = self.displayed_dataset
         current = bool(dataset and dataset.path == path and self.folder_opened_path == path)
+        unchecked = current and self._unchecked_path == path
         state = cache.cache_status(path)
         saved_at = metadata_date(state.info.get("saved_at"))
         ago = self._relative_age(time.time() - saved_at) if isinstance(saved_at, (int, float)) else ""
@@ -953,7 +1050,9 @@ class FolderExplorer(QWidget):
         else:
             text = "No cached data"
         freshness = self.model.data_freshness(node) if node else CacheFreshness.UNKNOWN
-        if cache.disk_cached(path) and freshness.value:
+        if unchecked:
+            text += " · Check failed" if self.load_error else " · Checking for changes…"
+        elif cache.disk_cached(path) and freshness.value:
             text += f" · {freshness.value}"
         self.folder_cache_label.setText(text)
         origin = {"disk": "disk cache", "files": "TXY files", "merged": "disk cache + new TXY files",
@@ -968,6 +1067,8 @@ class FolderExplorer(QWidget):
                  if isinstance(saved_at, (int, float)) else "")
         self.folder_cache_label.setToolTip("\n".join(filter(None, (
             f"Loaded from {origin}" if origin and current else "",
+            ("Not yet checked against the folder: " + (self.load_error or "the check is queued or running"))
+            if unchecked else "",
             self.load_cache_reason if current else "",
             " · ".join(details),
             f"Last successful cache save: {exact}" if exact else
@@ -1194,7 +1295,7 @@ class FolderExplorer(QWidget):
         if self.closed:
             return
         self._release_load()
-        self._cancelled_load_path = None
+        self._cancelled_load_path = self._cache_read_path = None
         self.get_selection_model().clear()
         self.selected_path_globally = self.view_path
         self.model.request_scan(self.view_path, priority=True)
@@ -1237,6 +1338,7 @@ class FolderExplorer(QWidget):
         self._cancelled_load_path = self.selected_path_globally
         self._cancel_background()
         self.model.cache.cancel(self.model.owner, "load")
+        self.model.cache.cancel(self.model.owner, "cached")
         if self._load_path is not None:
             self.model.set_load_state(self._load_path, "")
         self._load_path = None
