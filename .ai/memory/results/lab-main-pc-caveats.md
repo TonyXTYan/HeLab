@@ -1,8 +1,8 @@
 ---
-date: 2026-08-20
+date: 2026-10-08
 status: settled
 name: lab-main-pc-caveats
-description: "Lab Main PC: HeLab runs from a uv Python 3.13 venv; Python 3.11 stdlib is corrupted; launching HeLab over SSH poisons its cache settings"
+description: "Lab Main PC: HeLab runs from a uv Python 3.13 venv; Miniconda replaced Anaconda3 (condabin on PATH); Python 3.11 stdlib is corrupted; launching HeLab over SSH poisons its cache settings"
 metadata:
   node_type: memory
   type: result
@@ -53,9 +53,26 @@ ImportError: cannot import name 'coroutine' from 'asyncio.coroutines'
 pip vendors `tenacity`, which imports `asyncio`, so **pip and `ensurepip` are
 both dead on 3.11**. (The stale `Lib\re.py` is inert — the real `re/` package
 wins the import.) Other interpreters present and unsuitable: 3.6.1, 3.5,
-3.12.10 (python.org, per-user) and Anaconda3 2022.10 / Python 3.9.18 in
-`C:\ProgramData\Anaconda3` (`C:\Users\All Users\Anaconda3` is the same
-folder) with envs `HeLab` (3.12.9, superseded by the venv) and `py311`.
+3.12.10 (python.org, per-user).
+
+**conda:** Anaconda3 2022.10 (`C:\ProgramData\Anaconda3`, envs `HeLab` and
+`py311`) was removed by Tony on 2026-10-08. Its uninstaller failed, so the
+folder was deleted by hand. Its leftover registry keys (PEP 514
+`ContinuumAnalytics\Anaconda39-64` and `PythonCore\3.9`, the uninstall
+entry), Start Menu folder, `~\.conda\environments.txt` and
+`%LOCALAPPDATA%\conda` were then removed, with backups in
+`C:\ProgramData\uv-setup-backup\anaconda-leftovers-*`. **Miniconda**
+(conda 26.7.1, base Python 3.14.7) replaced it the same day: all users,
+`C:\ProgramData\miniconda3`, installed with `/RegisterPython=0
+/AddToPath=0` and no `conda init`, so bare `py` still runs uv's 3.13.
+Only `C:\ProgramData\miniconda3\condabin` (conda.bat and activate scripts,
+no python.exe) is on the machine `Path`, so `conda` works in any shell incl.
+SSH. `conda activate` in PowerShell still needs `conda init powershell`
+(not run); `conda run -n <env>` or the Start Menu prompts work without it. Channels are
+`defaults` then `conda-forge` (from `~\.condarc`, Tony's choice). Anaconda's
+Terms of Service for `repo.anaconda.com/pkgs/{main,r,msys2}` were **not**
+accepted by Claude; whoever first uses `defaults` must run `conda tos
+accept` (or switch to conda-forge only).
 
 ## Never launch HeLab over SSH — it poisons the desktop session
 

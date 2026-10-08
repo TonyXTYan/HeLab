@@ -2,7 +2,7 @@
 date: 2026-10-08
 status: settled
 name: lab-side-pc-caveats
-description: "Lab Side PC: HeLab runs from a uv Python 3.13 venv (uv installed for all users); bare python is 2.7, git and conda are off PATH, old Anaconda3 removed, and maestri --raw mangles backslash paths"
+description: "Lab Side PC: HeLab runs from a uv Python 3.13 venv (uv installed for all users); bare py runs it, bare python is 2.7, conda is off PATH (git was added to it), old Anaconda3 removed, and maestri --raw mangles backslash paths"
 metadata:
   node_type: memory
   type: result

@@ -48,10 +48,12 @@ Backends that pass a trivial page still fail on a real one
 (`context is marked as lost` / `Failed to make current`). Downgrading to
 PyQt6-WebEngine 6.7.x is **not** a workaround: 6.7.3 splits into a subwheel and
 the install breaks with `ImportError: DLL load failed while importing
-QtWebEngineWidgets`. Restore with:
+QtWebEngineWidgets`. Restore the versions `requirements.txt` resolves to (the
+uv venvs built on 2026-10-08 had PyQt6-WebEngine 6.11.0 with
+PyQt6-WebEngine-Qt6 6.11.2):
 
 ```
-venv\Scripts\python.exe -m pip install --force-reinstall "PyQt6==6.11.0" "PyQt6-Qt6==6.11.1" "PyQt6-WebEngine==6.11.0" "PyQt6-WebEngine-Qt6==6.11.1"
+uv pip install --python venv\Scripts\python.exe --reinstall -r requirements.txt
 ```
 
 ## Working alternative

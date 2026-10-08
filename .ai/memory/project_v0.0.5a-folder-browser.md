@@ -1,6 +1,6 @@
 ---
 name: project-v0.0.5a-folder-browser
-description: "Open threads on dev/v0.0.5a folder-browser work (summary panel, I/O lanes, scan-failure history): what is committed, what is open, known bugs"
+description: "Open threads on dev/v0.0.5a folder-browser work (summary panel, I/O lanes, cache first, scan-failure history): what is committed and pushed, what is open, known bugs"
 metadata:
   node_type: memory
   type: project
@@ -19,12 +19,21 @@ cooperative pausing; 296 tests). Tony confirmed the app works much better.
 Phase 4 = these memory updates; the per-scan timing log was dropped (log
 spam). Plan: `.ai/sessions/2026-10-08-claude-io-lanes/plan.md`.
 
+Then, still 2026-10-08, pushed to `TonyXTYan/dev/v0.0.5a` with `ec10fc8`:
+- `6132a4b`: the folder summary is a fixed 3-line block (no row jumping) and
+  the explorer's own status row merged into the main status bar — see
+  [[folder-summary-indicators]].
+- `5b49dfd`: **cache first** — cached data shows at once from a local lane,
+  then one folder stat checks it; files still being written (5 s) are never
+  read. 323 passed, 1 skipped. See [[folder-io-queue]]. Not yet tried on the
+  real `/Volumes/dld_output` in the full app.
+
 Open threads:
-- Undecided: after a names-only listing, re-selecting a folder whose data is
-  in RAM but not shown re-checks its files in a load helper (0 reads) instead
-  of reusing memory instantly. Fix offered: keep the previous signature when
-  the listing's TXY names are unchanged (risk: an in-place modification shows
-  only after the details scan).
+- Probably settled by cache first (`5b49dfd`): re-selecting a folder whose
+  data is in RAM used to re-check its files in a load helper (0 reads) before
+  showing it. Memory data now shows at once and an unmodified folder costs
+  one stat, so the "keep the previous signature" fix is likely unneeded.
+  Close it once confirmed on a real data volume.
 - Review findings still open: if the disk cache can't open, automatic scans
   are skipped silently; folders over 100k entries record a scan failure.
   (`configure_concurrency` now uses `MAX_SIMULTANEOUS_IO`, fixed in Phase 3.)
