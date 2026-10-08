@@ -60,6 +60,10 @@ real data is unnecessary. Do not add large lab datasets to the repository.
 
 ## Cache-only browsing
 
+Current feature scope and dependencies now live in
+[roadmaps/cache-only-browsing.md](../../../roadmaps/cache-only-browsing.md).
+The notes below retain the original review's ideas as historical context.
+
 Working name remains undecided (offline mode, cached view). Browse and view data
 using only local cache, without source-folder I/O or network queries, for off-site
 use or an unmounted data volume. Implementation ideas, not settled requirements:

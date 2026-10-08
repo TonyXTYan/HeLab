@@ -380,15 +380,15 @@ def test_row_returns_to_a_running_status_check_when_refresh_listing_finishes(
     assert node.state == "idle" and node.children
 
 
-# Known issue (ROADMAP.md, Known issues): while a tab refreshes, it ignores
+# Near-term fix (roadmaps/_readme.md): while a tab refreshes, it ignores
 # results other tabs finish. `_shared_snapshot_changed` applies them through
 # `request_scan(automatic=True)`, which Refresh blocks so it starts no new
 # checks; that also blocks results already in memory, which need no I/O. The
-# planned fix is a separate no-I/O path for in-memory results, built with
-# cache-only browsing (ROADMAP.md, Later and ideas). Remove these markers then;
+# planned fix is a separate no-I/O path for in-memory results, also useful for
+# cache-only browsing (roadmaps/cache-only-browsing.md). Remove these markers then;
 # strict xfail fails as soon as the behaviour is fixed.
 SHARED_RESULTS_DURING_REFRESH = pytest.mark.xfail(
-    strict=True, reason="Refresh blocks other tabs' in-memory results; fixed with cache-only browsing (ROADMAP.md)")
+    strict=True, reason="Refresh blocks other tabs' in-memory results; needs no-I/O replay (roadmaps/_readme.md)")
 
 
 def check_in_other_tab(qtbot: QtBot, cache: FolderCache, path: str, options: dict[str, Any]) -> None:

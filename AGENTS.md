@@ -13,7 +13,8 @@ Two repos exist: this one (`TonyXTYan/HeLab`) is the development branch; `HeBECA
 ## AI workspace (`.ai/`)
 
 - `.ai/coding-workspace.md` — shared AI-workspace conventions for Tony's repos (what goes in memory vs sessions, working rules).
-- `ROADMAP.md` (repo root) — the single product to-do list: current work, known issues, planned features. Add new product items there, not to README or memory.
+- `roadmaps/_readme.md` — the product overview, single priority/completion list and feature-plan index. Add new product items there, not to README or memory.
+- `roadmaps/` — ongoing feature documents: purpose, scope, dependencies, acceptance criteria and open decisions. Link each from `_readme.md`; do not duplicate its priority/completion checklist. Session-specific investigations and validation evidence stay in `.ai/sessions/`.
 - `.ai/MANUAL_TODO.md` — ongoing manual-action list, including native UI checks, real-volume testing and release validation. Detailed results and evidence belong in `.ai/sessions/`, linked from the item.
 - `.ai/memory/MEMORY.md` — index of project memory. Read it first; load individual files only when relevant. Settled design decisions (with the reasons and Tony's chosen wording/icons) live in `.ai/memory/results/`; this file keeps only the codebase rules.
 - `.ai/sessions/YYYY-MM-DD-<tool>-<title>/` — per-session notes. `.ai/session-export-codex/` and `.ai/session-export-claude/` — raw exported transcripts. Search these for history; don't auto-load them.

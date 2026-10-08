@@ -2,11 +2,11 @@
 
 The ongoing list of work requiring manual action, including native UI checks,
 real-volume testing and release validation. Product features and known issues
-belong in [ROADMAP.md](../ROADMAP.md).
+belong in the [roadmap overview](../roadmaps/_readme.md).
 
 Keep items concise and tick them when completed. Record detailed results, tested
 commit, OS/build and reproductions in `.ai/sessions/`, linked from the item.
-New confirmed product issues go in ROADMAP.md with a link to the evidence.
+New confirmed product issues go in `roadmaps/_readme.md` with a link to the evidence.
 
 The v0.0.5a checks below were added on 2026-10-08 and remain pending.
 
@@ -50,4 +50,4 @@ The v0.0.5a checks below were added on 2026-10-08 and remain pending.
   release commit. This is validation evidence, not a new testing feature.
 - [ ] Observe hover-menu tests in CI: real timers have approximately 200 ms of
   slack and may flake on slow machines. If a failure is reproducible, add a
-  concrete test-reliability item to ROADMAP.md with logs.
+  concrete test-reliability item to `roadmaps/_readme.md` with logs.

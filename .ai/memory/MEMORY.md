@@ -16,4 +16,4 @@ See `.ai/coding-workspace.md` for what belongs here vs `.ai/sessions/`.
 
 ## TODO
 
-Open work, known issues and planned features: [ROADMAP.md](../../ROADMAP.md) at the repo root.
+Open work, known issues and planned features: [roadmap overview](../../roadmaps/_readme.md).

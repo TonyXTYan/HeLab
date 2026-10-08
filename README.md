@@ -214,4 +214,4 @@ QT_QPA_PLATFORM=offscreen helab
 ---
 # TODO
 
-Open work, known issues and planned features are tracked in [ROADMAP.md](ROADMAP.md).
+Open work, known issues and planned features are tracked in the [roadmap overview](roadmaps/_readme.md).
