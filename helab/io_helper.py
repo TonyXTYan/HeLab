@@ -119,6 +119,8 @@ def _send_saved(cache: Any, path: str, send: Emit, identity: object) -> Any:
         previous = {}
     if previous:
         send({"kind": "scan_cached", "status": previous})
+    if subtree := _subtree_info(cache, path, identity):
+        send({"kind": "subtree_cached", "subtree": subtree})
     return history
 
 
@@ -168,6 +170,7 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                     if cache is not None:
                         child.update(scan_history=read_history(cache, entry.path),
                                      scan_status=_scan_info(cache, entry.path),
+                                     subtree=_subtree_info(cache, entry.path),
                                      disk_cached=_disk_cached(cache, entry.path),
                                      cache_info=_cache_info(cache, entry.path))
                     entries.append(child)
@@ -255,6 +258,41 @@ def _summary(path: str, raw: set[int], txy: set[int], has_dirs: bool, empty: boo
             "signature": hashlib.sha256(json.dumps(sorted(fingerprint)).encode()).hexdigest()}
 
 
+SUBTREE_KEY = "folder-subtree-v1"
+
+
+def _subtree_info(cache: Any, path: str, identity: object = None) -> dict[str, Any]:
+    """A folder's saved status derived from its subfolders (not their contents)."""
+    try:
+        info = cache.get((SUBTREE_KEY, path)) if cache is not None else None
+        if (isinstance(info, dict) and info.get("version") == 1
+                and info.get("status") in ("something", "nothing")
+                and isinstance(info.get("derived_at"), (float, int))
+                and math.isfinite(info["derived_at"]) and 0 < info["derived_at"] < 253402300799
+                and isinstance(info.get("older"), bool)
+                and all(isinstance(info.get(key), int) and info[key] >= 0 for key in ("data", "checked", "total"))):
+            # Another directory now at this path does not inherit the result.
+            if info.get("identity") is not None and identity is not None and info["identity"] != identity:
+                return {}
+            return info
+    except Exception:
+        pass
+    return {}
+
+
+def save_subtrees(cache_options: dict[str, Any], records: list[dict[str, Any]], send: Emit = emit) -> None:
+    """Save (or, with status "", remove) folders' statuses derived from their subfolders."""
+    from diskcache import FanoutCache
+    with FanoutCache(cache_options["directory"], **cache_options["params"]) as cache:
+        for record in records:
+            key = (SUBTREE_KEY, record["path"])
+            if record["status"]:
+                cache.set(key, {"version": 1, **{k: v for k, v in record.items() if k != "path"}})
+            else:
+                cache.pop(key, None)
+    send({"kind": "subtree_saved", "paths": [record["path"] for record in records]})
+
+
 def _save_summary(cache: Any, path: str, report: dict[str, Any]) -> None:
     # Optional persistence never turns a successful source check into a failure.
     try:
@@ -311,7 +349,7 @@ def _scan(path: str, send: Emit, cache: Any) -> dict[str, Any]:
                                 "modified_observed_at": time.time(),
                                 "disk_cached": _disk_cached(cache, entry.path),
                                 "cache_info": _cache_info(cache, entry.path),
-                                "scan_status": summary})
+                                "scan_status": summary, "subtree": _subtree_info(cache, entry.path, identity)})
                 if len(entries) >= 128:
                     send({"kind": "entries", "entries": entries})
                     entries = []
@@ -807,6 +845,8 @@ def main() -> None:
             with FanoutCache(options["directory"], **options["params"]) as cache:
                 history = write_outcome(cache, request["path"], request["outcome"])
                 emit({"kind": "scan_history_saved", "history": history})
+        elif operation == "subtree_save":
+            save_subtrees(request["cache"], request["records"])
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),

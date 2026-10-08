@@ -19,7 +19,8 @@ foreground slot, paused while the tab listed anything, and listed and statted
 every TXY file before reading the cache. On a slow `/Volumes/dld_output`
 nothing appeared.
 
-- A **local lane** (`LOCAL_CAP` 2) runs `cached` reads: local disk cache only,
+- A **local lane** (`LOCAL_CAP` 2) runs `cached` reads (and small batched
+  `subtree_save` writes of derived subfolder status): local disk cache only,
   never paused, never waits for source I/O. The data shows as unchecked:
   line 1 `… loaded (cached)`, cache line `Checking for changes…`.
 - The check is the usual load with the shown dataset as its RAM base. If the

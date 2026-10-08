@@ -230,8 +230,8 @@ class StatusIcons:
         StatusIcons.ICON_WARNING = tablerIcon(OutlineIcon.ALERT_CIRCLE, '#f8c350')
         StatusIcons.ICON_LOADING = tablerIcon(OutlineIcon.LOADER, '#000000')  # TODO: replace this with PERCENTAGE
         StatusIcons.ICON_LIVE = tablerIcon(OutlineIcon.EYE, '#000000')
-        StatusIcons.ICON_NOTHING = tablerIcon(FilledIcon.POINT, '#bbbbbb')
-        StatusIcons.ICON_SOMETHING = tablerIcon(OutlineIcon.CIRCLE_DOT, '#bbbbbb')
+        StatusIcons.ICON_NOTHING = tablerIcon(FilledIcon.POINT, '#e0e0e0')
+        StatusIcons.ICON_SOMETHING = tablerIcon(OutlineIcon.CIRCLE_DOT, '#707070')
         StatusIcons.ICON_UNKNOWN = tablerIcon(OutlineIcon.CIRCLE_DASHED, '#bbbbbb')
         StatusIcons.ICON_MISSING = tablerIcon(OutlineIcon.ERROR_404, '#bbbbbb')
         StatusIcons.ICON_CANCELLED = tablerIcon(OutlineIcon.PROGRESS_X, '#9923bd')

@@ -68,6 +68,11 @@ How to use it:
 
 ## Unchosen ideas
 
+- [ ] Cache folder listings to reduce source I/O: expand shows the saved listing
+  at once, then one folder stat skips the scandir when the folder is unmodified
+  (like the cache-first data check). Shares persisted listings with
+  [cache-only browsing](cache-only-browsing.md) (2026-10-09).
+
 - [ ] Lock the tree view during a recursive status check? (from the old README
   list; may no longer be needed).
 

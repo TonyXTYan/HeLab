@@ -82,7 +82,10 @@ class FolderCache(QObject):
     diskCacheChanged = pyqtSignal(str)
     scanHistoryChanged = pyqtSignal(str)
     folderIconChanged = pyqtSignal(str)
+    subtreeChanged = pyqtSignal(str)
     MAX_FOLDER_ICONS = 4096
+    MAX_SUBTREES = 4096
+    SUBTREE_SAVE_DELAY_MS = 500
     FRESH_SECONDS: float = 10.0
     MAX_SNAPSHOTS: int = 256
     MAX_ENTRIES: int = 100_000
@@ -118,6 +121,15 @@ class FolderCache(QObject):
         self.folder_icons: OrderedDict[str, QIcon] = OrderedDict()
         self._history_identity_dates: dict[str, float] = {}
         self._history_writes: dict[str, str] = {}
+        # Statuses derived from subfolders, newest per folder; status "" marks a removal.
+        # Saved by one batched helper write at a time, after a short delay.
+        self.subtrees: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._subtree_pending: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._subtree_writer = ""
+        self._subtree_options: dict[str, Any] = {}
+        self._subtree_timer = QTimer(self)
+        self._subtree_timer.setSingleShot(True)
+        self._subtree_timer.timeout.connect(self._save_subtrees)
         # Subscriber owners of the current tab (its model, and in queue mode its
         # background loads); their listings and loads use the foreground lane.
         self.foreground_owners: set[str] = set()
@@ -155,6 +167,49 @@ class FolderCache(QObject):
         self.scan_summaries.move_to_end(path)
         while len(self.scan_summaries) > self.MAX_SNAPSHOTS:
             self.scan_summaries.popitem(last=False)
+
+    def subtree(self, path: str, saved: object = None) -> dict[str, Any] | None:
+        """The newest derived status for the folder: this session's or ``saved`` (from a listing)."""
+        current = self.subtrees.get(path)
+        if isinstance(saved, dict) and saved and (current is None or saved["derived_at"] > current["derived_at"]):
+            current = saved
+        return current if current and current["status"] else None
+
+    def remember_subtree(self, path: str, record: dict[str, Any], *, notify: bool = True) -> None:
+        previous = self.subtrees.get(path)
+        if previous and previous["derived_at"] > record["derived_at"]:
+            return
+        self.subtrees[path] = dict(record)
+        self.subtrees.move_to_end(path)
+        while len(self.subtrees) > self.MAX_SUBTREES:
+            self.subtrees.popitem(last=False)
+        if notify:
+            self.subtreeChanged.emit(path)
+
+    def save_subtree(self, path: str, record: dict[str, Any], cache_options: dict[str, Any]) -> None:
+        """Share a newly derived status with other tabs and save it for later sessions."""
+        self.remember_subtree(path, record, notify=False)
+        # Notified later: the deriving tab must not re-enter its own derivation.
+        QTimer.singleShot(0, lambda: None if self.service.closed else self.subtreeChanged.emit(path))
+        self._subtree_pending[path] = {"path": path, **record}
+        self._subtree_pending.move_to_end(path)
+        self._subtree_options = cache_options
+        if not self._subtree_writer and not self._subtree_timer.isActive():
+            self._subtree_timer.start(self.SUBTREE_SAVE_DELAY_MS)
+
+    def _save_subtrees(self) -> None:
+        if self._subtree_writer or not self._subtree_pending or self.service.closed:
+            return
+        records = [self._subtree_pending.popitem(last=False)[1]
+                   for _ in range(min(256, len(self._subtree_pending)))]
+        owner = uuid4().hex
+        if self.service.submit(owner, 0, records[0]["path"], "subtree_save",
+                               {"cache": self._subtree_options, "records": records}):
+            self._subtree_writer = owner
+            return
+        for record in records:  # Queue full: try again later, newer derivations first.
+            self._subtree_pending.setdefault(record["path"], record)
+        self._subtree_timer.start(5000)
 
     def scan_history(self, path: str) -> ScanHistory:
         return self.scan_histories.get(self.key(path), empty_history())
@@ -664,8 +719,19 @@ class FolderCache(QObject):
         self.scan_history_errors.clear()
         self.folder_icons.clear()
         self._history_identity_dates.clear()
+        self._subtree_timer.stop()
+        self.subtrees.clear()
+        self._subtree_pending.clear()
 
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        if producer.owner == self._subtree_writer:
+            if event["kind"] in ("error", "cancelled"):
+                logging.warning("Subfolder status save: %s", event.get("message", "Save cancelled"))
+            if event["kind"] in ("done", "error", "cancelled"):
+                self._subtree_writer = ""
+                if self._subtree_pending:
+                    self._subtree_timer.start(self.SUBTREE_SAVE_DELAY_MS)
+            return
         if producer.owner in self._history_writes:
             path = self._history_writes[producer.owner]
             if event["kind"] == "scan_history_saved":
@@ -741,6 +807,11 @@ class FolderCache(QObject):
                 return
             if kind == "scan_mode":
                 job.scan_mode = event["mode"]
+            if kind == "subtree_cached":
+                self.remember_subtree(job.path, event["subtree"], notify=False)
+                for request in tuple(job.subscribers.values()):
+                    self.resultReady.emit(request, event)
+                return
             if kind == "scan_cached":
                 self.remember_scan(job.path, event["status"])
                 for request in tuple(job.subscribers.values()):
@@ -752,6 +823,8 @@ class FolderCache(QObject):
                                           observed_at=entry.get("modified_observed_at", time.time()))
                     if entry.get("scan_status"):
                         self.remember_scan(entry["path"], entry["scan_status"])
+                    if entry.get("subtree"):
+                        self.remember_subtree(entry["path"], entry["subtree"], notify=False)
                     if "disk_cached" in entry and not self._cleared_since(job, entry["path"]):
                         self._observe_cache(entry["path"], entry)
                 job.entries.extend(event["entries"])

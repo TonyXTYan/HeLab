@@ -666,7 +666,7 @@ def test_visible_child_restores_persisted_counts_before_selection(
     assert node.cached_report and not node.loaded
     assert browser.model.data(browser.model.path_index(str(child), 4)) == "1"
     tooltip = browser.model.data(browser.model.path_index(str(child)), int(Qt.ItemDataRole.ToolTipRole))
-    assert isinstance(tooltip, str) and "Previous scan" in tooltip
+    assert isinstance(tooltip, str) and "\nStatus cache: " in tooltip
     assert browser.selected_path_globally == str(tmp_path)
     assert not any(r.operation == "load" for r in browser.model.service.pending)
 
@@ -912,8 +912,8 @@ def test_auto_scan_keeps_persisted_results_until_manual_basic_scan(
     browser._check_visible_folders()
     assert not browser.model.cache.requests(browser.model.owner)
     tooltip = browser.model.data(browser.model.path_index(str(cached_child)), int(Qt.ItemDataRole.ToolTipRole))
-    assert isinstance(tooltip, str) and "Scan results cached 2h ago" in tooltip
-    assert "Last scan:" in tooltip and "Check folder status" in tooltip
+    assert isinstance(tooltip, str) and "\nStatus cache: " in tooltip and "(2h ago)" in tooltip
+    assert "Here: 1 shot converted, no raw files" in tooltip and "Select the folder to check it again." in tooltip
     assert node.txy_count == 1
     browser.deep_timer.stop()
     browser.context_menu_action_deep_calc_status(str(cached_child))
@@ -932,6 +932,8 @@ def test_auto_scan_keeps_old_session_results_after_toggle_and_visibility_changes
     complete_scan(browser, qtbot, str(child))
     node = browser.model.nodes[str(child)]
     node.checked_at -= 7200
+    assert node.scanned_at is not None
+    node.scanned_at -= 7200
     browser.model.cache.snapshots[str(child)].checked_at -= 7200
     browser.resize(420, 350)
     browser.show()
@@ -941,12 +943,12 @@ def test_auto_scan_keeps_old_session_results_after_toggle_and_visibility_changes
 
     index = browser.model.path_index(str(child))
     tooltip = browser.model.data(index, int(Qt.ItemDataRole.ToolTipRole))
-    assert isinstance(tooltip, str) and "Scan results cached 2h ago" in tooltip
+    assert isinstance(tooltip, str) and "\nStatus checked: " in tooltip and "(2h ago)" in tooltip
     with monkeypatch.context() as clock:
-        current = time.monotonic()
-        clock.setattr("helab.models.SnapshotFileSystemModel.time.monotonic", lambda: current + 3600)
+        current = time.time()
+        clock.setattr("helab.models.SnapshotFileSystemModel.time.time", lambda: current + 3600)
         tooltip = browser.model.data(index, int(Qt.ItemDataRole.ToolTipRole))
-        assert isinstance(tooltip, str) and "Scan results cached 3h ago" in tooltip
+        assert isinstance(tooltip, str) and "(3h ago)" in tooltip
     # Moving out of view and back, and re-enabling the option, both retain results.
     monkeypatch.setattr(browser, "_viewport_paths", lambda: [])
     browser._check_visible_folders()
@@ -1001,8 +1003,18 @@ def test_data_and_status_cache_freshness_indicators_are_independent(
         assert ("May be outdated" in browser.folder_cache_label.text()) == data_old
         assert ("May be outdated" in browser.folder_freshness_label.text()) == status_old
         tooltip = str(browser.model.data(index, int(Qt.ItemDataRole.ToolTipRole)))
-        assert "Data cache saved:" in tooltip and "Status scan:" in tooltip and "Observed folder modified:" in tooltip
-        assert "Use Load data" in tooltip and "Use Check folder status" in tooltip
+        # The row tooltip mirrors the icons: a reason only with the clock on each.
+        # Each cache has its date and freshness; the folder modified time is stated once.
+        lines = tooltip.splitlines()
+        status_line = next(line for line in lines if line.startswith(("Status cache: ", "Status checked: ")))
+        data_line = next(line for line in lines if line.startswith("Data cache: "))
+        assert sum(line.startswith("Folder modified: ") for line in lines) == 1
+        assert status_line.endswith("· may be outdated") == status_old
+        assert data_line.endswith("· may be outdated") == data_old
+        if folder_age is None:
+            # A status checked in this session notes only a later sign of change.
+            assert status_line.endswith("· freshness unknown") == status_line.startswith("Status cache: ")
+            assert data_line.endswith("· freshness unknown")
         if data_age is None or folder_age is None:
             assert "Freshness unknown" in browser.folder_cache_label.text()
         if scan_age is None or folder_age is None:

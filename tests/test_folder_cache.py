@@ -107,7 +107,7 @@ def test_two_tabs_share_snapshot_arrays_and_default_resolution(
     assert 1 in first.folder_opened_data
     assert second.model.root and len(second.model.root.children) == 1
     tooltip = str(second.model.data(second.model.path_index(path), int(Qt.ItemDataRole.ToolTipRole)))
-    assert "Shared RAM" in tooltip
+    assert "Data: shared RAM dataset open" in tooltip
     second._update_activity()
     assert second.activity_text == "" and not second.activity_busy
     events: list[dict[str, Any]] = []
@@ -1015,14 +1015,15 @@ def test_disk_badge_after_restart_ram_load_eviction_and_clear(qtbot: QtBot, tmp_
     # Subfolder cache lookups come with the root's background details scan.
     qtbot.waitUntil(lambda: badges() == [StatusIcons.ICON_CACHED], timeout=15000)
     assert model.cache.current_dataset(path) is None
-    assert "Cached on disk; not loaded into RAM" in str(model.data(index, int(Qt.ItemDataRole.ToolTipRole)))
+    tooltip = str(model.data(index, int(Qt.ItemDataRole.ToolTipRole)))
+    assert "\nData cache: " in tooltip and "Data: shared RAM" not in tooltip
     model.request_scan(path, priority=True)
     qtbot.waitUntil(lambda: model.nodes[path].loaded, timeout=15000)
     assert model.cache.submit(model.owner, model.generation, path, "load",
                               {"cache": options, "signature": model.nodes[path].signature}, timeout=30)
     qtbot.waitUntil(lambda: model.cache.current_dataset(path) is not None, timeout=15000)
     assert badges() == [StatusIcons.ICON_RAM_OPENED]
-    assert "not loaded into RAM" not in str(model.data(index, int(Qt.ItemDataRole.ToolTipRole)))
+    assert "Data: shared RAM dataset open" in str(model.data(index, int(Qt.ItemDataRole.ToolTipRole)))
     model.cache.MAX_DATA_BYTES = 0
     model.cache._evict()
     assert badges() == [StatusIcons.ICON_CACHED]

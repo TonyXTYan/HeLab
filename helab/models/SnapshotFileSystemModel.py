@@ -25,7 +25,25 @@ from helab.utils.caching_setup import load_cache_param
 from helab.utils.constants import DIR_CACHES
 from helab.utils.time_format import relative_age
 from helab.utils.scan_history import folder_identity
-from helab.utils.cache_freshness import CacheFreshness, cache_freshness, data_as_of, freshness_tooltip, metadata_date
+from helab.utils.cache_freshness import CacheFreshness, cache_freshness, data_as_of, metadata_date
+
+
+def _stamp(timestamp: float | None) -> str:
+    """An exact local time with its age, e.g. "2026-10-09 00:16:08 (2h ago)"."""
+    if timestamp is None:
+        return "date not recorded"
+    try:
+        exact = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, OverflowError, OSError):
+        return "date not recorded"
+    return f"{exact} ({relative_age(time.time() - timestamp)})"
+
+
+# A cache's freshness against the folder's observed modified time, as a suffix.
+_FRESHNESS = {CacheFreshness.UNCHANGED: " · folder not modified since",
+              CacheFreshness.POSSIBLY_OLD: " · may be outdated",
+              CacheFreshness.CHANGED: " · changes detected (different TXY fingerprints)",
+              CacheFreshness.UNKNOWN: " · freshness unknown"}
 
 
 @dataclass(eq=False)
@@ -52,6 +70,21 @@ class FolderNode:
     # A manual retry with no timeout: when it was requested, and entries listed so far.
     retry_since: float | None = None
     listed: int = 0
+    # When the row's listing/check was queued or started (wall clock), for tooltips.
+    state_since: float | None = None
+    # Status derived from the subfolders ("something"/"nothing", or "" to show the
+    # folder's own) and whether it may be outdated. ``subtree_info`` is the record
+    # shown: derived now from this tab's listed subfolders (``subtree_live``) or
+    # saved earlier. ``subtree_saved`` is the saved record a listing sent.
+    # ``report`` stays this folder's own checked files.
+    subtree: str = ""
+    subtree_older: bool = False
+    subtree_info: dict[str, Any] | None = None
+    subtree_live: bool = False
+    subtree_saved: dict[str, Any] | None = None
+    # Whether the folder had subfolders at its last listing (saved with its summary);
+    # None if unknown. An unlisted folder known to have none shows no expand arrow.
+    has_dirs: bool | None = None
 
 
 class SnapshotFileSystemModel(QAbstractItemModel):
@@ -104,6 +137,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.diskCacheChanged.connect(self._shared_dataset_changed)
         self.cache.scanHistoryChanged.connect(self._shared_dataset_changed)
         self.cache.folderIconChanged.connect(self._folder_icon_changed)
+        self.cache.subtreeChanged.connect(self._shared_subtree_changed)
 
     def node(self, index: QModelIndex) -> FolderNode | None:
         return cast(FolderNode, index.internalPointer()) if index.isValid() else None
@@ -144,11 +178,11 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if parent.column() > 0:
             return False
         node = self.node(parent)
-        return (bool(node.children) or not node.loaded) if node else self.root is not None
+        return (bool(node.children) or not node.loaded and node.has_dirs is not False) if node else self.root is not None
 
     def canFetchMore(self, parent: QModelIndex) -> bool:
         node = self.node(parent)
-        return bool(node and not node.loaded and node.state == "idle")
+        return bool(node and not node.loaded and node.has_dirs is not False and node.state == "idle")
 
     def fetchMore(self, parent: QModelIndex) -> None:
         node = self.node(parent)
@@ -166,12 +200,89 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                        and node.signature != info["signature"])
         return cache_freshness(as_of, node.modified, changed=changed)
 
+    def display_status(self, node: FolderNode) -> str | None:
+        """The folder's own status when it holds data, else one derived from its subfolders."""
+        own = node.report.status if node.report else None
+        return own if own in StatusReport.STATUS_CONTAINS_DATA_HERE else node.subtree or own
+
+    def display_older(self, node: FolderNode) -> bool:
+        if node.subtree and not (node.report and node.report.status in StatusReport.STATUS_CONTAINS_DATA_HERE):
+            return node.subtree_older
+        return self.status_freshness(node) == CacheFreshness.POSSIBLY_OLD
+
+    def _derive(self, node: FolderNode) -> bool:
+        """Derive the folder's status from its subfolders; returns whether it changed.
+
+        Any listed subfolder with data makes it "something"; it is "nothing" when the
+        listing is complete and every subfolder was checked and has nothing; with some
+        unchecked its own status shows. Only when no listed subfolder was checked (or
+        none is listed yet) does the saved result show. Subfolders count with what
+        they show, including their own saved results, so this never recurses.
+        """
+        own = node.report.status if node.report else None
+        info: dict[str, Any] | None = None
+        live = False
+        if own not in StatusReport.STATUS_CONTAINS_DATA_HERE:
+            statuses = [(self.display_status(child), child) for child in node.children]
+            checked = [(status, child) for status, child in statuses if status is not None]
+            if checked or node.loaded and not node.children:
+                live = True
+                own_older = node.report is not None and self.status_freshness(node) == CacheFreshness.POSSIBLY_OLD
+                data = [child for status, child in checked if status in StatusReport.STATUS_CONTAINS_DATA]
+                status, older = "", False
+                if data:
+                    # Possibly outdated only when every subfolder showing data may be.
+                    status, older = "something", own_older or all(self.display_older(child) for child in data)
+                elif (node.loaded and node.children and len(checked) == len(statuses)
+                      and all(status in StatusReport.STATUS_NOTHING for status, _ in checked)):
+                    status = "nothing"
+                    older = own_older or any(self.display_older(child) for child in node.children)
+                info = {"status": status, "older": older, "derived_at": time.time(), "identity": node.identity,
+                        "data": len(data), "checked": len(checked), "total": len(statuses)}
+                if node.loaded:
+                    self._save_subtree(node, info)
+            else:
+                saved = self.cache.subtree(node.path, node.subtree_saved)
+                if saved and self._same_folder(node, saved):
+                    info = saved
+        subtree = info["status"] if info else ""
+        older = False if info is None else info["older"] if live else self._saved_subtree_older(node, info)
+        unchanged = (subtree, older, live) == (node.subtree, node.subtree_older, node.subtree_live)
+        node.subtree, node.subtree_older, node.subtree_info, node.subtree_live = subtree, older, info, live
+        return not unchanged
+
+    @staticmethod
+    def _saved_subtree_older(node: FolderNode, info: dict[str, Any]) -> bool:
+        """A saved derivation may be outdated when the folder changed after it."""
+        return bool(info["older"]) or cache_freshness(info["derived_at"], node.modified) == CacheFreshness.POSSIBLY_OLD
+
+    def _save_subtree(self, node: FolderNode, info: dict[str, Any]) -> None:
+        """Save a complete listing's derivation when it differs from the saved one,
+        including its outdated hint, so the save date stays meaningful."""
+        saved = self.cache.subtree(node.path, node.subtree_saved)
+        if saved is None and not info["status"]:
+            return
+        if saved and (saved["status"], self._saved_subtree_older(node, saved)) == (info["status"], info["older"]):
+            return
+        self.cache.save_subtree(node.path, info, self._cache_options)
+
+    def _update_ancestors(self, node: FolderNode) -> None:
+        """The folder's status or subfolders changed: re-derive it and, while that
+        changes what they show, its ancestors."""
+        if self._derive(node):
+            self.changed(node)
+        parent = node.parent
+        while parent is not None and self._derive(parent):
+            self.changed(parent)
+            parent = parent.parent
+
     def observe_modified(self, path: str, modified: object, observed_at: object) -> None:
         """A folder modification time seen outside browsing, e.g. by a load's check."""
         node = self.nodes.get(path)
         if node is not None:
             self._observe_modified(node, modified, observed_at)
             self.changed(node)
+            self._update_ancestors(node)
 
     @staticmethod
     def _observe_modified(node: FolderNode, modified: object, observed_at: object) -> None:
@@ -193,41 +304,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             # A paused load waits like a queued one.
             return load_state in ("queued", "paused")
         if role == int(Qt.ItemDataRole.ToolTipRole):
-            from helab.utils.scan_history import history_tooltip
-            cached = ("\nShared RAM dataset available (read-only arrays)" if self.cache.current_dataset(node.path)
-                      else "\nCached on disk; not loaded into RAM.\nCache freshness is checked when loading."
-                      if self.cache.disk_cached(node.path) else "")
-            verification = ("\nPrevious scan; checking for changes" if node.cached_report and node.state in ("queued", "running")
-                            else "\nPrevious scan; use Check folder status to recheck" if node.cached_report
-                            else "\nCached snapshot; checking for changes" if node.loaded and node.state in ("queued", "running")
-                            else "\nCached snapshot; use Check folder status to recheck" if node.loaded and time.monotonic() - node.checked_at >= self.cache.FRESH_SECONDS
-                            else "")
-            report = node.report
-            scan_age = (f"\nScan results cached {relative_age(time.monotonic() - node.checked_at)}"
-                        f"\nLast scan: {report.time_last_updated.strftime('%Y-%m-%d %H:%M:%S')}" if report else "")
-            if report and node.scanned_at is None:
-                scan_age = "\nScan date not recorded"
-            freshness = ""
-            if report:
-                freshness += "\n" + freshness_tooltip("Status scan", node.scanned_at, node.modified,
-                    self.status_freshness(node), "Use Check folder status to recheck counts and status.")
-            if self.cache.disk_cached(node.path):
-                info = self.cache.cache_status(node.path).info
-                freshness += "\n" + freshness_tooltip("Data cache saved", info.get("saved_at"), node.modified,
-                    self.data_freshness(node), "Use Load data to validate and update the data cache.",
-                    as_of=data_as_of(info))
-            history = history_tooltip(self.cache.scan_history(node.path), time.time())
-            if history:
-                freshness += "\n" + history
-            if warning := self.cache.scan_history_errors.get(node.path):
-                freshness += "\n" + warning
-            if node.error:
-                return f"{node.path}\n{node.error}\nPrevious results retained; Retry to refresh.{scan_age}{cached}{freshness}"
-            details = (f"\nStatus: {report.status}\nRaw shots: {node.raw_count}"
-                       f"\nConverted shots: {node.txy_count}" if report else "")
-            activity = {"loading": "Loading dataset", "queued": "Queued to load dataset",
-                        "paused": "Loading paused while the current tab browses or loads"}.get(load_state, node.state)
-            return f"{node.path}\n{activity}{details}{scan_age}{cached}{verification}{freshness}"
+            return self._tooltip(node, load_state)
         if role == int(Qt.ItemDataRole.ForegroundRole) and node.error:
             return QColor("#b86c1d")
         if role == int(Qt.ItemDataRole.DisplayRole):
@@ -246,10 +323,10 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             icon = self.cache.folder_icons.get(node.path)
             return icon if icon is not None and not icon.isNull() else self._folder_icon
         if role == int(Qt.ItemDataRole.DecorationRole) and column == self.COLUMN_STATUS_ICON:
-            if not load_state and node.state not in ("queued", "running") and node.report:
-                icons = (StatusIcons.ICONS_STATUS_OLDER if self.status_freshness(node) == CacheFreshness.POSSIBLY_OLD
-                         else StatusIcons.ICONS_STATUS)
-                return icons.get(node.report.status)
+            status = self.display_status(node)
+            if not load_state and node.state not in ("queued", "running") and status:
+                icons = StatusIcons.ICONS_STATUS_OLDER if self.display_older(node) else StatusIcons.ICONS_STATUS
+                return icons.get(status)
         if role == self.STATUS_EXTRA_ICONS_ROLE:
             # Build icons from in-memory values; never call methods that update caches.
             extras = [k for k in (node.report.extra_icons if node.report else [])
@@ -266,6 +343,125 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             return [StatusIcons.ICONS_EXTRA[k] for k in extras
                     if k in StatusIcons.ICONS_EXTRA]
         return None
+
+    def _tooltip(self, node: FolderNode, load_state: str) -> str:
+        """One fact per line, in a fixed order, each matching what the row shows:
+
+        path · activity (busy only) · Here (own files) · Subfolders (with a derived
+        status's freshness) · Folder modified · Status cache/checked · Data cache (each
+        with its date and freshness against that modified time) · RAM · scan failures
+        · one action hint.
+
+        Qt does not rebuild an open tooltip while the mouse rests, so busy lines give
+        start times rather than elapsed counters, and FolderExplorer re-shows an open
+        tooltip when its row changes. Memory only, like all rendering.
+        """
+        from helab.utils.scan_history import history_tooltip
+        lines = [node.path]
+        busy = node.state in ("queued", "running")
+        report = node.report
+        if busy:
+            request = self._tree_requests.get(node.path)
+            check = request is not None and request.operation == "scan"
+            text = (("Queued to check folder status" if check else "Queued to list folder") if node.state == "queued"
+                    else "Checking folder status…" if check else "Listing folder…")
+            if node.state_since is not None:
+                text += f" since {datetime.fromtimestamp(node.state_since):%H:%M:%S}"
+            if node.retry_since is not None:
+                text += " · no time limit"
+            lines.append(text + (" · showing last results" if report else ""))
+        elif node.error:
+            lines.append("Last check cancelled · showing earlier results" if node.state == "cancelled"
+                         else f"Last check failed: {node.error.removesuffix(' — Retry')} · showing earlier results")
+        if load_state:
+            lines.append({"loading": "Loading dataset…", "queued": "Queued to load dataset",
+                          "paused": "Loading paused while the current tab browses or loads"}.get(load_state, load_state))
+        lines.append("Here: " + self._own_text(node))
+        lines.append("Subfolders: " + self._subfolders_text(node))
+        # Each cache: its date and its freshness against the folder's modified time, stated once.
+        disk_cached = self.cache.disk_cached(node.path)
+        if report or disk_cached:
+            lines.append("Folder modified: " + (_stamp(node.modified) if node.modified is not None else "not known yet"))
+        if report:
+            # Loaded from cache and not rechecked, or checked in this session: a fresh
+            # check only notes a later sign of change.
+            freshness = self.status_freshness(node)
+            lines.append(("Status cache: " if node.cached_report else "Status checked: ") + _stamp(node.scanned_at)
+                         + (_FRESHNESS[freshness] if node.cached_report or freshness in (
+                             CacheFreshness.POSSIBLY_OLD, CacheFreshness.CHANGED) else ""))
+        if disk_cached:
+            saved_at = metadata_date(self.cache.cache_status(node.path).info.get("saved_at"))
+            lines.append("Data cache: " + _stamp(saved_at) + _FRESHNESS[self.data_freshness(node)])
+        if self.cache.current_dataset(node.path):
+            lines.append("Data: shared RAM dataset open (read-only arrays)")
+        clock = bool(self.display_status(node)) and not busy and not load_state and self.display_older(node)
+        history = self.cache.scan_history(node.path)
+        if text := history_tooltip(history, time.time()):
+            lines.append(text)
+        if warning := self.cache.scan_history_errors.get(node.path):
+            lines.append(warning)
+        if not busy and not load_state and not history["blocked"]:
+            if node.error:
+                lines.append("Use Retry / Refresh to try again.")
+            elif report is None and not node.subtree:
+                lines.append("Select the folder to check it.")
+            elif clock and node.subtree_live and node.subtree == self.display_status(node):
+                # Its listing is current; the outdated part is a subfolder's result.
+                lines.append("Select the outdated subfolder to check it again.")
+            elif clock or node.cached_report or (node.subtree and not node.subtree_live):
+                lines.append("Select the folder to check it again.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _own_text(node: FolderNode) -> str:
+        """The folder's own files, from its last check."""
+        report = node.report
+        if report is None:
+            return "not checked yet"
+        raw, txy = node.raw_count, node.txy_count
+
+        def shots(count: int) -> str:
+            return f"{count:,} shot" + ("" if count == 1 else "s")
+        if report.status == "ok":
+            return f"{shots(txy)}, all converted"
+        if report.status == "fixable":
+            return f"{txy:,} of {shots(raw)} converted"
+        if report.status in ("warning", "critical"):
+            if not raw:
+                return f"{shots(txy)} converted, no raw files"
+            if not txy:
+                return f"{shots(raw)}, none converted"
+            return (f"{raw:,} raw, {txy:,} converted · "
+                    + ("converted shots without matching raw files" if report.status == "critical"
+                       else "raw and converted shots do not match"))
+        return "empty folder" if node.empty else "no TXY files"
+
+    def _subfolders_text(self, node: FolderNode) -> str:
+        """What is known about the subfolders: listed in this tab, else saved."""
+        info = node.subtree_info
+        saved = info is not None and not node.subtree_live
+        if node.loaded or node.children:
+            total = len(node.children)
+            if total == 0:
+                return "none"
+            if not saved:
+                statuses = [self.display_status(child) for child in node.children]
+                data = sum(status in StatusReport.STATUS_CONTAINS_DATA for status in statuses)
+                checked = sum(status is not None for status in statuses)
+                outdated = " · may be outdated" if node.subtree and node.subtree_older else ""
+                if data:
+                    return f"{total:,} · TXY data in {data:,}{outdated}"
+                if checked == total and all(status in StatusReport.STATUS_NOTHING for status in statuses):
+                    return f"{total:,} · all checked, no TXY data{outdated}"
+                return (f"{total:,} · none checked yet" if not checked
+                        else f"{total:,} · {checked:,} checked, no TXY data so far")
+        elif node.has_dirs is False:
+            return "none"
+        if info is not None and saved:
+            what = f"TXY data in {info['data']:,}" if info["status"] == "something" else "all checked, no TXY data"
+            outdated = " · may be outdated" if node.subtree_older else ""
+            return f"{info['total']:,} · {what} · saved {_stamp(info['derived_at'])}{outdated}"
+        return "not listed yet"
 
     def headerData(self, section: int, orientation: Qt.Orientation,
                    role: int = int(Qt.ItemDataRole.DisplayRole)) -> object:
@@ -420,6 +616,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         node.txy_count = status.get("txy_count", len(status.get("txy", [])))
         node.signature = status.get("signature", "")
         node.empty = status.get("empty")
+        node.has_dirs = status.get("has_dirs", node.has_dirs)
         node.cached_report = True
 
     def _on_event(self, request: IORequest, event: dict[str, Any]) -> None:
@@ -475,10 +672,16 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             node.listed = int(event.get("entries", node.listed))
         elif kind in ("queued", "started"):
             if owns_tree:
-                node.state = "queued" if kind == "queued" else "running"
+                state = "queued" if kind == "queued" else "running"
+                if node.state != state:
+                    node.state, node.state_since = state, time.time()
         elif kind == "scan_cached":
             if node.report is None:
                 self._restore_summary(node, event["status"])
+                self._update_ancestors(node)
+        elif kind == "subtree_cached":
+            node.subtree_saved = event["subtree"]
+            self._update_ancestors(node)
         elif kind == "entries":
             if seen is not None:
                 seen.update(entry["path"] for entry in event["entries"])
@@ -504,6 +707,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                         child.checked_at = cached.checked_at
                         child.scanned_at = metadata_date(status.get("scanned_at"))
                         child.empty = status.get("empty")
+                        child.has_dirs = status.get("has_dirs")
                         child.raw_count, child.txy_count = len(status["raw"]), len(status["txy"])
                         child.loaded = not cached.entries
                     elif summary := entry.get("scan_status") or self.cache.scan_summaries.get(path):
@@ -512,6 +716,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                             # Provisional until a details entry reports the folder's identity;
                             # a different folder at this path then drops the saved summary.
                             child.identity = folder_identity(summary.get("identity"))
+                    child.subtree_saved = entry.get("subtree") or None
+                    self._derive(child)
                     new.append(child)
                     self.nodes[path] = child
                 else:
@@ -519,12 +725,16 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                         child.report, child.signature = None, ""
                         child.raw_count = child.txy_count = 0
                         child.scanned_at, child.checked_at = None, 0
+                        child.subtree_saved = None
+                    if entry.get("subtree"):
+                        child.subtree_saved = entry["subtree"]
                     child.identity = entry.get("identity", child.identity)
                     if "modified" in entry:
                         self._observe_modified(child, entry["modified"], entry.get("modified_observed_at"))
                     summary = entry.get("scan_status") or self.cache.scan_summaries.get(path)
                     if child.report is None and summary and self._same_folder(child, summary):
                         self._restore_summary(child, summary)
+                    self._derive(child)
                     self.changed(child)
             if new:
                 self.beginInsertRows(self.path_index(node.path), len(node.children), len(node.children) + len(new) - 1)
@@ -532,10 +742,12 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 self.endInsertRows()
                 if self.refreshing and request.payload.get("listing_only"):
                     self._refresh_details.add(node.path)  # Dates for the new subfolders.
+            self._update_ancestors(node)
         elif kind == "status":
             if request.payload.get("listing_only"):
                 # Refresh changes the tree, not the last checked status or dataset.
                 node.empty = event.get("empty", node.empty)
+                node.has_dirs = event.get("has_dirs", node.has_dirs)
                 self.changed(node)
                 return
             node.cached_report = False
@@ -552,6 +764,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             # Unknown ("") after a names-only listing until details or a load supply it.
             node.signature = event.get("signature", "")
             node.empty = event.get("empty")
+            node.has_dirs = event.get("has_dirs", node.has_dirs)
+            self._update_ancestors(node)
             if not event.get("metadata_only"):
                 self.statusReady.emit(node.path)
         elif kind == "done":
@@ -578,6 +792,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                         self.endRemoveRows()
             for row, child in enumerate(node.children):
                 child.row = row
+            self._update_ancestors(node)
             if not request.payload.get("listing_only"):
                 self.directoryLoaded.emit(node.path)
             if request.operation == "list" and not request.payload.get("listing_only"):
@@ -614,6 +829,12 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             self.request_scan(path, force=bool(snapshot and snapshot.checked_at == 0
                                                and not self.cache.scan_history(path)["blocked"]), automatic=True)
 
+    def _shared_subtree_changed(self, path: str) -> None:
+        """Another tab saved a derived status; it shows here unless derived here now."""
+        node = self.nodes.get(path)
+        if not self.closed and node is not None and not node.subtree_live:
+            self._update_ancestors(node)
+
     def _shared_dataset_changed(self, path: str) -> None:
         node = self.nodes.get(path)
         if node:
@@ -621,6 +842,11 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             snapshot = self.cache.snapshots.get(self.cache.key(path))
             if not node.signature and snapshot and snapshot.status.get("signature"):
                 node.signature = snapshot.status["signature"]
+            # A load's listing (e.g. the check of a cache-first selection) shows
+            # whether an unlisted folder now has subfolders.
+            summary = self.cache.scan_summaries.get(path)
+            if not node.loaded and summary and "has_dirs" in summary:
+                node.has_dirs = summary["has_dirs"]
             self.changed(node)
 
     def _forget(self, node: FolderNode) -> None:
@@ -782,3 +1008,4 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.datasetChanged.disconnect(self._shared_dataset_changed)
         self.cache.diskCacheChanged.disconnect(self._shared_dataset_changed)
         self.cache.folderIconChanged.disconnect(self._folder_icon_changed)
+        self.cache.subtreeChanged.disconnect(self._shared_subtree_changed)

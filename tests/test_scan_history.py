@@ -370,7 +370,8 @@ def test_failure_badge_replaces_unavailable_text_and_cancelled_text_follows_badg
     cache.remember_history(path, apply_outcome(empty_history(), failure("timed-out", 5)))
     assert model.data(index, display) == ""
     tooltip = model.data(index, int(Qt.ItemDataRole.ToolTipRole))
-    assert isinstance(tooltip, str) and node.error in tooltip and "Automatic folder status checks are skipped" in tooltip
+    assert isinstance(tooltip, str) and node.error.removesuffix(" — Retry") in tooltip
+    assert "Automatic folder status checks are skipped" in tooltip
     node.state = "cancelled"  # A cancelled manual retry keeps its text beside the badge.
     assert model.data(index, display) == "Cancelled"
     pixmap = QPixmap(150, 20)

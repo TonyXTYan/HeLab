@@ -11,8 +11,8 @@ from typing import Any, Iterator
 import numpy as np
 import numpy.typing as npt
 from PyQt6.QtCore import QEvent, QObject, QItemSelection, QItemSelectionModel, QModelIndex, QPoint, QRect, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QDesktopServices, QFontMetrics, QIcon, QPainter, QPalette, QPen, QResizeEvent
-from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLineEdit, QMenu, QPushButton, QStyledItemDelegate, QStyleOptionViewItem, QTreeView, QInputDialog,
+from PyQt6.QtGui import QColor, QCursor, QDesktopServices, QFontMetrics, QIcon, QPainter, QPalette, QPen, QResizeEvent
+from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLineEdit, QMenu, QPushButton, QStyledItemDelegate, QStyleOptionViewItem, QToolTip, QTreeView, QInputDialog,
                              QStyle, QToolButton, QVBoxLayout, QWidget, QSizePolicy)
 from helab.models.SnapshotFileSystemModel import FolderNode, SnapshotFileSystemModel
 from helab.models.StatusReport import StatusReport
@@ -241,6 +241,7 @@ class FolderExplorer(QWidget):
         layout.addWidget(self.tree, 1)
         self.get_selection_model().selectionChanged.connect(self.on_selection_changed)
         self.tree.expanded.connect(self._expanded)
+        self.model.dataChanged.connect(self._refresh_open_tooltip)
         self.tree.doubleClicked.connect(self.on_double_click)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
@@ -362,6 +363,21 @@ class FolderExplorer(QWidget):
             if not self._check_replaces_listing(path):
                 self.model.request_scan(path, priority=True)
             self.selectionPathChanged.emit(path)
+
+    def _refresh_open_tooltip(self, top_left: QModelIndex, bottom_right: QModelIndex) -> None:
+        """Qt builds a tooltip only when it is shown; rebuild an open one when its row changes."""
+        if not QToolTip.isVisible():
+            return
+        viewport = self.tree.viewport()
+        if viewport is None:
+            return
+        position = viewport.mapFromGlobal(QCursor.pos())
+        index = self.tree.indexAt(position)
+        if (index.isValid() and index.parent() == top_left.parent()
+                and top_left.row() <= index.row() <= bottom_right.row()):
+            text = index.data(Qt.ItemDataRole.ToolTipRole)
+            if isinstance(text, str) and text != QToolTip.text():
+                QToolTip.showText(QCursor.pos(), text, viewport, self.tree.visualRect(index))
 
     def _check_replaces_listing(self, path: str) -> bool:
         """Selecting a folder with saved counts and a disk cache does not list it:

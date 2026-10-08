@@ -9,10 +9,13 @@ import time
 import numpy as np
 import pytest
 from diskcache import FanoutCache
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
 from pytestqt.qtbot import QtBot
 
-from helab.io_helper import list_folder, load, scan
+from helab.io_helper import list_folder, load, save_subtrees, scan
 from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
+from helab.resources.icons import IconsInitUtil, StatusIcons
 from helab.utils.folder_cache import FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.scan_history import apply_outcome, empty_history
@@ -635,3 +638,298 @@ def test_saved_summary_of_a_replaced_folder_is_dropped_by_details(
     assert node.identity == [stat.st_dev, stat.st_ino] and node.report is None
     explorer.close_cleanup()
     service.shutdown()
+
+
+# A folder's status derived from its subfolders: "something" when any holds data,
+# "nothing" when all were checked and hold nothing, else the folder's own status.
+@pytest.fixture
+def tree(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[FolderExplorer]:
+    IconsInitUtil.initialise_icons()
+    service = frozen_service(monkeypatch)
+    root = str(tmp_path)
+    explorer = FolderExplorer(root, root, root, [0, 4, 5])
+    qtbot.addWidget(explorer)
+    qtbot.waitUntil(lambda: ("list", root) in explorer.model.cache.jobs)
+    yield explorer
+    explorer.close_cleanup()
+    service.shutdown()
+
+
+def browse(qtbot: QtBot, explorer: FolderExplorer, path: Path, *, force: bool = False) -> None:
+    """List one folder (an expand, or a forced recheck) with the real helper."""
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    if str(path) != explorer.model.rootPath() or force:
+        explorer.model.request_scan(str(path), priority=True, force=force)
+    qtbot.waitUntil(lambda: ("list", str(path)) in cache.jobs)
+    replay(qtbot, cache, str(path), "list", lambda send: list_folder(str(path), send, options))
+
+
+def shown(explorer: FolderExplorer, path: Path) -> str | None:
+    return explorer.model.display_status(explorer.model.nodes[str(path)])
+
+
+def status_icon(explorer: FolderExplorer, path: Path) -> int:
+    index = explorer.model.path_index(str(path), explorer.model.COLUMN_STATUS_ICON)
+    return cast(QIcon, index.data(Qt.ItemDataRole.DecorationRole)).cacheKey()
+
+
+def test_data_in_a_subfolder_marks_its_ancestors_something(qtbot: QtBot, tree: FolderExplorer, tmp_path: Path) -> None:
+    a = tmp_path / "A"
+    (a / "X").mkdir(parents=True)
+    data_folder(a / "X" / "B", subfolder=False)
+    browse(qtbot, tree, tmp_path)
+    browse(qtbot, tree, a)
+    assert shown(tree, a) == "unknown"
+    browse(qtbot, tree, a / "X")
+    browse(qtbot, tree, a / "X" / "B")
+    assert shown(tree, a / "X" / "B") == "ok"
+    assert shown(tree, a / "X") == shown(tree, a) == shown(tree, tmp_path) == "something"
+    node = tree.model.nodes[str(a)]
+    # Only the display is derived: the folder's own check still has no data to load.
+    assert node.report is not None and node.report.status == "unknown"
+    assert status_icon(tree, a) == StatusIcons.ICONS_STATUS["something"].cacheKey()
+    index = tree.model.path_index(str(a), tree.model.COLUMN_STATUS_ICON)
+    tooltip = index.data(Qt.ItemDataRole.ToolTipRole)
+    assert "\nHere: no TXY files\nSubfolders: 1 · TXY data in 1\nFolder modified: " in tooltip
+
+
+def test_nothing_only_when_every_subfolder_was_checked_and_has_nothing(
+    qtbot: QtBot, tree: FolderExplorer, tmp_path: Path,
+) -> None:
+    a = tmp_path / "A"
+    (a / "B").mkdir(parents=True)
+    (a / "C").mkdir()
+    browse(qtbot, tree, tmp_path)
+    browse(qtbot, tree, a)
+    assert shown(tree, a) == "unknown"  # No subfolder checked yet.
+    browse(qtbot, tree, a / "B")
+    assert shown(tree, a / "B") == "nothing"
+    assert shown(tree, a) == "unknown"  # C is still unchecked.
+    browse(qtbot, tree, a / "C")
+    assert shown(tree, a) == shown(tree, tmp_path) == "nothing"
+
+
+def test_recheck_follows_the_subfolders_current_status(qtbot: QtBot, tree: FolderExplorer, tmp_path: Path) -> None:
+    a = tmp_path / "A"
+    a.mkdir()
+    data_folder(a / "B", subfolder=False)
+    browse(qtbot, tree, tmp_path)
+    browse(qtbot, tree, a)
+    browse(qtbot, tree, a / "B")
+    assert shown(tree, a) == "something"
+    for file in (a / "B").iterdir():
+        file.unlink()
+    browse(qtbot, tree, a / "B", force=True)
+    assert shown(tree, a / "B") == shown(tree, a) == "nothing"
+
+
+def test_own_data_wins_over_subfolders(qtbot: QtBot, tree: FolderExplorer, tmp_path: Path) -> None:
+    a = tmp_path / "A"
+    data_folder(a)  # Data in A itself, plus an empty subfolder "run".
+    browse(qtbot, tree, tmp_path)
+    browse(qtbot, tree, a)
+    browse(qtbot, tree, a / "run")
+    assert shown(tree, a / "run") == "nothing"
+    assert shown(tree, a) == "ok"
+
+
+def test_derived_status_may_be_outdated_when_its_subfolder_is(
+    qtbot: QtBot, tree: FolderExplorer, tmp_path: Path,
+) -> None:
+    a = tmp_path / "A"
+    a.mkdir()
+    data_folder(a / "B", subfolder=False)
+    browse(qtbot, tree, tmp_path)
+    browse(qtbot, tree, a)
+    browse(qtbot, tree, a / "B")
+    node = tree.model.nodes[str(a)]
+    assert node.subtree == "something" and not node.subtree_older
+    later = time.time() + 60
+    tree.model.observe_modified(str(a / "B"), later, later)
+    assert node.subtree_older and tree.model.nodes[str(tmp_path)].subtree_older
+    assert status_icon(tree, a) == StatusIcons.ICONS_STATUS_OLDER["something"].cacheKey()
+    tooltip = str(tree.model.path_index(str(a)).data(Qt.ItemDataRole.ToolTipRole)).splitlines()
+    assert "Subfolders: 1 · TXY data in 1 · may be outdated" in tooltip
+    assert tooltip[-1] == "Select the outdated subfolder to check it again."
+
+
+def save_queued_subtrees(qtbot: QtBot, explorer: FolderExplorer) -> list[str]:
+    """Run the queued batched save of derived statuses with the real helper."""
+    service = explorer.model.cache.service
+    qtbot.waitUntil(lambda: any(r.operation == "subtree_save" for r in service.pending))
+    request = next(r for r in service.pending if r.operation == "subtree_save")
+    save_subtrees(request.payload["cache"], request.payload["records"],
+                  lambda event: service.resultReady.emit(request, event))
+    service.resultReady.emit(request, {"kind": "done"})
+    service.pending.remove(request)
+    return [record["path"] for record in request.payload["records"]]
+
+
+def restart(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, explorer: FolderExplorer, root: Path) -> FolderExplorer:
+    """A new session: no memory, only the disk cache (shared through the test's cache folder)."""
+    explorer.close_cleanup()
+    explorer.model.cache.service.shutdown()
+    service = frozen_service(monkeypatch)
+    restarted = FolderExplorer(str(root), str(root), str(root), [0, 4, 5])
+    qtbot.addWidget(restarted)
+    assert restarted.model.cache.service is service and not restarted.model.cache.subtrees
+    qtbot.waitUntil(lambda: ("list", str(root)) in restarted.model.cache.jobs)
+    return restarted
+
+
+def test_derived_status_survives_restart_without_listing_the_folder(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tree: FolderExplorer, tmp_path: Path,
+) -> None:
+    a = tmp_path / "A"
+    a.mkdir()
+    data_folder(a / "B", subfolder=False)
+    browse(qtbot, tree, tmp_path)
+    browse(qtbot, tree, a)
+    browse(qtbot, tree, a / "B")
+    # B's background details scan saves its summary (a names-only listing does not).
+    scan(str(a / "B"), lambda event: None, tree.model._cache_options)
+    assert set(save_queued_subtrees(qtbot, tree)) == {str(a), str(tmp_path)}
+    restarted = restart(qtbot, monkeypatch, tree, tmp_path)
+    browse(qtbot, restarted, tmp_path)
+    node = restarted.model.nodes[str(a)]
+    # A is not listed: its saved derivation shows, marked as saved.
+    assert not node.children and shown(restarted, a) == "something" and not node.subtree_live
+    index = restarted.model.path_index(str(a), restarted.model.COLUMN_STATUS_ICON)
+    tooltip = index.data(Qt.ItemDataRole.ToolTipRole)
+    assert "\nSubfolders: 1 · TXY data in 1 · saved " in tooltip and "Select the folder to check it again." in tooltip
+    # The listed root shows its own saved derivation until a subfolder is checked here.
+    assert shown(restarted, tmp_path) == "something"
+    # Expanding derives it again from B's saved summary, without listing B.
+    browse(qtbot, restarted, a)
+    assert shown(restarted, a) == "something" and node.subtree_live
+    assert ("list", str(a / "B")) not in restarted.model.cache.jobs
+    restarted.close_cleanup()
+
+
+def test_saved_derivation_follows_a_recheck_and_folder_changes(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tree: FolderExplorer, tmp_path: Path,
+) -> None:
+    a = tmp_path / "A"
+    a.mkdir()
+    data_folder(a / "B", subfolder=False)
+    browse(qtbot, tree, tmp_path)
+    browse(qtbot, tree, a)
+    browse(qtbot, tree, a / "B")
+    save_queued_subtrees(qtbot, tree)
+    for file in (a / "B").iterdir():
+        file.unlink()
+    browse(qtbot, tree, a / "B", force=True)
+    assert shown(tree, a) == "nothing"
+    assert str(a) in save_queued_subtrees(qtbot, tree)
+    restarted = restart(qtbot, monkeypatch, tree, tmp_path)
+    browse(qtbot, restarted, tmp_path)
+    node = restarted.model.nodes[str(a)]
+    assert shown(restarted, a) == "nothing" and not node.subtree_older
+    # A changed after the derivation (e.g. a new subfolder): the saved result may be outdated.
+    later = time.time() + 60
+    restarted.model.observe_modified(str(a), later, later)
+    assert node.subtree_older
+    assert status_icon(restarted, a) == StatusIcons.ICONS_STATUS_OLDER["nothing"].cacheKey()
+    restarted.close_cleanup()
+
+
+def test_other_tabs_show_a_newly_derived_status(qtbot: QtBot, tree: FolderExplorer, tmp_path: Path) -> None:
+    a = tmp_path / "A"
+    a.mkdir()
+    data_folder(a / "B", subfolder=False)
+    browse(qtbot, tree, tmp_path)
+    other = FolderExplorer(str(tmp_path), str(tmp_path), str(tmp_path), [0, 4, 5])
+    qtbot.addWidget(other)
+    qtbot.waitUntil(lambda: str(a) in other.model.nodes)
+    assert shown(other, a) != "something"
+    browse(qtbot, tree, a)
+    browse(qtbot, tree, a / "B")
+    qtbot.waitUntil(lambda: shown(other, a) == "something")
+    other.close_cleanup()
+
+
+def test_saved_summary_decides_whether_an_unlisted_folder_is_expandable(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tree: FolderExplorer, tmp_path: Path,
+) -> None:
+    leaf, parent, unknown = tmp_path / "leaf", tmp_path / "parent", tmp_path / "unknown"
+    data_folder(leaf, subfolder=False)
+    data_folder(parent)  # Has the subfolder "run".
+    unknown.mkdir()
+    browse(qtbot, tree, tmp_path)
+    for path in (leaf, parent):
+        scan(str(path), lambda event: None, tree.model._cache_options)
+    restarted = restart(qtbot, monkeypatch, tree, tmp_path)
+    browse(qtbot, restarted, tmp_path)
+    model = restarted.model
+
+    def expandable(path: Path) -> bool:
+        return model.hasChildren(model.path_index(str(path)))
+    assert not expandable(leaf) and not model.canFetchMore(model.path_index(str(leaf)))
+    assert expandable(parent) and expandable(unknown)  # Unknown stays expandable until listed.
+    # A subfolder appears; selecting the row lists it and the arrow returns.
+    (leaf / "new").mkdir()
+    restarted.tree.setCurrentIndex(model.path_index(str(leaf)))
+    qtbot.waitUntil(lambda: ("list", str(leaf)) in model.cache.jobs)
+    replay(qtbot, model.cache, str(leaf), "list",
+           lambda send: list_folder(str(leaf), send, model._cache_options))
+    assert expandable(leaf) and model.nodes[str(leaf)].has_dirs
+    restarted.close_cleanup()
+
+
+def test_tooltips_share_one_layout_for_leaf_and_busy_folders(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tree: FolderExplorer, tmp_path: Path,
+) -> None:
+    leaf = tmp_path / "leaf"
+    data_folder(leaf, subfolder=False)
+    browse(qtbot, tree, tmp_path)
+    scan(str(leaf), lambda event: None, tree.model._cache_options)
+    restarted = restart(qtbot, monkeypatch, tree, tmp_path)
+    browse(qtbot, restarted, tmp_path)
+    model = restarted.model
+
+    def tooltip() -> str:
+        return str(model.path_index(str(leaf), model.COLUMN_STATUS_ICON).data(Qt.ItemDataRole.ToolTipRole))
+    # Unlisted, known from its saved summary to have no subfolders.
+    saved = tooltip().splitlines()
+    assert saved[1:3] == ["Here: 2 shots, all converted", "Subfolders: none"]
+    assert saved[3].startswith("Folder modified: 20")
+    assert saved[4].startswith("Status cache: ") and saved[4].endswith(") · folder not modified since")
+    assert saved[5:] == ["Select the folder to check it again."]
+    # Busy: a start time (an open tooltip is not rebuilt while the mouse rests), no outdated hint or action.
+    model.request_scan(str(leaf), priority=True)
+    qtbot.waitUntil(lambda: ("list", str(leaf)) in model.cache.jobs)
+    model.cache.service.resultReady.emit(producer(model.cache, str(leaf), "list"), {"kind": "started"})
+    busy = tooltip().splitlines()
+    assert busy[1].startswith("Listing folder… since ") and busy[1].endswith("· showing last results")
+    assert busy[2:4] == ["Here: 2 shots, all converted", "Subfolders: none"] and "Select the folder" not in busy[-1]
+    replay(qtbot, model.cache, str(leaf), "list", lambda send: list_folder(str(leaf), send, model._cache_options))
+    lines = tooltip().splitlines()
+    assert lines[1:3] == ["Here: 2 shots, all converted", "Subfolders: none"] and len(lines) == 5
+    assert lines[4].startswith("Status checked: ") and lines[4].endswith(")")  # No freshness note.
+    restarted.close_cleanup()
+
+
+def test_open_tooltip_is_rebuilt_when_its_row_changes(qtbot: QtBot, tree: FolderExplorer, tmp_path: Path) -> None:
+    from PyQt6.QtGui import QCursor
+    from PyQt6.QtWidgets import QToolTip
+    (tmp_path / "a").mkdir()
+    browse(qtbot, tree, tmp_path)
+    tree.resize(600, 300)
+    tree.show()
+    qtbot.waitExposed(tree)
+    model, view = tree.model, tree.tree
+    view.expand(model.path_index(str(tmp_path)))
+    index = model.path_index(str(tmp_path / "a"))
+    viewport = view.viewport()
+    assert viewport is not None
+    QCursor.setPos(viewport.mapToGlobal(view.visualRect(index).center()))
+    QToolTip.showText(QCursor.pos(), str(index.data(Qt.ItemDataRole.ToolTipRole)), viewport)
+    if not QToolTip.isVisible():
+        pytest.skip("No tooltip window on this platform")
+    assert "Subfolders: not listed yet" in QToolTip.text()
+    # Synchronously: the offscreen platform hides tooltips while events run.
+    node = model.nodes[str(tmp_path / "a")]
+    node.state, node.state_since = "running", time.time()
+    model.changed(node)
+    assert "Listing folder… since " in QToolTip.text()
+    QToolTip.hideText()
