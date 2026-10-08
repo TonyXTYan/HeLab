@@ -291,7 +291,10 @@ def _scan(path: str, send: Emit, cache: Any) -> dict[str, Any]:
             if entry.is_dir(follow_symlinks=False):
                 has_dirs = True
                 try:
-                    stat = entry.stat(follow_symlinks=False)
+                    # Windows DirEntry.stat() reports zero device/inode IDs.
+                    # Use the same source as _summary so saved metadata belongs
+                    # to this directory, and replacements are detected reliably.
+                    stat = os.stat(entry.path, follow_symlinks=False)
                     modified = stat.st_mtime
                     identity = [stat.st_dev, stat.st_ino]
                 except OSError:
