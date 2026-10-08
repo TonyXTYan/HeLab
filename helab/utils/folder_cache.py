@@ -247,6 +247,10 @@ class FolderCache(QObject):
         return any(self._finishing.get(owner) == path and self._finishing_epochs.get(owner) ==
                    self._epochs.get(path, 0) for owner in self._disk_cache_writers)
 
+    def writing_disk_cache(self, owner: str) -> bool:
+        """Whether a finished load's helper (by producer owner) is still writing the disk cache."""
+        return owner in self._disk_cache_writers
+
     def disk_cache_known(self, path: str) -> bool:
         snapshot = self.snapshots.get(path)
         dataset = self.current_dataset(path)

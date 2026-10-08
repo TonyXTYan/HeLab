@@ -156,7 +156,7 @@ def test_queue_mode_loads_immediately_when_idle_and_waits_when_busy(
     explorer.queue_load(d)
     select(explorer, b)
     assert explorer.load_waiting and ("load", b) not in cache.jobs
-    assert "Waiting" in explorer.scan_label.text()
+    assert "Waiting" in explorer.folder_summary_label.text()
     # Browsing past B leaves nothing queued for it.
     select(explorer, c)
     assert ("load", b) not in cache.jobs

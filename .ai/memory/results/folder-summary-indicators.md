@@ -17,25 +17,40 @@ TXY data with almost no visible sign that anything was loaded.
 
 ## Layout (top to bottom, no vertical padding)
 
-1. **Selected: <relative path>** with a **Deselect** button. Shown only when
-   the selection differs from the viewed path. Deselect returns to viewing the
-   path. Its tooltip says what happens to a running or queued load under the
-   current load-on-select mode.
-2. **Counts:** e.g. `456 TXY found · 123 loaded (27%)` (`· Paused` while
-   the current tab browses), `· Not loaded`,
-   `· Previous data`, `· Changes detected`, raw-shots-only, empty folder,
-   "TXY count not checked · Retry manually". A **Cancel** button (aligned under
-   Deselect) appears while loading. While scanning:
-   "Scanning folder content for TXY files…".
-3. **Cache:** `Cached data found` / `Cached data loaded` (+ `· Cached 5m ago`),
-   `Creating cache…`, `Cache updated 2m ago`, `No cached data`, plus a freshness
-   hint. The tooltip has origin, reuse counts, and the exact save date.
-4. **Freshness:** `Status scan: 3m ago · … · Live updates off`, or
+A fixed 3 lines (2026-10-08), so the tree's rows never move when the summary
+changes. Earlier the block was 2-4 lines plus wrapping, and rows could jump
+between the two clicks of a double-click. Every line is single-line and elided
+(`ElidedLabel`); the full text is in `text()` and tooltips.
+
+1. **Counts**, prefixed by the selected folder's relative path when it differs
+   from the viewed path (`run_042 › 456 TXY found · 123 loaded (27%)`; the path
+   gets its full width or at least 2/5 of the free space, middle-elided). Wording:
+   `· Paused` while the current tab browses, `· Not loaded`, `· Previous data`,
+   `· Changes detected`, raw-shots-only, empty folder, "TXY count not checked ·
+   Retry manually"; "Scanning folder content for TXY files…" while scanning.
+   Buttons on the right: **Cancel** (loading or listing retry), **Retry**
+   (moved from the path bar; folder or load error, not while loading),
+   **Deselect** (selected subfolder). All the same fixed width.
+2. **Cache:** always shown. `Cached data found` / `Cached data loaded`
+   (+ `· Cached 5m ago`), `Creating cache…`, `Cache updated 2m ago`,
+   `No cached data`, plus a freshness hint; `Cache not checked` before any
+   cache information, `No data to cache` for folders without TXY files. The
+   tooltip has origin ("Loaded from disk cache"), the cache-miss reason, reuse
+   counts, and the exact save date.
+3. **Freshness:** `Status scan: 3m ago · … · Live updates off`, or
    `Basic scan failed 2h ago · Retry manually` (see
    [[basic-scan-defaults-and-failures]]).
 
-All four lines have the same row height. Text starts 8 px in from the left,
-for looks.
+Text starts 8 px in from the left, for looks.
+
+The explorer has no status row of its own. Its tab activity (`Finding default
+folder…`, basic scan progress `N scanned · N scanning · N paused · N queued ·
+N failed` or its result, `N background loads: 1 loading, 2 queued`) leads the
+main window's status bar, followed by `│` and the app-wide
+`IOService.activity_summary()` (zero counts omitted, icon/cache-clear/history
+work named, "Saving N data caches" only for real cache writers, `N operations
+queued`). A spinner (space kept when idle) and the selected load's progress
+bar sit in the status bar too.
 
 ## Decisions and wording
 

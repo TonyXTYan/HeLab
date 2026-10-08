@@ -19,11 +19,11 @@ from typing import Any, List, Optional
 
 import psutil
 from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
-    QDir, QDateTime, QSettings, QStorageInfo
-from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QPixmap, QResizeEvent, QKeySequence
+    QDir, QDateTime, QSettings, QStorageInfo, QRect
+from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QPainter, QPixmap, QResizeEvent, QKeySequence
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget, QHBoxLayout, \
-    QPushButton, QTreeWidget, QTreeWidgetItem, QInputDialog
+    QPushButton, QTreeWidget, QTreeWidgetItem, QInputDialog, QProgressBar
 from humanfriendly.terminal import message
 # from numpy.f2py.crackfortran import include_paths
 from pyqtgraph.parametertree import ParameterTree, Parameter
@@ -38,7 +38,8 @@ from helab.utils.constants import *
 from helab.utils.os_cached import *
 from helab.utils.caching_setup import *
 from helab.utils.threading_setup import *
-from helab.views.FolderExplorer import FolderExplorer
+from helab.views.ElidedLabel import ElidedLabel
+from helab.views.FolderExplorer import FolderExplorer, paint_spinner
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
 from helab.views.SettingsDialog import SettingsDialog
@@ -117,8 +118,19 @@ class HelabMainWindow(QMainWindow):
         self.status_bar.setStyleSheet("QStatusBar { border-top: 1px solid #d8d8d8; }")
 
         self.setStatusBar(self.status_bar)
-        self.status_bar_message_left = QLabel("...")
-        self.status_bar.addWidget(self.status_bar_message_left)
+        # The current tab's activity, then app-wide I/O. The spinner keeps its
+        # space when idle so the text does not shift.
+        self.status_bar_spinner = QLabel()
+        self.status_bar_spinner.setFixedSize(16, 16)
+        self.status_bar_spinner_angle = 0
+        self.status_bar.addWidget(self.status_bar_spinner)
+        self.status_bar_message_left = ElidedLabel("...")
+        self.status_bar.addWidget(self.status_bar_message_left, 1)
+        self.status_bar_progress = QProgressBar()
+        self.status_bar_progress.setFixedSize(120, min(16, self.status_bar_message_left.fontMetrics().height()))
+        self.status_bar_progress.setTextVisible(False)
+        self.status_bar_progress.hide()
+        self.status_bar.addWidget(self.status_bar_progress)
         self.status_bar_message_right = QLabel(f"Please wait. GUI loading... v{APP_VERSION} ({APP_COMMIT_HASH})")
         self.status_bar_message_last_update = datetime.now()
 
@@ -141,27 +153,41 @@ class HelabMainWindow(QMainWindow):
         if self._closing:
             return
         service = get_io_service()
-        running = [r for r in service.active if not r.paused]
-        scans = sum(r.operation in ("list", "details", "scan", "resolve") for r in running)
-        loads = sum(r.operation == "load" and not r.completed for r in running)
-        paused_loads = sum(r.operation == "load" and r.paused for r in service.active)
-        paused_scans = sum(r.operation != "load" and r.paused for r in service.active)
-        saving = sum(service.finishing(r) for r in service.active)
-        stopping = service.stopping_summary()
-        queued = len(service.pending) - len(service.held_requests())
-        self.status_bar_message_left.setText(
-            " · ".join(filter(None, (f"Scanning {scans} folders", f"Loading {loads} datasets",
-                                     f"{paused_loads} load{'s' if paused_loads != 1 else ''} paused" if paused_loads else "",
-                                     f"{paused_scans} scan{'s' if paused_scans != 1 else ''} paused" if paused_scans else "",
-                                     f"Saving {saving} cache{'s' if saving != 1 else ''}" if saving else "",
-                                     stopping, f"{queued} queued")))
-            if scans or loads or paused_loads or paused_scans or saving or stopping or queued else "Ready")
-        self.status_bar_message_left.setToolTip(service.queue_tooltip())
+        current = self.tab_widget.currentWidget()
+        explorer = current if isinstance(current, FolderExplorer) else None
+        tab = explorer.activity_text if explorer else ""
+        app = service.activity_summary()
+        self.status_bar_message_left.setText(f"{tab}  │  {app}" if tab else app)
+        self.status_bar_message_left.setToolTip("\n\n".join(filter(None, (
+            explorer.activity_tooltip if explorer else "", service.queue_tooltip()))))
+        busy = bool(explorer and explorer.activity_busy or service.active or service.pending or service.retired)
+        self.status_bar_spinner_angle = (self.status_bar_spinner_angle + 30) % 360 if busy else 0
+        self.status_bar_spinner.setPixmap(self._spinner_pixmap() if busy else QPixmap())
+        # The selected load's progress; its counts are in the explorer's summary.
+        loading = bool(explorer and explorer.loading)
+        self.status_bar_progress.setVisible(loading)
+        if explorer and loading:
+            if explorer.load_progress is None:
+                self.status_bar_progress.setRange(0, 0)
+            else:
+                self.status_bar_progress.setRange(0, 100)
+                self.status_bar_progress.setValue(round(explorer.load_progress * 100))
+            self.status_bar_progress.setToolTip(explorer.loading_tooltip)
         self._update_cancel_loading_action()
         self.tab_widget.set_tab_switching_enable()
         if not self.action_tab_live_checked:
             self.set_tools_and_tabs_enable()
         self.status_bar_message_last_update = datetime.now()
+
+    def _spinner_pixmap(self) -> QPixmap:
+        ratio = self.status_bar_spinner.devicePixelRatioF()
+        pixmap = QPixmap(round(16 * ratio), round(16 * ratio))
+        pixmap.setDevicePixelRatio(ratio)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        paint_spinner(painter, QRect(3, 3, 10, 10), self.status_bar_spinner_angle)
+        painter.end()
+        return pixmap
 
     def update_status_bar_right(self) -> None:
         # Update the right message with CPU and RAM usage

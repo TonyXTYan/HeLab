@@ -14,11 +14,13 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QTabWidget
+from PyQt6.QtGui import QPixmap
+from PyQt6.QtWidgets import QLabel, QProgressBar, QTabWidget, QWidget
 
 from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService
+from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.HelabMainWindow import HelabMainWindow
 from helab.io_helper import load, scan
@@ -65,6 +67,15 @@ def loaded_event(events: list[dict[str, Any]]) -> dict[str, Any]:
     return next(event for event in events if event["kind"] == "loaded")
 
 
+def status_window(explorer: FolderExplorer | None, parent: QWidget) -> Any:
+    """The main window's status-bar widgets, without a full main window and its startup jobs."""
+    return SimpleNamespace(
+        _closing=False, action_tab_live_checked=True, _update_cancel_loading_action=lambda: None,
+        tab_widget=SimpleNamespace(currentWidget=lambda: explorer, set_tab_switching_enable=lambda: None),
+        status_bar_message_left=ElidedLabel("", parent), status_bar_spinner=QLabel(parent),
+        status_bar_spinner_angle=0, status_bar_progress=QProgressBar(parent), _spinner_pixmap=QPixmap)
+
+
 def explorer_for_test(qtbot: QtBot, path: str) -> FolderExplorer:
     explorer = FolderExplorer(path, path, path, [0, 4, 5])
     qtbot.addWidget(explorer)
@@ -98,8 +109,7 @@ def test_two_tabs_share_snapshot_arrays_and_default_resolution(
     tooltip = str(second.model.data(second.model.path_index(path), int(Qt.ItemDataRole.ToolTipRole)))
     assert "Shared RAM" in tooltip
     second._update_activity()
-    assert second.scan_label.text() == "Ready · Loaded from memory"
-    assert second.spinner_label.isHidden()
+    assert second.activity_text == "" and not second.activity_busy
     events: list[dict[str, Any]] = []
     cache.resultReady.connect(lambda r, e: events.append(e) if r.owner == "default" else None)
     assert cache.submit("default", 0, path, "resolve", {"candidates": [path]})
@@ -153,12 +163,16 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     finish_scan(cache, path)
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
     request = producer(cache, path, "load")
+    monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)
+    status = status_window(first, tabs)
     assert first.loading_message == "Queued"
-    assert first.scan_label.text() == "Queued · 1 queued"
-    assert first.progress.toolTip() == f"Queued\n\nQueued folders (next first):\nLoad data: {path}"
+    assert first.folder_summary_label.text() == "1 TXY found · Queued"
+    assert first.activity_text == ""  # The selected load is described by the summary.
+    assert service.activity_summary() == "1 operation queued"
+    assert first.loading_tooltip == f"Queued\n\nQueued folders (next first):\nLoad data: {path}"
     HelabMainWindow._central_placeholder_loading_indicator(window)
     assert window.central_placeholder.text() == f"{tmp_path.name}\nQueued"
-    assert window.central_placeholder.toolTip() == first.progress.toolTip()
+    assert window.central_placeholder.toolTip() == first.loading_tooltip
     service.pending.remove(request)
     service.resultReady.emit(request, {"kind": "started"})
     assert first.loading_message == "Preparing…"
@@ -167,9 +181,12 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     message = "123 of 456 files loaded (27%)"
     assert first.loading_message == message
     assert first.folder_summary_label.text() == "456 TXY found · 123 loaded (27%)"
-    assert first.progress.toolTip() == message
-    assert message not in first.scan_label.text()
-    assert first.progress.value() == 27
+    assert first.loading_tooltip == message
+    HelabMainWindow.update_status_bar_left(status)
+    assert status.status_bar_message_left.text() == "Ready"  # The fake service runs nothing.
+    assert not status.status_bar_progress.isHidden()
+    assert status.status_bar_progress.value() == 27
+    assert status.status_bar_progress.toolTip() == message
     HelabMainWindow._central_placeholder_loading_indicator(window)
     assert window.central_placeholder.text().endswith(f"Loading {tmp_path.name}\n{message}")
     assert window.central_placeholder.toolTip() == message
@@ -179,10 +196,10 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     other = str(tmp_path / "other")
     cache.submit("tab-c", 0, other, "load")
     first._update_activity()
-    assert first.progress.toolTip() == f"{message}\n\nQueued folders (next first):\nLoad data: {other}"
+    assert first.loading_tooltip == f"{message}\n\nQueued folders (next first):\nLoad data: {other}"
     cache.cancel("tab-c")
     first._update_activity()
-    assert first.progress.toolTip() == message
+    assert first.loading_tooltip == message
     service.resultReady.emit(request, {"kind": "queued", "retry": True, "attempt": 2})
     for explorer in (first, second):
         assert explorer.loading and not explorer.load_error
@@ -214,22 +231,25 @@ def test_queue_tooltip_covers_scans_loads_and_navigation_across_tabs_when_idle(
     cache.submit("other-tab", 0, data, "load")
     cache.submit("other-tab", 0, browse, "list", priority=True)
     first._update_activity()
+    monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)
+    status = status_window(first, first)
+    HelabMainWindow.update_status_bar_left(status)
     expected = (f"Queued folders (next first):\nLoad data: {data}\nBrowse folder: {browse}"
                 f"\nBasic scan: {bulk}")
-    assert first.scan_label.text().endswith("3 queued")
-    assert first.scan_label.toolTip() == expected
-    assert first.progress.toolTip() == expected
+    assert status.status_bar_message_left.text() == "3 operations queued"
+    assert status.status_bar_message_left.toolTip() == expected
+    assert first.loading_tooltip == expected
     assert expected in first.folder_summary_label.toolTip()
     # The pending list is global and deduplicated despite multiple subscribers.
     cache.submit("third-tab", 0, data, "load")
     assert len(service.queued_operations()) == 3
     cache.cancel("other-tab")
     first._update_activity()
-    assert first.scan_label.text().endswith("1 queued")
-    assert first.progress.toolTip() == f"Queued folders (next first):\nLoad data: {data}"
+    assert service.activity_summary() == "1 operation queued"
+    assert first.loading_tooltip == f"Queued folders (next first):\nLoad data: {data}"
     cache.cancel("third-tab")
     first._update_activity()
-    assert "queued" not in first.scan_label.text().lower()
+    assert service.activity_summary() == "Ready"
     assert "Queued folders" not in first.folder_summary_label.toolTip()
     first.close_cleanup()
     service.shutdown()
@@ -255,8 +275,8 @@ def test_queue_explains_waiting_for_timed_out_operation_to_stop(
     service.pending.append(rerun)
     explorer._update_activity()
     # One phrase for the stuck helper and the request it holds; that request is not counted twice.
-    assert explorer.scan_label.text() == "Waiting for timed-out folder listing to stop (42 s)"
-    tooltip = explorer.scan_label.toolTip()
+    assert service.activity_summary() == "Waiting for timed-out folder listing to stop (42 s)"
+    tooltip = service.queue_tooltip()
     assert (f"Browse folder: {path} — timed out after 60 s without progress · stopping for 42 s"
             " · requested again; starts when it exits") in tooltip
     assert "volume is not responding" in tooltip and "Queued folders" not in tooltip
@@ -264,25 +284,26 @@ def test_queue_explains_waiting_for_timed_out_operation_to_stop(
     assert "Stopping operations" in explorer.folder_summary_label.toolTip()
     # The main status bar must expose the same queue, including basic scans.
     monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)
-    global_label = QLabel(explorer)
-    window: Any = SimpleNamespace(
-        _closing=False, status_bar_message_left=global_label, action_tab_live_checked=True,
-        _update_cancel_loading_action=lambda: None,
-        tab_widget=SimpleNamespace(set_tab_switching_enable=lambda: None),
-    )
+    window = status_window(explorer, explorer)
+    global_label = window.status_bar_message_left
     HelabMainWindow.update_status_bar_left(window)
-    assert global_label.text() == ("Scanning 0 folders · Loading 0 datasets · "
-                                   "Waiting for timed-out folder listing to stop (42 s) · 0 queued")
-    assert global_label.toolTip() == explorer.scan_label.toolTip()
+    assert global_label.text() == "Waiting for timed-out folder listing to stop (42 s)"
+    assert global_label.toolTip() == tooltip
+    assert window.status_bar_progress.isHidden()
     service.messages.put((old, {"kind": "exit"}))
     service._tick()
     explorer._update_activity()
-    assert "waiting for timed-out" not in explorer.scan_label.text()
+    assert "Waiting for timed-out" not in service.activity_summary()
+    # A finished load holds its slot until it exits; only a cache writer is "saving".
     writer = IORequest("writer", 0, path, "load", {}, 120.0, completed=True)
     service.active.append(writer)
     HelabMainWindow.update_status_bar_left(window)
-    assert "Saving 1 cache" in global_label.text() and "Loading 0 datasets" in global_label.text()
+    assert "Saving" not in global_label.text() and "Loading" not in global_label.text()
+    cache._disk_cache_writers.add("writer")
+    HelabMainWindow.update_status_bar_left(window)
+    assert "Saving 1 data cache" in global_label.text() and "Loading" not in global_label.text()
     assert "stopping" not in global_label.text()
+    cache._disk_cache_writers.discard("writer")
     explorer.close_cleanup()
     service.shutdown()
 
@@ -667,7 +688,8 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
     assert reopened.folder_cache_label.text().startswith("Cached data loaded · Cached ")
     qtbot.waitUntil(lambda: not reopened.model.cache.requests(reopened.model.owner))
     reopened._update_activity()
-    assert reopened.scan_label.text() == "Ready · Loaded from disk cache"
+    assert reopened.activity_text == ""
+    assert "Loaded from disk cache" in reopened.folder_cache_label.toolTip()
     reopened.close_cleanup()
     restarted_service.shutdown()
 

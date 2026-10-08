@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDockWidget, QLabel
+from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel
 
 from helab.io_helper import list_folder, load, scan
 from helab.utils.folder_cache import FolderCache
@@ -92,13 +92,13 @@ def test_non_data_folder_summary(
         (tmp_path / "d1.txt").write_text("")
     assert browser.folder_summary_label.text() == "Scanning folder content for TXY files…"
     assert browser.folder_freshness_label.text() == "Live updates off"
-    assert browser.folder_cache_label.isHidden()
+    assert browser.folder_cache_label.text() == "Cache not checked"
     complete_scan(browser, qtbot, str(tmp_path))
     assert browser.folder_summary_label.text() == expected
     assert "Live updates off" in browser.folder_freshness_label.text()
     assert browser.selected_folder_label.isHidden()
     assert browser.deselect_button.isHidden()
-    assert browser.folder_cache_label.isHidden()
+    assert browser.folder_cache_label.text() == "No data to cache"
 
 
 def test_successful_and_partial_load_counts_survive_memory_reuse(
@@ -195,7 +195,7 @@ def test_subfolder_scope_and_retained_plot_source(
                                            "files": 1, "rows": 1, "bytes": 24, "problematic": [], "failed_files": 0})
     cache.service.pending.remove(request)
     assert browser.path_edit.text() == str(tmp_path)
-    assert browser.selected_folder_label.text() == "Selected: run_042"
+    assert browser.selected_folder_label.text() == "run_042 ›"
     assert not browser.selected_folder_label.isHidden()
     assert browser.folder_summary_label.text() == "1 TXY found · 1 loaded"
     assert not browser.deselect_button.isHidden()
@@ -217,7 +217,7 @@ def test_subfolder_scope_and_retained_plot_source(
     assert browser.tree.isExpanded(child_index)
     assert not browser.get_selection_model().selectedIndexes()
     assert not browser.get_selection_model().currentIndex().isValid()
-    assert browser.selected_folder_row.isHidden()
+    assert browser.selected_folder_label.isHidden()
     assert browser.deselect_button.isHidden()
     qtbot.waitUntil(lambda: browser.model.root is not None and browser.model.root.state == "idle")
     HelabMainWindow._update_plot_source_label(dock, browser)
@@ -303,13 +303,51 @@ def test_deselect_activates_data_in_displayed_path(browser: FolderExplorer, qtbo
     qtbot.waitUntil(lambda: browser.folder_opened_path == path)
     assert browser.displayed_dataset is not None and browser.displayed_dataset.path == path
     assert browser.folder_summary_label.text() == "1 TXY found · 1 loaded"
-    assert browser.selected_folder_row.isHidden()
+    assert browser.selected_folder_label.isHidden()
+
+
+def test_summary_height_is_fixed_so_tree_rows_never_move(
+    browser: FolderExplorer, qtbot: QtBot, tmp_path: Path,
+) -> None:
+    child = tmp_path / ("run_" + "x" * 80)
+    child.mkdir()
+    (child / "d_txy_forc1.txt").write_text("1,2,3\n")
+    browser.resize(260, 400)
+    browser.show()
+    qtbot.waitExposed(browser)
+
+    def tree_top() -> int:
+        QApplication.processEvents()  # Apply pending layout changes.
+        return browser.tree.geometry().top()
+
+    top, height = tree_top(), browser.summary_widget.height()
+    line = browser.folder_counts_row.height()
+    assert height == 3 * line
+    complete_scan(browser, qtbot, str(tmp_path))  # No TXY files: the cache line still holds its place.
+    assert browser.folder_cache_label.text() in ("Cache not checked", "No data to cache")
+    assert tree_top() == top
+    browser.tree.setCurrentIndex(browser.model.path_index(str(child)))
+    complete_scan(browser, qtbot, str(child))
+    assert not browser.selected_folder_label.isHidden() and not browser.deselect_button.isHidden()
+    assert tree_top() == top
+    browser.load_to_ram_cache(str(child), dwell=False)
+    browser.load_error = "A long message that used to wrap the counts line onto several lines " * 3
+    browser._update_activity()
+    assert not browser.cancel_load_button.isHidden()
+    assert tree_top() == top
+    # Long text is elided, never wrapped; the full text stays in text() and tooltips.
+    assert browser.folder_summary_label.height() == line
+    assert QLabel.text(browser.folder_summary_label) != browser.folder_summary_label.text()
+    assert browser.selected_folder_label.width() < browser.folder_counts_row.width() // 2
+    browser.deselect_button.click()
+    assert browser.selected_folder_label.isHidden()
+    assert tree_top() == top and browser.summary_widget.height() == height
 
 
 def test_detected_disk_cache_is_available_before_loading(
     browser: FolderExplorer, qtbot: QtBot, tmp_path: Path,
 ) -> None:
-    assert browser.folder_cache_label.isHidden()
+    assert browser.folder_cache_label.text() == "Cache not checked"
     path = str(tmp_path)
     (tmp_path / "d_txy_forc1.txt").write_text("1,2,3\n")
     options = {"directory": str(tmp_path / "disk-cache"), "params": {"shards": 2}}
@@ -613,7 +651,7 @@ def test_basic_recursive_scan_checks_exact_depth_without_loading_data(
     assert visited == [str(folder) for folder in folders[:depth + 1]]
     assert not browser._basic_active
     assert browser._basic_completed == depth + 1
-    assert "Basic scan complete" in browser.scan_label.text()
+    assert "Basic scan complete" in browser.activity_text
     assert browser.folder_opened_data is None
     assert not any(r.operation == "load" for r in browser.model.service.pending)
 
@@ -634,7 +672,7 @@ def test_cancel_basic_scan_keeps_other_tabs_scan_subscription(
     assert not request.cancelled.is_set()
     assert cache.has_request("other-tab", "scan", path)
     assert not cache.has_request(browser.model.owner, "scan", path)
-    assert "cancelled" in browser.scan_label.text()
+    assert "cancelled" in browser.activity_text
 
 
 def test_visible_scans_follow_scrolling_without_prefetching_offscreen_folders(

@@ -384,6 +384,36 @@ class IOService(QObject):
             text += f" · {len(self.retired) - 1} more stopping"
         return text
 
+    # Status-bar phrases for running operations other than scans and loads.
+    ACTIVITIES = {"resolve": "Finding default folder", "invalidate": "Clearing data cache",
+                  "scan_history": "Saving scan history", "icons": "Fetching folder icons",
+                  "drives": "Listing drives"}
+
+    def activity_summary(self) -> str:
+        """App-wide status-bar phrase from memory; zero counts are left out."""
+        def counted(count: int, noun: str) -> str:
+            return f"{count:,} {noun}{'' if count == 1 else 's'}"
+        running = [r for r in self.active if not r.paused and not r.completed]
+        scans = sum(r.operation in ("list", "details", "scan") for r in running)
+        loads = sum(r.operation == "load" for r in running)
+        paused_loads = sum(r.operation == "load" and r.paused and not r.completed for r in self.active)
+        paused_scans = sum(r.operation in ("list", "details", "scan") and r.paused for r in self.active)
+        # A finished load keeps its slot until it exits, but only some are writing a cache.
+        writing = self.folder_cache.writing_disk_cache if self.folder_cache else (lambda owner: False)
+        saving = sum(self.finishing(r) and writing(r.owner) for r in self.active)
+        others = dict.fromkeys(self.ACTIVITIES.get(r.operation, self.LABELS.get(r.operation, r.operation))
+                               for r in running if r.operation not in ("list", "details", "scan", "load"))
+        queued = len(self.pending) - len(self.held_requests())
+        return " · ".join(filter(None, (
+            f"Scanning {counted(scans, 'folder')}" if scans else "",
+            f"Loading {counted(loads, 'dataset')}" if loads else "",
+            *others,
+            f"{counted(paused_loads, 'load')} paused" if paused_loads else "",
+            f"{counted(paused_scans, 'scan')} paused" if paused_scans else "",
+            f"Saving {counted(saving, 'data cache')}" if saving else "",
+            self.stopping_summary(),
+            f"{counted(queued, 'operation')} queued" if queued else ""))) or "Ready"
+
     def queue_tooltip(self) -> str:
         """Shared queue and termination details without querying the filesystem."""
         parts: list[str] = []

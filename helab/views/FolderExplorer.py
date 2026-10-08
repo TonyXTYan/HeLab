@@ -11,9 +11,8 @@ from typing import Any, Iterator
 import numpy as np
 import numpy.typing as npt
 from PyQt6.QtCore import QEvent, QObject, QItemSelection, QItemSelectionModel, QModelIndex, QPoint, QRect, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QDesktopServices, QFontMetrics, QIcon, QPainter, QPalette, QPen, QPixmap
-from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QLineEdit, QMenu, QProgressBar,
-                             QPushButton, QStyledItemDelegate, QStyleOptionViewItem, QTreeView, QInputDialog,
+from PyQt6.QtGui import QColor, QDesktopServices, QFontMetrics, QIcon, QPainter, QPalette, QPen, QResizeEvent
+from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLineEdit, QMenu, QPushButton, QStyledItemDelegate, QStyleOptionViewItem, QTreeView, QInputDialog,
                              QStyle, QToolButton, QVBoxLayout, QWidget, QSizePolicy)
 from helab.models.SnapshotFileSystemModel import FolderNode, SnapshotFileSystemModel
 from helab.models.StatusReport import StatusReport
@@ -24,6 +23,7 @@ from helab.utils.constants import DEFAULT_LOAD_MODE, DIR_CACHES
 from helab.utils.time_format import duration, relative_age
 from helab.utils.cache_freshness import CacheFreshness, data_as_of, freshness_tooltip, metadata_date
 from helab.utils.scan_history import history_tooltip
+from helab.views.ElidedLabel import ElidedLabel
 
 
 def paint_spinner(painter: QPainter, rect: QRect, angle: int, selected: bool = False) -> None:
@@ -172,54 +172,48 @@ class FolderExplorer(QWidget):
         self.basic_scan_button.setMenu(scan_menu)
         self.basic_scan_button.clicked.connect(self._basic_scan_clicked)
         self.back_button.clicked.connect(self.on_back_button_clicked)
-        self.retry_button = QPushButton("Retry", self)
-        self.retry_button.clicked.connect(self._retry)
-        self.scan_label = QLabel(self)
+        # Tab activity (basic scans, background loads) is shown in the main window's status bar.
+        self.activity_text = ""
+        self.activity_tooltip = ""
+        self.activity_busy = False
+        # Three fixed-height lines: the tree's rows never move when the summary changes.
         self.summary_widget = QWidget(self)
-        self.selected_folder_row = QWidget(self.summary_widget)
         self.folder_counts_row = QWidget(self.summary_widget)
-        self.selected_folder_label = QLabel(self)
-        self.deselect_button = QToolButton(self.selected_folder_row)
-        self.deselect_button.setText("Deselect")
-        self.deselect_button.setToolTip("Clear subfolder selection and view the displayed path")
-        self.deselect_button.clicked.connect(self.clear_selection)
+        self.selected_folder_label = ElidedLabel("", self.folder_counts_row, Qt.TextElideMode.ElideMiddle)
+        self.folder_summary_label = ElidedLabel("Scanning folder content for TXY files…", self.folder_counts_row)
+        # _fit_selected_label sets its width; the counts label takes the rest of the line.
+        self.selected_folder_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.folder_cache_label = ElidedLabel("Cache not checked", self.summary_widget)
+        self.folder_freshness_label = ElidedLabel("Live updates off", self.summary_widget)
         self.cancel_load_button = QToolButton(self.folder_counts_row)
         self.cancel_load_button.setText("Cancel")
         self.cancel_load_button.setToolTip("Cancel loading in this tab (Esc)")
         self.cancel_load_button.clicked.connect(self.cancel_loading)
-        self.cancel_load_button.hide()
-        self.folder_summary_label = QLabel("Scanning folder content for TXY files…", self)
-        self.folder_cache_label = QLabel(self)
-        self.folder_freshness_label = QLabel("Live updates off", self)
-        for label in (self.selected_folder_label, self.folder_summary_label,
-                      self.folder_cache_label, self.folder_freshness_label):
-            label.setTextFormat(Qt.TextFormat.PlainText)
-            label.setWordWrap(True)
-            label.setMinimumWidth(0)
-        self.selected_folder_row.hide()
-        self.selected_folder_label.hide()
-        self.deselect_button.hide()
-        self.selected_folder_label.setWordWrap(False)
+        self.retry_button = QToolButton(self.folder_counts_row)
+        self.retry_button.setText("Retry")
+        self.retry_button.clicked.connect(self._retry)
+        self.deselect_button = QToolButton(self.folder_counts_row)
+        self.deselect_button.setText("Deselect")
+        self.deselect_button.setToolTip("Clear subfolder selection and view the displayed path")
+        self.deselect_button.clicked.connect(self.clear_selection)
+        self.summary_buttons = (self.cancel_load_button, self.retry_button, self.deselect_button)
+        for hidden in (self.selected_folder_label, *self.summary_buttons):
+            hidden.hide()
         summary_font = self.folder_summary_label.font()
         summary_font.setBold(True)
         self.folder_summary_label.setFont(summary_font)
-        freshness_font = self.folder_freshness_label.font()
-        freshness_font.setPointSizeF(max(8.0, freshness_font.pointSizeF() - 1.0))
-        self.folder_freshness_label.setFont(freshness_font)
-        self.folder_cache_label.setFont(freshness_font)
+        small_font = self.folder_freshness_label.font()
+        small_font.setPointSizeF(max(8.0, small_font.pointSizeF() - 1.0))
+        self.folder_freshness_label.setFont(small_font)
+        self.folder_cache_label.setFont(small_font)
         line_height = max(label.fontMetrics().height() for label in (
             self.selected_folder_label, self.folder_summary_label,
             self.folder_cache_label, self.folder_freshness_label))
-        for label in (self.selected_folder_label, self.folder_summary_label,
-                      self.folder_cache_label, self.folder_freshness_label):
-            label.setMinimumHeight(line_height)
-        for label in (self.folder_cache_label, self.folder_freshness_label):
-            label.setWordWrap(False)
-            label.setFixedHeight(line_height)
-            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.selected_folder_row.setFixedHeight(line_height)
-        for button in (self.deselect_button, self.cancel_load_button):
-            button.setFont(freshness_font)
+        for line in (self.folder_counts_row, self.selected_folder_label, self.folder_summary_label,
+                     self.folder_cache_label, self.folder_freshness_label):
+            line.setFixedHeight(line_height)
+        for button in self.summary_buttons:
+            button.setFont(small_font)
             button.setFixedHeight(line_height)
             button.setStyleSheet("""
                 QToolButton { padding: 0px 3px; border: 1px solid palette(mid); border-radius: 2px; }
@@ -227,47 +221,33 @@ class FolderExplorer(QWidget):
                 QToolButton:pressed { background: palette(mid); }
                 QToolButton:focus { border-color: palette(highlight); }
             """)
-        self._summary_button_width = max(button.sizeHint().width() for button in (
-            self.deselect_button, self.cancel_load_button))
-        for button in (self.deselect_button, self.cancel_load_button):
+        self._summary_button_width = max(button.sizeHint().width() for button in self.summary_buttons)
+        for button in self.summary_buttons:
             button.setFixedWidth(self._summary_button_width)
-        selected_layout = QHBoxLayout(self.selected_folder_row)
-        selected_layout.setContentsMargins(0, 0, 0, 0)
-        selected_layout.setSpacing(4)
-        selected_layout.addWidget(self.selected_folder_label, 1)
-        selected_layout.addWidget(self.deselect_button)
         counts_layout = QHBoxLayout(self.folder_counts_row)
         counts_layout.setContentsMargins(0, 0, 0, 0)
         counts_layout.setSpacing(4)
+        counts_layout.addWidget(self.selected_folder_label)
         counts_layout.addWidget(self.folder_summary_label, 1)
-        counts_layout.addWidget(self.cancel_load_button, 0, Qt.AlignmentFlag.AlignTop)
+        for button in self.summary_buttons:
+            counts_layout.addWidget(button)
         summary_layout = QVBoxLayout(self.summary_widget)
         summary_layout.setContentsMargins(8, 0, 0, 0)
         summary_layout.setSpacing(0)
-        summary_layout.addWidget(self.selected_folder_row)
         summary_layout.addWidget(self.folder_counts_row)
         summary_layout.addWidget(self.folder_cache_label)
         summary_layout.addWidget(self.folder_freshness_label)
-        self.spinner_label = QLabel(self)
-        self.spinner_label.setFixedSize(16, 16)
-        self.spinner_label.hide()
-        self.progress = QProgressBar(self)
-        self.progress.setMaximumWidth(150)
-        self.progress.hide()
+        self.summary_widget.setFixedHeight(3 * line_height)
+        self.summary_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         controls = QHBoxLayout()
         controls.addWidget(self.basic_scan_button)
-        for widget in (self.back_button, self.path_edit, self.retry_button):
-            controls.addWidget(widget)
-        status = QHBoxLayout()
-        status.addWidget(self.spinner_label)
-        status.addWidget(self.scan_label, 1)
-        status.addWidget(self.progress)
+        controls.addWidget(self.back_button)
+        controls.addWidget(self.path_edit)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(controls)
         layout.addWidget(self.summary_widget)
         layout.addWidget(self.tree, 1)
-        layout.addLayout(status)
         self.get_selection_model().selectionChanged.connect(self.on_selection_changed)
         self.tree.expanded.connect(self._expanded)
         self.tree.doubleClicked.connect(self.on_double_click)
@@ -333,7 +313,6 @@ class FolderExplorer(QWidget):
 
     def _resolve_default(self, candidates: list[str]) -> None:
         if not self.closed:
-            self.scan_label.setText("Finding default folder…")
             self.model.cache.submit(self.model.owner, self.model.generation, self.target_path,
                                       "resolve", {"candidates": candidates}, priority=True)
 
@@ -612,7 +591,6 @@ class FolderExplorer(QWidget):
                     self.model.root.state = "error"
                     self.model.root.error = event["message"]
                     self.model.changed(self.model.root)
-                self.scan_label.setText(event["message"])
                 self.emit_root_path_changed()
                 self.selectionPathChanged.emit(self.target_path)
             return
@@ -749,82 +727,51 @@ class FolderExplorer(QWidget):
         return "\n\n".join(parts)
 
     def _update_activity(self) -> None:
+        """Refresh the summary and this tab's part of the main window's status bar."""
         if self.closed:
             return
         self._update_folder_summary()
-        requests = self.model.cache.requests(self.model.owner)
-        queued = sum(r.operation in ("list", "scan") and self.model.nodes.get(r.path) is not None
-                     and self.model.nodes[r.path].state == "queued" for r in requests)
-        active = max(0, len(requests) - queued)
-        node = self.model.nodes.get(self.selected_path_globally)
-        error = self.load_error or (node.error if node else "")
-        root_error = self.model.root.error if self.model.root else ""
-        scans = any(r.operation in ("list", "details", "scan") for r in requests)
-        resolving = any(r.operation == "resolve" for r in requests)
-        loading_action = {"disk": "Loading from disk cache", "files": "Reading TXY files",
-                          "merged": "Reading new TXY files into disk cache",
-                          "updated": "Reading new TXY files",
-                          "memory": "Reusing data in memory"}.get(self.load_source, "Checking for cached data")
-        ready = "Ready"
-        if self.folder_opened_path == self.selected_path_globally:
-            origin = {"disk": "disk cache", "files": "TXY files", "merged": "disk cache + new TXY files",
-                      "updated": "memory + new TXY files", "memory": "memory"}.get(self.load_source)
-            if origin:
-                ready = f"Ready · Loaded from {origin}"
-                # The merge counts are long; they stay in the tooltip only.
-                if self.load_cache_reason and self.load_source not in ("merged", "updated"):
-                    ready += f" · {self.load_cache_reason}"
-        action = ("Queued" if self.loading and self.load_queued else
-                  "Finding default folder…" if resolving else loading_action if self.loading
-                  else "Scanning: checking file counts and status…" if scans else "Scanning folders")
-        status = "Queued" if self.loading and self.load_queued else action
-        background = len(self._bg_paths)
-        text = " · ".join(filter(None, (
-            status if requests or self.loading else "" if self.load_waiting else ready,
-            f"Waiting {self.DWELL_MS // 1000} s before queueing" if self.load_waiting else "",
-            f"{background} loading in background" if background else "")))
         self.basic_scan_button.setText("Cancel scan" if self._basic_active else "Basic scan")
+        requests = self.model.cache.requests(self.model.owner)
+        parts: list[str] = []
+        if any(r.operation == "resolve" for r in requests):
+            parts.append("Finding default folder…")
         if self._basic_active:
-            text = f"Basic scan: {self._basic_completed:,} scanned · {len(self._deep_depth):,} checking"
-            if self._basic_failed:
-                text += f" · {self._basic_failed:,} failed"
-        elif self._basic_result and not (requests or self.loading):
-            text = self._basic_result
-        # Retries held behind a stopping helper are described by the stopping summary.
-        queued_count = len(self.model.service.queued_operations(include_held=False))
-        stopping_count = len(self.model.service.retired)
-        if stopping := self.model.service.stopping_summary():
-            if self.model.service.pending and not self.model.service.active:
-                text = stopping
+            parts.append(self._basic_progress())
+        elif self._basic_result:
+            # Folder errors are on the summary's first line, so this never hides them.
+            parts.append(self._basic_result)
+        if self._bg_paths:
+            parts.append(self._background_summary())
+        self.activity_text = " · ".join(parts)
+        self.activity_tooltip = ("Loading in the background:\n" + "\n".join(
+            f"{path} ({self.model.load_states.get(path) or 'queued'})" for path in self._bg_paths)
+            if self._bg_paths else "")
+        self.activity_busy = bool(requests or self.loading or self._bg_paths or self._basic_active)
+
+    def _basic_progress(self) -> str:
+        """Submitted folders may still be queued or paused; only started ones are scanning."""
+        scanning = paused = queued = 0
+        for path in self._deep_depth:
+            job = next((job for operation in ("scan", "details", "list")
+                        if (job := self.model.cache.jobs.get((operation, path))) is not None), None)
+            if job is not None and job.paused:
+                paused += 1
+            elif job is not None and job.state == "started":
+                scanning += 1
             else:
-                text += f" · {stopping}"
-        if queued_count:
-            text += f" · {queued_count} queued"
-        self.scan_label.setText(self.load_error or text if self._basic_active or self._basic_result
-                                else error or root_error or text)
-        self.scan_label.setToolTip(self.loading_tooltip)
-        self.progress.setToolTip(self.loading_tooltip)
-        busy = self.loading or bool(active or queued or background or queued_count or stopping_count)
-        self.spinner_label.setVisible(busy)
-        if busy:
-            pixel_ratio = self.spinner_label.devicePixelRatioF()
-            pixmap = QPixmap(round(16 * pixel_ratio), round(16 * pixel_ratio))
-            pixmap.setDevicePixelRatio(pixel_ratio)
-            pixmap.fill(Qt.GlobalColor.transparent)
-            painter = QPainter(pixmap)
-            paint_spinner(painter, QRect(3, 3, 10, 10), self.delegate.angle)
-            painter.end()
-            self.spinner_label.setPixmap(pixmap)
-        self.retry_button.setVisible(bool(error or root_error))
-        self.progress.setVisible(busy)
-        if not self.loading and (active or queued or background or queued_count or stopping_count):
-            self.progress.setRange(0, 0)
-        if self.loading:
-            if self.load_progress is None:
-                self.progress.setRange(0, 0)
-            else:
-                self.progress.setRange(0, 100)
-                self.progress.setValue(round(self.load_progress * 100))
+                queued += 1
+        counts = ((self._basic_completed, "scanned"), (scanning, "scanning"), (paused, "paused"),
+                  (queued, "queued"), (self._basic_failed, "failed"))
+        return "Basic scan: " + " · ".join(f"{count:,} {label}" for count, label in counts
+                                           if count or label == "scanned")
+
+    def _background_summary(self) -> str:
+        states = [self.model.load_states.get(path) or "queued" for path in self._bg_paths]
+        terms = [f"{states.count(state)} {state}" for state in ("loading", "paused", "queued")
+                 if states.count(state)]
+        noun = "background load" if len(states) == 1 else "background loads"
+        return f"{len(states)} {noun}: " + ", ".join(terms)
 
     def _update_folder_summary(self) -> None:
         """Describe the active folder from memory; never probe the filesystem."""
@@ -832,26 +779,23 @@ class FolderExplorer(QWidget):
         node = self.model.nodes.get(path)
         report = node.report if node else None
         selected = path != self.view_path
-        self.selected_folder_row.setVisible(selected)
+        retrying = self.retrying_scan
+        scan_error = node.error if node else ""
+        root_error = self.model.root.error if self.model.root else ""
         self.selected_folder_label.setVisible(selected)
+        self.selected_folder_label.setText(f"{os.path.relpath(path, self.view_path)} ›" if selected else "")
+        self.selected_folder_label.setToolTip(f"Selected: {path}" if selected else "")
         self.deselect_button.setVisible(selected)
         self.deselect_button.setToolTip(self.deselect_tooltip)
         self.cancel_load_button.setVisible(self.can_cancel_loading)
-        retrying = self.retrying_scan
         self.cancel_load_button.setToolTip(
             "Cancel the folder listing retry (Esc)" if retrying and not (self.loading or self.load_waiting)
             else "Cancel loading in this tab (Esc)")
-        if selected:
-            metrics = self.selected_folder_label.fontMetrics()
-            scope = metrics.elidedText(os.path.relpath(path, self.view_path), Qt.TextElideMode.ElideMiddle,
-                                       max(0, self.width() - 8 - self._summary_button_width
-                                           - 4 - metrics.horizontalAdvance("Selected: ")))
-            self.selected_folder_label.setText(f"Selected: {scope}")
-        else:
-            self.selected_folder_label.clear()
-        self.selected_folder_label.setToolTip(path)
+        self.retry_button.setVisible(bool(self.load_error or scan_error or root_error) and not (
+            self.loading or self.load_waiting or retrying))
+        self.retry_button.setToolTip("Load this folder again" if self.load_error else
+                                     "List this folder again, without a time limit")
         scanning = node is not None and node.state in ("queued", "running")
-        scan_error = node.error if node else ""
         history = self.model.cache.scan_history(path)
         dataset = self.displayed_dataset
         shown = dataset is not None and dataset.path == path
@@ -873,6 +817,7 @@ class FolderExplorer(QWidget):
                 text += f" · {self.load_error}"
         elif report is None:
             text = (self.retry_message(retrying) if retrying else
+                    f"Loading · {self.loading_message}" if self.loading and self._load_path == path else
                     "TXY count not checked · Retry manually" if history["blocked"] or node and node.scan_skipped else
                     "Could not check folder · Retry" if scan_error else
                     f"Listing… {node.listed:,} entries" if node and scanning and node.listed else
@@ -921,6 +866,7 @@ class FolderExplorer(QWidget):
             elif scanning:
                 text += " · Checking file counts and status…"
         self.folder_summary_label.setText(text)
+        self._fit_selected_label()
         load_details = ""
         if shown and dataset is not None:
             rows = int(dataset.metadata.get("rows", 0))
@@ -955,6 +901,19 @@ class FolderExplorer(QWidget):
             "Last successful status scan", node.scanned_at if node else None, node.modified if node else None,
             status_freshness, "Use Basic scan / Refresh to recheck counts and status.")))))
 
+    def _fit_selected_label(self) -> None:
+        """Share line 1: the selected path gets its full width or at least 2/5 of the free space."""
+        if self.selected_folder_label.isHidden():
+            return
+        buttons = sum(self._summary_button_width + 4 for button in self.summary_buttons if not button.isHidden())
+        free = max(0, self.folder_counts_row.width() - buttons - 4)
+        room = max(free * 2 // 5, free - self.folder_summary_label.natural_width())
+        self.selected_folder_label.setFixedWidth(min(self.selected_folder_label.natural_width(), room))
+
+    def resizeEvent(self, a0: QResizeEvent | None) -> None:
+        super().resizeEvent(a0)
+        self._fit_selected_label()
+
     @staticmethod
     def _relative_age(seconds: float) -> str:
         return relative_age(seconds)
@@ -962,11 +921,14 @@ class FolderExplorer(QWidget):
     def _update_cache_summary(self, path: str, report: StatusReport | None) -> None:
         cache = self.model.cache
         node = self.model.nodes.get(path)
-        visible = cache.disk_cache_known(path) and (cache.disk_cached(path) or report is None
-                  or bool(report.d_txy_shots) or bool(node and node.txy_count))
-        self.folder_cache_label.setVisible(visible)
-        if not visible:
-            self.folder_cache_label.clear()
+        # The line is always shown, so the summary keeps its height.
+        if not cache.disk_cache_known(path):
+            self.folder_cache_label.setText("Cache not checked")
+            self.folder_cache_label.setToolTip("Cache availability is reported by the folder listing or a load.")
+            return
+        if not (cache.disk_cached(path) or report is None or report.d_txy_shots or node and node.txy_count):
+            self.folder_cache_label.setText("No data to cache")
+            self.folder_cache_label.setToolTip("This folder has no TXY files.")
             return
         dataset = self.displayed_dataset
         current = bool(dataset and dataset.path == path and self.folder_opened_path == path)
@@ -1006,6 +968,7 @@ class FolderExplorer(QWidget):
                  if isinstance(saved_at, (int, float)) else "")
         self.folder_cache_label.setToolTip("\n".join(filter(None, (
             f"Loaded from {origin}" if origin and current else "",
+            self.load_cache_reason if current else "",
             " · ".join(details),
             f"Last successful cache save: {exact}" if exact else
             "Cache date not recorded" if cache.disk_cached(path) else "",
