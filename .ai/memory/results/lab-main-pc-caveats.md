@@ -2,7 +2,7 @@
 date: 2026-08-20
 status: settled
 name: lab-main-pc-caveats
-description: "Lab Main PC: Python 3.11 stdlib is corrupted (use the 3.12 venv), and launching HeLab over SSH poisons its cache settings"
+description: "Lab Main PC: HeLab runs from a uv Python 3.13 venv; Python 3.11 stdlib is corrupted; launching HeLab over SSH poisons its cache settings"
 metadata:
   node_type: memory
   type: result
@@ -14,20 +14,30 @@ Working notes for the **Lab Main PC** (repo at `C:\GitHub\HeLab`, user profile
 PC's QtWebEngine problem does **not** apply: HeLab starts, renders and shuts
 down cleanly here.
 
-## Use the 3.12 venv; never Python 3.11
+## Python: the uv venv (set up 2026-10-08); never Python 3.11
 
-Working setup, installed 2026-08-20:
+Same layout as [[lab-side-pc-caveats]] and [[rspe-office-pc-caveats]]:
 
-- **Python 3.12.10**, per-user at
-  `C:\Users\BEC Machine\AppData\Local\Programs\Python\Python312\python.exe`
-- **venv** at `C:\GitHub\HeLab\venv` (pip, all of `requirements.txt`,
-  and `pip install -e .`)
-
-It was installed with `winget` using explicit flags so nothing global shifted —
-`PrependPath=0 AssociateFiles=0 Include_launcher=0 Shortcuts=0
-InstallAllUsers=0`. Consequences to remember: bare `python` is still **Python
-3.6.1**, and `py -0p` does **not** list 3.12. Always use the full path or
-`venv\Scripts\python.exe`.
+- uv 0.12.23 in `C:\Program Files\uv` (from the GitHub release zip; machine
+  `Path`), machine-wide `UV_PYTHON_INSTALL_DIR=C:\ProgramData\uv\python`.
+- `C:\GitHub\HeLab\venv` = uv-managed **Python 3.13.16** (`uv venv --seed
+  --managed-python`, then `uv pip install -r requirements.txt -e .`; 93
+  packages, `pip check` clean, imports OK). HeLab was confirmed launching from the
+  desktop with `venv\Scripts\helab`; the old 3.12 venv was deleted.
+- uv's cache (`%LOCALAPPDATA%\uv\cache`) is hardlinked with the venv, so
+  deleting it frees almost nothing.
+- Bare `py` defaults to the uv Python via `%LOCALAPPDATA%\py.ini`
+  (`python=Astral/CPython3.13`). The Store `python`/`python3` aliases were
+  removed. Bare `python`/`pip` are still **Python 3.6.1** (machine `Path`),
+  left alone in case lab tools rely on it.
+- Same day: the dead per-user Anaconda3 4.2.0 registrations (PEP 514 keys,
+  uninstall entry, three user-`Path` entries) were deleted, and the machine
+  `Path` lost missing MATLAB R2020a/R2016a and VISA entries, an empty entry
+  and duplicates. Backups (`.reg` exports, old `Path` values, run logs) are in
+  `C:\ProgramData\uv-setup-backup\`.
+- C: was nearly full (0.8 GB free after the rebuild); Tony cleaned it to
+  ~25 GB free the same day. `%TEMP%` had ~14.7 GB older than 7 days, 8 GB
+  of it 20 leftover OneDrive delta-update folders (GUID names).
 
 **Python 3.11 on this machine is broken and must not be used.** Someone
 extracted a Python 3.6 `Lib` tree over the top of it. 975 pre-2020 files
@@ -43,7 +53,9 @@ ImportError: cannot import name 'coroutine' from 'asyncio.coroutines'
 pip vendors `tenacity`, which imports `asyncio`, so **pip and `ensurepip` are
 both dead on 3.11**. (The stale `Lib\re.py` is inert — the real `re/` package
 wins the import.) Other interpreters present and unsuitable: 3.6.1, 3.5,
-and Anaconda 3.9.18 (two installs).
+3.12.10 (python.org, per-user) and Anaconda3 2022.10 / Python 3.9.18 in
+`C:\ProgramData\Anaconda3` (`C:\Users\All Users\Anaconda3` is the same
+folder) with envs `HeLab` (3.12.9, superseded by the venv) and `py311`.
 
 ## Never launch HeLab over SSH — it poisons the desktop session
 

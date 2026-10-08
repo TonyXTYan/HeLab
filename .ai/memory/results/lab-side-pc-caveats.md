@@ -33,6 +33,9 @@ requires and Tony's Mac uses.
 - The previous venv (python.org 3.12.10, only PyQt6/WebEngine/plotly, so HeLab
   failed at import) was deleted on 2026-10-08.
 
+Bare `py` defaults to the uv Python via helium's `%LOCALAPPDATA%\py.ini`
+(`[defaults]` `python=Astral/CPython3.13`, added 2026-10-08).
+
 To start HeLab, sit at the desktop, open a fresh terminal, and run
 `cd /d C:\GitHub\HeLab` then `venv\Scripts\helab`. A terminal that was open
 before the uv install will not have the new `Path`.
