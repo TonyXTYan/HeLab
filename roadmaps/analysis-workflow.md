@@ -12,7 +12,12 @@ before expanding the script catalogue.
 ## Current foundation
 
 Script discovery and action buttons exist in `ScriptsManager` and
-`ScriptTreeSelector`. Dynamic buttons currently call `execute_action` directly
+`ScriptTreeSelector` (the right-hand panel). `helab/scripts/` is this analysis
+script system: `examples/` is loaded by default, `plotly_3d_sactter.py` is the
+panel's 3D plot, and `legacy_plotly/` holds the lab's older Plotly figures.
+`helab/scripts/dev/` only holds plotting-library prototypes that read the old
+cache directly; they move to `dev/plotting-prototypes/` when the old browser is
+removed ([plan](cache-storage-and-settings.md#old-browser-removal)). Dynamic buttons currently call `execute_action` directly
 without providing a selected dataset or parameter context. Bundled example
 scripts simulate actions through logging. Parameter-tree and docked-plot UI
 components exist, but a common data-to-result workflow still needs definition.

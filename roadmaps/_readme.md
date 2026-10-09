@@ -17,6 +17,12 @@ How to use it:
 
 ## Now: v0.0.5a folder browser
 
+- [ ] Cache rebuild: SQLite records + compressed dataset files (old cache dropped),
+  remove the old folder browser, editable disk and RAM budgets, large-folder warning,
+  per-folder don't-cache/don't-auto-load flags, cache-folder move, rebuilt Settings →
+  Cache tab. Eleven sessions S1–S11
+  ([plan](cache-storage-and-settings.md#sessions)) (2026-10-10).
+
 - [ ] Finish the status-message audit: verify load-phase labels for `merged`/
   `updated` sources ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#status-messages)) (2026-10-08).
 
@@ -25,6 +31,12 @@ How to use it:
   the tooltip, load elapsed time and time left (2026-10-10, `3af4fea`).
 
 ## Known issues
+
+- [ ] Disk-cache reads under write contention silently return "nothing saved"
+  (statistics on, 0.2 s timeout), so an automatic scan can run on a blocked
+  folder; eviction can drop scan-failure history ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#storage-findings-ranked)) (2026-10-10).
+- [ ] Settings → Cache: parameter edits never apply, Clear blocks the GUI and
+  leaves badges stale ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#settings--cache-tab-helabviewssettingsdialogpy)) (2026-10-10).
 
 - [ ] Folders with over 100,000 entries record a scan failure.
 - [ ] With the default of one background lane, folder details and status checks
@@ -76,6 +88,17 @@ How to use it:
   at once, then one folder stat skips the scandir when the folder is unmodified
   (like the cache-first data check). Shares persisted listings with
   [cache-only browsing](cache-only-browsing.md) (2026-10-09).
+
+- [ ] More file kinds: measure raw `d*.txt` sizes, and load/cache other data formats.
+  The cache rebuild keeps file kinds table-driven for this
+  ([plan](cache-storage-and-settings.md#file-kinds)) (2026-10-10).
+
+- [ ] Dataset format without pickle (JSON header + Blosc-compressed raw buffers, possibly
+  Blosc2), for safety and numpy-version independence. Kept as pickle for now
+  ([plan](cache-storage-and-settings.md#decisions-tony-2026-10-10)) (2026-10-10).
+
+- [ ] Lower a load's peak memory: the helper compresses the saved `.npy` artifacts
+  for the cache instead of holding a second copy of every shot (2026-10-10).
 
 - [ ] Plot-area hints when no plot is open: usage tips, or a daily motivational
   quote. `CentralHint` already has a second line and `add_widget` for this (2026-10-09).

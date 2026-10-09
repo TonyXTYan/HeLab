@@ -37,6 +37,11 @@ The v0.0.5a checks below were added on 2026-10-08 and remain pending.
   time-left estimate (settles within a few seconds, stays steady, excludes
   paused time) and the short status bar. Added 2026-10-09.
 
+- [ ] Check whether `/Volumes/dld_output`'s `st_dev` changes across unmount/
+  remount (`python -c "import os;print(os.stat('/Volumes/dld_output').st_dev)"`
+  before and after). If it changes, saved summaries and failure history are
+  dropped on every remount ([audit](sessions/2026-10-10-claude-cache-audit/notes.md), finding 9). Added 2026-10-10.
+
 ## v0.0.5a: native UI and packaged application
 
 - [ ] Build the PyInstaller app and confirm the right-pointing SVG triangle
