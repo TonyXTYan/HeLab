@@ -112,9 +112,15 @@ def test_check_of_cached_data_is_one_folder_stat_until_the_folder_changes(
     (source / "d_txy_forc3.txt").write_text("3,2,3\n")
     later = time.time() + 10
     os.utime(source, (later, later))
-    result = loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"]))
+    events = run_load(source, tmp_path, memory=memory, base_signature=first["signature"])
+    result = loaded(events)
     assert not result.get("unchanged")
     assert result["load_counts"]["new_loaded"] == 1 and result["load_counts"]["reused_memory"] == 2
+    # Time left is estimated from the bytes actually read: shots held in memory are not counted.
+    progress = [event for event in events if event["kind"] == "progress"]
+    new_size = (source / "d_txy_forc3.txt").stat().st_size
+    assert progress[0]["read_bytes"] == 0 and progress[0]["total_read_bytes"] == new_size
+    assert progress[-1]["read_bytes"] == new_size
     # A different expected signature (the folder changed this session) never takes the shortcut.
     result = loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"],
                              expected="changed"))
@@ -136,7 +142,9 @@ def test_files_still_being_written_are_left_for_the_next_load(
     progress = [event for event in events if event["kind"] == "progress"]
     assert progress[0]["checked_files"] == 1 and progress[0]["unsettled_files"] == 1
     assert progress[-1] == {"kind": "progress", "progress": 1.0, "checked_files": 2,
-                           "loaded_files": 1, "total_files": 2, "failed_files": 0, "unsettled_files": 1}
+                           "loaded_files": 1, "total_files": 2, "failed_files": 0, "unsettled_files": 1,
+                           # Only the settled file is read, so only its bytes count towards the estimate.
+                           "read_bytes": 6, "read_files": 1, "total_read_bytes": 6}
     summary = next(event for event in events if event["kind"] == "scan_summary")["status"]
     assert summary["txy"] == [1, 2] and summary["unsettled"] == 1
     saved = next(event for event in events if event["kind"] == "cache_saved")["cache_info"]
@@ -146,7 +154,9 @@ def test_files_still_being_written_are_left_for_the_next_load(
     cached_events: list[dict[str, Any]] = []
     read_cached(str(source), str(output), cached_events.append, cache_options(tmp_path))
     cached_progress = [event for event in cached_events if event["kind"] == "progress"][-1]
-    assert cached_progress == progress[-1]
+    # Cached reads give the same counts; they read no TXY files, so they have no read counters.
+    assert cached_progress == {key: value for key, value in progress[-1].items()
+                               if "bytes" not in key and key != "read_files"}
     # A cache with unsettled files is always checked fully, even if the folder is unmodified.
     memory = [list(entry) for entry in result["fingerprint"]]
     os.utime(source, (old, old))

@@ -17,6 +17,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 
 from helab.utils.io_service import IORequest, IOService
+from helab.utils.load_clock import LoadClock
 from helab.utils.scan_history import ScanHistory, empty_history, parse_history, apply_outcome, for_identity, folder_identity
 
 
@@ -73,6 +74,8 @@ class SharedJob:
     completed_scan: FolderSnapshot | None = None
     created: float = field(default_factory=time.monotonic)
     paused: bool = False
+    # Shared, so a tab joining a running load shows its real elapsed time.
+    clock: LoadClock = field(default_factory=LoadClock)
 
 
 class FolderCache(QObject):
@@ -693,6 +696,11 @@ class FolderCache(QObject):
         if job.paused:
             self.resultReady.emit(request, {"kind": "paused"})
 
+    def load_clock(self, path: str) -> LoadClock | None:
+        """The running load's clock for this folder, if it is loading."""
+        job = self.jobs.get(("load", self.key(path)))
+        return job.clock if job else None
+
     def promote(self, path: str) -> None:
         """Run this folder's queued load before other queued loads."""
         job = self.jobs.get(("load", self.key(path)))
@@ -779,11 +787,20 @@ class FolderCache(QObject):
         kind = event["kind"]
         if kind in ("paused", "resumed"):
             job.paused = kind == "paused"
+            if job.paused:
+                job.clock.stop()
+            elif job.state == "started":
+                job.clock.run()
         if kind in ("queued", "started"):
             job.paused = False
             job.state = kind
             job.attempt = event.get("attempt", job.attempt)
+            if kind == "started":
+                job.clock.run()
+            else:
+                job.clock.stop()
             if event.get("retry"):
+                job.clock.restart_rate()
                 if job.operation == "load":
                     self._resume_load(job, producer)
                 job.entries.clear()
@@ -907,6 +924,9 @@ class FolderCache(QObject):
                 job.load_status = event
             if kind == "progress":
                 job.progress = event
+                if "total_read_bytes" in event:
+                    job.clock.sample(int(event["read_bytes"]), int(event["total_read_bytes"]),
+                                     int(event.get("read_files", 0)))
                 if job.load_status is not None and job.load_status["kind"] == "heartbeat":
                     job.load_status = None
             if kind == "scan_summary":
@@ -922,7 +942,12 @@ class FolderCache(QObject):
                     job.problematic.add(event["shot"])
                 return
             if kind == "loaded":
+                job.clock.stop()
                 event = {"loaded_at": time.time(), **event}
+                if job.operation == "load" and job.clock.total_bytes:
+                    # Only a load that read TXY files has a load time; a check
+                    # answered from memory or the cache would show "took 0:00".
+                    event.setdefault("load_seconds", job.clock.elapsed())
                 source_snapshot = self.snapshot(job.path)
                 expected = source_snapshot.status.get("signature") if source_snapshot else None
                 # Cached data is shown unchecked, even if the folder has changed since.

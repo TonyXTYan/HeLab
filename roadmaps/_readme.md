@@ -20,6 +20,10 @@ How to use it:
 - [ ] Finish the status-message audit: verify load-phase labels for `merged`/
   `updated` sources ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#status-messages)) (2026-10-08).
 
+- [x] Folder details panel (replaces the left-bottom placeholder and the plot
+  area's loading text), shorter status bar with its running helpers listed in
+  the tooltip, load elapsed time and time left (2026-10-10, commit pending).
+
 ## Known issues
 
 - [ ] Folders with over 100,000 entries record a scan failure.
@@ -72,6 +76,9 @@ How to use it:
   at once, then one folder stat skips the scandir when the folder is unmodified
   (like the cache-first data check). Shares persisted listings with
   [cache-only browsing](cache-only-browsing.md) (2026-10-09).
+
+- [ ] Plot-area hints when no plot is open: usage tips, or a daily motivational
+  quote. `CentralHint` already has a second line and `add_widget` for this (2026-10-09).
 
 - [ ] Lock the tree view during a recursive status check? (from the old README
   list; may no longer be needed).

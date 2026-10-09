@@ -20,10 +20,15 @@ from helab.utils.io_service import IORequest
 from helab.utils.folder_cache import Dataset
 from helab.utils.caching_setup import load_cache_param
 from helab.utils.constants import DEFAULT_LOAD_MODE, DIR_CACHES
-from helab.utils.time_format import duration, relative_age
+from helab.utils.load_clock import LoadClock
+from helab.utils.time_format import byte_rate, clock as stopwatch, duration, relative_age
 from helab.utils.cache_freshness import CacheFreshness, data_as_of, freshness_tooltip, metadata_date
 from helab.utils.scan_history import history_tooltip
 from helab.views.ElidedLabel import ElidedLabel
+
+# Where a load's data came from, as the cache summary and Folder details name it.
+LOAD_ORIGINS = {"disk": "disk cache", "files": "TXY files", "merged": "disk cache + new TXY files",
+                "updated": "memory + new TXY files", "memory": "memory"}
 
 
 def paint_spinner(painter: QPainter, rect: QRect, angle: int, selected: bool = False) -> None:
@@ -512,6 +517,10 @@ class FolderExplorer(QWidget):
         """Whether this folder's shown data came from memory or the disk cache and awaits its check."""
         return self.folder_opened_path == path and self._unchecked_path == path
 
+    def shows_unchecked(self, path: str) -> bool:
+        """Public form of ``_checking``: the shown data is not yet checked against the folder."""
+        return self._checking(path)
+
     def _load_payload(self, path: str) -> dict[str, Any]:
         node = self.model.nodes.get(path)
         cache = {"directory": os.path.join(DIR_CACHES, "data_ram_cache"),
@@ -838,8 +847,106 @@ class FolderExplorer(QWidget):
         return message
 
     @property
+    def load_path(self) -> str | None:
+        """The folder this tab is loading for display, if any."""
+        return self._load_path
+
+    @property
+    def load_is_check(self) -> bool:
+        """The selected load is the check of data shown from memory or the disk cache."""
+        return self.loading and self._load_path is not None and self._checking(self._load_path)
+
+    @property
+    def load_verb(self) -> str:
+        """How the selected load is named while it runs: Checking, Loading or Paused."""
+        return "Paused" if self.load_paused else "Checking" if self.load_is_check else "Loading"
+
+    @property
+    def dwell_seconds_left(self) -> int:
+        """Seconds until a folder waiting to load is queued (memory only)."""
+        # Rounded: a coarse timer can report a little over its interval just after starting.
+        return max(1, round(self._dwell.remainingTime() / 1000)) if self._dwell.isActive() else 0
+
+    @property
+    def load_count_details(self) -> list[str]:
+        """Where the shown data's shots came from, e.g. "12 TXY files read"."""
+        counts = self.load_counts
+        return [f"{counts[key]:,} {label.replace('files', 'file') if counts[key] == 1 else label}"
+                for key, label in (
+                    ("reused_memory", "reused from memory"), ("reused_disk", "reused from cache"),
+                    ("new_loaded", "new files loaded"), ("modified_loaded", "modified files loaded"),
+                    ("removed", "files removed"), ("read", "TXY files read")) if counts.get(key)]
+
+    @property
+    def load_clock(self) -> LoadClock | None:
+        """The selected load's shared clock (memory only)."""
+        return self.model.cache.load_clock(self._load_path) if self.loading and self._load_path else None
+
+    @property
+    def loading_timing_message(self) -> str:
+        """Running time (paused and queued time excluded) and, once measurable, the time left."""
+        clock = self.load_clock
+        if clock is None or self.load_queued:
+            return ""
+        text = f"{stopwatch(clock.elapsed())} elapsed"
+        if self.load_paused:
+            return text  # The estimate resumes with the load.
+        stalled = clock.stalled_for()
+        remaining = clock.remaining()
+        if clock.done_reading:
+            text += " · finishing…"
+        elif stalled:
+            text += f" · no progress for {stopwatch(stalled)}"
+        elif remaining is not None:
+            text += f" · ~{stopwatch(max(1.0, remaining))} left"
+        elif clock.total_bytes:
+            text += " · estimating…"
+        return text
+
+    @property
+    def loading_rate_message(self) -> str:
+        """Read rate over the clock's window: TXY bytes actually read, and files checked."""
+        clock = self.load_clock
+        rates = clock.rates() if clock is not None and not self.load_paused and not clock.done_reading else None
+        if not rates or (rates[0] <= 0 and rates[1] <= 0):
+            return ""
+        files = f"{rates[1]:.1f}" if 0 < rates[1] < 10 else f"{rates[1]:,.0f}"
+        return f"{byte_rate(rates[0])} · {files} files/s"
+
+    @property
+    def activity_brief(self) -> str:
+        """This tab's most important activity in a few words, for the main status bar."""
+        if self.loading and self._load_path:
+            name = os.path.basename(self._load_path.rstrip(os.sep)) or self._load_path
+            if self.load_queued:
+                return f"Queued {name}"
+            parts = [f"{self.load_verb} {name}"]
+            if self.load_progress is not None:
+                parts.append(f"{self.load_progress:.0%}")
+            clock = self.load_clock
+            remaining = clock.remaining() if clock is not None and not self.load_paused else None
+            if remaining is not None and clock is not None and not clock.done_reading:
+                parts.append(f"~{stopwatch(max(1.0, remaining))} left")
+            elif clock is not None and not self.load_paused:
+                parts.append(stopwatch(clock.elapsed()))
+            return " · ".join(parts)
+        if any(r.operation == "resolve" for r in self.model.cache.requests(self.model.owner)):
+            return "Finding default folder…"
+        if self._basic_active:
+            text = f"Checking folder status · {self._basic_completed:,} checked"
+            return text + (f" · {self._basic_failed:,} failed" if self._basic_failed else "")
+        if self._basic_result:
+            return self._basic_result.split(" · ")[0]
+        if self._bg_paths:
+            count = len(self._bg_paths)
+            return f"{count} background load{'' if count == 1 else 's'}"
+        return ""
+
+    @property
     def loading_tooltip(self) -> str:
         parts = [self.loading_message] if self.loading else []
+        if self.loading and (timing := self.loading_timing_message):
+            parts[0] += f"\n{timing}"
         if self.loading and self.load_attempt > 1 and self.load_filename:
             parts.append(f"Retrying file: {os.path.basename(self.load_filename)}\n"
                          f"Attempt {self.load_attempt} of 3 for this file")
@@ -1023,7 +1130,7 @@ class FolderExplorer(QWidget):
                 load_details += f"\nData loaded: {datetime.fromtimestamp(loaded_at).astimezone():%Y-%m-%d %H:%M:%S %Z}"
             problematic = dataset.metadata.get("problematic", [])
             if problematic:
-                load_details += f"\nShots with content/read errors: {', '.join(map(str, problematic[:20]))}"
+                load_details += f"\nShots unreadable or with invalid rows: {', '.join(map(str, problematic[:20]))}"
             if changed:
                 load_details += "\nLoaded data belongs to the previous folder contents. Load data to update it."
         self.folder_summary_label.setToolTip("\n".join(filter(None, (
@@ -1106,14 +1213,8 @@ class FolderExplorer(QWidget):
         elif cache.disk_cached(path) and freshness.value:
             text += f" · {freshness.value}"
         self.folder_cache_label.setText(text)
-        origin = {"disk": "disk cache", "files": "TXY files", "merged": "disk cache + new TXY files",
-                  "updated": "memory + new TXY files", "memory": "memory"}.get(self.load_source)
-        counts = self.load_counts if current else {}
-        details = [f"{counts[key]:,} {label.replace('files', 'file') if counts[key] == 1 else label}"
-                   for key, label in (
-                       ("reused_memory", "reused from memory"), ("reused_disk", "reused from cache"),
-                       ("new_loaded", "new files loaded"), ("modified_loaded", "modified files loaded"),
-                       ("removed", "files removed"), ("read", "TXY files read")) if counts.get(key)]
+        origin = LOAD_ORIGINS.get(self.load_source)
+        details = self.load_count_details if current else []
         exact = (datetime.fromtimestamp(saved_at).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
                  if isinstance(saved_at, (int, float)) else "")
         self.folder_cache_label.setToolTip("\n".join(filter(None, (

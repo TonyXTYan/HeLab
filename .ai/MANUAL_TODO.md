@@ -33,6 +33,10 @@ The v0.0.5a checks below were added on 2026-10-08 and remain pending.
   where practical; verify responsive navigation, cancellation, usable cached
   data and clear failure/retry state. Reconnect and retry.
 
+- [ ] Load a large folder on `/Volumes/dld_output` and judge the Folder details
+  time-left estimate (settles within a few seconds, stays steady, excludes
+  paused time) and the short status bar. Added 2026-10-09.
+
 ## v0.0.5a: native UI and packaged application
 
 - [ ] Build the PyInstaller app and confirm the right-pointing SVG triangle

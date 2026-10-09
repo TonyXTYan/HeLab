@@ -647,9 +647,14 @@ def load(path: str, output: str, send: Emit = emit,
         cache_reason = ""
     source = "updated" if in_memory else "disk" if cached else "merged" if reused else "files"
     send({"kind": "load_source", "source": source, "cache_reason": cache_reason})
+    # Bytes of the TXY files this load reads; the caller's time estimate uses only these.
+    total_read_bytes = 0 if cached else sum(
+        file_size for shot, file_size, _ in fingerprint if shot not in in_memory | reused)
+    read_bytes = 0
     send({"kind": "progress", "progress": len(young) / (len(files) + len(young)),
           "checked_files": len(young), "loaded_files": 0,
-          "total_files": len(files) + len(young), "failed_files": 0, "unsettled_files": len(young)})
+          "total_files": len(files) + len(young), "failed_files": 0, "unsettled_files": len(young),
+          "read_bytes": 0, "read_files": 0, "total_read_bytes": total_read_bytes})
     rows = size = loaded = 0
     last_progress = 0.0
     # Files that changed while being read: still being written. They keep their
@@ -681,6 +686,7 @@ def load(path: str, output: str, send: Emit = emit,
                 array = data[shot]
             elif not cached:
                 load_counts["read"] += 1
+                read_bytes += fingerprint[i][1]
                 if unchanged(i, filename):
                     array = read_txy(shot, filename)
                     if not unchanged(i, filename):
@@ -708,7 +714,9 @@ def load(path: str, output: str, send: Emit = emit,
             send({"kind": "progress", "progress": (i + 1 + len(young)) / (len(files) + len(young)),
                   "checked_files": i + 1 + len(young), "loaded_files": loaded,
                   "total_files": len(files) + len(young), "unsettled_files": len(young) + len(late),
-                  "failed_files": i + 1 - loaded - len(late)})
+                  "failed_files": i + 1 - loaded - len(late),
+                  "read_bytes": read_bytes, "read_files": load_counts["read"],
+                  "total_read_bytes": total_read_bytes})
             last_progress = now
     if not loaded:
         raise ValueError("TXY files are still being written — Retry" if late

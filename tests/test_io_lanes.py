@@ -52,6 +52,22 @@ def test_foreground_starts_while_background_slots_are_full_or_stopping(
     service.shutdown()
 
 
+def test_tooltip_lists_each_running_helper_the_count_includes(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = lanes_service(monkeypatch, {"tab"})
+    service.submit("other-tab", 0, "/old", "load")  # Started before the current tab's work.
+    service.submit("tab", 0, "/browse", "list")
+    service.submit("tab", 0, "/data", "load")
+    for request in service.active:
+        request.started = time.monotonic() - 12
+    assert service.activity_counts() == "3 running"
+    assert service.queue_tooltip().startswith(
+        "Running:\nLoad data: /old · 12 s (background)\nBrowse folder: /browse · 12 s (current tab)\n"
+        "Load data: /data · 12 s (current tab)")
+    service.shutdown()
+
+
 def test_background_pauses_while_foreground_works_and_resumes_after_delay(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:

@@ -16,6 +16,8 @@ from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel
 from helab.io_helper import list_folder, load, scan
 from helab.utils.folder_cache import FolderCache
 from helab.utils.io_service import IORequest, IOService
+from helab.views.CentralHint import CentralHint
+from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.HelabMainWindow import HelabMainWindow
 from helab.resources.icons import IconsInitUtil, StatusIcons
@@ -101,8 +103,91 @@ def test_non_data_folder_summary(
     assert browser.folder_cache_label.text() == "No data to cache"
 
 
+def test_folder_details_and_hint_describe_each_folder_state(
+    browser: FolderExplorer, qtbot: QtBot, tmp_path: Path,
+) -> None:
+    browser.auto_load_ram = False
+    child = tmp_path / "run"
+    child.mkdir()
+    (child / "d_txy_forc1.txt").write_text("1,2,3\n")
+    root, path = str(tmp_path), str(child)
+    window: Any = SimpleNamespace(
+        _closing=False, tab_widget=SimpleNamespace(currentWidget=lambda: browser),
+        central_placeholder=CentralHint(parent=browser), folder_details=FolderDetailsPanel(browser),
+        dock_widgets=[])
+    panel = window.folder_details
+
+    def show() -> tuple[str, str]:
+        browser._update_activity()
+        HelabMainWindow._update_folder_details(window)
+        return panel.text("state"), window.central_placeholder.text()
+
+    complete_scan(browser, qtbot, root)
+    assert show() == ("No TXY files here", f"No TXY files in {tmp_path.name} — select a data folder")
+    browser.tree.setCurrentIndex(browser.model.path_index(path))
+    complete_scan(browser, qtbot, path)
+    assert show() == ("Not loaded", "run is not loaded — right-click it › Load data")
+    assert panel.text("files") == "1 TXY found"
+    # Browsing past folders while another load runs: the countdown to queueing.
+    cache = browser.model.cache
+    cache.submit("other-tab", 0, str(tmp_path / "other"), "load")
+    browser.load_mode = "queue"
+    assert browser.load_to_ram_cache(path) and browser.load_waiting
+    assert show() == ("Waiting · queues in 3 s if still selected", "Waiting to load run…")
+    browser.cancel_load_button.click()
+    cache.cancel("other-tab")
+    assert browser.load_to_ram_cache(path, dwell=False)
+    assert show() == ("Queued", "Queued run…")
+    request = request_for(cache, path, "load")
+    cache.service.resultReady.emit(request, {"kind": "started"})
+    assert show() == ("Loading", "Loading run…")
+    cache.service.resultReady.emit(request, {"kind": "shot", "shot": 1, "array": np.ones((1, 3))})
+    cache.service.resultReady.emit(request, {
+        "kind": "loaded", "signature": browser.model.nodes[path].signature, "files": 1, "rows": 1,
+        "bytes": 24, "problematic": [1], "failed_files": 0, "total_files": 1, "source": "files"})
+    cache.service.pending.remove(request)
+    assert show() == ("Loaded", "Loaded run — run a script to plot it")
+    assert panel.text("files") == "1 TXY found · 1 loaded"
+    assert panel.text("data") == "1 data row · 24B in RAM"
+    assert panel.text("source") == "TXY files"
+    assert panel.text("errors") == "1 shot unreadable or with invalid rows"
+    # No TXY bytes were reported read, so there is no load time to show.
+    assert panel.text("loaded").endswith("just now") and "took" not in panel.text("loaded")
+    # Data shown before its check, a failed check, and data the folder has moved on from.
+    browser._unchecked_path = path
+    assert show() == ("Loaded from cache · not checked yet", "Loaded run — run a script to plot it")
+    browser.load_error = "Timed out — Retry"
+    assert show() == ("Check failed · Timed out — Retry", "Could not check run — see Folder details")
+    browser.load_error = ""
+    browser.model.nodes[path].signature = "changed"  # Not answerable from memory: a real check runs.
+    assert browser.load_to_ram_cache(path, dwell=False) and browser.load_is_check
+    request = request_for(cache, path, "load")
+    cache.service.resultReady.emit(request, {"kind": "started"})
+    assert show() == ("Checking for changes", "Checking run for changes…")
+    assert browser.activity_brief == "Checking run · 0:00"
+    cache.service.resultReady.emit(request, {"kind": "paused"})
+    assert show() == ("Paused", "Check paused: run…")
+    browser.cancel_load_button.click()
+    browser.folder_opened_path = None
+    browser.load_error = ""
+    assert show() == ("Folder changed · showing previous data", "Showing previous data for run — see Folder details")
+    assert browser.displayed_dataset is not None
+    browser.model.nodes[path].signature = browser.displayed_dataset.signature  # E.g. the cache was cleared.
+    assert show()[0] == "Showing previous data"
+    # Metadata the panel cannot make sense of is shown as zero or left out, never raised.
+    rows: dict[str, tuple[str, str]] = {}
+    FolderDetailsPanel._data_rows(browser, {"rows": None, "bytes": "x", "loaded_at": 1e30, "files": float("nan"),
+                                            "load_seconds": "slow", "problematic": "1, 2"}, rows, False, False)
+    assert rows["data"][0] == "0 data rows · 0B in RAM"
+    assert rows["files"][0] == "0 TXY found · 0 loaded"
+    assert "loaded" not in rows and "errors" not in rows
+    # A check answered without reading files has no load time; it says it found no change.
+    FolderDetailsPanel._data_rows(browser, {"loaded_at": time.time(), "unchanged": True}, rows, False, False)
+    assert rows["loaded"][0].endswith("just now · checked, unchanged")
+
+
 @pytest.mark.parametrize("known_counts", [False, True])
-def test_scan_states_agree_in_summary_and_central_message(
+def test_scan_states_agree_in_summary_and_folder_details(
     browser: FolderExplorer, qtbot: QtBot, tmp_path: Path, known_counts: bool,
 ) -> None:
     path = str(tmp_path)
@@ -115,13 +200,15 @@ def test_scan_states_agree_in_summary_and_central_message(
     request = request_for(browser.model.cache, path, operation)
     window: Any = SimpleNamespace(
         _closing=False, tab_widget=SimpleNamespace(currentWidget=lambda: browser),
-        central_placeholder=QLabel(browser), dock_widgets=[])
+        central_placeholder=CentralHint(parent=browser), folder_details=FolderDetailsPanel(browser),
+        dock_widgets=[])
 
     def assert_message(message: str) -> None:
         browser._update_activity()
-        HelabMainWindow._central_placeholder_loading_indicator(window)
+        HelabMainWindow._update_folder_details(window)
         assert browser.folder_summary_label.text().endswith(message)
-        assert window.central_placeholder.text().endswith(message)
+        assert window.folder_details.text("state") == message
+        assert window.central_placeholder.text() == "Select a data folder to begin"
 
     assert_message("Scan queued")
     browser.model.service.resultReady.emit(request, {"kind": "started"})

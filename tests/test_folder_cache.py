@@ -22,6 +22,8 @@ from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderExplorer import FolderExplorer
+from helab.views.CentralHint import CentralHint
+from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HelabMainWindow import HelabMainWindow
 from helab.io_helper import list_folder, load, scan
 from helab.resources.icons import IconsInitUtil, StatusIcons
@@ -156,9 +158,12 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     tabs = QTabWidget()
     qtbot.addWidget(tabs)
     tabs.addTab(first, "First")
-    # Exercise the central message with real widgets, without creating native
-    # settings, a watchdog, or a full main window and its startup jobs.
-    window: Any = SimpleNamespace(_closing=False, tab_widget=tabs, central_placeholder=QLabel(tabs), dock_widgets=[])
+    # Exercise Folder details and the plot-area hint with real widgets, without creating
+    # native settings, a watchdog, or a full main window and its startup jobs.
+    window: Any = SimpleNamespace(_closing=False, tab_widget=tabs, central_placeholder=CentralHint(parent=tabs),
+                                  folder_details=FolderDetailsPanel(tabs), dock_widgets=[])
+    now = [100.0]
+    monkeypatch.setattr("helab.utils.load_clock.monotonic", lambda: now[0])
     qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
     finish_scan(cache, path)
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
@@ -170,9 +175,11 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     assert first.activity_text == ""  # The selected load is described by the summary.
     assert service.activity_summary() == "1 operation queued"
     assert first.loading_tooltip == f"Queued\n\nQueued folders (next first):\nLoad data: {path}"
-    HelabMainWindow._central_placeholder_loading_indicator(window)
-    assert window.central_placeholder.text() == f"{tmp_path.name}\nQueued"
-    assert window.central_placeholder.toolTip() == first.loading_tooltip
+    HelabMainWindow._update_folder_details(window)
+    assert window.folder_details.text("state") == "Queued"
+    assert window.folder_details.text("time") == ""  # Queued time is not running time.
+    assert window.central_placeholder.text() == f"Queued {tmp_path.name}…"
+    assert window.central_placeholder.hint.toolTip() == first.loading_tooltip
     service.pending.remove(request)
     service.resultReady.emit(request, {"kind": "started"})
     assert first.loading_message == "Preparing…"
@@ -181,25 +188,28 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     message = "123 of 456 files checked (27%) · 123 loaded"
     assert first.loading_message == message
     assert first.folder_summary_label.text() == f"456 TXY found · {message}"
-    assert first.loading_tooltip == message
+    assert first.loading_tooltip == f"{message}\n0:00 elapsed"
     HelabMainWindow.update_status_bar_left(status)
-    assert status.status_bar_message_left.text() == "Ready"  # The fake service runs nothing.
+    # This tab's load in short; the fake service runs nothing.
+    assert status.status_bar_message_left.text() == f"Loading {tmp_path.name} · 27% · 0:00  │  Ready"
     assert not status.status_bar_progress.isHidden()
     assert status.status_bar_progress.value() == 27
-    assert status.status_bar_progress.toolTip() == message
-    HelabMainWindow._central_placeholder_loading_indicator(window)
-    assert window.central_placeholder.text().endswith(f"Loading {tmp_path.name}\n{message}")
-    assert window.central_placeholder.toolTip() == message
+    assert status.status_bar_progress.toolTip() == f"{message}\n0:00 elapsed"
+    HelabMainWindow._update_folder_details(window)
+    assert window.folder_details.text("state") == "Loading"
+    assert window.folder_details.text("files") == message
+    assert window.folder_details.text("time") == "0:00 elapsed"
+    assert window.central_placeholder.text() == f"Loading {tmp_path.name}…"
     second = explorer_for_test(qtbot, path)
     qtbot.waitUntil(lambda: second.loading)
     assert second.loading_message == message  # Join an already-running shared load.
     other = str(tmp_path / "other")
     cache.submit("tab-c", 0, other, "load")
     first._update_activity()
-    assert first.loading_tooltip == f"{message}\n\nQueued folders (next first):\nLoad data: {other}"
+    assert first.loading_tooltip == f"{message}\n0:00 elapsed\n\nQueued folders (next first):\nLoad data: {other}"
     cache.cancel("tab-c")
     first._update_activity()
-    assert first.loading_tooltip == message
+    assert first.loading_tooltip == f"{message}\n0:00 elapsed"
     service.resultReady.emit(request, {"kind": "queued", "retry": True, "attempt": 2})
     for explorer in (first, second):
         assert explorer.loading and not explorer.load_error
@@ -234,14 +244,89 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     fourth = explorer_for_test(qtbot, path)
     qtbot.waitUntil(lambda: fourth.loading)
     assert fourth.loading_message == first.loading_message
-    HelabMainWindow._central_placeholder_loading_indicator(window)
-    assert "Verifying files… 2" in window.central_placeholder.text()
+    HelabMainWindow._update_folder_details(window)
+    assert window.folder_details.text("state") == "Loading · Verifying files… 2"
     service.resultReady.emit(request, {"kind": "paused"})
-    HelabMainWindow._central_placeholder_loading_indicator(window)
-    assert window.central_placeholder.text().startswith(f"Loading paused: {tmp_path.name}\n")
-    assert window.central_placeholder.text().endswith(" · Paused")
+    HelabMainWindow._update_folder_details(window)
+    assert window.folder_details.text("state") == "Paused · Verifying files… 2"
+    assert window.central_placeholder.text() == f"Loading paused: {tmp_path.name}…"
     third.close_cleanup()
     fourth.close_cleanup()
+    first.close_cleanup()
+    second.close_cleanup()
+    service.shutdown()
+
+
+def test_load_time_excludes_pauses_is_shared_and_estimates_time_left(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = service_for_test(monkeypatch)
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    now = [100.0]
+    monkeypatch.setattr("helab.utils.load_clock.monotonic", lambda: now[0])
+    cache, path, name = get_folder_cache(service), str(tmp_path), tmp_path.name
+    first = explorer_for_test(qtbot, path)
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    finish_scan(cache, path)
+    qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
+    request = producer(cache, path, "load")
+    assert first.loading_timing_message == ""
+    now[0] = 130.0  # Queued time is not running time.
+    service.resultReady.emit(request, {"kind": "started"})
+
+    def progress(read: int, checked: int) -> None:
+        service.resultReady.emit(request, {
+            "kind": "progress", "progress": checked / 100, "checked_files": checked, "loaded_files": checked,
+            "total_files": 100, "failed_files": 0, "read_bytes": read, "read_files": checked,
+            "total_read_bytes": 100_000_000})
+
+    progress(0, 0)
+    now[0] = 131.0
+    progress(10_000_000, 10)
+    assert first.loading_timing_message == "0:01 elapsed · estimating…"
+    assert first.activity_brief == f"Loading {name} · 10% · 0:01"
+    now[0] = 132.0
+    progress(20_000_000, 20)
+    assert first.loading_timing_message == "0:02 elapsed · ~0:08 left"
+    assert first.loading_rate_message == "10.0 MB/s · 10 files/s"
+    assert first.activity_brief == f"Loading {name} · 20% · ~0:08 left"
+    # Paused time is not counted, and a paused load shows no estimate.
+    service.resultReady.emit(request, {"kind": "paused"})
+    now[0] = 200.0
+    assert first.loading_timing_message == "0:02 elapsed"
+    assert first.loading_rate_message == ""
+    assert first.activity_brief == f"Paused {name} · 20%"
+    service.resultReady.emit(request, {"kind": "resumed"})
+    now[0] = 201.0
+    # A tab joining the running load shows the same running time and estimate.
+    second = explorer_for_test(qtbot, path)
+    qtbot.waitUntil(lambda: second.loading)
+    assert first.loading_timing_message == "0:03 elapsed · ~0:07 left"
+    assert second.loading_timing_message == first.loading_timing_message
+    # A read with no progress for over 5 s has no estimate: it would count down while stuck.
+    now[0] = 208.0
+    assert first.loading_timing_message == "0:10 elapsed · no progress for 0:08"
+    assert first.activity_brief == f"Loading {name} · 20% · 0:10"
+    now[0] = 201.0
+    # A retry keeps the running time; its rate is measured afresh.
+    service.resultReady.emit(request, {"kind": "queued", "retry": True, "attempt": 2})
+    now[0] = 260.0
+    service.resultReady.emit(request, {"kind": "started", "attempt": 2})
+    assert first.loading_timing_message == "0:03 elapsed"
+    now[0] = 262.0
+    progress(100_000_000, 100)
+    assert first.loading_timing_message == "0:05 elapsed · finishing…"
+    finish_load(cache, path)
+    assert not first.loading and first.loading_timing_message == ""
+    assert first.displayed_dataset is not None
+    assert first.displayed_dataset.metadata["load_seconds"] == 5.0
+    panel = FolderDetailsPanel(first)
+    panel.show_explorer(first, service)
+    assert panel.text("state") == "Loaded"
+    assert panel.text("loaded").endswith(" · took 0:05")
+    assert panel.text("files") == "1 TXY found · 1 loaded"
+    assert panel.text("rate") == ""  # Only while reading.
+    assert panel.text("time") == "" and panel.text("io") == "Ready"
     first.close_cleanup()
     second.close_cleanup()
     service.shutdown()
@@ -268,8 +353,8 @@ def test_queue_tooltip_covers_scans_loads_and_navigation_across_tabs_when_idle(
     HelabMainWindow.update_status_bar_left(status)
     expected = (f"Queued folders (next first):\nLoad data: {data}\nBrowse folder: {browse}"
                 f"\nCheck folder status: {bulk}")
-    assert status.status_bar_message_left.text() == "3 operations queued"
-    assert status.status_bar_message_left.toolTip() == expected
+    assert status.status_bar_message_left.text() == "3 queued"
+    assert status.status_bar_message_left.toolTip() == f"3 operations queued\n\n{expected}"
     assert first.loading_tooltip == expected
     assert expected in first.folder_summary_label.toolTip()
     # The pending list is global and deduplicated despite multiple subscribers.
@@ -319,8 +404,9 @@ def test_queue_explains_waiting_for_timed_out_operation_to_stop(
     window = status_window(explorer, explorer)
     global_label = window.status_bar_message_left
     HelabMainWindow.update_status_bar_left(window)
-    assert global_label.text() == "Waiting for timed-out folder listing to stop (42 s)"
-    assert global_label.toolTip() == tooltip
+    # The held retry waits for the stopping helper; it is not counted as queued.
+    assert global_label.text() == "1 stopping (42 s)"
+    assert global_label.toolTip() == f"Waiting for timed-out folder listing to stop (42 s)\n\n{tooltip}"
     assert window.status_bar_progress.isHidden()
     service.messages.put((old, {"kind": "exit"}))
     service._tick()
@@ -330,11 +416,11 @@ def test_queue_explains_waiting_for_timed_out_operation_to_stop(
     writer = IORequest("writer", 0, path, "load", {}, 120.0, completed=True)
     service.active.append(writer)
     HelabMainWindow.update_status_bar_left(window)
-    assert "Saving" not in global_label.text() and "Loading" not in global_label.text()
+    assert global_label.text() == "1 queued"  # The listing requested again.
     cache._disk_cache_writers.add("writer")
     HelabMainWindow.update_status_bar_left(window)
-    assert "Saving 1 data cache" in global_label.text() and "Loading" not in global_label.text()
-    assert "stopping" not in global_label.text()
+    assert global_label.text() == "1 running · 1 queued"
+    assert "Saving 1 data cache" in global_label.toolTip() and "Loading" not in global_label.toolTip()
     cache._disk_cache_writers.discard("writer")
     explorer.close_cleanup()
     service.shutdown()

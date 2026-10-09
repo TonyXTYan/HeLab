@@ -431,10 +431,37 @@ class IOService(QObject):
             self.stopping_summary(),
             f"{counted(queued, 'operation')} queued" if queued else ""))) or "Ready"
 
+    def running_requests(self) -> list[IORequest]:
+        """Helpers doing work now: not paused, and either unfinished or a finished load writing its cache."""
+        writing = self.folder_cache.writing_disk_cache if self.folder_cache else (lambda owner: False)
+        return [r for r in self.active
+                if not r.paused and (not r.completed or self.finishing(r) and writing(r.owner))]
+
+    def activity_counts(self) -> str:
+        """Short app-wide status-bar phrase: counts only; ``queue_tooltip`` lists each one."""
+        running = len(self.running_requests())
+        paused = sum(r.paused and not r.completed for r in self.active)
+        parts = [f"{count:,} {label}" for count, label in (
+            # A retry held until its previous helper exits is counted under stopping.
+            (running, "running"), (paused, "paused"), (len(self.pending) - len(self.held_requests()), "queued"))
+            if count]
+        if self.retired:
+            now = time.monotonic()
+            ages = [age for r in self.retired if (age := self.stopping_for(r, now)) is not None]
+            parts.append(f"{len(self.retired):,} stopping" + (f" ({duration(max(ages))})" if ages else ""))
+        return " · ".join(parts) or "Ready"
+
+    LANE_NOTES = {FOREGROUND: " (current tab)", BACKGROUND: " (background)", LOCAL: " (local disk cache)"}
+
     def queue_tooltip(self) -> str:
         """Shared queue and termination details without querying the filesystem."""
         parts: list[str] = []
         now = time.monotonic()
+        # The same helpers as the status bar's "N running", so the count can be traced.
+        running = [f"{self.label(r)}: {r.path} · {duration(now - r.started)}"
+                   f"{self.LANE_NOTES.get(r.lane, '')}" for r in self.running_requests()]
+        if running:
+            parts.append("Running:\n" + "\n".join(running))
         if self.retired:
             parts.append("Stopping operations:\n" + "\n".join(self._stopping_row(r, now) for r in self.retired))
             notes: list[str] = []

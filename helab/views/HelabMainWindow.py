@@ -38,7 +38,9 @@ from helab.utils.constants import *
 from helab.utils.os_cached import *
 from helab.utils.caching_setup import *
 from helab.utils.threading_setup import *
+from helab.views.CentralHint import CentralHint
 from helab.views.ElidedLabel import ElidedLabel
+from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HoverMenuToolButton import HoverMenuToolButton
 from helab.views.FolderExplorer import FolderExplorer, paint_spinner
 from helab.views.FolderTabWidget import FolderTabWidget
@@ -163,16 +165,23 @@ class HelabMainWindow(QMainWindow):
         service = get_io_service()
         current = self.tab_widget.currentWidget()
         explorer = current if isinstance(current, FolderExplorer) else None
-        tab = explorer.activity_text if explorer else ""
-        app = service.activity_summary()
+        # Short: this tab's main activity and app-wide counts; Folder details and the tooltip have the rest.
+        tab = explorer.activity_brief if explorer else ""
+        app = service.activity_counts()
         self.status_bar_message_left.setText(f"{tab}  │  {app}" if tab else app)
+        # A load's tooltip already lists the queue and this tab's background loads.
+        loading = bool(explorer and explorer.loading)
+        summary = service.activity_summary()
         self.status_bar_message_left.setToolTip("\n\n".join(filter(None, (
-            explorer.activity_tooltip if explorer else "", service.queue_tooltip()))))
+            explorer.loading_tooltip if explorer and loading else "",
+            explorer.activity_text if explorer else "",
+            explorer.activity_tooltip if explorer and not loading else "",
+            "" if summary == "Ready" else summary,
+            "" if loading else service.queue_tooltip()))))
         busy = bool(explorer and explorer.activity_busy or service.active or service.pending or service.retired)
         self.status_bar_spinner_angle = (self.status_bar_spinner_angle + 30) % 360 if busy else 0
         self.status_bar_spinner.setPixmap(self._spinner_pixmap() if busy else QPixmap())
         # The selected load's progress; its counts are in the explorer's summary.
-        loading = bool(explorer and explorer.loading)
         self.status_bar_progress.setVisible(loading)
         if explorer and loading:
             if explorer.load_progress is None:
@@ -206,9 +215,11 @@ class HelabMainWindow(QMainWindow):
         ram_usage_app_gb = ram_usage_app / (1024 ** 3)
         ram_usage_total_gb = ram_usage_total / (1024 ** 3)
 
-        # Update the status bar message
-        self.status_bar_message_right.setText(
-            f"CPU {cpu_usage_app:.1f}% / {cpu_usage_total:.1f}%   RAM {ram_usage_app_gb:.1f}GB / {ram_usage_total_gb:.1f}GB")
+        # HeLab's own use; the system totals are in the tooltip.
+        self.status_bar_message_right.setText(f"CPU {cpu_usage_app:.0f}% · RAM {ram_usage_app_gb:.1f} GB")
+        self.status_bar_message_right.setToolTip(
+            f"HeLab: CPU {cpu_usage_app:.1f}% · RAM {ram_usage_app_gb:.2f} GB\n"
+            f"System: CPU {cpu_usage_total:.1f}% (summed over cores) · RAM {ram_usage_total_gb:.1f} GB used")
 
         # self.status_bar_message_right.setToolTip("(App resource usage) / (system total resource usage)")
 
@@ -496,7 +507,7 @@ class HelabMainWindow(QMainWindow):
         self.left_panel_width = 700  # Store the width of the left panel
         left_layout = QVBoxLayout(self.left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        # Create a splitter to hold the tab_widget and panel_left_bottom
+        # Create a splitter to hold the tab_widget and folder_details
         self.left_splitter = QSplitter(Qt.Orientation.Vertical)
         left_layout.addWidget(self.left_splitter)
         self.left_panel.setLayout(left_layout)
@@ -631,25 +642,17 @@ class HelabMainWindow(QMainWindow):
         self.sidebar_toolbar_left.addSeparator()
 
         # Add a button to the bottom of sidebar_toolbar_left
-        self.toggle_panel_left_bottom_action = QAction(ToolIcons.ICON_BOTTOM_EXPAND, "Toggle Panel", self)
-        self.toggle_panel_left_bottom_action.setCheckable(True)
-        self.toggle_panel_left_bottom_action.setChecked(True)
-        self.sidebar_toolbar_left.addAction(self.toggle_panel_left_bottom_action)
-        self.toggle_panel_left_bottom_action.triggered.connect(self.toggle_left_bottom_panel)
+        self.toggle_folder_details_action = QAction(ToolIcons.ICON_BOTTOM_EXPAND, "Toggle Folder Details", self)
+        self.toggle_folder_details_action.setCheckable(True)
+        self.toggle_folder_details_action.setChecked(True)
+        self.sidebar_toolbar_left.addAction(self.toggle_folder_details_action)
+        self.toggle_folder_details_action.triggered.connect(self.toggle_folder_details)
 
-        # Create a panel below the tab_widget
-        self.panel_left_bottom = QWidget()
-        self.panel_layout_left_bottom = QVBoxLayout(self.panel_left_bottom)
-        self.panel_layout_left_bottom.setContentsMargins(0, 0, 0, 0)
-        self.panel_label_left_bottom = QLabel("Left Bottom Placeholder\n"+"Folder grouping and statistics (?)")
-        self.panel_label_left_bottom.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.panel_layout_left_bottom.addWidget(self.panel_label_left_bottom)
-        self.panel_left_bottom.setVisible(True)
-
-        # Add the bottom panel to the left_layout
-        # left_layout.addWidget(self.panel_left_bottom)
-        self.left_splitter.addWidget(self.panel_left_bottom)
-        self.left_splitter.setSizes([400, 100])
+        # Folder details below the tab_widget: the current tab's selected folder, load and I/O.
+        self.folder_details = FolderDetailsPanel()
+        self.folder_details.setVisible(True)
+        self.left_splitter.addWidget(self.folder_details)
+        self.left_splitter.setSizes([400, 170])  # Room for a load's Folder details rows.
         self.splitter.addWidget(self.left_panel)
 
     def _setup_right_side(self) -> None:
@@ -701,14 +704,14 @@ class HelabMainWindow(QMainWindow):
     def _setup_middle_area(self) -> None:
         self.middle_mainwindow = QMainWindow()
         # Set a central widget for the middle main window
-        self.central_placeholder = QLabel("Select a data folder to begin")
-        self.central_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Load details are in Folder details; the plot area keeps a short hint.
+        self.central_placeholder = CentralHint("Select a data folder to begin")
         self.middle_mainwindow.setCentralWidget(self.central_placeholder)
         self.dock_widgets: List[QDockWidget] = []
 
 
         self.central_placeholder_timer = QTimer(self)
-        self.central_placeholder_timer.timeout.connect(self._central_placeholder_loading_indicator)
+        self.central_placeholder_timer.timeout.connect(self._update_folder_details)
         self.central_placeholder_timer.start(self.INTERVAL_UPDATE_CENTRAL_LOADING_INDICATOR)
         self.current_tracking_folder_path_is_loading: Optional[bool] = None
         """ True is loading, False is loaded, None is not loadable"""
@@ -724,8 +727,7 @@ class HelabMainWindow(QMainWindow):
         # Middle area (main content area)
         self.middle_mainwindow = QMainWindow()
         # Set a central widget for the middle main window
-        self.central_placeholder = QLabel("Main Content Area")
-        self.central_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.central_placeholder = CentralHint("Main Content Area")
         self.middle_mainwindow.setCentralWidget(self.central_placeholder)
         self.dock_widgets = []
 
@@ -933,19 +935,19 @@ class HelabMainWindow(QMainWindow):
 
 
         # Update the bottom panel icon based on its visibility and the state of the left panel
-        # if self.panel_left_bottom.isVisible():
-        #     self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
+        # if self.folder_details.isVisible():
+        #     self.toggle_folder_details_action.setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
         # else:
         if self.splitter.sizes()[0] == 0:  # Check if the left panel is hidden
-            self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_INACTIVE)
-            self.toggle_panel_left_bottom_action.setChecked(False)
+            self.toggle_folder_details_action.setIcon(ToolIcons.ICON_BOTTOM_INACTIVE)
+            self.toggle_folder_details_action.setChecked(False)
         else:
-            if self.panel_left_bottom.isVisible():
-                self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
-                self.toggle_panel_left_bottom_action.setChecked(True)
+            if self.folder_details.isVisible():
+                self.toggle_folder_details_action.setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
+                self.toggle_folder_details_action.setChecked(True)
             else:
-                self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
-                self.toggle_panel_left_bottom_action.setChecked(False)
+                self.toggle_folder_details_action.setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
+                self.toggle_folder_details_action.setChecked(False)
 
     def on_splitter_moved(self, pos: int, index: int) -> None:
         # Update the left panel width when the splitter is moved
@@ -956,31 +958,32 @@ class HelabMainWindow(QMainWindow):
         if self.splitter.sizes()[0] == 0:  # Check if the left panel is hidden
             self.toggle_left_panel_action.setIcon(ToolIcons.ICON_LEFT_EXPAND)
             self.toggle_left_panel_action.setChecked(False)
-            self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_INACTIVE)
-            self.toggle_panel_left_bottom_action.setChecked(False)
+            self.toggle_folder_details_action.setIcon(ToolIcons.ICON_BOTTOM_INACTIVE)
+            self.toggle_folder_details_action.setChecked(False)
             self.view_toggle_left_panel.setChecked(False)
         else:
             self.toggle_left_panel_action.setIcon(ToolIcons.ICON_LEFT_COLLAPSE)
             self.toggle_left_panel_action.setChecked(True)
             self.view_toggle_left_panel.setChecked(True)
-            if self.panel_left_bottom.isVisible():
-                self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
-                self.toggle_panel_left_bottom_action.setChecked(True)
+            if self.folder_details.isVisible():
+                self.toggle_folder_details_action.setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
+                self.toggle_folder_details_action.setChecked(True)
             else:
-                self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
-                self.toggle_panel_left_bottom_action.setChecked(False)
+                self.toggle_folder_details_action.setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
+                self.toggle_folder_details_action.setChecked(False)
 
-    def toggle_left_bottom_panel(self, checked: bool) -> None:
+    def toggle_folder_details(self, checked: bool) -> None:
         if checked:
-            self.panel_left_bottom.setVisible(True)
-            self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
+            self.folder_details.setVisible(True)
+            self._update_folder_details()  # Skipped while hidden, so it may be stale.
+            self.toggle_folder_details_action.setIcon(ToolIcons.ICON_BOTTOM_COLLAPSE)
 
         else:
-            self.panel_left_bottom.setVisible(False)
+            self.folder_details.setVisible(False)
             if self.splitter.sizes()[0] == 0:  # Check if the left panel is hidden
-                self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_INACTIVE)
+                self.toggle_folder_details_action.setIcon(ToolIcons.ICON_BOTTOM_INACTIVE)
             else:
-                self.toggle_panel_left_bottom_action.setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
+                self.toggle_folder_details_action.setIcon(ToolIcons.ICON_BOTTOM_EXPAND)
 
     # def enterEvent(self, a0):
     #     # Display the tooltip immediately when mouse enters the widget area
@@ -1050,7 +1053,7 @@ class HelabMainWindow(QMainWindow):
             self.setWindowTitle(f"HeLab — {os.path.basename(path.rstrip(os.sep)) or path}")
         if self.view_toggle_auto_load_ram.isChecked():
             explorer.load_to_ram_cache(path)
-        self._central_placeholder_loading_indicator()
+        self._update_folder_details()
 
     def load_folder_to_ram(self, current_folder_explorer: FolderExplorer, file_info: QFileInfo) -> None:
         current_folder_explorer.load_to_ram_cache(file_info.absoluteFilePath())
@@ -1058,36 +1061,52 @@ class HelabMainWindow(QMainWindow):
     def _snapshot_data_loaded(self, explorer: FolderExplorer, path: str) -> None:
         if self.tab_widget.currentWidget() is explorer and path == explorer.selected_path_globally:
             self.current_tracking_folder_path_is_loading = False
-            self.central_placeholder.setText(f"Loaded {os.path.basename(path)}\n{fnum(explorer.load_bytes)}B")
+            self._update_folder_details()
             self.update_placeholder_visibility()
 
-    def _central_placeholder_loading_indicator(self) -> None:
+    def _update_folder_details(self) -> None:
+        """Folder details, the plot area's hint and the plot docks' source labels (memory only)."""
         if self._closing:
             return
-        explorer = self.tab_widget.currentWidget()
-        if not isinstance(explorer, FolderExplorer):
+        current = self.tab_widget.currentWidget()
+        explorer = current if isinstance(current, FolderExplorer) else None
+        if not self.folder_details.isHidden():
+            self.folder_details.show_explorer(explorer, explorer.model.service if explorer else None)
+        if explorer is None:
+            self.central_placeholder.set_hint("Select a data folder to begin")
             return
         for dock in self.dock_widgets:
             HelabMainWindow._update_plot_source_label(dock, explorer)
         self.current_tracking_folder_path_is_loading = explorer.loading
-        name = os.path.basename(explorer.selected_path_globally)
-        self.central_placeholder.setToolTip(explorer.loading_tooltip if explorer.loading else "")
-        if explorer.loading:
-            frame = INDICATOR_DOTS[int(time.monotonic() * 10) % len(INDICATOR_DOTS)]
-            title = (name if explorer.load_queued else f"Loading paused: {name}" if explorer.load_paused
-                     else f"{frame} Loading {name}")
-            self.central_placeholder.setText(f"{title}\n{explorer.loading_message}")
-        elif explorer.load_error:
-            self.central_placeholder.setText(f"{name}\n{explorer.load_error}")
-        elif explorer.load_waiting:
-            self.central_placeholder.setText(
-                f"{name}\nQueues if still selected after {explorer.DWELL_MS // 1000} s")
-        elif explorer.folder_opened_path == explorer.selected_path_globally:
-            self.central_placeholder.setText(f"Loaded {name}\n{fnum(explorer.load_bytes)}B")
-        else:
-            node = explorer.model.nodes.get(explorer.selected_path_globally)
-            state = node.error if node and node.error else explorer.scan_message or "Select a data folder"
-            self.central_placeholder.setText(f"{name}\n{state}")
+        self.central_placeholder.set_hint(*HelabMainWindow.central_hint(explorer))
+
+    @staticmethod
+    def central_hint(explorer: FolderExplorer) -> tuple[str, str]:
+        """One line for the plot area; the details are in Folder details."""
+        path = explorer.selected_path_globally
+        name = os.path.basename(path.rstrip(os.sep)) or path
+        dataset = explorer.displayed_dataset
+        shown = dataset is not None and dataset.path == path
+        if explorer.loading and explorer.load_path == path:
+            text = (f"Queued {name}…" if explorer.load_queued else
+                    f"{'Check' if explorer.load_is_check else 'Loading'} paused: {name}…" if explorer.load_paused else
+                    f"Checking {name} for changes…" if explorer.load_is_check else f"Loading {name}…")
+            return text, explorer.loading_tooltip
+        if explorer.load_error:
+            verb = "check" if explorer.shows_unchecked(path) else "load"
+            return f"Could not {verb} {name} — see Folder details", explorer.load_error
+        if explorer.load_waiting:
+            return f"Waiting to load {name}…", ""
+        if explorer.folder_opened_path == path:
+            return f"Loaded {name} — run a script to plot it", ""
+        if shown:
+            return f"Showing previous data for {name} — see Folder details", ""
+        node = explorer.model.nodes.get(path)
+        if node is not None and node.report is not None and not node.error and not explorer.scan_message:
+            if node.txy_count or node.report.d_txy_shots:
+                return f"{name} is not loaded — right-click it › Load data", ""
+            return f"No TXY files in {name} — select a data folder", ""
+        return "Select a data folder to begin", ""
 
     def add_new_folder_explorer_tab(self,
                                     model_root_path: str|None = None,
@@ -1114,7 +1133,7 @@ class HelabMainWindow(QMainWindow):
             logging.debug(f"add_new_folder_explorer_tab: {current_folder_explorer.selected_path_globally = }")
             current_folder_explorer.selectionPathChanged.connect(
                 lambda _, fe=current_folder_explorer: self.on_folder_explorer_selection_changed(QItemSelection(), fe))
-            current_folder_explorer.loadStateChanged.connect(self._central_placeholder_loading_indicator)
+            current_folder_explorer.loadStateChanged.connect(self._update_folder_details)
             current_folder_explorer.loadStateChanged.connect(self._update_cancel_loading_action)
             current_folder_explorer.dataLoaded.connect(
                 lambda p, fe=current_folder_explorer: self._snapshot_data_loaded(fe, p))

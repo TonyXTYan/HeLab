@@ -664,10 +664,16 @@ def test_load_progress_counts_cached_files_and_reports_unreadable_files(
     expected_files = [str(source / f"d_txy_forc{shot}.txt") for shot in (1, 2)]
     assert [event["filename"] for event in events if event["kind"] == "file_started"] == expected_files
     assert [event["filename"] for event in events if event["kind"] == "file_finished"] == expected_files
+    # The time estimate counts only bytes actually read: none from the cache, the unheld file from memory.
+    to_read = {"files": info.st_size + (source / "d_txy_forc2.txt").stat().st_size, "disk": 0,
+               "memory": (source / "d_txy_forc2.txt").stat().st_size}[reuse]
+    read_files = {"files": 2, "disk": 0, "memory": 1}[reuse]
     assert progress[0] == {"kind": "progress", "progress": 0.0, "checked_files": 0, "loaded_files": 0,
-                           "total_files": 2, "failed_files": 0, "unsettled_files": 0}
+                           "total_files": 2, "failed_files": 0, "unsettled_files": 0,
+                           "read_bytes": 0, "read_files": 0, "total_read_bytes": to_read}
     assert progress[-1] == {"kind": "progress", "progress": 1.0, "checked_files": 2, "loaded_files": 1,
-                            "total_files": 2, "failed_files": 1, "unsettled_files": 0}
+                            "total_files": 2, "failed_files": 1, "unsettled_files": 0,
+                            "read_bytes": to_read, "read_files": read_files, "total_read_bytes": to_read}
     loaded = next(event for event in events if event["kind"] == "loaded")
     assert loaded["files"] == 1
     assert loaded["problematic"] == [2]
