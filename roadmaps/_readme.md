@@ -23,6 +23,12 @@ How to use it:
   Cache tab. Eleven sessions S1–S11
   ([plan](cache-storage-and-settings.md#sessions)) (2026-10-10).
 
+- [ ] App version and build info, **after the cache rebuild**: one version source inside
+  the package, commit and build date written at build time (the app now reads `setup.py`
+  from the working directory, so packaged builds likely show `0.0.0`), tags created on
+  release (`v0.0.4a` is still an untagged draft), PEP 440 versions
+  ([plan](app-versioning.md)) (2026-10-10).
+
 - [ ] Finish the status-message audit: verify load-phase labels for `merged`/
   `updated` sources ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#status-messages)) (2026-10-08).
 

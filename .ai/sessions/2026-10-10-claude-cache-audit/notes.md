@@ -183,3 +183,76 @@ Further decisions the same day:
 - Every load starts with a basic scan: the load's own listing-and-stat phase (already saved as
   the folder summary) provides the size before any file is read, rather than a separate scan
   helper listing the folder twice.
+
+## Plan review (Codex, 2026-10-10)
+
+Six findings on the plan; all accepted and written in:
+1. **[P1] Session order.** S3 would have deleted `caching_setup.py` while the current browser
+   and Settings still used it. It now stays until S5.
+2. **[P1] Move crash window.** Added a `cache-move.json` record and startup recovery for rename
+   and copy.
+3. **[P1] Cached data skipped the large-folder guard.** The guard now also runs before
+   `cached` reads.
+4. **[P2] Reader lifetime.** Replaced files are retired and deleted after a grace period;
+   readers re-read once.
+5. **[P2] Purge/trim invalidation.** One removal function with per-folder epochs, `removed`
+   events and `FolderCache.removed()`.
+6. **[P1] Network locations.** Network and synced folders are refused, including at startup.
+
+Second round, same day (Codex re-checked the revisions). Three more gaps, all accepted:
+- **[P1]** The move recovery table missed states. Recovery now checks which folder holds the
+  store (`store_id`) and uses the recorded step only for copies; every action is idempotent,
+  and crashes are injected around every write.
+- **[P1]** Per-folder epochs lived only in dataset rows, which removals delete. Added a durable
+  `folder_epochs` table, read when each writing job starts.
+- **[P2]** Deferred deletion vs Make room. The budget counts live data only (retired files are
+  shown as "freeing"). An over-budget save becomes a `pending_saves` entry, which `make_room`
+  adopts in the same transaction as the trim; no helper waits.
+
+Third round (Codex):
+- **[P2]** The sweep ran only at startup and once after. It is now scheduled by deadline from
+  `FolderCache`.
+- **[P1]** Make room could invalidate its own update. It now validates first, never evicts the
+  target, and uses the fit rule: live − the target's old bytes + pending bytes.
+- **[P2]** Adoption renamed a file. The final file name is now published before the pending row
+  is registered, so adoption only changes rows.
+- Wording reconciled: the budget counts live data, and clear-by-kind bumps folder epochs (Clear
+  all bumps `generation`).
+
+Fourth round (Codex, asked by Tony "is it ready to execute?"): five findings and two details,
+all accepted.
+- **[P1]** Clear-by-kind missed a first save in flight: per-kind generations.
+- **[P1]** An older pending save could overwrite newer data: dataset `revision` compare-and-swap
+  and `pending_id`.
+- **[P1]** Move race with a starting instance: `cache.lock` and instance locks outside the
+  cache, WAL checkpoint and verifying the copy as a store, Cancel until verified.
+- **[P1]** The local-lane rule clashed with source helpers: the rule now applies to cache-only
+  jobs.
+- **[P2]** 80% approval: `pending_saves.reason = needs_approval`, and `adopt` rechecks the
+  current budget.
+- Details: the one-stat unchanged fast path is kept; S8 now depends on S7.
+
+Fifth round (Codex): two narrow gaps, accepted.
+- **[P1, S4]** Two jobs with the same base revision could stage pending saves out of order. A
+  per-folder `job_seq` (taken when a load starts, stored in `folder_epochs`) now orders dataset
+  writes and pending saves, replacing the revision compare-and-swap.
+- **[P1, S9]** Rollback is limited to before cutover. After it, HeLab keeps the destination and
+  finishes cleanup at the next start. Cutover requires `QSettings.sync()` and
+  `status() == NoError` before recording `setting_updated`.
+
+Codex: "S1–S3 can proceed."
+
+Sixth round (Codex): if the settings write fails after a same-disk rename, HeLab renames back.
+If that fails too, it keeps the destination and the move record and runs on the store that
+exists. Codex: "no further plan-level blockers to execution".
+
+"Is it overkill?" review (Codex, asked by Tony). Codex would keep the storage safeguards.
+Applied:
+- No promise to cache a second kind beside the first (datasets stay keyed by path), and no
+  loader framework yet.
+- Crash tests are bounded to meaningful transitions, not one case per copied file.
+- A note that the RAM budget bounds retained datasets, not total memory.
+
+Kept as Tony's decisions, flagged to him:
+- the live cache move (Codex: S9 is the largest optional cost and could be deferred whole)
+- the "I understand" checkbox (Codex: optional friction)
