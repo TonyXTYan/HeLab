@@ -22,7 +22,7 @@ How to use it:
 
 - [x] Folder details panel (replaces the left-bottom placeholder and the plot
   area's loading text), shorter status bar with its running helpers listed in
-  the tooltip, load elapsed time and time left (2026-10-10, commit pending).
+  the tooltip, load elapsed time and time left (2026-10-10, `3af4fea`).
 
 ## Known issues
 
