@@ -1,5 +1,6 @@
 # tests/conftest.py
 import os
+import sys
 import tempfile
 from typing import Iterator
 
@@ -35,17 +36,16 @@ os.environ["HELAB_DIR_CACHES_OVERRIDE"] = tempfile.mkdtemp(prefix=f"helab_test_c
 # them as still being written. Settling has its own tests.
 os.environ["HELAB_SETTLE_SECONDS"] = "0"
 
-from helab.utils.threading_setup import cancel_all_workers
 
 
 @pytest.fixture(autouse=True)
 def _cancel_leftover_workers() -> Iterator[None]:
     yield
-    # Tests that create HelabFileSystemModel/FolderExplorer/HelabMainWindow
-    # instances without going through a full closeEvent (e.g. a test that
-    # fails before its own teardown, or a widget never explicitly closed)
-    # can leave persistent QRunnables (HelabFSModelThrottleDataChangedEmit)
-    # looping in a shared QThreadPool. Those never return on their own, and
-    # PyQt's atexit QThreadPool cleanup then blocks forever waiting for them
-    # to finish, hanging the whole test process at interpreter shutdown.
-    cancel_all_workers()
+    # Only the old browser's tests import its worker pools. A test that leaves
+    # a persistent QRunnable (HelabFSModelThrottleDataChangedEmit) looping in a
+    # shared QThreadPool would otherwise hang interpreter shutdown, when PyQt's
+    # atexit cleanup waits for it. Importing the pools here would load the old
+    # browser into every test, so only already-loaded pools are cancelled.
+    threading_setup = sys.modules.get("helab.utils.threading_setup")
+    if threading_setup is not None:
+        threading_setup.cancel_all_workers()

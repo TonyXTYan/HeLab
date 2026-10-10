@@ -14,7 +14,7 @@ from mypyc.ir.rtypes import RUnion
 from helab.models.HelabFileSystemModel import HelabFileSystemModel
 from helab.utils.os_cached import OSCMgmt
 from helab.workers.StatusWorker import StatusWorker
-from helab.models.StatusReport import StatusReport
+from helab.models.LegacyStatusReport import StatusReport
 from helab.workers.StatusDeepWorker import StatusDeepWorker
 from helab.workers.DirectoryCheckWorker import DirectoryCheckWorker
 

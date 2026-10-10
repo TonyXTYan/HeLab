@@ -12,6 +12,7 @@ from PyQt6.QtCore import Qt, QThread, QModelIndex, QTimer, QObject, QDir
 from PyQt6.QtGui import QFileSystemModel, QColor
 
 from helab.utils.caching_setup import *
+from helab.utils.number_format import fnum
 from helab.utils.threading_setup import *
 from helab.utils.os_cached import *
 from helab.utils.constants import *
@@ -21,7 +22,7 @@ from helab.workers.StatusRescanWorker import StatusRescanWorker
 # from helab.utils.loggingSetup import setup_logging
 
 from helab.workers.StatusWorker import StatusWorker
-from helab.models.StatusReport import StatusReport
+from helab.models.LegacyStatusReport import StatusReport
 from helab.resources.icons import tablerIcon, StatusIcons, str_to_QIcon
 from helab.workers.HelabFSModelThrottleDataChangedEmit import HelabFSModelThrottleDataChangedEmit
 

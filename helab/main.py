@@ -37,9 +37,7 @@ from PyQt6.QtWidgets import QApplication
 
 from helab.resources.icons import StatusIcons, ToolIcons, IconsInitUtil
 from helab.utils.constants import *
-from helab.utils.caching_setup import *
 from helab.views.HelabMainWindow import HelabMainWindow
-from helab.utils.threading_setup import *
 
 
 def _raise_fd_limit(target: int = 10240) -> None:
@@ -75,8 +73,6 @@ def main() -> None:
     logging.info(f"Starting HeLab v{APP_VERSION} ({APP_COMMIT_HASH})")
 
     # font_db = QFontDatabase()
-
-    logging.debug(cache_status_string())
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")

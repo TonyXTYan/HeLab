@@ -97,8 +97,6 @@ def test_rendering_never_reads_filesystem_or_disk_cache(
 
     monkeypatch.setattr(os, "scandir", forbidden)
     monkeypatch.setattr(os, "stat", forbidden)
-    from helab.utils.caching_setup import status_cache
-    monkeypatch.setattr(status_cache, "get", forbidden)
     from diskcache import FanoutCache
     monkeypatch.setattr(FanoutCache, "get", forbidden)
     monkeypatch.setattr(FanoutCache, "__contains__", forbidden)

@@ -277,4 +277,4 @@ class StatusWorker(QRunnable):
         self._is_cancelled = True
 
 
-from helab.models.StatusReport import StatusReport
+from helab.models.LegacyStatusReport import StatusReport

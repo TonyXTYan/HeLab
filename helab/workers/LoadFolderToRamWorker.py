@@ -29,12 +29,13 @@ import pyarrow.parquet as pq
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QDir, QTimer, QThread
 
 from helab.resources.icons import PercentageIcon
-from helab.utils.caching_setup import data_ram_cache, fnum, status_cache
+from helab.utils.caching_setup import data_ram_cache, status_cache
+from helab.utils.number_format import fnum
 from helab.utils.threading_setup import running_workers_ramLoading, thread_pool_load_data_ram, \
     running_workers_ThrottleDataChangedEmits, emit_data_changed_signal
 from helab.workers.StatusRescanWorker import StatusRescanWorker
 from helab.workers.StatusWorker import StatusWorker
-from helab.models.StatusReport import StatusReport
+from helab.models.LegacyStatusReport import StatusReport
 from helab.models.HelabFileSystemModel import HelabFileSystemModel
 
 class LoadFolderToRamWorkerSignals(QObject):

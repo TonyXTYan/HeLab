@@ -11,6 +11,7 @@ from PyQt6.QtCore import QSettings, QUrl
 from diskcache import FanoutCache
 
 from helab.utils.caching_setup import *
+from helab.utils.number_format import fnum
 from helab.utils.constants import *
 
 

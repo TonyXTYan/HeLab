@@ -11,7 +11,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, Qt, QModelIndex
 from helab.utils.caching_setup import status_cache
 from helab.utils.threading_setup import all_pools_total_activeThreadCount
 from helab.workers.StatusWorker import StatusWorker
-from helab.models.StatusReport import StatusReport
+from helab.models.LegacyStatusReport import StatusReport
 
 if TYPE_CHECKING:
     from helab.models.HelabFileSystemModel import HelabFileSystemModel

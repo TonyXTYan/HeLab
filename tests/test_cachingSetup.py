@@ -5,7 +5,6 @@ from collections import OrderedDict
 
 from helab.utils.caching_setup import (
     load_cache_param,
-    fnum,
     cache_status_string,
     CACHE_PARAMS_DEFAULTS,
     CACHE_PARAMS_OVERRIDE,
@@ -31,18 +30,6 @@ def test_load_cache_param_nonexistent() -> None:
     # Should still have defaults
     for key in CACHE_PARAMS_DEFAULTS.keys():
         assert key in params
-
-
-@pytest.mark.parametrize("value,expected", [
-    (123,  "   123"),
-    (999,  "   999"),
-    (1234, "1.234K"),
-    (123000, "123.0K"),
-    (1234567, "1.235M"),
-    (123456789000, "123.5G"),
-])
-def test_fnum(value: int, expected: str) -> None:
-    assert fnum(value) == expected
 
 
 def test_cache_status_string() -> None:

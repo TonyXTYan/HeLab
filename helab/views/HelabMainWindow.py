@@ -30,14 +30,9 @@ from pyqtgraph.parametertree import ParameterTree, Parameter
 from typing_extensions import no_type_check
 
 from helab.models.ScriptTreeSelector import TreePanelWidget, ParamTreeTabWidget
-from helab.models.StatusReport import StatusReport
 from helab.resources.icons import ToolIcons
-from helab.utils.caching_setup import *
 from helab.utils.constants import *
-# from helab.utils.os_cached import , os_scandir_cache, os_isdir_cache, os_listdir, os_scandir, os_isdir, os_scandir_cache
-from helab.utils.os_cached import *
-from helab.utils.caching_setup import *
-from helab.utils.threading_setup import *
+from helab.utils.number_format import fnum
 from helab.views.CentralHint import CentralHint
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
@@ -47,7 +42,6 @@ from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
 from helab.views.SettingsDialog import SettingsDialog
 from helab.views.DebugIconsWindow import DebugIconsWindow
-from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
 
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 # sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
@@ -721,79 +715,6 @@ class HelabMainWindow(QMainWindow):
 
         self.update_placeholder_visibility()
 
-    def _setup_middle_area_deprecated(self) -> None:
-        logging.warning("_setup_middle_area_deprecated is deprecated. Use _setup_middle_area instead.")
-        warnings.warn("_setup_middle_area_deprecated is deprecated. Use _setup_middle_area instead.", DeprecationWarning)
-        # Middle area (main content area)
-        self.middle_mainwindow = QMainWindow()
-        # Set a central widget for the middle main window
-        self.central_placeholder = CentralHint("Main Content Area")
-        self.middle_mainwindow.setCentralWidget(self.central_placeholder)
-        self.dock_widgets = []
-
-        try:
-            from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density, fig_txy_3d, fig_shots_scan, fig_pulse_eff_fitted, fig_shots_transfer
-            self._setup_legacy_plotly_to_dock_widget(fig_txt_density, "fig_txt_density")
-            self._setup_legacy_plotly_to_dock_widget(fig_txy_3d, "fig_txy_3d")
-            self._setup_legacy_plotly_to_dock_widget(fig_shots_scan, "fig_shots_scan")
-            # self._setup_legacy_plotly_to_dock_widget(fig_shots_transfer, "fig_shots_transfer")
-            # self._setup_legacy_plotly_to_dock_widget(fig_pulse_eff_fitted, "fig_pulse_eff_fitted")
-        except Exception as e:
-            logging.error(f"Failed to load legacy_plotly.scattering_proj_monitori_dld: {e}")
-            # Add placeholder dock widgets to the middle main window
-            dock_widget1 = QDockWidget("Dock Widget 1", self)
-            dock_widget_placeholder_label_1 = QLabel("Content of Dock Widget 1")
-            dock_widget_placeholder_label_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            dock_widget1.setWidget(dock_widget_placeholder_label_1)
-            self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget1)
-            self.dock_widgets.append(dock_widget1)
-
-            dock_widget2 = QDockWidget("Dock Widget 2", self)
-            dock_widget_placeholder_label_2 = QLabel("Content of Dock Widget 2")
-            dock_widget_placeholder_label_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            dock_widget2.setWidget(dock_widget_placeholder_label_2)
-            self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget2)
-            self.dock_widgets.append(dock_widget2)
-
-            dock_widget3 = QDockWidget("Dock Widget 3", self)
-            dock_widget_placeholder_label_3 = QLabel("Content of Dock Widget 3")
-            dock_widget_placeholder_label_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            dock_widget3.setWidget(dock_widget_placeholder_label_3)
-            self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_widget3)
-            self.dock_widgets.append(dock_widget3)
-
-        try:
-            self._setup_matplotlib_to_dock_widget()
-        except Exception as e:
-            logging.error(f"_setup_middle_area: Failed to load matplotlib {e}")
-
-
-        try:
-            self._setup_pyqtgraph_to_dock_widget()  # type: ignore[unused-ignore]
-        except Exception as e:
-            logging.error(f"_setup_middle_area: Failed to load pyqtgraphs lib {e}")
-
-        try:
-            self._setup_simple_test_pyqtgraph()
-        except Exception as e:
-            logging.error(f"_setup_middle_area: Failed to load pg_simple_densities {e}")
-
-
-        # Add the middle main window to the splitter
-        self.splitter.addWidget(self.middle_mainwindow)
-
-        # Keep track of dock widgets
-        # self.dock_widgets = [dock_widget1, dock_widget2, dock_widget3, txy_density_dock_widget]
-
-        # Connect signals to check if dock widgets are closed
-        for dock_widget in self.dock_widgets:
-            dock_widget.visibilityChanged.connect(self.update_placeholder_visibility)
-            # dock_widget.
-            dock_widget.setStyleSheet(QDOCKWIDGET_STYLESHEET)
-
-        # Initial check to set placeholder visibility
-        self.update_placeholder_visibility()
-
     def update_placeholder_visibility(self) -> None:
         # Check if any dock widgets are visible
         logging.debug(f"update_placeholder_visibility: called")
@@ -802,47 +723,6 @@ class HelabMainWindow(QMainWindow):
             self.central_placeholder.hide()
         else:
             self.central_placeholder.show()
-
-    # REVIEW: these can be moved somewhere else
-    # def plotly_to_dock_widget(self, plotly_fig: plotly.graph_objs.Figure, dock_widget_title: str) -> (tempfile.NamedTemporaryFile, QDockWidget):
-    def _setup_legacy_plotly_to_dock_widget(self, plotly_fig: plotly.graph_objs.Figure, dock_widget_title: str) -> None:
-        from PyQt6.QtWebEngineWidgets import QWebEngineView
-        plotly_fig_html = plotly_fig.to_html()
-        plotly_view = QWebEngineView()
-        plotly_temp = tempfile.NamedTemporaryFile(prefix="plotly_", suffix='.html', dir=DIR_TEMPS, delete=False)
-        self.named_temp_files.append(plotly_temp)
-        plotly_temp.write(plotly_fig_html.encode('utf-8'))
-        plotly_temp_html_filename = plotly_temp.name
-        logging.debug(f"plotly_to_dock_widget: title: {dock_widget_title}, tempfile: {plotly_temp_html_filename}")
-        plotly_view.load(QUrl.fromLocalFile(plotly_temp_html_filename))
-        plotly_dock_widget = QDockWidget(dock_widget_title, self)
-        plotly_dock_widget.setWidget(plotly_view)
-        # return plotly_temp, plotly_dock_widget
-        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, plotly_dock_widget)
-        self.dock_widgets.append(plotly_dock_widget)
-        # self.named_temp_files.append(plotly_temp)
-        # plotly_temp.close()
-        # os.remove(plotly_temp_html_filename)
-        # QTimer.singleShot(10*1000, lambda: os.remove(plotly_temp_html_filename))
-
-    @no_type_check
-    def _setup_simple_test_pyqtgraph(self) -> None:
-        import helab.scripts.dev.pg_simple_densities as pgsd
-        explorer = self.tab_widget.currentWidget()
-        if not isinstance(explorer, FolderExplorer) or explorer.folder_opened_data is None:
-            self.status_bar.showMessage("Select and load a data folder first", 3000)
-            return
-        win = pgsd.make_three_density_plots(explorer.folder_opened_data)
-
-
-        dock_widget = QDockWidget("Simple Test PyqtGraph", self)
-        dock_widget.setWidget(win)
-        self._set_plot_source(dock_widget, explorer)
-
-        # dock_widget = QDockWidget("Simple Test PyqtGraph", self)
-        # dock_widget.setWidget(win)
-        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_widget)
-        self.dock_widgets.append(dock_widget)
 
     def _set_plot_source(self, dock: QDockWidget, explorer: FolderExplorer) -> None:
         """Attach provenance to a plot at creation, before the selection changes."""
@@ -880,38 +760,6 @@ class HelabMainWindow(QMainWindow):
         prefix = "Data source" if current else "Showing previously loaded data"
         label.setText(f"{prefix}: {os.path.basename(path.rstrip(os.sep)) or path}")
         label.setToolTip(path)
-
-    @no_type_check
-    def _setup_matplotlib_to_dock_widget(self) -> None:
-        import matplotlib.pyplot as plt
-        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT as NavigationToolbar # type: ignore
-        import numpy as np
-
-        fig, ax = plt.subplots()
-        # scatter = ax.scatter([1, 2, 3, 4], [10, 20, 25, 30])
-        scatter = ax.scatter(np.random.rand(100), np.random.rand(100))
-        ax.set_title("Basic Scatter Plot")
-        canvas = FigureCanvas(fig)
-
-        dock_widget = QDockWidget("Matplotlib Scatter", self)
-        dock_widget.setWidget(canvas)
-        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_widget)
-        self.dock_widgets.append(dock_widget)
-
-    def _setup_pyqtgraph_to_dock_widget(self) -> None:
-        import pyqtgraph as pg
-        import numpy as np
-
-        plot_widget = pg.PlotWidget()
-        plot_widget.setBackground('w') 
-        plot_widget.plot(np.random.rand(100), np.random.rand(100), pen=None, symbol='o')
-        dock_widget = QDockWidget("PyQtGraph Plot", self)
-        dock_widget.setWidget(plot_widget)
-        self.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_widget)
-        self.dock_widgets.append(dock_widget)
-
-
-
 
     def toggle_left_panel(self, checked: bool) -> None:
         if checked: # Expand the left panel
@@ -1301,13 +1149,8 @@ class HelabMainWindow(QMainWindow):
             timer.stop()
         self.tab_widget.closeEvent(None)
         get_io_service().shutdown()
-        cancel_all_workers(wait=False)
-        # Cache closure and local file cleanup never wait in the GUI. Legacy
-        # workers must finish before their shared caches can be closed safely.
+        # Local file cleanup never waits in the GUI.
         def cleanup() -> None:
-            while all_pools_total_activeThreadCount():
-                time.sleep(0.05)
-            close_all_caches()
             for temp_file in self.named_temp_files:
                 temp_file.close()
                 try:

@@ -6,10 +6,11 @@ from PyQt6.QtGui import QMouseEvent, QFocusEvent, QPainter
 from PyQt6.QtWidgets import QTreeView, QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QProxyStyle, QStyle
 
 from helab.models.HelabFileSystemModel import HelabFileSystemModel
-from helab.utils.caching_setup import status_cache, data_ram_cache, fnum
+from helab.utils.caching_setup import status_cache, data_ram_cache
+from helab.utils.number_format import fnum
 from helab.utils.constants import *
 from helab.views.StatusIconDelegate import StatusIconDelegate
-from helab.models.StatusReport import StatusReport
+from helab.models.LegacyStatusReport import StatusReport
 
 
 # class OptionalBranchIconStyle(QProxyStyle):

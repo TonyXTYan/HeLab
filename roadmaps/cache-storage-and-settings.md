@@ -602,7 +602,7 @@ reading this plan, the audit notes and AGENTS.md. End it by ticking the row with
 | # | Session | Scope | Tests | Depends on | Status |
 |---|---|---|---|---|---|
 | S1 | Quick storage fixes | `statistics` off. Decide `blocked` inside `begin_scan`'s transaction. `save_subtrees`/`_save_summary` report failed saves. Reads that decide behaviour use `retry=True`. (Protects the current store until S5.) | Held write lock does not unblock an automatic scan; failed subtree save is reported | — | ☑ 2026-10-10 |
-| S2 | Untangle the old browser | Plain `StatusReport`; move `fnum` and the column constants; new `closeEvent`; `main.py` and `conftest` no longer import old modules | Full suite; import test: loading `HelabMainWindow` imports none of the old modules | — | ☐ |
+| S2 | Untangle the old browser | Plain `StatusReport`; move `fnum` and the column constants; new `closeEvent`; `main.py` and `conftest` no longer import old modules | Full suite; import test: loading `HelabMainWindow` imports none of the old modules | — | ☑ 2026-10-10 |
 | S3 | Delete the old browser | Delete the modules, tests and Debug item; strip the two old caches from `caching_setup.py` (the file stays until S5); old Cache tab shows only `data_ram_cache`; move `helab/scripts/dev/`; update AGENTS.md | Full suite; the app starts and Settings opens | S2 | ☐ |
 | S4 | New store module | `helab/utils/cache_store.py`: schema, versioning, dataset file writes, `retired_files` with deferred deletion, reader re-read on a missing file, the single removal function with durable `folder_epochs`, per-kind generations, per-folder `job_seq` ordering, `pending_saves` with `pending_id` and `reason`, read results (found/missing/error), save-guard checks | Two processes writing at once; killed writer; reader racing a replacement; removal racing a save; Clear by kind before a folder's first row exists; an older job's save or pending save never overwrites or supersedes a newer one, including the older job finishing last with neither adopted; newer `layout_version` opens read-only; error is not "missing" | — (parallel to S2/S3) | ☐ |
 | S5 | Switch to the new store | Helpers (`list`, `details`, `scan`, `load`, `cached`, `invalidate`, `subtree_save`, `scan_history`) use `cache_store`; one `FILE_KINDS` table drives matching and counting; summaries save `files` (TXY sized) and datasets `ram_bytes`; `last_used` on use; old cache folders deleted at startup; `caching_setup.py` and diskcache removed (the old Cache tab reads nothing until S7, so S5 shows "Rebuilt in a later update" there); network/synced cache path refused at startup | Existing cache-first, folder-cache and scan-history tests pass on the new store; the app starts and Settings opens | S1, S3, S4 | ☐ |
@@ -629,6 +629,13 @@ Notes from finished sessions:
   transaction and fail the job instead of reporting saved; a failed summary save sends
   `summary_save_failed`, which `FolderCache` logs. S4's readers must return found / missing /
   error themselves rather than rely on diskcache.
+- **S2:** `StatusReport` is now plain data. The old browser's methods live in a
+  `LegacyStatusReport` subclass, which S3 deletes with the rest. `fnum` moved to
+  `helab/utils/number_format.py`. Besides `_setup_middle_area_deprecated`, the four dock
+  helpers only it called were removed (one imported `helab/scripts/dev/`). `closeEvent` no
+  longer waits for the old pools or closes caches. The `conftest` fixture cancels old
+  workers only if a test already imported them. `caching_setup` is still imported (via
+  `SnapshotFileSystemModel`, `FolderExplorer`, `SettingsDialog`) until S5/S7.
 
 ## Acceptance
 

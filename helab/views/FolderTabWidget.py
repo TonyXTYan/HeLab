@@ -14,15 +14,8 @@ from PyQt6.QtWidgets import QTabWidget, QWidget, QMessageBox, QTabBar, QAbstract
 # from matplotlib.backend_bases import CloseEvent
 
 from helab.utils.constants import *
-from helab.utils.threading_setup import *
-from helab.utils.caching_setup import *
-from helab.models.HelabFileSystemModel import HelabFileSystemModel
+from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.views.FolderExplorer import FolderExplorer
-from helab.workers.DirectoryCheckWorker import DirectoryCheckWorker
-from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
-from helab.workers.StatusDeepWorker import StatusDeepWorker
-from helab.workers.StatusWorker import StatusWorker
-from helab.models.StatusReport import StatusReport
 
 
 def root_on_target_drive(model_root_path: str, target_path: str, path: ModuleType = os.path) -> str:
@@ -53,10 +46,6 @@ class FolderTabWidget(QTabWidget):
                     }
                 """)
 
-        # Initialize shared resources
-        # self.status_cache: LRUCache[str, Tuple[str, int, List[str]]] = LRUCache(maxsize=10*1000)
-        # self.hasChildren_cache: TTLCache[str, bool] = TTLCache(maxsize=100*1000, ttl=24*60*60)
-        self.status_cache = status_cache
         self.tab_back_button_enabled = False
 
         self.currentChanged.connect(self.on_current_tab_changed)
@@ -142,11 +131,11 @@ class FolderTabWidget(QTabWidget):
             view_path = QDir.rootPath()
 
         columns_to_show = [
-            HelabFileSystemModel.COLUMN_NAME,
-            HelabFileSystemModel.COLUMN_DATE_MODIFIED,
-            HelabFileSystemModel.COLUMN_STATUS_NUMBER,
-            HelabFileSystemModel.COLUMN_STATUS_ICON,
-            HelabFileSystemModel.COLUMN_RIGHTFILL
+            SnapshotFileSystemModel.COLUMN_NAME,
+            SnapshotFileSystemModel.COLUMN_DATE_MODIFIED,
+            SnapshotFileSystemModel.COLUMN_STATUS_NUMBER,
+            SnapshotFileSystemModel.COLUMN_STATUS_ICON,
+            SnapshotFileSystemModel.COLUMN_RIGHTFILL
         ]
 
         logging.debug(f"folderTabsWidget.add_new_folder_explorer_tab: cleaned {model_root_path = }, {target_path = }, {view_path = }")
@@ -231,10 +220,6 @@ class FolderTabWidget(QTabWidget):
             explorer = self.widget(index)
             if isinstance(explorer, FolderExplorer):
                 explorer.rescan(True)
-        running_workers_status.clear()
-        running_workers_deep.clear()
-        running_workers_hasChildren.clear()
-
         logging.info("Status cache cleared.")
         self.refresh_current_folder_explorer()
 
