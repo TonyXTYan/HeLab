@@ -119,7 +119,6 @@ def test_close_event_main_window(main_window: HelabMainWindow, qtbot: QtBot) -> 
 #     assert debug_menu.title() == 'Debug'
 #     debug_actions = debug_menu.actions()
 #     expected_debug_actions = [
-#         'Clear Status Cache',
 #         'Draw a line in debug console',
 #         'Show all Icons',
 #         'Show Memory Usage',

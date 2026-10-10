@@ -601,9 +601,9 @@ reading this plan, the audit notes and AGENTS.md. End it by ticking the row with
 
 | # | Session | Scope | Tests | Depends on | Status |
 |---|---|---|---|---|---|
-| S1 | Quick storage fixes | `statistics` off. Decide `blocked` inside `begin_scan`'s transaction. `save_subtrees`/`_save_summary` report failed saves. Reads that decide behaviour use `retry=True`. (Protects the current store until S5.) | Held write lock does not unblock an automatic scan; failed subtree save is reported | — | ☑ 2026-10-10 |
-| S2 | Untangle the old browser | Plain `StatusReport`; move `fnum` and the column constants; new `closeEvent`; `main.py` and `conftest` no longer import old modules | Full suite; import test: loading `HelabMainWindow` imports none of the old modules | — | ☑ 2026-10-10 |
-| S3 | Delete the old browser | Delete the modules, tests and Debug item; strip the two old caches from `caching_setup.py` (the file stays until S5); old Cache tab shows only `data_ram_cache`; move `helab/scripts/dev/`; update AGENTS.md | Full suite; the app starts and Settings opens | S2 | ☐ |
+| S1 | Quick storage fixes | `statistics` off. Decide `blocked` inside `begin_scan`'s transaction. `save_subtrees`/`_save_summary` report failed saves. Reads that decide behaviour use `retry=True`. (Protects the current store until S5.) | Held write lock does not unblock an automatic scan; failed subtree save is reported | — | ☑ 2026-10-10 `fe5a5b7` |
+| S2 | Untangle the old browser | Plain `StatusReport`; move `fnum` and the column constants; new `closeEvent`; `main.py` and `conftest` no longer import old modules | Full suite; import test: loading `HelabMainWindow` imports none of the old modules | — | ☑ 2026-10-10 `24493cc` |
+| S3 | Delete the old browser | Delete the modules, tests and Debug item; strip the two old caches from `caching_setup.py` (the file stays until S5); old Cache tab shows only `data_ram_cache`; move `helab/scripts/dev/`; update AGENTS.md | Full suite; the app starts and Settings opens | S2 | ☑ 2026-10-10 |
 | S4 | New store module | `helab/utils/cache_store.py`: schema, versioning, dataset file writes, `retired_files` with deferred deletion, reader re-read on a missing file, the single removal function with durable `folder_epochs`, per-kind generations, per-folder `job_seq` ordering, `pending_saves` with `pending_id` and `reason`, read results (found/missing/error), save-guard checks | Two processes writing at once; killed writer; reader racing a replacement; removal racing a save; Clear by kind before a folder's first row exists; an older job's save or pending save never overwrites or supersedes a newer one, including the older job finishing last with neither adopted; newer `layout_version` opens read-only; error is not "missing" | — (parallel to S2/S3) | ☐ |
 | S5 | Switch to the new store | Helpers (`list`, `details`, `scan`, `load`, `cached`, `invalidate`, `subtree_save`, `scan_history`) use `cache_store`; one `FILE_KINDS` table drives matching and counting; summaries save `files` (TXY sized) and datasets `ram_bytes`; `last_used` on use; old cache folders deleted at startup; `caching_setup.py` and diskcache removed (the old Cache tab reads nothing until S7, so S5 shows "Rebuilt in a later update" there); network/synced cache path refused at startup | Existing cache-first, folder-cache and scan-history tests pass on the new store; the app starts and Settings opens | S1, S3, S4 | ☐ |
 | S6 | Cache maintenance | `cache_admin` (inventory, clear, both purges, trim, adopt, discard, sweep); pending saves on `cache_full` and `cache_approval`; `removed` events and `FolderCache.removed()`; budget check in the save transaction, `cache_full` | Every removal kind during a running save, load and scan: nothing comes back, no stale badge; retired files and expired pending saves go by deadline without a restart; Make room or Save update with a stale or superseded `pending_id` removes nothing; Save update re-checks the current budget and turns into Make room when over; never evicts the target's own dataset, and uses the fit rule; a crash before or after the pending row commits leaves no dangling reference; purge estimates equal what is freed; records survive trimming; an over-budget save becomes a pending save, never auto-trimmed; Make room adopts it, or discards it if the folder was cleared meanwhile; retired bytes don't count toward the budget | S5 | ☐ |
@@ -636,6 +636,16 @@ Notes from finished sessions:
   longer waits for the old pools or closes caches. The `conftest` fixture cancels old
   workers only if a test already imported them. `caching_setup` is still imported (via
   `SnapshotFileSystemModel`, `FolderExplorer`, `SettingsDialog`) until S5/S7.
+- **S3:** Deleted the old browser's model, tree view, delegate, all of `helab/workers/`,
+  `LegacyStatusReport`, `os_cached.py`, `threading_setup.py`, their five tests and two
+  `.disabled` files, and Debug → "Clear Status Cache" (with `FolderTabWidget.clear_status_cache`).
+  `caching_setup.py` opens only `data_ram_cache`; `cache_status_string` and
+  `close_all_caches` went with the old caches. `load_cache_param` stays for the helpers'
+  options until S5. `helab/scripts/dev/` is now `dev/plotting-prototypes/` with a README;
+  the prototypes no longer run (they import `LoadFolderToRamWorker`). `SynchronisedDict`
+  stays: the Dash server uses it. Checked offscreen: the main window and Settings open, and
+  the Cache tab shows one row. The old `status_cache/` and `os_file_system_cache/` folders
+  stay on disk until S5 deletes them.
 
 ## Acceptance
 

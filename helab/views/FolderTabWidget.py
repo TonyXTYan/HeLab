@@ -215,15 +215,6 @@ class FolderTabWidget(QTabWidget):
             self.tab_back_button_enabled = current_folder_explorer.back_button_enabled
             logging.debug(f"folderTabWidget.on_back_button_clicked: {self.tab_back_button_enabled = }")
 
-    def clear_status_cache(self) -> None:
-        for index in range(self.count()):
-            explorer = self.widget(index)
-            if isinstance(explorer, FolderExplorer):
-                explorer.rescan(True)
-        logging.info("Status cache cleared.")
-        self.refresh_current_folder_explorer()
-
-
     def refresh_current_folder_explorer(self) -> None:
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):

@@ -337,13 +337,9 @@ class HelabMainWindow(QMainWindow):
         
         menu_debug = self.menu_bar.addMenu('Debug')
         if menu_debug is not None:
-            debug_action_1 = QAction('Clear Status Cache', self)
-            debug_action_1.triggered.connect(self.tab_widget.clear_status_cache)
             debug_action_2 = QAction('Draw a line in debug console', self)
             debug_action_2.triggered.connect(lambda: logging.debug("="*80))
 
-            menu_debug.addAction(debug_action_1)
-            menu_debug.addSeparator()
             menu_debug.addAction(debug_action_2)
 
             menu_debug.addSeparator()

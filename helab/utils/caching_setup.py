@@ -1,4 +1,3 @@
-import hashlib
 import json
 import logging
 from collections import OrderedDict
@@ -10,7 +9,6 @@ from copy import deepcopy
 from PyQt6.QtCore import QSettings
 
 from helab.utils.constants import *
-from helab.utils.number_format import fnum
 
 
 logging.debug("caching_setup.py: Loading")
@@ -48,12 +46,6 @@ The default cache parameters for all caches.
 """
 
 CACHE_PARAMS_OVERRIDE: Dict[str, Dict[str, Any]] = {
-    "status_cache": {
-        "size_limit": 1<<30<<1, # 2GB
-        #TODO increase RAM ?
-    },
-    "os_file_system_cache": {
-    },
     "data_ram_cache": {
         "size_limit": 1<<30<<3, # 8GB,
         "sqlite_mmap_size": 1<<30<<0, # 1GB
@@ -98,42 +90,9 @@ def load_cache_param(cache_name: str, settings: QSettings | None = None) -> Orde
     return base_params
 
 
-status_cache         = FanoutCache(DIR_CACHES + '/status_cache',      **load_cache_param('status_cache'))
-os_file_system_cache = FanoutCache(DIR_CACHES + '/os_file_system_cache', **load_cache_param('os_file_system_cache'))
-data_ram_cache       = FanoutCache(DIR_CACHES + '/data_ram_cache',    **load_cache_param('data_ram_cache'))
+# Read only by Settings' old Cache tab, until S7 rebuilds it (roadmaps/cache-storage-and-settings.md).
+data_ram_cache = FanoutCache(DIR_CACHES + '/data_ram_cache', **load_cache_param('data_ram_cache'))
 
 caches = OrderedDict([
-    ('status_cache', status_cache),
-    ('os_file_system_cache', os_file_system_cache),
     ('data_ram_cache', data_ram_cache),
 ])
-
-
-def cache_status_string() -> str:
-    """
-    Create a string with the status of all caches
-    :return: The cache status string
-    """
-    cache_str = "Cache status:\n"
-    max_len_cache_name = max(len(cache_name) for cache_name in caches.keys())
-    for cache_name, cache in caches.items():
-        hits, miss = cache.stats()
-        size = cache.volume()
-        spacer = " "*(max_len_cache_name-len(cache_name))
-        cache_str += f"  {cache_name}: {spacer}hits = {fnum(hits)}, miss = {fnum(miss)}, size = {fnum(size)}B\n"
-    return cache_str
-
-def close_all_caches() -> None:
-    """
-    Close all caches
-    """
-    for cache in caches.values():
-        cache.close()
-
-# def custom_key_function(func, *args, **kwargs):
-#     # Create a unique string representation of the function and its arguments
-#     key_string = f"{func.__module__}.{func.__name__}:{args}:{kwargs}"
-#     # Hash the string using SHA-256
-#     # print(f"custom_key_function: {key_string = }, hash = {hashlib.sha256(key_string.encode()).hexdigest()}")
-#     return hashlib.sha256(key_string.encode()).hexdigest()
-

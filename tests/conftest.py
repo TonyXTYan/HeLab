@@ -1,10 +1,6 @@
 # tests/conftest.py
 import os
-import sys
 import tempfile
-from typing import Iterator
-
-import pytest
 
 # Run Qt headless (offscreen) by default so tests don't pop up windows.
 # Set HELAB_SHOW_GUI=1 to force a real, visible display (e.g. when a test
@@ -15,7 +11,7 @@ if not os.environ.get("HELAB_SHOW_GUI") and "QT_QPA_PLATFORM" not in os.environ:
 # helab.utils.constants normally resolves DIR_TEMPS/DIR_CACHES from a
 # QSettings value that's shared (and persisted) across every process on the
 # machine, including other pytest-xdist workers running concurrently. That
-# makes every process's status_cache/os_file_system_cache/data_ram_cache the
+# makes every process's data_ram_cache the
 # *same* on-disk FanoutCache, so one worker's test clearing a cache in
 # setUp() races another worker's test reading/writing it. Give this process
 # its own private cache/temp dirs before helab.utils.constants (imported
@@ -35,17 +31,3 @@ os.environ["HELAB_DIR_CACHES_OVERRIDE"] = tempfile.mkdtemp(prefix=f"helab_test_c
 # Tests write TXY files and load them at once; helpers would otherwise treat
 # them as still being written. Settling has its own tests.
 os.environ["HELAB_SETTLE_SECONDS"] = "0"
-
-
-
-@pytest.fixture(autouse=True)
-def _cancel_leftover_workers() -> Iterator[None]:
-    yield
-    # Only the old browser's tests import its worker pools. A test that leaves
-    # a persistent QRunnable (HelabFSModelThrottleDataChangedEmit) looping in a
-    # shared QThreadPool would otherwise hang interpreter shutdown, when PyQt's
-    # atexit cleanup waits for it. Importing the pools here would load the old
-    # browser into every test, so only already-loaded pools are cancelled.
-    threading_setup = sys.modules.get("helab.utils.threading_setup")
-    if threading_setup is not None:
-        threading_setup.cancel_all_workers()

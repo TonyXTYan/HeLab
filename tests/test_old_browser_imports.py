@@ -1,4 +1,4 @@
-"""The app no longer loads the old QFileSystemModel browser (removed in roadmap session S3)."""
+"""The old QFileSystemModel browser, deleted in roadmap session S3, stays out of the app."""
 from __future__ import annotations
 
 import json
