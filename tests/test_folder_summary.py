@@ -483,7 +483,7 @@ def test_detected_disk_cache_is_available_before_loading(
     assert browser.folder_cache_label.text() == "Cache not checked"
     path = str(tmp_path)
     (tmp_path / "d_txy_forc1.txt").write_text("1,2,3\n")
-    options = {"directory": str(tmp_path / "disk-cache"), "params": {"shards": 2}}
+    options = {"directory": str(tmp_path / "disk-cache")}
     output = tmp_path / "artifacts"
     output.mkdir()
     # Created before loading: a new entry in the source folder after the file listing is a change.
@@ -681,14 +681,14 @@ def test_cancel_button_preserves_another_tabs_shared_load(
 def test_scan_metadata_survives_restart_without_reading_txy_contents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from diskcache import FanoutCache
+    from helab.utils.cache_store import CacheStore
     import pandas as pd
     import blosc
     root, child = tmp_path / "source", tmp_path / "source" / "run"
     child.mkdir(parents=True)
     (child / "d1.txt").write_text("")
     (child / "d_txy_forc1.txt").write_text("bad,data,row\n")
-    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
 
     def forbidden(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("Metadata scans must not parse or decompress TXY data")
@@ -699,9 +699,10 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
     scan(str(child), events.append, options)
     initial = next(e for e in events if e["kind"] == "status")
     assert initial["count"] == 1 and initial["status"] == "ok"
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        assert str(child) not in cache  # Scan persistence exists without any loaded data.
-        saved = cache.get(("folder-scan-v1", str(child)))
+    with CacheStore(options["directory"]) as store:
+        # Scan persistence exists without any loaded data.
+        assert store.read_dataset_row(str(child)).missing
+        saved = store.read_record("summaries", str(child)).value
     assert isinstance(saved, dict)
     assert saved["scanned_at"] == initial["scanned_at"]
     scanned: list[str] = []
@@ -722,8 +723,8 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
     assert {"kind": "scan_cached", "status": saved} in events
     assert next(e for e in events if e["kind"] == "status")["scanned_at"] >= saved["scanned_at"]
     # A failed refresh retains the previous date and count in persistent storage.
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        previous = cache.get(("folder-scan-v1", str(child)))
+    with CacheStore(options["directory"]) as store:
+        previous = store.read_record("summaries", str(child)).value
 
     def unavailable(path: str) -> Any:
         raise OSError("Volume unavailable")
@@ -733,8 +734,8 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
     with pytest.raises(OSError, match="Volume unavailable"):
         scan(str(child), events.append, options)
     assert next(e for e in events if e["kind"] == "scan_cached")["status"] == previous
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        assert cache.get(("folder-scan-v1", str(child))) == previous
+    with CacheStore(options["directory"]) as store:
+        assert store.read_record("summaries", str(child)).value == previous
 
 
 def test_visible_child_restores_persisted_counts_before_selection(
@@ -744,7 +745,7 @@ def test_visible_child_restores_persisted_counts_before_selection(
     child.mkdir()
     (child / "d1.txt").write_text("")
     (child / "d_txy_forc1.txt").write_text("1,2,3\n")
-    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     scan(str(child), lambda e: None, options)
     complete_scan(browser, qtbot, str(tmp_path), options)
     qtbot.waitUntil(lambda: browser.model.root is not None and browser.model.root.loaded)
@@ -976,7 +977,7 @@ def test_auto_scan_keeps_persisted_results_until_manual_basic_scan(
     for child in (cached_child, unknown_child):
         child.mkdir()
         (child / "d_txy_forc1.txt").write_text("1,2,3\n")
-    options: dict[str, Any] = {"directory": str(tmp_path_factory.mktemp("scan-cache")), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path_factory.mktemp("scan-cache"))}
     saved_at = time.time() - 7200
     with monkeypatch.context() as old_clock:
         old_clock.setattr("helab.io_helper.time.time", lambda: saved_at)
@@ -1118,7 +1119,7 @@ def test_manual_scan_confirms_data_changes_and_load_clears_cache_warning(
     child.mkdir()
     (child / "d1.txt").write_text("")
     (child / "d_txy_forc1.txt").write_text("1,2,3\n")
-    options: dict[str, Any] = {"directory": str(tmp_path_factory.mktemp("freshness-cache")), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path_factory.mktemp("freshness-cache"))}
     output = tmp_path_factory.mktemp("freshness-artifacts")
     saved_at = time.time() - 3600
     with monkeypatch.context() as old_clock:

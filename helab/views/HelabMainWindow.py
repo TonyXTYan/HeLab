@@ -12,6 +12,7 @@ import warnings
 import threading
 import time
 from helab.utils.io_service import IORequest, get_io_service
+from helab.utils.folder_cache import get_folder_cache
 from helab.utils.gui_watchdog import GUIWatchdog
 from datetime import datetime, timedelta
 from sys import getsizeof
@@ -23,7 +24,7 @@ from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelecti
 from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QPainter, QPixmap, QResizeEvent, QKeySequence
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget, QHBoxLayout, \
-    QPushButton, QTreeWidget, QTreeWidgetItem, QInputDialog, QProgressBar, QToolButton
+    QPushButton, QTreeWidget, QTreeWidgetItem, QInputDialog, QProgressBar, QToolButton, QMessageBox
 from humanfriendly.terminal import message
 # from numpy.f2py.crackfortran import include_paths
 from pyqtgraph.parametertree import ParameterTree, Parameter
@@ -152,6 +153,10 @@ class HelabMainWindow(QMainWindow):
         self.status_timer_cpu_ram = QTimer(self)
         self.status_timer_cpu_ram.timeout.connect(self.update_status_bar_right)
         self.status_timer_cpu_ram.start(self.INTERVAL_UPDATE_STATUS_BAR_RIGHT)
+        # Deletes the old diskcache folders and expired cache files in a helper.
+        get_folder_cache(get_io_service()).clean_up_cache()
+        if DIR_CACHES_REFUSED:
+            QTimer.singleShot(0, lambda: QMessageBox.warning(self, "Cache folder not used", DIR_CACHES_REFUSED))
 
     def update_status_bar_left(self) -> None:
         if self._closing:

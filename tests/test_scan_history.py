@@ -4,7 +4,6 @@ from pathlib import Path
 import time
 from typing import Any
 
-from diskcache import FanoutCache
 import numpy as np
 import pytest
 from PyQt6.QtCore import Qt
@@ -14,21 +13,35 @@ from helab.io_helper import list_folder, load, scan
 from helab.resources.icons import IconsInitUtil, StatusIcons
 from helab.utils.folder_cache import FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService
+from helab.utils.cache_store import CacheStore
 from helab.utils.scan_history import (
-    HISTORY_KEY, apply_outcome, begin_scan, empty_history, for_identity,
+    ScanHistory, apply_outcome, begin_scan, empty_history, for_identity,
     history_tooltip, read_history, write_outcome,
 )
 from helab.views.FolderExplorer import FolderExplorer
 
 
 def options_for(tmp_path: Path) -> dict[str, Any]:
-    return {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    return {"directory": str(tmp_path / "cache")}
 
 
 def failure(operation: str, revision: int, *, identity: list[int] | None = None) -> dict[str, Any]:
     return {"operation_id": operation, "revision": revision, "kind": "timeout",
             "at": time.time() - 7200, "attempts": 3, "reason": "I/O timeout (3 attempts)",
             "identity": identity}
+
+
+def begin(store: CacheStore, path: str, operation_id: str, revision: int,
+          identity: object = None) -> tuple[ScanHistory, int]:
+    return begin_scan(store, path, operation_id, revision, store.guard([path], ("histories",)), identity)
+
+
+def outcome(store: CacheStore, path: str, value: dict[str, Any]) -> ScanHistory:
+    return write_outcome(store, path, value, store.guard([path], ("histories",)))
+
+
+def save_history(store: CacheStore, path: str, record: dict[str, Any]) -> None:
+    store.save_record("histories", path, record, store.guard([path], ("histories",)))
 
 
 def frozen_service(monkeypatch: pytest.MonkeyPatch) -> IOService:
@@ -72,28 +85,28 @@ def browse(qtbot: QtBot, cache: FolderCache, path: str) -> None:
 def test_retry_history_is_deduplicated_bounded_and_ordered(tmp_path: Path) -> None:
     options = options_for(tmp_path)
     path = str(tmp_path / "unavailable-network-folder")
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        _, revision = begin_scan(cache, path, "one-job", 100)
-        _, retry_revision = begin_scan(cache, path, "one-job", 1)
+    with CacheStore(options["directory"]) as cache:
+        _, revision = begin(cache, path, "one-job", 100)
+        _, retry_revision = begin(cache, path, "one-job", 1)
         assert retry_revision == revision
-        first = write_outcome(cache, path, failure("one-job", revision))
-        duplicate = write_outcome(cache, path, failure("one-job", revision))
+        first = outcome(cache, path, failure("one-job", revision))
+        duplicate = outcome(cache, path, failure("one-job", revision))
         assert len(first["failures"]) == len(duplicate["failures"]) == 1
         assert duplicate["failures"][0]["attempts"] == 3
         # A backwards wall clock cannot place a newer scan before a saved one.
         for i in range(12):
-            _, revision = begin_scan(cache, path, f"job-{i}", 1)
-            duplicate = write_outcome(cache, path, failure(f"job-{i}", revision))
+            _, revision = begin(cache, path, f"job-{i}", 1)
+            duplicate = outcome(cache, path, failure(f"job-{i}", revision))
         assert len(duplicate["failures"]) == 10
         assert duplicate["failures"][0]["operation_id"] == "job-2"
-        _, success_revision = begin_scan(cache, path, "manual-recovery", 1)
-        recovered = write_outcome(cache, path, {"operation_id": "manual-recovery",
+        _, success_revision = begin(cache, path, "manual-recovery", 1)
+        recovered = outcome(cache, path, {"operation_id": "manual-recovery",
             "revision": success_revision, "kind": "success", "at": time.time()})
-        late = write_outcome(cache, path, failure("job-11", revision))
+        late = outcome(cache, path, failure("job-11", revision))
         assert not recovered["blocked"] and not late["blocked"]
         assert late["last_success_at"] == recovered["last_success_at"]
         assert len(late["failures"]) == 10
-    with FanoutCache(options["directory"], **options["params"]) as restarted:
+    with CacheStore(options["directory"]) as restarted:
         restored = read_history(restarted, path)
         assert restored is not None and not restored["blocked"]
         assert "later scan succeeded" in history_tooltip(restored, time.time())
@@ -105,10 +118,10 @@ def test_folder_replacement_rejects_old_outcomes(tmp_path: Path) -> None:
     assert not replaced["blocked"] and not replaced["failures"]
     assert apply_outcome(replaced, failure("late-old", 10, identity=[1, 2])) == replaced
     options = options_for(tmp_path)
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        cache.set((HISTORY_KEY, "folder"), old)
-        started, new_revision = begin_scan(cache, "folder", "replacement", 12, [1, 3])
-        late = write_outcome(cache, "folder", failure("retired-old", 11, identity=[1, 2]))
+    with CacheStore(options["directory"]) as cache:
+        save_history(cache, "folder", dict(old))
+        started, new_revision = begin(cache, "folder", "replacement", 12, [1, 3])
+        late = outcome(cache, "folder", failure("retired-old", 11, identity=[1, 2]))
         assert late == started and new_revision == 12
 
 
@@ -123,9 +136,9 @@ def test_blocked_helper_skips_automatic_check_but_allows_browsing_and_manual_sca
     path, options = str(source), options_for(tmp_path)
     if had_counts:
         scan(path, lambda e: None, options, revision=10)
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        write_outcome(cache, path, failure("failed", 11))
-        previous = cache.get(("folder-scan-v1", path))
+    with CacheStore(options["directory"]) as cache:
+        outcome(cache, path, failure("failed", 11))
+        previous = cache.read_record("summaries", path).value
     events: list[dict[str, Any]] = []
     with monkeypatch.context() as blocked:
         blocked.setattr("helab.io_helper._scan", lambda *a, **k: pytest.fail("Automatic check touched source"))
@@ -140,14 +153,14 @@ def test_blocked_helper_skips_automatic_check_but_allows_browsing_and_manual_sca
     assert any(e["kind"] == "entries" for e in events)
     status = next(e for e in events if e["kind"] == "status")
     assert not status["details"] and "signature" not in status
-    with FanoutCache(options["directory"], **options["params"]) as cache:
+    with CacheStore(options["directory"]) as cache:
         history = read_history(cache, path)
         assert history is not None and history["blocked"]
-        assert cache.get(("folder-scan-v1", path)) == previous
+        assert cache.read_record("summaries", path).value == previous
     events.clear()
     scan(path, events.append, options, manual=True, revision=12)
     assert any(e["kind"] == "status" for e in events)
-    with FanoutCache(options["directory"], **options["params"]) as cache:
+    with CacheStore(options["directory"]) as cache:
         history = read_history(cache, path)
         assert history is not None and not history["blocked"] and len(history["failures"]) == 1
 
@@ -158,13 +171,13 @@ def test_unknown_metadata_does_not_auto_check_and_manual_scan_repairs_it(
     source = tmp_path / "source"
     source.mkdir()
     path, options = str(source), options_for(tmp_path)
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        cache.set((HISTORY_KEY, path), {"version": "corrupt"})
+    with CacheStore(options["directory"]) as cache:
+        save_history(cache, path, {"version": "corrupt"})
     with monkeypatch.context() as blocked:
         blocked.setattr("helab.io_helper._scan", lambda *a, **k: pytest.fail("Unknown metadata touched source"))
         scan(path, lambda e: None, options, manual=False, automatic=True)
     scan(path, lambda e: None, options, manual=True)
-    with FanoutCache(options["directory"], **options["params"]) as cache:
+    with CacheStore(options["directory"]) as cache:
         history = read_history(cache, path)
         assert history is not None and not history["blocked"] and history["last_success_at"] is not None
 
@@ -195,8 +208,8 @@ def test_final_timeout_counts_once_across_tabs_and_saves_without_source_io(
     assert len(writes) == 1
     writer = writes[0]
     # The folder does not exist: persistence must access only the local cache.
-    with FanoutCache(options["directory"], **options["params"]) as disk:
-        saved = write_outcome(disk, path, writer.payload["outcome"])
+    with CacheStore(options["directory"]) as disk:
+        saved = outcome(disk, path, writer.payload["outcome"])
     service.resultReady.emit(writer, {"kind": "scan_history_saved", "history": saved})
     service.resultReady.emit(writer, {"kind": "done"})
     assert not cache.scan_history_errors
@@ -254,8 +267,7 @@ def test_visible_folder_restores_failure_before_selection_load_and_manual_recove
     (child / "d_txy_forc1.txt").write_text("1,2,3\n")
     service = frozen_service(monkeypatch)
     monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
-    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.DIR_CACHES", str(tmp_path / "caches"))
-    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.load_cache_param", lambda _: {"shards": 2})
+    monkeypatch.setattr("helab.utils.folder_cache.DIR_CACHES", str(tmp_path / "caches"))
     explorer = FolderExplorer(str(root), str(root), str(root), [0, 4, 5])
     qtbot.addWidget(explorer)
     cache, path = explorer.model.cache, str(child)
@@ -264,8 +276,8 @@ def test_visible_folder_restores_failure_before_selection_load_and_manual_recove
     if had_counts:
         scan(path, lambda e: None, options, revision=10)
     stat = child.stat()
-    with FanoutCache(options["directory"], **options["params"]) as disk:
-        write_outcome(disk, path, failure("saved-failure", 11, identity=[stat.st_dev, stat.st_ino]))
+    with CacheStore(options["directory"]) as disk:
+        outcome(disk, path, failure("saved-failure", 11, identity=[stat.st_dev, stat.st_ino]))
     browse(qtbot, cache, str(root))
     qtbot.waitUntil(lambda: path in explorer.model.nodes)
     node = explorer.model.nodes[path]

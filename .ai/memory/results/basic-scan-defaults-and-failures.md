@@ -24,8 +24,9 @@ reading the TXY files) in the active folder browser. Code:
   recursion depth, with progress and per-tab cancellation. Metadata-only scans
   never start automatic dataset loads.
 - Scan summaries (raw/TXY counts, status, signature, scan date) persist in
-  `data_ram_cache` under versioned keys and are restored before scanning, so
-  counts show as soon as a folder is visible.
+  the disk cache's `folder_summaries` table (store-v2 since S5 of
+  `roadmaps/cache-storage-and-settings.md`) and are restored before scanning,
+  so counts show as soon as a folder is visible.
 
 ## Failure history (Tony, 2026-10-07/08)
 
@@ -39,7 +40,7 @@ startup, holding up all other I/O.
 - **Not failures:** cancellation, queue rejection, and errors while saving
   metadata (a timeout while saving metadata after a completed scan must not
   mark the scan failed).
-- Stored under `("folder-scan-history-v1", path)` in `data_ram_cache`, written
+- Stored in the disk cache's `scan_histories` table, written
   only by isolated helpers. Keeps the latest 10 failures, ordered by a scan
   revision (not wall-clock time) and tied to the folder's `(st_dev, st_ino)`
   identity. A delayed write, or a different folder now at the same path, can't

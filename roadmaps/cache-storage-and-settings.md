@@ -604,8 +604,8 @@ reading this plan, the audit notes and AGENTS.md. End it by ticking the row with
 | S1 | Quick storage fixes | `statistics` off. Decide `blocked` inside `begin_scan`'s transaction. `save_subtrees`/`_save_summary` report failed saves. Reads that decide behaviour use `retry=True`. (Protects the current store until S5.) | Held write lock does not unblock an automatic scan; failed subtree save is reported | — | ☑ 2026-10-10 `fe5a5b7` |
 | S2 | Untangle the old browser | Plain `StatusReport`; move `fnum` and the column constants; new `closeEvent`; `main.py` and `conftest` no longer import old modules | Full suite; import test: loading `HelabMainWindow` imports none of the old modules | — | ☑ 2026-10-10 `24493cc` |
 | S3 | Delete the old browser | Delete the modules, tests and Debug item; strip the two old caches from `caching_setup.py` (the file stays until S5); old Cache tab shows only `data_ram_cache`; move `helab/scripts/dev/`; update AGENTS.md | Full suite; the app starts and Settings opens | S2 | ☑ 2026-10-10 `f36916a` |
-| S4 | New store module | `helab/utils/cache_store.py`: schema, versioning, dataset file writes, `retired_files` with deferred deletion, reader re-read on a missing file, the single removal function with durable `folder_epochs`, per-kind generations, per-folder `job_seq` ordering, `pending_saves` with `pending_id` and `reason`, read results (found/missing/error), save-guard checks | Two processes writing at once; killed writer; reader racing a replacement; removal racing a save; Clear by kind before a folder's first row exists; an older job's save or pending save never overwrites or supersedes a newer one, including the older job finishing last with neither adopted; newer `layout_version` opens read-only; error is not "missing" | — (parallel to S2/S3) | ☑ 2026-10-10 |
-| S5 | Switch to the new store | Helpers (`list`, `details`, `scan`, `load`, `cached`, `invalidate`, `subtree_save`, `scan_history`) use `cache_store`; one `FILE_KINDS` table drives matching and counting; summaries save `files` (TXY sized) and datasets `ram_bytes`; `last_used` on use; old cache folders deleted at startup; `caching_setup.py` and diskcache removed (the old Cache tab reads nothing until S7, so S5 shows "Rebuilt in a later update" there); network/synced cache path refused at startup | Existing cache-first, folder-cache and scan-history tests pass on the new store; the app starts and Settings opens | S1, S3, S4 | ☐ |
+| S4 | New store module | `helab/utils/cache_store.py`: schema, versioning, dataset file writes, `retired_files` with deferred deletion, reader re-read on a missing file, the single removal function with durable `folder_epochs`, per-kind generations, per-folder `job_seq` ordering, `pending_saves` with `pending_id` and `reason`, read results (found/missing/error), save-guard checks | Two processes writing at once; killed writer; reader racing a replacement; removal racing a save; Clear by kind before a folder's first row exists; an older job's save or pending save never overwrites or supersedes a newer one, including the older job finishing last with neither adopted; newer `layout_version` opens read-only; error is not "missing" | — (parallel to S2/S3) | ☑ 2026-10-10 `7040a29` |
+| S5 | Switch to the new store | Helpers (`list`, `details`, `scan`, `load`, `cached`, `invalidate`, `subtree_save`, `scan_history`) use `cache_store`; one `FILE_KINDS` table drives matching and counting; summaries save `files` (TXY sized) and datasets `ram_bytes`; `last_used` on use; old cache folders deleted at startup; `caching_setup.py` and diskcache removed (the old Cache tab reads nothing until S7, so S5 shows "Rebuilt in a later update" there); network/synced cache path refused at startup | Existing cache-first, folder-cache and scan-history tests pass on the new store; the app starts and Settings opens | S1, S3, S4 | ☑ 2026-10-10 |
 | S6 | Cache maintenance | `cache_admin` (inventory, clear, both purges, trim, adopt, discard, sweep); pending saves on `cache_full` and `cache_approval`; `removed` events and `FolderCache.removed()`; budget check in the save transaction, `cache_full` | Every removal kind during a running save, load and scan: nothing comes back, no stale badge; retired files and expired pending saves go by deadline without a restart; Make room or Save update with a stale or superseded `pending_id` removes nothing; Save update re-checks the current budget and turns into Make room when over; never evicts the target's own dataset, and uses the fit rule; a crash before or after the pending row commits leaves no dangling reference; purge estimates equal what is freed; records survive trimming; an over-budget save becomes a pending save, never auto-trimmed; Make room adopts it, or discards it if the folder was cleared meanwhile; retired bytes don't count toward the budget | S5 | ☐ |
 | S7 | Budgets and the Cache tab | Rebuilt tab with both purges; disk budget (default 8 GB); RAM budget (1/128 steps, default 1/8) replacing `MAX_DATA_BYTES`; 80% pause of uncached automatic loads with its dialog; update-save prompt over 80%; full-cache dialog (Make room / Don't cache now); "Reset all settings…" | pytest-qt tests with a fake inventory; 80% dialog once per crossing, Ignore lasts the session; cached folders still open over 80%; one cache dialog at a time; RAM eviction keeps shown datasets | S6 | ☐ |
 | S8 | Large-folder warning | Uses S7's RAM budget setting. Unscaled TXY-size estimate (the one-stat fast path keeps using the record's sizes); guard before both `load` and `cached`; `too_large` stop and `allow_large`; amber inline "Load anyway…"; queue skips; dialog for deliberate loads; the 30% refusal replaces the 1 GiB limit | Automatic loads never start or open a dialog; a large **cached** folder doesn't open automatically even after an earlier deliberate load; deliberate ones confirm; refusal; estimate from a saved summary vs from the load's own listing; the unchanged fast path still answers from one stat | S7 | ☐ |
@@ -670,6 +670,49 @@ Notes from finished sessions:
     retired the live file. `read_dataset` inside an outer transaction re-read a stale snapshot,
     so it now refuses to run there. A failed file write raised a raw `OSError` and left its
     `tmp-` file; it now raises `StoreError` and removes the file.
+
+- **S5:** Every helper opens `CacheStore` at `store_options()["directory"]` (`DIR_CACHES/store-v2`);
+  the GUI only passes that path. `caching_setup.py` and diskcache are gone, and nothing in the app
+  imports them (tested). Choices made here:
+  - Each job takes its save guard when it starts: `scan`/`details` for summaries and histories,
+    `load` with `start_dataset_job` (its `job_seq`), `subtree_save` and `scan_history` at helper
+    start. A Clear during a scan discards both its summary and its history write (tested).
+  - Listings read each batch of 128 subfolders' records in four queries
+    (`read_dataset_infos` added to the store: sizes and `info` without the fingerprint).
+  - A load reads only the dataset row when the caller already holds every shot; otherwise it
+    reads row and file together. `last_used` is touched when a load reuses the dataset, a
+    `cached` read shows it, or the one-stat check confirms it.
+  - Display reads turn an unreadable history into "unknown" (None), never empty, so an
+    automatic scan stops; `begin_scan` and `write_outcome` read under the write lock and raise.
+  - A store written by a newer HeLab is still read (cached shots are reused) but nothing is
+    saved, and each load warns. Scans then can't record their start, so automatic scans and
+    details skip those folders; manual scans run.
+  - Startup cleanup is a `cache_admin` helper (action `sweep`, local lane) that deletes the old
+    diskcache folders and runs `CacheStore.sweep()` once per session. Deadline scheduling and the
+    other actions are S6.
+  - `FILE_KINDS` lives in `helab/utils/file_kinds.py`. Summaries save `files` (raw counted, TXY
+    counted and sized); the large-folder estimate (S8) can use `ram_per_byte`.
+  - The network/synced check (`helab/utils/cache_location.py`, reused by S9) uses `psutil`
+    mount types (smbfs, afpfs, nfs, webdav, cifs…, or Windows `remote`), UNC paths, and known
+    sync folders (iCloud `Mobile Documents`, `Library/CloudStorage`, OneDrive, Dropbox, Google
+    Drive). A refused folder is replaced by the default for the session, with a warning dialog.
+  - The Settings Cache tab shows only the store's folder and "rebuilt in a later update".
+  - Codex's review found two bugs, both fixed with tests. Listings and scans turned an
+    unreadable summary, subfolder status or dataset row (I/O error or malformed JSON) into
+    "not cached", clearing valid badges; such keys are now left out, so the GUI keeps what it
+    knew, and a `cache_warning` is sent, recorded in `FolderCache.cache_read_errors` and shown
+    in the row and summary tooltips ("Saved results unknown: …"). A load that can't read the
+    cache leaves `disk_cached` out of `loaded` too. And a refused cache folder with no safe
+    default stayed in use; the disk cache is now off for that session (`DISK_CACHE_ENABLED`,
+    `store_options()` empty, cache-only helpers refuse).
+    A second review found two more, also fixed with tests. A store that failed to open still
+    reported folders as not cached; it now sends a `cache_warning` and leaves the flags out
+    (a helper with no cache configured still says "not cached"). And a load took its save
+    guard after importing NumPy and pandas, so a clear in that window was undone by its save;
+    `load` now takes the guard right after opening the store, before anything else (so the
+    one-stat check takes a `job_seq` too). A third pass found the same race in `scan`, which
+    restored saved results before taking its guard; it now takes it first too (tested). Every
+    writing helper now takes its guard right after opening the store.
 
 ## Acceptance
 

@@ -26,7 +26,21 @@ from helab.views.CentralHint import CentralHint
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HelabMainWindow import HelabMainWindow
 from helab.io_helper import list_folder, load, scan
+from helab.utils.cache_store import CacheStore, DatasetRow, unpack_dataset
 from helab.resources.icons import IconsInitUtil, StatusIcons
+
+
+def saved_dataset(options: dict[str, Any], path: str) -> tuple[DatasetRow, dict[int, Any]] | None:
+    """The folder's cached dataset row and its shots, or None."""
+    with CacheStore(options["directory"]) as store:
+        found = store.read_dataset(path)
+    assert not found.failed, found.error
+    if found.value is None:
+        return None
+    row, packed = found.value
+    data = unpack_dataset(packed)
+    assert data is not None
+    return row, data
 
 
 def service_for_test(monkeypatch: pytest.MonkeyPatch) -> IOService:
@@ -918,7 +932,7 @@ print(json.dumps(events))
         output = tmp_path / name
         output.mkdir()
         request = {"path": str(source), "output": str(output), "require_cache": require_cache,
-                   "cache": {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}}
+                   "cache": {"directory": str(tmp_path / "cache")}}
         completed = subprocess.run([sys.executable, "-c", program], input=json.dumps(request),
                                    capture_output=True, text=True, check=True, timeout=30)
         events: list[dict[str, Any]] = json.loads(completed.stdout)
@@ -947,17 +961,14 @@ print(json.dumps(events))
 def test_changed_folder_reads_only_new_or_modified_txy_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import blosc
-    import pickle
     import pandas as pd
-    from diskcache import FanoutCache
 
     source = tmp_path / "source"
     source.mkdir()
     for shot in (1, 2, 3):
         (source / f"d_txy_forc{shot}.txt").write_text(f"{shot},{shot},{shot}\n")
     (source / "d_txy_forc4.txt").write_text("4,nan,4\n5,5,5\n")
-    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     (tmp_path / "first").mkdir()
     load(str(source), str(tmp_path / "first"), lambda event: None, options)
 
@@ -989,10 +1000,8 @@ def test_changed_folder_reads_only_new_or_modified_txy_files(
     for shot, expected in ((1, [[1, 1, 1]]), (2, [[20, 20, 20]]), (4, [[5, 5, 5]]), (5, [[50, 50, 50]])):
         np.testing.assert_array_equal(np.load(output / f"{shot}.npy"), expected)
     assert not (output / "3.npy").exists()
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        merged = pickle.loads(blosc.decompress(cache.get(str(source))))
-        assert sorted(merged) == [1, 2, 4, 5]
-        assert cache.get(("snapshot-problematic", str(source))) == [4]
+    saved = saved_dataset(options, str(source))
+    assert saved is not None and sorted(saved[1]) == [1, 2, 4, 5] and saved[0]["problematic"] == [4]
 
     events.clear()
     (tmp_path / "third").mkdir()
@@ -1004,10 +1013,7 @@ def test_changed_folder_reads_only_new_or_modified_txy_files(
 def test_load_skips_shots_already_in_memory_and_completes_disk_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import blosc
-    import pickle
     import pandas as pd
-    from diskcache import FanoutCache
 
     source, output = tmp_path / "source", tmp_path / "output"
     source.mkdir()
@@ -1028,7 +1034,7 @@ def test_load_skips_shots_already_in_memory_and_completes_disk_cache(
         return original_read_csv(filename, *args, **kwargs)
 
     monkeypatch.setattr(pd, "read_csv", record_read_csv)
-    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     load(str(source), str(output), events.append, options, memory)
     assert read == ["d_txy_forc3.txt*", "d_txy_forc1.txt", "d_txy_forc2.txt"]
     assert [event["shot"] for event in events if event["kind"] == "shot"] == [3]
@@ -1040,8 +1046,8 @@ def test_load_skips_shots_already_in_memory_and_completes_disk_cache(
     }
     assert loaded["cache_reason"] == "Reused 2 shots from memory; read 1 new or changed TXY files"
     assert events[-1] == {"kind": "disk_cached", "disk_cached": True}
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        assert sorted(pickle.loads(blosc.decompress(cache.get(str(source))))) == [1, 2, 3]
+    saved = saved_dataset(options, str(source))
+    assert saved is not None and sorted(saved[1]) == [1, 2, 3]
 
 
 def test_scan_reports_cached_children_without_loading_or_probing_them(
@@ -1054,7 +1060,7 @@ def test_scan_reports_cached_children_without_loading_or_probing_them(
     source.mkdir(parents=True)
     output.mkdir()
     (source / "d_txy_forc1.txt").write_text("1,2,3\n")
-    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     load(str(source), str(output), lambda event: None, options)
     original_scandir = os.scandir
     scanned: list[str] = []
@@ -1122,39 +1128,40 @@ def test_disk_badge_after_restart_ram_load_eviction_and_clear(qtbot: QtBot, tmp_
 
 
 def test_disk_clear_epoch_prevents_older_load_from_repopulating_cache(tmp_path: Path) -> None:
-    from diskcache import FanoutCache
     source, output = tmp_path / "source", tmp_path / "output"
     source.mkdir()
     output.mkdir()
     (source / "d_txy_forc1.txt").write_text("1,2,3\n")
-    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
+
+    events: list[dict[str, Any]] = []
 
     def clear_during_delivery(event: dict[str, Any]) -> None:
+        events.append(event)
         if event["kind"] == "shot":
-            with FanoutCache(options["directory"], **options["params"]) as cache:
-                cache.set(("snapshot-epoch", str(source)), "cleared")
+            with CacheStore(options["directory"]) as store:
+                store.remove(("datasets",), [str(source)])
 
     load(str(source), str(output), clear_during_delivery, options)
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        assert cache.get(str(source)) is None
-        assert cache.get(("snapshot-fingerprint", str(source))) is None
+    assert saved_dataset(options, str(source)) is None
+    failed = next(event for event in events if event["kind"] == "cache_save_failed")
+    assert failed["message"] == "Cache was cleared before saving completed"
 
 
 def test_save_date_persists_and_cache_reuse_does_not_rewrite_it(tmp_path: Path) -> None:
-    from diskcache import FanoutCache
     source, output = tmp_path / "source", tmp_path / "output"
     source.mkdir()
     output.mkdir()
     (source / "d_txy_forc1.txt").write_text("1,2,3\n")
     path = str(source)
-    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     events: list[dict[str, Any]] = []
     load(path, str(output), events.append, options)
     saved = next(event["cache_info"] for event in events if event["kind"] == "cache_saved")
     assert saved["action"] == "created"
     assert saved["saved_at"] > 0
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        assert cache.get(("snapshot-cache-info", path)) == saved
+    row = saved_dataset(options, path)
+    assert row is not None and row[0]["info"] == saved
     events.clear()
     scan(path, events.append, options)
     assert next(e for e in events if e["kind"] == "status")["cache_info"] == saved
@@ -1163,59 +1170,52 @@ def test_save_date_persists_and_cache_reuse_does_not_rewrite_it(tmp_path: Path) 
     assert loaded_event(events)["cache_info"] == saved
     assert loaded_event(events)["load_counts"]["reused_disk"] == 1
     assert not any(event["kind"] == "cache_saved" for event in events)
-    # A legacy cache remains readable without inventing its save date.
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        cache.pop(("snapshot-cache-info", path))
-    events.clear()
-    load(path, str(output), events.append, options)
-    assert loaded_event(events)["source"] == "disk"
-    assert loaded_event(events)["cache_info"] == {}
+    # Reuse records the use, not a new save date.
+    used = saved_dataset(options, path)
+    assert used is not None and used[0]["info"] == saved and used[0]["last_used"] >= row[0]["last_used"]
 
 
-@pytest.mark.parametrize("failed_key", ["data", "snapshot-fingerprint", "snapshot-cache-info"])
-def test_failed_save_rolls_back_bytes_fingerprint_and_date(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_key: str,
+@pytest.mark.parametrize("failure", ["file", "row"])
+def test_failed_save_keeps_the_previous_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
 ) -> None:
-    from diskcache import FanoutCache
+    import sqlite3
     source, output = tmp_path / "source", tmp_path / "output"
     source.mkdir()
     output.mkdir()
     path = str(source)
     converted = source / "d_txy_forc1.txt"
     converted.write_text("1,2,3\n")
-    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     load(path, str(output), lambda event: None, options)
-    keys = [path, ("snapshot-fingerprint", path), ("snapshot-cache-info", path)]
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        before = [cache.get(key) for key in keys]
+    before = saved_dataset(options, path)
+    assert before is not None
     converted.write_text("10,20,30\n")
-    original_set = FanoutCache.set
 
-    def fail_set(self: Any, key: Any, value: Any, *args: Any, **kwargs: Any) -> bool:
-        if key == (path if failed_key == "data" else (failed_key, path)):
-            return False
-        return bool(original_set(self, key, value, *args, **kwargs))
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("disk full") if failure == "file" else sqlite3.OperationalError("disk I/O error")
 
-    monkeypatch.setattr(FanoutCache, "set", fail_set)
+    monkeypatch.setattr(CacheStore, "write_dataset_file" if failure == "file" else "_upsert_dataset", fail)
     events: list[dict[str, Any]] = []
     load(path, str(output), events.append, options)
     assert loaded_event(events)["files"] == 1
     assert any(event["kind"] == "cache_save_failed" for event in events)
     assert not any(event["kind"] == "cache_saved" for event in events)
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        assert [cache.get(key) for key in keys] == before
+    monkeypatch.undo()
+    after = saved_dataset(options, path)
+    assert after is not None and after[0] == before[0] and after[1].keys() == before[1].keys()
+    np.testing.assert_array_equal(after[1][1], [[1, 2, 3]])
     np.testing.assert_array_equal(np.load(output / "1.npy"), [[10, 20, 30]])
 
 
 def test_new_file_during_background_save_caches_loaded_shots_as_possibly_old(tmp_path: Path) -> None:
-    from diskcache import FanoutCache
     from helab.utils.cache_freshness import CacheFreshness, cache_freshness, data_as_of
     source, output = tmp_path / "source", tmp_path / "output"
     source.mkdir()
     output.mkdir()
     path = str(source)
     (source / "d_txy_forc1.txt").write_text("1,2,3\n")
-    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     events: list[dict[str, Any]] = []
 
     def add_after_load(event: dict[str, Any]) -> None:
@@ -1227,9 +1227,8 @@ def test_new_file_during_background_save_caches_loaded_shots_as_possibly_old(tmp
     load(path, str(output), add_after_load, options)
     saved = next(event for event in events if event["kind"] == "cache_saved")["cache_info"]
     assert not any(event["kind"] == "cache_save_failed" for event in events)
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        fingerprint = cache.get(("snapshot-fingerprint", path))
-        assert isinstance(fingerprint, list) and [entry[0] for entry in fingerprint] == [1]
+    row = saved_dataset(options, path)
+    assert row is not None and [entry[0] for entry in row[0]["fingerprint"]] == [1]
     # Saved after the shot arrived, but compared from the file listing, so it is not shown as current.
     modified = source.stat().st_mtime
     assert saved["saved_at"] > modified > saved["snapshot_at"]
@@ -1238,18 +1237,18 @@ def test_new_file_during_background_save_caches_loaded_shots_as_possibly_old(tmp
 
 
 def test_corrupt_disk_cache_reports_failure_and_loads_source(tmp_path: Path) -> None:
-    from diskcache import FanoutCache
-
     source, output = tmp_path / "source", tmp_path / "output"
     source.mkdir()
     output.mkdir()
     converted = source / "d_txy_forc1.txt"
     converted.write_text("1,2,3\n")
     info = converted.stat()
-    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        cache.set(("snapshot-fingerprint", str(source)), [(1, info.st_size, info.st_mtime_ns)])
-        cache.set(str(source), b"invalid compressed dataset")
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
+    with CacheStore(options["directory"]) as store:
+        guard = store.start_dataset_job(str(source))
+        file = store.write_dataset_file(b"invalid compressed dataset")
+        store.save_dataset(str(source), file, {"ram_bytes": 24, "rows": 1, "shots": 1,
+            "fingerprint": [[1, info.st_size, info.st_mtime_ns]], "problematic": [], "info": {}}, guard)
     events: list[dict[str, Any]] = []
     load(str(source), str(output), events.append, options)
     warning = next(event for event in events if event["kind"] == "cache_warning")
@@ -1260,13 +1259,12 @@ def test_corrupt_disk_cache_reports_failure_and_loads_source(tmp_path: Path) -> 
 
 
 def test_changed_source_during_load_is_not_published_to_disk_cache(tmp_path: Path) -> None:
-    from diskcache import FanoutCache
     source, output = tmp_path / "source", tmp_path / "output"
     source.mkdir()
     output.mkdir()
     file = source / "d_txy_forc1.txt"
     file.write_text("1,2,3\n")
-    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
 
     def change_during_delivery(event: dict[str, Any]) -> None:
         if event["kind"] == "shot":
@@ -1274,18 +1272,16 @@ def test_changed_source_during_load_is_not_published_to_disk_cache(tmp_path: Pat
 
     with pytest.raises(ValueError, match="changed while loading"):
         load(str(source), str(output), change_during_delivery, options)
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        assert cache.get(str(source)) is None
+    assert saved_dataset(options, str(source)) is None
 
 
 def test_shot_added_during_live_load_is_left_for_the_next_load(tmp_path: Path) -> None:
-    from diskcache import FanoutCache
     source, output = tmp_path / "source", tmp_path / "output"
     source.mkdir()
     output.mkdir()
     for shot in (1, 2):
         (source / f"d_txy_forc{shot}.txt").write_text("1,2,3\n")
-    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     events: list[dict[str, Any]] = []
 
     def next_shot_arrives(event: dict[str, Any]) -> None:
@@ -1297,9 +1293,8 @@ def test_shot_added_during_live_load_is_left_for_the_next_load(tmp_path: Path) -
     assert loaded_event(events)["files"] == 2
     assert any(e["kind"] == "cache_saved" for e in events)
     assert not any(e["kind"] == "cache_save_failed" for e in events)
-    with FanoutCache(options["directory"], **options["params"]) as cache:
-        saved = cache.get(("snapshot-fingerprint", str(source)))
-        assert isinstance(saved, list) and [entry[0] for entry in saved] == [1, 2]
+    saved = saved_dataset(options, str(source))
+    assert saved is not None and [entry[0] for entry in saved[0]["fingerprint"]] == [1, 2]
     # The next load reads only the new shot and reuses the cached ones.
     events.clear()
     (output / "next").mkdir()

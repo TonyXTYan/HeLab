@@ -16,6 +16,8 @@ import numpy.typing as npt
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 
+from helab.utils.cache_store import store_root
+from helab.utils.constants import DIR_CACHES, DISK_CACHE_ENABLED
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.load_clock import LoadClock
 from helab.utils.scan_history import ScanHistory, empty_history, parse_history, apply_outcome, for_identity, folder_identity
@@ -71,11 +73,20 @@ class SharedJob:
     base: Dataset | None = None
     scan_mode: str = "scan"
     history_saved: bool = False
+    cache_warning: str = ""
     completed_scan: FolderSnapshot | None = None
     created: float = field(default_factory=time.monotonic)
     paused: bool = False
     # Shared, so a tab joining a running load shows its real elapsed time.
     clock: LoadClock = field(default_factory=LoadClock)
+
+
+def store_options() -> dict[str, Any]:
+    """What a helper needs to open the disk cache; {} when the cache is off for this session.
+
+    The GUI process never opens the store.
+    """
+    return {"directory": store_root(DIR_CACHES)} if DISK_CACHE_ENABLED else {}
 
 
 class FolderCache(QObject):
@@ -120,6 +131,8 @@ class FolderCache(QObject):
         self.listing_notifications: set[str] = set()
         self.scan_histories: OrderedDict[str, ScanHistory] = OrderedDict()
         self.scan_history_errors: dict[str, str] = {}
+        # A listing or scan that couldn't read the disk cache: its saved flags are unknown.
+        self.cache_read_errors: OrderedDict[str, str] = OrderedDict()
         # Native icons (including unsuccessful lookups) are session-only and bounded.
         self.folder_icons: OrderedDict[str, QIcon] = OrderedDict()
         self._history_identity_dates: dict[str, float] = {}
@@ -130,6 +143,7 @@ class FolderCache(QObject):
         self._subtree_pending: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._subtree_writer = ""
         self._subtree_options: dict[str, Any] = {}
+        self._cleanup = ""
         self._subtree_timer = QTimer(self)
         self._subtree_timer.setSingleShot(True)
         self._subtree_timer.timeout.connect(self._save_subtrees)
@@ -194,6 +208,8 @@ class FolderCache(QObject):
         self.remember_subtree(path, record, notify=False)
         # Notified later: the deriving tab must not re-enter its own derivation.
         QTimer.singleShot(0, lambda: None if self.service.closed else self.subtreeChanged.emit(path))
+        if not cache_options:
+            return  # The disk cache is off: shared in memory only.
         self._subtree_pending[path] = {"path": path, **record}
         self._subtree_pending.move_to_end(path)
         self._subtree_options = cache_options
@@ -725,13 +741,31 @@ class FolderCache(QObject):
         self.listing_notifications.clear()
         self.scan_histories.clear()
         self.scan_history_errors.clear()
+        self.cache_read_errors.clear()
         self.folder_icons.clear()
         self._history_identity_dates.clear()
         self._subtree_timer.stop()
         self.subtrees.clear()
         self._subtree_pending.clear()
 
+    def clean_up_cache(self) -> None:
+        """Once per session, on the local lane: delete the old diskcache folders, and cache
+        files past their grace period."""
+        options = store_options()
+        if self._cleanup or not options:
+            return
+        self._cleanup = uuid4().hex
+        if not self.service.submit(self._cleanup, 0, options["directory"], "cache_admin",
+                                   {"cache": options, "action": "sweep"}):
+            logging.warning("Disk cache cleanup: queue full; it runs at the next start")
+
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        if producer.owner == self._cleanup:
+            if event["kind"] == "swept":
+                logging.info("Disk cache cleanup: %s", event)
+            elif event["kind"] in ("error", "cancelled"):
+                logging.warning("Disk cache cleanup: %s", event.get("message", "Cancelled"))
+            return
         if producer.owner == self._subtree_writer:
             if event["kind"] in ("error", "cancelled"):
                 logging.warning("Subfolder status save: %s", event.get("message", "Save cancelled"))
@@ -821,6 +855,15 @@ class FolderCache(QObject):
                     job.payload["scan_revision"] = producer.payload["scan_revision"] = event["revision"]
                 job.history_saved |= bool(event.get("saved"))
                 return
+            if kind == "cache_warning":
+                job.cache_warning = event["message"]
+                self.cache_read_errors[job.path] = event["message"]
+                self.cache_read_errors.move_to_end(job.path)
+                while len(self.cache_read_errors) > 4096:
+                    self.cache_read_errors.popitem(last=False)
+                logging.warning("Disk cache %s: %s", job.path, event["message"])
+                self.scanHistoryChanged.emit(job.path)
+                return
             if kind == "scan_history_warning":
                 self.scan_history_errors[job.path] = event["message"]
                 logging.warning("Scan history %s: %s", job.path, event["message"])
@@ -861,6 +904,9 @@ class FolderCache(QObject):
                         self.resultReady.emit(request, {"kind": "error", "message": "Folder exceeds snapshot entry limit"})
                 return
             if kind == "status":
+                if not job.cache_warning and job.path in self.cache_read_errors:
+                    del self.cache_read_errors[job.path]
+                    self.scanHistoryChanged.emit(job.path)
                 self.remember_history(job.path, None, identity=event.get("identity"),
                                       observed_at=event.get("scanned_at", time.time()))
                 if "disk_cached" in event and not self._cleared_since(job, job.path):

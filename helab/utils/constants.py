@@ -258,7 +258,7 @@ def get_path_from_setting_or_use_default(key: str, candidates: List[str], settin
 # QSettings persists dir_temps/dir_caches across processes and reuses
 # whatever path was saved last time, so concurrent processes (e.g. pytest-xdist
 # workers) that each expect a private cache dir would otherwise all resolve to
-# the same on-disk FanoutCache and race each other's .clear()/writes. These
+# the same on-disk cache and race each other's clears and writes. These
 # overrides let a test process opt out of the persisted/shared path and force
 # its own private directory instead.
 def migrate_legacy_temp_dir(key: str, kind: str, settings: Optional[QSettings] = None,
@@ -291,6 +291,31 @@ def migrate_legacy_temp_dir(key: str, kind: str, settings: Optional[QSettings] =
     logging.info(f"Moved {key} from {value} to {target}")
 
 
+def refuse_unsafe_cache_dir(path: str, candidates: List[str]) -> tuple[str, str, bool]:
+    """``path``, or for this session a default folder if ``path`` is on a network or synced
+    folder, with the reason to tell the user and whether the disk cache can be used.
+
+    With no safe default the disk cache is off for the session, never left on the refused
+    folder. The saved setting is left for the user to change.
+    """
+    from helab.utils.cache_location import cache_location_problem
+    problem = cache_location_problem(path)
+    if not problem:
+        return path, "", True
+    fallback = next((candidate for candidate in candidates if not cache_location_problem(candidate)
+                     and usable_directory(candidate, create=True)), "")
+    if not fallback:
+        reason = (f"The saved cache folder {path} is {problem}, where the cache can't work safely, and no "
+                  f"safe default folder is available. The disk cache is off for this session; choose "
+                  f"another folder in Settings → General.")
+        logging.error(reason)
+        return path, reason, False
+    reason = (f"The saved cache folder {path} is {problem}, where the cache can't work safely. "
+              f"HeLab uses {fallback} for this session; choose another folder in Settings → General.")
+    logging.warning(reason)
+    return fallback, reason, True
+
+
 _dir_temps_override = os.environ.get("HELAB_DIR_TEMPS_OVERRIDE")
 _dir_caches_override = os.environ.get("HELAB_DIR_CACHES_OVERRIDE")
 
@@ -307,6 +332,12 @@ if _dir_caches_override:
 else:
     migrate_legacy_temp_dir("dir_caches", "caches")
     DIR_CACHES = get_path_from_setting_or_use_default("dir_caches", DIR_CACHES_CANDIDATES, create=True)
+# Why the saved cache folder isn't used this session ("" when it is).
+DIR_CACHES_REFUSED = ""
+# False when the saved folder was refused and no safe default exists: no helper opens a cache.
+DISK_CACHE_ENABLED = True
+if not _dir_caches_override:
+    DIR_CACHES, DIR_CACHES_REFUSED, DISK_CACHE_ENABLED = refuse_unsafe_cache_dir(DIR_CACHES, DIR_CACHES_CANDIDATES)
 
 
 # DIR_TEMPS = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps')

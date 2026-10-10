@@ -20,7 +20,7 @@ import os
 import pathlib
 import sqlite3
 import time
-from typing import Any, Generator, Generic, Iterable, Literal, Mapping, Sequence, TypeVar, TypedDict, cast
+from typing import Any, Callable, Generator, Generic, Iterable, Literal, Mapping, Sequence, TypeVar, TypedDict, cast
 import uuid
 
 LAYOUT_VERSION = 2
@@ -34,6 +34,8 @@ RETRY_OPEN = 60.0
 # Pending saves the user hasn't answered, and files no row names (a killed writer).
 PENDING_MAX_AGE = 3600.0
 ORPHAN_MIN_AGE = 3600.0
+# The diskcache folders of earlier versions, deleted at startup.
+OLD_CACHE_DIRS = ("data_ram_cache", "status_cache", "os_file_system_cache")
 
 Kind = Literal["datasets", "summaries", "histories", "subtrees"]
 KINDS: tuple[Kind, ...] = ("datasets", "summaries", "histories", "subtrees")
@@ -146,6 +148,13 @@ class DatasetRow(DatasetRecord):
     job_seq: int
 
 
+class DatasetInfo(TypedDict):
+    bytes: int
+    ram_bytes: int
+    info: dict[str, Any]
+    last_used: float
+
+
 @dataclass(frozen=True)
 class Removal:
     """What one removal did. ``paths`` is None for a removal by kind (every path)."""
@@ -165,6 +174,29 @@ class Sweep:
 
 def store_root(caches_dir: str) -> str:
     return os.path.join(caches_dir, STORE_DIRNAME)
+
+
+def remove_old_caches(caches_dir: str, progress: Callable[[], None] = lambda: None) -> list[str]:
+    """Delete the diskcache folders HeLab used before this store; their contents are dropped,
+    not migrated. Returns the folders now gone. ``progress`` is called per deleted entry."""
+    removed = []
+    for name in OLD_CACHE_DIRS:
+        folder = os.path.join(caches_dir, name)
+        if os.path.islink(folder) or not os.path.isdir(folder):
+            continue
+        for parent, folders, files in os.walk(folder, topdown=False):
+            for entry in files:
+                with contextlib.suppress(OSError):
+                    os.remove(os.path.join(parent, entry))
+                progress()
+            for entry in folders:
+                with contextlib.suppress(OSError):
+                    os.rmdir(os.path.join(parent, entry))
+        with contextlib.suppress(OSError):
+            os.rmdir(folder)
+        if not os.path.exists(folder):
+            removed.append(name)
+    return removed
 
 
 def pack_dataset(data: Mapping[int, Any]) -> bytes:
@@ -195,7 +227,8 @@ def _dumps(value: object) -> str:
 class CacheStore:
     """One connection to a store. Not thread-safe: one per helper process."""
 
-    def __init__(self, root: str, *, busy_timeout: float = BUSY_TIMEOUT) -> None:
+    def __init__(self, root: str, *, busy_timeout: float | None = None) -> None:
+        busy_timeout = BUSY_TIMEOUT if busy_timeout is None else busy_timeout
         self.root = root
         self.datasets_dir = os.path.join(root, "datasets")
         self.database = os.path.join(root, "records.sqlite")
@@ -603,6 +636,34 @@ class CacheStore:
                 "info": json.loads(row[8]), "last_used": row[9], "job_seq": row[10]}))
         except ValueError as exc:
             return _error(f"Saved dataset record is unreadable: {exc}")
+
+    def read_dataset_infos(self, paths: Sequence[str]) -> dict[str, Read[DatasetInfo]]:
+        """Each folder's dataset sizes and ``info``, without its fingerprint: for listings."""
+        unique = list(dict.fromkeys(paths))
+        rows: dict[str, tuple[int, int, str, float]] = {}
+        try:
+            with self.transaction(write=False):
+                for start in range(0, len(unique), 500):
+                    chunk = unique[start:start + 500]
+                    for path, size, ram_bytes, info, last_used in self._conn.execute(
+                            f"SELECT path, bytes, ram_bytes, info, last_used FROM datasets "
+                            f"WHERE path IN ({','.join('?' * len(chunk))})", chunk):
+                        rows[path] = (size, ram_bytes, info, last_used)
+        except (sqlite3.Error, StoreError) as exc:
+            failure = _error(f"Disk cache could not be read: {exc}")
+            return {path: failure for path in unique}
+        result: dict[str, Read[DatasetInfo]] = {}
+        for path in unique:
+            if path not in rows:
+                result[path] = _missing()
+                continue
+            size, ram_bytes, info, last_used = rows[path]
+            try:
+                result[path] = _found(DatasetInfo(bytes=int(size), ram_bytes=int(ram_bytes), info=json.loads(info),
+                                                  last_used=float(last_used)))
+            except ValueError as exc:
+                result[path] = _error(f"Saved dataset record is unreadable: {exc}")
+        return result
 
     def _read_file(self, file: str) -> bytes:
         with open(os.path.join(self.datasets_dir, file), "rb") as handle:

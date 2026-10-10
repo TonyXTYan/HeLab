@@ -25,7 +25,6 @@ uncertainties
 pandas
 scipy
 joblib
-diskcache
 pyarrow
 zstandard
 blosc

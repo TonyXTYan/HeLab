@@ -8,12 +8,12 @@ import time
 
 import numpy as np
 import pytest
-from diskcache import FanoutCache
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from pytestqt.qtbot import QtBot
 
 from helab.io_helper import list_folder, load, save_subtrees, scan
+from helab.utils.cache_store import CacheStore
 from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.resources.icons import IconsInitUtil, StatusIcons
 from helab.utils.folder_cache import FolderCache, get_folder_cache
@@ -82,14 +82,20 @@ class _NoStatListing:
         self.listing.__exit__(*args)
 
 
+def saved_summary(options: dict[str, Any], path: str) -> dict[str, Any]:
+    with CacheStore(options["directory"]) as store:
+        found = store.read_record("summaries", path)
+    assert found.value is not None
+    return found.value
+
+
 def test_listing_reads_names_only_and_never_writes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = tmp_path / "source"
     data_folder(source)
     path = str(source)
-    options: dict[str, Any] = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     scan(path, lambda event: None, options)
-    with FanoutCache(options["directory"], **options["params"]) as disk:
-        saved = cast(dict[str, Any], disk.get(("folder-scan-v1", path)))
+    saved = saved_summary(options, path)
     assert saved["signature"]
     scandir = os.scandir
     with monkeypatch.context() as no_stat:
@@ -110,8 +116,7 @@ def test_listing_reads_names_only_and_never_writes(tmp_path: Path, monkeypatch: 
     assert not {"modified", "identity"} & set(entries[0])
     # The folder's own saved summary is restored; nothing is written.
     assert next(event for event in events if event["kind"] == "scan_cached")["status"] == saved
-    with FanoutCache(options["directory"], **options["params"]) as disk:
-        assert disk.get(("folder-scan-v1", path)) == saved
+    assert saved_summary(options, path) == saved
 
 
 def test_browse_shows_counts_first_and_details_fill_dates_and_signature(
@@ -528,8 +533,9 @@ def test_load_of_the_selected_folder_replaces_details_and_saves_its_summary(
     assert snapshot is not None and snapshot.status["signature"] == dataset.signature
     explorer._update_activity()
     assert explorer.folder_summary_label.text() == "2 TXY found · 2 loaded"
-    with FanoutCache(options["directory"], **options["params"]) as disk:
-        saved = cast(dict[str, Any], disk.get(("folder-scan-v1", path)))
+    saved = saved_summary(options, path)
+    assert saved["files"] == {"raw": {"count": 2}, "txy": {"count": 2, "bytes": sum(
+        (source / f"d_txy_forc{shot}.txt").stat().st_size for shot in (1, 2))}}
     assert (saved["signature"], saved["txy_count"], saved["raw_count"]) == (dataset.signature, 2, 2)
     explorer.close_cleanup()
     service.shutdown()

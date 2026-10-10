@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, TypedDict, cast
 
 from helab.utils.cache_freshness import metadata_date
+from helab.utils.cache_store import CacheStore, SaveGuard, StoreError
 from helab.utils.time_format import relative_age
 
 
@@ -30,7 +31,6 @@ class ScanHistory(TypedDict):
 
 
 HISTORY_LIMIT = 10
-HISTORY_KEY = "folder-scan-history-v1"
 
 
 def empty_history() -> ScanHistory:
@@ -79,24 +79,25 @@ def parse_history(value: object) -> ScanHistory | None:
     return history
 
 
-def read_saved(cache: Any, key: object) -> Any:
-    """One cached value, or None if absent; a read error raises.
+def _saved(store: CacheStore, path: str) -> ScanHistory | None:
+    """The saved history (empty if none), or None if malformed; a read error raises.
 
-    FanoutCache.get returns its default for sqlite3.OperationalError even with
-    retry=True, so a failed read would look like "nothing saved". Read the shard
-    directly, whose get only retries timeouts.
+    An error must never look like "nothing saved", which would unblock a scan.
     """
-    shards = getattr(cache, "_shards", None)
-    if shards is None:
-        return cache.get(key, retry=True)
-    return shards[cache._hash(key) % cache._count].get(key, retry=True)
+    found = store.read_record("histories", path)
+    if found.failed:
+        raise StoreError(found.error)
+    return parse_history(found.value)
 
 
-def read_history(cache: Any, path: str) -> ScanHistory | None:
-    try:
-        return parse_history(cache.get((HISTORY_KEY, path), retry=True)) if cache is not None else None
-    except Exception:
-        return None
+def read_history(store: CacheStore | None, path: str) -> ScanHistory | None:
+    """For display: the saved history (empty if none), or None if unreadable."""
+    return None if store is None else read_histories(store, [path])[path]
+
+
+def read_histories(store: CacheStore, paths: list[str]) -> dict[str, ScanHistory | None]:
+    return {path: None if found.failed else parse_history(found.value)
+            for path, found in store.read_records("histories", paths).items()}
 
 
 def for_identity(history: ScanHistory, identity: object) -> ScanHistory:
@@ -117,13 +118,12 @@ class ScanSkipped(Exception):
         self.history = history
 
 
-def begin_scan(cache: Any, path: str, operation_id: str, revision: int,
+def begin_scan(store: CacheStore, path: str, operation_id: str, revision: int, guard: SaveGuard,
                identity: object = None, *, manual: bool = True,
                automatic: bool = False) -> tuple[ScanHistory, int]:
-    with cache.transact():
-        # Decided here, under the write lock: a read made before the scan may have
-        # failed and looked like "nothing saved", which must not unblock a scan.
-        found = parse_history(read_saved(cache, (HISTORY_KEY, path)))
+    with store.transaction():
+        # Decided here, under the write lock, from a read that raises on error.
+        found = _saved(store, path)
         if found is not None:
             found = for_identity(found, identity)
         if not manual and (found["blocked"] if found is not None else automatic):
@@ -136,8 +136,7 @@ def begin_scan(cache: Any, path: str, operation_id: str, revision: int,
         starts[operation_id] = issued
         starts = dict(list(starts.items())[-64:])
         updated: ScanHistory = {**history, "sequence": max(history["sequence"], issued), "starts": starts}
-        if not cache.set((HISTORY_KEY, path), updated):
-            raise OSError("Scan history write was rejected")
+        store.save_record("histories", path, updated, guard)
         return updated, issued
 
 
@@ -169,15 +168,14 @@ def apply_outcome(history: ScanHistory, outcome: dict[str, Any]) -> ScanHistory:
     return updated
 
 
-def write_outcome(cache: Any, path: str, outcome: dict[str, Any]) -> ScanHistory:
-    with cache.transact():
+def write_outcome(store: CacheStore, path: str, outcome: dict[str, Any], guard: SaveGuard) -> ScanHistory:
+    with store.transaction():
         # A read error raises: an empty history would overwrite the saved failures.
-        history = parse_history(read_saved(cache, (HISTORY_KEY, path)))
+        history = _saved(store, path)
         if history is None:
-            raise OSError("Saved scan history could not be read")
+            raise StoreError("Saved scan history could not be read")
         history = apply_outcome(history, outcome)
-        if not cache.set((HISTORY_KEY, path), history):
-            raise OSError("Scan history write was rejected")
+        store.save_record("histories", path, history, guard)
         return history
 
 

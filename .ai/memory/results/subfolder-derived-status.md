@@ -28,7 +28,7 @@ Tests: end of `tests/test_two_step_browse.py`.
   cache, nothing deeper. Why: walking saved descendants could be a very long
   recursion.
 - **Saved so it survives restarts** (Tony: more useful than session-only):
-  `("folder-subtree-v1", path)` in `data_ram_cache` with status, `derived_at`,
+  the disk cache's `subtrees` table with status, `derived_at`,
   folder identity, `older`, and data/checked/total subfolder counts. Saved only
   after a complete listing and only when status or outdated hint differs from
   the saved one; an empty folder listing removes it. Written by a batched

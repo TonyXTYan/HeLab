@@ -17,7 +17,7 @@ from helab.views.FolderExplorer import FolderExplorer
 
 
 def cache_options(tmp_path: Path) -> dict[str, Any]:
-    return {"directory": str(tmp_path / "disk-cache"), "params": {"shards": 2}}
+    return {"directory": str(tmp_path / "disk-cache")}
 
 
 def source_folder(tmp_path: Path, shots: int = 2) -> Path:

@@ -69,7 +69,7 @@ def test_compressed_cache_is_reused_and_validated(tmp_path: Path, monkeypatch: p
     source.mkdir()
     output.mkdir()
     (source / "d_txy_forc7.txt").write_text("1,2,3\n")
-    options = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options = {"directory": str(tmp_path / "cache")}
     events: list[dict[str, Any]] = []
     load(str(source), str(output), events.append, options)
 
@@ -97,9 +97,10 @@ def test_rendering_never_reads_filesystem_or_disk_cache(
 
     monkeypatch.setattr(os, "scandir", forbidden)
     monkeypatch.setattr(os, "stat", forbidden)
-    from diskcache import FanoutCache
-    monkeypatch.setattr(FanoutCache, "get", forbidden)
-    monkeypatch.setattr(FanoutCache, "__contains__", forbidden)
+    from helab.utils.cache_store import CacheStore
+    import sqlite3
+    monkeypatch.setattr(CacheStore, "__init__", forbidden)
+    monkeypatch.setattr(sqlite3, "connect", forbidden)
     for role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole,
                  Qt.ItemDataRole.ToolTipRole, Qt.ItemDataRole.ForegroundRole,
                  model.STATUS_EXTRA_ICONS_ROLE):
@@ -651,7 +652,7 @@ def test_load_progress_counts_cached_files_and_reports_unreadable_files(
     good = source / "d_txy_forc1.txt"
     good.write_text("1,2,3\n")
     (source / "d_txy_forc2.txt").write_text("not,numeric,data\n")
-    options = {"directory": str(tmp_path / "cache"), "params": {"shards": 2}}
+    options = {"directory": str(tmp_path / "cache")}
     if reuse == "disk":
         load(str(source), str(output), lambda event: None, options)
     info = good.stat()

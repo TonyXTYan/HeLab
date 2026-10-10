@@ -17,9 +17,8 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLineEdit, QMenu, QPushB
 from helab.models.SnapshotFileSystemModel import FolderNode, SnapshotFileSystemModel
 from helab.models.StatusReport import StatusReport
 from helab.utils.io_service import IORequest
-from helab.utils.folder_cache import Dataset
-from helab.utils.caching_setup import load_cache_param
-from helab.utils.constants import DEFAULT_LOAD_MODE, DIR_CACHES
+from helab.utils.folder_cache import Dataset, store_options
+from helab.utils.constants import DEFAULT_LOAD_MODE
 from helab.utils.load_clock import LoadClock
 from helab.utils.time_format import byte_rate, clock as stopwatch, duration, relative_age
 from helab.utils.cache_freshness import CacheFreshness, data_as_of, freshness_tooltip, metadata_date
@@ -523,9 +522,7 @@ class FolderExplorer(QWidget):
 
     def _load_payload(self, path: str) -> dict[str, Any]:
         node = self.model.nodes.get(path)
-        cache = {"directory": os.path.join(DIR_CACHES, "data_ram_cache"),
-                 "params": dict(load_cache_param("data_ram_cache"))}
-        return {"cache": cache, "signature": node.signature if node else ""}
+        return {"cache": store_options(), "signature": node.signature if node else ""}
 
     def _has_data(self, path: str) -> bool:
         node = self.model.nodes.get(path)
@@ -1151,7 +1148,9 @@ class FolderExplorer(QWidget):
             self.folder_freshness_label.setText(
                 f"Folder status check failed {self._relative_age(time.time() - failed_at)} · Retry manually")
         self.folder_freshness_label.setToolTip("\n".join(filter(None, (history_tooltip(history, time.time()),
-            self.model.cache.scan_history_errors.get(path), freshness_tooltip(
+            self.model.cache.scan_history_errors.get(path),
+            f"Saved results unknown: {warning}" if (warning := self.model.cache.cache_read_errors.get(path)) else "",
+            freshness_tooltip(
             "Last successful status scan", node.scanned_at if node else None, node.modified if node else None,
             status_freshness, "Use Check folder status to recheck counts and status.")))))
 
@@ -1420,10 +1419,8 @@ class FolderExplorer(QWidget):
     def clear_data_cache(self, path: str) -> None:
         self.model.cache.cancel(self.model.owner, "load")
         self.load_error = ""
-        cache = {"directory": os.path.join(DIR_CACHES, "data_ram_cache"),
-                 "params": dict(load_cache_param("data_ram_cache"))}
         if not self.model.cache.submit(self.model.owner, self.model.generation, path, "invalidate",
-                                         {"cache": cache}, priority=True):
+                                         {"cache": store_options()}, priority=True):
             self.load_error = "Cache request queue full — Retry"
         self.loadStateChanged.emit()
 

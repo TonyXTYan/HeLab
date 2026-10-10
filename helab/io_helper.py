@@ -10,14 +10,16 @@ import base64
 import hashlib
 import math
 import os
-import re
 import sys
 import time
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+from helab.utils import file_kinds
+
+if TYPE_CHECKING:
+    from helab.utils.cache_store import CacheStore, SaveGuard
 
 Emit = Callable[[dict[str, Any]], None]
-RAW = re.compile(r"^d(\d+)\.txt$")
-TXY = re.compile(r"^d_txy_forc(\d+)\.txt$")
 # Another computer may still be writing a file modified this recently; it is
 # left for the next load rather than read half-written. Tests set it to 0.
 SETTLE_SECONDS = float(os.environ.get("HELAB_SETTLE_SECONDS", "5"))
@@ -74,54 +76,103 @@ class Heartbeat:
             self.last = now
 
 
-def _disk_cached(cache: Any, path: str) -> bool:
-    # Membership reads local metadata, without reading/decompressing array data.
-    try:
-        return cache is not None and path in cache
-    except Exception:
-        return False
+def _cache_info(info: object) -> dict[str, Any]:
+    """A dataset record's ``info`` if it is usable (a save date and signature), else {}."""
+    if isinstance(info, dict):
+        saved_at = info.get("saved_at")
+        if (isinstance(saved_at, (int, float)) and math.isfinite(saved_at) and saved_at > 0
+                and isinstance(info.get("signature"), str)):
+            return info
+    return {}
 
 
-def _cache_info(cache: Any, path: str) -> dict[str, Any]:
-    """Small persisted metadata only; older cached arrays have no save date."""
-    try:
-        info = cache.get(("snapshot-cache-info", path), retry=True) if cache is not None else None
-        if isinstance(info, dict):
-            saved_at = info.get("saved_at")
-            if (isinstance(saved_at, (int, float)) and math.isfinite(saved_at) and saved_at > 0
-                    and isinstance(info.get("signature"), str)):
-                return info
-        return {}
-    except Exception:
-        return {}
+def _open_store(cache_options: dict[str, Any] | None, send: Emit) -> CacheStore | None:
+    """The disk cache, or None without one or if it can't be opened.
 
-
-def _open_cache(cache_options: dict[str, Any] | None) -> Any:
+    An opening error is sent as a ``cache_warning``; what the cache holds is then
+    unknown, never "nothing saved" (callers check ``cache_options`` to tell).
+    """
     if not cache_options:
         return None
+    from helab.utils.cache_store import CacheStore, StoreError
     try:
-        from diskcache import FanoutCache
-        return FanoutCache(cache_options["directory"], **cache_options["params"])
-    except Exception:
+        return CacheStore(cache_options["directory"])
+    except (StoreError, OSError) as exc:
         # Optional cache metadata must not prevent browsing source folders.
+        send({"kind": "cache_warning", "message": f"Disk cache could not be opened: {exc}"})
         return None
 
 
-def _send_saved(cache: Any, path: str, send: Emit, identity: object) -> Any:
+def _saved_folders(store: CacheStore, paths: list[str], send: Emit,
+                   identities: dict[str, object] | None = None) -> dict[str, dict[str, Any]]:
+    """Each folder's saved history, summary, subfolder status and dataset flags, in a few queries.
+
+    A read error is unknown, never "nothing saved": a history that can't be read is
+    None, and an unreadable summary, subfolder status or dataset leaves its keys out,
+    so the GUI keeps what it knew. The error is sent as a ``cache_warning``.
+    A record saved for another directory at the same path is left out.
+    """
+    from helab.utils.scan_history import for_identity, read_histories
+    histories = read_histories(store, paths)
+    summaries = store.read_records("summaries", paths)
+    subtrees = store.read_records("subtrees", paths)
+    datasets = store.read_dataset_infos(paths)
+    saved: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    for path in paths:
+        identity = (identities or {}).get(path)
+        history = histories[path]
+        if history is not None:
+            history = for_identity(history, identity)
+        entry: dict[str, Any] = {"scan_history": history}
+        if summaries[path].failed:
+            errors.append(summaries[path].error)
+        else:
+            summary = _valid_summary(summaries[path].value)
+            if summary.get("identity") is not None and identity is not None and summary["identity"] != identity:
+                summary = {}
+            entry["scan_status"] = summary
+        if subtrees[path].failed:
+            errors.append(subtrees[path].error)
+        else:
+            entry["subtree"] = _valid_subtree(subtrees[path].value, identity)
+        dataset = datasets[path]
+        if dataset.failed:
+            errors.append(dataset.error)
+        else:
+            entry["disk_cached"] = dataset.value is not None
+            entry["cache_info"] = {} if dataset.value is None else _cache_info(dataset.value["info"])
+        saved[path] = entry
+    if errors:
+        more = f" (and {len(errors) - 1} more)" if len(errors) > 1 else ""
+        send({"kind": "cache_warning", "message": f"{errors[0]}{more}"})
+    return saved
+
+
+def _dataset_flags(store: CacheStore | None, path: str, send: Emit) -> dict[str, Any]:
+    """The folder's ``disk_cached`` and ``cache_info``; left out if unknown."""
+    if store is None:
+        return {}
+    saved = _saved_folders(store, [path], send)[path]
+    return {key: saved[key] for key in ("disk_cached", "cache_info") if key in saved}
+
+
+def _send_saved(store: CacheStore | None, path: str, send: Emit, identity: object) -> Any:
     """Send this folder's saved history and summary; returns the history (None if unreadable)."""
-    from helab.utils.scan_history import read_history, for_identity
-    history = read_history(cache, path)
-    if history is not None:
-        history = for_identity(history, identity)
-    send({"kind": "scan_history", "history": history})
-    previous = _scan_info(cache, path)
-    if previous.get("identity") is not None and identity is not None and previous["identity"] != identity:
-        previous = {}
-    if previous:
-        send({"kind": "scan_cached", "status": previous})
-    if subtree := _subtree_info(cache, path, identity):
-        send({"kind": "subtree_cached", "subtree": subtree})
-    return history
+    if store is None:
+        send({"kind": "scan_history", "history": None})
+        return None
+    saved = _saved_folders(store, [path], send, {path: identity})[path]
+    send({"kind": "scan_history", "history": saved["scan_history"]})
+    if saved.get("scan_status"):
+        send({"kind": "scan_cached", "status": saved["scan_status"]})
+    if saved.get("subtree"):
+        send({"kind": "subtree_cached", "subtree": saved["subtree"]})
+    return saved["scan_history"]
+
+
+def _shots(found: dict[str, set[int]]) -> tuple[set[int], set[int]]:
+    return found.get(file_kinds.RAW.name, set()), found.get(file_kinds.TXY.name, set())
 
 
 def _classify(raw: set[int], txy: set[int], has_dirs: bool) -> tuple[str, int]:
@@ -145,50 +196,47 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
     identity is checked by the ``details`` scan (step 2), which also adds the
     signature and dates. Nothing is written.
     """
-    from helab.utils.scan_history import read_history
-    cache = _open_cache(cache_options)
+    store = _open_store(cache_options, send)
     try:
-        _send_saved(cache, path, send, identity)
-        raw: set[int] = set()
-        txy: set[int] = set()
+        _send_saved(store, path, send, identity)
+        found: dict[str, set[int]] = {}
         entries: list[dict[str, Any]] = []
         has_dirs = False
         empty = True
         listed_at = time.time()
         beat = Heartbeat(send, "listing")
+
+        def flush() -> None:
+            if store is not None:
+                saved = _saved_folders(store, [child["path"] for child in entries], send)
+                for child in entries:
+                    child.update(saved[child["path"]])
+            send({"kind": "entries", "entries": entries})
+
         with os.scandir(path) as directory:
             for entry in directory:
                 beat()
                 empty = False
-                if match := RAW.fullmatch(entry.name):
-                    raw.add(int(match.group(1)))
-                elif match := TXY.fullmatch(entry.name):
-                    txy.add(int(match.group(1)))
+                if matched := file_kinds.match(entry.name):
+                    found.setdefault(matched[0].name, set()).add(matched[1])
                 elif entry.is_dir(follow_symlinks=False):
                     has_dirs = True
-                    child: dict[str, Any] = {"path": entry.path, "name": entry.name}
-                    if cache is not None:
-                        child.update(scan_history=read_history(cache, entry.path),
-                                     scan_status=_scan_info(cache, entry.path),
-                                     subtree=_subtree_info(cache, entry.path),
-                                     disk_cached=_disk_cached(cache, entry.path),
-                                     cache_info=_cache_info(cache, entry.path))
-                    entries.append(child)
+                    entries.append({"path": entry.path, "name": entry.name})
                     if len(entries) >= 128:
-                        send({"kind": "entries", "entries": entries})
+                        flush()
                         entries = []
         if entries:
-            send({"kind": "entries", "entries": entries})
+            flush()
+        raw, txy = _shots(found)
         status, count = _classify(raw, txy, has_dirs)
         report: dict[str, Any] = {"kind": "status", "details": False, "status": status, "count": count,
                                   "empty": empty, "has_dirs": has_dirs, "scanned_at": listed_at,
-                                  "raw": sorted(raw), "txy": sorted(txy)}
-        if cache is not None:
-            report.update(disk_cached=_disk_cached(cache, path), cache_info=_cache_info(cache, path))
+                                  "raw": sorted(raw), "txy": sorted(txy),
+                                  "files": file_kinds.files_summary(found, {}), **_dataset_flags(store, path, send)}
         send(report)
     finally:
-        if cache is not None:
-            cache.close()
+        if store is not None:
+            store.close()
 
 
 def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = None, *,
@@ -196,11 +244,19 @@ def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = No
          operation_id: str = "", revision: int = 0, identity: object = None) -> None:
     """Full scan: a basic scan, or browse step 2 (``details``). Saves summary and history."""
     from uuid import uuid4
+    from helab.utils.cache_store import StoreError
     from helab.utils.scan_history import ScanSkipped, begin_scan, write_outcome
     send({"kind": "scan_mode", "mode": "metadata"})
-    cache = _open_cache(cache_options)
+    store = _open_store(cache_options, send)
     try:
-        history = _send_saved(cache, path, send, identity)
+        guard: SaveGuard | None = None
+        if store is not None:
+            try:
+                # Taken first, before anything is read: a Clear from now on stops its saves.
+                guard = store.guard([path], ("summaries", "histories"))
+            except StoreError:
+                guard = None
+        history = _send_saved(store, path, send, identity)
         blocked = history is not None and history["blocked"]
         if not manual and (blocked or automatic and history is None):
             # Browsing a blocked folder lists it (step 1) without this scan.
@@ -208,15 +264,15 @@ def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = No
             return
         operation_id = operation_id or uuid4().hex
         revision = revision or time.time_ns()
-        if cache is None and cache_options:
+        if guard is None and cache_options:
             send({"kind": "scan_history_warning", "message": "The cache could not be opened"})
             if not manual:
                 # Without the saved history this may be a blocked folder.
                 send({"kind": "scan_mode", "mode": "skipped"})
                 return
-        if cache is not None:
+        if store is not None and guard is not None:
             try:
-                history, revision = begin_scan(cache, path, operation_id, revision, identity,
+                history, revision = begin_scan(store, path, operation_id, revision, guard, identity,
                                                manual=manual, automatic=automatic)
                 send({"kind": "scan_history", "history": history, "revision": revision})
             except ScanSkipped as skipped:
@@ -231,126 +287,124 @@ def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = No
                     send({"kind": "scan_mode", "mode": "skipped"})
                     return
         send({"kind": "scan_mode", "mode": "scan"})
-        report = _scan(path, send, cache)
-        if cache is not None:
+        report = _scan(path, send, store, guard, bool(cache_options))
+        if store is not None and guard is not None:
             try:
-                history = write_outcome(cache, path, {"operation_id": operation_id, "revision": revision,
-                    "kind": "success", "at": report["scanned_at"], "identity": report["identity"]})
+                history = write_outcome(store, path, {"operation_id": operation_id, "revision": revision,
+                    "kind": "success", "at": report["scanned_at"], "identity": report["identity"]}, guard)
                 send({"kind": "scan_history", "history": history, "revision": revision, "saved": True})
             except Exception as exc:
                 send({"kind": "scan_history_warning", "message": str(exc)})
     finally:
-        if cache is not None:
-            cache.close()
+        if store is not None:
+            store.close()
 
 
-def _scan_info(cache: Any, path: str) -> dict[str, Any]:
-    """Restore metadata independently of the compressed dataset."""
-    try:
-        info = cache.get(("folder-scan-v1", path), retry=True) if cache is not None else None
-        if (isinstance(info, dict) and info.get("version") == 1
-                and isinstance(info.get("signature"), str)
-                and info.get("status") in ("ok", "warning", "critical", "fixable", "unknown", "nothing")
-                and isinstance(info.get("count"), int)
-                and isinstance(info.get("scanned_at"), (float, int))
-                and math.isfinite(info["scanned_at"]) and 0 < info["scanned_at"] < 253402300799
-                and all(isinstance(info.get(key), int) and info[key] >= 0
-                        for key in ("raw_count", "txy_count"))):
-            return info
-    except Exception:
-        pass
+SUMMARY_STATUSES = ("ok", "warning", "critical", "fixable", "unknown", "nothing")
+
+
+def _valid_summary(info: object) -> dict[str, Any]:
+    """A saved folder summary if it is complete, else {}."""
+    if (isinstance(info, dict) and info.get("version") == 1
+            and isinstance(info.get("signature"), str)
+            and info.get("status") in SUMMARY_STATUSES
+            and isinstance(info.get("count"), int)
+            and isinstance(info.get("scanned_at"), (float, int))
+            and math.isfinite(info["scanned_at"]) and 0 < info["scanned_at"] < 253402300799
+            and all(isinstance(info.get(key), int) and info[key] >= 0
+                    for key in ("raw_count", "txy_count"))
+            and ("files" not in info or file_kinds.valid_files(info["files"]))):
+        return info
     return {}
 
 
-def _summary(path: str, raw: set[int], txy: set[int], has_dirs: bool, empty: bool,
+def _summary(path: str, found: dict[str, set[int]], sizes: dict[str, int], has_dirs: bool, empty: bool,
              fingerprint: list[tuple[int, int, int]], scanned_at: float) -> dict[str, Any]:
     """A complete status for this folder, as a scan or load computes it."""
     folder_stat = os.stat(path)
+    raw, txy = _shots(found)
     status, count = _classify(raw, txy, has_dirs)
     return {"kind": "status", "details": True, "status": status, "count": count, "empty": empty,
             "has_dirs": has_dirs, "scanned_at": scanned_at,
             "identity": [folder_stat.st_dev, folder_stat.st_ino],
-            "raw": sorted(raw), "txy": sorted(txy), "modified": folder_stat.st_mtime,
+            "raw": sorted(raw), "txy": sorted(txy), "files": file_kinds.files_summary(found, sizes),
+            "modified": folder_stat.st_mtime,
             "signature": hashlib.sha256(json.dumps(sorted(fingerprint)).encode()).hexdigest()}
 
 
-SUBTREE_KEY = "folder-subtree-v1"
-
-
-def _subtree_info(cache: Any, path: str, identity: object = None) -> dict[str, Any]:
-    """A folder's saved status derived from its subfolders (not their contents)."""
-    try:
-        info = cache.get((SUBTREE_KEY, path), retry=True) if cache is not None else None
-        if (isinstance(info, dict) and info.get("version") == 1
-                and info.get("status") in ("something", "nothing")
-                and isinstance(info.get("derived_at"), (float, int))
-                and math.isfinite(info["derived_at"]) and 0 < info["derived_at"] < 253402300799
-                and isinstance(info.get("older"), bool)
-                and all(isinstance(info.get(key), int) and info[key] >= 0 for key in ("data", "checked", "total"))):
-            # Another directory now at this path does not inherit the result.
-            if info.get("identity") is not None and identity is not None and info["identity"] != identity:
-                return {}
-            return info
-    except Exception:
-        pass
+def _valid_subtree(info: object, identity: object = None) -> dict[str, Any]:
+    """A folder's saved status derived from its subfolders (not their contents), else {}."""
+    if (isinstance(info, dict) and info.get("version") == 1
+            and info.get("status") in ("something", "nothing")
+            and isinstance(info.get("derived_at"), (float, int))
+            and math.isfinite(info["derived_at"]) and 0 < info["derived_at"] < 253402300799
+            and isinstance(info.get("older"), bool)
+            and all(isinstance(info.get(key), int) and info[key] >= 0 for key in ("data", "checked", "total"))):
+        # Another directory now at this path does not inherit the result.
+        if info.get("identity") is not None and identity is not None and info["identity"] != identity:
+            return {}
+        return info
     return {}
 
 
 def save_subtrees(cache_options: dict[str, Any], records: list[dict[str, Any]], send: Emit = emit) -> None:
     """Save (or, with status "", remove) folders' statuses derived from their subfolders.
 
-    One transaction: it waits for the write lock instead of timing out, and a
-    failed write raises (the job reports an error) rather than reporting saved.
+    One transaction, all or nothing: a failed write raises (the job reports an
+    error) rather than reporting saved.
     """
-    from diskcache import FanoutCache
-    with FanoutCache(cache_options["directory"], **cache_options["params"]) as cache:
-        with cache.transact():
-            for record in records:
-                key = (SUBTREE_KEY, record["path"])
-                if record["status"]:
-                    if not cache.set(key, {"version": 1, **{k: v for k, v in record.items() if k != "path"}},
-                                     retry=True):
-                        raise OSError(f"Subfolder status write was rejected: {record['path']}")
-                else:
-                    cache.delete(key, retry=True)
+    from helab.utils.cache_store import CacheStore
+    with CacheStore(cache_options["directory"]) as store:
+        batch = {record["path"]: {"version": 1, **{k: v for k, v in record.items() if k != "path"}}
+                 if record["status"] else None for record in records}
+        store.save_records("subtrees", batch, store.guard(list(batch), ("subtrees",)))
     send({"kind": "subtree_saved", "paths": [record["path"] for record in records]})
 
 
-def _save_summary(cache: Any, path: str, report: dict[str, Any], send: Emit) -> None:
+def _save_summary(store: CacheStore, path: str, report: dict[str, Any], guard: SaveGuard, send: Emit) -> None:
     # Optional persistence never turns a successful source check into a failure,
     # but a failed save is reported, not silently dropped.
     try:
-        if not cache.set(("folder-scan-v1", path), {"version": 1, **{
-                key: value for key, value in report.items()
-                if key not in ("kind", "details", "disk_cached", "cache_info", "raw", "txy")},
-                "raw_count": len(report["raw"]), "txy_count": len(report["txy"])}, retry=True):
-            raise OSError("write was rejected")
+        store.save_record("summaries", path, {"version": 1, **{
+            key: value for key, value in report.items()
+            if key not in ("kind", "details", "disk_cached", "cache_info", "raw", "txy")},
+            "raw_count": len(report["raw"]), "txy_count": len(report["txy"])}, guard)
     except Exception as exc:
         send({"kind": "summary_save_failed", "message": f"Folder summary could not be saved: {exc}"})
 
 
-def _scan(path: str, send: Emit, cache: Any) -> dict[str, Any]:
-    from helab.utils.scan_history import read_history, for_identity
-    raw: set[int] = set()
-    txy: set[int] = set()
+def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | None,
+          cache_on: bool = False) -> dict[str, Any]:
+    found: dict[str, set[int]] = {}
     entries: list[dict[str, Any]] = []
     has_dirs = False
     empty = True
     fingerprint: list[tuple[int, int, int]] = []
+    txy_bytes = 0
+
+    def flush() -> None:
+        if store is not None:
+            saved = _saved_folders(store, [child["path"] for child in entries], send,
+                                   {child["path"]: child["identity"] for child in entries})
+            for child in entries:
+                child.update(saved[child["path"]])
+        send({"kind": "entries", "entries": entries})
+
     beat = Heartbeat(send, "listing")
     # Do not traverse directory symlinks or recursively probe children.
     with os.scandir(path) as directory:
         for entry in directory:
             beat()
             empty = False
-            if match := RAW.fullmatch(entry.name):
-                raw.add(int(match.group(1)))
-            if match := TXY.fullmatch(entry.name):
-                txy.add(int(match.group(1)))
-                # Match load()'s fingerprint of the actual converted file,
-                # including when the file itself is a symlink.
-                info = entry.stat()
-                fingerprint.append((int(match.group(1)), info.st_size, info.st_mtime_ns))
+            if matched := file_kinds.match(entry.name):
+                kind, shot = matched
+                found.setdefault(kind.name, set()).add(shot)
+                if kind is file_kinds.TXY:
+                    # Match load()'s fingerprint of the actual converted file,
+                    # including when the file itself is a symlink.
+                    info = entry.stat()
+                    fingerprint.append((shot, info.st_size, info.st_mtime_ns))
+                    txy_bytes += info.st_size
             if entry.is_dir(follow_symlinks=False):
                 has_dirs = True
                 try:
@@ -358,39 +412,30 @@ def _scan(path: str, send: Emit, cache: Any) -> dict[str, Any]:
                     # Use the same source as _summary so saved metadata belongs
                     # to this directory, and replacements are detected reliably.
                     stat = os.stat(entry.path, follow_symlinks=False)
-                    modified = stat.st_mtime
-                    identity = [stat.st_dev, stat.st_ino]
+                    modified: float | None = stat.st_mtime
+                    identity: list[int] | None = [stat.st_dev, stat.st_ino]
                 except OSError:
                     modified = None
                     identity = None
-                history = read_history(cache, entry.path)
-                if history is not None:
-                    history = for_identity(history, identity)
-                summary = _scan_info(cache, entry.path)
-                if summary.get("identity") is not None and identity is not None and summary["identity"] != identity:
-                    summary = {}
                 entries.append({"path": entry.path, "name": entry.name, "modified": modified,
-                                "identity": identity, "scan_history": history,
-                                "modified_observed_at": time.time(),
-                                "disk_cached": _disk_cached(cache, entry.path),
-                                "cache_info": _cache_info(cache, entry.path),
-                                "scan_status": summary, "subtree": _subtree_info(cache, entry.path, identity)})
+                                "identity": identity, "modified_observed_at": time.time()})
                 if len(entries) >= 128:
-                    send({"kind": "entries", "entries": entries})
+                    flush()
                     entries = []
     if entries:
-        send({"kind": "entries", "entries": entries})
+        flush()
     # Like load(), files that may still be being written are not in the signature,
     # so a scan during acquisition agrees with the data loaded meanwhile.
     settled = _settled(fingerprint)
-    report = {**_summary(path, raw, txy, has_dirs, empty, settled, time.time()),
+    report = {**_summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, empty, settled, time.time()),
               "unsettled": len(fingerprint) - len(settled),
-              "disk_cached": _disk_cached(cache, path), "cache_info": _cache_info(cache, path)}
+              # Without a cache nothing is cached; a cache that couldn't be opened is unknown.
+              **({} if cache_on else {"disk_cached": False, "cache_info": {}}), **_dataset_flags(store, path, send)}
     # Publish the completed source check before optional cache writes, so even a
     # stalled cache writer cannot turn it into a failed basic scan.
     send(report)
-    if cache is not None:
-        _save_summary(cache, path, report, send)
+    if store is not None and guard is not None:
+        _save_summary(store, path, report, guard, send)
     return report
 
 
@@ -400,20 +445,6 @@ def _settled(fingerprint: list[tuple[int, int, int]]) -> list[tuple[int, int, in
         return fingerprint
     settle_after = time.time() - SETTLE_SECONDS
     return [item for item in fingerprint if item[2] / 1e9 <= settle_after]
-
-
-def _unpack(packed: Any) -> dict[int, Any] | None:
-    """A cached dataset: Blosc-compressed pickle of ``{shot: float64 array (n, 3)}``."""
-    import blosc
-    import numpy as np
-    import pickle
-    if not isinstance(packed, bytes):
-        return None
-    unpacked = pickle.loads(blosc.decompress(packed))
-    valid = isinstance(unpacked, dict) and all(
-        isinstance(shot, int) and isinstance(array, np.ndarray) and array.ndim == 2 and array.shape[1] == 3
-        for shot, array in unpacked.items())
-    return unpacked if valid else None
 
 
 def _fingerprint_signature(fingerprint: Any) -> str:
@@ -429,6 +460,19 @@ def _as_of(info: dict[str, Any]) -> float | None:
     return None
 
 
+def _touch(store: CacheStore, path: str) -> None:
+    """Record that the cached dataset was used; best effort (e.g. a read-only cache)."""
+    from helab.utils.cache_store import StoreError
+    try:
+        store.touch_dataset(path)
+    except StoreError:
+        pass
+
+
+def _saved_fingerprint(row: Any) -> list[tuple[int, int, int]]:
+    return [(int(shot), int(size), int(modified)) for shot, size, modified in row["fingerprint"]]
+
+
 def read_cached(path: str, output: str, send: Emit = emit,
                 cache_options: dict[str, Any] | None = None) -> None:
     """Send a folder's dataset from the local disk cache, never touching the source folder.
@@ -437,23 +481,28 @@ def read_cached(path: str, output: str, send: Emit = emit,
     base checks the folder.
     """
     import numpy as np
-    cache = _open_cache(cache_options)
-    if cache is None:
+    from helab.utils.cache_store import unpack_dataset
+    store = _open_store(cache_options, send)
+    if store is None:
         raise ValueError("Disk cache unavailable")
     try:
-        with cache.transact():
-            saved: Any = cache.get(("snapshot-fingerprint", path))
-            packed = cache.get(path) if saved is not None else None
-            previous = cache.get(("snapshot-problematic", path), [])
-            info = _cache_info(cache, path)
+        found = store.read_dataset(path)
+        if found.failed:
+            raise ValueError(found.error)
+        if found.value is None:
+            raise ValueError("No cached data for this folder")
+        row, packed = found.value
+        data = unpack_dataset(packed)
+        if data is None:
+            raise ValueError("No cached data for this folder")
+        _touch(store, path)
     finally:
-        cache.close()
-    data = _unpack(packed) if isinstance(saved, (list, tuple)) else None
-    if data is None or not isinstance(saved, (list, tuple)):
-        raise ValueError("No cached data for this folder")
+        store.close()
+    saved = _saved_fingerprint(row)
     fingerprint = [list(entry) for entry in saved]
     by_shot = {int(entry[0]): entry for entry in fingerprint}
-    problematic = {value for value in previous if isinstance(value, int)} if isinstance(previous, list) else set()
+    problematic = {value for value in row["problematic"] if isinstance(value, int)}
+    info = _cache_info(row["info"])
     send({"kind": "load_source", "source": "disk", "cache_reason": ""})
     rows = size = 0
     last_progress = 0.0
@@ -479,18 +528,17 @@ def read_cached(path: str, output: str, send: Emit = emit,
     if not shots:
         raise ValueError("No cached data for this folder")
     send({"kind": "loaded", "rows": rows, "bytes": size, "files": len(shots), "loaded_at": time.time(),
-          "total_files": len(fingerprint) + int(info.get("unsettled", 0) or 0),
-          "failed_files": len(fingerprint) - len(shots),
-          "unsettled_files": int(info.get("unsettled", 0) or 0),
+          "total_files": len(fingerprint) + unsettled, "failed_files": len(fingerprint) - len(shots),
+          "unsettled_files": unsettled,
           "problematic": sorted(problematic & set(shots)), "source": "disk", "cached": True,
           "disk_cached": True, "disk_cache_pending": False, "cache_info": info,
           "load_counts": {"reused_memory": 0, "reused_disk": len(shots), "new": 0, "modified": 0,
                           "removed": 0, "read": 0, "new_loaded": 0, "modified_loaded": 0},
           "cache_reason": "", "fingerprint": fingerprint, "memory_shots": [], "verified": False,
-          "signature": info.get("signature") or _fingerprint_signature(saved)})
+          "signature": info.get("signature") or _fingerprint_signature(fingerprint)})
 
 
-def _unchanged_since_cache(path: str, send: Emit, cache_options: dict[str, Any],
+def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
                            base_signature: str, memory: list[list[int]]) -> bool:
     """One folder stat instead of listing and checking every file.
 
@@ -499,27 +547,21 @@ def _unchanged_since_cache(path: str, send: Emit, cache_options: dict[str, Any],
     since the dataset's file list was taken, nothing can have been added or
     removed: ``loaded`` names the caller's shots and True is returned.
     """
-    cache = _open_cache(cache_options)
-    if cache is None:
+    found = store.read_dataset_row(path)
+    if found.value is None:
         return False
-    try:
-        with cache.transact():
-            info = _cache_info(cache, path)
-            saved: Any = cache.get(("snapshot-fingerprint", path))
-            previous = cache.get(("snapshot-problematic", path), [])
-    finally:
-        cache.close()
+    row = found.value
+    info = _cache_info(row["info"])
     as_of = _as_of(info)
-    if (info.get("signature") != base_signature or info.get("unsettled") or as_of is None
-            or not isinstance(saved, (list, tuple))):
+    if info.get("signature") != base_signature or info.get("unsettled") or as_of is None:
         return False
     modified = os.stat(path).st_mtime
     if modified > as_of:
         return False
-    fingerprint = [list(entry) for entry in saved]
+    fingerprint = [list(entry) for entry in _saved_fingerprint(row)]
     held = sorted({int(entry[0]) for entry in memory} & {int(entry[0]) for entry in fingerprint})
-    problematic = [value for value in previous if isinstance(value, int) and value in held] \
-        if isinstance(previous, list) else []
+    problematic = [value for value in row["problematic"] if isinstance(value, int) and value in held]
+    _touch(store, path)
     send({"kind": "load_source", "source": "memory", "cache_reason": ""})
     send({"kind": "loaded", "rows": 0, "bytes": 0, "files": len(held), "loaded_at": time.time(),
           "total_files": len(fingerprint), "failed_files": len(fingerprint) - len(held), "unsettled_files": 0,
@@ -545,8 +587,28 @@ def load(path: str, output: str, send: Emit = emit,
     ``base_signature`` names the dataset those shots belong to; if it is the cached
     dataset and the folder is unmodified since, one folder stat is the whole check.
     """
-    if (base_signature and cache_options and memory and expected in ("", base_signature)
-            and _unchanged_since_cache(path, send, cache_options, base_signature, memory)):
+    from helab.utils.cache_store import StoreError
+    store = _open_store(cache_options, send)
+    try:
+        guard: SaveGuard | None = None
+        if store is not None:
+            try:
+                # Taken first, before anything is read or imported: only a later job's
+                # save may replace this one's, and a removal from now on stops it.
+                guard = store.start_dataset_job(path, ("summaries",))
+            except StoreError as exc:
+                send({"kind": "cache_warning", "message": f"Disk cache can't be updated: {exc}"})
+        _load(path, output, send, store, guard, bool(cache_options), memory, base_signature, expected)
+    finally:
+        if store is not None:
+            store.close()
+
+
+def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: SaveGuard | None, cache_on: bool,
+          memory: list[list[int]] | None, base_signature: str, expected: str) -> None:
+    from helab.utils.cache_store import StoreError
+    if (base_signature and store is not None and memory and expected in ("", base_signature)
+            and _unchanged_since_cache(path, send, store, base_signature, memory)):
         return
     # These imports are deliberately local: scanning does not initialize numpy,
     # pandas, any HeLab caches, or a QApplication.
@@ -554,7 +616,7 @@ def load(path: str, output: str, send: Emit = emit,
     import pandas as pd
 
     files: list[tuple[int, str]] = []
-    raw: set[int] = set()
+    found: dict[str, set[int]] = {}
     has_dirs = False
     # Files added after this listing are not in the dataset; freshness compares against it.
     listed_at = time.time()
@@ -562,10 +624,11 @@ def load(path: str, output: str, send: Emit = emit,
     with os.scandir(path) as directory:
         for entry in directory:
             beat()
-            if match := TXY.fullmatch(entry.name):
-                files.append((int(match.group(1)), entry.path))
-            elif match := RAW.fullmatch(entry.name):
-                raw.add(int(match.group(1)))
+            if matched := file_kinds.match(entry.name):
+                kind, shot = matched
+                found.setdefault(kind.name, set()).add(shot)
+                if kind.loaded:
+                    files.append((shot, entry.path))
             elif not has_dirs and entry.is_dir(follow_symlinks=False):
                 has_dirs = True
     if not files:
@@ -582,6 +645,7 @@ def load(path: str, output: str, send: Emit = emit,
         return result
 
     fingerprint = stat_files("checking")
+    txy_bytes = sum(size for _, size, _ in fingerprint)
     # Files another computer may still be writing are left out entirely (not in
     # the fingerprint), so the next load sees them as new and reads them whole.
     young = {item[0] for item in fingerprint} - {item[0] for item in _settled(fingerprint)}
@@ -597,45 +661,52 @@ def load(path: str, output: str, send: Emit = emit,
     # browsing skips its details scan (step 2) while this load runs, unless the
     # folder has subfolders (their dates come from step 2). Sent and saved before any
     # file is read; a basic scan's success is still needed to clear a failure.
-    summary = _summary(path, raw, {shot for shot, _ in files} | young, has_dirs, False, fingerprint, listed_at)
+    summary = _summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, False, fingerprint, listed_at)
     summary["unsettled"] = len(young)
     send({"kind": "scan_summary", "status": summary})
     current = {shot: (size, modified) for shot, size, modified in fingerprint}
     in_memory = {int(shot) for shot, size, modified in memory or ()
                  if current.get(int(shot)) == (size, modified)}
-    cache = None
-    cache_epoch: Any = None
     data: dict[int, Any] = {}
     cached = False
-    cache_reason = "Disk cache unavailable" if cache_options is None else "No saved cache fingerprint"
+    cache_reason = "Disk cache unavailable" if store is None else "No saved cache fingerprint"
     problematic: list[int] = []
     reused: set[int] = set()
     baseline: dict[int, tuple[int, int]] = {}
     cache_info: dict[str, Any] = {}
-    if cache_options:
+    # None: the cache couldn't be opened or read, so whether it holds this folder is unknown.
+    had_dataset: bool | None = None if cache_on and store is None else False
+    if store is not None:
+        from helab.utils.cache_store import unpack_dataset
+        if guard is not None:
+            _save_summary(store, path, summary, guard, send)
         try:
-            from diskcache import FanoutCache
-            cache = FanoutCache(cache_options["directory"], **cache_options["params"])
-            _save_summary(cache, path, summary, send)
-            with cache.transact():
-                cache_epoch = cache.get(("snapshot-epoch", path))
-                saved_fingerprint: Any = cache.get(("snapshot-fingerprint", path))
-                packed = cache.get(path) if saved_fingerprint is not None else None
-                previous = cache.get(("snapshot-problematic", path), [])
-                cache_info = _cache_info(cache, path)
-            if isinstance(saved_fingerprint, (list, tuple)):
-                baseline = {int(shot): (size, modified) for shot, size, modified in saved_fingerprint}
-            previous = [value for value in previous if isinstance(value, int)] \
-                if isinstance(previous, list) else []
+            row_read = store.read_dataset_row(path)
+            if row_read.failed:
+                raise StoreError(row_read.error)
+            row = row_read.value
+            packed: bytes | None = None
+            if row is not None and not (_saved_fingerprint(row) == fingerprint and in_memory >= set(current)):
+                # The dataset itself is needed: read it with its row, which may have changed meanwhile.
+                full = store.read_dataset(path)
+                if full.failed:
+                    raise StoreError(full.error)
+                row, packed = full.value if full.value is not None else (None, None)
+            had_dataset = row is not None
+            saved_fingerprint = _saved_fingerprint(row) if row is not None else None
+            previous = [value for value in row["problematic"] if isinstance(value, int)] if row is not None else []
+            cache_info = _cache_info(row["info"]) if row is not None else {}
+            if saved_fingerprint is not None:
+                baseline = {shot: (size, modified) for shot, size, modified in saved_fingerprint}
 
             def unpack() -> dict[int, Any] | None:
-                return _unpack(packed)
+                return unpack_dataset(packed) if packed is not None else None
 
-            if saved_fingerprint == fingerprint and packed is not None and in_memory >= set(current):
+            if saved_fingerprint == fingerprint and packed is None:
                 # The caller already holds every shot: no need to decompress the cache.
                 cached, problematic = True, previous
             elif saved_fingerprint == fingerprint:
-                cache_reason = "Cached dataset missing" if packed is None else "Cached dataset invalid"
+                cache_reason = "Cached dataset invalid"
                 unpacked = unpack()
                 if unpacked is not None:
                     data, cached, problematic = unpacked, True, previous
@@ -644,14 +715,15 @@ def load(path: str, output: str, send: Emit = emit,
                 cache_reason = "TXY files changed since caching"
                 # Keep shots whose converted file is unchanged; only new or
                 # modified TXY files are read and merged into the dataset.
-                saved = {int(shot): (size, modified) for shot, size, modified in saved_fingerprint}
                 data = {shot: array for shot, array in (unpack() or {}).items()
-                        if shot in current and saved.get(shot) == current[shot]}
+                        if shot in current and baseline.get(shot) == current[shot]}
                 reused = set(data)
                 problematic = [shot for shot in previous if shot in reused]
         except Exception as exc:
             # A cache miss/failure must not prevent loading the actual files.
             data, cached, reused, problematic = {}, False, set(), []
+            if isinstance(exc, StoreError):
+                had_dataset = None
             cache_reason = f"Cache read failed: {type(exc).__name__}: {exc}"
             send({"kind": "cache_warning", "message": cache_reason})
     from_disk = reused - in_memory
@@ -755,8 +827,6 @@ def load(path: str, output: str, send: Emit = emit,
         return settled != [item for item in stat_files("verifying") if item[0] not in late]
 
     if changed():
-        if cache is not None:
-            cache.close()
         raise ValueError("Folder changed while loading — Retry")
     send({"kind": "loaded", "rows": rows, "bytes": size, "files": loaded,
           "loaded_at": time.time(),
@@ -764,19 +834,21 @@ def load(path: str, output: str, send: Emit = emit,
           "unsettled_files": unsettled,
           "problematic": sorted(set(problematic)),
           "source": source, "cached": cached,
-          "disk_cached": cached or _disk_cached(cache, path),
-          "disk_cache_pending": cache is not None and not cached,
+          # Left out when the cache couldn't be read: unknown, not "not cached".
+          **({} if had_dataset is None and not cached else {"disk_cached": cached or bool(had_dataset)}),
+          "disk_cache_pending": guard is not None and not cached,
           "cache_info": cache_info, "load_counts": load_counts,
           "cache_reason": cache_reason,
           "fingerprint": fingerprint, "memory_shots": sorted(in_memory),
           "signature": hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest()})
-    if cache is None or cached:
-        if cache is not None:
-            cache.close()
+    if store is not None and (cached or reused):
+        _touch(store, path)
+    if store is None or guard is None or cached:
         return
     # The caller already has its data; updating the disk cache no longer
     # delays it. Shots only the caller holds are read again for completeness.
     try:
+        from helab.utils.cache_store import DATASET_FORMAT, pack_dataset
         for shot, filename in files:
             if shot in in_memory and shot not in data:
                 Pause.checkpoint(send)
@@ -788,30 +860,20 @@ def load(path: str, output: str, send: Emit = emit,
                 send({"kind": "file_finished", "filename": filename})
         if changed():
             raise ValueError("Folder changed before cache could be saved")
-        import blosc
-        import pickle
-        packed = blosc.compress(pickle.dumps(dict(sorted(data.items())), protocol=pickle.HIGHEST_PROTOCOL),
-                                typesize=8, cname="zstd", clevel=9, shuffle=blosc.NOSHUFFLE)
-        with cache.transact():
-            if cache.get(("snapshot-epoch", path)) != cache_epoch:
-                raise ValueError("Cache was cleared before saving completed")
-            action = "updated" if _disk_cached(cache, path) else "created"
-            info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(
-                json.dumps(fingerprint).encode()).hexdigest(), "action": action, "counts": load_counts,
-                "unsettled": unsettled}
-            # A failed set must roll back bytes, fingerprints AND the save date.
-            for key, value in ((path, packed), (("snapshot-fingerprint", path), fingerprint),
-                               (("snapshot-problematic", path), sorted(set(problematic))),
-                               (("snapshot-cache-info", path), info)):
-                if not cache.set(key, value):
-                    raise OSError("Cache write did not complete")
+        file = store.write_dataset_file(pack_dataset(data))
+        info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(
+            json.dumps(fingerprint).encode()).hexdigest(), "action": "updated" if had_dataset else "created",
+            "counts": load_counts, "unsettled": unsettled, "kind": file_kinds.TXY.name, "format": DATASET_FORMAT}
+        store.save_dataset(path, file, {
+            "ram_bytes": sum(int(array.nbytes) for array in data.values()),
+            "rows": sum(len(array) for array in data.values()), "shots": len(data),
+            "fingerprint": [list(entry) for entry in fingerprint], "problematic": sorted(set(problematic)),
+            "info": info}, guard)
         send({"kind": "cache_saved", "cache_info": info})
-        send({"kind": "disk_cached", "disk_cached": _disk_cached(cache, path)})
+        send({"kind": "disk_cached", "disk_cached": True})
     except Exception as exc:
         send({"kind": "cache_save_failed", "message": str(exc)})
         send({"kind": "cache_warning", "message": str(exc)})
-    finally:
-        cache.close()
 
 
 def folder_icons(paths: list[str], send: Emit = emit) -> None:
@@ -843,11 +905,37 @@ def folder_icons(paths: list[str], send: Emit = emit) -> None:
     _ = app
 
 
+def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit) -> None:
+    """Disk cache maintenance on the local lane. ``sweep`` runs at startup: it deletes the
+    old diskcache folders, retired files past their grace period and expired pending saves."""
+    from helab.utils.cache_store import CacheStore, StoreReadOnly, remove_old_caches
+    if action != "sweep":
+        raise ValueError(f"Unknown cache action: {action}")
+    beat = Heartbeat(send, "cleaning up")
+    root = cache_options["directory"]
+    old = remove_old_caches(os.path.dirname(os.path.abspath(root)), beat)
+    with CacheStore(root) as store:
+        try:
+            result = store.sweep()
+        except StoreReadOnly:
+            send({"kind": "swept", "old_caches": old, "deleted_files": 0, "expired_pending": 0,
+                  "next_deadline": None, "read_only": True})
+            return
+    send({"kind": "swept", "old_caches": old, "deleted_files": result.deleted_files,
+          "expired_pending": result.expired_pending, "next_deadline": result.next_deadline})
+
+
+# Operations that only touch the disk cache.
+CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin")
+
+
 def main() -> None:
     try:
         request = json.loads(sys.stdin.readline())
         operation = request["operation"]
         Pause.configure(request.get("control"))
+        if operation in CACHE_ONLY and not request.get("cache"):
+            raise ValueError("The disk cache is off for this session")
         if operation == "drives":
             if sys.platform == "win32":
                 import ctypes
@@ -872,11 +960,11 @@ def main() -> None:
                  operation_id=request.get("scan_operation_id", ""), revision=request.get("scan_revision", 0),
                  identity=request.get("identity"))
         elif operation == "scan_history":
-            from diskcache import FanoutCache
+            from helab.utils.cache_store import CacheStore
             from helab.utils.scan_history import write_outcome
-            options = request["cache"]
-            with FanoutCache(options["directory"], **options["params"]) as cache:
-                history = write_outcome(cache, request["path"], request["outcome"])
+            with CacheStore(request["cache"]["directory"]) as store:
+                guard = store.guard([request["path"]], ("histories",))
+                history = write_outcome(store, request["path"], request["outcome"], guard)
                 emit({"kind": "scan_history_saved", "history": history})
         elif operation == "subtree_save":
             save_subtrees(request["cache"], request["records"])
@@ -887,17 +975,12 @@ def main() -> None:
         elif operation == "cached":
             read_cached(request["path"], request["output"], cache_options=request.get("cache"))
         elif operation == "invalidate":
-            from diskcache import FanoutCache
-            options = request["cache"]
-            with FanoutCache(options["directory"], **options["params"]) as cache:
-                with cache.transact():
-                    # A load started before clearing cannot repopulate this entry.
-                    from uuid import uuid4
-                    cache.set(("snapshot-epoch", request["path"]), uuid4().hex)
-                    for key in (request["path"], ("snapshot-fingerprint", request["path"]),
-                                ("snapshot-problematic", request["path"]),
-                                ("snapshot-cache-info", request["path"])):
-                        cache.pop(key, None)
+            from helab.utils.cache_store import CacheStore
+            with CacheStore(request["cache"]["directory"]) as store:
+                # Bumps the folder's epoch: a load started before cannot save it back.
+                store.remove(("datasets",), [request["path"]])
+        elif operation == "cache_admin":
+            cache_admin(request["cache"], request["action"])
         else:
             raise ValueError(f"Unknown operation: {operation}")
         emit({"kind": "done"})

@@ -11,9 +11,8 @@ if not os.environ.get("HELAB_SHOW_GUI") and "QT_QPA_PLATFORM" not in os.environ:
 # helab.utils.constants normally resolves DIR_TEMPS/DIR_CACHES from a
 # QSettings value that's shared (and persisted) across every process on the
 # machine, including other pytest-xdist workers running concurrently. That
-# makes every process's data_ram_cache the
-# *same* on-disk FanoutCache, so one worker's test clearing a cache in
-# setUp() races another worker's test reading/writing it. Give this process
+# makes every process's disk cache the *same* on-disk store, so one worker's
+# test clearing a cache races another worker's test reading/writing it. Give this process
 # its own private cache/temp dirs before helab.utils.constants (imported
 # transitively below) ever computes DIR_TEMPS/DIR_CACHES.
 #

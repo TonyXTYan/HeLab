@@ -20,9 +20,7 @@ from PyQt6.QtWidgets import QApplication, QStyle, QTreeView
 from helab.models.StatusReport import StatusReport
 from helab.resources.icons import StatusIcons
 from helab.utils.io_service import IORequest, IOService, get_io_service
-from helab.utils.folder_cache import SCANS, get_folder_cache
-from helab.utils.caching_setup import load_cache_param
-from helab.utils.constants import DIR_CACHES
+from helab.utils.folder_cache import SCANS, get_folder_cache, store_options
 from helab.utils.time_format import relative_age
 from helab.utils.scan_history import folder_identity
 from helab.utils.cache_freshness import CacheFreshness, cache_freshness, data_as_of, metadata_date
@@ -110,8 +108,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache = get_folder_cache(self.service)
         style = QApplication.style()
         self._folder_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon) if style else QIcon()
-        self._cache_options: dict[str, Any] = {"directory": os.path.join(DIR_CACHES, "data_ram_cache"),
-                                               "params": dict(load_cache_param("data_ram_cache"))}
+        self._cache_options: dict[str, Any] = store_options()
         self.owner = uuid4().hex
         self.generation = 0
         self.root: FolderNode | None = None
@@ -400,6 +397,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             lines.append(text)
         if warning := self.cache.scan_history_errors.get(node.path):
             lines.append(warning)
+        if warning := self.cache.cache_read_errors.get(node.path):
+            lines.append(f"Saved results unknown: {warning}")
         if not busy and not load_state and not history["blocked"]:
             if node.error:
                 lines.append("Use Retry / Refresh to try again.")

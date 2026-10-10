@@ -88,17 +88,17 @@ class IOService(QObject):
     RESUME_DELAY = 0.5
     LISTINGS = ("list", "resolve")
     # Operations in the local lane: they never wait for or pause with source-folder I/O.
-    LOCAL_OPERATIONS = ("cached", "subtree_save")
+    LOCAL_OPERATIONS = ("cached", "subtree_save", "cache_admin")
     LOCAL_CAP = 2
     PAUSABLE = ("load", "list", "details", "scan", "icons")
     LABELS = {"load": "Load data", "cached": "Read cached data", "list": "Browse folder", "details": "Folder details",
               "scan": "Check folder status", "resolve": "Browse folder", "invalidate": "Clear data cache",
               "scan_history": "Save scan history", "icons": "Folder icons",
-              "subtree_save": "Save subfolder status"}
+              "subtree_save": "Save subfolder status", "cache_admin": "Clean up disk cache"}
     NOUNS = {"load": "load", "cached": "cached data read", "list": "folder listing", "details": "folder details scan",
              "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup",
-             "subtree_save": "subfolder-status save"}
+             "subtree_save": "subfolder-status save", "cache_admin": "disk cache cleanup"}
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -403,7 +403,7 @@ class IOService(QObject):
     # Status-bar phrases for running operations other than scans and loads.
     ACTIVITIES = {"resolve": "Finding default folder", "cached": "Reading cached data", "invalidate": "Clearing data cache",
                   "scan_history": "Saving scan history", "icons": "Fetching folder icons",
-                  "subtree_save": "Saving subfolder status",
+                  "subtree_save": "Saving subfolder status", "cache_admin": "Cleaning up disk cache",
                   "drives": "Listing drives"}
 
     def activity_summary(self) -> str:

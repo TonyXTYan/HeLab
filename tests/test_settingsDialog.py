@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QLabel, QPushButton
 from pytestqt.qtbot import QtBot
 
 from helab.views.SettingsDialog import SettingsDialog
@@ -50,8 +50,11 @@ def test_cache_tab_controls(qtbot: QtBot, settings_dialog: SettingsDialog) -> No
     # Verify cache tab widgets
     assert settings_dialog.cache_tab is not None
     assert settings_dialog.cache_layout is not None
-    assert settings_dialog.cache_widgets is not None
-    assert isinstance(settings_dialog.cache_params_ui, dict)
+    # Rebuilt in a later update; until then it only names the cache folder.
+    texts = [label.text() for label in settings_dialog.cache_tab.findChildren(QLabel)]
+    assert any(text.startswith("Disk cache: ") and text.endswith("store-v2") for text in texts)
+    assert any("rebuilt in a later update" in text for text in texts)
+    assert not settings_dialog.cache_tab.findChildren(QPushButton)
 
 def test_settings_dialog_buttons(qtbot: QtBot, settings_dialog : SettingsDialog) -> None:
     """Test dialog buttons"""
