@@ -170,7 +170,7 @@ def test_startup_cleanup_deletes_old_diskcache_folders_and_sweeps(tmp_path: Path
     assert sorted(os.listdir(caches)) == ["keep-me", "store-v2"]
     assert not (Path(options["directory"]) / "datasets" / stale).exists()
     with pytest.raises(ValueError, match="Unknown cache action"):
-        cache_admin(options, "trim", events.append)
+        cache_admin(options, "compact", events.append)
 
 
 def test_folder_cache_submits_the_cleanup_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -185,7 +185,7 @@ def test_folder_cache_submits_the_cleanup_once(monkeypatch: pytest.MonkeyPatch) 
         cache.clean_up_cache()
         requests = [r for r in service.pending if r.operation == "cache_admin"]
         assert len(requests) == 1
-        assert requests[0].payload == {"cache": store_options(), "action": "sweep"}
+        assert requests[0].payload == {"cache": store_options(), "action": "sweep", "params": {}}
         assert store_options()["directory"].endswith("store-v2")
         assert "cache_admin" in service.LOCAL_OPERATIONS
     finally:

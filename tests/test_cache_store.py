@@ -287,7 +287,7 @@ def test_older_pending_save_never_supersedes_a_newer_one(store: CacheStore) -> N
     # The older job finishes last, and neither has been adopted.
     with pytest.raises(SaveRejected):
         pend(store, "a", older, 1)
-    assert store.adopt_pending(kept) == "a" and stored_value(store, "a") == 2
+    assert store.adopt_pending(kept).path == "a" and stored_value(store, "a") == 2
 
 
 def test_newer_pending_save_replaces_an_older_one(store: CacheStore) -> None:

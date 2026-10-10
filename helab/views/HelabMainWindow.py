@@ -12,7 +12,7 @@ import warnings
 import threading
 import time
 from helab.utils.io_service import IORequest, get_io_service
-from helab.utils.folder_cache import get_folder_cache
+from helab.utils.folder_cache import get_folder_cache, set_disk_budget
 from helab.utils.gui_watchdog import GUIWatchdog
 from datetime import datetime, timedelta
 from sys import getsizeof
@@ -302,6 +302,7 @@ class HelabMainWindow(QMainWindow):
             menu_view.addAction(self.view_toggle_auto_scan_visible)
             get_io_service().configure_concurrency(
                 read_io_concurrency(settings))
+            set_disk_budget(read_disk_budget(settings))
 
             self.view_toggle_auto_load_ram = QAction('Toggle Auto Load to RAM', self)
             self.view_toggle_auto_load_ram.setCheckable(True)
@@ -430,6 +431,7 @@ class HelabMainWindow(QMainWindow):
         self.apply_load_mode(read_load_mode(settings))
         get_io_service().configure_concurrency(
             read_io_concurrency(settings))
+        set_disk_budget(read_disk_budget(settings))
         self.apply_auto_scan_visible(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
 
     def show_memory_usage_window(self) -> None:

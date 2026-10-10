@@ -135,6 +135,21 @@ DEFAULT_SIMULTANEOUS_IO = 1
 MAX_SIMULTANEOUS_IO = 32
 
 
+# The disk cache budget in bytes (Settings → Cache from S7). It counts live data only.
+DISK_BUDGET_SETTING = "disk_cache_budget"
+DEFAULT_DISK_BUDGET = 8 << 30
+MIN_DISK_BUDGET = 1 << 30
+
+
+def read_disk_budget(settings: QSettings) -> int:
+    """The saved disk cache budget, or the default for a missing or malformed value."""
+    try:
+        value = int(settings.value(DISK_BUDGET_SETTING, DEFAULT_DISK_BUDGET))
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_DISK_BUDGET
+    return max(MIN_DISK_BUDGET, value)
+
+
 def read_io_concurrency(settings: QSettings) -> int:
     """Use a safe default for missing or malformed saved limits."""
     try:

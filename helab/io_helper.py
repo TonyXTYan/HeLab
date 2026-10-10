@@ -171,6 +171,17 @@ def _send_saved(store: CacheStore | None, path: str, send: Emit, identity: objec
     return saved["scan_history"]
 
 
+def _send_guard(store: CacheStore | None, path: str, send: Emit) -> SaveGuard | None:
+    """Take a listing or scan's save guard when it starts and send it to the app, which hands
+    it to the history write that records this job's failure: a Clear after the job started
+    then discards that write too. Raises ``StoreError`` if it can't be read."""
+    if store is None:
+        return None
+    guard = store.guard([path], ("summaries", "histories"))
+    send({"kind": "save_guard", "guard": {"generations": dict(guard.generations), "epochs": dict(guard.epochs)}})
+    return guard
+
+
 def _shots(found: dict[str, set[int]]) -> tuple[set[int], set[int]]:
     return found.get(file_kinds.RAW.name, set()), found.get(file_kinds.TXY.name, set())
 
@@ -194,10 +205,16 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
     Each subfolder's saved summary, scan history and cache flags are read from the
     local cache, never the source, so saved badges appear with the names; their
     identity is checked by the ``details`` scan (step 2), which also adds the
-    signature and dates. Nothing is written.
+    signature and dates. Nothing is written here; a failed listing's history is saved
+    later by the app, with the guard this sends first.
     """
+    from helab.utils.cache_store import StoreError
     store = _open_store(cache_options, send)
     try:
+        try:
+            _send_guard(store, path, send)
+        except StoreError:
+            pass  # Without it the app saves a failure with a fresh guard; browsing goes on.
         _send_saved(store, path, send, identity)
         found: dict[str, set[int]] = {}
         entries: list[dict[str, Any]] = []
@@ -252,8 +269,9 @@ def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = No
         guard: SaveGuard | None = None
         if store is not None:
             try:
-                # Taken first, before anything is read: a Clear from now on stops its saves.
-                guard = store.guard([path], ("summaries", "histories"))
+                # Taken first, before anything is read: a Clear from now on stops its saves,
+                # including the failure the app saves for it later (it gets this guard).
+                guard = _send_guard(store, path, send)
             except StoreError:
                 guard = None
         history = _send_saved(store, path, send, identity)
@@ -598,14 +616,15 @@ def load(path: str, output: str, send: Emit = emit,
                 guard = store.start_dataset_job(path, ("summaries",))
             except StoreError as exc:
                 send({"kind": "cache_warning", "message": f"Disk cache can't be updated: {exc}"})
-        _load(path, output, send, store, guard, bool(cache_options), memory, base_signature, expected)
+        _load(path, output, send, store, guard, bool(cache_options), memory, base_signature, expected,
+              (cache_options or {}).get("budget"))
     finally:
         if store is not None:
             store.close()
 
 
 def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: SaveGuard | None, cache_on: bool,
-          memory: list[list[int]] | None, base_signature: str, expected: str) -> None:
+          memory: list[list[int]] | None, base_signature: str, expected: str, budget: int | None) -> None:
     from helab.utils.cache_store import StoreError
     if (base_signature and store is not None and memory and expected in ("", base_signature)
             and _unchanged_since_cache(path, send, store, base_signature, memory)):
@@ -864,15 +883,22 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(
             json.dumps(fingerprint).encode()).hexdigest(), "action": "updated" if had_dataset else "created",
             "counts": load_counts, "unsettled": unsettled, "kind": file_kinds.TXY.name, "format": DATASET_FORMAT}
-        store.save_dataset(path, file, {
+        result = store.save_dataset(path, file, {
             "ram_bytes": sum(int(array.nbytes) for array in data.values()),
             "rows": sum(len(array) for array in data.values()), "shots": len(data),
             "fingerprint": [list(entry) for entry in fingerprint], "problematic": sorted(set(problematic)),
-            "info": info}, guard)
-        send({"kind": "cache_saved", "cache_info": info})
+            "info": info}, guard, budget=budget)
+        if not result.saved:
+            # Held for the user's answer (Make room / Save update); nothing waits for it.
+            send(_pending_event(store, path, result))
+            return
+        # The replaced file was retired: the next cleanup deadline may be new.
+        send({"kind": "cache_saved", "cache_info": info, "superseded": list(result.superseded), "job_seq": result.job_seq,
+              "next_deadline": _deadline(store)})
         send({"kind": "disk_cached", "disk_cached": True})
     except Exception as exc:
-        send({"kind": "cache_save_failed", "message": str(exc)})
+        # A rejected save retired its file: the next cleanup deadline may be new.
+        send({"kind": "cache_save_failed", "message": str(exc), "next_deadline": _deadline(store)})
         send({"kind": "cache_warning", "message": str(exc)})
 
 
@@ -905,24 +931,111 @@ def folder_icons(paths: list[str], send: Emit = emit) -> None:
     _ = app
 
 
-def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit) -> None:
-    """Disk cache maintenance on the local lane. ``sweep`` runs at startup: it deletes the
-    old diskcache folders, retired files past their grace period and expired pending saves."""
-    from helab.utils.cache_store import CacheStore, StoreReadOnly, remove_old_caches
-    if action != "sweep":
-        raise ValueError(f"Unknown cache action: {action}")
-    beat = Heartbeat(send, "cleaning up")
-    root = cache_options["directory"]
-    old = remove_old_caches(os.path.dirname(os.path.abspath(root)), beat)
-    with CacheStore(root) as store:
+def _pending_event(store: CacheStore, path: str, result: Any) -> dict[str, Any]:
+    """``cache_full`` (doesn't fit) or ``cache_approval`` (grows the cache over 80%) for a pending save."""
+    from dataclasses import asdict
+    event: dict[str, Any] = {
+        "kind": "cache_full" if result.reason == "over_budget" else "cache_approval",
+        "pending_id": result.pending_id, "path": path, "reason": result.reason, "bytes": result.bytes,
+        "usage": result.usage, "budget": result.budget, "job_seq": result.job_seq,
+        "superseded": list(result.superseded), "next_deadline": _deadline(store)}
+    if result.reason == "over_budget" and result.budget is not None:
+        from helab.utils.cache_store import SaveRejected, StoreError
         try:
-            result = store.sweep()
-        except StoreReadOnly:
-            send({"kind": "swept", "old_caches": old, "deleted_files": 0, "expired_pending": 0,
-                  "next_deadline": None, "read_only": True})
+            event["room"] = asdict(store.room_plan(result.pending_id, result.budget))
+        except (SaveRejected, StoreError):
+            pass  # Answered or expired meanwhile; the dialog asks again.
+    return event
+
+
+def _deadline(store: CacheStore) -> float | None:
+    from helab.utils.cache_store import StoreError
+    try:
+        return store.next_deadline()
+    except StoreError:
+        return None
+
+
+def _removed_event(removal: Any) -> dict[str, Any]:
+    """What a removal did, for ``FolderCache.removed``; ``paths`` None means every path of those kinds."""
+    return {"kind": "removed", "kinds": list(removal.kinds),
+            "paths": None if removal.paths is None else list(removal.paths),
+            "datasets": removal.datasets, "bytes": removal.dataset_bytes}
+
+
+ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep")
+
+
+def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, **params: Any) -> None:
+    """Disk cache maintenance on the local lane; never touches source folders.
+
+    Every removal sends ``removed`` (kinds and paths), and every action ends with
+    ``admin_result`` carrying the store's next cleanup deadline. ``sweep`` also
+    deletes the old diskcache folders (at startup).
+    """
+    from dataclasses import asdict
+    from helab.utils.cache_store import KINDS, CacheStore, SaveRejected, StoreReadOnly, remove_old_caches
+    if action not in ADMIN_ACTIONS:
+        raise ValueError(f"Unknown cache action: {action}")
+    root = cache_options["directory"]
+    budget = params.get("budget", cache_options.get("budget"))
+    result: dict[str, Any] = {}
+    old: list[str] = []
+    if action == "sweep":
+        old = remove_old_caches(os.path.dirname(os.path.abspath(root)), Heartbeat(send, "cleaning up"))
+    with CacheStore(root) as store:
+        if action == "inventory":
+            send({"kind": "inventory", "inventory": store.inventory(budget)})
+        elif action == "sweep":
+            try:
+                swept = store.sweep()
+            except StoreReadOnly:
+                send({"kind": "swept", "old_caches": old, "deleted_files": 0, "expired_pending": 0,
+                      "next_deadline": None, "read_only": True})
+                return
+            send({"kind": "swept", "old_caches": old, "deleted_files": swept.deleted_files,
+                  "expired_pending": swept.expired_pending, "expired_ids": swept.expired_ids,
+                  "still_open": len(swept.still_open), "next_deadline": swept.next_deadline})
             return
-    send({"kind": "swept", "old_caches": old, "deleted_files": result.deleted_files,
-          "expired_pending": result.expired_pending, "next_deadline": result.next_deadline})
+        elif action == "clear":
+            kinds = tuple(params.get("kinds") or KINDS)
+            unknown = set(kinds) - set(KINDS)
+            if unknown:
+                raise ValueError(f"Unknown cache kinds: {sorted(unknown)}")
+            send(_removed_event(store.remove(kinds)))
+        elif action == "purge":
+            cutoff = float(params["cutoff"])
+            if params["what"] == "datasets":
+                removals = [store.purge_datasets(cutoff)]
+            elif params["what"] == "records":
+                removals = store.purge_records(cutoff, bool(params.get("include_failures")))
+            else:
+                raise ValueError(f"Unknown purge: {params['what']}")
+            for removal in removals:
+                send(_removed_event(removal))
+            result["removed"] = {kind: len(removal.paths or ()) for removal in removals for kind in removal.kinds}
+            result["bytes"] = sum(removal.dataset_bytes for removal in removals)
+        elif action == "trim":
+            removal = store.trim(int(params["budget"]))
+            send(_removed_event(removal))
+            result.update(datasets=removal.datasets, bytes=removal.dataset_bytes)
+        elif action == "adopt":
+            try:
+                adopted = store.adopt_pending(params["pending_id"], budget=budget,
+                                              make_room=bool(params.get("make_room")))
+            except SaveRejected as rejection:
+                result.update(adopted=False, rejected=rejection.reason, message=str(rejection))
+            else:
+                if adopted.removal is not None:
+                    send(_removed_event(adopted.removal))
+                result.update(adopted=adopted.adopted, path=adopted.path, bytes=adopted.bytes,
+                              room=None if adopted.room is None else asdict(adopted.room))
+                if adopted.adopted:
+                    row = store.read_dataset_row(adopted.path)
+                    result["cache_info"] = _cache_info(row.value["info"]) if row.value is not None else {}
+        elif action == "discard":
+            result["discarded"] = store.discard_pending(params["pending_id"])
+        send({"kind": "admin_result", "action": action, **result, "next_deadline": _deadline(store)})
 
 
 # Operations that only touch the disk cache.
@@ -962,8 +1075,13 @@ def main() -> None:
         elif operation == "scan_history":
             from helab.utils.cache_store import CacheStore
             from helab.utils.scan_history import write_outcome
+            from helab.utils.cache_store import SaveGuard as Guard
             with CacheStore(request["cache"]["directory"]) as store:
-                guard = store.guard([request["path"]], ("histories",))
+                # The scan's own guard when the app has it: a Clear after that scan started
+                # must not get its outcome back.
+                saved = request.get("guard")
+                guard = (Guard(saved["generations"], saved["epochs"]) if saved
+                         else store.guard([request["path"]], ("histories",)))
                 history = write_outcome(store, request["path"], request["outcome"], guard)
                 emit({"kind": "scan_history_saved", "history": history})
         elif operation == "subtree_save":
@@ -978,9 +1096,10 @@ def main() -> None:
             from helab.utils.cache_store import CacheStore
             with CacheStore(request["cache"]["directory"]) as store:
                 # Bumps the folder's epoch: a load started before cannot save it back.
-                store.remove(("datasets",), [request["path"]])
+                emit(_removed_event(store.remove(("datasets",), [request["path"]])))
+                emit({"kind": "admin_result", "action": "invalidate", "next_deadline": _deadline(store)})
         elif operation == "cache_admin":
-            cache_admin(request["cache"], request["action"])
+            cache_admin(request["cache"], request["action"], **request.get("params", {}))
         else:
             raise ValueError(f"Unknown operation: {operation}")
         emit({"kind": "done"})

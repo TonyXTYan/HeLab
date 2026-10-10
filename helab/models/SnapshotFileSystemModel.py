@@ -135,6 +135,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.scanHistoryChanged.connect(self._shared_dataset_changed)
         self.cache.folderIconChanged.connect(self._folder_icon_changed)
         self.cache.subtreeChanged.connect(self._shared_subtree_changed)
+        self.cache.cacheRemoved.connect(self._cache_removed)
 
     def node(self, index: QModelIndex) -> FolderNode | None:
         return cast(FolderNode, index.internalPointer()) if index.isValid() else None
@@ -828,6 +829,26 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             self.request_scan(path, force=bool(snapshot and snapshot.checked_at == 0
                                                and not self.cache.scan_history(path)["blocked"]), automatic=True)
 
+    def _cache_removed(self, paths: list[str] | None, kinds: list[str]) -> None:
+        """Saved results removed from the disk cache stop showing; what this tab checked
+        itself stays. Cache badges follow ``diskCacheChanged``."""
+        if self.closed:
+            return
+        nodes = list(self.nodes.values()) if paths is None else [self.nodes[p] for p in paths if p in self.nodes]
+        for node in nodes:
+            changed = False
+            if "summaries" in kinds and node.cached_report:
+                node.report, node.signature, node.cached_report = None, "", False
+                node.raw_count = node.txy_count = 0
+                node.scanned_at, node.checked_at = None, 0
+                changed = True
+            if "subtrees" in kinds and node.subtree_saved is not None:
+                node.subtree_saved = None
+                changed = True
+            if changed:
+                self._update_ancestors(node)
+                self.changed(node)
+
     def _shared_subtree_changed(self, path: str) -> None:
         """Another tab saved a derived status; it shows here unless derived here now."""
         node = self.nodes.get(path)
@@ -1008,3 +1029,4 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.diskCacheChanged.disconnect(self._shared_dataset_changed)
         self.cache.folderIconChanged.disconnect(self._folder_icon_changed)
         self.cache.subtreeChanged.disconnect(self._shared_subtree_changed)
+        self.cache.cacheRemoved.disconnect(self._cache_removed)

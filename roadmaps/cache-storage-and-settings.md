@@ -605,8 +605,8 @@ reading this plan, the audit notes and AGENTS.md. End it by ticking the row with
 | S2 | Untangle the old browser | Plain `StatusReport`; move `fnum` and the column constants; new `closeEvent`; `main.py` and `conftest` no longer import old modules | Full suite; import test: loading `HelabMainWindow` imports none of the old modules | — | ☑ 2026-10-10 `24493cc` |
 | S3 | Delete the old browser | Delete the modules, tests and Debug item; strip the two old caches from `caching_setup.py` (the file stays until S5); old Cache tab shows only `data_ram_cache`; move `helab/scripts/dev/`; update AGENTS.md | Full suite; the app starts and Settings opens | S2 | ☑ 2026-10-10 `f36916a` |
 | S4 | New store module | `helab/utils/cache_store.py`: schema, versioning, dataset file writes, `retired_files` with deferred deletion, reader re-read on a missing file, the single removal function with durable `folder_epochs`, per-kind generations, per-folder `job_seq` ordering, `pending_saves` with `pending_id` and `reason`, read results (found/missing/error), save-guard checks | Two processes writing at once; killed writer; reader racing a replacement; removal racing a save; Clear by kind before a folder's first row exists; an older job's save or pending save never overwrites or supersedes a newer one, including the older job finishing last with neither adopted; newer `layout_version` opens read-only; error is not "missing" | — (parallel to S2/S3) | ☑ 2026-10-10 `7040a29` |
-| S5 | Switch to the new store | Helpers (`list`, `details`, `scan`, `load`, `cached`, `invalidate`, `subtree_save`, `scan_history`) use `cache_store`; one `FILE_KINDS` table drives matching and counting; summaries save `files` (TXY sized) and datasets `ram_bytes`; `last_used` on use; old cache folders deleted at startup; `caching_setup.py` and diskcache removed (the old Cache tab reads nothing until S7, so S5 shows "Rebuilt in a later update" there); network/synced cache path refused at startup | Existing cache-first, folder-cache and scan-history tests pass on the new store; the app starts and Settings opens | S1, S3, S4 | ☑ 2026-10-10 |
-| S6 | Cache maintenance | `cache_admin` (inventory, clear, both purges, trim, adopt, discard, sweep); pending saves on `cache_full` and `cache_approval`; `removed` events and `FolderCache.removed()`; budget check in the save transaction, `cache_full` | Every removal kind during a running save, load and scan: nothing comes back, no stale badge; retired files and expired pending saves go by deadline without a restart; Make room or Save update with a stale or superseded `pending_id` removes nothing; Save update re-checks the current budget and turns into Make room when over; never evicts the target's own dataset, and uses the fit rule; a crash before or after the pending row commits leaves no dangling reference; purge estimates equal what is freed; records survive trimming; an over-budget save becomes a pending save, never auto-trimmed; Make room adopts it, or discards it if the folder was cleared meanwhile; retired bytes don't count toward the budget | S5 | ☐ |
+| S5 | Switch to the new store | Helpers (`list`, `details`, `scan`, `load`, `cached`, `invalidate`, `subtree_save`, `scan_history`) use `cache_store`; one `FILE_KINDS` table drives matching and counting; summaries save `files` (TXY sized) and datasets `ram_bytes`; `last_used` on use; old cache folders deleted at startup; `caching_setup.py` and diskcache removed (the old Cache tab reads nothing until S7, so S5 shows "Rebuilt in a later update" there); network/synced cache path refused at startup | Existing cache-first, folder-cache and scan-history tests pass on the new store; the app starts and Settings opens | S1, S3, S4 | ☑ 2026-10-10 `fd4e020` |
+| S6 | Cache maintenance | `cache_admin` (inventory, clear, both purges, trim, adopt, discard, sweep); pending saves on `cache_full` and `cache_approval`; `removed` events and `FolderCache.removed()`; budget check in the save transaction, `cache_full` | Every removal kind during a running save, load and scan: nothing comes back, no stale badge; retired files and expired pending saves go by deadline without a restart; Make room or Save update with a stale or superseded `pending_id` removes nothing; Save update re-checks the current budget and turns into Make room when over; never evicts the target's own dataset, and uses the fit rule; a crash before or after the pending row commits leaves no dangling reference; purge estimates equal what is freed; records survive trimming; an over-budget save becomes a pending save, never auto-trimmed; Make room adopts it, or discards it if the folder was cleared meanwhile; retired bytes don't count toward the budget | S5 | ☑ 2026-10-10 |
 | S7 | Budgets and the Cache tab | Rebuilt tab with both purges; disk budget (default 8 GB); RAM budget (1/128 steps, default 1/8) replacing `MAX_DATA_BYTES`; 80% pause of uncached automatic loads with its dialog; update-save prompt over 80%; full-cache dialog (Make room / Don't cache now); "Reset all settings…" | pytest-qt tests with a fake inventory; 80% dialog once per crossing, Ignore lasts the session; cached folders still open over 80%; one cache dialog at a time; RAM eviction keeps shown datasets | S6 | ☐ |
 | S8 | Large-folder warning | Uses S7's RAM budget setting. Unscaled TXY-size estimate (the one-stat fast path keeps using the record's sizes); guard before both `load` and `cached`; `too_large` stop and `allow_large`; amber inline "Load anyway…"; queue skips; dialog for deliberate loads; the 30% refusal replaces the 1 GiB limit | Automatic loads never start or open a dialog; a large **cached** folder doesn't open automatically even after an earlier deliberate load; deliberate ones confirm; refusal; estimate from a saved summary vs from the load's own listing; the unchanged fast path still answers from one stat | S7 | ☐ |
 | S9 | Cache folder move | Change… flow and checks (network/synced refused), I/O pause until helpers exit, `cache.lock` and instance locks in the app folder, WAL checkpoint and store verification, Cancel until verified, `cache-move.json` record and startup recovery, move with progress and Cancel, `cache_dir()` switch in place, instance locks, failure dialog with Show in Finder/Explorer | Same-disk rename; cross-disk copy; failure and Cancel before cutover keep the source; a failure deleting the source after cutover keeps the destination and finishes at the next start; a settings write that fails `sync()`/`status()` counts as before cutover; a successful rename followed by a failed settings write, with the rename-back succeeding and failing; a simulated crash before and after each meaningful transition (record writes, rename, copy completion, verification, settings write, source cleanup, plus one partial copy and one partial deletion), for rename and copy, recovers to one valid store with the setting pointing at it; refusal with another instance; an instance starting mid-move waits; a corrupt copy fails verification; network target refused | S5 | ☐ |
@@ -713,6 +713,61 @@ Notes from finished sessions:
     one-stat check takes a `job_seq` too). A third pass found the same race in `scan`, which
     restored saved results before taking its guard; it now takes it first too (tested). Every
     writing helper now takes its guard right after opening the store.
+- **S6:** `CacheStore` gained the budget (`save_dataset(..., budget=)` returns a `SaveResult`:
+  saved, or pending with `reason`), `adopt_pending(..., budget=, make_room=)` returning an
+  `AdoptResult` (with a `RoomPlan` when it doesn't fit), `room_plan`, `trim`, `purge_datasets`,
+  `purge_records`, `inventory`, and the module function `purge_estimate`. The helper runs
+  `cache_admin` actions with `params`; `FolderCache` has `cache_admin()`, `removed()`,
+  `pending_saves`, the sweep timer and the signals `cacheRemoved`, `pendingSavesChanged` and
+  `cacheAdminResult` that S7's tab and dialogs use. Choices made here:
+  - The budget is bytes, default 8 GiB (`DISK_BUDGET_SETTING`, read at startup and after
+    Settings; S7 adds the control). It travels in `store_options()`.
+  - Live usage counts the records database by its pages in use (`page_count × page_size`),
+    not the WAL file, whose size changes with checkpoints rather than with the records.
+  - `needs_approval` applies only to a folder that already has cached data, when the save
+    grows it and live usage is at least 80% before the save. A new folder that fits is saved
+    (S7 pauses automatic loads of new folders over 80%).
+  - Clearing a folder's data also drops its pending save, and a newer direct save drops older
+    ones, so Make room on such a `pending_id` answers "gone" and removes nothing. A pending save
+    whose folder had another removal (e.g. a records purge) answers "cleared".
+  - Record purges remove each kind by its own `saved_at`; without "Include scan failures",
+    histories with failures are kept, and histories without any are purged with the summaries.
+    `inventory` returns the raw ages, so `purge_estimate` uses the same comparisons as the purge.
+  - In memory, removed datasets stay loaded but lose their cache flag; saved summaries
+    (`cached_report` nodes), histories and subfolder statuses are forgotten, and listing
+    entries, snapshots and events read before the removal drop those fields.
+  - Codex's review found five bugs, all fixed with tests (each fails with its fix reverted).
+    A load's late `cache_saved` after a Clear restored the badge; finishing loads now ignore
+    cache events when a removal came after they started. A failed scan's follow-up history
+    write took a fresh guard after "Forget scan failures" and saved the old failure again; the
+    scan helper now sends its guard (`save_guard`) and the app passes it to that write, and
+    skips the outcome if histories were removed since. Ordinary replacements didn't schedule
+    the sweep; `cache_saved` now carries `next_deadline`. Pending saves were matched by folder,
+    so a late answer about an older save cleared a newer one, and expired ones stayed listed;
+    they are now matched by `pending_id`, and `swept` lists `expired_ids`. And the budget was
+    checked before the row was written, so a large fingerprint could push usage over it; the
+    save (and Make room) now writes the row inside a savepoint, measures, and rolls back to a
+    pending save if it doesn't fit. Usage counts the database's pages in use, less pending
+    saves' records.
+  - A deeper second review found six more, all fixed with tests (each fails with its fix
+    reverted). Trim now measures after each removal (a dataset's records go with it). The
+    Make room preview (`room_plan(pending_id, budget)`) runs the real adoption in a savepoint
+    and rolls it back, so it removes exactly what Make room would. Late `scan_history_saved`
+    and `adopt` results, and inventories, are ignored for what a removal since their job
+    started took away. Saves list the older pending saves they `superseded`, and pending
+    events carry `job_seq`, so the shown pending save is always the newest. And a rejected
+    save reports the cleanup deadline for the file it retired.
+  - A final review found three more, fixed with tests (each fails with its fix reverted).
+    `FolderCache` now remembers answered, superseded and expired pending ids and each folder's
+    newest save `job_seq` (saves carry it too), so a late `cache_full` can't revive a save the
+    store no longer has. An inventory keeps pending changes that events made after it was
+    requested. And a sweep the full queue rejected is retried after `SWEEP_RETRY` (5 s), at
+    startup too. Then two inventory races: `inventory` lists each pending save's `job_seq`, which
+    orders it against late events like one an event added; and an inventory requested before
+    the last one applied is ignored, also by `cacheAdminResult` viewers. Last, listings send
+    their `save_guard` too, so a failed listing's queued history write can't undo "Forget scan
+    failures"; and clearing subfolder status cancels a queued `subtree_save`, whose batch was
+    derived before the clear.
 
 ## Acceptance
 

@@ -34,6 +34,9 @@ RETRY_OPEN = 60.0
 # Pending saves the user hasn't answered, and files no row names (a killed writer).
 PENDING_MAX_AGE = 3600.0
 ORPHAN_MIN_AGE = 3600.0
+# Over this share of the budget, a save that grows a cached folder's dataset asks first.
+APPROVAL_SHARE = 0.8
+DEFAULT_BUDGET = 8 << 30
 # The diskcache folders of earlier versions, deleted at startup.
 OLD_CACHE_DIRS = ("data_ram_cache", "status_cache", "os_file_system_cache")
 
@@ -165,9 +168,49 @@ class Removal:
 
 
 @dataclass(frozen=True)
+class SaveResult:
+    """A dataset save: saved, or held as a pending save until the user answers."""
+    pending_id: str = ""
+    reason: str = ""  # "over_budget" or "needs_approval" when held
+    bytes: int = 0  # what the save adds: its file and its records
+    usage: int = 0  # live bytes when the save was decided
+    budget: int | None = None
+    job_seq: int = 0
+    # Older jobs' pending saves this save (or pending save) replaced.
+    superseded: tuple[str, ...] = ()
+
+    @property
+    def saved(self) -> bool:
+        return not self.pending_id
+
+
+@dataclass(frozen=True)
+class RoomPlan:
+    """What Make room removes for a pending save: other folders' datasets, least recently used first."""
+    paths: tuple[str, ...]
+    bytes: int
+    oldest_last_used: float | None
+    newest_last_used: float | None
+    # False: the folder alone is bigger than the budget, so nothing can make room.
+    possible: bool
+
+
+@dataclass(frozen=True)
+class AdoptResult:
+    path: str
+    adopted: bool
+    bytes: int
+    # Not adopted: it doesn't fit, and this is what Make room would remove.
+    room: RoomPlan | None = None
+    # Adopted with Make room: what was removed.
+    removal: Removal | None = None
+
+
+@dataclass(frozen=True)
 class Sweep:
     deleted_files: int = 0
     expired_pending: int = 0
+    expired_ids: list[str] = field(default_factory=list)
     still_open: list[str] = field(default_factory=list)
     next_deadline: float | None = None
 
@@ -222,6 +265,11 @@ def unpack_dataset(packed: bytes) -> dict[int, Any] | None:
 
 def _dumps(value: object) -> str:
     return json.dumps(value, separators=(",", ":"))
+
+
+def _record_bytes(record: Mapping[str, Any]) -> int:
+    """About what a dataset row adds to the records database (its JSON columns)."""
+    return len(_dumps(record))
 
 
 class CacheStore:
@@ -501,11 +549,17 @@ class CacheStore:
                     self._retire(file, time.time())
         return rejection
 
-    def save_dataset(self, path: str, file: str, record: DatasetRecord, guard: SaveGuard) -> None:
+    def save_dataset(self, path: str, file: str, record: DatasetRecord, guard: SaveGuard, *,
+                     budget: int | None = None) -> SaveResult:
         """Point ``path``'s dataset row at a file from :meth:`write_dataset_file`.
 
         The previous file, and those of older jobs' pending saves, are retired, never
         deleted here. A rejected save retires ``file`` and raises :class:`SaveRejected`.
+
+        With a ``budget``, the same transaction checks the fit rule. A save that
+        doesn't fit, or one that grows a cached folder's dataset while usage is at
+        least ``APPROVAL_SHARE`` of the budget, becomes a pending save instead:
+        nothing is removed to make room without the user's answer.
         """
         now = time.time()
         size = self._file_bytes(file)
@@ -515,15 +569,40 @@ class CacheStore:
                 stored = self._stored_job_seq(path)
                 if stored is not None and stored >= guard.job_seq:
                     raise SaveRejected("newer", "Newer data is already cached")
+                live, current = self._live(), self._dataset_bytes(path)
+                # Decided after writing the row, so its records (e.g. a large fingerprint) count too;
+                # a save that doesn't stand is rolled back to here.
+                self._conn.execute("SAVEPOINT budget_check")
                 self._upsert_dataset(path, file, size, record, guard.job_seq, now)
-                for (old,) in self._conn.execute("SELECT file FROM pending_saves WHERE path = ? AND job_seq < ?",
-                                                 (path, guard.job_seq)).fetchall():
+                superseded = []
+                for old_id, old in self._conn.execute("SELECT pending_id, file FROM pending_saves "
+                                                      "WHERE path = ? AND job_seq < ?",
+                                                      (path, guard.job_seq)).fetchall():
                     self._retire(old, now)
+                    superseded.append(old_id)
                 self._conn.execute("DELETE FROM pending_saves WHERE path = ? AND job_seq < ?", (path, guard.job_seq))
+                usage = self._live()
+                reason: Literal["over_budget", "needs_approval"] | None = None
+                if budget is not None and usage > budget:
+                    reason = "over_budget"
+                elif (budget is not None and current is not None and size > current
+                      and live >= APPROVAL_SHARE * budget):
+                    reason = "needs_approval"
+                if reason is not None:
+                    self._conn.execute("ROLLBACK TO budget_check")
+                    self._conn.execute("RELEASE budget_check")
+                    replaced = [old for (old,) in self._conn.execute(
+                        "SELECT pending_id FROM pending_saves WHERE path = ?", (path,))]
+                    pending_id = self._insert_pending(path, file, size, record, guard, reason, now)
+                    return SaveResult(pending_id, reason, size + _record_bytes(record), live, budget,
+                                      guard.job_seq, tuple(replaced))
+                self._conn.execute("RELEASE budget_check")
         except SaveRejected as rejection:
             raise self._reject_file(file, rejection) from None
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return SaveResult(bytes=size + _record_bytes(record), usage=usage, budget=budget, job_seq=guard.job_seq,
+                          superseded=tuple(superseded))
 
     def _upsert_dataset(self, path: str, file: str, size: int, record: DatasetRecord, job_seq: int,
                         now: float) -> None:
@@ -547,39 +626,48 @@ class CacheStore:
         """
         now = time.time()
         size = self._file_bytes(file)
-        pending_id = uuid.uuid4().hex
         try:
             with self.transaction():
                 self._check(guard, "datasets", path)
                 stored = self._stored_job_seq(path)
                 if stored is not None and stored >= guard.job_seq:
                     raise SaveRejected("newer", "Newer data is already cached")
-                existing = self._conn.execute("SELECT file, job_seq FROM pending_saves WHERE path = ?",
-                                              (path,)).fetchone()
-                if existing and int(existing[1]) >= guard.job_seq:
-                    raise SaveRejected("newer", "Newer data is already waiting to be cached")
-                if existing:
-                    self._retire(existing[0], now)
-                    self._conn.execute("DELETE FROM pending_saves WHERE path = ?", (path,))
-                self._conn.execute(
-                    "INSERT INTO pending_saves (pending_id, path, reason, file, bytes, record, gen_datasets, epoch, "
-                    "job_seq, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (pending_id, path, reason, file, size, _dumps(record), guard.generations["datasets"],
-                     guard.epochs[path], guard.job_seq, now))
+                return self._insert_pending(path, file, size, record, guard, reason, now)
         except SaveRejected as rejection:
             raise self._reject_file(file, rejection) from None
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
+
+    def _insert_pending(self, path: str, file: str, size: int, record: DatasetRecord, guard: SaveGuard,
+                        reason: Literal["over_budget", "needs_approval"], now: float) -> str:
+        existing = self._conn.execute("SELECT file, job_seq FROM pending_saves WHERE path = ?", (path,)).fetchone()
+        if existing and int(existing[1]) >= guard.job_seq:
+            raise SaveRejected("newer", "Newer data is already waiting to be cached")
+        if existing:
+            self._retire(existing[0], now)
+            self._conn.execute("DELETE FROM pending_saves WHERE path = ?", (path,))
+        pending_id = uuid.uuid4().hex
+        self._conn.execute(
+            "INSERT INTO pending_saves (pending_id, path, reason, file, bytes, record, gen_datasets, epoch, "
+            "job_seq, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (pending_id, path, reason, file, size, _dumps(record), guard.generations["datasets"],
+             guard.epochs[path], guard.job_seq, now))
         return pending_id
 
-    def adopt_pending(self, pending_id: str) -> str:
-        """Make a pending save the folder's dataset; returns its path.
+    def adopt_pending(self, pending_id: str, *, budget: int | None = None,
+                      make_room: bool = False) -> AdoptResult:
+        """Make a pending save the folder's dataset (Save update, or Make room).
 
         Raises :class:`SaveRejected` if it is gone, or (discarding it) if the folder
-        was cleared or newer data was cached since its job started.
+        was cleared or newer data was cached since its job started; nothing else is
+        removed then. With a ``budget`` the fit rule is checked against current usage:
+        if it doesn't fit, the save stays pending as ``over_budget`` and the result says
+        what Make room would remove. With ``make_room``, least recently used **other**
+        datasets are removed until it fits, in the same transaction.
         """
         now = time.time()
         rejection: SaveRejected | None = None
+        result: AdoptResult | None = None
         try:
             with self.transaction():
                 row = self._conn.execute(
@@ -593,16 +681,84 @@ class CacheStore:
                     rejection = SaveRejected("cleared", "Cache was cleared before saving completed")
                 elif stored is not None and stored >= job_seq:
                     rejection = SaveRejected("newer", "Newer data is already cached")
-                else:
-                    self._upsert_dataset(path, file, int(size), json.loads(record), int(job_seq), now)
                 if rejection is not None:
                     self._retire(file, now)
-                self._conn.execute("DELETE FROM pending_saves WHERE pending_id = ?", (pending_id,))
+                    self._conn.execute("DELETE FROM pending_saves WHERE pending_id = ?", (pending_id,))
+                else:
+                    needed = int(size) + len(record)
+                    fits, removal = self._adopt_in_savepoint(pending_id, budget, make_room, keep=True)
+                    if fits:
+                        result = AdoptResult(str(path), True, needed, removal=removal)
+                    else:
+                        assert budget is not None  # Without a budget everything fits.
+                        self._conn.execute("UPDATE pending_saves SET reason = 'over_budget' WHERE pending_id = ?",
+                                           (pending_id,))
+                        result = AdoptResult(str(path), False, needed, room=self._room_plan(pending_id, budget))
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
         if rejection is not None:
             raise rejection
-        return str(path)
+        assert result is not None
+        return result
+
+    def _adopt_in_savepoint(self, pending_id: str, budget: int | None, make_room: bool, *,
+                            keep: bool) -> tuple[bool, Removal | None]:
+        """Adopt a pending save inside a savepoint, with Make room if asked, and measure.
+
+        The decision is made on the real result, records included. It is kept only if
+        ``keep`` and it fits; otherwise everything is rolled back. Returns whether it
+        fits and what Make room removed (or would remove).
+        """
+        path, file, size, record, job_seq = self._conn.execute(
+            "SELECT path, file, bytes, record, job_seq FROM pending_saves WHERE pending_id = ?",
+            (pending_id,)).fetchone()
+        self._conn.execute("SAVEPOINT adopt_fit")
+        try:
+            self._upsert_dataset(path, file, int(size), json.loads(record), int(job_seq), time.time())
+            self._conn.execute("DELETE FROM pending_saves WHERE pending_id = ?", (pending_id,))
+            removed: list[Removal] = []
+            if budget is not None and make_room:
+                # Least recently used other folders, one at a time, until it really fits.
+                others = [other for (other,) in self._conn.execute(
+                    "SELECT path FROM datasets WHERE path != ? ORDER BY last_used, path", (path,))]
+                for other in others:
+                    if self._live() <= budget:
+                        break
+                    removed.append(self.remove(("datasets",), [other]))
+            fits = budget is None or self._live() <= budget
+        except BaseException:
+            self._conn.execute("ROLLBACK TO adopt_fit")
+            self._conn.execute("RELEASE adopt_fit")
+            raise
+        if not (keep and fits):
+            self._conn.execute("ROLLBACK TO adopt_fit")
+        self._conn.execute("RELEASE adopt_fit")
+        removal = None if not removed else Removal(
+            ("datasets",), tuple(other for item in removed for other in item.paths or ()),
+            sum(item.datasets for item in removed), sum(item.dataset_bytes for item in removed))
+        return fits, removal
+
+    def _room_plan(self, pending_id: str, budget: int) -> RoomPlan:
+        """Make room, tried and rolled back: exactly what it would remove."""
+        fits, removal = self._adopt_in_savepoint(pending_id, budget, True, keep=False)
+        paths = () if removal is None or not fits else tuple(removal.paths or ())
+        used = [] if not paths else [float(last_used) for (last_used,) in self._conn.execute(
+            f"SELECT last_used FROM datasets WHERE path IN ({','.join('?' * len(paths))})", paths)]
+        return RoomPlan(paths, 0 if removal is None or not fits else removal.dataset_bytes,
+                        min(used, default=None), max(used, default=None), fits)
+
+    def room_plan(self, pending_id: str, budget: int) -> RoomPlan:
+        """What Make room would remove for a pending save: least recently used other
+        folders' datasets, never its own. ``possible`` is False if even removing all of
+        them isn't enough. Tried in the store and rolled back, so it is exact."""
+        try:
+            with self.transaction():
+                if self._conn.execute("SELECT 1 FROM pending_saves WHERE pending_id = ?",
+                                      (pending_id,)).fetchone() is None:
+                    raise SaveRejected("gone", "This save is no longer waiting")
+                return self._room_plan(pending_id, budget)
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be read: {exc}") from exc
 
     def discard_pending(self, pending_id: str) -> bool:
         """Drop a pending save and retire its file; False if it was already gone."""
@@ -749,6 +905,130 @@ class CacheStore:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
         return Removal(kinds, selected, datasets, dataset_bytes)
 
+    # Budget
+
+    def _records_bytes(self) -> int:
+        """The records database's size as this connection sees it: pages in use (not free
+        pages, nor the WAL file, which grows and shrinks with checkpoints, not with records)."""
+        pages = self._conn.execute("PRAGMA page_count").fetchone()[0]
+        free = self._conn.execute("PRAGMA freelist_count").fetchone()[0]
+        page_size = self._conn.execute("PRAGMA page_size").fetchone()[0]
+        return (int(pages) - int(free)) * int(page_size)
+
+    def _live(self) -> int:
+        """Live bytes: dataset files rows point to, plus the records database.
+        Retired files and pending saves don't count."""
+        datasets = self._conn.execute("SELECT COALESCE(SUM(bytes), 0) FROM datasets").fetchone()[0]
+        # A pending save's record lives in the database too, but like its file it doesn't count.
+        pending = self._conn.execute("SELECT COALESCE(SUM(LENGTH(record)), 0) FROM pending_saves").fetchone()[0]
+        return int(datasets) + max(0, self._records_bytes() - int(pending))
+
+    def _dataset_bytes(self, path: str) -> int | None:
+        row = self._conn.execute("SELECT bytes FROM datasets WHERE path = ?", (path,)).fetchone()
+        return None if row is None else int(row[0])
+
+    def usage(self) -> int:
+        try:
+            with self.transaction(write=False):
+                return self._live()
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be read: {exc}") from exc
+
+    def trim(self, budget: int) -> Removal:
+        """Remove least recently used datasets until live usage fits ``budget``.
+        Only on the user's request (lowering the budget); never automatic."""
+        try:
+            with self.transaction():
+                # Measured after each removal: a dataset's records are freed with its file.
+                victims: list[Removal] = []
+                for (path,) in self._conn.execute("SELECT path FROM datasets ORDER BY last_used, path").fetchall():
+                    if self._live() <= budget:
+                        break
+                    victims.append(self.remove(("datasets",), [path]))
+                return Removal(("datasets",), tuple(path for item in victims for path in item.paths or ()),
+                               sum(item.datasets for item in victims), sum(item.dataset_bytes for item in victims))
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+
+    def purge_datasets(self, cutoff: float) -> Removal:
+        """Remove cached data not used since ``cutoff`` (a timestamp)."""
+        try:
+            with self.transaction():
+                paths = [path for (path,) in self._conn.execute(
+                    "SELECT path FROM datasets WHERE last_used < ?", (cutoff,))]
+                return self.remove(("datasets",), paths)
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+
+    def purge_records(self, cutoff: float, include_failures: bool = False) -> list[Removal]:
+        """Remove folder records not checked (saved) since ``cutoff``: summaries and subfolder
+        status, and scan histories without failures, or all old histories with ``include_failures``."""
+        removals = []
+        try:
+            with self.transaction():
+                for kind, query in _RECORD_PURGES.items():
+                    if kind == "histories" and not include_failures:
+                        query += " AND json_array_length(record, '$.failures') = 0"
+                    paths = [path for (path,) in self._conn.execute(query, (cutoff,))]
+                    if paths:
+                        removals.append(self.remove((kind,), paths))
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return removals
+
+    def inventory(self, budget: int | None = None) -> dict[str, Any]:
+        """Everything the Cache tab shows, and what its purge estimates need (see :func:`purge_estimate`)."""
+        try:
+            with self.transaction(write=False):
+                dataset_ages = [[float(last_used), int(size)] for last_used, size in self._conn.execute(
+                    "SELECT last_used, bytes FROM datasets ORDER BY last_used")]
+                ram_bytes = int(self._conn.execute("SELECT COALESCE(SUM(ram_bytes), 0) FROM datasets").fetchone()[0])
+                ages: dict[str, Any] = {"datasets": dataset_ages}
+                for kind in ("summaries", "subtrees"):
+                    ages[kind] = [float(saved_at) for (saved_at,) in self._conn.execute(
+                        f"SELECT saved_at FROM {RECORD_TABLES[kind]} ORDER BY saved_at")]
+                ages["histories"] = [[float(saved_at), bool(failures)] for saved_at, failures in self._conn.execute(
+                    "SELECT saved_at, json_array_length(record, '$.failures') > 0 FROM scan_histories "
+                    "ORDER BY saved_at")]
+                blocked = int(self._conn.execute(
+                    "SELECT COUNT(*) FROM scan_histories WHERE json_extract(record, '$.blocked') = 1").fetchone()[0])
+                pending = [{"pending_id": pending_id, "path": path, "reason": reason, "bytes": int(size),
+                            "created_at": float(created_at), "job_seq": int(job_seq)}
+                           for pending_id, path, reason, size, created_at, job_seq in self._conn.execute(
+                               "SELECT pending_id, path, reason, bytes, created_at, job_seq FROM pending_saves "
+                               "ORDER BY created_at")]
+                retired = [file for (file,) in self._conn.execute("SELECT file FROM retired_files")]
+                known = {file for (file,) in self._conn.execute(
+                    "SELECT file FROM datasets UNION SELECT file FROM pending_saves UNION "
+                    "SELECT file FROM retired_files")}
+                live = self._live()
+                records_bytes = live - sum(size for _, size in dataset_ages)
+                deadline = self.next_deadline()
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be read: {exc}") from exc
+        retired_bytes = sum(self._size_or_zero(file) for file in retired)
+        try:
+            orphans = [name for name in os.listdir(self.datasets_dir) if name not in known]
+        except OSError:
+            orphans = []
+        return {
+            "layout_version": self.layout_version, "store_id": self.store_id, "read_only": self.read_only,
+            "root": self.root, "usage": live, "budget": budget, "records_bytes": records_bytes,
+            "datasets": {"count": len(dataset_ages), "bytes": sum(size for _, size in dataset_ages),
+                         "ram_bytes": ram_bytes,
+                         "last_used": dataset_ages[-1][0] if dataset_ages else None},
+            "summaries": {"count": len(ages["summaries"])}, "subtrees": {"count": len(ages["subtrees"])},
+            "histories": {"count": len(ages["histories"]), "blocked": blocked},
+            "pending": pending, "retired": {"count": len(retired), "bytes": retired_bytes},
+            "orphans": {"count": len(orphans), "bytes": sum(self._size_or_zero(name) for name in orphans)},
+            "ages": ages, "next_deadline": deadline, "checked_at": time.time()}
+
+    def _size_or_zero(self, file: str) -> int:
+        try:
+            return os.path.getsize(os.path.join(self.datasets_dir, file))
+        except OSError:
+            return 0
+
     def next_deadline(self) -> float | None:
         """When the next sweep has something to do: a retired file's or pending save's expiry."""
         try:
@@ -796,7 +1076,7 @@ class CacheStore:
         if deadline is not None and deadline <= now:
             # Only files still open are past due: retry them shortly, not at once.
             deadline = now + RETRY_OPEN
-        return Sweep(deleted, len(expired), still_open, deadline)
+        return Sweep(deleted, len(expired), [pending_id for pending_id, _ in expired], still_open, deadline)
 
     def _sweep_orphans(self, now: float) -> int:
         try:
@@ -821,6 +1101,27 @@ class CacheStore:
             except OSError:
                 continue
         return deleted
+
+
+_RECORD_PURGES: dict[Kind, str] = {
+    "summaries": "SELECT path FROM folder_summaries WHERE saved_at < ?",
+    "subtrees": "SELECT path FROM subtrees WHERE saved_at < ?",
+    "histories": "SELECT path FROM scan_histories WHERE saved_at < ?"}
+
+
+def purge_estimate(inventory: Mapping[str, Any], cutoff: float, *, datasets: bool,
+                   include_failures: bool = False) -> dict[str, int]:
+    """What a purge with this ``cutoff`` removes, from an :meth:`CacheStore.inventory`:
+    ``{"datasets", "bytes"}`` for cached data, else rows per record kind. Uses the
+    same comparisons as the purge, so it equals what is freed if nothing changed since."""
+    ages = inventory["ages"]
+    if datasets:
+        old = [size for last_used, size in ages["datasets"] if last_used < cutoff]
+        return {"datasets": len(old), "bytes": sum(old)}
+    return {"summaries": sum(saved_at < cutoff for saved_at in ages["summaries"]),
+            "subtrees": sum(saved_at < cutoff for saved_at in ages["subtrees"]),
+            "histories": sum(saved_at < cutoff and (include_failures or not failures)
+                             for saved_at, failures in ages["histories"])}
 
 
 def _layout_version(conn: sqlite3.Connection) -> int | None:

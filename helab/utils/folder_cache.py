@@ -17,7 +17,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 
 from helab.utils.cache_store import store_root
-from helab.utils.constants import DIR_CACHES, DISK_CACHE_ENABLED
+from helab.utils.constants import DEFAULT_DISK_BUDGET, DIR_CACHES, DISK_CACHE_ENABLED
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.load_clock import LoadClock
 from helab.utils.scan_history import ScanHistory, empty_history, parse_history, apply_outcome, for_identity, folder_identity
@@ -26,6 +26,9 @@ from helab.utils.scan_history import ScanHistory, empty_history, parse_history, 
 # Folder checks that list a folder: browse step 1 (names only), browse step 2
 # (``details``, the full scan in the background) and a basic scan.
 SCANS = ("list", "details", "scan")
+# The saved fields a listing entry carries for each kind of disk cache record.
+ENTRY_KEYS = {"datasets": ("disk_cached", "cache_info"), "summaries": ("scan_status",),
+              "histories": ("scan_history",), "subtrees": ("subtree",)}
 # The current tab's work that runs in the foreground I/O lane.
 FOREGROUND_OPERATIONS = ("list", "resolve", "load")
 
@@ -74,6 +77,8 @@ class SharedJob:
     scan_mode: str = "scan"
     history_saved: bool = False
     cache_warning: str = ""
+    # The scan helper's save guard, handed to the follow-up history write.
+    save_guard: dict[str, Any] | None = None
     completed_scan: FolderSnapshot | None = None
     created: float = field(default_factory=time.monotonic)
     paused: bool = False
@@ -81,12 +86,19 @@ class SharedJob:
     clock: LoadClock = field(default_factory=LoadClock)
 
 
-def store_options() -> dict[str, Any]:
-    """What a helper needs to open the disk cache; {} when the cache is off for this session.
+# Set from the saved setting at startup (``set_disk_budget``); sent with every request.
+_disk_budget = DEFAULT_DISK_BUDGET
 
-    The GUI process never opens the store.
-    """
-    return {"directory": store_root(DIR_CACHES)} if DISK_CACHE_ENABLED else {}
+
+def set_disk_budget(budget: int) -> None:
+    global _disk_budget
+    _disk_budget = int(budget)
+
+
+def store_options() -> dict[str, Any]:
+    """What a helper needs to open the disk cache, and its budget in bytes; {} when the
+    cache is off for this session. The GUI process never opens the store."""
+    return {"directory": store_root(DIR_CACHES), "budget": _disk_budget} if DISK_CACHE_ENABLED else {}
 
 
 class FolderCache(QObject):
@@ -97,7 +109,15 @@ class FolderCache(QObject):
     scanHistoryChanged = pyqtSignal(str)
     folderIconChanged = pyqtSignal(str)
     subtreeChanged = pyqtSignal(str)
+    # A removal from the disk cache: paths (None: every path) and the kinds removed.
+    cacheRemoved = pyqtSignal(object, object)
+    # Pending saves (waiting for Make room / Save update) were added or answered.
+    pendingSavesChanged = pyqtSignal()
+    # A cache_admin job's result: action, event (inventory, admin_result, swept, error).
+    cacheAdminResult = pyqtSignal(str, object)
     MAX_FOLDER_ICONS = 4096
+    # Seconds before a sweep the queue rejected is tried again.
+    SWEEP_RETRY = 5.0
     MAX_SUBTREES = 4096
     SUBTREE_SAVE_DELAY_MS = 500
     FRESH_SECONDS: float = 10.0
@@ -123,6 +143,8 @@ class FolderCache(QObject):
         self._finishing: dict[str, str] = {}
         self._disk_cache_writers: set[str] = set()
         self._finishing_epochs: dict[str, int] = {}
+        # When each finishing load started: a removal since then voids its cache events.
+        self._finishing_created: dict[str, float] = {}
         self._cache_states: OrderedDict[str, CacheStatus] = OrderedDict()
         # When each folder's disk cache was last cleared; older scans saw stale entries.
         self._cleared_at: OrderedDict[str, float] = OrderedDict()
@@ -144,6 +166,29 @@ class FolderCache(QObject):
         self._subtree_writer = ""
         self._subtree_options: dict[str, Any] = {}
         self._cleanup = ""
+        # cache_admin jobs by owner: their action.
+        self._admin: dict[str, str] = {}
+        # When cache_admin jobs and history writes started: removals since then void their results.
+        self._started: dict[str, float] = {}
+        # When each kind was last removed from the disk cache, for every path or per path;
+        # results read before then are stale.
+        self._removed_all: dict[str, float] = {}
+        self._removed_paths: OrderedDict[tuple[str, str], float] = OrderedDict()
+        # Saves waiting for the user's answer, by folder: the cache_full / cache_approval event.
+        self.pending_saves: dict[str, dict[str, Any]] = {}
+        # What late events must not undo: pending ids answered, superseded or expired; each
+        # folder's newest job_seq whose save outcome arrived; when events last changed a folder's
+        # pending save (an inventory requested before then doesn't override it).
+        self._pending_gone: OrderedDict[str, None] = OrderedDict()
+        self._save_seq: dict[str, int] = {}
+        self._pending_changed: dict[str, float] = {}
+        # When the newest inventory applied was requested; an older one arriving later is stale.
+        self._inventory_started = float("-inf")
+        # One timer for the store's next cleanup deadline (wall clock).
+        self._sweep_deadline: float | None = None
+        self._sweep_timer = QTimer(self)
+        self._sweep_timer.setSingleShot(True)
+        self._sweep_timer.timeout.connect(self._sweep_due)
         self._subtree_timer = QTimer(self)
         self._subtree_timer.setSingleShot(True)
         self._subtree_timer.timeout.connect(self._save_subtrees)
@@ -265,6 +310,8 @@ class FolderCache(QObject):
         self.scanHistoryChanged.emit(path)
 
     def _record_scan_outcome(self, job: SharedJob, event: dict[str, Any], *, success: bool = False) -> None:
+        if self._removed_since(job, "histories", job.path):
+            return  # The history was cleared after this scan started; its outcome stays out.
         history = self.scan_history(job.path)
         outcome = {"operation_id": job.owner, "revision": job.payload["scan_revision"],
             "kind": "success" if success else "timeout" if event.get("timeout") else "io_error",
@@ -286,8 +333,11 @@ class FolderCache(QObject):
             return
         owner = uuid4().hex
         self._history_writes[owner] = job.path
-        if not self.service.submit(owner, 0, job.path, "scan_history", {"cache": options, "outcome": outcome},
-                                   priority=True):
+        self._started[owner] = time.monotonic()
+        payload: dict[str, Any] = {"cache": options, "outcome": outcome}
+        if job.save_guard is not None:
+            payload["guard"] = job.save_guard
+        if not self.service.submit(owner, 0, job.path, "scan_history", payload, priority=True):
             self._history_writes.pop(owner, None)
             self.scan_history_errors[job.path] = "Scan history save queue full; suppression is session-only."
             logging.warning("Scan history %s: %s", job.path, self.scan_history_errors[job.path])
@@ -616,7 +666,7 @@ class FolderCache(QObject):
 
     def _cleared_since(self, job: SharedJob, path: str) -> bool:
         """A scan that started before a cache clear may report the cleared entry."""
-        return job.created < self._cleared_at.get(path, float("-inf"))
+        return job.created < self._cleared_at.get(path, float("-inf")) or self._removed_since(job, "datasets", path)
 
     def _adopt_load_summary(self, path: str, status: dict[str, Any]) -> None:
         """A load's listing and fingerprint complete a names-only listing of the same files."""
@@ -724,6 +774,7 @@ class FolderCache(QObject):
             self.service.promote(job.owner)
 
     def shutdown(self) -> None:
+        self._sweep_timer.stop()
         for owner in {r.owner for job in self.jobs.values() for r in job.subscribers.values()} | {
             r.owner for r in self._deliveries}:
             self.cancel(owner)
@@ -734,6 +785,7 @@ class FolderCache(QObject):
         self._disk_cached_paths.clear()
         self._disk_cache_writers.clear()
         self._finishing_epochs.clear()
+        self._finishing_created.clear()
         self._cache_states.clear()
         self._cleared_at.clear()
         self.scan_summaries.clear()
@@ -750,21 +802,217 @@ class FolderCache(QObject):
 
     def clean_up_cache(self) -> None:
         """Once per session, on the local lane: delete the old diskcache folders, and cache
-        files past their grace period."""
-        options = store_options()
-        if self._cleanup or not options:
+        files past their grace period. Later sweeps run by deadline."""
+        if self._cleanup or not store_options():
             return
-        self._cleanup = uuid4().hex
-        if not self.service.submit(self._cleanup, 0, options["directory"], "cache_admin",
-                                   {"cache": options, "action": "sweep"}):
-            logging.warning("Disk cache cleanup: queue full; it runs at the next start")
+        self._cleanup = self.cache_admin("sweep") or "failed"
+        if self._cleanup == "failed":
+            self._schedule_sweep(time.time() + self.SWEEP_RETRY)
+
+    def cache_admin(self, action: str, **params: Any) -> str:
+        """Submit a disk cache maintenance job on the local lane; its owner, or "" if it
+        couldn't be queued (or the cache is off). Results arrive as ``cacheAdminResult``."""
+        options = store_options()
+        if not options or self.service.closed:
+            return ""
+        owner = uuid4().hex
+        if not self.service.submit(owner, 0, options["directory"], "cache_admin",
+                                   {"cache": options, "action": action, "params": params}, priority=True):
+            logging.warning("Disk cache %s: queue full", action)
+            return ""
+        self._admin[owner] = action
+        self._started[owner] = time.monotonic()
+        return owner
+
+    def _schedule_sweep(self, deadline: object) -> None:
+        """Keep one timer for the earliest cleanup deadline any helper reported."""
+        if not isinstance(deadline, (int, float)) or not math.isfinite(deadline) or self.service.closed:
+            return
+        if self._sweep_deadline is not None and self._sweep_timer.isActive() and self._sweep_deadline <= deadline:
+            return
+        self._sweep_deadline = float(deadline)
+        self._sweep_timer.start(int(min(max(0.0, deadline - time.time()), 24 * 3600) * 1000) + 1000)
+
+    def _sweep_due(self) -> None:
+        self._sweep_deadline = None
+        if store_options() and not self.cache_admin("sweep"):
+            self._schedule_sweep(time.time() + self.SWEEP_RETRY)  # Queue full: try again shortly.
+
+    def removed(self, paths: list[str] | None, kinds: list[str]) -> None:
+        """Forget what a disk cache removal took away: ``paths`` (None: every path) of ``kinds``.
+
+        Cache flags and dates, saved summaries, histories and subfolder statuses go;
+        datasets in RAM stay loaded but are no longer marked as cached. Results read
+        before the removal are ignored when they arrive (see ``_removed_since``).
+        """
+        now = time.monotonic()
+        keys = None if paths is None else [self.key(path) for path in paths]
+        for kind in kinds:
+            if keys is None:
+                self._removed_all[kind] = now
+            else:
+                for path in keys:
+                    self._removed_paths[(kind, path)] = now
+                    self._removed_paths.move_to_end((kind, path))
+        while len(self._removed_paths) > self.MAX_ENTRIES:
+            self._removed_paths.popitem(last=False)
+
+        def selected(known: Any) -> list[str]:
+            return list(known) if keys is None else [path for path in keys if path in known]
+        if "datasets" in kinds:
+            # The store drops the folders' pending saves with their data.
+            self._forget_pending({entry["pending_id"] for path, entry in self.pending_saves.items()
+                                  if (keys is None or path in keys) and entry.get("pending_id")})
+            for path in selected({*self._disk_cached_paths, *self._cache_states}):
+                self._cache_states[path] = CacheStatus()
+                self._set_disk_cached(path, False, notify=True)
+            for entry in self.datasets.values():
+                if keys is None or entry.path in keys:
+                    entry.metadata.update(disk_cached=False, cache_info={})
+            for path in selected(self.snapshots):
+                if "disk_cached" in self.snapshots[path].status:
+                    self.snapshots[path].status = {**self.snapshots[path].status, "disk_cached": False,
+                                                   "cache_info": {}}
+            self.pendingSavesChanged.emit()
+        if "summaries" in kinds:
+            for path in selected(self.scan_summaries):
+                del self.scan_summaries[path]
+        if "histories" in kinds:
+            for path in selected(self.scan_histories):
+                del self.scan_histories[path]
+                self.scan_history_errors.pop(path, None)
+                self.scanHistoryChanged.emit(path)
+        if "subtrees" in kinds:
+            if self._subtree_writer:
+                # Its batch was derived before the clear and its guard may be taken after it.
+                self.service.cancel(self._subtree_writer)
+            for path in selected({*self.subtrees, *self._subtree_pending}):
+                self.subtrees.pop(path, None)
+                self._subtree_pending.pop(path, None)
+                self.subtreeChanged.emit(path)
+        # Snapshots replayed to tabs later must not bring the removed fields back.
+        stale = [key for kind in kinds for key in ENTRY_KEYS.get(kind, ())]
+        for snapshot in self.snapshots.values():
+            if any(key in entry for entry in snapshot.entries for key in stale):
+                snapshot.entries = tuple(
+                    {key: value for key, value in entry.items() if key not in stale}
+                    if keys is None or entry["path"] in keys else entry for entry in snapshot.entries)
+        self.cacheRemoved.emit(keys, list(kinds))
+
+    def _fresh_entry(self, job: SharedJob, entry: dict[str, Any]) -> dict[str, Any]:
+        """A listing entry without saved fields read before they were removed."""
+        stale = [key for kind, keys in ENTRY_KEYS.items() if self._removed_since(job, kind, entry["path"])
+                 for key in keys if key in entry]
+        return {key: value for key, value in entry.items() if key not in stale} if stale else entry
+
+    def _forget_pending(self, pending_ids: set[str]) -> None:
+        """Drop pending saves the store no longer has (answered, superseded or expired); a late
+        event naming one of them never brings it back."""
+        for pending_id in pending_ids:
+            self._pending_gone[pending_id] = None
+            self._pending_gone.move_to_end(pending_id)
+        while len(self._pending_gone) > self.MAX_ENTRIES:
+            self._pending_gone.popitem(last=False)
+        gone = [path for path, entry in self.pending_saves.items() if entry.get("pending_id") in pending_ids]
+        for path in gone:
+            del self.pending_saves[path]
+            self._pending_changed[path] = time.monotonic()
+        if gone:
+            self.pendingSavesChanged.emit()
+
+    def _hold_pending(self, path: str, event: dict[str, Any]) -> bool:
+        """A load's save waits for the user's answer, unless the store already moved past it:
+        the save was answered or superseded, or a later job's save outcome already arrived."""
+        job_seq = int(event.get("job_seq", 0))
+        current = self.pending_saves.get(path)
+        if (event.get("pending_id") in self._pending_gone or job_seq <= self._save_seq.get(path, 0)
+                or current is not None and current.get("job_seq", 0) >= job_seq):
+            return False
+        self._save_seq[path] = job_seq
+        self.pending_saves[path] = dict(event)
+        self._pending_changed[path] = time.monotonic()
+        self.pendingSavesChanged.emit()
+        return True
+
+    def _removed_since(self, job: SharedJob, kind: str, path: str) -> bool:
+        """A job that started before a removal of ``kind`` may report what was removed."""
+        return self._removed_after(job.created, kind, path)
+
+    def _removed_after(self, started: float, kind: str, path: str) -> bool:
+        removed = max(self._removed_all.get(kind, float("-inf")),
+                      self._removed_paths.get((kind, path), float("-inf")))
+        return started < removed
+
+    def _on_admin_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        action = self._admin[producer.owner]
+        kind = event["kind"]
+        if "next_deadline" in event:
+            self._schedule_sweep(event["next_deadline"])
+        if kind == "removed":
+            self.removed(event["paths"], event["kinds"])
+            return
+        started = self._started.get(producer.owner, 0.0)
+        # A newer inventory was already applied: this one is stale, for the cache and its viewers.
+        stale = kind == "inventory" and started < self._inventory_started
+        if stale:
+            pass
+        elif kind == "inventory":
+            self._inventory_started = started
+            # The store's list is the truth; keep what events added (e.g. a room plan) for the same
+            # save, and leave out saves a removal since then took away.
+            # Folders whose pending save an event changed after this inventory was requested keep
+            # that newer state.
+            snapshot = {self.key(entry["path"]): entry for entry in event["inventory"]["pending"]
+                        if entry["pending_id"] not in self._pending_gone
+                        and not self._removed_after(started, "datasets", self.key(entry["path"]))}
+            merged: dict[str, dict[str, Any]] = {}
+            for path in {*self.pending_saves, *snapshot}:
+                current = self.pending_saves.get(path)
+                if self._pending_changed.get(path, float("-inf")) > started:
+                    if current is not None:
+                        merged[path] = current
+                elif path in snapshot:
+                    same = current is not None and current.get("pending_id") == snapshot[path]["pending_id"]
+                    merged[path] = {**(current if same and current else {}), **snapshot[path]}
+                    # Its job_seq orders it against late events, as for one an event added.
+                    self._save_seq[path] = max(self._save_seq.get(path, 0), int(snapshot[path].get("job_seq", 0)))
+            self.pending_saves = merged
+            self.pendingSavesChanged.emit()
+            self._schedule_sweep(event["inventory"].get("next_deadline"))
+        elif kind == "admin_result" and action in ("adopt", "discard"):
+            # Matched by pending_id: a late answer about an older save never touches a newer one.
+            pending_id = producer.payload["params"].get("pending_id")
+            held = next((path for path, entry in self.pending_saves.items()
+                         if entry.get("pending_id") == pending_id), None)
+            if event.get("adopted") is False and event.get("room") is not None:
+                # Still waiting: it no longer fits, so the answer is Make room or Don't cache.
+                if held:
+                    self.pending_saves[held] = {**self.pending_saves[held], "reason": "over_budget",
+                                                "room": event["room"]}
+            elif pending_id:
+                # Adopted, discarded, or rejected: either way the store no longer has it.
+                self._forget_pending({pending_id})
+            if event.get("adopted") and event.get("path") and not self._removed_after(
+                    started, "datasets", self.key(event["path"])):
+                adopted = self.key(event["path"])
+                state = self._cache_states.setdefault(adopted, CacheStatus())
+                state.info, state.error = dict(event.get("cache_info") or {}), ""
+                self._set_disk_cached(adopted, True, notify=True)
+            self.pendingSavesChanged.emit()
+        elif kind == "swept":
+            self._forget_pending(set(event.get("expired_ids") or ()))
+            logging.info("Disk cache cleanup: %s", event)
+        elif kind in ("error", "cancelled"):
+            logging.warning("Disk cache %s: %s", action, event.get("message", "Cancelled"))
+        if kind in ("inventory", "admin_result", "swept", "error", "cancelled") and not stale:
+            self.cacheAdminResult.emit(action, event)
+        if kind in ("done", "error", "cancelled"):
+            self._admin.pop(producer.owner, None)
+            self._started.pop(producer.owner, None)
 
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
-        if producer.owner == self._cleanup:
-            if event["kind"] == "swept":
-                logging.info("Disk cache cleanup: %s", event)
-            elif event["kind"] in ("error", "cancelled"):
-                logging.warning("Disk cache cleanup: %s", event.get("message", "Cancelled"))
+        if producer.owner in self._admin:
+            self._on_admin_event(producer, event)
             return
         if producer.owner == self._subtree_writer:
             if event["kind"] in ("error", "cancelled"):
@@ -776,7 +1024,9 @@ class FolderCache(QObject):
             return
         if producer.owner in self._history_writes:
             path = self._history_writes[producer.owner]
-            if event["kind"] == "scan_history_saved":
+            if event["kind"] == "scan_history_saved" and not self._removed_after(
+                    self._started.get(producer.owner, 0.0), "histories", path):
+                # (A history cleared after this write started stays cleared.)
                 self.scan_history_errors.pop(path, None)
                 self.remember_history(path, event["history"])
             elif event["kind"] in ("error", "cancelled"):
@@ -785,15 +1035,32 @@ class FolderCache(QObject):
                 self.scanHistoryChanged.emit(path)
             if event["kind"] in ("done", "error", "cancelled"):
                 self._history_writes.pop(producer.owner, None)
+                self._started.pop(producer.owner, None)
             return
         job = self._producers.get(producer.owner)
         if job is None and producer.owner in self._finishing:
             path = self._finishing[producer.owner]
             kind = event["kind"]
-            valid = self._finishing_epochs.get(producer.owner) == self._epochs.get(path, 0)
+            # A removal since the load started voids its cache events: a save that committed
+            # before a Clear must not bring the badge back after it.
+            valid = (self._finishing_epochs.get(producer.owner) == self._epochs.get(path, 0)
+                     and not self._removed_after(self._finishing_created.get(producer.owner, 0.0), "datasets", path))
             was_saving = producer.owner in self._disk_cache_writers
-            if kind in ("cache_saved", "cache_save_failed", "disk_cached", "cache_warning", "done", "error", "cancelled"):
+            if kind in ("cache_saved", "cache_save_failed", "disk_cached", "cache_warning", "cache_full",
+                        "cache_approval", "done", "error", "cancelled"):
                 self._disk_cache_writers.discard(producer.owner)
+            if "next_deadline" in event:
+                self._schedule_sweep(event["next_deadline"])
+            if kind in ("cache_full", "cache_approval", "cache_saved"):
+                self._forget_pending(set(event.get("superseded") or ()))
+            if kind == "cache_saved" and event.get("job_seq"):
+                self._save_seq[path] = max(self._save_seq.get(path, 0), int(event["job_seq"]))
+            if valid and kind in ("cache_full", "cache_approval") and self._hold_pending(path, event):
+                # Not saved yet: it waits for the user's answer (Make room / Save update).
+                state = self._cache_states.setdefault(path, CacheStatus())
+                state.error = ("Not cached — disk cache full" if kind == "cache_full"
+                               else "Cache update waiting for your answer")
+                self.diskCacheChanged.emit(path)
             if valid and kind == "cache_saved":
                 state = self._cache_states.setdefault(path, CacheStatus())
                 state.info, state.error = dict(event["cache_info"]), ""
@@ -813,6 +1080,7 @@ class FolderCache(QObject):
             if kind in ("done", "error", "cancelled"):
                 del self._finishing[producer.owner]
                 self._finishing_epochs.pop(producer.owner, None)
+                self._finishing_created.pop(producer.owner, None)
             return
         if job is None:
             # Non-shared IOService consumers retain their existing protocol.
@@ -849,6 +1117,13 @@ class FolderCache(QObject):
                 job.progress = None
                 job.load_status = None
         if job.operation in SCANS:
+            if kind == "save_guard":
+                job.save_guard = event["guard"]
+                return
+            if kind in ("scan_history", "subtree_cached", "scan_cached") and self._removed_since(
+                    job, {"scan_history": "histories", "subtree_cached": "subtrees",
+                          "scan_cached": "summaries"}[kind], job.path):
+                return  # Read before that record was removed.
             if kind == "scan_history":
                 self.remember_history(job.path, event.get("history"))
                 if event.get("revision"):
@@ -882,6 +1157,7 @@ class FolderCache(QObject):
                     self.resultReady.emit(request, event)
                 return
             if kind == "entries":
+                event = {**event, "entries": [self._fresh_entry(job, entry) for entry in event["entries"]]}
                 for entry in event["entries"]:
                     self.remember_history(entry["path"], entry.get("scan_history"), identity=entry.get("identity"),
                                           observed_at=entry.get("modified_observed_at", time.time()))
@@ -931,7 +1207,8 @@ class FolderCache(QObject):
                 # A late status check must not replace a newer refresh's names,
                 # including snapshots used by tabs opened after both jobs finish.
                 newer_listing = old is not None and old.listed_at > job.created
-                entries = old.entries if old is not None and newer_listing else tuple(job.entries)
+                entries = old.entries if old is not None and newer_listing else tuple(
+                    self._fresh_entry(job, entry) for entry in job.entries)
                 listed_at = old.listed_at if old is not None and newer_listing else job.created
                 snapshot = FolderSnapshot(entries, job.status, checked_at, listed_at)
                 if not job.payload.get("listing_only"):
@@ -1008,7 +1285,7 @@ class FolderCache(QObject):
                         source_snapshot.checked_at = 0
                     self.snapshotChanged.emit(job.path)
                     return
-                if "disk_cached" in event:
+                if "disk_cached" in event and not self._cleared_since(job, job.path):
                     self._observe_cache(job.path, event)
                 memory_shots = event.get("memory_shots", [])
                 if memory_shots:
@@ -1026,6 +1303,7 @@ class FolderCache(QObject):
                 self._forget_job(job)
                 self._finishing[job.owner] = job.path
                 self._finishing_epochs[job.owner] = job.epoch
+                self._finishing_created[job.owner] = job.created
                 if event.get("disk_cache_pending"):
                     self._disk_cache_writers.add(job.owner)
                     self._cache_states.setdefault(job.path, CacheStatus()).error = ""
@@ -1045,6 +1323,10 @@ class FolderCache(QObject):
                 for path in job.payload["paths"]:
                     if path not in self.folder_icons:
                         self.remember_folder_icon(path)
+        elif job.operation == "invalidate" and kind in ("removed", "admin_result"):
+            # Its state was reset when it was submitted; only the cleanup deadline is new.
+            self._schedule_sweep(event.get("next_deadline"))
+            return
         elif job.operation == "resolve" and kind == "resolved":
             candidates = tuple(job.payload["candidates"])
             self._defaults[candidates] = event["path"]
