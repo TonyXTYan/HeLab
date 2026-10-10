@@ -785,6 +785,10 @@ class FolderCache(QObject):
             self.resultReady.emit(producer, event)
             return
         kind = event["kind"]
+        if kind == "summary_save_failed":
+            # The check itself succeeded; only its saved copy for later sessions is missing.
+            logging.warning("%s: %s", job.path, event["message"])
+            return
         if kind in ("paused", "resumed"):
             job.paused = kind == "paused"
             if job.paused:

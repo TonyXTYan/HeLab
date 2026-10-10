@@ -26,7 +26,9 @@ logging.debug("caching_setup.py: Loading")
 
 
 CACHE_PARAMS_DEFAULTS: OrderedDict[str, Any] = OrderedDict([
-    ("statistics", True),
+    # Off: with statistics on, every read is a write transaction that can time out
+    # and silently answer "nothing saved".
+    ("statistics", False),
     ("eviction_policy", "least-recently-stored"),
     # ("sqlite_journal_mode", "memory"),
     ("sqlite_journal_mode", "wal"),
@@ -88,6 +90,8 @@ def load_cache_param(cache_name: str, settings: QSettings | None = None) -> Orde
     for key, val in base_params.items():
         setting_path = f"cache_params/{cache_name}/{key}"
         base_params[key] = settings.value(setting_path, val)
+    # Never from saved settings, which may still hold the old default.
+    base_params["statistics"] = False
 
     logging.debug(f"load_cache_param: loaded   {cache_name = } ,base_params = {json.dumps(base_params)}")
     return base_params

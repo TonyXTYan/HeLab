@@ -85,7 +85,7 @@ def _disk_cached(cache: Any, path: str) -> bool:
 def _cache_info(cache: Any, path: str) -> dict[str, Any]:
     """Small persisted metadata only; older cached arrays have no save date."""
     try:
-        info = cache.get(("snapshot-cache-info", path)) if cache is not None else None
+        info = cache.get(("snapshot-cache-info", path), retry=True) if cache is not None else None
         if isinstance(info, dict):
             saved_at = info.get("saved_at")
             if (isinstance(saved_at, (int, float)) and math.isfinite(saved_at) and saved_at > 0
@@ -196,7 +196,7 @@ def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = No
          operation_id: str = "", revision: int = 0, identity: object = None) -> None:
     """Full scan: a basic scan, or browse step 2 (``details``). Saves summary and history."""
     from uuid import uuid4
-    from helab.utils.scan_history import begin_scan, write_outcome
+    from helab.utils.scan_history import ScanSkipped, begin_scan, write_outcome
     send({"kind": "scan_mode", "mode": "metadata"})
     cache = _open_cache(cache_options)
     try:
@@ -208,12 +208,28 @@ def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = No
             return
         operation_id = operation_id or uuid4().hex
         revision = revision or time.time_ns()
+        if cache is None and cache_options:
+            send({"kind": "scan_history_warning", "message": "The cache could not be opened"})
+            if not manual:
+                # Without the saved history this may be a blocked folder.
+                send({"kind": "scan_mode", "mode": "skipped"})
+                return
         if cache is not None:
             try:
-                history, revision = begin_scan(cache, path, operation_id, revision, identity)
+                history, revision = begin_scan(cache, path, operation_id, revision, identity,
+                                               manual=manual, automatic=automatic)
                 send({"kind": "scan_history", "history": history, "revision": revision})
+            except ScanSkipped as skipped:
+                if skipped.history is not None:
+                    send({"kind": "scan_history", "history": skipped.history})
+                send({"kind": "scan_mode", "mode": "skipped"})
+                return
             except Exception as exc:
                 send({"kind": "scan_history_warning", "message": str(exc)})
+                if not manual:
+                    # Without the saved history this may be a blocked folder.
+                    send({"kind": "scan_mode", "mode": "skipped"})
+                    return
         send({"kind": "scan_mode", "mode": "scan"})
         report = _scan(path, send, cache)
         if cache is not None:
@@ -231,7 +247,7 @@ def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = No
 def _scan_info(cache: Any, path: str) -> dict[str, Any]:
     """Restore metadata independently of the compressed dataset."""
     try:
-        info = cache.get(("folder-scan-v1", path)) if cache is not None else None
+        info = cache.get(("folder-scan-v1", path), retry=True) if cache is not None else None
         if (isinstance(info, dict) and info.get("version") == 1
                 and isinstance(info.get("signature"), str)
                 and info.get("status") in ("ok", "warning", "critical", "fixable", "unknown", "nothing")
@@ -264,7 +280,7 @@ SUBTREE_KEY = "folder-subtree-v1"
 def _subtree_info(cache: Any, path: str, identity: object = None) -> dict[str, Any]:
     """A folder's saved status derived from its subfolders (not their contents)."""
     try:
-        info = cache.get((SUBTREE_KEY, path)) if cache is not None else None
+        info = cache.get((SUBTREE_KEY, path), retry=True) if cache is not None else None
         if (isinstance(info, dict) and info.get("version") == 1
                 and info.get("status") in ("something", "nothing")
                 and isinstance(info.get("derived_at"), (float, int))
@@ -281,27 +297,36 @@ def _subtree_info(cache: Any, path: str, identity: object = None) -> dict[str, A
 
 
 def save_subtrees(cache_options: dict[str, Any], records: list[dict[str, Any]], send: Emit = emit) -> None:
-    """Save (or, with status "", remove) folders' statuses derived from their subfolders."""
+    """Save (or, with status "", remove) folders' statuses derived from their subfolders.
+
+    One transaction: it waits for the write lock instead of timing out, and a
+    failed write raises (the job reports an error) rather than reporting saved.
+    """
     from diskcache import FanoutCache
     with FanoutCache(cache_options["directory"], **cache_options["params"]) as cache:
-        for record in records:
-            key = (SUBTREE_KEY, record["path"])
-            if record["status"]:
-                cache.set(key, {"version": 1, **{k: v for k, v in record.items() if k != "path"}})
-            else:
-                cache.pop(key, None)
+        with cache.transact():
+            for record in records:
+                key = (SUBTREE_KEY, record["path"])
+                if record["status"]:
+                    if not cache.set(key, {"version": 1, **{k: v for k, v in record.items() if k != "path"}},
+                                     retry=True):
+                        raise OSError(f"Subfolder status write was rejected: {record['path']}")
+                else:
+                    cache.delete(key, retry=True)
     send({"kind": "subtree_saved", "paths": [record["path"] for record in records]})
 
 
-def _save_summary(cache: Any, path: str, report: dict[str, Any]) -> None:
-    # Optional persistence never turns a successful source check into a failure.
+def _save_summary(cache: Any, path: str, report: dict[str, Any], send: Emit) -> None:
+    # Optional persistence never turns a successful source check into a failure,
+    # but a failed save is reported, not silently dropped.
     try:
-        cache.set(("folder-scan-v1", path), {"version": 1, **{
-            key: value for key, value in report.items()
-            if key not in ("kind", "details", "disk_cached", "cache_info", "raw", "txy")},
-            "raw_count": len(report["raw"]), "txy_count": len(report["txy"])})
-    except Exception:
-        pass
+        if not cache.set(("folder-scan-v1", path), {"version": 1, **{
+                key: value for key, value in report.items()
+                if key not in ("kind", "details", "disk_cached", "cache_info", "raw", "txy")},
+                "raw_count": len(report["raw"]), "txy_count": len(report["txy"])}, retry=True):
+            raise OSError("write was rejected")
+    except Exception as exc:
+        send({"kind": "summary_save_failed", "message": f"Folder summary could not be saved: {exc}"})
 
 
 def _scan(path: str, send: Emit, cache: Any) -> dict[str, Any]:
@@ -365,7 +390,7 @@ def _scan(path: str, send: Emit, cache: Any) -> dict[str, Any]:
     # stalled cache writer cannot turn it into a failed basic scan.
     send(report)
     if cache is not None:
-        _save_summary(cache, path, report)
+        _save_summary(cache, path, report, send)
     return report
 
 
@@ -591,7 +616,7 @@ def load(path: str, output: str, send: Emit = emit,
         try:
             from diskcache import FanoutCache
             cache = FanoutCache(cache_options["directory"], **cache_options["params"])
-            _save_summary(cache, path, summary)
+            _save_summary(cache, path, summary, send)
             with cache.transact():
                 cache_epoch = cache.get(("snapshot-epoch", path))
                 saved_fingerprint: Any = cache.get(("snapshot-fingerprint", path))

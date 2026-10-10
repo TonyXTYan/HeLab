@@ -79,9 +79,22 @@ def parse_history(value: object) -> ScanHistory | None:
     return history
 
 
+def read_saved(cache: Any, key: object) -> Any:
+    """One cached value, or None if absent; a read error raises.
+
+    FanoutCache.get returns its default for sqlite3.OperationalError even with
+    retry=True, so a failed read would look like "nothing saved". Read the shard
+    directly, whose get only retries timeouts.
+    """
+    shards = getattr(cache, "_shards", None)
+    if shards is None:
+        return cache.get(key, retry=True)
+    return shards[cache._hash(key) % cache._count].get(key, retry=True)
+
+
 def read_history(cache: Any, path: str) -> ScanHistory | None:
     try:
-        return parse_history(cache.get((HISTORY_KEY, path))) if cache is not None else None
+        return parse_history(cache.get((HISTORY_KEY, path), retry=True)) if cache is not None else None
     except Exception:
         return None
 
@@ -96,13 +109,28 @@ def for_identity(history: ScanHistory, identity: object) -> ScanHistory:
     return {**history, "identity": observed} if observed is not None else history
 
 
+class ScanSkipped(Exception):
+    """A scan that is not manual found its folder blocked (or, if automatic, its history unreadable)."""
+
+    def __init__(self, history: ScanHistory | None) -> None:
+        super().__init__("Folder status check skipped")
+        self.history = history
+
+
 def begin_scan(cache: Any, path: str, operation_id: str, revision: int,
-               identity: object = None) -> tuple[ScanHistory, int]:
+               identity: object = None, *, manual: bool = True,
+               automatic: bool = False) -> tuple[ScanHistory, int]:
     with cache.transact():
-        # A manual/source check can repair malformed metadata; real read errors
-        # still propagate. Automatic checks never reach here with unknown state.
-        history = parse_history(cache.get((HISTORY_KEY, path))) or empty_history()
-        history = for_identity(history, identity)
+        # Decided here, under the write lock: a read made before the scan may have
+        # failed and looked like "nothing saved", which must not unblock a scan.
+        found = parse_history(read_saved(cache, (HISTORY_KEY, path)))
+        if found is not None:
+            found = for_identity(found, identity)
+        if not manual and (found["blocked"] if found is not None else automatic):
+            raise ScanSkipped(found)
+        # A manual or details check repairs malformed metadata; real read errors
+        # still propagate.
+        history = found or for_identity(empty_history(), identity)
         starts = dict(history["starts"])
         issued = starts.get(operation_id, max(revision, history["sequence"] + 1))
         starts[operation_id] = issued
@@ -143,7 +171,8 @@ def apply_outcome(history: ScanHistory, outcome: dict[str, Any]) -> ScanHistory:
 
 def write_outcome(cache: Any, path: str, outcome: dict[str, Any]) -> ScanHistory:
     with cache.transact():
-        history = read_history(cache, path)
+        # A read error raises: an empty history would overwrite the saved failures.
+        history = parse_history(read_saved(cache, (HISTORY_KEY, path)))
         if history is None:
             raise OSError("Saved scan history could not be read")
         history = apply_outcome(history, outcome)

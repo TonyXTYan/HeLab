@@ -601,7 +601,7 @@ reading this plan, the audit notes and AGENTS.md. End it by ticking the row with
 
 | # | Session | Scope | Tests | Depends on | Status |
 |---|---|---|---|---|---|
-| S1 | Quick storage fixes | `statistics` off. Decide `blocked` inside `begin_scan`'s transaction. `save_subtrees`/`_save_summary` report failed saves. Reads that decide behaviour use `retry=True`. (Protects the current store until S5.) | Held write lock does not unblock an automatic scan; failed subtree save is reported | — | ☐ |
+| S1 | Quick storage fixes | `statistics` off. Decide `blocked` inside `begin_scan`'s transaction. `save_subtrees`/`_save_summary` report failed saves. Reads that decide behaviour use `retry=True`. (Protects the current store until S5.) | Held write lock does not unblock an automatic scan; failed subtree save is reported | — | ☑ 2026-10-10 |
 | S2 | Untangle the old browser | Plain `StatusReport`; move `fnum` and the column constants; new `closeEvent`; `main.py` and `conftest` no longer import old modules | Full suite; import test: loading `HelabMainWindow` imports none of the old modules | — | ☐ |
 | S3 | Delete the old browser | Delete the modules, tests and Debug item; strip the two old caches from `caching_setup.py` (the file stays until S5); old Cache tab shows only `data_ram_cache`; move `helab/scripts/dev/`; update AGENTS.md | Full suite; the app starts and Settings opens | S2 | ☐ |
 | S4 | New store module | `helab/utils/cache_store.py`: schema, versioning, dataset file writes, `retired_files` with deferred deletion, reader re-read on a missing file, the single removal function with durable `folder_epochs`, per-kind generations, per-folder `job_seq` ordering, `pending_saves` with `pending_id` and `reason`, read results (found/missing/error), save-guard checks | Two processes writing at once; killed writer; reader racing a replacement; removal racing a save; Clear by kind before a folder's first row exists; an older job's save or pending save never overwrites or supersedes a newer one, including the older job finishing last with neither adopted; newer `layout_version` opens read-only; error is not "missing" | — (parallel to S2/S3) | ☐ |
@@ -615,6 +615,20 @@ reading this plan, the audit notes and AGENTS.md. End it by ticking the row with
 
 S1, S2 and S4 can start in any order. S8 needs S7 (the RAM budget setting). S9 and S10 are
 independent of S7, S8 and each other.
+
+Notes from finished sessions:
+
+- **S1:** `FanoutCache.get` returns the default on `sqlite3.OperationalError` even with
+  `retry=True`, so a plain read can't tell an error from "nothing saved". S1 therefore
+  makes the decisions that matter under the write lock, reading the history through
+  `scan_history.read_saved` (the shard's own `get`, which raises). `begin_scan` raises
+  `ScanSkipped` for a blocked folder (or, for an automatic scan, a malformed history). A
+  scan that is not manual is skipped when the history read fails or the cache can't be
+  opened, and `write_outcome` fails rather than overwrite saved failures (both found in
+  Codex's review). Display reads still use `FanoutCache.get`. Subtree saves run in one
+  transaction and fail the job instead of reporting saved; a failed summary save sends
+  `summary_save_failed`, which `FolderCache` logs. S4's readers must return found / missing /
+  error themselves rather than rely on diskcache.
 
 ## Acceptance
 

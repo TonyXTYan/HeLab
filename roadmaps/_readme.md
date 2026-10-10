@@ -38,9 +38,10 @@ How to use it:
 
 ## Known issues
 
-- [ ] Disk-cache reads under write contention silently return "nothing saved"
-  (statistics on, 0.2 s timeout), so an automatic scan can run on a blocked
-  folder; eviction can drop scan-failure history ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#storage-findings-ranked)) (2026-10-10).
+- [ ] Disk-cache eviction can drop scan-failure history and other records to make room
+  for data, until the cache rebuild (S5/S6). The contention part (reads silently
+  returning "nothing saved", so an automatic scan could run on a blocked folder) was
+  fixed in S1 ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#storage-findings-ranked)) (2026-10-10).
 - [ ] Settings → Cache: parameter edits never apply, Clear blocks the GUI and
   leaves badges stale ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#settings--cache-tab-helabviewssettingsdialogpy)) (2026-10-10).
 
