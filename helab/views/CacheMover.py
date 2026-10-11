@@ -125,8 +125,20 @@ class CacheMover(QObject):
             logging.warning("Cache move cleanup not queued; it finishes at the next start")
             self._end(True)
             return False
+        if action == "abort":
+            self._undo_unknown("HeLab's work queue is full.")
+            return False
         self._finish(False, FAILED, "HeLab's work queue is full. Try again in a moment.")
         return False
+
+    def _undo_unknown(self, why: str) -> None:
+        """Undoing the move didn't report where the store is (its helper failed or couldn't be
+        queued): don't guess. The disk cache is off for this session, so no helper opens or
+        creates a store in the wrong folder; the next start recovers the move from its record."""
+        reason = (f"The disk cache is off for this session: a cache move couldn't be undone ({why}). "
+                  "HeLab finishes it at the next start.")
+        set_cache_dir(cache_dir(), reason, False)
+        self._finish(False, FAILED, reason)
 
     def _event(self, request: IORequest, event: dict[str, Any]) -> None:
         if request.owner != self.owner:
@@ -178,7 +190,7 @@ class CacheMover(QObject):
                 # The record says how far it got; abort undoes whatever came before the cutover.
                 self._abort(f"{message} The cache stays in {self.source}.")
             elif action == "abort":
-                self._finish(False, FAILED, f"{message} HeLab finishes undoing the move at the next start.")
+                self._undo_unknown(message)
             elif action == "cleanup":
                 logging.warning("Cache move cleanup: %s", message)
         if kind in ("done", "error", "cancelled") and action == "cleanup":

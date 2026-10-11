@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import QWidget
 from helab.utils import cache_locks, cache_move
 from helab.utils.cache_locks import FileLock, lock_for_move, other_instances, startup
 from helab.utils.cache_store import CacheStore, DatasetRecord, store_root
-from helab.utils.constants import cache_dir, set_cache_dir
+from helab.utils.constants import cache_dir, cache_dir_refused, set_cache_dir
 from helab.utils.folder_cache import get_folder_cache, store_options
 from helab.utils.io_service import IORequest, IOService
 from helab.views.CacheMover import CacheMover
@@ -449,6 +449,89 @@ def test_the_helper_reports_where_the_store_is_after_a_failed_move(tmp_path: Pat
     assert cache_move.read_record(app) is not None  # Kept for the next start.
 
 
+def test_an_undo_that_cant_say_where_the_store_is_turns_the_cache_off(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    run = Run(qtbot, monkeypatch, tmp_path)
+    reject = [False]
+    submit = run.service.submit
+
+    def maybe(*args: Any, **kwargs: Any) -> bool:
+        return False if reject[0] else submit(*args, **kwargs)
+    monkeypatch.setattr(run.service, "submit", maybe)
+    try:
+        for failure in ("error", "queue full"):
+            set_cache_dir(run.source)
+            move = run.checked(cache_move.RENAME)
+            reject[0] = failure == "queue full"
+            # The move helper ended abruptly (after renaming?), so its record is undone by an abort...
+            run.service.resultReady.emit(move, {"kind": "error", "message": "The helper stopped."})
+            run.service.pending.remove(move)
+            if failure == "error":
+                abort = run.request("abort")
+                run.service.resultReady.emit(abort, {"kind": "error", "message": "The helper stopped."})
+                run.service.pending.remove(abort)
+            # ...which never said where the store is: no disk cache this session, nothing held.
+            assert store_options() == {} and "off for this session" in cache_dir_refused()
+            assert not run.service.cache_hold and run.mover.lock is None and not run.mover.running
+            reject[0] = False
+    finally:
+        set_cache_dir(cache_dir())
+        run.close()
+
+
+def test_queued_requests_open_no_cache_once_it_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, started = started_service(monkeypatch)
+    try:
+        service.cache_options = lambda: {}  # The disk cache was turned off after these were queued.
+        service.submit("a", 0, "/x", "cache_admin", {"cache": {"directory": "/gone"}, "action": "inventory"})
+        service.submit("b", 0, "/y", "load", {"cache": {"directory": "/gone"}})
+        service._dispatch()
+        qtbot_wait(lambda: len(started) == 2)
+        assert all(request.payload["cache"] == {} for request in started)
+    finally:
+        service.shutdown()
+
+
+def test_recovery_isnt_usable_after_a_failed_settings_write(tmp_path: Path) -> None:
+    from helab.io_helper import cache_move_job
+    app, source, target = str(tmp_path / "app"), tmp_path / "caches", tmp_path / "moved"
+    make_cache(source)
+    record = cache_move.start(str(source), str(target), app, cache_move.RENAME)
+    cache_move.move(record, app, lambda done, total: None, lambda: False)  # Renamed; setting still the source.
+    folder = tmp_path / "settings"
+    folder.mkdir()
+    settings = QSettings(str(folder / "settings.ini"), QSettings.Format.IniFormat)
+    settings.setValue("dir_caches", str(source))
+    settings.sync()
+    os.chmod(folder / "settings.ini", 0o444)
+    os.chmod(folder, 0o555)  # Saving the setting fails.
+    events: list[dict[str, Any]] = []
+    held = cache_locks.cache_lock(app)
+    assert held.try_lock("startup-2")
+    try:
+        cache_move_job({"action": "recover", "app_dir": app, "settings": {"file": settings.fileName()},
+                        "token": "startup-2"}, events.append)
+    finally:
+        held.unlock()
+        os.chmod(folder, 0o755)
+        os.chmod(folder / "settings.ini", 0o644)
+    assert "couldn't save" in events[-1]["message"] and events[-1]["usable"] is False
+    assert cache_move.read_record(app) is not None
+
+
+def test_startup_turns_the_cache_off_rather_than_open_a_new_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.utils import constants
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    settings.setValue("dir_caches", str(tmp_path / "renamed-away"))
+    monkeypatch.setattr(constants, "_dir_caches_override", None)
+    monkeypatch.setattr(constants, "DIR_CACHES_CANDIDATES", [str(tmp_path / "default")])
+    constants.start_cache_dir(settings, usable=False, reason="The disk cache is off for this session: …")
+    assert store_options() == {} and cache_dir_refused().startswith("The disk cache is off")
+    assert settings.value("dir_caches", type=str) == str(tmp_path / "renamed-away")  # Not replaced.
+    assert not (tmp_path / "default").exists()
+
+
 def test_a_move_is_refused_while_an_earlier_one_is_unfinished(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
@@ -524,7 +607,7 @@ def test_startup_recovery_runs_in_a_helper_and_saves_the_setting(tmp_path: Path,
                         "token": "startup-1"}, events.append)
     finally:
         held.unlock()
-    assert "finished" in events[-1]["message"]
+    assert "finished" in events[-1]["message"] and events[-1]["usable"] is True
     settings.sync()
     assert settings.value("dir_caches", type=str) == str(target) and cache_move.valid_at(str(target), store_id)
     assert not source.exists() and cache_move.read_record(app) is None

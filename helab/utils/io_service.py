@@ -273,8 +273,9 @@ class IOService(QObject):
 
     def _start(self, request: IORequest, lane: str) -> None:
         if request.payload.get("cache") and self.cache_options is not None:
-            # Queued before a cache move: it opens the cache where it is now.
-            request.payload["cache"] = self.cache_options() or request.payload["cache"]
+            # Queued before a cache move: it opens the cache where it is now, or none if the disk
+            # cache is off now (a cache-only job then fails; a source job runs without the cache).
+            request.payload["cache"] = self.cache_options()
         self.pending.remove(request)
         request.lane = lane
         request.started = time.monotonic()

@@ -26,6 +26,7 @@ coloredlogs.install(
 
 
 import platform
+from typing import Any
 import re
 import subprocess
 import sys
@@ -73,10 +74,13 @@ def _start_cache() -> str:
         QApplication.processEvents()
         time.sleep(0.2)
     def recover(token: str) -> str:
-        message = _recover_in_helper(settings, token)
-        # Still holding cache.lock: the setting may have changed, so use the folder it names now.
+        message, usable = _recover_in_helper(settings, token)
+        # Still holding cache.lock: the setting may have changed, so use the folder it names now
+        # (or, if the move couldn't be resolved, no disk cache this session).
         settings.sync()
-        start_cache_dir(settings)
+        reason = ("The disk cache is off for this session: an interrupted cache move couldn't be finished. "
+                  "HeLab tries again at the next start.")
+        start_cache_dir(settings, usable=usable, reason=reason)
         return message
     message, instance = startup(app_folder(), recover, wait)
     for box in waiting:
@@ -86,7 +90,7 @@ def _start_cache() -> str:
     return message
 
 
-def _recover_in_helper(settings: QSettings, token: str) -> str:
+def _recover_in_helper(settings: QSettings, token: str) -> tuple[str, bool]:
     """Recover an interrupted cache move in a helper process: it reads the store and may delete
     a folder, neither of which the GUI process does. Nothing to do without a move record."""
     import math
@@ -96,16 +100,16 @@ def _recover_in_helper(settings: QSettings, token: str) -> str:
     from helab.utils.io_service import get_io_service
     app_dir = app_folder()
     if read_record(app_dir) is None:
-        return ""
+        return "", True
     service = get_io_service()
-    result = ["", False]
+    result: list[Any] = ["", False]
     loop = QEventLoop()
 
     def event(request: object, event: dict[str, object]) -> None:
         if getattr(request, "owner", "") != "startup-recovery":
             return
         if event["kind"] == "move_recovered":
-            result[0] = str(event["message"])
+            result[0], result[1] = str(event["message"]), bool(event.get("usable"))
         elif event["kind"] in ("error", "cancelled"):
             result[0] = (f"An interrupted cache move couldn't be finished ({event.get('message', 'stopped')}). "
                          "HeLab tries again at the next start.")
@@ -120,7 +124,7 @@ def _recover_in_helper(settings: QSettings, token: str) -> str:
         loop.exec()
         box.close()
     service.resultReady.disconnect(event)
-    return str(result[0])
+    return str(result[0]), bool(result[1])  # Not usable unless the helper said so.
 
 
 # This instance's lock, held for the app's life.

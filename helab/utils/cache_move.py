@@ -21,6 +21,7 @@ import json
 import os
 import shutil
 import sqlite3
+import time
 from typing import Any, Callable
 
 from helab.utils.cache_location import cache_location_problem
@@ -494,6 +495,22 @@ def _remove_tree(path: str) -> list[str]:
 
 # Recovery at startup, before any cache is opened
 
+def _set_aside(app_dir: str) -> None:
+    """Nothing left to recover: keep the record for the log under another name, so it no longer
+    holds up the cache at every start."""
+    try:
+        os.replace(record_path(app_dir), os.path.join(app_dir, f"cache-move.failed-{int(time.time())}.json"))
+    except OSError:
+        pass
+
+
+def usable_after_recovery(app_dir: str, setting: str) -> bool:
+    """Whether HeLab may open the cache the setting names: no move is left to recover, or the
+    setting already names the move's store (e.g. only a partial copy is left to delete)."""
+    record = read_record(app_dir)
+    return record is None or valid_at(setting, record["store_id"])
+
+
 def recover(app_dir: str, read_setting: Callable[[], str], write_setting: Callable[[str], bool],
             crash: Crash = _no_crash) -> str:
     """Resolve a leftover move record (see the roadmap's table); what was repaired, for the user,
@@ -520,6 +537,7 @@ def recover(app_dir: str, read_setting: Callable[[], str], write_setting: Callab
                 return f"An interrupted cache move was undone, but the setting couldn't be saved; it tries again."
             delete_record(app_dir)
             return f"An interrupted cache move was undone; the cache stays in {source}."
+        _set_aside(app_dir)
         return (f"An interrupted cache move left no readable cache in {source} or {target}. "
                 "HeLab starts a new, empty cache.")
     step = record["step"]
@@ -538,9 +556,13 @@ def recover(app_dir: str, read_setting: Callable[[], str], write_setting: Callab
         return ""
     # verified or later: the copy was checked, so the move goes forward (unless it is now unreadable).
     if not at_to:
-        if at_from and use(source):
+        if at_from:
+            if not use(source):
+                return (f"The cache copy in {target} was unreadable; HeLab goes back to {source} but couldn't "
+                        "save that setting; it tries again.")
             delete_record(app_dir)
             return f"The cache copy in {target} was unreadable; HeLab kept using {source}."
+        _set_aside(app_dir)
         return f"The cache copy in {target} was unreadable and {source} is gone; HeLab starts a new, empty cache."
     if step == "verified":
         if not use(target):

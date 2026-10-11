@@ -389,7 +389,35 @@ def test_a_finished_move_whose_copy_is_now_unreadable_is_reported_not_forgotten(
         run(app, source, target, setting, crash_at("old_deleted"))
     os.remove(os.path.join(store_root(target), "records.sqlite"))  # The new cache is damaged.
     assert "unreadable" in cache_move.recover(app, setting.read, setting.write)
-    assert cache_move.read_record(app) is not None  # Kept: nothing valid is left.
+    # Nothing valid is left: the record is kept for the log, set aside so it doesn't hold up the cache.
+    assert cache_move.read_record(app) is None
+    assert any(name.startswith("cache-move.failed-") for name in os.listdir(app))
+
+
+def test_an_unreadable_copy_with_a_good_source_keeps_the_record_until_the_setting_is_saved(
+    folders: tuple[str, str, str, str], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, source, target, store_id = folders
+    force(COPY, monkeypatch)
+    setting = Setting(source)
+    with pytest.raises(Crash):
+        run(app, source, target, setting, crash_at("setting_updated"))  # Cut over; the old folder not deleted yet.
+    os.remove(os.path.join(store_root(target), "records.sqlite"))  # The copy is now unreadable.
+    setting.fail = True
+    assert "tries again" in cache_move.recover(app, setting.read, setting.write)
+    assert cache_move.read_record(app) is not None  # Not set aside: the source is fine.
+    setting.fail = False
+    cache_move.recover(app, setting.read, setting.write)
+    assert setting.value == source and cache_move.read_record(app) is None
+
+
+def test_the_cache_is_usable_after_recovery_only_where_the_store_is(folders: tuple[str, str, str, str]) -> None:
+    app, source, target, store_id = folders
+    assert cache_move.usable_after_recovery(app, source)  # No move left.
+    cache_move.write_record(app, {"from": source, "to": target, "method": COPY, "step": "started",
+                                  "store_id": store_id, "id": "m"})
+    assert cache_move.usable_after_recovery(app, source)  # The setting names the store.
+    assert not cache_move.usable_after_recovery(app, target)  # It doesn't: don't open a new one there.
 
 
 def test_a_cache_folder_holding_the_app_folder_isnt_moved(folders: tuple[str, str, str, str]) -> None:

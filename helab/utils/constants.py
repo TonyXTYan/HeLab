@@ -394,9 +394,14 @@ def resolve_cache_dir(settings: Optional[QSettings] = None, *, persist: bool = F
     return refuse_unsafe_cache_dir(path, DIR_CACHES_CANDIDATES)
 
 
-def start_cache_dir(settings: Optional[QSettings] = None) -> None:
+def start_cache_dir(settings: Optional[QSettings] = None, *, usable: bool = True, reason: str = "") -> None:
     """At startup, with ``cache.lock`` held and any move recovered: move a legacy temp cache
-    folder, save a replaced setting, and use the cache folder the setting names now."""
+    folder, save a replaced setting, and use the cache folder the setting names now. If an
+    interrupted move couldn't be resolved (``usable`` False), the disk cache is off for this
+    session and nothing is saved: the store may be in a folder the setting doesn't name yet."""
+    if not usable:
+        set_cache_dir(cache_dir(), reason, False)
+        return
     if not _dir_caches_override:
         migrate_legacy_temp_dir("dir_caches", "caches", settings)
     set_cache_dir(*resolve_cache_dir(settings, persist=True))
