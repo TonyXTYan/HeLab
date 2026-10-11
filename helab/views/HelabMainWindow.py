@@ -688,6 +688,8 @@ class HelabMainWindow(QMainWindow):
 
         # Folder details below the tab_widget: the current tab's selected folder, load and I/O.
         self.folder_details = FolderDetailsPanel()
+        self.folder_details.revealRequested.connect(self.reveal_load)
+        get_io_service().request_note = self._request_note
         self.folder_details.setVisible(True)
         self.left_splitter.addWidget(self.folder_details)
         self.left_splitter.setSizes([400, 170])  # Room for a load's Folder details rows.
@@ -955,6 +957,33 @@ class HelabMainWindow(QMainWindow):
             self.current_tracking_folder_path_is_loading = False
             self._update_folder_details()
             self.update_placeholder_visibility()
+
+    def _explorers(self) -> list[tuple[int, FolderExplorer]]:
+        return [(index, widget) for index in range(self.tab_widget.count())
+                if isinstance(widget := self.tab_widget.widget(index), FolderExplorer)]
+
+    def _load_tabs(self, producer: IORequest) -> tuple[list[tuple[int, FolderExplorer]], str]:
+        """The tabs a running load is for (in tab order), and its progress note."""
+        owners, note = get_folder_cache(get_io_service()).load_note(producer)
+        tabs = [(index, explorer) for index, explorer in self._explorers()
+                if explorer.model.owner in owners or explorer.bg_owner in owners]
+        return tabs, note
+
+    def _request_note(self, request: IORequest) -> str:
+        """For the I/O tooltip: a load's tab(s), progress, current file and time (memory only)."""
+        tabs, note = self._load_tabs(request)
+        names = ", ".join(f'"{self.tab_widget.tabText(index)}"' for index, _ in tabs)
+        return " · ".join(filter(None, (f"tab {names}" if names else "", note)))
+
+    def reveal_load(self, producer_owner: str, path: str) -> None:
+        """Folder details' All I/O row was clicked: show that load's folder in its tab."""
+        request = next((r for r in get_io_service().running_loads() if r.owner == producer_owner), None)
+        tabs = self._load_tabs(request)[0] if request is not None else []
+        if not tabs:
+            return
+        index, explorer = next(((i, e) for i, e in tabs if i == self.tab_widget.currentIndex()), tabs[0])
+        self.tab_widget.setCurrentIndex(index)
+        explorer.reveal(path)
 
     def _update_folder_details(self) -> None:
         """Folder details, the plot area's hint and the plot docks' source labels (memory only)."""

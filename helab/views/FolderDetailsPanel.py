@@ -7,8 +7,8 @@ import time
 from datetime import datetime
 from typing import Any, Mapping
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
+from PyQt6.QtGui import QFont, QMouseEvent
 from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QProgressBar, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from helab.models.StatusReport import StatusReport
@@ -27,6 +27,8 @@ LARGE_MARK = "Update not loaded: "
 
 
 class FolderDetailsPanel(QScrollArea):
+    # The All I/O row was clicked while it names one load: (its producer owner, its folder).
+    revealRequested = pyqtSignal(str, str)
     """Single-line rows that hide when empty; longer details are in each row's tooltip."""
 
     ROWS = (("folder", "Folder"), ("state", "State"), ("files", "Files"), ("time", "Time"), ("rate", "Rate"),
@@ -73,6 +75,9 @@ class FolderDetailsPanel(QScrollArea):
             if key == "state":
                 grid.addWidget(self.progress, row, 1)
                 row += 1
+        # Clicking "Loading run_042" shows that folder in its tab.
+        self._reveal: tuple[str, str] | None = None
+        self.values["io"].installEventFilter(self)
         layout.addLayout(grid)
         layout.addStretch(1)
         self.setWidget(body)
@@ -90,6 +95,14 @@ class FolderDetailsPanel(QScrollArea):
             self.names[key].setVisible(bool(text))
             value.setVisible(bool(text))
 
+    def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
+        if (a0 is self.values["io"] and isinstance(a1, QMouseEvent)
+                and a1.type() == QEvent.Type.MouseButtonRelease and a1.button() == Qt.MouseButton.LeftButton
+                and self._reveal is not None):
+            self.revealRequested.emit(*self._reveal)
+            return True
+        return super().eventFilter(a0, a1)
+
     def text(self, key: str) -> str:
         """A row's full text ("" when hidden), for tests and other readers."""
         return self.values[key].text()
@@ -106,7 +119,16 @@ class FolderDetailsPanel(QScrollArea):
                 rows["tab"] = (explorer.activity_text, "\n\n".join(filter(None, (
                     "Other work in this tab; the selected folder's load is above.", explorer.activity_tooltip))))
         if service is not None:
-            rows["io"] = (service.activity_summary(), service.queue_tooltip())
+            loads = service.running_loads()
+            self._reveal = (loads[0].owner, loads[0].path) if len(loads) == 1 else None
+            rows["io"] = (service.activity_summary(), "\n\n".join(filter(None, (
+                "Click to show this folder in its tab." if self._reveal else "", service.queue_tooltip()))))
+        else:
+            self._reveal = None
+        io = self.values["io"]
+        cursor = Qt.CursorShape.PointingHandCursor if self._reveal else Qt.CursorShape.ArrowCursor
+        if io.cursor().shape() != cursor:
+            io.setCursor(cursor)
         for key, (text, tooltip) in rows.items():
             self.set_row(key, text, tooltip)
         # A large folder's state is amber, as on the summary line.
@@ -186,8 +208,11 @@ class FolderDetailsPanel(QScrollArea):
         if explorer.load_queued:
             state = "Queued"
         else:
-            phase = [f"Retrying file (attempt {explorer.load_attempt} of 3)"] \
-                if explorer.load_attempt > 1 and explorer.load_filename else []
+            # The file being read now (the shared job knows it; a retry's event names it too).
+            name = (os.path.basename(explorer.load_filename) if explorer.load_filename else
+                    explorer.model.cache.load_file(explorer.load_path) if explorer.load_path else "")
+            phase = [f"Retrying {name or 'file'} (attempt {explorer.load_attempt} of 3)"] \
+                if explorer.load_attempt > 1 and explorer.load_filename else [name] if name else []
             phase += [explorer.load_listing] if explorer.load_listing else []
             verb = explorer.load_verb
             # A check that reads nothing ends here; one that finds changes shows its progress.
@@ -197,7 +222,9 @@ class FolderDetailsPanel(QScrollArea):
         if explorer.load_progress is not None:
             self.progress.setRange(0, 1000)
             self.progress.setValue(round(explorer.load_progress * 1000))
-            rows["files"] = (explorer.loading_progress_message, "")
+            left = (explorer.load_total_files - explorer.load_checked_files
+                    if explorer.load_total_files is not None else 0)
+            rows["files"] = (explorer.loading_progress_message + (f" · {left:,} to go" if left > 0 else ""), "")
         elif not explorer.load_queued:
             # Busy until the first file is counted; a paused bar stays still.
             self.progress.setRange(0, 1000 if explorer.load_paused else 0)

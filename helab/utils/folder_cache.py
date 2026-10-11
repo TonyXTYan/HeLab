@@ -23,6 +23,7 @@ from helab.utils.constants import (
 )
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.load_clock import LoadClock
+from helab.utils.time_format import clock as clock_text
 from helab.utils.scan_history import ScanHistory, empty_history, parse_history, apply_outcome, for_identity, folder_identity
 
 
@@ -87,6 +88,8 @@ class SharedJob:
     paused: bool = False
     # Shared, so a tab joining a running load shows its real elapsed time.
     clock: LoadClock = field(default_factory=LoadClock)
+    # The TXY file a load is reading now ("" between files), for the I/O tooltip.
+    current_file: str = ""
 
 
 # Set from the saved setting at startup (``set_disk_budget``); sent with every request, with
@@ -584,6 +587,29 @@ class FolderCache(QObject):
                 self.prefs[path] = dict(saved)
             self.folderPrefsChanged.emit(path)
         self.folderPrefsFailed.emit(path, message, owner)
+
+    def load_file(self, path: str) -> str:
+        """The TXY file a running load of ``path`` is reading now ("" if none), from memory."""
+        job = self.jobs.get(("load", self.key(path)))
+        return job.current_file if job is not None else ""
+
+    def load_note(self, producer: IORequest) -> tuple[list[str], str]:
+        """For the I/O tooltip, from memory: the owners (tabs) a running load is for, and its
+        progress, current file and time, e.g. "123 of 579 files (21%) · d_txy_forc123.txt · 1:23"."""
+        job = self._producers.get(producer.owner)
+        if job is None or job.operation != "load":
+            return [], ""
+        parts: list[str] = []
+        progress = job.progress or {}
+        total, checked = progress.get("total_files"), progress.get("checked_files")
+        if isinstance(total, int) and isinstance(checked, int):
+            parts.append(f"{checked:,} of {total:,} files ({checked / total:.0%})" if total else "no files")
+        if job.current_file:
+            parts.append(job.current_file)
+        elapsed, remaining = job.clock.elapsed(), job.clock.remaining()
+        if elapsed:
+            parts.append(clock_text(elapsed) + (f", ~{clock_text(remaining)} left" if remaining else ""))
+        return [request.owner for request in job.subscribers.values()], " · ".join(parts)
 
     def large_limits(self) -> dict[str, int]:
         """The large-folder thresholds sent with every load and cached read."""
@@ -1498,12 +1524,14 @@ class FolderCache(QObject):
                 self._record_scan_outcome(job, event)
         elif job.operation in ("load", "cached"):
             if kind == "file_started":
+                job.current_file = os.path.basename(str(event.get("filename", "")))
                 attempt = event.get("attempt", job.attempt)
                 job.load_status = event if attempt > 1 else None
                 if attempt == job.attempt and attempt == 1:
                     return
                 job.attempt = attempt
             if kind == "file_finished":
+                job.current_file = ""
                 job.load_status = None
                 if job.attempt == 1:
                     return

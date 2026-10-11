@@ -1761,6 +1761,16 @@ class FolderExplorer(QWidget):
         else:
             QMessageBox.warning(self, "Folder setting not saved", text)
 
+    def reveal(self, path: str) -> None:
+        """Show ``path`` (e.g. a load's folder): select its row if this tab has it, else open it."""
+        node = self.model.nodes.get(path)
+        index = self.model.path_index(path) if node is not None else QModelIndex()
+        if index.isValid():
+            self.tree.setCurrentIndex(index)
+            self.tree.scrollTo(index)
+        else:
+            self.open_to_path(path)
+
     def clear_data_cache(self, path: str) -> None:
         self.model.cache.cancel(self.model.owner, "load")
         self.load_error = ""

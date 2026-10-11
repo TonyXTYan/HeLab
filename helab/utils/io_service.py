@@ -119,6 +119,8 @@ class IOService(QObject):
         # the current cache options when they start (``cache_options``, set by FolderCache).
         self.cache_hold = False
         self.cache_options: Callable[[], dict[str, Any]] | None = None
+        # Set by the main window: a running request's tab, progress and time, for the I/O tooltip.
+        self.request_note: Callable[[IORequest], str] | None = None
         self._foreground_busy_at = -math.inf
         self._listing_busy_at = -math.inf
         self.timer = QTimer(self)
@@ -444,7 +446,7 @@ class IOService(QObject):
             return f"{count:,} {noun}{'' if count == 1 else 's'}"
         running = [r for r in self.active if not r.paused and not r.completed]
         scans = sum(r.operation in ("list", "details", "scan") for r in running)
-        loads = sum(r.operation == "load" for r in running)
+        loads = len(self.running_loads())
         paused_loads = sum(r.operation == "load" and r.paused and not r.completed for r in self.active)
         paused_scans = sum(r.operation in ("list", "details", "scan") and r.paused for r in self.active)
         # A finished load keeps its slot until it exits, but only some are writing a cache.
@@ -455,13 +457,22 @@ class IOService(QObject):
         queued = len(self.pending) - len(self.held_requests())
         return " · ".join(filter(None, (
             f"Scanning {counted(scans, 'folder')}" if scans else "",
-            f"Loading {counted(loads, 'dataset')}" if loads else "",
+            (f"Loading {self._folder_name(self.running_loads()[0].path)}" if loads == 1 else
+             f"Loading {counted(loads, 'dataset')}" if loads else ""),
             *others,
             f"{counted(paused_loads, 'load')} paused" if paused_loads else "",
             f"{counted(paused_scans, 'scan')} paused" if paused_scans else "",
             f"Saving {counted(saving, 'data cache')}" if saving else "",
             self.stopping_summary(),
             f"{counted(queued, 'operation')} queued" if queued else ""))) or "Ready"
+
+    def running_loads(self) -> list[IORequest]:
+        """Loads reading now (not paused, not finished): what "Loading …" counts."""
+        return [r for r in self.active if r.operation == "load" and not r.paused and not r.completed]
+
+    @staticmethod
+    def _folder_name(path: str) -> str:
+        return os.path.basename(path.rstrip("/\\")) or path
 
     def running_requests(self) -> list[IORequest]:
         """Helpers doing work now: not paused, and either unfinished or a finished load writing its cache."""
@@ -490,8 +501,15 @@ class IOService(QObject):
         parts: list[str] = []
         now = time.monotonic()
         # The same helpers as the status bar's "N running", so the count can be traced.
-        running = [f"{self.label(r)}: {r.path} · {duration(now - r.started)}"
-                   f"{self.LANE_NOTES.get(r.lane, '')}" for r in self.running_requests()]
+        running = []
+        for r in self.running_requests():
+            note = self.request_note(r) if self.request_note is not None else ""
+            if note:
+                # Its tab, progress, current file and time (e.g. a load).
+                running.append(f"{self.label(r)}: {r.path}{self.LANE_NOTES.get(r.lane, '')}\n  {note}")
+            else:
+                running.append(f"{self.label(r)}: {r.path} · {duration(now - r.started)}"
+                               f"{self.LANE_NOTES.get(r.lane, '')}")
         if running:
             parts.append("Running:\n" + "\n".join(running))
         if self.retired:

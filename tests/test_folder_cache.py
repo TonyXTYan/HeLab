@@ -211,8 +211,15 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     assert status.status_bar_progress.toolTip() == f"{message}\n0:00 elapsed"
     HelabMainWindow._update_folder_details(window)
     assert window.folder_details.text("state") == "Loading"
-    assert window.folder_details.text("files") == message
+    assert window.folder_details.text("files") == f"{message} · 333 to go"
     assert window.folder_details.text("time") == "0:00 elapsed"
+    # The file being read now is named in State.
+    service.resultReady.emit(request, {"kind": "file_started", "filename": str(tmp_path / "d_txy_forc124.txt")})
+    HelabMainWindow._update_folder_details(window)
+    assert window.folder_details.text("state") == "Loading · d_txy_forc124.txt"
+    note_owners, note = cache.load_note(request)
+    assert first.model.owner in note_owners and "d_txy_forc124.txt" in note
+    service.resultReady.emit(request, {"kind": "file_finished", "filename": str(tmp_path / "d_txy_forc124.txt")})
     assert window.central_placeholder.text() == f"Loading {tmp_path.name}…"
     second = explorer_for_test(qtbot, path)
     qtbot.waitUntil(lambda: second.loading)
