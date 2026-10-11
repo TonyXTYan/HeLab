@@ -28,6 +28,11 @@ Then, still 2026-10-08, pushed to `TonyXTYan/dev/v0.0.5a` with `ec10fc8`:
   read. 323 passed, 1 skipped. See [[folder-io-queue]]. Not yet tried on the
   real `/Volumes/dld_output` in the full app.
 
+Cache rebuild (2026-10-10…11, S1–S11 of `roadmaps/cache-storage-and-settings.md`): the old
+browser and diskcache are gone; store-v2, budgets, Cache tab, large-folder warning, cache move
+and folder flags landed in `fe5a5b7`…`eafcf4b`. See [[disk-cache-and-budgets]]. Native UI and
+real-volume checks for them are in `.ai/MANUAL_TODO.md`.
+
 Open threads:
 - Probably settled by cache first (`5b49dfd`): re-selecting a folder whose
   data is in RAM used to re-check its files in a load helper (0 reads) before

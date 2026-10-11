@@ -14,6 +14,7 @@ See `.ai/coding-workspace.md` for what belongs here vs `.ai/sessions/`.
 - [Basic scan defaults & failures](results/basic-scan-defaults-and-failures.md) — auto basic scan off by default and never rescans; persisted failure history suppresses auto scans; magnifying-glass ! badge replaces "Unavailable"
 - [Subfolder-derived status](results/subfolder-derived-status.md) — `something` if any listed subfolder has data, `nothing` only when all checked and empty; saved (store `subtrees` table) for restarts, tooltip saved vs derived now; never recursive
 - [Folder row tooltip](results/folder-row-tooltip.md) — fixed line order (activity, Here, Subfolders, Folder modified, Status cache, Data cache, hint), each cache with date + freshness matching the icons; start times not counters; open tooltip re-shown on row change
+- [Disk cache and budgets](results/disk-cache-and-budgets.md) — rebuilt cache (S1–S11): store-v2 opened only by helpers, nothing removed without asking, 8 GB disk budget with the 80% pause and Make room / Save update dialogs, RAM budget in 1/128 steps, large-folder warning (unscaled TXY size; budget/10% warn, 30% refuse), cache-folder move with crash recovery, per-folder Don't cache / Don't auto-load flags
 - [v0.0.5a folder-browser open threads](project_v0.0.5a-folder-browser.md) — io-lanes, 3-line summary and cache first committed and pushed (`5b49dfd`, `ec10fc8`); cache first untested on the real data volume; open review findings; cache dirs in ~/Library/Caches/HeLab
 
 ## TODO

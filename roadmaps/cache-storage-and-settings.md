@@ -1,7 +1,9 @@
 # Cache storage, memory budget and the Settings → Cache tab
 
 Horizon: now (v0.0.5a). Added: 2026-10-10. Decisions agreed with Tony on 2026-10-10 (below);
-built over several sessions and commits, tracked in [Sessions](#sessions).
+built over several sessions and commits, tracked in [Sessions](#sessions). **Done 2026-10-11**
+(S1–S11); settled summary: `.ai/memory/results/disk-cache-and-budgets.md`; native checks:
+`.ai/MANUAL_TODO.md`.
 Evidence and the old-browser assessment: [cache audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md).
 Priority and completion: [overview](_readme.md).
 
@@ -610,8 +612,8 @@ reading this plan, the audit notes and AGENTS.md. End it by ticking the row with
 | S7 | Budgets and the Cache tab | Rebuilt tab with both purges; disk budget (default 8 GB); RAM budget (1/128 steps, default 1/8) replacing `MAX_DATA_BYTES`; 80% pause of uncached automatic loads with its dialog; update-save prompt over 80%; full-cache dialog (Make room / Don't cache now); "Reset all settings…" | pytest-qt tests with a fake inventory; 80% dialog once per crossing, Ignore lasts the session; cached folders still open over 80%; one cache dialog at a time; RAM eviction keeps shown datasets | S6 | ☑ 2026-10-10 `52201ca` |
 | S8 | Large-folder warning | Uses S7's RAM budget setting. Unscaled TXY-size estimate (the one-stat fast path keeps using the record's sizes); guard before both `load` and `cached`; `too_large` stop and `allow_large`; amber inline "Load anyway…"; queue skips; dialog for deliberate loads; the 30% refusal replaces the 1 GiB limit | Automatic loads never start or open a dialog; a large **cached** folder doesn't open automatically even after an earlier deliberate load; deliberate ones confirm; refusal; estimate from a saved summary vs from the load's own listing; the unchanged fast path still answers from one stat | S7 | ☑ 2026-10-11 `34f59c6` |
 | S9 | Cache folder move | Change… flow and checks (network/synced refused), I/O pause until helpers exit, `cache.lock` and instance locks in the app folder, WAL checkpoint and store verification, Cancel until verified, `cache-move.json` record and startup recovery, move with progress and Cancel, `cache_dir()` switch in place, instance locks, failure dialog with Show in Finder/Explorer | Same-disk rename; cross-disk copy; failure and Cancel before cutover keep the source; a failure deleting the source after cutover keeps the destination and finishes at the next start; a settings write that fails `sync()`/`status()` counts as before cutover; a successful rename followed by a failed settings write, with the rename-back succeeding and failing; a simulated crash before and after each meaningful transition (record writes, rename, copy completion, verification, settings write, source cleanup, plus one partial copy and one partial deletion), for rename and copy, recovers to one valid store with the setting pointing at it; refusal with another instance; an instance starting mid-move waits; a corrupt copy fails verification; network target refused | S5 | ☑ 2026-10-11 `9ba2eae` |
-| S10 | Folder flags | `folder_prefs` and its helper save; flags in listings; right-click toggles; row badge and tooltip; no-auto-load and no-cache behaviour; offer to remove cached data; "Don't auto-load" in the large-folder warning | Flag survives restart and purges; no-cache load never saves; no-auto-load select starts nothing; flags never inherited | S5. The warning's "Don't auto-load" button is added by whichever of S8 and S10 lands second. | ☑ 2026-10-11 |
-| S11 | Wrap-up | AGENTS.md, `.ai/memory/results/` decision note, MANUAL_TODO native checks (dialogs, move, large-folder warning, flags), overview ticks | — | all | ☐ |
+| S10 | Folder flags | `folder_prefs` and its helper save; flags in listings; right-click toggles; row badge and tooltip; no-auto-load and no-cache behaviour; offer to remove cached data; "Don't auto-load" in the large-folder warning | Flag survives restart and purges; no-cache load never saves; no-auto-load select starts nothing; flags never inherited | S5. The warning's "Don't auto-load" button is added by whichever of S8 and S10 lands second. | ☑ 2026-10-11 `eafcf4b` |
+| S11 | Wrap-up | AGENTS.md, `.ai/memory/results/` decision note, MANUAL_TODO native checks (dialogs, move, large-folder warning, flags), overview ticks | — | all | ☑ 2026-10-11 |
 
 S1, S2 and S4 can start in any order. S8 needs S7 (the RAM budget setting). S9 and S10 are
 independent of S7, S8 and each other.
@@ -921,6 +923,15 @@ Notes from finished sessions:
     abruptly) reports where the store is (`store_at`); HeLab then uses the target for the
     session and the next start saves the setting. A record at `old_deleted` whose destination
     is unreadable is reported and kept, not silently dropped. A cache folder containing the app folder (its record and locks) is never moved.
+  - When HeLab can't tell where the store is, it never guesses: an undo whose helper fails or
+    can't be queued, or a startup recovery that fails or leaves a record while the setting
+    doesn't name the move's store (`usable_after_recovery`), turns the disk cache off for the
+    session (`start_cache_dir(usable=False)`, nothing saved), and the next start tries again.
+    A record with no valid store left is set aside (`cache-move.failed-<time>.json`) for the log
+    instead of blocking the cache at every start; one whose source is fine but whose setting
+    couldn't be saved is kept. Recovery is never "usable" after a failed settings write (the
+    attempted value may linger in the helper's memory), and queued helpers get empty cache
+    options once the cache is off (a cache-only job then fails; a source job runs without it).
   - Recovery never opens or trusts a folder that is now on a network or synced folder: it
     counts as holding no store, so a safe source is kept.
   - The cache path is resolved without saving at import; a default that replaced a missing or
@@ -980,6 +991,13 @@ Notes from finished sessions:
     first, so S10 adds it).
   - The Cache tab's "Folder preferences" row shows the counts with its own Clear…; Clear all and
     the purges never touch the flags.
+
+- **S11:** Wrap-up: the settled decisions and review lessons in
+  `.ai/memory/results/disk-cache-and-budgets.md` (indexed in `.ai/memory/MEMORY.md`), native
+  checks for the dialogs, the move, the large-folder warning and the flags in
+  `.ai/MANUAL_TODO.md`, the overview ticked, and the S7–S10 review history in
+  `.ai/sessions/2026-10-11-claude-cache-rebuild-s7-s10/notes.md`. AGENTS.md was updated in each
+  session.
 
 ## Acceptance
 

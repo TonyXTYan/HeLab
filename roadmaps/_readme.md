@@ -17,11 +17,12 @@ How to use it:
 
 ## Now: v0.0.5a folder browser
 
-- [ ] Cache rebuild: SQLite records + compressed dataset files (old cache dropped),
+- [x] Cache rebuild: SQLite records + compressed dataset files (old cache dropped),
   remove the old folder browser, editable disk and RAM budgets, large-folder warning,
   per-folder don't-cache/don't-auto-load flags, cache-folder move, rebuilt Settings →
   Cache tab. Eleven sessions S1–S11
-  ([plan](cache-storage-and-settings.md#sessions)) (2026-10-10).
+  ([plan](cache-storage-and-settings.md#sessions)) (2026-10-10; done 2026-10-11,
+  `fe5a5b7`…`eafcf4b`; native checks in [MANUAL_TODO](../.ai/MANUAL_TODO.md)).
 
 - [ ] App version and build info, **after the cache rebuild**: one version source inside
   the package, commit and build date written at build time (the app now reads `setup.py`
@@ -38,12 +39,14 @@ How to use it:
 
 ## Known issues
 
-- [ ] Disk-cache eviction can drop scan-failure history and other records to make room
-  for data, until the cache rebuild (S5/S6). The contention part (reads silently
+- [x] Disk-cache eviction can drop scan-failure history and other records to make room
+  for data, until the cache rebuild (S5/S6). Fixed: records are never removed to make room
+  (`fd4e020`, `ef4c0ca`). The contention part (reads silently
   returning "nothing saved", so an automatic scan could run on a blocked folder) was
   fixed in S1 ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#storage-findings-ranked)) (2026-10-10).
-- [ ] Settings → Cache: parameter edits never apply, Clear blocks the GUI and
+- [x] Settings → Cache: parameter edits never apply, Clear blocks the GUI and
   leaves badges stale ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#settings--cache-tab-helabviewssettingsdialogpy)) (2026-10-10).
+  Fixed by the rebuilt Cache tab (`52201ca`).
 
 - [ ] Folders with over 100,000 entries record a scan failure.
 - [ ] With the default of one background lane, folder details and status checks

@@ -42,6 +42,27 @@ The v0.0.5a checks below were added on 2026-10-08 and remain pending.
   before and after). If it changes, saved summaries and failure history are
   dropped on every remount ([audit](sessions/2026-10-10-claude-cache-audit/notes.md), finding 9). Added 2026-10-10.
 
+## v0.0.5a: cache rebuild (native checks, added 2026-10-11)
+
+Built in S6–S10 of the [cache plan](../roadmaps/cache-storage-and-settings.md#sessions) and
+tested offscreen only. Check on native macOS (and once on a Windows lab PC):
+
+- [ ] Settings → Cache: the inventory appears, Clear by kind and Clear all ask first and the
+  tab refreshes; both purges show estimates; lowering the disk budget below use asks and
+  trims; the RAM budget spin box shows "16.0 GB (1/8 of 128 GB)"-style values.
+- [ ] The disk cache dialogs with a small disk budget: the 80% warning (Open purge settings
+  opens the Cache tab at Remove old entries; Ignore this time), Make room / Don't cache this
+  folder now, Save update / Don't cache this update now; one at a time, never behind Settings.
+- [ ] Large-folder warning on `/Volumes/dld_output` with a low RAM budget: the amber summary
+  line, Load anyway… dialog (tick box enables Load anyway), No auto-load, Folder details and
+  the status bar; a folder over 30% of RAM is refused.
+- [ ] Cache move: Change… to a folder on the same disk (instant), then to another disk
+  (progress, Cancel during the copy keeps the source), a refused target (network, synced or
+  non-empty) with Show in Finder; quit during a copy and confirm the next start finishes or
+  undoes it. Start a second HeLab during a move: it waits.
+- [ ] Folder flags: right-click toggles, row badges and tooltips, "Auto-load off for this
+  folder · Load", the Remove its cached data question, and the Folder preferences row.
+
 ## v0.0.5a: native UI and packaged application
 
 - [ ] Build the PyInstaller app and confirm the right-pointing SVG triangle
