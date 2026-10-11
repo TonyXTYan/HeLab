@@ -21,8 +21,8 @@ from PyQt6.QtWidgets import (
 
 from helab.utils.cache_store import KINDS, purge_estimate, trim_estimate
 from helab.utils.constants import (
-    DIR_CACHES_REFUSED, DISK_BUDGET_SETTING, MIN_DISK_BUDGET, RAM_BUDGET_SETTING, RAM_STEPS, read_disk_budget,
-    read_ram_budget_steps, ram_step_bytes, ram_step_range, total_ram,
+    DISK_BUDGET_SETTING, MIN_DISK_BUDGET, RAM_BUDGET_SETTING, RAM_STEPS, read_disk_budget,
+    cache_dir_refused, read_ram_budget_steps, ram_step_bytes, ram_step_range, total_ram,
 )
 from helab.utils.folder_cache import FolderCache, store_options
 from helab.utils.number_format import byte_size
@@ -107,19 +107,17 @@ class CacheTab(QWidget):
         layout.setSpacing(2)
         layout.addWidget(self._heading("Disk cache"))
         location = QHBoxLayout()
-        root = str(store_options().get("directory", ""))
-        self.location_label = QLabel(root or "Off for this session")
-        self.location_label.setToolTip("\n".join(filter(None, (
-            root, DIR_CACHES_REFUSED, "Change the folder on the General tab."))))
+        self.location_label = QLabel()
         self.location_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         location.addWidget(self.location_label, 1)
         self.open_button = QPushButton("Open")
-        self.open_button.setEnabled(bool(root))
-        self.open_button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(root)))
+        self.open_button.clicked.connect(lambda: QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(store_options().get("directory", "")))))
         location.addWidget(self.open_button)
+        self.show_location(refresh=False)
         layout.addLayout(location)
-        if DIR_CACHES_REFUSED:
-            refused = QLabel(DIR_CACHES_REFUSED)
+        if cache_dir_refused():
+            refused = QLabel(cache_dir_refused())
             refused.setWordWrap(True)
             layout.addWidget(refused)
 
@@ -233,6 +231,16 @@ class CacheTab(QWidget):
         days.setSuffix(" days")
         days.valueChanged.connect(self._show_estimates)
         return days
+
+    def show_location(self, *, refresh: bool = True) -> None:
+        """Where the disk cache is now (it can move while Settings is open)."""
+        root = str(store_options().get("directory", ""))
+        self.location_label.setText(root or "Off for this session")
+        self.location_label.setToolTip("\n".join(filter(None, (
+            root, cache_dir_refused(), "Move it with Change… on the General tab."))))
+        self.open_button.setEnabled(bool(root))
+        if refresh:
+            self.refresh()
 
     def detach(self) -> None:
         """Stop listening to the cache (the dialog is closing)."""

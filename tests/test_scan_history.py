@@ -267,7 +267,7 @@ def test_visible_folder_restores_failure_before_selection_load_and_manual_recove
     (child / "d_txy_forc1.txt").write_text("1,2,3\n")
     service = frozen_service(monkeypatch)
     monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
-    monkeypatch.setattr("helab.utils.folder_cache.DIR_CACHES", str(tmp_path / "caches"))
+    monkeypatch.setattr("helab.utils.constants._cache_dir_state", [str(tmp_path / "caches"), "", True])
     explorer = FolderExplorer(str(root), str(root), str(root), [0, 4, 5])
     qtbot.addWidget(explorer)
     cache, path = explorer.model.cache, str(child)

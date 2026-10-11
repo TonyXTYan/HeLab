@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QChe
     QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem
 from PyQt6.QtCore import QSettings, QUrl
 
-from helab.utils.folder_cache import FolderCache
+from helab.utils.folder_cache import FolderCache, store_options
 from helab.utils.number_format import fnum
 from helab.utils.constants import *
 from helab.views.CacheTab import CacheTab
@@ -22,6 +22,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings if settings is not None else QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
         self.cache = cache
+        self.mover: Any = None  # CacheMover, made on the first Change…
         self.setWindowTitle("Settings")
         self.setMinimumSize(800, 500)
         self.main_layout = QVBoxLayout(self)
@@ -92,22 +93,25 @@ class SettingsDialog(QDialog):
         self.dir_caches_edit = QLineEdit()
 
         self.dir_temps_edit.setText(DIR_TEMPS)
-        self.dir_caches_edit.setText(DIR_CACHES)
+        # The cache folder changes only by moving the cache (Change…), never by typing a path.
+        self.dir_caches_edit.setReadOnly(True)
+        self.dir_caches_edit.setText(cache_dir())
 
         self.dir_temps_browse_btn = QPushButton("Browse...")
-        self.dir_caches_browse_btn = QPushButton("Browse...")
+        self.dir_caches_browse_btn = QPushButton("Change…")
+        self.dir_caches_browse_btn.setToolTip("Move the disk cache to another folder. HeLab pauses loading and "
+                                              "folder checks while it moves.")
         self.dir_temps_open_btn = QPushButton("Open Path")
         self.dir_caches_open_btn = QPushButton("Open Path")
         self.dir_temps_reset_btn = QPushButton("Reset to Default")
-        self.dir_caches_reset_btn = QPushButton("Reset to Default")
 
         self.dir_temps_browse_btn.clicked.connect(self.browse_dir_temps)
-        self.dir_caches_browse_btn.clicked.connect(self.browse_dir_caches)
+        self.dir_caches_browse_btn.clicked.connect(self.change_cache_folder)
+        self.dir_caches_browse_btn.setEnabled(self.cache is not None and bool(store_options()))
         self.dir_temps_open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.dir_temps_edit.text())))
         self.dir_caches_open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.dir_caches_edit.text())))
         # Reset shows the persistent default; it is saved (and created on next launch) with Save.
         self.dir_temps_reset_btn.clicked.connect(lambda: self.dir_temps_edit.setText(default_app_dir("temps")))
-        self.dir_caches_reset_btn.clicked.connect(lambda: self.dir_caches_edit.setText(default_app_dir("caches")))
 
 
 
@@ -119,12 +123,11 @@ class SettingsDialog(QDialog):
         dir_temps_btn_layout.addWidget(self.dir_temps_reset_btn)
         self.dir_scroll_layout.addLayout(dir_temps_btn_layout)
 
-        self.dir_scroll_layout.addWidget(QLabel("DIR_CACHES:"))
+        self.dir_scroll_layout.addWidget(QLabel("Cache folder (moving it keeps its contents):"))
         self.dir_scroll_layout.addWidget(self.dir_caches_edit)
         dir_caches_btn_layout = QHBoxLayout()
         dir_caches_btn_layout.addWidget(self.dir_caches_browse_btn)
         dir_caches_btn_layout.addWidget(self.dir_caches_open_btn)
-        dir_caches_btn_layout.addWidget(self.dir_caches_reset_btn)
         self.dir_scroll_layout.addLayout(dir_caches_btn_layout)
 
         self.dir_scroll_area.setWidget(self.dir_scroll_content)
@@ -194,11 +197,19 @@ class SettingsDialog(QDialog):
         self.cache_tab.focus_purge()
 
     def done(self, a0: int) -> None:
+        if self.mover is not None and self.mover.busy:
+            return  # A cache move switches folders (or is cancelled) first.
         if self.cache_tab.applying and self.cache is not None:
             # Closed while the store records a new budget: the one in effect stays. Set again
             # now, so it is newer than the change, and sent until the store has it.
             self.cache.restore_budget()
         self.cache_tab.detach()
+        if self.mover is not None:
+            # The mover outlives this dialog (e.g. deleting the old folder): stop listening.
+            self.mover.switched.disconnect(self._cache_switched)
+            self.mover.finished.disconnect(self._cache_move_ended)
+            self.mover.window = None
+            self.mover = None
         super().done(a0)
 
     def browse_dir_temps(self) -> None:
@@ -206,17 +217,39 @@ class SettingsDialog(QDialog):
         if folder:
             self.dir_temps_edit.setText(folder)
 
-    def browse_dir_caches(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select DIR_CACHES Folder")
-        if folder:
-            self.dir_caches_edit.setText(folder)
+    def change_cache_folder(self, folder: str = "") -> None:
+        """Move the disk cache to an empty or new folder (``CacheMover``)."""
+        if self.cache is None:
+            return
+        from helab.views.CacheMover import cache_mover
+        mover = cache_mover(self.cache, self.settings)
+        if mover.running:
+            return
+        folder = folder or QFileDialog.getExistingDirectory(self, "Move the disk cache to an empty folder")
+        if not folder:
+            return
+        if self.mover is None:
+            self.mover = mover
+            mover.switched.connect(self._cache_switched)
+            mover.finished.connect(self._cache_move_ended)
+        self.dir_caches_browse_btn.setEnabled(False)
+        if not mover.change(folder, self):
+            self.dir_caches_browse_btn.setEnabled(True)
+
+    def _cache_switched(self) -> None:
+        self.dir_caches_edit.setText(cache_dir())
+        self.cache_tab.show_location()
+
+    def _cache_move_ended(self, moved: bool) -> None:
+        self.dir_caches_browse_btn.setEnabled(True)
+        self._cache_switched()
 
     def load_settings(self) -> None:
         settings = self.settings
         self.example_checkbox.setChecked(settings.value("example_checkbox", False, type=bool))
         self.example_text.setText(settings.value("example_text", "", type=str))
         self.dir_temps_edit.setText(settings.value("dir_temps", DIR_TEMPS, type=str))
-        self.dir_caches_edit.setText(settings.value("dir_caches", DIR_CACHES, type=str))
+        self.dir_caches_edit.setText(cache_dir())
         self.load_mode_combo.setCurrentIndex(self.load_mode_combo.findData(read_load_mode(settings)))
         self.simultaneous_io_spin.setValue(read_io_concurrency(settings))
         self.auto_scan_visible_checkbox.setChecked(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
@@ -247,7 +280,6 @@ class SettingsDialog(QDialog):
         settings.setValue("example_checkbox", self.example_checkbox.isChecked())
         settings.setValue("example_text", self.example_text.text())
         settings.setValue("dir_temps", self.dir_temps_edit.text())
-        settings.setValue("dir_caches", self.dir_caches_edit.text())
         settings.setValue(LOAD_MODE_SETTING, self.load_mode_combo.currentData())
         settings.setValue(SIMULTANEOUS_IO_SETTING, self.simultaneous_io_spin.value())
         settings.remove("simultaneous_folder_scans")
@@ -273,7 +305,11 @@ class SettingsDialog(QDialog):
                 "and view choices. The disk cache's contents are kept.", "Reset all settings"):
             return
         settings = self.settings
+        # Where the disk cache is isn't a preference: it stays (moving it is Change…).
+        caches = settings.value("dir_caches", type=str)
         settings.clear()
+        if caches:
+            settings.setValue("dir_caches", caches)
         self.load_settings()
         self.cache_tab.disk_budget.setValue(read_disk_budget(settings) / (1 << 30))
         self.cache_tab.ram_budget.setValue(read_ram_budget_steps(settings, self.cache_tab.ram_budget.total))

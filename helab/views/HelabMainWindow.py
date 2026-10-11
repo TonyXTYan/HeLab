@@ -166,8 +166,8 @@ class HelabMainWindow(QMainWindow):
         self.status_timer_cpu_ram.start(self.INTERVAL_UPDATE_STATUS_BAR_RIGHT)
         # Deletes the old diskcache folders and expired cache files in a helper.
         get_folder_cache(get_io_service()).clean_up_cache()
-        if DIR_CACHES_REFUSED:
-            QTimer.singleShot(0, lambda: QMessageBox.warning(self, "Cache folder not used", DIR_CACHES_REFUSED))
+        if cache_dir_refused():
+            QTimer.singleShot(0, lambda: QMessageBox.warning(self, "Cache folder not used", cache_dir_refused()))
 
     def update_status_bar_left(self) -> None:
         if self._closing:

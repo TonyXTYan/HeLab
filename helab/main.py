@@ -31,9 +31,9 @@ import subprocess
 import sys
 import os
 
-from PyQt6.QtCore import Qt, QThreadPool
+from PyQt6.QtCore import QSettings, Qt, QThreadPool, QTimer
 from PyQt6.QtGui import QFont, QFontDatabase
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from helab.resources.icons import StatusIcons, ToolIcons, IconsInitUtil
 from helab.utils.constants import *
@@ -55,6 +55,76 @@ def _raise_fd_limit(target: int = 10240) -> None:
             logging.info(f"Raised file-descriptor limit (RLIMIT_NOFILE): {soft} -> {new_soft} (hard={hard})")
     except (ValueError, OSError) as e:
         logging.warning(f"Could not raise RLIMIT_NOFILE: {e}")
+
+
+def _start_cache() -> str:
+    """Resolve a leftover cache move and register this instance; what was repaired ("" if nothing)."""
+    import time
+    from helab.utils.cache_locks import startup
+    settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+    waiting: list[QMessageBox] = []
+
+    def wait() -> None:
+        if not waiting:
+            box = QMessageBox(QMessageBox.Icon.Information, "HeLab", "Another HeLab is moving the cache…",
+                              QMessageBox.StandardButton.NoButton)
+            box.show()
+            waiting.append(box)
+        QApplication.processEvents()
+        time.sleep(0.2)
+    def recover(token: str) -> str:
+        message = _recover_in_helper(settings, token)
+        # Still holding cache.lock: the setting may have changed, so use the folder it names now.
+        settings.sync()
+        start_cache_dir(settings)
+        return message
+    message, instance = startup(app_folder(), recover, wait)
+    for box in waiting:
+        box.close()
+    QApplication.instance().aboutToQuit.connect(instance.unlock)  # type: ignore[union-attr]
+    _INSTANCE_LOCK.append(instance)
+    return message
+
+
+def _recover_in_helper(settings: QSettings, token: str) -> str:
+    """Recover an interrupted cache move in a helper process: it reads the store and may delete
+    a folder, neither of which the GUI process does. Nothing to do without a move record."""
+    import math
+    from PyQt6.QtCore import QEventLoop
+    from helab.utils.cache_move import read_record
+    from helab.utils.cache_setting import settings_spec
+    from helab.utils.io_service import get_io_service
+    app_dir = app_folder()
+    if read_record(app_dir) is None:
+        return ""
+    service = get_io_service()
+    result = ["", False]
+    loop = QEventLoop()
+
+    def event(request: object, event: dict[str, object]) -> None:
+        if getattr(request, "owner", "") != "startup-recovery":
+            return
+        if event["kind"] == "move_recovered":
+            result[0] = str(event["message"])
+        elif event["kind"] in ("error", "cancelled"):
+            result[0] = (f"An interrupted cache move couldn't be finished ({event.get('message', 'stopped')}). "
+                         "HeLab tries again at the next start.")
+        if event["kind"] in ("done", "error", "cancelled"):
+            loop.quit()
+    service.resultReady.connect(event)
+    move = {"action": "recover", "app_dir": app_dir, "settings": settings_spec(settings), "token": token}
+    if service.submit("startup-recovery", 0, app_dir, "cache_move", {"move": move}, timeout=math.inf):
+        box = QMessageBox(QMessageBox.Icon.Information, "HeLab", "Finishing an interrupted cache move…",
+                          QMessageBox.StandardButton.NoButton)
+        box.show()
+        loop.exec()
+        box.close()
+    service.resultReady.disconnect(event)
+    return str(result[0])
+
+
+# This instance's lock, held for the app's life.
+_INSTANCE_LOCK: list[object] = []
 
 
 def main() -> None:
@@ -87,8 +157,14 @@ def main() -> None:
 
     IconsInitUtil.initialise_icons()
 
+    # Before any cache is opened: wait out a cache move in another HeLab, finish or undo a move
+    # a crash interrupted, and register this instance (roadmap S9).
+    moved = _start_cache()
+
     main_window = HelabMainWindow()
     main_window.show()
+    if moved:
+        QTimer.singleShot(0, lambda: QMessageBox.information(main_window, "Disk cache", moved))
 
     sys.exit(app.exec())
 

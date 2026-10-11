@@ -608,8 +608,8 @@ reading this plan, the audit notes and AGENTS.md. End it by ticking the row with
 | S5 | Switch to the new store | Helpers (`list`, `details`, `scan`, `load`, `cached`, `invalidate`, `subtree_save`, `scan_history`) use `cache_store`; one `FILE_KINDS` table drives matching and counting; summaries save `files` (TXY sized) and datasets `ram_bytes`; `last_used` on use; old cache folders deleted at startup; `caching_setup.py` and diskcache removed (the old Cache tab reads nothing until S7, so S5 shows "Rebuilt in a later update" there); network/synced cache path refused at startup | Existing cache-first, folder-cache and scan-history tests pass on the new store; the app starts and Settings opens | S1, S3, S4 | ☑ 2026-10-10 `fd4e020` |
 | S6 | Cache maintenance | `cache_admin` (inventory, clear, both purges, trim, adopt, discard, sweep); pending saves on `cache_full` and `cache_approval`; `removed` events and `FolderCache.removed()`; budget check in the save transaction, `cache_full` | Every removal kind during a running save, load and scan: nothing comes back, no stale badge; retired files and expired pending saves go by deadline without a restart; Make room or Save update with a stale or superseded `pending_id` removes nothing; Save update re-checks the current budget and turns into Make room when over; never evicts the target's own dataset, and uses the fit rule; a crash before or after the pending row commits leaves no dangling reference; purge estimates equal what is freed; records survive trimming; an over-budget save becomes a pending save, never auto-trimmed; Make room adopts it, or discards it if the folder was cleared meanwhile; retired bytes don't count toward the budget | S5 | ☑ 2026-10-10 `ef4c0ca` |
 | S7 | Budgets and the Cache tab | Rebuilt tab with both purges; disk budget (default 8 GB); RAM budget (1/128 steps, default 1/8) replacing `MAX_DATA_BYTES`; 80% pause of uncached automatic loads with its dialog; update-save prompt over 80%; full-cache dialog (Make room / Don't cache now); "Reset all settings…" | pytest-qt tests with a fake inventory; 80% dialog once per crossing, Ignore lasts the session; cached folders still open over 80%; one cache dialog at a time; RAM eviction keeps shown datasets | S6 | ☑ 2026-10-10 `52201ca` |
-| S8 | Large-folder warning | Uses S7's RAM budget setting. Unscaled TXY-size estimate (the one-stat fast path keeps using the record's sizes); guard before both `load` and `cached`; `too_large` stop and `allow_large`; amber inline "Load anyway…"; queue skips; dialog for deliberate loads; the 30% refusal replaces the 1 GiB limit | Automatic loads never start or open a dialog; a large **cached** folder doesn't open automatically even after an earlier deliberate load; deliberate ones confirm; refusal; estimate from a saved summary vs from the load's own listing; the unchanged fast path still answers from one stat | S7 | ☑ 2026-10-11 |
-| S9 | Cache folder move | Change… flow and checks (network/synced refused), I/O pause until helpers exit, `cache.lock` and instance locks in the app folder, WAL checkpoint and store verification, Cancel until verified, `cache-move.json` record and startup recovery, move with progress and Cancel, `cache_dir()` switch in place, instance locks, failure dialog with Show in Finder/Explorer | Same-disk rename; cross-disk copy; failure and Cancel before cutover keep the source; a failure deleting the source after cutover keeps the destination and finishes at the next start; a settings write that fails `sync()`/`status()` counts as before cutover; a successful rename followed by a failed settings write, with the rename-back succeeding and failing; a simulated crash before and after each meaningful transition (record writes, rename, copy completion, verification, settings write, source cleanup, plus one partial copy and one partial deletion), for rename and copy, recovers to one valid store with the setting pointing at it; refusal with another instance; an instance starting mid-move waits; a corrupt copy fails verification; network target refused | S5 | ☐ |
+| S8 | Large-folder warning | Uses S7's RAM budget setting. Unscaled TXY-size estimate (the one-stat fast path keeps using the record's sizes); guard before both `load` and `cached`; `too_large` stop and `allow_large`; amber inline "Load anyway…"; queue skips; dialog for deliberate loads; the 30% refusal replaces the 1 GiB limit | Automatic loads never start or open a dialog; a large **cached** folder doesn't open automatically even after an earlier deliberate load; deliberate ones confirm; refusal; estimate from a saved summary vs from the load's own listing; the unchanged fast path still answers from one stat | S7 | ☑ 2026-10-11 `34f59c6` |
+| S9 | Cache folder move | Change… flow and checks (network/synced refused), I/O pause until helpers exit, `cache.lock` and instance locks in the app folder, WAL checkpoint and store verification, Cancel until verified, `cache-move.json` record and startup recovery, move with progress and Cancel, `cache_dir()` switch in place, instance locks, failure dialog with Show in Finder/Explorer | Same-disk rename; cross-disk copy; failure and Cancel before cutover keep the source; a failure deleting the source after cutover keeps the destination and finishes at the next start; a settings write that fails `sync()`/`status()` counts as before cutover; a successful rename followed by a failed settings write, with the rename-back succeeding and failing; a simulated crash before and after each meaningful transition (record writes, rename, copy completion, verification, settings write, source cleanup, plus one partial copy and one partial deletion), for rename and copy, recovers to one valid store with the setting pointing at it; refusal with another instance; an instance starting mid-move waits; a corrupt copy fails verification; network target refused | S5 | ☑ 2026-10-11 |
 | S10 | Folder flags | `folder_prefs` and its helper save; flags in listings; right-click toggles; row badge and tooltip; no-auto-load and no-cache behaviour; offer to remove cached data; "Don't auto-load" in the large-folder warning | Flag survives restart and purges; no-cache load never saves; no-auto-load select starts nothing; flags never inherited | S5. The warning's "Don't auto-load" button is added by whichever of S8 and S10 lands second. | ☐ |
 | S11 | Wrap-up | AGENTS.md, `.ai/memory/results/` decision note, MANUAL_TODO native checks (dialogs, move, large-folder warning, flags), overview ticks | — | all | ☐ |
 
@@ -875,6 +875,69 @@ Notes from finished sessions:
     earlier data stays shown, the summary line adds the warning after it and Folder details says
     "… · Update not loaded: Large folder · …".
   - "Don't auto-load this folder" in the warning waits for S10's folder flags.
+
+- **S9:** `helab/utils/cache_move.py` (record, checks, rename/copy/verify, cutover, cleanup,
+  abort, `recover`), `helab/utils/cache_locks.py` (`FileLock`: OS file locks, `flock` /
+  `msvcrt.locking`, released by the OS when their process ends, so a crash never leaves one
+  stuck and nothing is taken over), `helab/views/CacheMover.py` (the flow and its dialogs) and a
+  `cache_move` helper operation (`check`, `move`, `cleanup`, `abort`, `recover`) on the local
+  lane, with no time limit. Choices made here:
+  - The cache folder (`dir_caches`) moves whole: its contents land in the chosen folder, which
+    must be empty or new. The General tab shows it read-only with **Change…**; Save never
+    writes it, and "Reset all settings…" keeps it (where the cache is isn't a preference).
+  - Pause: `IOService.hold_cache` stops running helpers that open the cache (they are
+    cancelled; a load shows "Cancelled — Retry") and holds the rest; the move starts once
+    `cache_busy()` is false (every exit confirmed). Queued helpers get the current cache
+    options when they start (`IOService.cache_options`), so nothing queued before the move
+    opens the old folder.
+  - Each step is its own request (a new generation); Cancel's abort reuses the move's key, so it
+    starts only after the stopped move helper has exited. A rename has no cancel point; Cancel
+    is removed at "Switching to the new folder…".
+  - The cutover is `write_cache_setting`: set, `sync()`, `status()` and read back. A failed
+    write is before the cutover: a copy is discarded (`abort(before_cutover=True)`); a rename is
+    renamed back (`undo_rename`), or, if that fails, the destination is used for the session and
+    the next start repairs the setting.
+  - A copy is made in a sibling staging folder (`.<name>.helab-moving`) that the move creates
+    exclusively and marks with `.helab-move-<id>`, and renamed to the target only if the target
+    is still empty. Undoing a copy deletes only a folder holding that marker, never files put in
+    the target after the check, a folder already in the staging folder's place, or a user's own
+    copy of the cache. The marker is removed from the new cache folder after the cutover. A rename that has happened is renamed back
+    by `abort`; `abort` never deletes the record while the store is only at the target.
+  - Each move has an `id` in its record; `cleanup` and `abort` touch only their own move's
+    record, and a move doesn't start while an earlier one's record remains (e.g. its old folder
+    couldn't be deleted: restart to finish it). The mover keeps `cache.lock` until a copy's old
+    folder is deleted, so no other move starts meanwhile (I/O resumes at the switch; Settings can
+    close then). A third lock, `move.lock`, is held by the helper doing a move step, which can
+    outlive its HeLab; startup and `lock_for_move` wait for it. Each holder writes a token in
+    its lock (the move id, or `startup-<pid>-…`), and a move step's helper, once it holds
+    `move.lock`, acts only if `cache.lock` is still held with its token: a helper that outlived
+    its HeLab never touches what a new HeLab is using.
+  - A cutover whose record can't be written after the setting was saved still switches; the
+    record stays at its last step and the next start finishes. After a failed settings write the
+    in-memory setting is put back (a later sync must not save the discarded folder); a rename
+    renamed back resumes on the source even if its record can't be deleted. Any unexpected error
+    while handling a step resumes I/O and reports, leaving the record for the next start.
+  - A move whose rename can't be undone after a failure (or an abort after its helper ended
+    abruptly) reports where the store is (`store_at`); HeLab then uses the target for the
+    session and the next start saves the setting. A record at `old_deleted` whose destination
+    is unreadable is reported and kept, not silently dropped. A cache folder containing the app folder (its record and locks) is never moved.
+  - Recovery never opens or trusts a folder that is now on a network or synced folder: it
+    counts as holding no store, so a safe source is kept.
+  - The cache path is resolved without saving at import; a default that replaced a missing or
+    unusable setting is saved only at startup while `cache.lock` is held
+    (`constants.start_cache_dir`), so a launch during a rename can't overwrite the moved
+    setting. The legacy temp-folder migration runs there too.
+  - The copy skips SQLite's `-shm` file (rebuilt on open) after `wal_checkpoint(TRUNCATE)`;
+    verification opens the copy with `query_only`, since a read-only open of a WAL database
+    fails without its shared-memory file.
+  - `cleanup` deletes nothing before the cutover is recorded, whoever calls it.
+  - Startup (`main._start_cache`): take `cache.lock` (showing "Another HeLab is moving the
+    cache…" while waiting, also for a running `move.lock`), recover in a helper (it reads the
+    store, may delete a folder and saves the setting itself; skipped without a record), register
+    `instances/<pid>.lock`, release, then re-resolve the cache folder (`resolve_cache_dir`,
+    `set_cache_dir`). What recovery repaired
+    is shown once the window is up. A record whose stores can't both be found stays, as the
+    table says.
 
 ## Acceptance
 

@@ -278,7 +278,7 @@ def usable_directory(path: str, *, create: bool = False) -> bool:
 
 
 def get_path_from_setting_or_use_default(key: str, candidates: List[str], settings: Optional[QSettings] = None,
-                                         *, create: bool = False) -> str:
+                                         *, create: bool = False, persist: bool = True) -> str:
     """
     This function attempts to retrieve a setting value using the provided key. If the value is a writable
     directory, it is returned. Otherwise the function returns the first usable candidate (creating it when
@@ -305,7 +305,8 @@ def get_path_from_setting_or_use_default(key: str, candidates: List[str], settin
     if new_value == '':
         logging.error(f"No valid default path found for {key}.")
         raise NotADirectoryError(f"No valid default path found for {key = }, {candidates = }.")
-    settings.setValue(key, new_value)  # Save the replaced value
+    if persist:
+        settings.setValue(key, new_value)  # Save the replaced value
     return new_value
 
 
@@ -380,18 +381,54 @@ else:
     migrate_legacy_temp_dir("dir_temps", "temps")
     DIR_TEMPS = get_path_from_setting_or_use_default("dir_temps", DIR_TEMPS_CANDIDATES, create=True)
 
-if _dir_caches_override:
-    os.makedirs(_dir_caches_override, exist_ok=True)
-    DIR_CACHES = _dir_caches_override
-else:
-    migrate_legacy_temp_dir("dir_caches", "caches")
-    DIR_CACHES = get_path_from_setting_or_use_default("dir_caches", DIR_CACHES_CANDIDATES, create=True)
-# Why the saved cache folder isn't used this session ("" when it is).
-DIR_CACHES_REFUSED = ""
-# False when the saved folder was refused and no safe default exists: no helper opens a cache.
-DISK_CACHE_ENABLED = True
-if not _dir_caches_override:
-    DIR_CACHES, DIR_CACHES_REFUSED, DISK_CACHE_ENABLED = refuse_unsafe_cache_dir(DIR_CACHES, DIR_CACHES_CANDIDATES)
+def resolve_cache_dir(settings: Optional[QSettings] = None, *, persist: bool = False) -> tuple[str, str, bool]:
+    """The cache folder to use: the saved one if it is usable and safe, else a default; why the
+    saved one isn't used ("" when it is); and whether the disk cache can be used at all.
+    ``persist`` saves a default that replaced a missing or unusable setting: only at startup
+    while ``cache.lock`` is held (a cache move may be renaming the saved folder right now)."""
+    if _dir_caches_override:
+        os.makedirs(_dir_caches_override, exist_ok=True)
+        return _dir_caches_override, "", True
+    path = get_path_from_setting_or_use_default("dir_caches", DIR_CACHES_CANDIDATES, settings, create=True,
+                                                persist=persist)
+    return refuse_unsafe_cache_dir(path, DIR_CACHES_CANDIDATES)
+
+
+def start_cache_dir(settings: Optional[QSettings] = None) -> None:
+    """At startup, with ``cache.lock`` held and any move recovered: move a legacy temp cache
+    folder, save a replaced setting, and use the cache folder the setting names now."""
+    if not _dir_caches_override:
+        migrate_legacy_temp_dir("dir_caches", "caches", settings)
+    set_cache_dir(*resolve_cache_dir(settings, persist=True))
+# The cache folder when HeLab started. It can change while HeLab runs (a cache move, or a
+# move recovered at startup): read the current one with ``cache_dir()``.
+# DIR_CACHES_REFUSED: why the saved cache folder isn't used this session ("" when it is).
+# DISK_CACHE_ENABLED: False when it was refused and no safe default exists.
+DIR_CACHES, DIR_CACHES_REFUSED, DISK_CACHE_ENABLED = resolve_cache_dir()
+_cache_dir_state = [DIR_CACHES, DIR_CACHES_REFUSED, DISK_CACHE_ENABLED]
+
+
+def cache_dir() -> str:
+    """The cache folder in use now. Every cache path is read through this, never ``DIR_CACHES``."""
+    return str(_cache_dir_state[0])
+
+
+def cache_dir_refused() -> str:
+    return str(_cache_dir_state[1])
+
+
+def cache_dir_enabled() -> bool:
+    return bool(_cache_dir_state[2])
+
+
+def set_cache_dir(path: str, refused: str = "", enabled: bool = True) -> None:
+    """Switch the cache folder in place (after a move, or a move recovered at startup)."""
+    _cache_dir_state[:] = [path, refused, enabled]
+
+
+def app_folder() -> str:
+    """The per-user app folder, outside every cache: the cache-move record and the locks."""
+    return os.environ.get("HELAB_APP_DIR_OVERRIDE") or os.path.dirname(default_app_dir("caches"))
 
 
 # DIR_TEMPS = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps')

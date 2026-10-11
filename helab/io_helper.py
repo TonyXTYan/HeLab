@@ -1123,6 +1123,76 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
               **_usage(store)})
 
 
+def cache_move_job(move: dict[str, Any], send: Emit = emit) -> None:
+    """A step of moving the cache folder (roadmap S9; the app holds every other cache user):
+    ``check`` the target, ``move`` (record, rename or checkpoint+copy+verify), ``cleanup`` the
+    old folder after the cutover, ``abort`` a move before it, or ``recover`` one a crash
+    interrupted (at startup). Every step but ``check`` holds ``move.lock`` while it runs, so a
+    HeLab starting meanwhile waits for it even if the HeLab that started it has ended."""
+    from helab.utils import cache_move as mover
+    from helab.utils.cache_locks import cache_lock, held_with, move_lock
+    action, app_dir = move["action"], move["app_dir"]
+    if action == "check":
+        send({"kind": "move_check", **mover.check_target(move["from"], move["to"], app_dir)})
+        return
+    lock = move_lock(app_dir)
+    if not lock.try_lock():
+        raise ValueError("Another cache move step is still running")
+    try:
+        # Only while the HeLab that asked still holds the cache (its token in cache.lock): a
+        # helper that outlived it must not touch anything a new HeLab is now using.
+        if not held_with(cache_lock(app_dir).path, str(move.get("token", ""))):
+            raise ValueError("The HeLab that asked for this cache move step is no longer moving the cache")
+        _cache_move_step(mover, action, app_dir, move, send)
+    finally:
+        lock.unlock()
+
+
+def _cache_move_step(mover: Any, action: str, app_dir: str, move: dict[str, Any], send: Emit) -> None:
+    def ours(record: dict[str, Any] | None) -> bool:
+        # Only this move's record: a later move's is never touched.
+        return record is not None and record.get("id") == move.get("id")
+    if action == "move":
+        record = mover.start(move["from"], move["to"], app_dir, move["method"], move.get("id", ""))
+        last = [0.0]
+
+        def progress(done: int, total: int) -> None:
+            now = time.monotonic()
+            if now - last[0] >= 0.2 or done == total:
+                last[0] = now
+                send({"kind": "move_progress", "done": done, "total": total})
+        try:
+            record = mover.move(record, app_dir, progress, lambda: False)
+        except (mover.MoveError, mover.MoveCancelled, OSError) as exc:
+            # Before the cutover: the source is intact (a rename is renamed back); a copy is discarded.
+            saved = mover.read_record(app_dir) or record
+            left = mover.abort(app_dir, saved)
+            message = str(exc) if isinstance(exc, mover.MoveError) else f"The move failed: {exc}"
+            # Where the store is now: the source, unless undoing a rename failed.
+            send({"kind": "move_failed", "message": message, "left": left, "store_at": mover.store_at(saved)})
+            return
+        send({"kind": "move_done", "record": record})
+    elif action == "cleanup":
+        saved = mover.read_record(app_dir)
+        left = mover.cleanup(app_dir, saved) if saved is not None and ours(saved) else []
+        send({"kind": "move_cleaned", "left": left})
+    elif action == "abort":
+        saved = mover.read_record(app_dir)
+        left = mover.abort(app_dir, saved, before_cutover=bool(move.get("before_cutover"))) if (
+            saved is not None and ours(saved)) else []
+        # Where the store is now: the source, unless undoing a rename failed.
+        send({"kind": "move_aborted", "left": left,
+              "store_at": mover.store_at(saved) if saved is not None and ours(saved) else ""})
+    elif action == "recover":
+        from helab.utils.cache_setting import open_settings, write_cache_setting
+        settings = open_settings(move["settings"])
+        message = mover.recover(app_dir, lambda: str(settings.value("dir_caches", "", type=str)),
+                                lambda path: write_cache_setting(settings, path))
+        send({"kind": "move_recovered", "message": message})
+    else:
+        raise ValueError(f"Unknown cache move action: {action}")
+
+
 # Operations that only touch the disk cache.
 CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin")
 
@@ -1186,6 +1256,8 @@ def main() -> None:
                 emit(_removed_event(store.remove(("datasets",), [request["path"]])))
                 emit({"kind": "admin_result", "action": "invalidate", "next_deadline": _deadline(store),
                       **_usage(store)})
+        elif operation == "cache_move":
+            cache_move_job(request["move"])
         elif operation == "cache_admin":
             cache_admin(request["cache"], request["action"], **request.get("params", {}))
         else:

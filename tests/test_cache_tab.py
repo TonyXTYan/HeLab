@@ -693,6 +693,8 @@ def test_saves_restored_from_the_store_ask_with_its_numbers(
                                  store.start_dataset_job("/c"), budget=budget)
     assert (update.reason, new.reason) == ("needs_approval", "over_budget")
     monkeypatch.setattr("helab.utils.folder_cache._disk_budget", budget)
+    # Set now: newer than any budget an earlier test recorded in this worker's store.
+    monkeypatch.setattr("helab.utils.folder_cache._disk_budget_set_at", time.time())
     events: list[dict[str, Any]] = []
     cache_admin(store_options(), "inventory", events.append)
     service, cache = frozen_cache(monkeypatch)

@@ -18,7 +18,9 @@ from PyQt6.QtGui import QIcon, QPixmap
 
 from helab.utils import large_folder
 from helab.utils.cache_store import APPROVAL_SHARE, store_root
-from helab.utils.constants import DEFAULT_DISK_BUDGET, DEFAULT_RAM_STEPS, DIR_CACHES, DISK_CACHE_ENABLED, ram_step_bytes
+from helab.utils.constants import (
+    DEFAULT_DISK_BUDGET, DEFAULT_RAM_STEPS, DISK_CACHE_ENABLED, cache_dir, cache_dir_enabled, ram_step_bytes,
+)
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.load_clock import LoadClock
 from helab.utils.scan_history import ScanHistory, empty_history, parse_history, apply_outcome, for_identity, folder_identity
@@ -102,9 +104,9 @@ def set_disk_budget(budget: int) -> None:
 def store_options() -> dict[str, Any]:
     """What a helper needs to open the disk cache, and its budget in bytes; {} when the
     cache is off for this session. The GUI process never opens the store."""
-    if not DISK_CACHE_ENABLED:
+    if not (DISK_CACHE_ENABLED and cache_dir_enabled()):
         return {}
-    return {"directory": store_root(DIR_CACHES), "budget": _disk_budget, "budget_set_at": _disk_budget_set_at}
+    return {"directory": store_root(cache_dir()), "budget": _disk_budget, "budget_set_at": _disk_budget_set_at}
 
 
 class FolderCache(QObject):
@@ -142,6 +144,11 @@ class FolderCache(QObject):
 
     def __init__(self, service: IOService) -> None:
         super().__init__(service)
+        # Helpers queued before a cache move open the cache where it is when they start.
+        service.cache_options = store_options
+        # The app's cache mover (S9, ``helab.views.CacheMover.cache_mover``): kept here so a move
+        # outlives the Settings dialog that started it.
+        self.cache_mover: QObject | None = None
         self.service = service
         self.snapshots: OrderedDict[str, FolderSnapshot] = OrderedDict()
         self.datasets: OrderedDict[tuple[str, str, int], Dataset] = OrderedDict()

@@ -88,17 +88,21 @@ class IOService(QObject):
     RESUME_DELAY = 0.5
     LISTINGS = ("list", "resolve")
     # Operations in the local lane: they never wait for or pause with source-folder I/O.
-    LOCAL_OPERATIONS = ("cached", "subtree_save", "cache_admin")
+    LOCAL_OPERATIONS = ("cached", "subtree_save", "cache_admin", "cache_move")
+    # Operations that open the disk cache whatever their payload says.
+    CACHE_OPERATIONS = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin")
     LOCAL_CAP = 2
     PAUSABLE = ("load", "list", "details", "scan", "icons")
     LABELS = {"load": "Load data", "cached": "Read cached data", "list": "Browse folder", "details": "Folder details",
               "scan": "Check folder status", "resolve": "Browse folder", "invalidate": "Clear data cache",
               "scan_history": "Save scan history", "icons": "Folder icons",
-              "subtree_save": "Save subfolder status", "cache_admin": "Clean up disk cache"}
+              "subtree_save": "Save subfolder status", "cache_admin": "Clean up disk cache",
+              "cache_move": "Move disk cache"}
     NOUNS = {"load": "load", "cached": "cached data read", "list": "folder listing", "details": "folder details scan",
              "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup",
-             "subtree_save": "subfolder-status save", "cache_admin": "disk cache cleanup"}
+             "subtree_save": "subfolder-status save", "cache_admin": "disk cache cleanup",
+             "cache_move": "disk cache move"}
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -111,6 +115,10 @@ class IOService(QObject):
         self.max_operations = 1
         # Set by FolderCache: whether a request is the current tab's browsing or selected load.
         self.is_foreground: Callable[[IORequest], bool] = lambda request: False
+        # A cache move holds every helper that would open the disk cache (S9); queued ones get
+        # the current cache options when they start (``cache_options``, set by FolderCache).
+        self.cache_hold = False
+        self.cache_options: Callable[[], dict[str, Any]] | None = None
         self._foreground_busy_at = -math.inf
         self._listing_busy_at = -math.inf
         self.timer = QTimer(self)
@@ -243,7 +251,30 @@ class IOService(QObject):
         self.resultReady.emit(again, {"kind": "queued", "retry": True, "requeued": True,
                                       "attempt": again.attempt})
 
+    def uses_cache(self, request: IORequest) -> bool:
+        return request.operation in self.CACHE_OPERATIONS or bool(request.payload.get("cache"))
+
+    def hold_cache(self) -> None:
+        """Start no helper that opens the disk cache, and stop those running (a cache move)."""
+        self.cache_hold = True
+        for request in list(self.active):
+            if self.uses_cache(request):
+                self._retire(request)
+                self.resultReady.emit(request, {"kind": "cancelled"})
+        self.activityChanged.emit()
+
+    def cache_busy(self) -> bool:
+        """Whether a helper that opens the disk cache is still running or not yet confirmed exited."""
+        return any(self.uses_cache(request) for request in (*self.active, *self.retired))
+
+    def release_cache(self) -> None:
+        self.cache_hold = False
+        self.activityChanged.emit()
+
     def _start(self, request: IORequest, lane: str) -> None:
+        if request.payload.get("cache") and self.cache_options is not None:
+            # Queued before a cache move: it opens the cache where it is now.
+            request.payload["cache"] = self.cache_options() or request.payload["cache"]
         self.pending.remove(request)
         request.lane = lane
         request.started = time.monotonic()
@@ -261,7 +292,7 @@ class IOService(QObject):
         # A retry never runs beside its predecessor; it waits for confirmed exit.
         # The current tab's listing and selected load never wait for background work.
         for request in list(self.pending):
-            if self.blocker(request) is not None:
+            if self.blocker(request) is not None or (self.cache_hold and self.uses_cache(request)):
                 continue
             if request.operation in self.LOCAL_OPERATIONS:
                 if self._local_room():
@@ -271,7 +302,7 @@ class IOService(QObject):
         hold = self.hold_background(now)
         for request in list(self.pending):
             if (self.blocker(request) is not None or self.wants_foreground(request)
-                    or request.operation in self.LOCAL_OPERATIONS):
+                    or request.operation in self.LOCAL_OPERATIONS or (self.cache_hold and self.uses_cache(request))):
                 continue
             if not self._background_room():
                 break
