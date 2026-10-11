@@ -84,10 +84,13 @@ class StoreReadOnly(StoreError):
     """A newer HeLab wrote this store's layout; this one only reads it."""
 
 
+NOT_CACHED = "Not cached: your choice"
+
+
 class SaveRejected(Exception):
     """The save guard discarded a write; nothing was written."""
 
-    def __init__(self, reason: Literal["cleared", "newer", "gone"], message: str) -> None:
+    def __init__(self, reason: Literal["cleared", "newer", "gone", "no_cache"], message: str) -> None:
         super().__init__(message)
         self.reason = reason
 
@@ -414,6 +417,83 @@ class CacheStore:
         finally:
             self._depth, self._writing = 0, False
 
+    # Folder preferences (S10): set by the user, never removed to make room or by Clear all.
+
+    def _no_cache(self, path: str) -> bool:
+        row = self._conn.execute("SELECT no_cache FROM folder_prefs WHERE path = ?", (path,)).fetchone()
+        return bool(row and row[0])
+
+    def _check_cacheable(self, path: str) -> None:
+        """Checked in every dataset save's transaction: a folder the user chose not to cache is
+        never saved, even by a load that started before they chose."""
+        if self._no_cache(path):
+            raise SaveRejected("no_cache", NOT_CACHED)
+
+    def read_prefs(self, paths: Sequence[str]) -> dict[str, Read[dict[str, Any]]]:
+        """Each folder's flags (``no_cache``, ``no_auto_load``, ``set_at``); missing if none set."""
+        unique = list(dict.fromkeys(paths))
+        rows: dict[str, dict[str, Any]] = {}
+        try:
+            with self.transaction(write=False):
+                for start in range(0, len(unique), 500):
+                    chunk = unique[start:start + 500]
+                    for path, no_cache, no_auto_load, set_at in self._conn.execute(
+                            f"SELECT path, no_cache, no_auto_load, set_at FROM folder_prefs "
+                            f"WHERE path IN ({','.join('?' * len(chunk))})", chunk):
+                        rows[path] = {"no_cache": bool(no_cache), "no_auto_load": bool(no_auto_load),
+                                      "set_at": float(set_at)}
+        except (sqlite3.Error, StoreError) as exc:
+            failure: Read[dict[str, Any]] = _error(f"Disk cache could not be read: {exc}")
+            return {path: failure for path in unique}
+        return {path: _found(rows[path]) if path in rows else _missing() for path in unique}
+
+    def set_prefs(self, path: str, no_cache: bool, no_auto_load: bool, set_at: float) -> dict[str, Any]:
+        """Set a folder's flags, unless a later choice (``set_at``, e.g. in another HeLab) is saved;
+        returns the flags now saved. Flags turned off keep their row (with its ``set_at``), so an
+        older choice arriving late can't bring them back."""
+        return self.set_prefs_removing(path, no_cache, no_auto_load, set_at, remove_cached=False)[0]
+
+    def set_prefs_removing(self, path: str, no_cache: bool, no_auto_load: bool, set_at: float, *,
+                           remove_cached: bool) -> tuple[dict[str, Any], Removal | None]:
+        """:meth:`set_prefs`, and with ``remove_cached`` also remove the folder's cached data, in
+        the same transaction and only if this choice was the one saved (a superseded request
+        removes nothing)."""
+        try:
+            with self.transaction():
+                row = self._conn.execute("SELECT no_cache, no_auto_load, set_at FROM folder_prefs WHERE path = ?",
+                                         (path,)).fetchone()
+                cleared = float(self._meta().get("prefs_cleared_at", 0.0))
+                if row is not None and float(row[2]) > set_at:
+                    return {"no_cache": bool(row[0]), "no_auto_load": bool(row[1]), "set_at": float(row[2])}, None
+                if cleared > set_at:
+                    # Chosen before a Clear: that folder (saved or not) stays cleared.
+                    return {"no_cache": False, "no_auto_load": False, "set_at": cleared}, None
+                self._conn.execute("INSERT OR REPLACE INTO folder_prefs (path, no_cache, no_auto_load, set_at) "
+                                   "VALUES (?, ?, ?, ?)", (path, int(no_cache), int(no_auto_load), set_at))
+                removal = self.remove(("datasets",), [path]) if remove_cached and no_cache else None
+                return {"no_cache": no_cache, "no_auto_load": no_auto_load, "set_at": set_at}, removal
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+
+    def clear_prefs(self, set_at: float | None = None) -> list[str]:
+        """Turn every folder's flags off (the Cache tab's Folder preferences row), keeping each row's
+        ``set_at`` as the time of this choice; the paths that had a flag."""
+        now = time.time() if set_at is None else set_at
+        try:
+            with self.transaction():
+                # A choice saved after this Clear (e.g. while it waited for the lock) stays.
+                paths = [path for (path,) in self._conn.execute(
+                    "SELECT path FROM folder_prefs WHERE (no_cache OR no_auto_load) AND set_at <= ?", (now,))]
+                self._conn.execute("UPDATE folder_prefs SET no_cache = 0, no_auto_load = 0, set_at = ? "
+                                   "WHERE set_at <= ?", (now, now))
+                # Also stops a choice made before the Clear for a folder with no row yet.
+                self._conn.execute("INSERT INTO meta (key, value) VALUES ('prefs_cleared_at', ?) ON CONFLICT (key) "
+                                   "DO UPDATE SET value = MAX(CAST(value AS REAL), CAST(excluded.value AS REAL))",
+                                   (_dumps(now),))
+                return paths
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+
     def _meta(self) -> dict[str, Any]:
         return {key: json.loads(value) for key, value in self._conn.execute("SELECT key, value FROM meta")}
 
@@ -593,6 +673,7 @@ class CacheStore:
         try:
             with self.transaction():
                 self._check(guard, "datasets", path)
+                self._check_cacheable(path)
                 stored = self._stored_job_seq(path)
                 if stored is not None and stored >= guard.job_seq:
                     raise SaveRejected("newer", "Newer data is already cached")
@@ -658,6 +739,7 @@ class CacheStore:
         try:
             with self.transaction():
                 self._check(guard, "datasets", path)
+                self._check_cacheable(path)
                 stored = self._stored_job_seq(path)
                 if stored is not None and stored >= guard.job_seq:
                     raise SaveRejected("newer", "Newer data is already cached")
@@ -711,6 +793,8 @@ class CacheStore:
                 stored = self._stored_job_seq(path)
                 if (int(self._meta()["gen_datasets"]) != generation or self._epoch(path) != epoch):
                     rejection = SaveRejected("cleared", "Cache was cleared before saving completed")
+                elif self._no_cache(path):
+                    rejection = SaveRejected("no_cache", NOT_CACHED)
                 elif stored is not None and stored >= job_seq:
                     rejection = SaveRejected("newer", "Newer data is already cached")
                 if rejection is not None:
@@ -1085,6 +1169,9 @@ class CacheStore:
                     "SELECT file FROM retired_files")}
                 live, writes = self._live(), self._writes()
                 records_bytes = live - sum(size for _, size in dataset_ages)
+                no_cache, no_auto_load = self._conn.execute(
+                    "SELECT COALESCE(SUM(no_cache), 0), COALESCE(SUM(no_auto_load), 0) FROM folder_prefs").fetchone()
+                prefs = {"no_cache": int(no_cache), "no_auto_load": int(no_auto_load)}
                 deadline = self.next_deadline()
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be read: {exc}") from exc
@@ -1100,7 +1187,7 @@ class CacheStore:
                          "ram_bytes": ram_bytes,
                          "last_used": dataset_ages[-1][0] if dataset_ages else None},
             "summaries": {"count": len(ages["summaries"])}, "subtrees": {"count": len(ages["subtrees"])},
-            "histories": {"count": len(ages["histories"]), "blocked": blocked},
+            "histories": {"count": len(ages["histories"]), "blocked": blocked}, "prefs": prefs,
             "pending": pending, "retired": {"count": len(retired), "bytes": retired_bytes},
             "orphans": {"count": len(orphans), "bytes": sum(self._size_or_zero(name) for name in orphans)},
             "ages": ages, "next_deadline": deadline, "checked_at": time.time(),

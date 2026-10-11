@@ -116,6 +116,10 @@ class FolderCache(QObject):
     diskCacheChanged = pyqtSignal(str)
     scanHistoryChanged = pyqtSignal(str)
     folderIconChanged = pyqtSignal(str)
+    # A folder's flags (S10: Don't cache, Don't auto-load) changed.
+    folderPrefsChanged = pyqtSignal(str)
+    # A flag couldn't be saved (path, why, the owner that set it); memory shows the saved state again.
+    folderPrefsFailed = pyqtSignal(str, str, str)
     subtreeChanged = pyqtSignal(str)
     # A removal from the disk cache: paths (None: every path) and the kinds removed.
     cacheRemoved = pyqtSignal(object, object)
@@ -149,6 +153,12 @@ class FolderCache(QObject):
         # The app's cache mover (S9, ``helab.views.CacheMover.cache_mover``): kept here so a move
         # outlives the Settings dialog that started it.
         self.cache_mover: QObject | None = None
+        # Each folder's flags, as the store or this session last said: {"no_cache", "no_auto_load", "set_at"}.
+        self.prefs: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        # What the store last confirmed for each folder (listings, saves): shown again if a choice fails.
+        self._confirmed_prefs: dict[str, dict[str, Any]] = {}
+        # Flag saves in flight: job owner → (path, the choice's set_at, who set it).
+        self._pref_writes: dict[str, tuple[str, float, str]] = {}
         self.service = service
         self.snapshots: OrderedDict[str, FolderSnapshot] = OrderedDict()
         self.datasets: OrderedDict[tuple[str, str, int], Dataset] = OrderedDict()
@@ -514,6 +524,66 @@ class FolderCache(QObject):
     def release(self, owner: str) -> None:
         self.pins.pop(owner, None)
         self._evict()
+
+    def folder_prefs(self, path: str) -> dict[str, Any]:
+        """A folder's flags (never its parent's or subfolders'): no_cache, no_auto_load."""
+        saved = self.prefs.get(path) or {}
+        return {"no_cache": bool(saved.get("no_cache")), "no_auto_load": bool(saved.get("no_auto_load"))}
+
+    def remember_prefs(self, path: str, prefs: object, *, known: bool = True, confirmed: bool = True) -> None:
+        """Keep a folder's flags; a later choice (``set_at``) wins. ``known=False`` (a listing that
+        found none) only fills in a folder this session knows nothing about. ``confirmed``: what
+        the store said (not this session's unsaved choice)."""
+        if not isinstance(prefs, dict):
+            return
+        if confirmed and prefs:
+            saved = self._confirmed_prefs.get(path)
+            if saved is None or float(saved.get("set_at", 0)) <= float(prefs.get("set_at", 0)):
+                self._confirmed_prefs[path] = dict(prefs)
+        current = self.prefs.get(path)
+        if not prefs:
+            if current is not None and not known:
+                return
+            prefs = {"no_cache": False, "no_auto_load": False, "set_at": 0.0}
+        elif current is not None and float(current.get("set_at", 0)) > float(prefs.get("set_at", 0)):
+            return
+        before = self.folder_prefs(path)
+        self.prefs[path] = dict(prefs)
+        self.prefs.move_to_end(path)
+        while len(self.prefs) > self.MAX_ENTRIES:
+            self.prefs.popitem(last=False)
+        if self.folder_prefs(path) != before:
+            self.folderPrefsChanged.emit(path)
+
+    def set_folder_prefs(self, path: str, *, no_cache: bool, no_auto_load: bool, remove_cached: bool = False,
+                         owner: str = "") -> bool:
+        """The user's choice for one folder: shown at once, then saved by a helper (with the folder's
+        cached data removed too, if asked). If saving fails, the saved state is shown again and
+        ``folderPrefsFailed`` says why. Session-only when the disk cache is off."""
+        set_at = time.time()
+        self.remember_prefs(path, {"no_cache": no_cache, "no_auto_load": no_auto_load, "set_at": set_at},
+                            confirmed=False)
+        if not store_options():
+            return True
+        job = self.cache_admin("prefs", path=path, no_cache=no_cache, no_auto_load=no_auto_load,
+                               set_at=set_at, remove_cached=remove_cached)
+        if not job:
+            self._prefs_not_saved(path, set_at, "HeLab's work queue is full", owner)
+            return False
+        self._pref_writes[job] = (path, set_at, owner)
+        return True
+
+    def _prefs_not_saved(self, path: str, set_at: float, message: str, owner: str) -> None:
+        current = self.prefs.get(path)
+        if current is not None and float(current.get("set_at", 0)) == set_at:
+            # Still this choice (not a newer one): show what the store last confirmed again.
+            saved = self._confirmed_prefs.get(path)
+            if saved is None:
+                del self.prefs[path]
+            else:
+                self.prefs[path] = dict(saved)
+            self.folderPrefsChanged.emit(path)
+        self.folderPrefsFailed.emit(path, message, owner)
 
     def large_limits(self) -> dict[str, int]:
         """The large-folder thresholds sent with every load and cached read."""
@@ -1108,6 +1178,15 @@ class FolderCache(QObject):
         if "next_deadline" in event:
             self._schedule_sweep(event["next_deadline"])
         self._note_usage(event.get("usage"), event.get("usage_seq"))
+        if kind == "folder_prefs":
+            self.remember_prefs(event["path"], event["prefs"])
+            return
+        if kind == "prefs_cleared":
+            # As of the Clear's own time: a choice saved after it (arriving first) stays.
+            cleared = {"no_cache": False, "no_auto_load": False, "set_at": float(event.get("set_at", 0))}
+            for path in {*event["paths"], *self.prefs}:
+                self.remember_prefs(path, cleared)
+            return
         if kind == "removed":
             self.removed(event["paths"], event["kinds"])
             return
@@ -1175,6 +1254,10 @@ class FolderCache(QObject):
         if kind in ("done", "error", "cancelled"):
             self._admin.pop(producer.owner, None)
             self._started.pop(producer.owner, None)
+            write = self._pref_writes.pop(producer.owner, None)
+            if write is not None and kind != "done":
+                self._prefs_not_saved(write[0], write[1], str(event.get("message") or "the save was cancelled"),
+                                      write[2])
             if producer.owner == self._budget_owner:
                 self._budget_owner = ""
                 if kind != "done":
@@ -1317,6 +1400,9 @@ class FolderCache(QObject):
                 logging.warning("Scan history %s: %s", job.path, event["message"])
                 self.scanHistoryChanged.emit(job.path)
                 return
+            if kind == "folder_prefs":
+                self.remember_prefs(event["path"], event["prefs"], known=False)
+                return
             if kind == "scan_mode":
                 job.scan_mode = event["mode"]
             if kind == "subtree_cached":
@@ -1338,6 +1424,8 @@ class FolderCache(QObject):
                         self.remember_scan(entry["path"], entry["scan_status"])
                     if entry.get("subtree"):
                         self.remember_subtree(entry["path"], entry["subtree"], notify=False)
+                    if "prefs" in entry:
+                        self.remember_prefs(entry["path"], entry["prefs"], known=False)
                     if "disk_cached" in entry and not self._cleared_since(job, entry["path"]):
                         self._observe_cache(entry["path"], entry)
                 job.entries.extend(event["entries"])

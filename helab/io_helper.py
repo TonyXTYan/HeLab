@@ -118,6 +118,7 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit,
     summaries = store.read_records("summaries", paths)
     subtrees = store.read_records("subtrees", paths)
     datasets = store.read_dataset_infos(paths)
+    prefs = store.read_prefs(paths)
     saved: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
     for path in paths:
@@ -137,6 +138,11 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit,
             errors.append(subtrees[path].error)
         else:
             entry["subtree"] = _valid_subtree(subtrees[path].value, identity)
+        if prefs[path].failed:
+            errors.append(prefs[path].error)
+        else:
+            # The user's choices for this folder alone (never inherited).
+            entry["prefs"] = prefs[path].value or {}
         dataset = datasets[path]
         if dataset.failed:
             errors.append(dataset.error)
@@ -155,7 +161,8 @@ def _listed_sizes(info: dict[str, Any], dataset: Any) -> dict[str, Any]:
     """A listed dataset's ``info`` with its TXY files' size and its size in RAM."""
     if not info:
         return info
-    return {**info, "txy_bytes": int(dataset["source_bytes"]), "ram_bytes": int(dataset["ram_bytes"])}
+    return {**info, "txy_bytes": int(dataset["source_bytes"]), "ram_bytes": int(dataset["ram_bytes"]),
+            "disk_bytes": int(dataset["bytes"])}
 
 
 def _dataset_flags(store: CacheStore | None, path: str, send: Emit) -> dict[str, Any]:
@@ -177,6 +184,8 @@ def _send_saved(store: CacheStore | None, path: str, send: Emit, identity: objec
         send({"kind": "scan_cached", "status": saved["scan_status"]})
     if saved.get("subtree"):
         send({"kind": "subtree_cached", "subtree": saved["subtree"]})
+    if "prefs" in saved:
+        send({"kind": "folder_prefs", "path": path, "prefs": saved["prefs"]})
     return saved["scan_history"]
 
 
@@ -515,6 +524,12 @@ def read_cached(path: str, output: str, send: Emit = emit,
     if store is None:
         raise ValueError("Disk cache unavailable")
     try:
+        flags = store.read_prefs([path])[path]
+        if flags.failed:
+            # Unknown whether the user chose not to cache it: don't read it.
+            raise ValueError(f"The folder's settings couldn't be read: {flags.error}")
+        if flags.value and flags.value.get("no_cache"):
+            raise ValueError(NOT_CACHED_REASON)  # Chosen since the read was asked for.
         record = store.read_dataset_row(path)
         if record.value is not None and _too_large(
                 large_folder.estimate(_saved_fingerprint(record.value)), limits, allow_large, send):
@@ -614,7 +629,8 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
 def load(path: str, output: str, send: Emit = emit,
          cache_options: dict[str, Any] | None = None,
          memory: list[list[int]] | None = None, base_signature: str = "",
-         expected: str = "", *, limits: dict[str, Any] | None = None, allow_large: bool = False) -> None:
+         expected: str = "", *, limits: dict[str, Any] | None = None, allow_large: bool = False,
+         no_cache: bool = False) -> None:
     """Load converted TXY files, reusing unchanged shots from RAM and disk cache.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for shots the caller already holds
@@ -624,9 +640,12 @@ def load(path: str, output: str, send: Emit = emit,
     dataset and the folder is unmodified since, one folder stat is the whole check.
     After its scan phase (saved as the folder's summary), a load whose new data is large
     (``limits``) stops with ``too_large`` before reading anything, unless ``allow_large``.
+    A folder the user chose not to cache (``no_cache``, or its saved flag) is read into RAM
+    only: its cached data is neither used nor written.
     """
     from helab.utils.cache_store import StoreError
     store = _open_store(cache_options, send)
+    no_cache_reason = NOT_CACHED_REASON
     try:
         guard: SaveGuard | None = None
         if store is not None:
@@ -636,9 +655,18 @@ def load(path: str, output: str, send: Emit = emit,
                 guard = store.start_dataset_job(path, ("summaries",))
             except StoreError as exc:
                 send({"kind": "cache_warning", "message": f"Disk cache can't be updated: {exc}"})
+            prefs = store.read_prefs([path])[path]
+            if prefs.failed:
+                # Unknown whether the user chose not to cache it: load from the files, without the cache.
+                send({"kind": "cache_warning", "message": f"Disk cache not used: the folder's settings couldn't be "
+                                                         f"read ({prefs.error})"})
+            chosen = no_cache or bool(prefs.value and prefs.value.get("no_cache"))
+            if prefs.failed and not chosen:
+                no_cache_reason = "Disk cache not used: the folder's settings couldn't be read"
+            no_cache = chosen or prefs.failed
         _load(path, output, send, store, guard, bool(cache_options), memory, base_signature, expected,
               (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
-              limits=limits, allow_large=allow_large)
+              limits=limits, allow_large=allow_large, no_cache=no_cache, no_cache_reason=no_cache_reason)
     finally:
         if store is not None:
             store.close()
@@ -647,9 +675,9 @@ def load(path: str, output: str, send: Emit = emit,
 def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: SaveGuard | None, cache_on: bool,
           memory: list[list[int]] | None, base_signature: str, expected: str, budget: int | None,
           budget_set_at: float | None = None, *, limits: dict[str, Any] | None = None,
-          allow_large: bool = False) -> None:
+          allow_large: bool = False, no_cache: bool = False, no_cache_reason: str = "") -> None:
     from helab.utils.cache_store import StoreError
-    if (base_signature and store is not None and memory and expected in ("", base_signature)
+    if (not no_cache and base_signature and store is not None and memory and expected in ("", base_signature)
             and _unchanged_since_cache(path, send, store, base_signature, memory)):
         return
     # These imports are deliberately local: scanning does not initialize numpy,
@@ -720,7 +748,10 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     cache_info: dict[str, Any] = {}
     # None: the cache couldn't be opened or read, so whether it holds this folder is unknown.
     had_dataset: bool | None = None if cache_on and store is None else False
-    if store is not None:
+    if no_cache:
+        # Not cached: the user's choice. Its cached data (if any) is neither read nor written.
+        cache_reason, had_dataset = no_cache_reason or NOT_CACHED_REASON, None
+    elif store is not None:
         from helab.utils.cache_store import unpack_dataset
         try:
             row_read = store.read_dataset_row(path)
@@ -885,14 +916,14 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           "source": source, "cached": cached,
           # Left out when the cache couldn't be read: unknown, not "not cached".
           **({} if had_dataset is None and not cached else {"disk_cached": cached or bool(had_dataset)}),
-          "disk_cache_pending": guard is not None and not cached,
+          "disk_cache_pending": guard is not None and not cached and not no_cache,
           "cache_info": cache_info, "load_counts": load_counts,
           "cache_reason": cache_reason,
           "fingerprint": fingerprint, "memory_shots": sorted(in_memory),
           "signature": hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest()})
     if store is not None and (cached or reused):
         _touch(store, path)
-    if store is None or guard is None or cached:
+    if store is None or guard is None or cached or no_cache:
         return
     # The caller already has its data; updating the disk cache no longer
     # delays it. Shots only the caller holds are read again for completeness.
@@ -915,7 +946,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             "counts": load_counts, "unsettled": unsettled, "kind": file_kinds.TXY.name, "format": DATASET_FORMAT,
             # For the large-folder check before a later cached read.
             "txy_bytes": large_folder.estimate(fingerprint),
-            "ram_bytes": sum(int(array.nbytes) for array in data.values())}
+            "ram_bytes": sum(int(array.nbytes) for array in data.values()),
+            "disk_bytes": os.path.getsize(os.path.join(store.datasets_dir, file))}
         result = store.save_dataset(path, file, {
             "ram_bytes": sum(int(array.nbytes) for array in data.values()),
             "rows": sum(len(array) for array in data.values()), "shots": len(data),
@@ -965,6 +997,9 @@ def folder_icons(paths: list[str], send: Emit = emit) -> None:
     _ = app
 
 
+NOT_CACHED_REASON = "Not cached: your choice"
+
+
 def _too_large(estimate: int, limits: dict[str, Any] | None, allow_large: bool, send: Emit) -> bool:
     """Stop before reading: the data would take ``estimate`` bytes of RAM, which needs the
     user's yes (``large``) or is never loaded (``refused``)."""
@@ -978,7 +1013,8 @@ def _with_sizes(info: dict[str, Any], row: Any) -> dict[str, Any]:
     """A dataset's ``info`` with its TXY files' size and its size in RAM, for the large-folder check."""
     if not info:
         return info
-    sizes = {"txy_bytes": large_folder.estimate(_saved_fingerprint(row)), "ram_bytes": int(row["ram_bytes"])}
+    sizes = {"txy_bytes": large_folder.estimate(_saved_fingerprint(row)), "ram_bytes": int(row["ram_bytes"]),
+             "disk_bytes": int(row["bytes"])}
     return {**info, **sizes}
 
 
@@ -1024,7 +1060,7 @@ def _removed_event(removal: Any) -> dict[str, Any]:
             "datasets": removal.datasets, "bytes": removal.dataset_bytes}
 
 
-ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget")
+ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs")
 
 
 def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, **params: Any) -> None:
@@ -1114,6 +1150,19 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                     result["cache_info"] = _cache_info(row.value["info"]) if row.value is not None else {}
         elif action == "discard":
             result["discarded"] = store.discard_pending(params["pending_id"])
+        elif action == "prefs":
+            # The user's flags for one folder; with ``remove_cached``, its cached data goes too
+            # (ticking "Don't cache this folder" and saying yes).
+            path = str(params["path"])
+            saved, flag_removal = store.set_prefs_removing(
+                path, bool(params.get("no_cache")), bool(params.get("no_auto_load")),
+                float(params.get("set_at") or time.time()), remove_cached=bool(params.get("remove_cached")))
+            send({"kind": "folder_prefs", "path": path, "prefs": saved})
+            if flag_removal is not None:
+                send(_removed_event(flag_removal))
+        elif action == "clear_prefs":
+            cleared_at = time.time()
+            send({"kind": "prefs_cleared", "paths": store.clear_prefs(cleared_at), "set_at": cleared_at})
         elif action == "budget":
             if budget is not None and budget_set_at is not None:
                 # Lowering it (``fit``): not recorded if the data cached by now doesn't fit.
@@ -1245,7 +1294,7 @@ def main() -> None:
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),
                  expected=request.get("signature", ""), limits=request.get("limits"),
-                 allow_large=bool(request.get("allow_large")))
+                 allow_large=bool(request.get("allow_large")), no_cache=bool(request.get("no_cache")))
         elif operation == "cached":
             read_cached(request["path"], request["output"], cache_options=request.get("cache"),
                         limits=request.get("limits"), allow_large=bool(request.get("allow_large")))

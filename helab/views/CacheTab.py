@@ -169,6 +169,18 @@ class CacheTab(QWidget):
         footer.addWidget(self.clear_all_button)
         layout.addLayout(footer)
 
+        # The user's choices (S10): not part of Clear all, never removed to make room.
+        prefs = QHBoxLayout()
+        prefs.addWidget(QLabel("Folder preferences"))
+        self.prefs_label = QLabel("Checking…")
+        self.prefs_label.setToolTip("Folders you chose not to cache or not to auto-load (right-click a folder). "
+                                    "Clear all and purges keep them.")
+        prefs.addWidget(self.prefs_label, 1)
+        self.prefs_button = QPushButton("Clear…")
+        self.prefs_button.clicked.connect(self.clear_prefs)
+        prefs.addWidget(self.prefs_button)
+        layout.addLayout(prefs)
+
         layout.addWidget(self._heading("Remove old entries"))
         purges = QGridLayout()
         purges.setVerticalSpacing(0)
@@ -327,6 +339,18 @@ class CacheTab(QWidget):
             return
         self._update()
 
+    def clear_prefs(self) -> None:
+        inventory = self.inventory
+        if inventory is None or self.busy:
+            return
+        prefs = inventory.get("prefs") or {}
+        if not self.confirm("Clear folder preferences?",
+                            f"Forgets your choices: {plural(int(prefs.get('no_cache', 0)), 'folder')} not cached and "
+                            f"{plural(int(prefs.get('no_auto_load', 0)), 'folder')} not auto-loaded. Those folders "
+                            "are cached and auto-loaded again. Cached data is kept.", "Clear"):
+            return
+        self._run("Clear folder preferences", "clear_prefs")
+
     def clear(self, kinds: list[str]) -> None:
         inventory = self.inventory
         if inventory is None or self.busy:
@@ -413,13 +437,14 @@ class CacheTab(QWidget):
         writable = inventory is not None and not inventory.get("read_only") and not self.busy
         for button in (*self.kind_buttons.values(), self.clear_all_button):
             button.setEnabled(writable)
+        self.prefs_button.setEnabled(False)
         self.refresh_button.setEnabled(self.enabled and not self.busy and not self._inventory_owner)
         self.disk_budget.setEnabled(not self.applying)
         status = ("Off for this session" if not store_options() else
                   "Changing the disk budget…" if self._budget_job else f"{self._job_label}…" if self.busy else "Checking…" if self._inventory_owner and inventory is None
                   else "")
         if inventory is None:
-            for label in self.kind_labels.values():
+            for label in (*self.kind_labels.values(), self.prefs_label):
                 label.setText(status or "Not checked")
             self.usage_label.setText(status or "Not checked")
             self.checked_label.setText(self.message or status)
@@ -452,6 +477,10 @@ class CacheTab(QWidget):
         self.kind_labels["histories"].setText(f"{plural(histories['blocked'], 'folder')} skip automatic checks")
         self.kind_labels["histories"].setToolTip(f"{plural(histories['count'], 'folder')} with a scan history")
         self.kind_labels["subtrees"].setText(plural(inventory["subtrees"]["count"], "folder"))
+        prefs = inventory.get("prefs") or {"no_cache": 0, "no_auto_load": 0}
+        self.prefs_label.setText(f"{plural(prefs['no_cache'], 'folder')} not cached · "
+                                 f"{plural(prefs['no_auto_load'], 'folder')} not auto-loaded")
+        self.prefs_button.setEnabled(writable and bool(prefs["no_cache"] or prefs["no_auto_load"]))
         checked = f"Checked {datetime.fromtimestamp(inventory['checked_at']):%H:%M}"
         self.checked_label.setText(" · ".join(filter(None, (status or checked, self.message))))
         self._show_estimates()

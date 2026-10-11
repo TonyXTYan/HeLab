@@ -194,6 +194,9 @@ class StatusIcons:
     ICON_CACHED_OLDER = QIcon()
     ICON_STATUS_CACHE_OLDER = QIcon()
     ICON_SCAN_FAILED = QIcon()
+    # Folder flags (the user's choice): not cached, not auto-loaded.
+    ICON_NO_CACHE = QIcon()
+    ICON_NO_AUTO_LOAD = QIcon()
     ICON_DEVICE_FLOPPY = QIcon()
     ICON_DEVICE_SD_CARD = QIcon()
     ICON_DEVICE_USB = QIcon()
@@ -267,6 +270,8 @@ class StatusIcons:
         StatusIcons.ICON_RAM_OPENED = tablerIcon(OutlineIcon.CONTAINER, '#00FF00')
         StatusIcons.ICON_CACHED = tablerIcon(OutlineIcon.PACKAGE, '#888888')
         StatusIcons.ICON_SCAN_FAILED = tablerIcon(OutlineIcon.ZOOM_EXCLAMATION, '#c48618')
+        StatusIcons.ICON_NO_CACHE = tablerIcon(OutlineIcon.DATABASE_OFF, '#888888')
+        StatusIcons.ICON_NO_AUTO_LOAD = tablerIcon(OutlineIcon.PLAYER_PAUSE, '#888888')
         StatusIcons.ICON_CACHED_OLDER = _badged_icon(
             StatusIcons.ICON_CACHED, clock)
         StatusIcons.ICON_DEVICE_FLOPPY = tablerIcon(OutlineIcon.DEVICE_FLOPPY, '#3989c9')
@@ -303,6 +308,8 @@ class StatusIcons:
             'cached_older': StatusIcons.ICON_CACHED_OLDER,
             'status_cache_older': StatusIcons.ICON_STATUS_CACHE_OLDER,
             'scan_failed': StatusIcons.ICON_SCAN_FAILED,
+            'no_cache': StatusIcons.ICON_NO_CACHE,
+            'no_auto_load': StatusIcons.ICON_NO_AUTO_LOAD,
             'device_floppy': StatusIcons.ICON_DEVICE_FLOPPY,
             'device_sd_card': StatusIcons.ICON_DEVICE_SD_CARD,
             'device_usb': StatusIcons.ICON_DEVICE_USB,

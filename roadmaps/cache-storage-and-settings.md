@@ -609,8 +609,8 @@ reading this plan, the audit notes and AGENTS.md. End it by ticking the row with
 | S6 | Cache maintenance | `cache_admin` (inventory, clear, both purges, trim, adopt, discard, sweep); pending saves on `cache_full` and `cache_approval`; `removed` events and `FolderCache.removed()`; budget check in the save transaction, `cache_full` | Every removal kind during a running save, load and scan: nothing comes back, no stale badge; retired files and expired pending saves go by deadline without a restart; Make room or Save update with a stale or superseded `pending_id` removes nothing; Save update re-checks the current budget and turns into Make room when over; never evicts the target's own dataset, and uses the fit rule; a crash before or after the pending row commits leaves no dangling reference; purge estimates equal what is freed; records survive trimming; an over-budget save becomes a pending save, never auto-trimmed; Make room adopts it, or discards it if the folder was cleared meanwhile; retired bytes don't count toward the budget | S5 | ☑ 2026-10-10 `ef4c0ca` |
 | S7 | Budgets and the Cache tab | Rebuilt tab with both purges; disk budget (default 8 GB); RAM budget (1/128 steps, default 1/8) replacing `MAX_DATA_BYTES`; 80% pause of uncached automatic loads with its dialog; update-save prompt over 80%; full-cache dialog (Make room / Don't cache now); "Reset all settings…" | pytest-qt tests with a fake inventory; 80% dialog once per crossing, Ignore lasts the session; cached folders still open over 80%; one cache dialog at a time; RAM eviction keeps shown datasets | S6 | ☑ 2026-10-10 `52201ca` |
 | S8 | Large-folder warning | Uses S7's RAM budget setting. Unscaled TXY-size estimate (the one-stat fast path keeps using the record's sizes); guard before both `load` and `cached`; `too_large` stop and `allow_large`; amber inline "Load anyway…"; queue skips; dialog for deliberate loads; the 30% refusal replaces the 1 GiB limit | Automatic loads never start or open a dialog; a large **cached** folder doesn't open automatically even after an earlier deliberate load; deliberate ones confirm; refusal; estimate from a saved summary vs from the load's own listing; the unchanged fast path still answers from one stat | S7 | ☑ 2026-10-11 `34f59c6` |
-| S9 | Cache folder move | Change… flow and checks (network/synced refused), I/O pause until helpers exit, `cache.lock` and instance locks in the app folder, WAL checkpoint and store verification, Cancel until verified, `cache-move.json` record and startup recovery, move with progress and Cancel, `cache_dir()` switch in place, instance locks, failure dialog with Show in Finder/Explorer | Same-disk rename; cross-disk copy; failure and Cancel before cutover keep the source; a failure deleting the source after cutover keeps the destination and finishes at the next start; a settings write that fails `sync()`/`status()` counts as before cutover; a successful rename followed by a failed settings write, with the rename-back succeeding and failing; a simulated crash before and after each meaningful transition (record writes, rename, copy completion, verification, settings write, source cleanup, plus one partial copy and one partial deletion), for rename and copy, recovers to one valid store with the setting pointing at it; refusal with another instance; an instance starting mid-move waits; a corrupt copy fails verification; network target refused | S5 | ☑ 2026-10-11 |
-| S10 | Folder flags | `folder_prefs` and its helper save; flags in listings; right-click toggles; row badge and tooltip; no-auto-load and no-cache behaviour; offer to remove cached data; "Don't auto-load" in the large-folder warning | Flag survives restart and purges; no-cache load never saves; no-auto-load select starts nothing; flags never inherited | S5. The warning's "Don't auto-load" button is added by whichever of S8 and S10 lands second. | ☐ |
+| S9 | Cache folder move | Change… flow and checks (network/synced refused), I/O pause until helpers exit, `cache.lock` and instance locks in the app folder, WAL checkpoint and store verification, Cancel until verified, `cache-move.json` record and startup recovery, move with progress and Cancel, `cache_dir()` switch in place, instance locks, failure dialog with Show in Finder/Explorer | Same-disk rename; cross-disk copy; failure and Cancel before cutover keep the source; a failure deleting the source after cutover keeps the destination and finishes at the next start; a settings write that fails `sync()`/`status()` counts as before cutover; a successful rename followed by a failed settings write, with the rename-back succeeding and failing; a simulated crash before and after each meaningful transition (record writes, rename, copy completion, verification, settings write, source cleanup, plus one partial copy and one partial deletion), for rename and copy, recovers to one valid store with the setting pointing at it; refusal with another instance; an instance starting mid-move waits; a corrupt copy fails verification; network target refused | S5 | ☑ 2026-10-11 `9ba2eae` |
+| S10 | Folder flags | `folder_prefs` and its helper save; flags in listings; right-click toggles; row badge and tooltip; no-auto-load and no-cache behaviour; offer to remove cached data; "Don't auto-load" in the large-folder warning | Flag survives restart and purges; no-cache load never saves; no-auto-load select starts nothing; flags never inherited | S5. The warning's "Don't auto-load" button is added by whichever of S8 and S10 lands second. | ☑ 2026-10-11 |
 | S11 | Wrap-up | AGENTS.md, `.ai/memory/results/` decision note, MANUAL_TODO native checks (dialogs, move, large-folder warning, flags), overview ticks | — | all | ☐ |
 
 S1, S2 and S4 can start in any order. S8 needs S7 (the RAM budget setting). S9 and S10 are
@@ -938,6 +938,48 @@ Notes from finished sessions:
     `set_cache_dir`). What recovery repaired
     is shown once the window is up. A record whose stores can't both be found stays, as the
     table says.
+
+- **S10:** `CacheStore.read_prefs` / `set_prefs` (a later `set_at` wins, e.g. another HeLab; a
+  row is kept when its flags are turned off or cleared, so its `set_at` still rejects an older
+  choice arriving late, and a listing's fresh "off" replaces a stale "on") / `clear_prefs`; `cache_admin` actions `prefs` (with
+  `remove_cached`) and `clear_prefs`; listings send each subfolder's `prefs` (and a listing of
+  the folder itself sends `folder_prefs`); `FolderCache.prefs`, `folder_prefs`,
+  `set_folder_prefs` (shown at once, then saved) and `folderPrefsChanged`. Choices made here:
+  - Every dataset save, pending save and adoption checks the folder's `no_cache` flag in its
+    own transaction (`SaveRejected("no_cache")`), so a load that started before the user ticked
+    it never saves. A load of such a folder (from the request or the saved flag) neither reads
+    nor writes its cached data ("Not cached: your choice"); cache first doesn't apply, though
+    data already in RAM still shows.
+  - "Don't auto-load": an automatic load of the folder starts nothing, not even a cached read.
+    Summary line `… · Auto-load off for this folder` with **Load**, Folder details and the
+    hint say so; untick it while the folder is selected and it loads by itself.
+  - Ticking "Don't cache" on a folder with cached data asks "Remove its cached data
+    (420 MB)?" (Remove cached data / Keep it). Records carry the dataset file's size
+    (`disk_bytes`) for this.
+  - Row badges (tabler `database-off`, `player-pause`, grey) and tooltip lines "Not cached: your
+    choice" / "Not auto-loaded: your choice".
+  - A listing that finds no flags doesn't undo this session's newer choice.
+  - `set_prefs_removing` removes the folder's cached data in the same transaction, and only if
+    this choice was the one saved: a superseded request removes nothing.
+  - Setting a flag stops this tab's automatic work it rules out (queued or running loads and
+    cached reads for Don't auto-load; cached reads for Don't cache), keeping deliberate work;
+    the cached-read helper also refuses a folder whose saved flag says not to cache it. A flag
+    that can't be read counts as "don't cache" for that load or read (with a warning), and a
+    load that saves nothing by choice never shows "Cache update failed".
+  - A deliberate load's cached read keeps it deliberate: its follow-up check runs even with
+    auto-load off (for the folder or the tab), unless Cancel comes first.
+  - A flag that can't be saved (helper error, cancellation, a full queue) is put back to what the
+    store last confirmed (never to another unsaved choice), and the tab that set it says so
+    ("HeLab couldn't save your choice for …").
+  - Clear records its time (`meta.prefs_cleared_at`, never lowered by an older Clear finishing
+    last) and changes only rows chosen before it: a choice made before it is refused even for a
+    folder that had no flags yet, and one saved after it stays; its result carries that time, so a newer saved choice
+    that arrived first stays. Don't cache set during a queued automatic cached read loads the
+    folder from its files instead.
+  - The large-folder warning gets a **No auto-load** button beside **Load anyway…** (S8 landed
+    first, so S10 adds it).
+  - The Cache tab's "Folder preferences" row shows the counts with its own Clear…; Clear all and
+    the purges never touch the flags.
 
 ## Acceptance
 

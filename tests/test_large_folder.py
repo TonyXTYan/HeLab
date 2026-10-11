@@ -415,8 +415,9 @@ def test_a_large_cached_folder_doesnt_open_automatically(
             service.resultReady.emit(read, event)
         service.pending.remove(read)
         qtbot.waitUntil(lambda: ("load", cached) in cache.jobs)
+        # (Part of the same deliberate load, so it is deliberate too; the yes was for the read only.)
         check = request_for(service, "load", cached)
-        assert check.payload["deliberate"] is False and check.payload["allow_large"] is False
+        assert check.payload["deliberate"] is True and check.payload["allow_large"] is False
         assert explorer.large_state(cached) is None
         cache.cancel(explorer.model.owner)
         # ...then another folder; its data leaves RAM (a large folder is over the RAM budget).

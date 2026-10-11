@@ -12,7 +12,7 @@ import numpy as np
 import numpy.typing as npt
 from PyQt6.QtCore import QEvent, QObject, QItemSelection, QItemSelectionModel, QModelIndex, QPoint, QRect, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QDesktopServices, QFontMetrics, QIcon, QPainter, QPalette, QPen, QResizeEvent
-from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLineEdit, QMenu, QPushButton, QStyledItemDelegate, QStyleOptionViewItem, QToolTip, QTreeView, QInputDialog,
+from PyQt6.QtWidgets import (QApplication, QMessageBox, QHBoxLayout, QLineEdit, QMenu, QPushButton, QStyledItemDelegate, QStyleOptionViewItem, QToolTip, QTreeView, QInputDialog,
                              QStyle, QToolButton, QVBoxLayout, QWidget, QSizePolicy)
 from helab.models.SnapshotFileSystemModel import FolderNode, SnapshotFileSystemModel
 from helab.models.StatusReport import StatusReport
@@ -38,6 +38,10 @@ AUTO_LOAD_PAUSED_TOOLTIP = ("Load this folder now. Automatic loading of folders 
 LARGE_TOOLTIP = ("Automatic loads skip folders larger than the RAM budget or 10% of RAM (their TXY files' size). "
                  "Load anyway… asks first.")
 REFUSED_TOOLTIP = "Folders larger than 30% of RAM are never loaded."
+# The user's choice for a folder (S10): selecting it loads nothing.
+AUTO_LOAD_OFF = "Auto-load off for this folder"
+AUTO_LOAD_OFF_TOOLTIP = ("Load this folder now. You chose not to load it automatically "
+                         "(right-click › Don't auto-load this folder).")
 AMBER = "#b26a00"
 
 
@@ -164,6 +168,9 @@ class FolderExplorer(QWidget):
         # Replaceable in tests; None asks with LargeFolderDialog. (Not a bound method: that
         # would keep this widget's wrapper alive after Qt deletes it.)
         self.confirm_large: Callable[[str, int], bool] | None = None
+        self.ask_remove_cached: Callable[[str, int | None], bool] | None = None
+        self.report_flag_failure: Callable[[str, str], None] | None = None
+        self._auto_load_off_paths: set[str] = set()
         self._loading_data: dict[int, npt.NDArray[np.float64]] = {}
         self._deep: list[tuple[Iterator[FolderNode], int]] = []
         self._deep_depth: dict[str, int] = {}
@@ -220,11 +227,19 @@ class FolderExplorer(QWidget):
         self.retry_button = QToolButton(self.folder_counts_row)
         self.retry_button.setText("Retry")
         self.retry_button.clicked.connect(self._retry)
+        # Offered with the large-folder warning (S10): stop it coming up at all.
+        self.no_auto_load_button = QToolButton(self.folder_counts_row)
+        self.no_auto_load_button.setText("No auto-load")
+        self.no_auto_load_button.setToolTip("Don't auto-load this folder: selecting it won't load it again "
+                                            "(right-click to change).")
+        self.no_auto_load_button.clicked.connect(
+            lambda: self.set_folder_flag(self.selected_path_globally, "no_auto_load", True))
         self.deselect_button = QToolButton(self.folder_counts_row)
         self.deselect_button.setText("Deselect")
         self.deselect_button.setToolTip("Clear subfolder selection and view the displayed path")
         self.deselect_button.clicked.connect(self.clear_selection)
-        self.summary_buttons = (self.cancel_load_button, self.retry_button, self.deselect_button)
+        self.summary_buttons = (self.cancel_load_button, self.retry_button, self.no_auto_load_button,
+                                self.deselect_button)
         for hidden in (self.selected_folder_label, *self.summary_buttons):
             hidden.hide()
         summary_font = self.folder_summary_label.font()
@@ -283,6 +298,8 @@ class FolderExplorer(QWidget):
         self.model.cache.resultReady.connect(self._io_event)
         self.model.cache.datasetChanged.connect(self._shared_dataset_changed)
         self.model.cache.autoLoadPauseChanged.connect(self._auto_load_pause_changed)
+        self.model.cache.folderPrefsChanged.connect(self._folder_prefs_changed)
+        self.model.cache.folderPrefsFailed.connect(self._folder_prefs_failed)
         self.model.activityChanged.connect(self._update_activity)
         self.animation = QTimer(self)
         self.animation.timeout.connect(self._animate)
@@ -368,7 +385,7 @@ class FolderExplorer(QWidget):
     def _retry(self) -> None:
         # A load retry keeps its per-file timeouts; a hung read is genuinely stuck.
         if (self.load_error or self.auto_load_paused_path == self.selected_path_globally
-                or self.large_state(self.selected_path_globally)):
+                or self.large_state(self.selected_path_globally) or self.auto_load_off(self.selected_path_globally)):
             # Deliberate: it loads even while automatic loads are paused.
             self.load_to_ram_cache(self.selected_path_globally, dwell=False, explicit=True)
         else:
@@ -556,7 +573,7 @@ class FolderExplorer(QWidget):
     def _load_payload(self, path: str, deliberate: bool = False) -> dict[str, Any]:
         node = self.model.nodes.get(path)
         return {"cache": store_options(), "signature": node.signature if node else "",
-                **self._large_payload(path, deliberate)}
+                "no_cache": self.model.cache.folder_prefs(path)["no_cache"], **self._large_payload(path, deliberate)}
 
     def _large_payload(self, path: str, deliberate: bool) -> dict[str, Any]:
         """The large-folder thresholds, whether the user asked for this request (asked about if
@@ -584,6 +601,12 @@ class FolderExplorer(QWidget):
             return False
         if not dwell:
             self._cancelled_load_path = None
+        if not explicit and self.model.cache.folder_prefs(path)["no_auto_load"]:
+            # The user's choice: selecting this folder loads nothing, cached or not.
+            if path == self.selected_path_globally:
+                self._update_activity()
+                self.loadStateChanged.emit()
+            return False
         if self._large_blocked(path, explicit):
             return False
         cached = self.model.cache.disk_cached(path)
@@ -770,8 +793,8 @@ class FolderExplorer(QWidget):
                                                    and node.signature == dataset.signature)
             self._display(path, dataset, {"verified": matches})
             return False
-        if not cache.disk_cached(path) or path == self._cache_read_path:
-            return False  # Read (or unreadable) already: the check loads the files.
+        if not cache.disk_cached(path) or path == self._cache_read_path or cache.folder_prefs(path)["no_cache"]:
+            return False  # Read (or unreadable) already, or not cached by choice: the load reads the files.
         if large_folder.verdict(cache.cached_estimate(path), cache.large_limits(), self._allowing == path):
             # Too large to read whole: the load decides by the folder's own size, and reads
             # its files instead of unpacking the cache if that is what fits.
@@ -813,10 +836,14 @@ class FolderExplorer(QWidget):
             logging.info("Cached data %s: %s", path, event.get("message", ""))
         elif kind == "too_large":
             self._stopped_large(request, event)
-        if kind in ("loaded", "error") and path == self.selected_path_globally and self.auto_load_ram:
-            # Now check the folder, reusing the shots just shown.
+        deliberate = bool(request.payload.get("deliberate"))
+        if kind in ("loaded", "error") and path == self.selected_path_globally and (self.auto_load_ram or deliberate):
+            # Now check the folder, reusing the shots just shown; a deliberate read's check is deliberate
+            # too (unless Cancel comes first).
+            cancels = self._cancel_count
             QTimer.singleShot(0, lambda: self.selected_path_globally == path and not self.closed
-                              and self.load_to_ram_cache(path))
+                              and cancels == self._cancel_count
+                              and self.load_to_ram_cache(path, dwell=not deliberate, explicit=deliberate))
         self._update_activity()
         self.loadStateChanged.emit()
 
@@ -1239,18 +1266,22 @@ class FolderExplorer(QWidget):
             "Cancel the folder listing retry (Esc)" if retrying and not (self.loading or self.load_waiting)
             else "Cancel loading in this tab (Esc)")
         paused = self.auto_load_paused_path == path
+        off = self.auto_load_off(path)
         large = self.large_state(path) if path == self.selected_path_globally else None
         offer_large = large is not None and not large[1] and not self.load_error
-        self.retry_button.setVisible(bool(self.load_error or scan_error or root_error or paused or offer_large)
-                                     and not (self.loading or self.load_waiting or retrying))
+        idle = not (self.loading or self.load_waiting or retrying)
+        self.retry_button.setVisible(bool(self.load_error or scan_error or root_error or paused or offer_large or off)
+                                     and idle)
         retry_path = self.listing_retry_path
         self.retry_button.setText("Load anyway…" if offer_large else
-                                  "Load" if paused and not self.load_error else "Retry")
-        self.retry_button.setEnabled(bool(self.load_error) or paused or offer_large
+                                  "Load" if (paused or off) and not self.load_error else "Retry")
+        self.retry_button.setEnabled(bool(self.load_error) or paused or offer_large or off
                                      or not self.model.refresh_pending(retry_path))
+        self.no_auto_load_button.setVisible(large is not None and not off and idle and bool(store_options()))
         self.retry_button.setToolTip("Load this folder again" if self.load_error else
                                      LARGE_TOOLTIP if offer_large else
                                      AUTO_LOAD_PAUSED_TOOLTIP if paused else
+                                     AUTO_LOAD_OFF_TOOLTIP if off else
                                      "Wait for this folder's refresh to finish" if not self.retry_button.isEnabled() else
                                      "List this folder again, without a time limit")
         scan_message = self.scan_message
@@ -1310,6 +1341,8 @@ class FolderExplorer(QWidget):
                 text += f" · Waiting {self.DWELL_MS // 1000} s before queueing"
             elif self.auto_load_paused_path == path:
                 text += f" · {AUTO_LOAD_PAUSED}"
+            elif off and not (self.loading and self._load_path == path):
+                text += f" · {AUTO_LOAD_OFF}"
             elif large is not None and not (self.loading and self._load_path == path):
                 text += f" · {large_text(*large)}"
         elif report.d_dld_shots or node and node.raw_count:
@@ -1626,6 +1659,14 @@ class FolderExplorer(QWidget):
                 submenu.addAction("All subfolders" if depth == 32768 else f"Depth {depth}", lambda checked=False, d=depth: self.context_menu_action_deep_calc_status(path, d))
             submenu.addAction("Custom depth…", lambda: self._choose_scan_depth_for(path))
         menu.addAction("Load data", lambda: self.queue_load(path))
+        prefs = self.model.cache.folder_prefs(path)
+        for key, label in (("no_cache", "Don't cache this folder"), ("no_auto_load", "Don't auto-load this folder")):
+            flag = menu.addAction(label)
+            if flag:
+                flag.setCheckable(True)
+                flag.setChecked(prefs[key])
+                flag.setToolTip("This folder only, never its subfolders")
+                flag.toggled.connect(lambda on, k=key: self.set_folder_flag(path, k, on))
         menu.addAction("Clear loaded data cache", lambda: self.clear_data_cache(path))
         cancel_action = menu.addAction("Cancel Loading", self.cancel_loading)
         if cancel_action:
@@ -1633,6 +1674,92 @@ class FolderExplorer(QWidget):
         viewport = self.tree.viewport()
         if viewport:
             menu.exec(viewport.mapToGlobal(position))
+
+    def auto_load_off(self, path: str | None) -> bool:
+        """The user chose not to auto-load this folder, and its data isn't open here."""
+        return bool(path) and self.model.cache.folder_prefs(str(path))["no_auto_load"] and (
+            self.folder_opened_path != path)
+
+    def set_folder_flag(self, path: str, key: str, on: bool) -> None:
+        """Right-click › Don't cache / Don't auto-load this folder (this folder only). Ticking
+        Don't cache offers to remove the folder's cached data."""
+        cache = self.model.cache
+        prefs = {**cache.folder_prefs(path), key: on}
+        remove = False
+        if key == "no_cache" and on and cache.disk_cached(path):
+            size = cache.cache_status(path).info.get("disk_bytes")
+            remove = (self.ask_remove_cached or self._ask_remove_cached)(
+                path, size if isinstance(size, int) else None)
+        cache.set_folder_prefs(path, no_cache=prefs["no_cache"], no_auto_load=prefs["no_auto_load"],
+                               remove_cached=remove, owner=self.model.owner)
+        self.loadStateChanged.emit()
+
+    def _ask_remove_cached(self, path: str, size: int | None) -> bool:
+        name = os.path.basename(path.rstrip(os.sep)) or path
+        box = QMessageBox(QMessageBox.Icon.Question, "Don't cache this folder",
+                          f"{name} won't be cached from now on. Remove its cached data"
+                          f"{f' ({byte_size(size)})' if size else ''}?", parent=self)
+        remove = box.addButton("Remove cached data", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Keep it", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        return box.clickedButton() is remove
+
+    def _drop_automatic(self, path: str, operations: tuple[str, ...]) -> set[str]:
+        """A flag just set for ``path``: stop this tab's automatic work it rules out (queued or
+        running); work the user asked for stays. Returns the operations stopped."""
+        cache = self.model.cache
+        dropped: set[str] = set()
+        for owner in (self.model.owner, self.bg_owner):
+            for request in cache.requests(owner):
+                if (request.path == path and request.operation in operations
+                        and not request.payload.get("deliberate")):
+                    cache.cancel(owner, request.operation, path)
+                    dropped.add(request.operation)
+        if path in self._bg_paths and not any(
+                r.path == path and r.operation == "load" for r in cache.requests(self.bg_owner)):
+            del self._bg_paths[path]
+            self.model.set_load_state(path, "")
+        if path == self._load_path and not self.loading:
+            self.load_error = ""  # Stopped by the user's choice, not a failure.
+        return dropped
+
+    def _folder_prefs_changed(self, path: str) -> None:
+        if self.closed:
+            return
+        prefs = self.model.cache.folder_prefs(path)
+        if prefs["no_auto_load"]:
+            self._drop_automatic(path, ("load", "cached"))
+        if prefs["no_cache"] and "cached" in self._drop_automatic(path, ("cached",)) and (
+                path == self.selected_path_globally and self.auto_load_ram and not prefs["no_auto_load"]):
+            # Not from the cache, then: from the folder itself.
+            self._cache_read_path = None
+            QTimer.singleShot(0, lambda: self.selected_path_globally == path and not self.closed
+                              and self.load_to_ram_cache(path))
+        node = self.model.nodes.get(path)
+        if node:
+            self.model.changed(node)
+        off = self.model.cache.folder_prefs(path)["no_auto_load"]
+        was_off = path in self._auto_load_off_paths
+        if off:
+            self._auto_load_off_paths.add(path)
+        else:
+            self._auto_load_off_paths.discard(path)
+        if path == self.selected_path_globally:
+            if was_off and not off and self.auto_load_ram and not self.loading:
+                self.load_to_ram_cache(path)  # Auto-load is on again for the selected folder.
+            self._update_activity()
+            self.loadStateChanged.emit()
+
+    def _folder_prefs_failed(self, path: str, message: str, owner: str) -> None:
+        """A flag this tab set couldn't be saved; FolderCache has put the saved state back."""
+        if self.closed or owner != self.model.owner:
+            return
+        name = os.path.basename(path.rstrip(os.sep)) or path
+        text = f"HeLab couldn't save your choice for {name}: {message}. Try again."
+        if self.report_flag_failure is not None:
+            self.report_flag_failure(path, text)
+        else:
+            QMessageBox.warning(self, "Folder setting not saved", text)
 
     def clear_data_cache(self, path: str) -> None:
         self.model.cache.cancel(self.model.owner, "load")
@@ -1746,6 +1873,8 @@ class FolderExplorer(QWidget):
         self.model.cache.resultReady.disconnect(self._io_event)
         self.model.cache.datasetChanged.disconnect(self._shared_dataset_changed)
         self.model.cache.autoLoadPauseChanged.disconnect(self._auto_load_pause_changed)
+        self.model.cache.folderPrefsChanged.disconnect(self._folder_prefs_changed)
+        self.model.cache.folderPrefsFailed.disconnect(self._folder_prefs_failed)
         self.model.cache.release(self.model.owner)
         self.folder_opened_data = None
         self.displayed_dataset = None

@@ -17,7 +17,7 @@ from helab.utils.io_service import IOService
 from helab.utils.time_format import clock as stopwatch, relative_age
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderExplorer import (
-    AMBER, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, LOAD_ORIGINS, REFUSED_TOOLTIP, FolderExplorer,
+    AMBER, AUTO_LOAD_OFF, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, LOAD_ORIGINS, REFUSED_TOOLTIP, FolderExplorer,
     large_text,
 )
 
@@ -138,6 +138,8 @@ class FolderDetailsPanel(QScrollArea):
                              "Another load is running; browsing past folders does not queue them.")
         elif explorer.auto_load_paused_path == path and not shown:
             rows["state"] = (AUTO_LOAD_PAUSED + " · Load data", AUTO_LOAD_PAUSED_TOOLTIP)
+        elif explorer.auto_load_off(path) and not shown:
+            rows["state"] = (AUTO_LOAD_OFF + " · Load data", AUTO_LOAD_OFF_TOOLTIP)
         elif (large := explorer.large_state(path)) is not None and not shown:
             rows["state"] = (large_text(*large) + ("" if large[1] else " · Load anyway…"),
                              REFUSED_TOOLTIP if large[1] else LARGE_TOOLTIP)

@@ -336,6 +336,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                       if k not in ("ram", "ram_single", "ram_opened", "cached", "cached_older", "scan_failed")]
             if self.cache.scan_history(node.path)["blocked"]:
                 extras.append("scan_failed")
+            prefs = self.cache.folder_prefs(node.path)
+            extras += [key for key in ("no_cache", "no_auto_load") if prefs[key]]
             older = self.data_freshness(node) in (CacheFreshness.POSSIBLY_OLD, CacheFreshness.CHANGED)
             if self.cache.current_dataset(node.path):
                 extras.append("ram_opened")
@@ -385,6 +387,11 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             estimate, refused = self.large_paths[node.path]
             lines.append(f"Too large to load · ~{byte_size(estimate)} in RAM, over 30% of RAM" if refused else
                          f"Large folder · ~{byte_size(estimate)} in RAM · right-click › Load data")
+        prefs = self.cache.folder_prefs(node.path)
+        if prefs["no_cache"]:
+            lines.append("Not cached: your choice")
+        if prefs["no_auto_load"]:
+            lines.append("Not auto-loaded: your choice")
         lines.append("Here: " + self._own_text(node))
         lines.append("Subfolders: " + self._subfolders_text(node))
         # Each cache: its date and its freshness against the folder's modified time, stated once.
