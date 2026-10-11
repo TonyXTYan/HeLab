@@ -607,8 +607,8 @@ reading this plan, the audit notes and AGENTS.md. End it by ticking the row with
 | S4 | New store module | `helab/utils/cache_store.py`: schema, versioning, dataset file writes, `retired_files` with deferred deletion, reader re-read on a missing file, the single removal function with durable `folder_epochs`, per-kind generations, per-folder `job_seq` ordering, `pending_saves` with `pending_id` and `reason`, read results (found/missing/error), save-guard checks | Two processes writing at once; killed writer; reader racing a replacement; removal racing a save; Clear by kind before a folder's first row exists; an older job's save or pending save never overwrites or supersedes a newer one, including the older job finishing last with neither adopted; newer `layout_version` opens read-only; error is not "missing" | — (parallel to S2/S3) | ☑ 2026-10-10 `7040a29` |
 | S5 | Switch to the new store | Helpers (`list`, `details`, `scan`, `load`, `cached`, `invalidate`, `subtree_save`, `scan_history`) use `cache_store`; one `FILE_KINDS` table drives matching and counting; summaries save `files` (TXY sized) and datasets `ram_bytes`; `last_used` on use; old cache folders deleted at startup; `caching_setup.py` and diskcache removed (the old Cache tab reads nothing until S7, so S5 shows "Rebuilt in a later update" there); network/synced cache path refused at startup | Existing cache-first, folder-cache and scan-history tests pass on the new store; the app starts and Settings opens | S1, S3, S4 | ☑ 2026-10-10 `fd4e020` |
 | S6 | Cache maintenance | `cache_admin` (inventory, clear, both purges, trim, adopt, discard, sweep); pending saves on `cache_full` and `cache_approval`; `removed` events and `FolderCache.removed()`; budget check in the save transaction, `cache_full` | Every removal kind during a running save, load and scan: nothing comes back, no stale badge; retired files and expired pending saves go by deadline without a restart; Make room or Save update with a stale or superseded `pending_id` removes nothing; Save update re-checks the current budget and turns into Make room when over; never evicts the target's own dataset, and uses the fit rule; a crash before or after the pending row commits leaves no dangling reference; purge estimates equal what is freed; records survive trimming; an over-budget save becomes a pending save, never auto-trimmed; Make room adopts it, or discards it if the folder was cleared meanwhile; retired bytes don't count toward the budget | S5 | ☑ 2026-10-10 `ef4c0ca` |
-| S7 | Budgets and the Cache tab | Rebuilt tab with both purges; disk budget (default 8 GB); RAM budget (1/128 steps, default 1/8) replacing `MAX_DATA_BYTES`; 80% pause of uncached automatic loads with its dialog; update-save prompt over 80%; full-cache dialog (Make room / Don't cache now); "Reset all settings…" | pytest-qt tests with a fake inventory; 80% dialog once per crossing, Ignore lasts the session; cached folders still open over 80%; one cache dialog at a time; RAM eviction keeps shown datasets | S6 | ☑ 2026-10-10 |
-| S8 | Large-folder warning | Uses S7's RAM budget setting. Unscaled TXY-size estimate (the one-stat fast path keeps using the record's sizes); guard before both `load` and `cached`; `too_large` stop and `allow_large`; amber inline "Load anyway…"; queue skips; dialog for deliberate loads; the 30% refusal replaces the 1 GiB limit | Automatic loads never start or open a dialog; a large **cached** folder doesn't open automatically even after an earlier deliberate load; deliberate ones confirm; refusal; estimate from a saved summary vs from the load's own listing; the unchanged fast path still answers from one stat | S7 | ☐ |
+| S7 | Budgets and the Cache tab | Rebuilt tab with both purges; disk budget (default 8 GB); RAM budget (1/128 steps, default 1/8) replacing `MAX_DATA_BYTES`; 80% pause of uncached automatic loads with its dialog; update-save prompt over 80%; full-cache dialog (Make room / Don't cache now); "Reset all settings…" | pytest-qt tests with a fake inventory; 80% dialog once per crossing, Ignore lasts the session; cached folders still open over 80%; one cache dialog at a time; RAM eviction keeps shown datasets | S6 | ☑ 2026-10-10 `52201ca` |
+| S8 | Large-folder warning | Uses S7's RAM budget setting. Unscaled TXY-size estimate (the one-stat fast path keeps using the record's sizes); guard before both `load` and `cached`; `too_large` stop and `allow_large`; amber inline "Load anyway…"; queue skips; dialog for deliberate loads; the 30% refusal replaces the 1 GiB limit | Automatic loads never start or open a dialog; a large **cached** folder doesn't open automatically even after an earlier deliberate load; deliberate ones confirm; refusal; estimate from a saved summary vs from the load's own listing; the unchanged fast path still answers from one stat | S7 | ☑ 2026-10-11 |
 | S9 | Cache folder move | Change… flow and checks (network/synced refused), I/O pause until helpers exit, `cache.lock` and instance locks in the app folder, WAL checkpoint and store verification, Cancel until verified, `cache-move.json` record and startup recovery, move with progress and Cancel, `cache_dir()` switch in place, instance locks, failure dialog with Show in Finder/Explorer | Same-disk rename; cross-disk copy; failure and Cancel before cutover keep the source; a failure deleting the source after cutover keeps the destination and finishes at the next start; a settings write that fails `sync()`/`status()` counts as before cutover; a successful rename followed by a failed settings write, with the rename-back succeeding and failing; a simulated crash before and after each meaningful transition (record writes, rename, copy completion, verification, settings write, source cleanup, plus one partial copy and one partial deletion), for rename and copy, recovers to one valid store with the setting pointing at it; refusal with another instance; an instance starting mid-move waits; a corrupt copy fails verification; network target refused | S5 | ☐ |
 | S10 | Folder flags | `folder_prefs` and its helper save; flags in listings; right-click toggles; row badge and tooltip; no-auto-load and no-cache behaviour; offer to remove cached data; "Don't auto-load" in the large-folder warning | Flag survives restart and purges; no-cache load never saves; no-auto-load select starts nothing; flags never inherited | S5. The warning's "Don't auto-load" button is added by whichever of S8 and S10 lands second. | ☐ |
 | S11 | Wrap-up | AGENTS.md, `.ai/memory/results/` decision note, MANUAL_TODO native checks (dialogs, move, large-folder warning, flags), overview ticks | — | all | ☐ |
@@ -837,6 +837,44 @@ Notes from finished sessions:
     once and the status bar says what was dropped. The main status bar shows one-time notices
     (`show_status_notice`), e.g. "Disk cache below 80% — automatic loading resumed".
   - "Folder preferences" in the tab waits for S10, which adds `folder_prefs`.
+- **S8:** `helab/utils/large_folder.py` holds the thresholds (`limits`: warn above min(RAM budget,
+  10% of RAM), refuse above 30%), the `verdict` and the `estimate` (a fingerprint's sizes, unscaled,
+  without shots already held). Every `load` and `cached` request carries `limits`, `deliberate` and `allow_large`
+  (`FolderExplorer._large_payload`). Choices made here:
+  - The helper's load checks right after its scan phase, which is sent and now saved first, and
+    counts only shots the tab doesn't already hold, so the check of data in RAM (and the one-stat
+    fast path) is never stopped. `read_cached` checks the record's TXY size before reading the
+    dataset, and again on the dataset it read (it may have been replaced meanwhile). Both stop
+    with `too_large` (`estimate`, `refused`); the 1 GiB input limit is gone. A load whose cached
+    dataset is larger than allowed (the folder shrank) doesn't unpack it and reads the files
+    instead ("Cached dataset too large to reuse").
+  - Dataset records save `txy_bytes` and `ram_bytes` in `info`; listings send them with each
+    subfolder's `cache_info` (summed from the fingerprint for records saved before S8). The tab
+    decides in memory before anything is submitted: a load by the folder's own size
+    (`FolderCache.large_estimate`, the newest saved summary), a cached read by the dataset's
+    (`cached_estimate`). A cached dataset too large to read whole isn't read; the load then
+    decides by the folder's size and reads the files, so an old, larger cache never blocks a
+    folder that is small now.
+  - `FolderExplorer._large_blocked` runs before both the cached read and the load. A helper's
+    stop (`_large_stops`) is the newest word on a folder until it is measured again (a scan
+    or a cached save after it) or the folder's data in RAM changes (a stop counts what a load
+    would add to what was held then), so a fresh, smaller size replaces an earlier refusal and
+    an approved cached read's follow-up check runs. For data
+    already in RAM only such a stop counts (what a load would add), so a deliberate update that
+    its helper found large is asked about rather than retried. A deliberate load (Retry,
+    "Load anyway…", right-click › Load data) asks with `LargeFolderDialog` (tick box enables Load
+    anyway). The yes covers only the request that call submits (`_allowing`, reset when the call
+    returns), and whether a request was asked for travels with it (`deliberate` and
+    `allow_large` in its payload), so neither outlives it: later automatic loads are checked
+    again and never ask. A deliberate load whose size only its helper found is asked about
+    after the helper stops (dropped if Cancel comes first: `_cancel_count`); an automatic one (including queue mode's background
+    loads) just stops, shows the warning and lets the queue move on.
+  - The warning: summary line `… · Large folder · ~2.1 GB in RAM` in amber with a **Load anyway…**
+    button, Folder details' state row (amber), the status bar, the central hint and the row
+    tooltip. Refused: `Too large to load · ~X in RAM, over 30% of RAM`, with no button. When
+    earlier data stays shown, the summary line adds the warning after it and Folder details says
+    "… · Update not loaded: Large folder · …".
+  - "Don't auto-load this folder" in the warning waits for S10's folder flags.
 
 ## Acceptance
 

@@ -6,7 +6,7 @@ from datetime import datetime
 import logging
 import os
 import time
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import numpy as np
 import numpy.typing as npt
@@ -17,7 +17,9 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLineEdit, QMenu, QPushB
 from helab.models.SnapshotFileSystemModel import FolderNode, SnapshotFileSystemModel
 from helab.models.StatusReport import StatusReport
 from helab.utils.io_service import IORequest
+from helab.utils import large_folder
 from helab.utils.folder_cache import Dataset, store_options
+from helab.utils.number_format import byte_size
 from helab.utils.constants import DEFAULT_LOAD_MODE
 from helab.utils.load_clock import LoadClock
 from helab.utils.time_format import byte_rate, clock as stopwatch, duration, relative_age
@@ -32,6 +34,18 @@ LOAD_ORIGINS = {"disk": "disk cache", "files": "TXY files", "merged": "disk cach
 AUTO_LOAD_PAUSED = "Auto-load paused — disk cache 80% full"
 AUTO_LOAD_PAUSED_TOOLTIP = ("Load this folder now. Automatic loading of folders without cached data is paused "
                             "while the disk cache is 80% full; free space in Settings → Cache.")
+# A folder whose data would take too much RAM (roadmap S8): automatic loads never start it.
+LARGE_TOOLTIP = ("Automatic loads skip folders larger than the RAM budget or 10% of RAM (their TXY files' size). "
+                 "Load anyway… asks first.")
+REFUSED_TOOLTIP = "Folders larger than 30% of RAM are never loaded."
+AMBER = "#b26a00"
+
+
+def large_text(estimate: int, refused: bool) -> str:
+    """How the summary line, Folder details and the status bar name a large folder."""
+    if refused:
+        return f"Too large to load · ~{byte_size(estimate)} in RAM, over 30% of RAM"
+    return f"Large folder · ~{byte_size(estimate)} in RAM"
 
 
 def paint_spinner(painter: QPainter, rect: QRect, angle: int, selected: bool = False) -> None:
@@ -139,6 +153,17 @@ class FolderExplorer(QWidget):
         self._cache_read_path: str | None = None
         self._load_path: str | None = None
         self._cancelled_load_path: str | None = None
+        # Large folders (S8): the folder the user just said yes to, only while the call that asked
+        # submits its request. Whether a request was asked for (``deliberate``) and allowed
+        # (``allow_large``) travels with the request, so neither outlives it.
+        self._allowing: str | None = None
+        # Bumped by Cancel: a large-folder question scheduled before it is dropped.
+        self._cancel_count = 0
+        # The latest helper stop for being large, per folder: (estimate, when, what was in RAM).
+        self._large_stops: dict[str, tuple[int, float, tuple[str, int, int] | None]] = {}
+        # Replaceable in tests; None asks with LargeFolderDialog. (Not a bound method: that
+        # would keep this widget's wrapper alive after Qt deletes it.)
+        self.confirm_large: Callable[[str, int], bool] | None = None
         self._loading_data: dict[int, npt.NDArray[np.float64]] = {}
         self._deep: list[tuple[Iterator[FolderNode], int]] = []
         self._deep_depth: dict[str, int] = {}
@@ -342,7 +367,8 @@ class FolderExplorer(QWidget):
 
     def _retry(self) -> None:
         # A load retry keeps its per-file timeouts; a hung read is genuinely stuck.
-        if self.load_error or self.auto_load_paused_path == self.selected_path_globally:
+        if (self.load_error or self.auto_load_paused_path == self.selected_path_globally
+                or self.large_state(self.selected_path_globally)):
             # Deliberate: it loads even while automatic loads are paused.
             self.load_to_ram_cache(self.selected_path_globally, dwell=False, explicit=True)
         else:
@@ -527,9 +553,16 @@ class FolderExplorer(QWidget):
         """Public form of ``_checking``: the shown data is not yet checked against the folder."""
         return self._checking(path)
 
-    def _load_payload(self, path: str) -> dict[str, Any]:
+    def _load_payload(self, path: str, deliberate: bool = False) -> dict[str, Any]:
         node = self.model.nodes.get(path)
-        return {"cache": store_options(), "signature": node.signature if node else ""}
+        return {"cache": store_options(), "signature": node.signature if node else "",
+                **self._large_payload(path, deliberate)}
+
+    def _large_payload(self, path: str, deliberate: bool) -> dict[str, Any]:
+        """The large-folder thresholds, whether the user asked for this request (asked about if
+        its helper finds it large) and whether they just said yes to it."""
+        return {"limits": self.model.cache.large_limits(), "deliberate": deliberate,
+                "allow_large": self._allowing == path}
 
     def _has_data(self, path: str) -> bool:
         node = self.model.nodes.get(path)
@@ -540,16 +573,24 @@ class FolderExplorer(QWidget):
 
     def load_to_ram_cache(self, path: str, *, dwell: bool = True, explicit: bool = False) -> bool:
         """Show this folder's data, loading it as the tab's visible load."""
+        try:
+            return self._load_to_ram_cache(path, dwell, explicit)
+        finally:
+            self._allowing = None  # A yes covers only what this call submitted.
+
+    def _load_to_ram_cache(self, path: str, dwell: bool, explicit: bool) -> bool:
         # A scan finishing after Cancel must not restart automatic loading.
         if dwell and path == self._cancelled_load_path:
             return False
         if not dwell:
             self._cancelled_load_path = None
+        if self._large_blocked(path, explicit):
+            return False
         cached = self.model.cache.disk_cached(path)
         if self.folder_opened_path != path or self.folder_opened_data is None:
             # Show data from memory or the local disk cache at once; it never
             # waits for source-folder I/O. The check below follows the usual rules.
-            if self._show_cached(path):
+            if self._show_cached(path, explicit):
                 return True
         if not explicit and not cached and not self._has_data(path):
             return False
@@ -588,7 +629,7 @@ class FolderExplorer(QWidget):
                 self.loadStateChanged.emit()
                 return True
         accepted = self.model.cache.submit(self.model.owner, self.model.generation, path, "load",
-                                           self._load_payload(path), priority=True)
+                                           self._load_payload(path, explicit), priority=True)
         if accepted and self.load_mode != "cancel":
             self.model.cache.promote(path)
         if not accepted:
@@ -597,6 +638,95 @@ class FolderExplorer(QWidget):
             self.model.set_load_state(path, "")
         self.loadStateChanged.emit()
         return accepted
+
+    def large_state(self, path: str | None) -> tuple[int, bool] | None:
+        """(estimate, refused) if ``path``'s load stopped, or wasn't started, for being large."""
+        return self.model.large_paths.get(path) if path else None
+
+    def _set_large(self, path: str, state: tuple[int, bool] | None) -> None:
+        if state is None:
+            if self.model.large_paths.pop(path, None) is None:
+                return
+        else:
+            self.model.large_paths[path] = state
+        node = self.model.nodes.get(path)
+        if node:
+            self.model.changed(node)
+
+    def _large_estimate(self, path: str, held: bool) -> int | None:
+        """What loading ``path`` would add to RAM, as far as memory knows. A helper's stop is the
+        newest word until the folder or its cached data is measured again, or the data in RAM
+        changes; data already held is otherwise left to the helper, which counts only what a
+        load would add."""
+        stop = self._large_stops.get(path)
+        if stop is not None and not self._measured_since(path, stop[1]) and stop[2] == self._held_key(path):
+            return stop[0]
+        return None if held else self.model.cache.large_estimate(path)
+
+    def _held_key(self, path: str) -> tuple[str, int, int] | None:
+        """Which of the folder's data is in RAM: a stop's estimate is what a load would add to
+        it, so it no longer counts once that changes (e.g. a cached read brought the data)."""
+        cache = self.model.cache
+        dataset = cache.current_dataset(path) or cache.latest_dataset(path)
+        return None if dataset is None else (dataset.signature, dataset.epoch, len(dataset.data))
+
+    def _measured_since(self, path: str, since: float) -> bool:
+        cache = self.model.cache
+        snapshot = cache.snapshots.get(path)
+        dates = [status.get("scanned_at") for status in (cache.scan_summaries.get(path),
+                                                         snapshot.status if snapshot else None) if status]
+        if cache.disk_cached(path):
+            dates.append(cache.cache_status(path).info.get("saved_at"))
+        return any(isinstance(date, (int, float)) and date > since for date in dates)
+
+    def _large_blocked(self, path: str, explicit: bool) -> bool:
+        """Whether a load of ``path`` mustn't start for being large (S8), from what memory knows.
+
+        Automatic loads above the warning threshold don't start and show "Load anyway…";
+        deliberate ones ask first. Above 30% of RAM nothing loads. For data already in RAM only
+        a helper's stop counts (what a load would add to it).
+        """
+        cache = self.model.cache
+        held = cache.current_dataset(path) is not None or cache.latest_dataset(path) is not None
+        estimate = self._large_estimate(path, held)
+        verdict = large_folder.verdict(estimate, cache.large_limits(), self._allowing == path)
+        if not verdict or estimate is None:
+            self._set_large(path, None)
+            return False
+        if verdict == "large" and explicit and (self.confirm_large or self._confirm_large)(path, estimate):
+            self._allowing = path
+            self._set_large(path, None)
+            return False
+        self._set_large(path, (estimate, verdict == "refused"))
+        if path == self.selected_path_globally:
+            self._update_activity()
+            self.loadStateChanged.emit()
+        return True
+
+    def _confirm_large(self, path: str, estimate: int) -> bool:
+        from helab.views.LargeFolderDialog import confirm_large
+        cache = self.model.cache
+        return confirm_large(path, estimate, cache.max_data_bytes, cache.total_ram, self)
+
+    def _stopped_large(self, request: IORequest, event: dict[str, Any], *, background: bool = False) -> None:
+        """A helper stopped before reading: the data would take ``estimate`` bytes of RAM."""
+        path = request.path
+        estimate, refused = int(event.get("estimate", 0)), bool(event.get("refused"))
+        self._large_stops[path] = (estimate, time.time(), self._held_key(path))
+        self._set_large(path, (estimate, refused))
+        if not refused and request.payload.get("deliberate"):
+            # Asked for: ask about the size, then load again (unless cancelled meanwhile).
+            cancels = self._cancel_count
+            QTimer.singleShot(0, lambda: self._load_again(path, background, cancels))
+
+    def _load_again(self, path: str, background: bool, cancels: int) -> None:
+        if self.closed or cancels != self._cancel_count:
+            return
+        if background:
+            if path not in self._bg_paths and path != self.selected_path_globally:
+                self.queue_load(path)
+        elif path == self.selected_path_globally:
+            self.load_to_ram_cache(path, dwell=False, explicit=True)
 
     @property
     def auto_load_paused_path(self) -> str | None:
@@ -622,7 +752,7 @@ class FolderExplorer(QWidget):
         self._update_activity()
         self.loadStateChanged.emit()
 
-    def _show_cached(self, path: str) -> bool:
+    def _show_cached(self, path: str, deliberate: bool = False) -> bool:
         """Display this folder's dataset from memory, or start reading it from the
         disk cache. True while that read is pending: the check waits for it, so
         it can reuse the shots instead of reading files."""
@@ -642,9 +772,13 @@ class FolderExplorer(QWidget):
             return False
         if not cache.disk_cached(path) or path == self._cache_read_path:
             return False  # Read (or unreadable) already: the check loads the files.
+        if large_folder.verdict(cache.cached_estimate(path), cache.large_limits(), self._allowing == path):
+            # Too large to read whole: the load decides by the folder's own size, and reads
+            # its files instead of unpacking the cache if that is what fits.
+            return False
         self._cache_read_path = path
         return cache.submit(self.model.owner, self.model.generation, path, "cached",
-                            {"cache": self._load_payload(path)["cache"]}, priority=True)
+                            {"cache": store_options(), **self._large_payload(path, deliberate)}, priority=True)
 
     def _display(self, path: str, dataset: Dataset, event: dict[str, Any] | None = None) -> None:
         """Show a dataset; data not from a completed load stays unchecked until one completes."""
@@ -677,6 +811,8 @@ class FolderExplorer(QWidget):
                 self._display(path, event["dataset"], event)
         elif kind == "error":
             logging.info("Cached data %s: %s", path, event.get("message", ""))
+        elif kind == "too_large":
+            self._stopped_large(request, event)
         if kind in ("loaded", "error") and path == self.selected_path_globally and self.auto_load_ram:
             # Now check the folder, reusing the shots just shown.
             QTimer.singleShot(0, lambda: self.selected_path_globally == path and not self.closed
@@ -690,8 +826,14 @@ class FolderExplorer(QWidget):
             return self.load_to_ram_cache(path, dwell=False, explicit=True)
         if path in self._bg_paths or (self.loading and self._load_path == path):
             return True
+        try:
+            if self._large_blocked(path, True):
+                return False
+            payload = self._load_payload(path, deliberate=True)
+        finally:
+            self._allowing = None
         self._bg_paths[path] = None
-        if not self.model.cache.submit(self.bg_owner, 0, path, "load", self._load_payload(path), priority=True):
+        if not self.model.cache.submit(self.bg_owner, 0, path, "load", payload, priority=True):
             self._bg_paths.pop(path, None)
             self.model.set_load_state(path, "")
             return False
@@ -709,11 +851,15 @@ class FolderExplorer(QWidget):
             self.model.set_load_state(path, "queued" if kind == "queued" else "loading")
         elif kind == "paused":
             self.model.set_load_state(path, "paused")
-        elif kind in ("loaded", "error", "cancelled"):
+        elif kind in ("loaded", "error", "cancelled", "too_large"):
             del self._bg_paths[path]
             self.model.set_load_state(path, "")
             if kind == "error":
                 logging.warning("Background load %s: %s", path, event.get("message", ""))
+            if kind == "too_large":
+                self._stopped_large(request, event, background=True)
+            elif kind == "loaded":
+                self._large_stops.pop(path, None)
         else:
             return
         self._update_activity()
@@ -828,6 +974,8 @@ class FolderExplorer(QWidget):
             assert isinstance(dataset, Dataset)
             self.loading = False
             self.model.set_load_state(request.path, "")
+            self._large_stops.pop(request.path, None)
+            self._set_large(request.path, None)
             self._display(request.path, dataset, event)
             node = self.model.nodes.get(request.path)
             if node and node.cached_report and not event.get("unchanged"):
@@ -838,6 +986,12 @@ class FolderExplorer(QWidget):
             self._loading_data.clear()
             self.load_error = event.get("message", "Cancelled — Retry")
             self.model.set_load_state(request.path, "")
+        elif kind == "too_large":
+            # Stopped before reading anything (S8).
+            self.loading = self.load_paused = False
+            self._loading_data.clear()
+            self.model.set_load_state(request.path, "")
+            self._stopped_large(request, event)
         self._update_activity()
         self.loadStateChanged.emit()
 
@@ -977,6 +1131,9 @@ class FolderExplorer(QWidget):
         if self._bg_paths:
             count = len(self._bg_paths)
             return f"{count} background load{'' if count == 1 else 's'}"
+        large = self.large_state(self.selected_path_globally)
+        if large is not None and not self.loading:
+            return large_text(*large)
         return ""
 
     @property
@@ -1082,12 +1239,17 @@ class FolderExplorer(QWidget):
             "Cancel the folder listing retry (Esc)" if retrying and not (self.loading or self.load_waiting)
             else "Cancel loading in this tab (Esc)")
         paused = self.auto_load_paused_path == path
-        self.retry_button.setVisible(bool(self.load_error or scan_error or root_error or paused) and not (
-            self.loading or self.load_waiting or retrying))
+        large = self.large_state(path) if path == self.selected_path_globally else None
+        offer_large = large is not None and not large[1] and not self.load_error
+        self.retry_button.setVisible(bool(self.load_error or scan_error or root_error or paused or offer_large)
+                                     and not (self.loading or self.load_waiting or retrying))
         retry_path = self.listing_retry_path
-        self.retry_button.setText("Load" if paused and not self.load_error else "Retry")
-        self.retry_button.setEnabled(bool(self.load_error) or paused or not self.model.refresh_pending(retry_path))
+        self.retry_button.setText("Load anyway…" if offer_large else
+                                  "Load" if paused and not self.load_error else "Retry")
+        self.retry_button.setEnabled(bool(self.load_error) or paused or offer_large
+                                     or not self.model.refresh_pending(retry_path))
         self.retry_button.setToolTip("Load this folder again" if self.load_error else
+                                     LARGE_TOOLTIP if offer_large else
                                      AUTO_LOAD_PAUSED_TOOLTIP if paused else
                                      "Wait for this folder's refresh to finish" if not self.retry_button.isEnabled() else
                                      "List this folder again, without a time limit")
@@ -1117,6 +1279,9 @@ class FolderExplorer(QWidget):
                 text += " · Previous data"
             if self.load_error:
                 text += f" · {self.load_error}"
+            elif large is not None and not (self.loading and self._load_path == path):
+                # Why the update didn't load: the shown data stays.
+                text += f" · {large_text(*large)}"
         elif report is None:
             text = (self.retry_message(retrying) if retrying else
                     f"Loading · {self.loading_message}" if self.loading and self._load_path == path else
@@ -1145,6 +1310,8 @@ class FolderExplorer(QWidget):
                 text += f" · Waiting {self.DWELL_MS // 1000} s before queueing"
             elif self.auto_load_paused_path == path:
                 text += f" · {AUTO_LOAD_PAUSED}"
+            elif large is not None and not (self.loading and self._load_path == path):
+                text += f" · {large_text(*large)}"
         elif report.d_dld_shots or node and node.raw_count:
             raw = node.raw_count if node else len(report.d_dld_shots or [])
             text = f"{raw:,} raw shot{'s' if raw != 1 else ''} found · No converted TXY files"
@@ -1162,6 +1329,9 @@ class FolderExplorer(QWidget):
             elif scan_message:
                 text += f" · {scan_message}"
         self.folder_summary_label.setText(text)
+        # Amber while the selected folder is too large to load automatically, like freshness warnings.
+        self.folder_summary_label.setStyleSheet(f"color: {AMBER};" if large is not None and large_text(*large) in text
+                                                else "")
         self._fit_selected_label()
         load_details = ""
         if shown and dataset is not None:
@@ -1176,7 +1346,8 @@ class FolderExplorer(QWidget):
             if changed:
                 load_details += "\nLoaded data belongs to the previous folder contents. Load data to update it."
         self.folder_summary_label.setToolTip("\n".join(filter(None, (
-            path, load_details, scan_error, self.load_error, self.loading_tooltip))))
+            path, load_details, scan_error, self.load_error, self.loading_tooltip,
+            (REFUSED_TOOLTIP if large[1] else LARGE_TOOLTIP) if large else ""))))
         self._update_cache_summary(path, report)
         checked_at = node.checked_at if node else 0
         if checked_at and node and node.scanned_at is not None:
@@ -1536,6 +1707,7 @@ class FolderExplorer(QWidget):
                 self._update_activity()
                 return
         visible_load = self.loading or self.load_waiting
+        self._cancel_count += 1
         self._cancelled_load_path = self.selected_path_globally
         self._cancel_background()
         self.model.cache.cancel(self.model.owner, "load")

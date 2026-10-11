@@ -39,7 +39,9 @@ from helab.views.CentralHint import CentralHint
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HoverMenuToolButton import HoverMenuToolButton
-from helab.views.FolderExplorer import AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, FolderExplorer, paint_spinner
+from helab.views.FolderExplorer import (
+    AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP, FolderExplorer, large_text, paint_spinner,
+)
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
 from helab.views.SettingsDialog import SettingsDialog
@@ -990,6 +992,10 @@ class HelabMainWindow(QMainWindow):
         if explorer.auto_load_paused_path == path and not shown:
             return f"{name}: {AUTO_LOAD_PAUSED[0].lower()}{AUTO_LOAD_PAUSED[1:]} — right-click it › Load data", \
                 AUTO_LOAD_PAUSED_TOOLTIP
+        if (large := explorer.large_state(path)) is not None and not shown:
+            text = large_text(*large)
+            return (f"{name}: {text[0].lower()}{text[1:]}" + ("" if large[1] else " — Load anyway… asks first"),
+                    REFUSED_TOOLTIP if large[1] else LARGE_TOOLTIP)
         if explorer.folder_opened_path == path:
             return f"Loaded {name} — run a script to plot it", ""
         if shown:

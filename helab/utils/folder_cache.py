@@ -16,6 +16,7 @@ import numpy.typing as npt
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 
+from helab.utils import large_folder
 from helab.utils.cache_store import APPROVAL_SHARE, store_root
 from helab.utils.constants import DEFAULT_DISK_BUDGET, DEFAULT_RAM_STEPS, DIR_CACHES, DISK_CACHE_ENABLED, ram_step_bytes
 from helab.utils.io_service import IORequest, IOService
@@ -147,6 +148,7 @@ class FolderCache(QObject):
         self.pins: dict[str, Dataset] = {}
         # The RAM budget for datasets no tab shows (Settings → Cache; ``set_ram_budget``).
         self.max_data_bytes = DEFAULT_RAM_STEPS * ram_step_bytes()
+        self.total_ram = large_folder.total_ram()
         # The disk cache's live bytes, as the newest helper measurement reported them.
         self.disk_usage: int | None = None
         # Which store and write count it was measured at (``CacheStore.Usage``).
@@ -505,6 +507,32 @@ class FolderCache(QObject):
     def release(self, owner: str) -> None:
         self.pins.pop(owner, None)
         self._evict()
+
+    def large_limits(self) -> dict[str, int]:
+        """The large-folder thresholds sent with every load and cached read."""
+        return large_folder.limits(self.max_data_bytes, self.total_ram)
+
+    def large_estimate(self, path: str) -> int | None:
+        """What loading ``path`` from its files would take in RAM, from memory only (no I/O):
+        its saved summary's TXY size (the newer of this session's and the saved one); None
+        if unknown. (A load whose cached dataset is larger doesn't unpack it.)"""
+        snapshot = self.snapshots.get(path)
+        newest: tuple[float, int] | None = None
+        for status in (self.scan_summaries.get(path), snapshot.status if snapshot else None):
+            files = status.get("files") if isinstance(status, dict) else None
+            txy = files.get("txy") if isinstance(files, dict) else None
+            if isinstance(txy, dict) and isinstance(txy.get("bytes"), int):
+                assert isinstance(status, dict)
+                at = status.get("scanned_at")
+                measured = (float(at) if isinstance(at, (int, float)) else 0.0, int(txy["bytes"]))
+                if newest is None or measured[0] >= newest[0]:
+                    newest = measured
+        return None if newest is None else newest[1]
+
+    def cached_estimate(self, path: str) -> int | None:
+        """What reading ``path``'s cached dataset would take in RAM (its TXY size); None if unknown."""
+        cached = self.cache_status(path).info.get("txy_bytes")
+        return cached if self.disk_cached(path) and isinstance(cached, int) else None
 
     def set_ram_budget(self, budget: int) -> list[Dataset]:
         """Apply a new RAM budget at once; the datasets it dropped from memory."""

@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import QApplication, QStyle, QTreeView
 from helab.models.StatusReport import StatusReport
 from helab.resources.icons import StatusIcons
 from helab.utils.io_service import IORequest, IOService, get_io_service
+from helab.utils.number_format import byte_size
 from helab.utils.folder_cache import SCANS, get_folder_cache, store_options
 from helab.utils.time_format import relative_age
 from helab.utils.scan_history import folder_identity
@@ -130,6 +131,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.load_states: dict[str, str] = {}
         # The tab's selected folder whose automatic load waits while the disk cache is 80% full.
         self.auto_load_paused_path: str | None = None
+        # Folders whose load stopped, or didn't start, for being large: (estimate, refused).
+        self.large_paths: dict[str, tuple[int, bool]] = {}
         self.cache.resultReady.connect(self._on_event)
         self.cache.snapshotChanged.connect(self._shared_snapshot_changed)
         self.cache.datasetChanged.connect(self._shared_dataset_changed)
@@ -378,6 +381,10 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                           "paused": "Loading paused while the current tab browses or loads"}.get(load_state, load_state))
         elif node.path == self.auto_load_paused_path:
             lines.append("Auto-load paused — disk cache 80% full · right-click › Load data")
+        elif node.path in self.large_paths:
+            estimate, refused = self.large_paths[node.path]
+            lines.append(f"Too large to load · ~{byte_size(estimate)} in RAM, over 30% of RAM" if refused else
+                         f"Large folder · ~{byte_size(estimate)} in RAM · right-click › Load data")
         lines.append("Here: " + self._own_text(node))
         lines.append("Subfolders: " + self._subfolders_text(node))
         # Each cache: its date and its freshness against the folder's modified time, stated once.

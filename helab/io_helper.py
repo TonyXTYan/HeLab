@@ -15,7 +15,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from helab.utils import file_kinds
+from helab.utils import file_kinds, large_folder
 
 if TYPE_CHECKING:
     from helab.utils.cache_store import CacheStore, SaveGuard
@@ -142,12 +142,20 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit,
             errors.append(dataset.error)
         else:
             entry["disk_cached"] = dataset.value is not None
-            entry["cache_info"] = {} if dataset.value is None else _cache_info(dataset.value["info"])
+            entry["cache_info"] = {} if dataset.value is None else _listed_sizes(
+                _cache_info(dataset.value["info"]), dataset.value)
         saved[path] = entry
     if errors:
         more = f" (and {len(errors) - 1} more)" if len(errors) > 1 else ""
         send({"kind": "cache_warning", "message": f"{errors[0]}{more}"})
     return saved
+
+
+def _listed_sizes(info: dict[str, Any], dataset: Any) -> dict[str, Any]:
+    """A listed dataset's ``info`` with its TXY files' size and its size in RAM."""
+    if not info:
+        return info
+    return {**info, "txy_bytes": int(dataset["source_bytes"]), "ram_bytes": int(dataset["ram_bytes"])}
 
 
 def _dataset_flags(store: CacheStore | None, path: str, send: Emit) -> dict[str, Any]:
@@ -493,11 +501,13 @@ def _saved_fingerprint(row: Any) -> list[tuple[int, int, int]]:
 
 
 def read_cached(path: str, output: str, send: Emit = emit,
-                cache_options: dict[str, Any] | None = None) -> None:
+                cache_options: dict[str, Any] | None = None, *,
+                limits: dict[str, Any] | None = None, allow_large: bool = False) -> None:
     """Send a folder's dataset from the local disk cache, never touching the source folder.
 
     The caller shows it as not yet checked; a later ``load`` with it as the RAM
-    base checks the folder.
+    base checks the folder. A large dataset (its TXY files' size) stops with
+    ``too_large`` before it is read, unless ``allow_large``.
     """
     import numpy as np
     from helab.utils.cache_store import unpack_dataset
@@ -505,12 +515,19 @@ def read_cached(path: str, output: str, send: Emit = emit,
     if store is None:
         raise ValueError("Disk cache unavailable")
     try:
+        record = store.read_dataset_row(path)
+        if record.value is not None and _too_large(
+                large_folder.estimate(_saved_fingerprint(record.value)), limits, allow_large, send):
+            return
         found = store.read_dataset(path)
         if found.failed:
             raise ValueError(found.error)
         if found.value is None:
             raise ValueError("No cached data for this folder")
         row, packed = found.value
+        # Checked again on what was read: the dataset may have been replaced since.
+        if _too_large(large_folder.estimate(_saved_fingerprint(row)), limits, allow_large, send):
+            return
         data = unpack_dataset(packed)
         if data is None:
             raise ValueError("No cached data for this folder")
@@ -521,7 +538,7 @@ def read_cached(path: str, output: str, send: Emit = emit,
     fingerprint = [list(entry) for entry in saved]
     by_shot = {int(entry[0]): entry for entry in fingerprint}
     problematic = {value for value in row["problematic"] if isinstance(value, int)}
-    info = _cache_info(row["info"])
+    info = _with_sizes(_cache_info(row["info"]), row)
     send({"kind": "load_source", "source": "disk", "cache_reason": ""})
     rows = size = 0
     last_progress = 0.0
@@ -570,7 +587,7 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
     if found.value is None:
         return False
     row = found.value
-    info = _cache_info(row["info"])
+    info = _with_sizes(_cache_info(row["info"]), row)
     as_of = _as_of(info)
     if info.get("signature") != base_signature or info.get("unsettled") or as_of is None:
         return False
@@ -597,7 +614,7 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
 def load(path: str, output: str, send: Emit = emit,
          cache_options: dict[str, Any] | None = None,
          memory: list[list[int]] | None = None, base_signature: str = "",
-         expected: str = "") -> None:
+         expected: str = "", *, limits: dict[str, Any] | None = None, allow_large: bool = False) -> None:
     """Load converted TXY files, reusing unchanged shots from RAM and disk cache.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for shots the caller already holds
@@ -605,6 +622,8 @@ def load(path: str, output: str, send: Emit = emit,
     ``memory_shots``. The disk cache is updated after ``loaded`` is sent.
     ``base_signature`` names the dataset those shots belong to; if it is the cached
     dataset and the folder is unmodified since, one folder stat is the whole check.
+    After its scan phase (saved as the folder's summary), a load whose new data is large
+    (``limits``) stops with ``too_large`` before reading anything, unless ``allow_large``.
     """
     from helab.utils.cache_store import StoreError
     store = _open_store(cache_options, send)
@@ -618,7 +637,8 @@ def load(path: str, output: str, send: Emit = emit,
             except StoreError as exc:
                 send({"kind": "cache_warning", "message": f"Disk cache can't be updated: {exc}"})
         _load(path, output, send, store, guard, bool(cache_options), memory, base_signature, expected,
-              (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"))
+              (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
+              limits=limits, allow_large=allow_large)
     finally:
         if store is not None:
             store.close()
@@ -626,7 +646,8 @@ def load(path: str, output: str, send: Emit = emit,
 
 def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: SaveGuard | None, cache_on: bool,
           memory: list[list[int]] | None, base_signature: str, expected: str, budget: int | None,
-          budget_set_at: float | None = None) -> None:
+          budget_set_at: float | None = None, *, limits: dict[str, Any] | None = None,
+          allow_large: bool = False) -> None:
     from helab.utils.cache_store import StoreError
     if (base_signature and store is not None and memory and expected in ("", base_signature)
             and _unchanged_since_cache(path, send, store, base_signature, memory)):
@@ -675,9 +696,6 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         fingerprint = [item for item in fingerprint if item[0] not in young]
         if not files:
             raise ValueError("TXY files are still being written — Retry")
-    total_size = sum(size for _, size, _ in fingerprint)
-    if total_size > 1 << 30:
-        raise ValueError("Folder exceeds the 1 GiB input limit")
     # This listing and fingerprint are a complete status check of this folder, so
     # browsing skips its details scan (step 2) while this load runs, unless the
     # folder has subfolders (their dates come from step 2). Sent and saved before any
@@ -688,6 +706,11 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     current = {shot: (size, modified) for shot, size, modified in fingerprint}
     in_memory = {int(shot) for shot, size, modified in memory or ()
                  if current.get(int(shot)) == (size, modified)}
+    if guard is not None and store is not None:
+        _save_summary(store, path, summary, guard, send)
+    # What this load would add to RAM: shots the caller doesn't hold already.
+    if _too_large(large_folder.estimate(fingerprint, in_memory), limits, allow_large, send):
+        return
     data: dict[int, Any] = {}
     cached = False
     cache_reason = "Disk cache unavailable" if store is None else "No saved cache fingerprint"
@@ -699,8 +722,6 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     had_dataset: bool | None = None if cache_on and store is None else False
     if store is not None:
         from helab.utils.cache_store import unpack_dataset
-        if guard is not None:
-            _save_summary(store, path, summary, guard, send)
         try:
             row_read = store.read_dataset_row(path)
             if row_read.failed:
@@ -716,12 +737,17 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             had_dataset = row is not None
             saved_fingerprint = _saved_fingerprint(row) if row is not None else None
             previous = [value for value in row["problematic"] if isinstance(value, int)] if row is not None else []
-            cache_info = _cache_info(row["info"]) if row is not None else {}
+            cache_info = _with_sizes(_cache_info(row["info"]), row) if row is not None else {}
             if saved_fingerprint is not None:
                 baseline = {shot: (size, modified) for shot, size, modified in saved_fingerprint}
 
+            # Unpacking brings the whole cached dataset into RAM, more than the folder now holds if
+            # it shrank: when that is too large, the cache isn't used and the files are read.
+            too_big = packed is not None and row is not None and bool(large_folder.verdict(
+                large_folder.estimate(_saved_fingerprint(row)), limits, allow_large))
+
             def unpack() -> dict[int, Any] | None:
-                return unpack_dataset(packed) if packed is not None else None
+                return unpack_dataset(packed) if packed is not None and not too_big else None
 
             if saved_fingerprint == fingerprint and packed is None:
                 # The caller already holds every shot: no need to decompress the cache.
@@ -740,6 +766,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                         if shot in current and baseline.get(shot) == current[shot]}
                 reused = set(data)
                 problematic = [shot for shot in previous if shot in reused]
+            if too_big:
+                cache_reason = "Cached dataset too large to reuse"
         except Exception as exc:
             # A cache miss/failure must not prevent loading the actual files.
             data, cached, reused, problematic = {}, False, set(), []
@@ -884,7 +912,10 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         file = store.write_dataset_file(pack_dataset(data))
         info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(
             json.dumps(fingerprint).encode()).hexdigest(), "action": "updated" if had_dataset else "created",
-            "counts": load_counts, "unsettled": unsettled, "kind": file_kinds.TXY.name, "format": DATASET_FORMAT}
+            "counts": load_counts, "unsettled": unsettled, "kind": file_kinds.TXY.name, "format": DATASET_FORMAT,
+            # For the large-folder check before a later cached read.
+            "txy_bytes": large_folder.estimate(fingerprint),
+            "ram_bytes": sum(int(array.nbytes) for array in data.values())}
         result = store.save_dataset(path, file, {
             "ram_bytes": sum(int(array.nbytes) for array in data.values()),
             "rows": sum(len(array) for array in data.values()), "shots": len(data),
@@ -932,6 +963,23 @@ def folder_icons(paths: list[str], send: Emit = emit) -> None:
         send({"kind": "folder_icon", "path": path, "png": encoded})
     # Keep the QApplication alive until every pixmap and buffer has been used.
     _ = app
+
+
+def _too_large(estimate: int, limits: dict[str, Any] | None, allow_large: bool, send: Emit) -> bool:
+    """Stop before reading: the data would take ``estimate`` bytes of RAM, which needs the
+    user's yes (``large``) or is never loaded (``refused``)."""
+    verdict = large_folder.verdict(estimate, limits, allow_large)
+    if verdict:
+        send({"kind": "too_large", "estimate": estimate, "refused": verdict == "refused"})
+    return bool(verdict)
+
+
+def _with_sizes(info: dict[str, Any], row: Any) -> dict[str, Any]:
+    """A dataset's ``info`` with its TXY files' size and its size in RAM, for the large-folder check."""
+    if not info:
+        return info
+    sizes = {"txy_bytes": large_folder.estimate(_saved_fingerprint(row)), "ram_bytes": int(row["ram_bytes"])}
+    return {**info, **sizes}
 
 
 def _pending_event(store: CacheStore, path: str, result: Any) -> dict[str, Any]:
@@ -1126,9 +1174,11 @@ def main() -> None:
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),
-                 expected=request.get("signature", ""))
+                 expected=request.get("signature", ""), limits=request.get("limits"),
+                 allow_large=bool(request.get("allow_large")))
         elif operation == "cached":
-            read_cached(request["path"], request["output"], cache_options=request.get("cache"))
+            read_cached(request["path"], request["output"], cache_options=request.get("cache"),
+                        limits=request.get("limits"), allow_large=bool(request.get("allow_large")))
         elif operation == "invalidate":
             from helab.utils.cache_store import CacheStore
             with CacheStore(request["cache"]["directory"]) as store:

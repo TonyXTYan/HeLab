@@ -16,7 +16,14 @@ from helab.utils.number_format import fnum
 from helab.utils.io_service import IOService
 from helab.utils.time_format import clock as stopwatch, relative_age
 from helab.views.ElidedLabel import ElidedLabel
-from helab.views.FolderExplorer import AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LOAD_ORIGINS, FolderExplorer
+from helab.views.FolderExplorer import (
+    AMBER, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, LOAD_ORIGINS, REFUSED_TOOLTIP, FolderExplorer,
+    large_text,
+)
+
+
+# Marks the large-folder part of a state row, which is then amber.
+LARGE_MARK = "Update not loaded: "
 
 
 class FolderDetailsPanel(QScrollArea):
@@ -102,6 +109,13 @@ class FolderDetailsPanel(QScrollArea):
             rows["io"] = (service.activity_summary(), service.queue_tooltip())
         for key, (text, tooltip) in rows.items():
             self.set_row(key, text, tooltip)
+        # A large folder's state is amber, as on the summary line.
+        large = explorer is not None and explorer.large_state(explorer.selected_path_globally) is not None
+        style = f"color: {AMBER};" if large and rows["state"][0].startswith(("Large folder", "Too large")) else ""
+        if large and rows["state"][0] and not style and LARGE_MARK in rows["state"][0]:
+            style = f"color: {AMBER};"
+        if self.values["state"].styleSheet() != style:
+            self.values["state"].setStyleSheet(style)
 
     def _folder_rows(self, explorer: FolderExplorer) -> dict[str, tuple[str, str]]:
         path = explorer.selected_path_globally
@@ -124,6 +138,9 @@ class FolderDetailsPanel(QScrollArea):
                              "Another load is running; browsing past folders does not queue them.")
         elif explorer.auto_load_paused_path == path and not shown:
             rows["state"] = (AUTO_LOAD_PAUSED + " · Load data", AUTO_LOAD_PAUSED_TOOLTIP)
+        elif (large := explorer.large_state(path)) is not None and not shown:
+            rows["state"] = (large_text(*large) + ("" if large[1] else " · Load anyway…"),
+                             REFUSED_TOOLTIP if large[1] else LARGE_TOOLTIP)
         elif opened:
             # Not loading: shown from the cache with auto-load off, or its check was cancelled.
             rows["state"] = ("Loaded from cache · not checked yet", "Shown from memory or the disk cache; "
@@ -132,6 +149,7 @@ class FolderDetailsPanel(QScrollArea):
             changed = node is not None and dataset is not None and FolderExplorer._changed_since_load(node, dataset)
             rows["state"] = ("Folder changed · showing previous data" if changed else "Showing previous data",
                              "The loaded data no longer matches the folder. Load data to update it.")
+
         elif node and node.error:
             rows["state"] = (node.error, node.error)
         elif explorer.scan_message:
@@ -145,6 +163,12 @@ class FolderDetailsPanel(QScrollArea):
         if not loading and not shown and node is not None and (node.txy_count or node.report and node.report.d_txy_shots):
             found = node.txy_count or (len(node.report.d_txy_shots or []) if node.report else 0)
             rows["files"] = (f"{found:,} TXY found", "")
+        large = explorer.large_state(path)
+        if large is not None and (shown or opened) and not loading and not explorer.load_error:
+            # The update didn't load for being large: say so beside the data still shown.
+            rows["state"] = (f"{rows['state'][0]} · {LARGE_MARK}{large_text(*large)}"
+                             + ("" if large[1] else " · Load anyway…"),
+                             REFUSED_TOOLTIP if large[1] else LARGE_TOOLTIP)
         cache = explorer.model.cache
         if path in cache.pending_saves and (waiting := cache.cache_status(path).error):
             # A save held for the user's answer (Make room / Save update); one question at a time.

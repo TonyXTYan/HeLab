@@ -272,7 +272,8 @@ def test_visible_folder_restores_failure_before_selection_load_and_manual_recove
     qtbot.addWidget(explorer)
     cache, path = explorer.model.cache, str(child)
     options = explorer.model._cache_options
-    monkeypatch.setattr(explorer, "_load_payload", lambda p: {"cache": options, "signature": explorer.model.nodes[p].signature})
+    monkeypatch.setattr(explorer, "_load_payload", lambda p, deliberate=False: {
+        "cache": options, "signature": explorer.model.nodes[p].signature})
     if had_counts:
         scan(path, lambda e: None, options, revision=10)
     stat = child.stat()

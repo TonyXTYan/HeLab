@@ -154,6 +154,8 @@ class DatasetRow(DatasetRecord):
 class DatasetInfo(TypedDict):
     bytes: int
     ram_bytes: int
+    # Its TXY files' size on disk (the large-folder estimate), from the fingerprint.
+    source_bytes: int
     info: dict[str, Any]
     last_used: float
 
@@ -830,15 +832,16 @@ class CacheStore:
     def read_dataset_infos(self, paths: Sequence[str]) -> dict[str, Read[DatasetInfo]]:
         """Each folder's dataset sizes and ``info``, without its fingerprint: for listings."""
         unique = list(dict.fromkeys(paths))
-        rows: dict[str, tuple[int, int, str, float]] = {}
+        rows: dict[str, tuple[int, int, str, float, int]] = {}
         try:
             with self.transaction(write=False):
                 for start in range(0, len(unique), 500):
                     chunk = unique[start:start + 500]
-                    for path, size, ram_bytes, info, last_used in self._conn.execute(
-                            f"SELECT path, bytes, ram_bytes, info, last_used FROM datasets "
+                    for path, size, ram_bytes, info, last_used, source in self._conn.execute(
+                            f"SELECT path, bytes, ram_bytes, info, last_used, (SELECT COALESCE(SUM("
+                            f"json_extract(f.value, '$[1]')), 0) FROM json_each(fingerprint) f) FROM datasets "
                             f"WHERE path IN ({','.join('?' * len(chunk))})", chunk):
-                        rows[path] = (size, ram_bytes, info, last_used)
+                        rows[path] = (size, ram_bytes, info, last_used, source)
         except (sqlite3.Error, StoreError) as exc:
             failure = _error(f"Disk cache could not be read: {exc}")
             return {path: failure for path in unique}
@@ -847,10 +850,10 @@ class CacheStore:
             if path not in rows:
                 result[path] = _missing()
                 continue
-            size, ram_bytes, info, last_used = rows[path]
+            size, ram_bytes, info, last_used, source = rows[path]
             try:
                 result[path] = _found(DatasetInfo(bytes=int(size), ram_bytes=int(ram_bytes), info=json.loads(info),
-                                                  last_used=float(last_used)))
+                                                  last_used=float(last_used), source_bytes=int(source or 0)))
             except ValueError as exc:
                 result[path] = _error(f"Saved dataset record is unreadable: {exc}")
         return result
