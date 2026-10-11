@@ -21,7 +21,7 @@ from typing import Any, List, Optional
 import psutil
 from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
     QDir, QDateTime, QSettings, QStorageInfo, QRect
-from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QPainter, QPixmap, QResizeEvent, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QPainter, QPixmap, QKeySequence
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget, QHBoxLayout, \
     QPushButton, QTreeWidget, QTreeWidgetItem, QInputDialog, QProgressBar, QToolButton, QMessageBox
@@ -1207,18 +1207,6 @@ class HelabMainWindow(QMainWindow):
             explorer = self.tab_widget.widget(index)
             if isinstance(explorer, FolderExplorer):
                 explorer.set_auto_scan_visible(enabled)
-
-
-    def resizeEvent(self, a0: QResizeEvent | None) -> None:
-        self.setUpdatesEnabled(False)
-        super().resizeEvent(a0)
-        QTimer.singleShot(100, self._reenable_updates_after_resize)
-
-    def _reenable_updates_after_resize(self) -> None:
-        try:
-            self.setUpdatesEnabled(True)
-        except RuntimeError:
-            logging.debug("HelabMainWindow._reenable_updates_after_resize: window has been deleted, skipping.")
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         if self._closing:

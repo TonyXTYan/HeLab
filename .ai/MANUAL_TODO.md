@@ -65,6 +65,9 @@ tested offscreen only. Check on native macOS (and once on a Windows lab PC):
 
 ## v0.0.5a: native UI and packaged application
 
+- [ ] On native macOS (and a Windows lab PC), start a large manual recursive basic
+  scan, resize once and repeatedly, and confirm painting, progress and Cancel work
+  before scans finish ([resize fix](sessions/2026-10-11-codex-resize-during-scan/notes.md#implementation)). Added 2026-10-11.
 - [ ] Build the PyInstaller app and confirm the right-pointing SVG triangle
   renders (including Qt's SVG icon plugin), helper operations run and native
   folder/volume icons appear.

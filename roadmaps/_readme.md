@@ -39,6 +39,9 @@ How to use it:
 
 ## Known issues
 
+- [x] Resize repaint freeze: removed main-window repaint suppression; pytest covers
+  painting and scan cancellation ([fix](../.ai/sessions/2026-10-11-codex-resize-during-scan/notes.md#implementation)) (2026-10-11; native check in [MANUAL_TODO](../.ai/MANUAL_TODO.md)).
+
 - [x] Disk-cache eviction can drop scan-failure history and other records to make room
   for data, until the cache rebuild (S5/S6). Fixed: records are never removed to make room
   (`fd4e020`, `ef4c0ca`). The contention part (reads silently

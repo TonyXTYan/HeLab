@@ -4,7 +4,7 @@ from typing import Generator, Any
 from unittest.mock import patch
 
 import pytest
-from PyQt6.QtGui import QIcon, QResizeEvent
+from PyQt6.QtGui import QIcon
 from pytestqt.qtbot import QtBot
 from PyQt6.QtWidgets import QApplication, QMessageBox, QListWidget, QMenu, QWidget
 from PyQt6.QtCore import Qt
@@ -171,14 +171,6 @@ def test_close_event_main_window(main_window: HelabMainWindow, qtbot: QtBot) -> 
 #         assert main_window.action_tab_new.isEnabled()
 #         assert main_window.action_tab_rescan.isEnabled()
 #         assert main_window.action_tab_folder_up.isEnabled()
-
-
-# def test_resize_event_main_window(main_window: HelabMainWindow, qtbot: QtBot) -> None:
-#     with patch.object(main_window, 'setUpdatesEnabled') as mock_set_updates:
-#         resize_event = QResizeEvent(main_window.size(), main_window.size())
-#         main_window.resizeEvent(resize_event)
-#         mock_set_updates.assert_any_call(False)
-#         mock_set_updates.assert_any_call(True)
 
 
 def test_handle_exit_main_window(main_window: HelabMainWindow, qtbot: QtBot) -> None:
