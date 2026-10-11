@@ -128,6 +128,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         # Dataset loads by path ("queued", "loading" or "paused"); kept across root changes
         # because background loads outlive the visible tree.
         self.load_states: dict[str, str] = {}
+        # The tab's selected folder whose automatic load waits while the disk cache is 80% full.
+        self.auto_load_paused_path: str | None = None
         self.cache.resultReady.connect(self._on_event)
         self.cache.snapshotChanged.connect(self._shared_snapshot_changed)
         self.cache.datasetChanged.connect(self._shared_dataset_changed)
@@ -374,6 +376,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if load_state:
             lines.append({"loading": "Loading dataset…", "queued": "Queued to load dataset",
                           "paused": "Loading paused while the current tab browses or loads"}.get(load_state, load_state))
+        elif node.path == self.auto_load_paused_path:
+            lines.append("Auto-load paused — disk cache 80% full · right-click › Load data")
         lines.append("Here: " + self._own_text(node))
         lines.append("Subfolders: " + self._subfolders_text(node))
         # Each cache: its date and its freshness against the folder's modified time, stated once.

@@ -2,6 +2,17 @@
 from typing import Optional
 
 
+def byte_size(num: int | float) -> str:
+    """Sizes in binary units, as budgets are set: ``850 B``, ``706 MB``, ``1.2 GB``, ``8.0 GB``."""
+    value = max(0.0, float(num))
+    unit = "B"
+    for unit in ("B", "kB", "MB", "GB", "TB"):
+        if value < 1023.5 or unit == "TB":
+            break
+        value /= 1024
+    return f"{value:.0f} {unit}" if unit == "B" or value >= 99.95 else f"{value:.1f} {unit}"
+
+
 def fnum(num: Optional[int]) -> str:
     """
     Format a number with a suffix for thousands, millions, etc.

@@ -15,8 +15,8 @@ from PyQt6.QtWidgets import QDialog, QMainWindow, QPushButton, QTabWidget, QTool
 
 from helab.resources.icons import IconsInitUtil
 from helab.utils.constants import DEFAULT_LOAD_MODE, LOAD_MODE_LABELS, LOAD_MODE_SETTING, read_load_mode
-from helab.utils.constants import AUTO_SCAN_VISIBLE_SETTING, SIMULTANEOUS_IO_SETTING
-from helab.utils.folder_cache import FolderCache, get_folder_cache
+from helab.utils.constants import AUTO_SCAN_VISIBLE_SETTING, SIMULTANEOUS_IO_SETTING, read_disk_budget
+from helab.utils.folder_cache import FolderCache, get_folder_cache, store_options
 from helab.utils.io_service import IORequest, IOService
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.FolderTabWidget import FolderTabWidget
@@ -406,17 +406,45 @@ def test_folder_io_menu_and_settings_apply_to_existing_and_new_tabs(
     assert settings.value(AUTO_SCAN_VISIBLE_SETTING, type=bool)
 
     # Exercise the real Save dialog and main-window application after it closes.
+    monkeypatch.setattr("helab.utils.folder_cache._disk_budget", read_disk_budget(settings))
+    cache = get_folder_cache(service)
+    admin: list[str] = []
+    queue = cache.cache_admin
+
+    def record(action: str, **params: Any) -> str:
+        admin.append(action)
+        return queue(action, **params)
+    monkeypatch.setattr(cache, "cache_admin", record)
+
     def save_dialog() -> None:
         dialog = window.settings_dialog
         dialog.simultaneous_io_spin.setValue(4)
         dialog.auto_scan_visible_checkbox.setChecked(False)
+        dialog.cache_tab.disk_budget.setValue(10.0)
         dialog.save_button.click()
+        # Saved once the store has recorded the new disk budget.
+        request = next(r for r in service.pending if r.payload.get("action") == "budget")
+        for event in ({"kind": "admin_result", "action": "budget", "next_deadline": None}, {"kind": "done"}):
+            service.resultReady.emit(request, event)
 
     monkeypatch.setattr("helab.views.HelabMainWindow.SettingsDialog",
-                        lambda parent: SettingsDialog(parent, settings=settings))
+                        lambda parent, **kwargs: SettingsDialog(parent, settings=settings, **kwargs))
     QTimer.singleShot(0, save_dialog)
     window.show_settings_dialog()
     assert service.max_operations == 4
+    # The store had the new disk budget before Settings saved it; the app uses it from now on.
+    # Then an inventory, for room plans under the new budget.
+    assert store_options()["budget"] == 10 << 30 and admin[-2:] == ["budget", "inventory"]
+    assert abs(store_options()["budget_set_at"] - time.time()) < 60
+    # Reset saves the default budget at once; cancelled, the store is still told.
+    def reset_and_cancel() -> None:
+        dialog = window.settings_dialog
+        dialog.cache_tab.confirm = lambda title, text, verb: True
+        dialog.reset_settings()
+        dialog.reject()
+    QTimer.singleShot(0, reset_and_cancel)
+    window.show_settings_dialog()
+    assert store_options()["budget"] == 8 << 30 and admin[-2:] == ["budget", "inventory"]
     assert not action.isChecked() and not first.auto_scan_visible and not second.auto_scan_visible
     action.trigger()
     window.add_new_folder_explorer_tab(target_path=str(tmp_path))

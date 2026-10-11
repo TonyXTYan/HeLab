@@ -150,6 +150,45 @@ def read_disk_budget(settings: QSettings) -> int:
     return max(MIN_DISK_BUDGET, value)
 
 
+# The RAM budget for loaded folders not shown in a tab, saved as steps of 1/128 of the
+# computer's RAM so it still makes sense after a RAM upgrade.
+RAM_BUDGET_SETTING = "ram_budget_steps"
+RAM_STEPS = 128
+DEFAULT_RAM_STEPS = 16
+MAX_RAM_STEPS = 64
+MIN_RAM_BUDGET = 1 << 30
+
+
+def total_ram() -> int:
+    import psutil
+    return int(psutil.virtual_memory().total)
+
+
+def ram_step_bytes(total: int | None = None) -> int:
+    return max(1, (total_ram() if total is None else total) // RAM_STEPS)
+
+
+def ram_step_range(total: int | None = None) -> tuple[int, int]:
+    """The allowed steps: at least max(1 GB, 1 step), at most half of RAM."""
+    step = ram_step_bytes(total)
+    return min(MAX_RAM_STEPS, max(1, -(-MIN_RAM_BUDGET // step))), MAX_RAM_STEPS
+
+
+def read_ram_budget_steps(settings: QSettings, total: int | None = None) -> int:
+    """The saved RAM budget in steps, or the default, within the allowed range."""
+    low, high = ram_step_range(total)
+    try:
+        value = int(settings.value(RAM_BUDGET_SETTING, DEFAULT_RAM_STEPS))
+    except (TypeError, ValueError, OverflowError):
+        value = DEFAULT_RAM_STEPS
+    return max(low, min(high, value))
+
+
+def read_ram_budget(settings: QSettings, total: int | None = None) -> int:
+    """The saved RAM budget in bytes."""
+    return read_ram_budget_steps(settings, total) * ram_step_bytes(total)
+
+
 def read_io_concurrency(settings: QSettings) -> int:
     """Use a safe default for missing or malformed saved limits."""
     try:

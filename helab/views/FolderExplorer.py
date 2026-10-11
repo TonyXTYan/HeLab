@@ -28,6 +28,10 @@ from helab.views.ElidedLabel import ElidedLabel
 # Where a load's data came from, as the cache summary and Folder details name it.
 LOAD_ORIGINS = {"disk": "disk cache", "files": "TXY files", "merged": "disk cache + new TXY files",
                 "updated": "memory + new TXY files", "memory": "memory"}
+# A folder without cached data that wasn't loaded automatically: the disk cache is 80% full.
+AUTO_LOAD_PAUSED = "Auto-load paused — disk cache 80% full"
+AUTO_LOAD_PAUSED_TOOLTIP = ("Load this folder now. Automatic loading of folders without cached data is paused "
+                            "while the disk cache is 80% full; free space in Settings → Cache.")
 
 
 def paint_spinner(painter: QPainter, rect: QRect, angle: int, selected: bool = False) -> None:
@@ -253,6 +257,7 @@ class FolderExplorer(QWidget):
         self.model.directoryLoaded.connect(self._directory_loaded)
         self.model.cache.resultReady.connect(self._io_event)
         self.model.cache.datasetChanged.connect(self._shared_dataset_changed)
+        self.model.cache.autoLoadPauseChanged.connect(self._auto_load_pause_changed)
         self.model.activityChanged.connect(self._update_activity)
         self.animation = QTimer(self)
         self.animation.timeout.connect(self._animate)
@@ -337,8 +342,9 @@ class FolderExplorer(QWidget):
 
     def _retry(self) -> None:
         # A load retry keeps its per-file timeouts; a hung read is genuinely stuck.
-        if self.load_error:
-            self.load_to_ram_cache(self.selected_path_globally, dwell=False)
+        if self.load_error or self.auto_load_paused_path == self.selected_path_globally:
+            # Deliberate: it loads even while automatic loads are paused.
+            self.load_to_ram_cache(self.selected_path_globally, dwell=False, explicit=True)
         else:
             self.model.request_scan(self.listing_retry_path, priority=True, force=True, no_timeout=True)
 
@@ -363,6 +369,7 @@ class FolderExplorer(QWidget):
             if path != self.selected_path_globally:
                 self._release_load()
                 self._cancelled_load_path = self._cache_read_path = None
+                self.auto_load_paused_path = None
                 self.selected_path_globally = path
             if not self._check_replaces_listing(path):
                 self.model.request_scan(path, priority=True)
@@ -554,6 +561,15 @@ class FolderExplorer(QWidget):
             return True
         node = self.model.nodes.get(path)
         in_memory = node is not None and self.model.cache.dataset(path, node.signature) is not None
+        if (not explicit and not cached and not in_memory and path not in self._bg_paths
+                and self.model.cache.auto_load_paused):
+            # Over 80% of the disk cache budget, new folders load only when asked.
+            if self.auto_load_paused_path != path:
+                self.auto_load_paused_path = path
+                self._update_activity()
+                self.loadStateChanged.emit()
+            return False
+        self.auto_load_paused_path = None
         if (dwell and self.load_mode == "queue" and path not in self._bg_paths
                 and not in_memory and self.model.service.load_busy()):
             # Browsing past folders must not fill the queue.
@@ -581,6 +597,30 @@ class FolderExplorer(QWidget):
             self.model.set_load_state(path, "")
         self.loadStateChanged.emit()
         return accepted
+
+    @property
+    def auto_load_paused_path(self) -> str | None:
+        """The selected folder whose automatic load waits: the disk cache is 80% full."""
+        return self.model.auto_load_paused_path
+
+    @auto_load_paused_path.setter
+    def auto_load_paused_path(self, path: str | None) -> None:
+        previous, self.model.auto_load_paused_path = self.model.auto_load_paused_path, path
+        for changed in {previous, path} - {None}:
+            node = self.model.nodes.get(changed) if changed else None
+            if node:
+                self.model.changed(node)
+
+    def _auto_load_pause_changed(self, paused: bool) -> None:
+        """Below 80% again (or Ignore): the selected folder's automatic load starts by itself."""
+        path = self.auto_load_paused_path
+        if paused or self.closed or path is None:
+            return
+        self.auto_load_paused_path = None
+        if path == self.selected_path_globally and self.auto_load_ram:
+            self.load_to_ram_cache(path)
+        self._update_activity()
+        self.loadStateChanged.emit()
 
     def _show_cached(self, path: str) -> bool:
         """Display this folder's dataset from memory, or start reading it from the
@@ -1041,11 +1081,14 @@ class FolderExplorer(QWidget):
         self.cancel_load_button.setToolTip(
             "Cancel the folder listing retry (Esc)" if retrying and not (self.loading or self.load_waiting)
             else "Cancel loading in this tab (Esc)")
-        self.retry_button.setVisible(bool(self.load_error or scan_error or root_error) and not (
+        paused = self.auto_load_paused_path == path
+        self.retry_button.setVisible(bool(self.load_error or scan_error or root_error or paused) and not (
             self.loading or self.load_waiting or retrying))
         retry_path = self.listing_retry_path
-        self.retry_button.setEnabled(bool(self.load_error) or not self.model.refresh_pending(retry_path))
+        self.retry_button.setText("Load" if paused and not self.load_error else "Retry")
+        self.retry_button.setEnabled(bool(self.load_error) or paused or not self.model.refresh_pending(retry_path))
         self.retry_button.setToolTip("Load this folder again" if self.load_error else
+                                     AUTO_LOAD_PAUSED_TOOLTIP if paused else
                                      "Wait for this folder's refresh to finish" if not self.retry_button.isEnabled() else
                                      "List this folder again, without a time limit")
         scan_message = self.scan_message
@@ -1100,6 +1143,8 @@ class FolderExplorer(QWidget):
                 text += f" · {self.load_error}"
             elif self.load_waiting:
                 text += f" · Waiting {self.DWELL_MS // 1000} s before queueing"
+            elif self.auto_load_paused_path == path:
+                text += f" · {AUTO_LOAD_PAUSED}"
         elif report.d_dld_shots or node and node.raw_count:
             raw = node.raw_count if node else len(report.d_dld_shots or [])
             text = f"{raw:,} raw shot{'s' if raw != 1 else ''} found · No converted TXY files"
@@ -1192,6 +1237,8 @@ class FolderExplorer(QWidget):
         suffix = f" · Cached {ago}" if ago else ""
         if cache.disk_cache_saving(path):
             text = "Updating cache…" if cache.disk_cached(path) else "Creating cache…"
+        elif path in cache.pending_saves and state.error:
+            text = state.error  # Waiting for the user's answer (Make room / Save update).
         elif state.error:
             text = "Cache update failed" if cache.disk_cached(path) else "Cache creation failed"
         elif (current and self._load_cache_pending and dataset is not None
@@ -1526,6 +1573,7 @@ class FolderExplorer(QWidget):
         self.model.close_cleanup()
         self.model.cache.resultReady.disconnect(self._io_event)
         self.model.cache.datasetChanged.disconnect(self._shared_dataset_changed)
+        self.model.cache.autoLoadPauseChanged.disconnect(self._auto_load_pause_changed)
         self.model.cache.release(self.model.owner)
         self.folder_opened_data = None
         self.displayed_dataset = None

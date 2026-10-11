@@ -12,7 +12,7 @@ import warnings
 import threading
 import time
 from helab.utils.io_service import IORequest, get_io_service
-from helab.utils.folder_cache import get_folder_cache, set_disk_budget
+from helab.utils.folder_cache import get_folder_cache, set_disk_budget, store_options
 from helab.utils.gui_watchdog import GUIWatchdog
 from datetime import datetime, timedelta
 from sys import getsizeof
@@ -33,12 +33,13 @@ from typing_extensions import no_type_check
 from helab.models.ScriptTreeSelector import TreePanelWidget, ParamTreeTabWidget
 from helab.resources.icons import ToolIcons
 from helab.utils.constants import *
-from helab.utils.number_format import fnum
+from helab.utils.number_format import byte_size, fnum
+from helab.views.CacheDialogs import CacheDialogs
 from helab.views.CentralHint import CentralHint
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HoverMenuToolButton import HoverMenuToolButton
-from helab.views.FolderExplorer import FolderExplorer, paint_spinner
+from helab.views.FolderExplorer import AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, FolderExplorer, paint_spinner
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
 from helab.views.SettingsDialog import SettingsDialog
@@ -109,6 +110,12 @@ class HelabMainWindow(QMainWindow):
         self.menu_bar: QMenuBar = menubar
         self.create_menus()
 
+        # The disk cache's questions (Make room, Save update, 80% full), one at a time.
+        cache = get_folder_cache(get_io_service())
+        self.cache_dialogs = CacheDialogs(cache, self, lambda: self.show_settings_dialog(purge=True),
+                                          self.show_status_notice)
+        cache.autoLoadPauseChanged.connect(self._auto_load_pause_changed)
+
         # Create Left Panel (File Tree View)
         self.tab_widget.currentChanged.connect(self.on_current_tab_changed)
 
@@ -138,6 +145,8 @@ class HelabMainWindow(QMainWindow):
         self.status_bar.addWidget(self.status_bar_progress)
         self.status_bar_message_right = QLabel(f"Please wait. GUI loading... v{APP_VERSION} ({APP_COMMIT_HASH})")
         self.status_bar_message_last_update = datetime.now()
+        # A one-time notice shown before the tab's activity until it expires (monotonic time).
+        self._status_notice: tuple[str, float] | None = None
 
         self.status_bar.addPermanentWidget(self.status_bar_message_right)
         self.status_bar_message_right.setToolTip("(App resource usage) / (system total resource usage)")
@@ -166,8 +175,11 @@ class HelabMainWindow(QMainWindow):
         explorer = current if isinstance(current, FolderExplorer) else None
         # Short: this tab's main activity and app-wide counts; Folder details and the tooltip have the rest.
         tab = explorer.activity_brief if explorer else ""
+        if self._status_notice is not None and time.monotonic() > self._status_notice[1]:
+            self._status_notice = None
+        notice = self._status_notice[0] if self._status_notice else ""
         app = service.activity_counts()
-        self.status_bar_message_left.setText(f"{tab}  │  {app}" if tab else app)
+        self.status_bar_message_left.setText("  │  ".join(filter(None, (notice, tab, app))))
         # A load's tooltip already lists the queue and this tab's background loads.
         loading = bool(explorer and explorer.loading)
         summary = service.activity_summary()
@@ -248,7 +260,7 @@ class HelabMainWindow(QMainWindow):
             menu_file.addSeparator()
 
             menu_action_settings = QAction(' Settings...', self)
-            menu_action_settings.triggered.connect(self.show_settings_dialog)
+            menu_action_settings.triggered.connect(lambda: self.show_settings_dialog())
             menu_file.addAction(menu_action_settings)
 
             menu_file.addSeparator()
@@ -303,6 +315,7 @@ class HelabMainWindow(QMainWindow):
             get_io_service().configure_concurrency(
                 read_io_concurrency(settings))
             set_disk_budget(read_disk_budget(settings))
+            get_folder_cache(get_io_service()).set_ram_budget(read_ram_budget(settings))
 
             self.view_toggle_auto_load_ram = QAction('Toggle Auto Load to RAM', self)
             self.view_toggle_auto_load_ram.setCheckable(True)
@@ -423,16 +436,42 @@ class HelabMainWindow(QMainWindow):
                 logging.info(f"{r = }")
 
 
-    def show_settings_dialog(self) -> None:
-        # pass
-        self.settings_dialog = SettingsDialog(self)
+    def show_settings_dialog(self, purge: bool = False) -> None:
+        if self._closing or QApplication.activeModalWidget() is not None:
+            return
+        cache = get_folder_cache(get_io_service())
+        self.settings_dialog = SettingsDialog(self, cache=cache)
+        if purge:
+            self.settings_dialog.show_purge()
         self.settings_dialog.exec()
         settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
         self.apply_load_mode(read_load_mode(settings))
         get_io_service().configure_concurrency(
             read_io_concurrency(settings))
-        set_disk_budget(read_disk_budget(settings))
+        if read_disk_budget(settings) != store_options().get("budget"):
+            # Saved without Save (e.g. Reset, then Cancel): the store is told until it has it.
+            # (After Save it already has it: Settings saves a new disk budget only then.)
+            set_disk_budget(read_disk_budget(settings))
+            cache.sync_budget()
+            # Saves waiting for an answer get room plans for the new budget.
+            cache.cache_admin("inventory")
+        cache.update_auto_load_pause()
+        dropped = cache.set_ram_budget(read_ram_budget(settings))
+        if dropped:
+            size = sum(int(dataset.metadata.get("bytes", 0)) for dataset in dropped)
+            self.show_status_notice(f"RAM budget lowered: dropped {len(dropped)} loaded "
+                                    f"folder{'' if len(dropped) == 1 else 's'} ({byte_size(size)}) not shown in tabs")
         self.apply_auto_scan_visible(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
+
+    def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
+        self._status_notice = (text, time.monotonic() + seconds)
+        self.update_status_bar_left()
+
+    def _auto_load_pause_changed(self, paused: bool) -> None:
+        cache = get_folder_cache(get_io_service())
+        if not paused and not cache.disk_nearly_full():
+            self.show_status_notice("Disk cache below 80% — automatic loading resumed")
+        self._update_folder_details()
 
     def show_memory_usage_window(self) -> None:
         self.memory_usage_window = MemoryUsageWindow()
@@ -948,6 +987,9 @@ class HelabMainWindow(QMainWindow):
             return f"Could not {verb} {name} — see Folder details", explorer.load_error
         if explorer.load_waiting:
             return f"Waiting to load {name}…", ""
+        if explorer.auto_load_paused_path == path and not shown:
+            return f"{name}: {AUTO_LOAD_PAUSED[0].lower()}{AUTO_LOAD_PAUSED[1:]} — right-click it › Load data", \
+                AUTO_LOAD_PAUSED_TOOLTIP
         if explorer.folder_opened_path == path:
             return f"Loaded {name} — run a script to plot it", ""
         if shown:
@@ -1147,6 +1189,7 @@ class HelabMainWindow(QMainWindow):
                 a0.accept()
             return
         self._closing = True
+        self.cache_dialogs.detach()
         self.watchdog.stop()
         for timer in self.findChildren(QTimer):
             timer.stop()

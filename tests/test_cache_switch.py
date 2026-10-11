@@ -184,8 +184,9 @@ def test_folder_cache_submits_the_cleanup_once(monkeypatch: pytest.MonkeyPatch) 
         cache.clean_up_cache()
         cache.clean_up_cache()
         requests = [r for r in service.pending if r.operation == "cache_admin"]
-        assert len(requests) == 1
-        assert requests[0].payload == {"cache": store_options(), "action": "sweep", "params": {}}
+        # The sweep, and the inventory that restores saves still waiting for an answer.
+        assert [r.payload for r in requests] == [{"cache": store_options(), "action": action, "params": {}}
+                                                 for action in ("sweep", "inventory")]
         assert store_options()["directory"].endswith("store-v2")
         assert "cache_admin" in service.LOCAL_OPERATIONS
     finally:
@@ -449,3 +450,15 @@ def test_clear_while_a_scan_reads_saved_results_is_not_undone(
     with CacheStore(options["directory"]) as store:
         assert store.read_record("summaries", path).missing
         assert store.read_record("histories", path).missing
+
+
+def test_a_load_saves_within_the_budget_the_app_set_last(tmp_path: Path) -> None:
+    """A load requested before the user lowered the budget doesn't save over the new one."""
+    source = data_folder(tmp_path)
+    options = options_for(tmp_path)
+    requested = time.time() - 60
+    with CacheStore(options["directory"]) as store:
+        assert store.record_budget(1000, requested + 30) == 1000  # Lowered while it ran.
+    events = run_load(source, tmp_path, {**options, "budget": 1 << 30, "budget_set_at": requested})
+    held = next(event for event in events if event["kind"] in ("cache_full", "cache_saved"))
+    assert held["kind"] == "cache_full" and held["budget"] == 1000

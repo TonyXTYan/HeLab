@@ -16,8 +16,8 @@ import numpy.typing as npt
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 
-from helab.utils.cache_store import store_root
-from helab.utils.constants import DEFAULT_DISK_BUDGET, DIR_CACHES, DISK_CACHE_ENABLED
+from helab.utils.cache_store import APPROVAL_SHARE, store_root
+from helab.utils.constants import DEFAULT_DISK_BUDGET, DEFAULT_RAM_STEPS, DIR_CACHES, DISK_CACHE_ENABLED, ram_step_bytes
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.load_clock import LoadClock
 from helab.utils.scan_history import ScanHistory, empty_history, parse_history, apply_outcome, for_identity, folder_identity
@@ -86,19 +86,24 @@ class SharedJob:
     clock: LoadClock = field(default_factory=LoadClock)
 
 
-# Set from the saved setting at startup (``set_disk_budget``); sent with every request.
+# Set from the saved setting at startup (``set_disk_budget``); sent with every request, with
+# when it was set: the store keeps the latest, so a load that started before the user lowered
+# the budget saves within the new one (``CacheStore._active_budget``).
 _disk_budget = DEFAULT_DISK_BUDGET
+_disk_budget_set_at = 0.0
 
 
 def set_disk_budget(budget: int) -> None:
-    global _disk_budget
-    _disk_budget = int(budget)
+    global _disk_budget, _disk_budget_set_at
+    _disk_budget, _disk_budget_set_at = int(budget), time.time()
 
 
 def store_options() -> dict[str, Any]:
     """What a helper needs to open the disk cache, and its budget in bytes; {} when the
     cache is off for this session. The GUI process never opens the store."""
-    return {"directory": store_root(DIR_CACHES), "budget": _disk_budget} if DISK_CACHE_ENABLED else {}
+    if not DISK_CACHE_ENABLED:
+        return {}
+    return {"directory": store_root(DIR_CACHES), "budget": _disk_budget, "budget_set_at": _disk_budget_set_at}
 
 
 class FolderCache(QObject):
@@ -115,6 +120,14 @@ class FolderCache(QObject):
     pendingSavesChanged = pyqtSignal()
     # A cache_admin job's result: action, event (inventory, admin_result, swept, error).
     cacheAdminResult = pyqtSignal(str, object)
+    # A cache_admin job ended: its owner, action, and "" or why it failed.
+    cacheAdminDone = pyqtSignal(str, str, str)
+    # The disk cache's live usage changed (``disk_usage``).
+    diskUsageChanged = pyqtSignal()
+    # Automatic loads of folders without cached data paused (True) or resumed (False).
+    autoLoadPauseChanged = pyqtSignal(bool)
+    # Usage crossed 80% of the budget (or rose another 10% after Ignore): ask the user once.
+    diskNearlyFull = pyqtSignal()
     MAX_FOLDER_ICONS = 4096
     # Seconds before a sweep the queue rejected is tried again.
     SWEEP_RETRY = 5.0
@@ -123,7 +136,8 @@ class FolderCache(QObject):
     FRESH_SECONDS: float = 10.0
     MAX_SNAPSHOTS: int = 256
     MAX_ENTRIES: int = 100_000
-    MAX_DATA_BYTES: int = 512 << 20
+    # After Ignore, the 80% dialog comes back when usage rises by this share of the budget.
+    IGNORE_STEP = 0.1
 
     def __init__(self, service: IOService) -> None:
         super().__init__(service)
@@ -131,6 +145,16 @@ class FolderCache(QObject):
         self.snapshots: OrderedDict[str, FolderSnapshot] = OrderedDict()
         self.datasets: OrderedDict[tuple[str, str, int], Dataset] = OrderedDict()
         self.pins: dict[str, Dataset] = {}
+        # The RAM budget for datasets no tab shows (Settings → Cache; ``set_ram_budget``).
+        self.max_data_bytes = DEFAULT_RAM_STEPS * ram_step_bytes()
+        # The disk cache's live bytes, as the newest helper measurement reported them.
+        self.disk_usage: int | None = None
+        # Which store and write count it was measured at (``CacheStore.Usage``).
+        self._usage_seq: tuple[str, int] | None = None
+        self.auto_load_paused = False
+        # The 80% dialog was shown for this crossing; after Ignore, the usage it waits for.
+        self._full_warned = False
+        self._full_ignored_until: float | None = None
         self.jobs: dict[tuple[str, str], SharedJob] = {}
         self._producers: dict[str, SharedJob] = {}
         self._deliveries: list[IORequest] = []
@@ -186,6 +210,14 @@ class FolderCache(QObject):
         self._inventory_started = float("-inf")
         # One timer for the store's next cleanup deadline (wall clock).
         self._sweep_deadline: float | None = None
+        # ``sync_budget``: the job telling the store the app's disk budget, retried until it has.
+        self._budget_owner = ""
+        self._budget_timer = QTimer(self)
+        self._budget_timer.setSingleShot(True)
+        self._budget_timer.timeout.connect(self.sync_budget)
+        self._restore_timer = QTimer(self)
+        self._restore_timer.setSingleShot(True)
+        self._restore_timer.timeout.connect(self.restore_pending)
         self._sweep_timer = QTimer(self)
         self._sweep_timer.setSingleShot(True)
         self._sweep_timer.timeout.connect(self._sweep_due)
@@ -474,19 +506,39 @@ class FolderCache(QObject):
         self.pins.pop(owner, None)
         self._evict()
 
-    def _evict(self) -> None:
-        total = sum(int(d.metadata["bytes"]) for d in self.datasets.values())
+    def set_ram_budget(self, budget: int) -> list[Dataset]:
+        """Apply a new RAM budget at once; the datasets it dropped from memory."""
+        self.max_data_bytes = max(0, int(budget))
+        return self._evict()
+
+    def memory_usage(self) -> tuple[int, int, int]:
+        """Loaded datasets in memory: (count, bytes, bytes shown in tabs)."""
+        held = {id(entry): entry for entry in (*self.datasets.values(), *self.pins.values())}
+        shown = {id(entry) for entry in self.pins.values()}
+        total = sum(int(entry.metadata.get("bytes", 0)) for entry in held.values())
+        pinned = sum(int(entry.metadata.get("bytes", 0)) for key, entry in held.items() if key in shown)
+        return len(held), total, pinned
+
+    def _evict(self) -> list[Dataset]:
+        """Drop datasets no tab shows, least recently used first, until the rest fit the RAM budget."""
+        dropped: list[Dataset] = []
+        # Everything held in RAM, once each: tabs may still show datasets no longer in
+        # ``datasets`` (e.g. invalidated), and those count too.
+        _, total, _ = self.memory_usage()
+        pinned = {id(entry) for entry in self.pins.values()}
         for key, entry in list(self.datasets.items()):
-            if total <= self.MAX_DATA_BYTES:
+            if total <= self.max_data_bytes:
                 break
-            if entry not in self.pins.values():
-                total -= int(entry.metadata["bytes"])
+            if id(entry) not in pinned:
+                total -= int(entry.metadata.get("bytes", 0))
                 del self.datasets[key]
+                dropped.append(entry)
                 self.datasetChanged.emit(entry.path)
         count = sum(len(s.entries) for s in self.snapshots.values())
         while self.snapshots and (len(self.snapshots) > self.MAX_SNAPSHOTS or count > self.MAX_ENTRIES):
             _, snapshot = self.snapshots.popitem(last=False)
             count -= len(snapshot.entries)
+        return dropped
 
     def submit(self, owner: str, generation: int, path: str, operation: str,
                payload: dict[str, Any] | None = None, *, priority: bool = False,
@@ -775,6 +827,8 @@ class FolderCache(QObject):
 
     def shutdown(self) -> None:
         self._sweep_timer.stop()
+        self._restore_timer.stop()
+        self._budget_timer.stop()
         for owner in {r.owner for job in self.jobs.values() for r in job.subscribers.values()} | {
             r.owner for r in self._deliveries}:
             self.cancel(owner)
@@ -808,6 +862,30 @@ class FolderCache(QObject):
         self._cleanup = self.cache_admin("sweep") or "failed"
         if self._cleanup == "failed":
             self._schedule_sweep(time.time() + self.SWEEP_RETRY)
+        self.restore_pending()
+
+    def sync_budget(self) -> None:
+        """Make the store record the app's disk budget (``store_options``), retrying until a job
+        has: a running load saves within the store's. (Settings cancelled while the store took
+        an unsaved budget sends the saved one this way, set later, so it wins.)"""
+        self._budget_timer.stop()
+        if not store_options() or self.service.closed:
+            return
+        self._budget_owner = self.cache_admin("budget")
+        if not self._budget_owner:
+            self._budget_timer.start(int(self.SWEEP_RETRY * 1000))
+
+    def restore_budget(self) -> None:
+        """A change of the disk budget failed or was abandoned, and the store may have recorded
+        it anyway: set the budget in effect again (so it is newer) and send it until it has."""
+        set_disk_budget(_disk_budget)
+        self.sync_budget()
+
+    def restore_pending(self) -> None:
+        """At startup: the inventory brings back saves still waiting for an answer from an
+        earlier session (they would expire unasked), and the usage for the 80% pause."""
+        if store_options() and not self.service.closed and not self.cache_admin("inventory"):
+            self._restore_timer.start(int(self.SWEEP_RETRY * 1000))
 
     def cache_admin(self, action: str, **params: Any) -> str:
         """Submit a disk cache maintenance job on the local lane; its owner, or "" if it
@@ -837,6 +915,52 @@ class FolderCache(QObject):
         self._sweep_deadline = None
         if store_options() and not self.cache_admin("sweep"):
             self._schedule_sweep(time.time() + self.SWEEP_RETRY)  # Queue full: try again shortly.
+
+    def _note_usage(self, usage: object, seq: object) -> None:
+        """A helper measured the disk cache's live usage; keep the newest measurement, by the
+        store's write count when it was taken (a different store, e.g. recreated, starts over)."""
+        if (not isinstance(usage, int) or isinstance(usage, bool) or not isinstance(seq, (list, tuple))
+                or len(seq) != 2 or not isinstance(seq[0], str) or not isinstance(seq[1], int)):
+            return
+        store_id, writes = seq
+        if self._usage_seq is not None and self._usage_seq[0] == store_id and writes < self._usage_seq[1]:
+            return
+        self._usage_seq = (store_id, writes)
+        if usage != self.disk_usage:
+            self.disk_usage = usage
+            self.diskUsageChanged.emit()
+        self.update_auto_load_pause()
+
+    def disk_nearly_full(self) -> bool:
+        """Usage is at least 80% of the budget (whether or not the user chose to ignore it)."""
+        budget = store_options().get("budget")
+        return bool(self.disk_usage is not None and budget and self.disk_usage >= APPROVAL_SHARE * budget)
+
+    def update_auto_load_pause(self) -> None:
+        """Re-decide the 80% pause after a new usage or budget. Ask once per crossing; after
+        Ignore, only when usage rises another ``IGNORE_STEP`` of the budget."""
+        full = self.disk_nearly_full()
+        ignored = (full and self._full_ignored_until is not None and self.disk_usage is not None
+                   and self.disk_usage < self._full_ignored_until)
+        paused = full and not ignored
+        if not full:
+            self._full_warned = False
+        warn = paused and not self._full_warned
+        if warn:
+            self._full_warned = True
+        if paused != self.auto_load_paused:
+            self.auto_load_paused = paused
+            self.autoLoadPauseChanged.emit(paused)
+        if warn:
+            self.diskNearlyFull.emit()
+
+    def ignore_disk_nearly_full(self) -> None:
+        """Keep loading automatically this session, until usage rises another 10% of the budget."""
+        budget = store_options().get("budget") or 0
+        if self.disk_usage is not None:
+            self._full_ignored_until = self.disk_usage + self.IGNORE_STEP * budget
+        self._full_warned = False
+        self.update_auto_load_pause()
 
     def removed(self, paths: list[str] | None, kinds: list[str]) -> None:
         """Forget what a disk cache removal took away: ``paths`` (None: every path) of ``kinds``.
@@ -948,6 +1072,7 @@ class FolderCache(QObject):
         kind = event["kind"]
         if "next_deadline" in event:
             self._schedule_sweep(event["next_deadline"])
+        self._note_usage(event.get("usage"), event.get("usage_seq"))
         if kind == "removed":
             self.removed(event["paths"], event["kinds"])
             return
@@ -958,6 +1083,8 @@ class FolderCache(QObject):
             pass
         elif kind == "inventory":
             self._inventory_started = started
+            # First: the questions about its pending saves show this usage.
+            self._note_usage(event["inventory"].get("usage"), event["inventory"].get("usage_seq"))
             # The store's list is the truth; keep what events added (e.g. a room plan) for the same
             # save, and leave out saves a removal since then took away.
             # Folders whose pending save an event changed after this inventory was requested keep
@@ -992,6 +1119,10 @@ class FolderCache(QObject):
             elif pending_id:
                 # Adopted, discarded, or rejected: either way the store no longer has it.
                 self._forget_pending({pending_id})
+                if held and not event.get("adopted"):
+                    # Not cached this time, by the user's answer; the data stays in RAM.
+                    self._cache_states.setdefault(held, CacheStatus()).error = ""
+                    self.diskCacheChanged.emit(held)
             if event.get("adopted") and event.get("path") and not self._removed_after(
                     started, "datasets", self.key(event["path"])):
                 adopted = self.key(event["path"])
@@ -1009,6 +1140,12 @@ class FolderCache(QObject):
         if kind in ("done", "error", "cancelled"):
             self._admin.pop(producer.owner, None)
             self._started.pop(producer.owner, None)
+            if producer.owner == self._budget_owner:
+                self._budget_owner = ""
+                if kind != "done":
+                    self._budget_timer.start(int(self.SWEEP_RETRY * 1000))  # Not recorded: again.
+            self.cacheAdminDone.emit(producer.owner, action,
+                                     "" if kind == "done" else str(event.get("message") or "Cancelled"))
 
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
         if producer.owner in self._admin:
@@ -1051,6 +1188,7 @@ class FolderCache(QObject):
                 self._disk_cache_writers.discard(producer.owner)
             if "next_deadline" in event:
                 self._schedule_sweep(event["next_deadline"])
+            self._note_usage(event.get("usage"), event.get("usage_seq"))
             if kind in ("cache_full", "cache_approval", "cache_saved"):
                 self._forget_pending(set(event.get("superseded") or ()))
             if kind == "cache_saved" and event.get("job_seq"):
@@ -1324,8 +1462,9 @@ class FolderCache(QObject):
                     if path not in self.folder_icons:
                         self.remember_folder_icon(path)
         elif job.operation == "invalidate" and kind in ("removed", "admin_result"):
-            # Its state was reset when it was submitted; only the cleanup deadline is new.
+            # Its state was reset when it was submitted; only the cleanup deadline and usage are new.
             self._schedule_sweep(event.get("next_deadline"))
+            self._note_usage(event.get("usage"), event.get("usage_seq"))
             return
         elif job.operation == "resolve" and kind == "resolved":
             candidates = tuple(job.payload["candidates"])

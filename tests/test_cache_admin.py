@@ -920,3 +920,28 @@ def test_clearing_subfolder_status_cancels_a_queued_save(
         assert not cache.subtree(path)
     finally:
         service.shutdown()
+
+
+def test_make_room_removes_exactly_the_folders_it_named_or_nothing(store: CacheStore) -> None:
+    """The question named a plan; if the budget changed since, nothing goes and it is asked again."""
+    save(store, "old", 4000, last_used=1.0)
+    save(store, "older", 4000, last_used=0.5)
+    base = store.usage()
+    budget = base + 2000
+    pending = save(store, "new", 5000, budget=budget)
+    plan = store.room_plan(pending.pending_id, budget)
+    assert plan.paths == ("older",)
+    lower = budget - 4000  # Lowered since: it takes both.
+    held = store.adopt_pending(pending.pending_id, budget=lower, make_room=True, expected_room=list(plan.paths))
+    assert not held.adopted and held.room is not None and set(held.room.paths) == {"older", "old"}
+    assert dataset_paths(store) == {"old", "older"} and pending_rows(store)[0][2] == "over_budget"
+    adopted = store.adopt_pending(pending.pending_id, budget=lower, make_room=True, expected_room=["old", "older"])
+    assert adopted.adopted and dataset_paths(store) == {"new"}
+    # Through the helper, as the dialog sends it: a plan that no longer holds removes nothing.
+    other = save(store, "other", 4000, last_used=2.0)
+    assert other.saved
+    later = save(store, "later", 5000, budget=store.usage() + 1000)
+    events: list[dict[str, Any]] = []
+    cache_admin({"directory": store.root, "budget": store.usage() + 1000}, "adopt", events.append,
+                pending_id=later.pending_id, make_room=True, room_paths=["nowhere"])
+    assert events[-1]["adopted"] is False and dataset_paths(store) == {"new", "other"}

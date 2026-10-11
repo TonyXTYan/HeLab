@@ -16,14 +16,15 @@ from helab.utils.number_format import fnum
 from helab.utils.io_service import IOService
 from helab.utils.time_format import clock as stopwatch, relative_age
 from helab.views.ElidedLabel import ElidedLabel
-from helab.views.FolderExplorer import LOAD_ORIGINS, FolderExplorer
+from helab.views.FolderExplorer import AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LOAD_ORIGINS, FolderExplorer
 
 
 class FolderDetailsPanel(QScrollArea):
     """Single-line rows that hide when empty; longer details are in each row's tooltip."""
 
     ROWS = (("folder", "Folder"), ("state", "State"), ("files", "Files"), ("time", "Time"), ("rate", "Rate"),
-            ("data", "Data"), ("loaded", "Loaded"), ("source", "Source"), ("errors", "Problems"),
+            ("data", "Data"), ("loaded", "Loaded"), ("source", "Source"), ("cache", "Disk cache"),
+            ("errors", "Problems"),
             ("tab", "This tab"), ("io", "All I/O"))
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -121,6 +122,8 @@ class FolderDetailsPanel(QScrollArea):
         elif explorer.load_waiting:
             rows["state"] = (f"Waiting · queues in {explorer.dwell_seconds_left} s if still selected",
                              "Another load is running; browsing past folders does not queue them.")
+        elif explorer.auto_load_paused_path == path and not shown:
+            rows["state"] = (AUTO_LOAD_PAUSED + " · Load data", AUTO_LOAD_PAUSED_TOOLTIP)
         elif opened:
             # Not loading: shown from the cache with auto-load off, or its check was cancelled.
             rows["state"] = ("Loaded from cache · not checked yet", "Shown from memory or the disk cache; "
@@ -142,6 +145,11 @@ class FolderDetailsPanel(QScrollArea):
         if not loading and not shown and node is not None and (node.txy_count or node.report and node.report.d_txy_shots):
             found = node.txy_count or (len(node.report.d_txy_shots or []) if node.report else 0)
             rows["files"] = (f"{found:,} TXY found", "")
+        cache = explorer.model.cache
+        if path in cache.pending_saves and (waiting := cache.cache_status(path).error):
+            # A save held for the user's answer (Make room / Save update); one question at a time.
+            rows["cache"] = (waiting, "The disk cache asks before this save: Make room or Save update, or don't "
+                                      "cache it now. The loaded data stays in RAM either way.")
         if dataset is None or not shown:
             return rows
         self._data_rows(explorer, dataset.metadata, rows, loading, opened)

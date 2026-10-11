@@ -1,12 +1,14 @@
 import pytest
 from pathlib import Path
 from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QApplication, QLabel, QPushButton
+from PyQt6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
 from helab.views.SettingsDialog import SettingsDialog
+from helab.utils.folder_cache import get_folder_cache
+from helab.utils.io_service import get_io_service
 from helab.utils.constants import (
-    AUTO_SCAN_VISIBLE_SETTING, SIMULTANEOUS_IO_SETTING,
+    AUTO_SCAN_VISIBLE_SETTING, DISK_BUDGET_SETTING, SIMULTANEOUS_IO_SETTING, read_disk_budget,
     read_io_concurrency,
 )
 
@@ -47,14 +49,13 @@ def test_cache_tab_controls(qtbot: QtBot, settings_dialog: SettingsDialog) -> No
     """Test cache tab controls"""
     qtbot.addWidget(settings_dialog)
     
-    # Verify cache tab widgets
-    assert settings_dialog.cache_tab is not None
-    assert settings_dialog.cache_layout is not None
-    # Rebuilt in a later update; until then it only names the cache folder.
-    texts = [label.text() for label in settings_dialog.cache_tab.findChildren(QLabel)]
-    assert any(text.startswith("Disk cache: ") and text.endswith("store-v2") for text in texts)
-    assert any("rebuilt in a later update" in text for text in texts)
-    assert not settings_dialog.cache_tab.findChildren(QPushButton)
+    # Without the app's folder cache (no helper to ask), it names the folder and
+    # leaves every action disabled; tests/test_cache_tab.py covers the working tab.
+    tab = settings_dialog.cache_tab
+    assert tab.location_label.text().endswith("store-v2")
+    assert tab.inventory is None and not tab.enabled
+    assert all(not button.isEnabled() for button in (*tab.kind_buttons.values(), tab.clear_all_button,
+                                                     tab.purge_datasets_button, tab.purge_records_button))
 
 def test_settings_dialog_buttons(qtbot: QtBot, settings_dialog : SettingsDialog) -> None:
     """Test dialog buttons"""
@@ -68,7 +69,7 @@ def test_settings_dialog_buttons(qtbot: QtBot, settings_dialog : SettingsDialog)
     # Test button labels
     assert settings_dialog.save_button.text() == "Save"
     assert settings_dialog.cancel_button.text() == "Cancel"
-    assert settings_dialog.reset_button.text() == "Reset"
+    assert settings_dialog.reset_button.text() == "Reset all settings…"
 
 
 def test_folder_io_settings_defaults_persistence_and_reset(
@@ -87,9 +88,45 @@ def test_folder_io_settings_defaults_persistence_and_reset(
     assert restored.auto_scan_visible_checkbox.isChecked()
     assert dialog.settings.value(AUTO_SCAN_VISIBLE_SETTING, type=bool)
     assert read_io_concurrency(dialog.settings) == 3
+    asked: list[str] = []
+
+    def decline(title: str, text: str, verb: str) -> bool:
+        asked.append(title)
+        return False
+    restored.cache_tab.confirm = decline
+    restored.reset_settings()  # Declined: nothing changes.
+    assert asked == ["Reset all settings?"] and restored.simultaneous_io_spin.value() == 3
+    restored.cache_tab.confirm = lambda title, text, verb: True
     restored.reset_settings()
     assert restored.simultaneous_io_spin.value() == 1
     assert not restored.auto_scan_visible_checkbox.isChecked()
+
+
+def test_declining_to_lower_the_disk_budget_saves_nothing(qtbot: QtBot, tmp_path: Path) -> None:
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    dialog = SettingsDialog(settings=settings, cache=get_folder_cache(get_io_service()))
+    qtbot.addWidget(dialog)
+    asked: list[str] = []
+
+    def decline(title: str, text: str, verb: str) -> bool:
+        asked.append(title)
+        return False
+    dialog.cache_tab.confirm = decline
+    dialog.simultaneous_io_spin.setValue(7)
+    dialog.cache_tab.disk_budget.setValue(1.0)  # Below use: the inventory is still unknown.
+    dialog.save_settings()
+    assert asked == ["Lower the disk cache budget?"] and dialog.tabs.currentWidget() is dialog.cache_tab
+    assert read_io_concurrency(settings) == 1 and not settings.contains(DISK_BUDGET_SETTING)
+    dialog.reject()
+
+
+def test_without_a_disk_cache_the_budget_is_just_saved(qtbot: QtBot, tmp_path: Path) -> None:
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    dialog = SettingsDialog(settings=settings)  # No cache: no store to tell.
+    qtbot.addWidget(dialog)
+    dialog.cache_tab.disk_budget.setValue(12.0)
+    dialog.save_settings()
+    assert read_disk_budget(settings) == 12 << 30
 
 
 @pytest.mark.parametrize("value, expected", [(None, 1), ("invalid", 1), (0, 1), (-2, 1), (1000, 32)])

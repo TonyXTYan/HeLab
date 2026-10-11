@@ -1,6 +1,7 @@
 # SettingsDialog.py
 import logging
 import sys
+import time
 from re import S
 from typing import Optional, Dict, Any
 
@@ -9,15 +10,18 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QChe
     QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem
 from PyQt6.QtCore import QSettings, QUrl
 
-from helab.utils.cache_store import store_root
+from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import fnum
 from helab.utils.constants import *
+from helab.views.CacheTab import CacheTab
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent: Optional[QWidget] = None, *, settings: QSettings | None = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None, *, settings: QSettings | None = None,
+                 cache: FolderCache | None = None) -> None:
         super().__init__(parent)
         self.settings = settings if settings is not None else QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        self.cache = cache
         self.setWindowTitle("Settings")
         self.setMinimumSize(800, 500)
         self.main_layout = QVBoxLayout(self)
@@ -157,13 +161,14 @@ class SettingsDialog(QDialog):
 
 
         self._make_tab_cache()
+        self.cache_tab.budgetApplied.connect(self._budget_applied)
 
 
         # Buttons
         self.button_layout = QHBoxLayout()
         self.save_button = QPushButton("Save")
         self.cancel_button = QPushButton("Cancel")
-        self.reset_button = QPushButton("Reset")
+        self.reset_button = QPushButton("Reset all settings…")
         self.button_layout.addWidget(self.save_button)
         self.button_layout.addWidget(self.cancel_button)
         self.button_layout.addWidget(self.reset_button)
@@ -179,22 +184,22 @@ class SettingsDialog(QDialog):
         # self.main_layout.setStretch(1, 0)
 
     def _make_tab_cache(self) -> None:
-        # The old diskcache tab is gone with diskcache; the store-v2 tab is rebuilt in a
-        # later update (roadmaps/cache-storage-and-settings.md, S7). The GUI never opens the store.
-        self.cache_tab = QWidget()
-        self.cache_layout = QVBoxLayout(self.cache_tab)
-        location = QLabel(f"Disk cache: {store_root(DIR_CACHES)}" if DISK_CACHE_ENABLED
-                          else "Disk cache: off for this session")
-        location.setWordWrap(True)
-        location.setToolTip("Change the folder on the General tab.")
-        self.cache_layout.addWidget(location)
-        if DIR_CACHES_REFUSED:
-            refused = QLabel(DIR_CACHES_REFUSED)
-            refused.setWordWrap(True)
-            self.cache_layout.addWidget(refused)
-        self.cache_layout.addWidget(QLabel("Cache details and clearing are rebuilt in a later update."))
-        self.cache_layout.addStretch(1)
+        # The GUI never opens the store: the tab asks a helper (FolderCache.cache_admin).
+        self.cache_tab = CacheTab(self.cache, self.settings)
         self.tabs.addTab(self.cache_tab, "Cache")
+
+    def show_purge(self) -> None:
+        """Open at the Cache tab's Remove old entries (from the disk cache's 80% warning)."""
+        self.tabs.setCurrentWidget(self.cache_tab)
+        self.cache_tab.focus_purge()
+
+    def done(self, a0: int) -> None:
+        if self.cache_tab.applying and self.cache is not None:
+            # Closed while the store records a new budget: the one in effect stays. Set again
+            # now, so it is newer than the change, and sent until the store has it.
+            self.cache.restore_budget()
+        self.cache_tab.detach()
+        super().done(a0)
 
     def browse_dir_temps(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select DIR_TEMPS Folder")
@@ -218,6 +223,26 @@ class SettingsDialog(QDialog):
         logging.debug("Settings loaded")
 
     def save_settings(self) -> None:
+        applied = self.cache_tab.apply_budget()
+        if applied is None:
+            # Saved once the store has the new disk budget.
+            self.save_button.setEnabled(False)
+            self.reset_button.setEnabled(False)
+        elif applied:
+            self._write_settings()
+        else:
+            # Declined, or it couldn't be queued: save nothing, stay open.
+            self.tabs.setCurrentWidget(self.cache_tab)
+
+    def _budget_applied(self, applied: bool) -> None:
+        self.save_button.setEnabled(True)
+        self.reset_button.setEnabled(True)
+        if applied:
+            self._write_settings()
+        else:
+            self.tabs.setCurrentWidget(self.cache_tab)
+
+    def _write_settings(self) -> None:
         settings = self.settings
         settings.setValue("example_checkbox", self.example_checkbox.isChecked())
         settings.setValue("example_text", self.example_text.text())
@@ -228,7 +253,7 @@ class SettingsDialog(QDialog):
         settings.remove("simultaneous_folder_scans")
         settings.remove("simultaneous_folder_loads")
         settings.setValue(AUTO_SCAN_VISIBLE_SETTING, self.auto_scan_visible_checkbox.isChecked())
-
+        self.cache_tab.save(settings)
         self.accept()
         logging.debug("Settings saved")
 
@@ -242,7 +267,14 @@ class SettingsDialog(QDialog):
         self.deleteLater()
 
     def reset_settings(self) -> None:
+        if not self.cache_tab.confirm(
+                "Reset all settings?",
+                "Resets every HeLab setting to its default: folders, load options, both cache budgets, window "
+                "and view choices. The disk cache's contents are kept.", "Reset all settings"):
+            return
         settings = self.settings
         settings.clear()
         self.load_settings()
+        self.cache_tab.disk_budget.setValue(read_disk_budget(settings) / (1 << 30))
+        self.cache_tab.ram_budget.setValue(read_ram_budget_steps(settings, self.cache_tab.ram_budget.total))
         logging.debug("Settings reset to default")

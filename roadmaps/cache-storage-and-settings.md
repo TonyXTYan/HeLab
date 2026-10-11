@@ -168,7 +168,7 @@ rewrite. Design rules for every session:
   - Default: 16 steps (1/8 of RAM). Examples: 16 GB on 128 GB (Tony's Mac), 2 GB on a
     16 GB lab PC, 1 GB on 8 GB.
   - Shown as e.g. "16.0 GB (1/8 of 128 GB)". Typed values snap to the nearest step.
-- **What it decides:** replaces `FolderCache.MAX_DATA_BYTES` (512 MiB today).
+- **What it decides:** replaces `FolderCache.MAX_DATA_BYTES` (512 MiB before S7).
   - After every load, datasets not shown by any tab are dropped from RAM, least recently used
     first, until the total fits.
   - Datasets shown in a tab are never dropped, even over budget.
@@ -606,8 +606,8 @@ reading this plan, the audit notes and AGENTS.md. End it by ticking the row with
 | S3 | Delete the old browser | Delete the modules, tests and Debug item; strip the two old caches from `caching_setup.py` (the file stays until S5); old Cache tab shows only `data_ram_cache`; move `helab/scripts/dev/`; update AGENTS.md | Full suite; the app starts and Settings opens | S2 | ☑ 2026-10-10 `f36916a` |
 | S4 | New store module | `helab/utils/cache_store.py`: schema, versioning, dataset file writes, `retired_files` with deferred deletion, reader re-read on a missing file, the single removal function with durable `folder_epochs`, per-kind generations, per-folder `job_seq` ordering, `pending_saves` with `pending_id` and `reason`, read results (found/missing/error), save-guard checks | Two processes writing at once; killed writer; reader racing a replacement; removal racing a save; Clear by kind before a folder's first row exists; an older job's save or pending save never overwrites or supersedes a newer one, including the older job finishing last with neither adopted; newer `layout_version` opens read-only; error is not "missing" | — (parallel to S2/S3) | ☑ 2026-10-10 `7040a29` |
 | S5 | Switch to the new store | Helpers (`list`, `details`, `scan`, `load`, `cached`, `invalidate`, `subtree_save`, `scan_history`) use `cache_store`; one `FILE_KINDS` table drives matching and counting; summaries save `files` (TXY sized) and datasets `ram_bytes`; `last_used` on use; old cache folders deleted at startup; `caching_setup.py` and diskcache removed (the old Cache tab reads nothing until S7, so S5 shows "Rebuilt in a later update" there); network/synced cache path refused at startup | Existing cache-first, folder-cache and scan-history tests pass on the new store; the app starts and Settings opens | S1, S3, S4 | ☑ 2026-10-10 `fd4e020` |
-| S6 | Cache maintenance | `cache_admin` (inventory, clear, both purges, trim, adopt, discard, sweep); pending saves on `cache_full` and `cache_approval`; `removed` events and `FolderCache.removed()`; budget check in the save transaction, `cache_full` | Every removal kind during a running save, load and scan: nothing comes back, no stale badge; retired files and expired pending saves go by deadline without a restart; Make room or Save update with a stale or superseded `pending_id` removes nothing; Save update re-checks the current budget and turns into Make room when over; never evicts the target's own dataset, and uses the fit rule; a crash before or after the pending row commits leaves no dangling reference; purge estimates equal what is freed; records survive trimming; an over-budget save becomes a pending save, never auto-trimmed; Make room adopts it, or discards it if the folder was cleared meanwhile; retired bytes don't count toward the budget | S5 | ☑ 2026-10-10 |
-| S7 | Budgets and the Cache tab | Rebuilt tab with both purges; disk budget (default 8 GB); RAM budget (1/128 steps, default 1/8) replacing `MAX_DATA_BYTES`; 80% pause of uncached automatic loads with its dialog; update-save prompt over 80%; full-cache dialog (Make room / Don't cache now); "Reset all settings…" | pytest-qt tests with a fake inventory; 80% dialog once per crossing, Ignore lasts the session; cached folders still open over 80%; one cache dialog at a time; RAM eviction keeps shown datasets | S6 | ☐ |
+| S6 | Cache maintenance | `cache_admin` (inventory, clear, both purges, trim, adopt, discard, sweep); pending saves on `cache_full` and `cache_approval`; `removed` events and `FolderCache.removed()`; budget check in the save transaction, `cache_full` | Every removal kind during a running save, load and scan: nothing comes back, no stale badge; retired files and expired pending saves go by deadline without a restart; Make room or Save update with a stale or superseded `pending_id` removes nothing; Save update re-checks the current budget and turns into Make room when over; never evicts the target's own dataset, and uses the fit rule; a crash before or after the pending row commits leaves no dangling reference; purge estimates equal what is freed; records survive trimming; an over-budget save becomes a pending save, never auto-trimmed; Make room adopts it, or discards it if the folder was cleared meanwhile; retired bytes don't count toward the budget | S5 | ☑ 2026-10-10 `ef4c0ca` |
+| S7 | Budgets and the Cache tab | Rebuilt tab with both purges; disk budget (default 8 GB); RAM budget (1/128 steps, default 1/8) replacing `MAX_DATA_BYTES`; 80% pause of uncached automatic loads with its dialog; update-save prompt over 80%; full-cache dialog (Make room / Don't cache now); "Reset all settings…" | pytest-qt tests with a fake inventory; 80% dialog once per crossing, Ignore lasts the session; cached folders still open over 80%; one cache dialog at a time; RAM eviction keeps shown datasets | S6 | ☑ 2026-10-10 |
 | S8 | Large-folder warning | Uses S7's RAM budget setting. Unscaled TXY-size estimate (the one-stat fast path keeps using the record's sizes); guard before both `load` and `cached`; `too_large` stop and `allow_large`; amber inline "Load anyway…"; queue skips; dialog for deliberate loads; the 30% refusal replaces the 1 GiB limit | Automatic loads never start or open a dialog; a large **cached** folder doesn't open automatically even after an earlier deliberate load; deliberate ones confirm; refusal; estimate from a saved summary vs from the load's own listing; the unchanged fast path still answers from one stat | S7 | ☐ |
 | S9 | Cache folder move | Change… flow and checks (network/synced refused), I/O pause until helpers exit, `cache.lock` and instance locks in the app folder, WAL checkpoint and store verification, Cancel until verified, `cache-move.json` record and startup recovery, move with progress and Cancel, `cache_dir()` switch in place, instance locks, failure dialog with Show in Finder/Explorer | Same-disk rename; cross-disk copy; failure and Cancel before cutover keep the source; a failure deleting the source after cutover keeps the destination and finishes at the next start; a settings write that fails `sync()`/`status()` counts as before cutover; a successful rename followed by a failed settings write, with the rename-back succeeding and failing; a simulated crash before and after each meaningful transition (record writes, rename, copy completion, verification, settings write, source cleanup, plus one partial copy and one partial deletion), for rename and copy, recovers to one valid store with the setting pointing at it; refusal with another instance; an instance starting mid-move waits; a corrupt copy fails verification; network target refused | S5 | ☐ |
 | S10 | Folder flags | `folder_prefs` and its helper save; flags in listings; right-click toggles; row badge and tooltip; no-auto-load and no-cache behaviour; offer to remove cached data; "Don't auto-load" in the large-folder warning | Flag survives restart and purges; no-cache load never saves; no-auto-load select starts nothing; flags never inherited | S5. The warning's "Don't auto-load" button is added by whichever of S8 and S10 lands second. | ☐ |
@@ -768,6 +768,75 @@ Notes from finished sessions:
     their `save_guard` too, so a failed listing's queued history write can't undo "Forget scan
     failures"; and clearing subfolder status cancels a queued `subtree_save`, whose batch was
     derived before the clear.
+- **S7:** Helpers report the store's live usage with their results (`usage`, `usage_seq` on
+  `cache_saved`, pending events, `admin_result`, `swept` and the inventory), and pending events
+  carry `replaces` (the folder's current dataset bytes) for the update prompt's growth.
+  `usage_seq` is `[store_id, writes]`: every write transaction bumps the store's `writes` count
+  (`meta`), and a measurement is as new as the count it saw, so a slow inventory that finishes
+  after a Clear never brings back the usage before it (clock times could). The inventory's pending
+  saves carry `replaces` and, for `over_budget`, the room plan, so a question restored after a
+  restart shows the same numbers; questions show `FolderCache.disk_usage`, the newest usage.
+  `FolderCache` keeps the newest measurement (`disk_usage`) and decides the 80% pause
+  (`auto_load_paused`, `autoLoadPauseChanged`, `diskNearlyFull`, `ignore_disk_nearly_full`,
+  `update_auto_load_pause` after a budget change). `CacheDialogs` (`helab/views/CacheDialogs.py`)
+  asks one question at a time; the Cache tab is `helab/views/CacheTab.py`. Choices made here:
+  - The pause applies to automatic loads only (selection, the queue's dwell, the check after a
+    cached read never pauses: its folder has cached data). A folder held in memory isn't paused
+    either, since its load is answered from memory. Retry and the summary's **Load** button,
+    right-click › Load data and the background queue are deliberate.
+  - Ignore keeps loading for the session; dropping below 80% doesn't reset it, but rising another
+    10% of the budget above the usage at Ignore asks again. Without Ignore, the dialog comes once
+    per crossing. The 80% dialog has no escape button: Esc or closing the window doesn't choose.
+  - Questions about held saves come before the 80% warning (the warning waits one event-loop turn,
+    since the event that crossed 80% may also hold a save). A question whose save was answered
+    elsewhere, superseded or expired closes unanswered. Save update that no longer fits becomes
+    the Make room question for the same `pending_id`. Esc on a save question is "not now":
+    nothing is removed. While another modal window (e.g. Settings) is open, questions wait.
+  - Make room removes exactly the folders its question named (`room_paths` → `adopt_pending(
+    expected_room=…)`), or nothing: if the plan changed (a new budget, other data cached), the save
+    stays pending with the new plan and is asked again. A question is identified by its kind, room
+    plan and the budget in effect, so a changed plan or budget replaces an open question and re-asks
+    an answered one. Questions show the budget in effect; after a budget change the main window
+    requests an inventory, which brings room plans for the new budget.
+  - A Make room / Save update whose job fails is asked again, saying why ("Make room failed: …");
+    a failed Don't cache isn't (still "not now": the save waits in the store until it expires), and
+    the status bar says so.
+  - The Cache tab's buttons are disabled until the inventory arrives and while a job runs; a job
+    ends with a fresh inventory. Read-only stores (newer layout) disable every removal. The record
+    purge estimate counts rows ("N records", per kind in the tooltip); records have no size.
+  - Lowering the disk budget below the last inventory's usage asks first (`trim_estimate`: least
+    recently used datasets until usage fits, an upper bound) and then sends `trim`.
+  - Every request carries the budget and when the app set it (`budget_set_at`). The store records
+    the newest (`meta.budget`, `CacheStore._active_budget`) in every `cache_admin` job, in a
+    save's transaction and in Make room / Save update, and uses it over an older request's: a load
+    that started before the user lowered the budget saves within the new one.
+  - Settings saves a changed disk budget only once the store has it: Save sends a `budget` job (or
+    the `trim`, which records the budget in its own transaction, so a failed trim changes nothing),
+    waits for it with Save disabled ("Changing the disk budget…"), then writes every setting.
+    Declining, a job that can't be queued, or one that fails saves nothing and keeps the dialog open
+    at the Cache tab, saying why. While the job runs, the budget field, Save and Reset are disabled,
+    and Save writes only the budget the store acknowledged. Closing Settings while the job runs sets
+    the saved budget again (so it is newer than the change) and `FolderCache.sync_budget` sends it
+    until a job has recorded it, retrying when the queue is full or the job fails. Budgets are
+    saved with Save, like the other settings. Save compares the field with the budget in effect
+    (`store_options()`), not the saved setting: "Reset all settings…" saves the defaults at once,
+    so Save after Reset still sends the default budget, and Reset then Cancel has the main window
+    set it and `sync_budget` it.
+  - The tab's inventory may be old. Lowering the budget without a trim sends `budget` with `fit`:
+    the helper records it only if the data cached by then fits (`CacheStore.lower_budget`, in one
+    transaction). Otherwise it records nothing, and the tab asks with the current usage ("now uses
+    …") and sends the trim; declining saves nothing.
+  - A budget or trim job that fails may already have committed: the tab then sets the budget in
+    effect again and sends it until recorded (`FolderCache.restore_budget`), as Cancel does.
+  - At startup, after the sweep, an inventory restores saves still waiting from an earlier session
+    (otherwise they would expire unasked) and the usage for the 80% pause; it is retried if the
+    queue is full.
+  - Sizes are binary units shown as "GB" (the budget's 8 GB is 8 GiB), as the status bar already did.
+  - The RAM budget is saved as steps (`ram_budget_steps`) and counts every dataset held in RAM
+    once, including ones only a tab still shows (e.g. invalidated); lowering it drops unshown datasets at
+    once and the status bar says what was dropped. The main status bar shows one-time notices
+    (`show_status_notice`), e.g. "Disk cache below 80% — automatic loading resumed".
+  - "Folder preferences" in the tab waits for S10, which adds `folder_prefs`.
 
 ## Acceptance
 

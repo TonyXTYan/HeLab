@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import base64
+import contextlib
 import hashlib
 import math
 import os
@@ -617,14 +618,15 @@ def load(path: str, output: str, send: Emit = emit,
             except StoreError as exc:
                 send({"kind": "cache_warning", "message": f"Disk cache can't be updated: {exc}"})
         _load(path, output, send, store, guard, bool(cache_options), memory, base_signature, expected,
-              (cache_options or {}).get("budget"))
+              (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"))
     finally:
         if store is not None:
             store.close()
 
 
 def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: SaveGuard | None, cache_on: bool,
-          memory: list[list[int]] | None, base_signature: str, expected: str, budget: int | None) -> None:
+          memory: list[list[int]] | None, base_signature: str, expected: str, budget: int | None,
+          budget_set_at: float | None = None) -> None:
     from helab.utils.cache_store import StoreError
     if (base_signature and store is not None and memory and expected in ("", base_signature)
             and _unchanged_since_cache(path, send, store, base_signature, memory)):
@@ -887,14 +889,15 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             "ram_bytes": sum(int(array.nbytes) for array in data.values()),
             "rows": sum(len(array) for array in data.values()), "shots": len(data),
             "fingerprint": [list(entry) for entry in fingerprint], "problematic": sorted(set(problematic)),
-            "info": info}, guard, budget=budget)
+            "info": info}, guard, budget=budget, budget_set_at=budget_set_at)
         if not result.saved:
             # Held for the user's answer (Make room / Save update); nothing waits for it.
             send(_pending_event(store, path, result))
             return
         # The replaced file was retired: the next cleanup deadline may be new.
         send({"kind": "cache_saved", "cache_info": info, "superseded": list(result.superseded), "job_seq": result.job_seq,
-              "next_deadline": _deadline(store)})
+              "next_deadline": _deadline(store),
+              "usage": result.usage, "usage_seq": [store.store_id, result.usage_seq]})
         send({"kind": "disk_cached", "disk_cached": True})
     except Exception as exc:
         # A rejected save retired its file: the next cleanup deadline may be new.
@@ -937,8 +940,9 @@ def _pending_event(store: CacheStore, path: str, result: Any) -> dict[str, Any]:
     event: dict[str, Any] = {
         "kind": "cache_full" if result.reason == "over_budget" else "cache_approval",
         "pending_id": result.pending_id, "path": path, "reason": result.reason, "bytes": result.bytes,
-        "usage": result.usage, "budget": result.budget, "job_seq": result.job_seq,
-        "superseded": list(result.superseded), "next_deadline": _deadline(store)}
+        "usage": result.usage, "usage_seq": [store.store_id, result.usage_seq], "created_at": time.time(),
+        "budget": result.budget, "job_seq": result.job_seq,
+        "replaces": result.replaces, "superseded": list(result.superseded), "next_deadline": _deadline(store)}
     if result.reason == "over_budget" and result.budget is not None:
         from helab.utils.cache_store import SaveRejected, StoreError
         try:
@@ -956,6 +960,15 @@ def _deadline(store: CacheStore) -> float | None:
         return None
 
 
+def _usage(store: CacheStore) -> dict[str, Any]:
+    """The store's live usage and when it was measured, for the app's 80% pause; {} if unreadable."""
+    from helab.utils.cache_store import StoreError
+    try:
+        return store.measure_usage().event()
+    except StoreError:
+        return {}
+
+
 def _removed_event(removal: Any) -> dict[str, Any]:
     """What a removal did, for ``FolderCache.removed``; ``paths`` None means every path of those kinds."""
     return {"kind": "removed", "kinds": list(removal.kinds),
@@ -963,7 +976,7 @@ def _removed_event(removal: Any) -> dict[str, Any]:
             "datasets": removal.datasets, "bytes": removal.dataset_bytes}
 
 
-ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep")
+ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget")
 
 
 def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, **params: Any) -> None:
@@ -974,18 +987,35 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     deletes the old diskcache folders (at startup).
     """
     from dataclasses import asdict
-    from helab.utils.cache_store import KINDS, CacheStore, SaveRejected, StoreReadOnly, remove_old_caches
+    from helab.utils.cache_store import (
+        KINDS, CacheStore, SaveRejected, StoreError, StoreReadOnly, remove_old_caches,
+    )
     if action not in ADMIN_ACTIONS:
         raise ValueError(f"Unknown cache action: {action}")
     root = cache_options["directory"]
     budget = params.get("budget", cache_options.get("budget"))
+    # When the app set it: a budget set later (e.g. lowered while this job waited) wins.
+    budget_set_at = params.get("budget_set_at", cache_options.get("budget_set_at"))
     result: dict[str, Any] = {}
     old: list[str] = []
     if action == "sweep":
         old = remove_old_caches(os.path.dirname(os.path.abspath(root)), Heartbeat(send, "cleaning up"))
     with CacheStore(root) as store:
+        if (budget is not None and budget_set_at is not None and not store.read_only
+                and action not in ("trim", "budget")):
+            # Every job tells the store the app's budget, so running loads save within it.
+            # (A trim or a budget job records it in its own transaction.)
+            with contextlib.suppress(StoreError):
+                budget = store.record_budget(int(budget), float(budget_set_at))
         if action == "inventory":
-            send({"kind": "inventory", "inventory": store.inventory(budget)})
+            inventory = store.inventory(budget)
+            if budget is not None and not store.read_only:
+                # What Make room would remove, as the save's own event said before a restart.
+                for entry in inventory["pending"]:
+                    if entry["reason"] == "over_budget":
+                        with contextlib.suppress(SaveRejected, StoreError):
+                            entry["room"] = asdict(store.room_plan(entry["pending_id"], int(budget)))
+            send({"kind": "inventory", "inventory": inventory})
         elif action == "sweep":
             try:
                 swept = store.sweep()
@@ -995,7 +1025,7 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 return
             send({"kind": "swept", "old_caches": old, "deleted_files": swept.deleted_files,
                   "expired_pending": swept.expired_pending, "expired_ids": swept.expired_ids,
-                  "still_open": len(swept.still_open), "next_deadline": swept.next_deadline})
+                  "still_open": len(swept.still_open), "next_deadline": swept.next_deadline, **_usage(store)})
             return
         elif action == "clear":
             kinds = tuple(params.get("kinds") or KINDS)
@@ -1016,12 +1046,13 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             result["removed"] = {kind: len(removal.paths or ()) for removal in removals for kind in removal.kinds}
             result["bytes"] = sum(removal.dataset_bytes for removal in removals)
         elif action == "trim":
-            removal = store.trim(int(params["budget"]))
+            removal = store.trim(int(budget or params["budget"]), budget_set_at)
             send(_removed_event(removal))
             result.update(datasets=removal.datasets, bytes=removal.dataset_bytes)
         elif action == "adopt":
             try:
-                adopted = store.adopt_pending(params["pending_id"], budget=budget,
+                adopted = store.adopt_pending(params["pending_id"], budget=budget, budget_set_at=budget_set_at,
+                                              expected_room=params.get("room_paths"),
                                               make_room=bool(params.get("make_room")))
             except SaveRejected as rejection:
                 result.update(adopted=False, rejected=rejection.reason, message=str(rejection))
@@ -1035,7 +1066,13 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                     result["cache_info"] = _cache_info(row.value["info"]) if row.value is not None else {}
         elif action == "discard":
             result["discarded"] = store.discard_pending(params["pending_id"])
-        send({"kind": "admin_result", "action": action, **result, "next_deadline": _deadline(store)})
+        elif action == "budget":
+            if budget is not None and budget_set_at is not None:
+                # Lowering it (``fit``): not recorded if the data cached by now doesn't fit.
+                active = store.lower_budget(int(budget), float(budget_set_at), fit=bool(params.get("fit")))
+                result.update(budget=active if active is not None else budget, recorded=active is not None)
+        send({"kind": "admin_result", "action": action, **result, "next_deadline": _deadline(store),
+              **_usage(store)})
 
 
 # Operations that only touch the disk cache.
@@ -1097,7 +1134,8 @@ def main() -> None:
             with CacheStore(request["cache"]["directory"]) as store:
                 # Bumps the folder's epoch: a load started before cannot save it back.
                 emit(_removed_event(store.remove(("datasets",), [request["path"]])))
-                emit({"kind": "admin_result", "action": "invalidate", "next_deadline": _deadline(store)})
+                emit({"kind": "admin_result", "action": "invalidate", "next_deadline": _deadline(store),
+                      **_usage(store)})
         elif operation == "cache_admin":
             cache_admin(request["cache"], request["action"], **request.get("params", {}))
         else:

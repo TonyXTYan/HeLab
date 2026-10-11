@@ -86,7 +86,7 @@ def loaded_event(events: list[dict[str, Any]]) -> dict[str, Any]:
 def status_window(explorer: FolderExplorer | None, parent: QWidget) -> Any:
     """The main window's status-bar widgets, without a full main window and its startup jobs."""
     return SimpleNamespace(
-        _closing=False, action_tab_live_checked=True, _update_cancel_loading_action=lambda: None,
+        _closing=False, _status_notice=None, action_tab_live_checked=True, _update_cancel_loading_action=lambda: None,
         tab_widget=SimpleNamespace(currentWidget=lambda: explorer, set_tab_switching_enable=lambda: None),
         status_bar_message_left=ElidedLabel("", parent), status_bar_spinner=QLabel(parent),
         status_bar_spinner_angle=0, status_bar_progress=QProgressBar(parent), _spinner_pixmap=QPixmap)
@@ -764,7 +764,7 @@ def test_memory_budget_evicts_unused_entries_but_pins_open_data(
 ) -> None:
     service = service_for_test(monkeypatch)
     cache = get_folder_cache(service)
-    cache.MAX_DATA_BYTES = 24
+    cache.max_data_bytes = 24
     first = Dataset("/one", "v1", {1: np.zeros((1, 3))}, {"bytes": 24}, 0)
     second = Dataset("/two", "v1", {1: np.zeros((1, 3))}, {"bytes": 24}, 0)
     cache.datasets[(cache.key("/one"), "v1", 0)] = first
@@ -773,7 +773,7 @@ def test_memory_budget_evicts_unused_entries_but_pins_open_data(
     cache._evict()
     assert cache.dataset("/one", "v1") is first
     assert cache.dataset("/two", "v1") is None
-    cache.MAX_DATA_BYTES = 0
+    cache.max_data_bytes = 0
     cache.release("tab")
     assert not cache.datasets
     service.shutdown()
@@ -1116,7 +1116,7 @@ def test_disk_badge_after_restart_ram_load_eviction_and_clear(qtbot: QtBot, tmp_
     qtbot.waitUntil(lambda: model.cache.current_dataset(path) is not None, timeout=15000)
     assert badges() == [StatusIcons.ICON_RAM_OPENED]
     assert "Data: shared RAM dataset open" in str(model.data(index, int(Qt.ItemDataRole.ToolTipRole)))
-    model.cache.MAX_DATA_BYTES = 0
+    model.cache.max_data_bytes = 0
     model.cache._evict()
     assert badges() == [StatusIcons.ICON_CACHED]
     assert model.cache.submit(model.owner, model.generation, path, "invalidate", {"cache": options})
