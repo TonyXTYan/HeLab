@@ -38,3 +38,14 @@
 - Local event-count checks and all 4096 release-condition combinations passed.
   Actionlint passed with the existing queue-key exclusion; diff check passed.
 - Summary icon rendering must be verified in the next GitHub run.
+
+## Skipped-job labels
+
+- Run 38260536960 confirmed both compatibility groups now render the skipped icon,
+  with nine completed entries each and all 18 jobs skipped with no steps. Tony
+  confirmed the browser display, then noted raw input expressions in child names.
+- Made child names literal (Tests / Build) and moved explicit OS/Python labels to
+  the expanded caller matrix names; updated required-failure summary labels.
+- All 24 labels are distinct and identify OS/Python; other workflow behavior is
+  unchanged. All 23 Bash blocks, actionlint (same queue exclusion) and diff check
+  passed. Label rendering needs a new live run after commit/push.

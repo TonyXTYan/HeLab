@@ -32,7 +32,8 @@ permissions:
 
 jobs:
   build:
-    name: Build on ${{ inputs.os }} py3.${{ inputs.python-minor }}
+    # Keep skipped-job names literal; the caller identifies the configuration.
+    name: Build
     if: inputs.enabled
     runs-on: ${{ inputs.os }}-latest
     timeout-minutes: 15
@@ -141,5 +142,5 @@ jobs:
             echo "- **Python target:** 3.${PYTHON_MINOR}"
             echo "- **Runner:** ${RUNNER_OS} / ${RUNNER_ARCH}"
             echo ""
-            echo "Other configurations will continue. Inspect **Build on ${MATRIX_OS} py3.${PYTHON_MINOR}** in the [job logs](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}) for the failed step."
+            echo "Other configurations will continue. Inspect **Required builds (${MATRIX_OS}, Python 3.${PYTHON_MINOR}) / Build** in the [job logs](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}) for the failed step."
           } >> "$GITHUB_STEP_SUMMARY"
