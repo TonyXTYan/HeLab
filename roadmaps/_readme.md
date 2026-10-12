@@ -29,6 +29,11 @@ How to use it:
   to `main` ([implementation](app-versioning.md#implemented-workflow-authoritative))
   (2026-10-12; release/native checks in [MANUAL_TODO](../.ai/MANUAL_TODO.md)).
 
+- [ ] Release repos: develop and release on `TonyXTYan/HeLab`; fast-forward
+  `HeBECANU/HeLab` `main` only for lab-ready versions, which drafts the same
+  release there; stop pushing dev branches to `HeBECANU`. Proposed, Tony to
+  confirm ([plan](app-updates.md#release-repos-proposed-2026-10-13-tony-to-confirm)) (2026-10-13).
+
 - [ ] Finish the status-message audit: verify load-phase labels for `merged`/
   `updated` sources ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#status-messages)) (2026-10-08).
 
@@ -71,6 +76,9 @@ How to use it:
   ([plan](analysis-workflow.md#standard-analyses)) (2026-10-08).
 - [ ] Export results and figures with their data source and analysis settings
   ([plan](analysis-workflow.md#export)) (2026-10-08).
+- [ ] Update check (notify only): compare the running version with published
+  GitHub releases, from source checkouts and frozen builds alike
+  ([plan](app-updates.md#stage-1-notify-only)) (2026-10-13).
 
 ## Medium term: repeated lab work
 
@@ -82,6 +90,9 @@ How to use it:
   unavailable ([plan](cache-only-browsing.md)) (2026-10-08).
 - [ ] Compare folders or experimental runs using consistent settings
   ([plan](run-comparison-and-batch.md#run-comparison)) (2026-10-08).
+- [ ] Self-update button for source checkouts (git + uv) and frozen builds
+  (verified download, separate updater, rollback), then a lab self-check
+  ([plan](app-updates.md#stage-2-self-update-button)) (2026-10-13).
 
 ## Long term: reproducible scientific workflows
 

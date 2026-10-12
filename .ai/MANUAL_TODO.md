@@ -91,6 +91,17 @@ tested offscreen only. Check on native macOS (and once on a Windows lab PC):
   correct asset stamps/digests and refusal to change a moved tag/published release.
   Check PR stamps show the source branch and merge ref plus the actual merge SHA.
 
+- [ ] Release repos (added 2026-10-13): confirm the
+  [proposal](../roadmaps/app-updates.md#release-repos-proposed-2026-10-13-tony-to-confirm).
+  If confirmed, stop pushing dev branches to `HeBECANU`. For the first lab-ready
+  version, fast-forward `HeBECANU` `main` to the released `TonyXTYan` commit
+  (`git push HeBECANU <sha>:main`; no squash or rebase there), check the draft
+  appears there with the same tag commit and assets, then publish it.
+- [ ] Self-update prerequisites (added 2026-10-13), before the first updater ships:
+  ask ANU IT whether managed lab PCs allow self-replacing/unsigned programs;
+  test reaching `api.github.com` from each lab PC; decide where the signing key
+  is backed up and who can release after Tony leaves
+  ([risks](../roadmaps/app-updates.md#risks)).
 - [ ] Record the required Python 3.13 suite/type-check and build results for the
   release commit. This is validation evidence, not a new testing feature.
 - [ ] Observe hover-menu tests in CI: real timers have approximately 200 ms of
