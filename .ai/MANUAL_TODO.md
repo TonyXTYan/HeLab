@@ -79,6 +79,18 @@ tested offscreen only. Check on native macOS (and once on a Windows lab PC):
 
 ## v0.0.5a: release evidence
 
+- [ ] Versioning (added 2026-10-12): on native macOS and Windows, launch the packaged
+  app from outside the checkout; Help → About must match its version, commit and
+  UTC build stamp. On the first release PR, verify PRs only check/build, the new
+  main version gets an explicit tag on the squash commit plus a draft, alpha/final
+  pre-release flags agree, publishing is manual, and tag pushes do not release twice
+  ([implementation](sessions/2026-10-12-codex-app-versioning/notes.md)).
+- [ ] Release recovery (added 2026-10-12): in a disposable test release, fail after
+  tag creation and after a partial upload; rerun all jobs, then try a later same-version
+  main push. Confirm tagged-SHA rebuild/tests, preservation of completed uploads,
+  correct asset stamps/digests and refusal to change a moved tag/published release.
+  Check PR stamps show the source branch and merge ref plus the actual merge SHA.
+
 - [ ] Record the required Python 3.13 suite/type-check and build results for the
   release commit. This is validation evidence, not a new testing feature.
 - [ ] Observe hover-menu tests in CI: real timers have approximately 200 ms of

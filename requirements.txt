@@ -14,6 +14,7 @@ pytest-rerunfailures
 pytest-timeout
 pympler
 pyinstaller
+packaging
 psutil
 coloredlogs
 plotly

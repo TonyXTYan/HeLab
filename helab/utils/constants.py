@@ -7,6 +7,8 @@ import tempfile
 import logging
 from typing import List
 import hashlib
+from helab._version import __version__
+from helab.build_info import get_build_info
 
 from typing import Optional
 
@@ -63,57 +65,16 @@ QSPLITTER_STYLESHEET = """
 """
 
 
+APP_BUILD_INFO = get_build_info()
+
+
 def get_version() -> str:
-    """
-    Retrieve the version number from the setup.py file.
-
-    This function reads the setup.py file located in the current directory,
-    searches for the version string defined in the file, and returns it.
-
-    :return: The version string in the format x.y.z. If the version string
-             is not found, it returns '0.0.0' as the default version.
-    :rtype: str
-    """
-    dirs_to_try = ['setup.py', '../setup.py', '../../setup.py']  # Add more paths as needed
-    content = None
-
-    for path in dirs_to_try:
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                break
-        except FileNotFoundError:
-            continue
-
-    if content:
-        match = re.search(r'version\s*=\s*[\'"]([^\'"]+)[\'"]', content)
-        if match:
-            return match.group(1)
-    return '0.0.0'  # Default version if not found
+    """Return the package version, independent of the launch directory."""
+    return __version__
 
 def get_git_commit_hash() -> str:
-    """
-    Retrieve the current Git commit hash.
-
-    This function attempts to obtain the current Git commit hash of the repository
-    in which the script is located. It returns the first 6 characters of the commit
-    hash in uppercase. If the commit hash cannot be determined, it returns 'unknown'.
-
-    :return: The first 6 characters of the Git commit hash in uppercase, or 'unknown' if not found.
-    :rtype: str
-
-    :raises subprocess.CalledProcessError: If the Git command fails.
-    :raises FileNotFoundError: If Git is not installed or not found in the system path.
-    :raises Exception: For any other exceptions that may occur.
-    """
-    try:
-        commit_hash = subprocess.check_output(
-            ['git', 'rev-parse', 'HEAD'],
-            stderr=subprocess.STDOUT
-        ).decode('utf-8').strip()
-        return commit_hash[:6].upper()  # Return only the first 6 characters
-    except Exception:
-        return 'unknown'
+    """Return the embedded build commit, or this package's checkout commit."""
+    return APP_BUILD_INFO.short_commit
 
 APP_VERSION = get_version()
 APP_COMMIT_HASH = get_git_commit_hash()

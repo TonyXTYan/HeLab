@@ -4,9 +4,9 @@ from typing import Generator, Any
 from unittest.mock import patch
 
 import pytest
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QCloseEvent
 from pytestqt.qtbot import QtBot
-from PyQt6.QtWidgets import QApplication, QMessageBox, QListWidget, QMenu, QWidget
+from PyQt6.QtWidgets import QApplication, QMessageBox, QListWidget, QMenu, QWidget, QMainWindow
 from PyQt6.QtCore import Qt
 
 from helab.resources.icons import StatusIcons, ToolIcons, PercentageIcon
@@ -21,6 +21,20 @@ def test_qtbot_add_widget(qtbot: QtBot) -> None:
     qtbot.addWidget(widget)
     widget.show()
     assert widget.isVisible()
+
+
+def test_about_displays_build_provenance(qtbot: QtBot) -> None:
+    from helab.utils.constants import APP_BUILD_INFO
+    class AboutWindow(HelabMainWindow):
+        def __init__(self) -> None:
+            QMainWindow.__init__(self)
+        def closeEvent(self, a0: QCloseEvent | None) -> None:
+            QMainWindow.closeEvent(self, a0)
+    window = AboutWindow()
+    qtbot.addWidget(window)
+    with patch.object(QMessageBox, "about") as about:
+        window.show_about_dialog()
+    about.assert_called_once_with(window, "About HeLab", APP_BUILD_INFO.description())
 
 
 @pytest.fixture

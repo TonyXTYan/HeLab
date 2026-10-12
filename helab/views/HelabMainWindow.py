@@ -396,7 +396,16 @@ class HelabMainWindow(QMainWindow):
 
         else:
             logging.error("menu_debug is None")
-            
+
+        menu_help = self.menu_bar.addMenu("Help")
+        if menu_help is not None:
+            action_about = QAction("About HeLab", self)
+            action_about.triggered.connect(self.show_about_dialog)
+            menu_help.addAction(action_about)
+
+    def show_about_dialog(self) -> None:
+        QMessageBox.about(self, "About HeLab", APP_BUILD_INFO.description())
+
     def _on_drive_result(self, request: IORequest, event: dict[str, Any]) -> None:
         if self._closing or request.owner != self._drive_owner or event["kind"] != "drives":
             return

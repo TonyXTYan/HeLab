@@ -1,8 +1,80 @@
 # App version and build info
 
-Horizon: now, **after the [cache rebuild](cache-storage-and-settings.md)** (Tony, 2026-10-10).
-Added: 2026-10-10. Direction recommended, not yet decided.
+Added: 2026-10-10. **Option A chosen and implemented 2026-10-12**.
 Priority and completion: [overview](_readme.md).
+
+## Implemented workflow (authoritative)
+
+- `helab/_version.py` is the single editable source: `__version__ = "0.0.5a1"`.
+  Use canonical PEP 440 versions without `v`; the tag adds `v`.
+- Branch names are labels, not inputs. A release cycle can use `dev/v0.0.5`
+  while the package moves through `0.0.5a1`, `0.0.5b1` and `0.0.5`. The existing
+  `dev/v0.0.5a` branch does not need renaming for this change.
+- Open the PR to `main`, resolve findings, and commit the intended release
+  version on the PR branch **before final approval**. Do not automatically strip
+  an alpha suffix: merge an alpha when that is the release you intend.
+- Branch pushes and PRs to `main` run checks/builds without releasing. CI validates
+  canonical public versions and rejects decreases relative to valid existing tags.
+  Legacy equivalent tag spellings count as already released.
+- Squash-merge to `main`. For a version with no completed release, after required
+  tests/builds pass, CI prepares and validates all platform archives, explicitly
+  tags their tested commit and creates or resumes a **draft** release.
+  Alpha/beta/RC/dev versions are pre-releases; final versions are not. Publication
+  remains Tony's manual action. Tag pushes do not start another release workflow.
+- Release jobs share the `helab-release` concurrency group with `queue: max` and
+  `cancel-in-progress: false`, so up to 100 pending releases wait instead of replacing
+  one another. Jobs run in the order they start waiting, which may differ from push
+  order; additional jobs are cancelled if the queue is full. See [GitHub's concurrency
+  documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+  A tag already pointing at another commit is an error, never force-moved. Start the
+  next development cycle from updated `main`.
+- An existing tag is not a completion flag. Selection reads authenticated release
+  state, including drafts; API errors are failures rather than absence. Full reruns
+  and later same-version main pushes can repair missing drafts or incomplete assets.
+  Recovery selects the tag's own SHA, checks its version and main ancestry, and
+  rebuilds that SHA. Head tests still run; older recovery builds add the required
+  Python 3.13 tests on each OS. Archive stamps must match the selected version/SHA
+  and be clean before tag creation/upload. Tags are rechecked against the remote
+  before draft mutations; published releases are not changed.
+- The draft body carries a commit/size/SHA-256 asset manifest. Verified completed
+  uploads survive retries/rebuilds; only missing or invalid owned platform assets
+  are uploaded/replaced. Other assets and human notes are preserved. Missing digest
+  evidence never counts as a completed upload.
+- The Python 3.13 test/build gates and other versions' soft-failure policy are unchanged.
+
+## Runtime and build provenance
+
+`helab/build_info.py` is independent of Qt, caches and Dash. `setup.py` reads the
+package version and stamps wheel build output. `HeLab.spec` reads the same version
+and stamps its work directory, then bundles the stamp as `helab/_build_info.json`.
+JSON is used instead of the originally proposed generated Python module: it can
+be validated as data and need not be written into or imported from the source tree.
+
+The stamp records version, full commit, branch, explicit build ref, UTC build time
+and dirty state. CI supplies its source branch and merge/tag ref independently of
+the actual checked-out Git HEAD; PR builds therefore identify the source branch
+and `refs/pull/<n>/merge`, while recovery builds identify the tag ref. A plain
+detached source checkout says `detached`, rather than pretending `HEAD` is a branch.
+The runtime validates it; a missing or malformed frozen stamp reports unknown
+provenance without searching the launch directory. A source checkout queries Git
+with an explicit package-root path and bounded timeouts, rejecting enclosing repos.
+No Git executable or checkout is required by a packaged app.
+
+Help → About HeLab shows all fields; the title retains the short version/commit
+and the startup log records full provenance. `helab --version` queries it before
+GUI/services initialize (windowed Windows builds use About). macOS numeric bundle fields use the
+release triplet (`0.0.5`); separate `HeLabVersion`, `HeLabCommit` and `HeLabBuildDate`
+plist fields retain full alpha/build identity (with `HeLabBranch`/`HeLabBuildRef`). There is no generated stamp in the
+source package, so a local build cannot leave a stale stamp used by later source runs.
+
+Validation evidence: [session notes](../.ai/sessions/2026-10-12-codex-app-versioning/notes.md).
+Native/Windows and live GitHub release checks: [MANUAL_TODO](../.ai/MANUAL_TODO.md).
+
+## Historical investigation and alternatives
+
+The sections below preserve the original investigation and proposed alternatives.
+Where they differ, the implemented workflow above takes precedence (in particular,
+build metadata is JSON, and CI creates a draft rather than publishing automatically).
 
 ## Purpose
 
@@ -82,7 +154,7 @@ the version, commits and tags, and can write a changelog.
 - Tests: version and build-info reading (present, missing, malformed), and no dependence on
   the working directory.
 
-## Open decisions
+## Original open decisions (superseded by the chosen workflow above)
 
 - Option A, B or C, with or without D (recommended: A now, C later if wanted).
 - Version scheme: PEP 440 alphas on `0.0.x`, or a move to `0.x.0`.

@@ -10,6 +10,13 @@ if "--helab-io-helper" in sys.argv:
     io_helper_main()
     raise SystemExit(0)
 
+# Query provenance before importing Qt, opening settings/caches or starting Dash.
+if "--version" in sys.argv:
+    from helab.build_info import get_build_info
+    if sys.stdout is not None:
+        print(get_build_info().description())
+    raise SystemExit(0)
+
 # This Python file uses the following encoding: utf-8
 import logging
 import tempfile
@@ -145,6 +152,7 @@ def main() -> None:
     logging.info(f"{tempfile.gettempdir() = }")
 
     logging.info(f"Starting HeLab v{APP_VERSION} ({APP_COMMIT_HASH})")
+    logging.info(APP_BUILD_INFO.description())
 
     # font_db = QFontDatabase()
 

@@ -1,51 +1,31 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-import re
-import os
-import subprocess
+from pathlib import Path
+import sys
 
-# Function to extract version from setup.py
-def get_version():
-    with open('setup.py', 'r', encoding='utf-8') as f:
-        content = f.read()
-        match = re.search(r'version\s*=\s*[\'"]([^\'"]+)[\'"]', content)
-        if match:
-            return match.group(1)
-    return '0.0.0'  # Default version if not found
+from packaging.version import Version
+from PyInstaller.config import CONF
 
-def get_git_commit_hash_old():
-    try:
-        commit_hash = subprocess.check_output(
-            ['git', 'rev-parse', 'HEAD'],
-            stderr=subprocess.STDOUT
-        ).decode('utf-8').strip()
-        return commit_hash
-    except subprocess.CalledProcessError as e:
-        print(f"Git command failed with error: {e.output.decode('utf-8')}")
-        return 'unknown'
-    except Exception as e:
-        print(f"Error obtaining git commit hash: {e}")
-        return 'unknown'
+ROOT = Path(SPECPATH).resolve()
+sys.path.insert(0, str(ROOT))
+from helab._version import __version__
+from helab.build_info import BUILD_INFO_FILENAME, write_build_info
 
-def get_git_commit_hash():
-    try:
-        commit_hash = subprocess.check_output(
-            ['git', 'rev-parse', 'HEAD'],
-            stderr=subprocess.STDOUT
-        ).decode('utf-8').strip()
-        return commit_hash[:6].upper()  # Return only the first 6 characters
-    except Exception:
-        return 'unknown'
-
-APP_VERSION = get_version()
-APP_COMMIT_HASH = get_git_commit_hash()
+metadata_path = Path(CONF['workpath']) / BUILD_INFO_FILENAME
+build_info = write_build_info(ROOT, metadata_path)
+APP_VERSION = __version__
+# Apple's machine-readable fields use numeric components; the full PEP 440
+# version and Git commit remain in separate fields and the app's About dialog.
+release = Version(APP_VERSION).release
+BUNDLE_VERSION = '.'.join(str(value) for value in (release + (0, 0))[:3])
 
 
 a = Analysis(
-    ['helab/main.py'],
-    pathex=[],
+    [str(ROOT / 'helab/main.py')],
+    pathex=[str(ROOT)],
     binaries=[],
-    datas=[('helab/resources/menu-right.svg', 'helab/resources')],
+    datas=[(str(ROOT / 'helab/resources/menu-right.svg'), 'helab/resources'),
+           (str(metadata_path), 'helab')],
     hiddenimports=["helab.io_helper"],
     hookspath=[],
     hooksconfig={},
@@ -85,11 +65,16 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='HeLab.app',
-    icon='helab/resources/ai-icon.icns',
+    icon=str(ROOT / 'helab/resources/ai-icon.icns'),
     bundle_identifier='au.edu.anu.he-bec-lab',
     info_plist={
-        'CFBundleShortVersionString': APP_VERSION,
-        'CFBundleVersion': APP_COMMIT_HASH,
+        'CFBundleShortVersionString': BUNDLE_VERSION,
+        'CFBundleVersion': BUNDLE_VERSION,
+        'HeLabVersion': APP_VERSION,
+        'HeLabCommit': build_info.commit,
+        'HeLabBuildDate': build_info.built_at,
+        'HeLabBuildRef': build_info.build_ref,
+        'HeLabBranch': build_info.branch,
         'CFBundleName': 'HeLab',
         'CFBundleDisplayName': 'HeLab',
         'CFBundleExecutable': 'HeLab',

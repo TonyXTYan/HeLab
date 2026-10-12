@@ -72,6 +72,19 @@ pyinstaller HeLab.spec --clean -y    # all platforms
 
 The `.spec` file produces `HeLab.app` on macOS (bundle ID `au.edu.anu.he-bec-lab`).
 
+**Versioning:** `helab/_version.py` is the only editable version source (PEP 440,
+no `v` prefix). Branch names need not match it. `helab/build_info.py` writes
+`_build_info.json` into PyInstaller/wheel build output; never generate it in the
+source package. Runtime uses that stamp, or Git explicitly rooted in the package's
+own checkout, never the launch directory. Help → About HeLab shows provenance.
+CI stamps record the explicit source branch/build ref without replacing Git HEAD.
+Put a release-version bump on the PR branch before final approval. A squash merge
+to `main` with a new version triggers CI tagging and a draft release after required
+checks pass; publication remains manual. An existing tag with an incomplete draft
+is recoverable: rebuild/test that tagged SHA, validate clean archive stamps before
+tagging/uploading, preserve manifest-verified assets and never modify a published
+release or force-move a tag. See `roadmaps/app-versioning.md`.
+
 ## Architecture
 
 **Package layout:** `helab/models/`, `helab/views/`, `helab/workers/`, `helab/scripts/`, `helab/utils/`
@@ -118,4 +131,13 @@ A folder's status shown in the tree can be **derived from its subfolders** (`som
 
 ## CI/CD
 
-`.github/workflows/dev-cicd.yml` runs the full test matrix (macOS, Windows, Ubuntu × Python 3.10–3.13) with coverage upload to Codecov, and builds PyInstaller releases on git tags.
+`.github/workflows/dev-cicd.yml` tests/builds branch pushes and PRs to `main`
+(macOS, Windows, Ubuntu × Python 3.11–3.14), with Codecov uploads. Only Python
+3.13 tests/builds are blocking; other versions remain soft failures. A new package
+version on `main` creates an explicit tag and a draft release; tag pushes do not
+trigger releases. `python -m helab.release` validates/selects the version in CI.
+`python -m helab.release_draft` validates archives and resumes draft uploads. API
+errors fail selection; they never mean "no release". Only authenticated main runs
+query release state. Build jobs may target an older tagged SHA during recovery;
+the normal test jobs still check the current workflow commit, and recovery builds
+add Python 3.13 tests of the tagged commit on each OS.

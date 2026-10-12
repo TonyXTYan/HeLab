@@ -24,11 +24,10 @@ How to use it:
   ([plan](cache-storage-and-settings.md#sessions)) (2026-10-10; done 2026-10-11,
   `fe5a5b7`…`eafcf4b`; native checks in [MANUAL_TODO](../.ai/MANUAL_TODO.md)).
 
-- [ ] App version and build info, **after the cache rebuild**: one version source inside
-  the package, commit and build date written at build time (the app now reads `setup.py`
-  from the working directory, so packaged builds likely show `0.0.0`), tags created on
-  release (`v0.0.4a` is still an untagged draft), PEP 440 versions
-  ([plan](app-versioning.md)) (2026-10-10).
+- [x] App version and build info: package version `0.0.5a1`, embedded build provenance,
+  Help → About, and explicit CI tagging plus draft releases on new versions merged
+  to `main` ([implementation](app-versioning.md#implemented-workflow-authoritative))
+  (2026-10-12; release/native checks in [MANUAL_TODO](../.ai/MANUAL_TODO.md)).
 
 - [ ] Finish the status-message audit: verify load-phase labels for `merged`/
   `updated` sources ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#status-messages)) (2026-10-08).

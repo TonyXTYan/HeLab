@@ -147,8 +147,43 @@ random useful notes:
 ```bash
 pyinstaller HeLab.spec --clean
 pyinstaller HeLab.spec --clean -y 
-pyinstaller --onefile --windowed --name HELIUM helab/main.py
 ```
+
+## Versioning and releases
+
+Change the version only in `helab/_version.py`, using PEP 440 without a leading
+`v`, for example `0.0.5a1` (alpha), `0.0.5b1` (beta), or `0.0.5` (final).
+The app, Python package and CI use that value. Help → About HeLab shows the full
+version, commit, branch, build ref, UTC build date and whether the source was modified.
+`helab --version` (or `python -m helab --version`) prints the same provenance
+without starting the GUI, caches or Dash; windowed Windows builds use About.
+
+Start a development cycle from current `main`, for example on `dev/v0.0.5`
+with version `0.0.5a1`. The branch name is a label, not the version source.
+Development pushes and PRs run tests/builds without releasing. Set the intended
+release version in a commit on the PR branch **before final approval**; releasing
+an alpha is fine, and approval does not require removing its alpha suffix.
+
+After squash-merging to `main`, CI creates or resumes the version's unfinished draft.
+Once the required tests and builds pass, it prepares and validates all platform
+archives, explicitly creates `v<version>` on the tested commit, then creates or
+resumes a **draft** GitHub release. Review the packaged
+app and publish the draft manually. Alpha/beta/RC versions are marked as
+pre-releases; final versions are not. Tag pushes do not trigger a second release.
+Start the next cycle from updated `main` rather than continuing the squashed branch.
+
+An existing tag alone does not mean the release finished. Full reruns and later
+`main` pushes with the same version can resume missing drafts/assets. Recovery
+rebuilds the tagged commit, not the newer `main` commit; it checks lineage, version,
+tag SHA and embedded archive stamps. A draft manifest records asset sizes/digests
+so completed uploads are preserved. Published releases are left alone.
+Detached CI builds record their explicit source branch/build ref while retaining
+the actual checked-out Git commit; PR merge builds retain the PR merge ref.
+
+Build with `HeLab.spec` so commit and date metadata is embedded. Wheel builds
+also include it. Metadata is generated inside build output, never in the source
+package, so a checkout cannot accidentally use an older build's stamp.
+See [the versioning plan](roadmaps/app-versioning.md) for implementation details.
 
 
 ## ~~Setting up self hosted runners~~
