@@ -95,7 +95,8 @@ def test_a_large_load_stops_after_its_scan_phase_unless_allowed(tmp_path: Path) 
     assert any(e["kind"] == "loaded" for e in run_load(source, tmp_path, options))
 
 
-def test_the_check_of_data_already_in_ram_counts_only_what_it_adds(tmp_path: Path) -> None:
+@pytest.mark.parametrize("newline", [None, "\n", "\r\n"], ids=["native", "lf", "crlf"])
+def test_the_check_of_data_already_in_ram_counts_only_what_it_adds(tmp_path: Path, newline: str | None) -> None:
     source = data_folder(tmp_path)
     options = options_for(tmp_path)
     run_load(source, tmp_path, options)
@@ -110,10 +111,11 @@ def test_the_check_of_data_already_in_ram_counts_only_what_it_adds(tmp_path: Pat
     full = [e["kind"] for e in run_load(source, tmp_path, options, memory=memory, limits=tiny)]
     assert "loaded" in full and "too_large" not in full
     # A new shot is what it would add.
-    (source / "d_txy_forc3.txt").write_text("3,2,3\n")
+    new_file = source / "d_txy_forc3.txt"
+    new_file.write_text("3,2,3\n", newline=newline)
     added = next(e for e in run_load(source, tmp_path, options, memory=memory, limits=tiny)
                  if e["kind"] in ("loaded", "too_large"))
-    assert added == {"kind": "too_large", "estimate": len("3,2,3\n"), "refused": False}
+    assert added == {"kind": "too_large", "estimate": new_file.stat().st_size, "refused": False}
 
 
 def test_a_load_doesnt_unpack_a_cached_dataset_larger_than_the_folder_now_is(

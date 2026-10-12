@@ -103,8 +103,17 @@ def test_click_keyboard_and_accessible_popups_open_options_to_the_right(qtbot: Q
     assert positions == [button.mapToGlobal(QPoint(button.width(), 0))]
 
 
-def test_options_open_left_of_the_triangle_at_the_screen_edge(qtbot: QtBot) -> None:
+@pytest.mark.parametrize("menu_label", ["x", "Current folder"])
+def test_options_open_left_of_the_triangle_at_the_screen_edge(qtbot: QtBot, menu_label: str) -> None:
     window, button, menu = make_button(qtbot)
+    menu.actions()[0].setText(menu_label)
+    # Put the triangle at the window's right edge: menu width varies with Qt's
+    # platform style, so placing only the window at the screen edge is insufficient.
+    layout = window.layout()
+    assert layout is not None
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setAlignment(button, Qt.AlignmentFlag.AlignRight)
+    layout.activate()
     screen = button.screen()
     assert screen is not None
     area = screen.availableGeometry()

@@ -358,7 +358,12 @@ def test_newer_layout_opens_read_only(root: str) -> None:
     assert Path(database).read_bytes() == before
 
 
-@pytest.mark.parametrize("name", ["with%20space", "query?mode=rw", "hash#part"])
+@pytest.mark.parametrize("name", [
+    "with%20space",
+    pytest.param("query?mode=rw", marks=pytest.mark.skipif(sys.platform == "win32",
+                                                        reason="Windows forbids '?' in folder names")),
+    "hash#part",
+])
 def test_read_only_open_handles_uri_characters_in_the_path(tmp_path: Path, name: str) -> None:
     root = tmp_path / name / "store-v2"
     with CacheStore(str(root)) as store:

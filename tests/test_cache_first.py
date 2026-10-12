@@ -127,13 +127,17 @@ def test_check_of_cached_data_is_one_folder_stat_until_the_folder_changes(
     assert not result.get("unchanged")
 
 
+@pytest.mark.parametrize("newline", [None, "\n", "\r\n"], ids=["native", "lf", "crlf"])
 def test_files_still_being_written_are_left_for_the_next_load(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, newline: str | None,
 ) -> None:
     monkeypatch.setattr("helab.io_helper.SETTLE_SECONDS", 60.0)
     source = source_folder(tmp_path)
+    settled_file = source / "d_txy_forc1.txt"
+    settled_file.write_text("1,2,3\n", newline=newline)
+    settled_bytes = settled_file.stat().st_size
     old = time.time() - 120
-    os.utime(source / "d_txy_forc1.txt", (old, old))  # Shot 2 was just written.
+    os.utime(settled_file, (old, old))  # Shot 2 was just written.
     events = run_load(source, tmp_path)
     result = loaded(events)
     assert [event["shot"] for event in events if event["kind"] == "shot"] == [1]
@@ -144,7 +148,7 @@ def test_files_still_being_written_are_left_for_the_next_load(
     assert progress[-1] == {"kind": "progress", "progress": 1.0, "checked_files": 2,
                            "loaded_files": 1, "total_files": 2, "failed_files": 0, "unsettled_files": 1,
                            # Only the settled file is read, so only its bytes count towards the estimate.
-                           "read_bytes": 6, "read_files": 1, "total_read_bytes": 6}
+                           "read_bytes": settled_bytes, "read_files": 1, "total_read_bytes": settled_bytes}
     summary = next(event for event in events if event["kind"] == "scan_summary")["status"]
     assert summary["txy"] == [1, 2] and summary["unsettled"] == 1
     saved = next(event for event in events if event["kind"] == "cache_saved")["cache_info"]
