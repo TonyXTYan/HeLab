@@ -2,6 +2,7 @@
 a blocked folder is never scanned automatically, and failed saves are reported."""
 from __future__ import annotations
 
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import threading
@@ -90,10 +91,13 @@ def test_held_write_lock_does_not_unblock_a_scan(
 def test_held_write_lock_still_lets_a_manual_scan_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path, options = blocked_folder(tmp_path)
     monkeypatch.setattr(cache_store, "BUSY_TIMEOUT", 0.05)
-    holder = hold_write_lock(options, 0.5)
     events: list[dict[str, Any]] = []
-    scan(path, events.append, options, manual=True)
-    holder.join(5)
+    # Keep the lock through the outcome save, even when coverage or a slow
+    # runner makes the scan take longer than the timed holder's half second.
+    with closing(sqlite3.connect(str(Path(options["directory"]) / "records.sqlite"),
+                                 isolation_level=None)) as holder:
+        holder.execute("BEGIN IMMEDIATE")
+        scan(path, events.append, options, manual=True)
     assert any(e["kind"] == "scan_history_warning" for e in events)
     assert any(e["kind"] == "status" for e in events)
     # The saved failures stay: the outcome couldn't be written over them.
