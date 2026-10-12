@@ -44,7 +44,7 @@ jobs:
 
   # Required coverage runs to completion on every OS, even after a failure.
   test:
-    name: Required tests (${{ matrix.os }}, Python 3.13)
+    name: ${{ matrix.os == 'windows' && 'win' || matrix.os }} + py3.13
     needs: get-version
     strategy:
       fail-fast: false
@@ -58,7 +58,7 @@ jobs:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   build:
-    name: Required builds (${{ matrix.os }}, Python 3.13)
+    name: ${{ matrix.os == 'windows' && 'win' || matrix.os }} + py3.13
     needs: get-version
     strategy:
       fail-fast: false
@@ -75,7 +75,7 @@ jobs:
   # Expand compatibility entries so the graph can display each skipped job.
   # The called jobs start runners only for PRs targeting main.
   test-compatibility:
-    name: Compatibility tests (${{ matrix.os }}, Python 3.${{ matrix.python3-version }})
+    name: ${{ matrix.os == 'windows' && 'win' || matrix.os }} + py3.${{ matrix.python3-version }}
     needs: get-version
     strategy:
       fail-fast: false
@@ -92,7 +92,7 @@ jobs:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   build-compatibility:
-    name: Compatibility builds (${{ matrix.os }}, Python 3.${{ matrix.python3-version }})
+    name: ${{ matrix.os == 'windows' && 'win' || matrix.os }} + py3.${{ matrix.python3-version }}
     needs: get-version
     strategy:
       fail-fast: false
