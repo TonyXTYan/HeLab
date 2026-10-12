@@ -43,8 +43,8 @@ jobs:
         run: python -m helab.release
 
   # Required coverage runs to completion on every OS, even after a failure.
-  test:
-    name: ${{ matrix.os == 'windows' && 'win' || matrix.os }} + py3.13
+  required-tests:
+    name: ${{ matrix.os }} + py3.13
     needs: get-version
     strategy:
       fail-fast: false
@@ -57,8 +57,8 @@ jobs:
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
-  build:
-    name: ${{ matrix.os == 'windows' && 'win' || matrix.os }} + py3.13
+  required-builds:
+    name: ${{ matrix.os }} + py3.13
     needs: get-version
     strategy:
       fail-fast: false
@@ -74,8 +74,8 @@ jobs:
 
   # Expand compatibility entries so the graph can display each skipped job.
   # The called jobs start runners only for PRs targeting main.
-  test-compatibility:
-    name: ${{ matrix.os == 'windows' && 'win' || matrix.os }} + py3.${{ matrix.python3-version }}
+  compatibility-tests:
+    name: ${{ matrix.os }} + py3.${{ matrix.python3-version }}
     needs: get-version
     strategy:
       fail-fast: false
@@ -91,8 +91,8 @@ jobs:
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
-  build-compatibility:
-    name: ${{ matrix.os == 'windows' && 'win' || matrix.os }} + py3.${{ matrix.python3-version }}
+  compatibility-builds:
+    name: ${{ matrix.os }} + py3.${{ matrix.python3-version }}
     needs: get-version
     strategy:
       fail-fast: false
@@ -111,14 +111,14 @@ jobs:
 
   release:
     name: Tag tested main commit and create draft release
-    needs: [get-version, test, build, test-compatibility, build-compatibility]
+    needs: [get-version, required-tests, required-builds, compatibility-tests, compatibility-builds]
     # Compatibility jobs are skipped on pushes and remain non-blocking.
     # An explicit status check lets skipped dependencies reach this gate.
     if: >-
       !cancelled() &&
       needs.get-version.result == 'success' &&
-      needs.test.result == 'success' &&
-      needs.build.result == 'success' &&
+      needs.required-tests.result == 'success' &&
+      needs.required-builds.result == 'success' &&
       needs.get-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     # Serialize tag creation and retain pending releases instead of replacing them.

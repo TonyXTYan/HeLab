@@ -49,3 +49,24 @@
 - All 24 labels are distinct and identify OS/Python; other workflow behavior is
   unchanged. All 23 Bash blocks, actionlint (same queue exclusion) and diff check
   passed. Label rendering needs a new live run after commit/push.
+
+## Full OS labels
+
+- After Terminal 3 shortened caller names in 825e647, Tony requested `windows`
+  instead of `win`. Removed the abbreviation from all four caller labels and
+  both required-failure summaries. Actionlint and diff check passed; uncommitted.
+- The reusable job suffix (`/ Tests` or `/ Build`) is still present. No documented
+  setting to suppress only that component was found; no blank-name workaround used.
+
+## Matrix group ids
+
+- Tony asked to rename the matrix groups, whose graph labels show the job id
+  because their names use matrix values. Ids are now `required-tests`,
+  `required-builds`, `compatibility-tests` and `compatibility-builds`; the release
+  job's `needs` and result checks follow. Branch-protection check names come from
+  the expanded job names, not ids, so they are unchanged.
+- The ` / Tests` and ` / Build` suffixes stay: GitHub always names a called
+  workflow's job `<caller> / <called job>`, and inlining the jobs would lose the
+  explicit skips (a job-level `if` cannot read `matrix`).
+- YAML parse and needs-reference check passed; git diff --check passed. actionlint
+  was not available in this session. Uncommitted; needs a live run.
