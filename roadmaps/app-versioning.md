@@ -44,8 +44,10 @@ Priority and completion: [overview](_readme.md).
   branch push and PR to `main`. Separate Python 3.11, 3.12 and 3.14 compatibility
   matrices run only on PRs to `main` and remain non-blocking. The matrices share
   reusable test/build workflows and finish all configurations after a failure;
-  required failures no longer cancel the workflow. Release depends only on
-  version selection and the two required matrices, using their Python 3.13 artifacts.
+  required failures no longer cancel the workflow. Branch/version detection feeds
+  all four matrices in parallel, then release waits for all four. Its explicit
+  status gate requires version selection and the two required matrices to succeed,
+  allowing compatibility skips/failures, and uses only Python 3.13 artifacts.
 
 ## Runtime and build provenance
 

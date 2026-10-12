@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   get-version:
-    name: Detect version bump
+    name: Detect branch and version bump
     runs-on: ubuntu-latest
     outputs:
       tag_name: ${{ steps.compare.outputs.tag_name }}
@@ -45,6 +45,7 @@ jobs:
   # Required coverage runs to completion on every OS, even after a failure.
   test:
     name: Required tests
+    needs: get-version
     strategy:
       fail-fast: false
       matrix:
@@ -75,6 +76,7 @@ jobs:
   test-compatibility:
     name: Compatibility tests
     if: github.event_name == 'pull_request'
+    needs: get-version
     strategy:
       fail-fast: false
       matrix:
@@ -108,8 +110,15 @@ jobs:
 
   release:
     name: Tag tested main commit and create draft release
-    needs: [get-version, test, build]
-    if: needs.get-version.outputs.should_release == 'true'
+    needs: [get-version, test, build, test-compatibility, build-compatibility]
+    # Compatibility jobs are skipped on pushes and remain non-blocking.
+    # An explicit status check lets skipped dependencies reach this gate.
+    if: >-
+      !cancelled() &&
+      needs.get-version.result == 'success' &&
+      needs.test.result == 'success' &&
+      needs.build.result == 'success' &&
+      needs.get-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     # Serialize tag creation and retain pending releases instead of replacing them.
     concurrency:

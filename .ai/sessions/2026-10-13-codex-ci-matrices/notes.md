@@ -13,3 +13,16 @@
   with only the pre-existing unsupported concurrency.queue key excluded.
 - Focused versioning/release tests: 46 passed. git diff --check passed.
 - No live GitHub run or push. Existing unrelated test changes untouched.
+
+## Dependency graph follow-up
+
+- Tony requested one branch/version detection job feeding all four matrices,
+  with all four feeding tag/release. Tests and builds stay parallel.
+- Added detection dependencies to both test matrices and both compatibility
+  dependencies to release. The release condition explicitly permits skipped
+  compatibility jobs while requiring successful detection and required tests/builds;
+  workflow cancellation and should_release=false still prevent release.
+- Verified graph edges, 4096 combinations of dependency results/release flag/
+  cancellation in the condition, unchanged other job behavior and 23 Bash blocks.
+  Actionlint passed with the same pre-existing queue-key exclusion; diff check passed.
+- Follow-up validated locally before commit/push; live GitHub execution pending.

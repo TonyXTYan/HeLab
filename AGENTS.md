@@ -136,8 +136,10 @@ macOS, Windows and Ubuntu for every branch push and PR to `main`. Separate
 Python 3.11, 3.12 and 3.14 compatibility matrices run only on PRs to `main`,
 with soft failures. Shared steps live in `ci-test.yml` and `ci-build.yml`, with
 Codecov uploads. All matrices disable fail-fast; required failures do not cancel
-other OS tests/builds. Release depends only on the required matrices and version
-selection. A new package version on `main` creates an explicit tag and a draft
+other OS tests/builds. All four matrices depend on branch/version selection;
+release waits for all four, but only required matrices and version selection
+must succeed (compatibility skips/failures are non-blocking). A new package
+version on `main` creates an explicit tag and a draft
 release; tag pushes do not
 trigger releases. `python -m helab.release` validates/selects the version in CI.
 `python -m helab.release_draft` validates archives and resumes draft uploads. API
