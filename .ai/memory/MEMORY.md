@@ -3,6 +3,7 @@
 See `.ai/coding-workspace.md` for what belongs here vs `.ai/sessions/`.
 
 - [Ask before commit](feedback_ask_before_commit.md) — never `git commit` without asking first, even after verifying a fix works
+- [Maestri Chat and Codex caveats](results/maestri-chat-and-codex.md) — reply through `maestri say`; avoid heredocs for auto-approved commands; verify terminal identity live; Maestri color threads and Codex chats have separate histories
 - [Lab PC QtWebEngine black render](results/lab-pc-qtwebengine-black-render.md) — the Lab Side PC is Sandy Bridge/no-D3D11, so Qt plot panes never paint; export Plotly HTML to a browser instead
 - [Lab Side PC caveats](results/lab-side-pc-caveats.md) — HeLab runs from a uv Python 3.13 venv (uv for all users), bare py runs it; bare python is 2.7; conda off PATH, git on it; old Anaconda3 removed; maestri --raw mangles `\r`/`\v` paths, so send base64 Python
 - [Lab Main PC caveats](results/lab-main-pc-caveats.md) — uv Python 3.13 venv, bare py runs it (3.11's stdlib is corrupted; bare python is 3.6); Miniconda replaced Anaconda3, `conda` works in any shell via condabin, ToS not yet accepted; never launch HeLab over SSH: elevation poisons its cache settings
