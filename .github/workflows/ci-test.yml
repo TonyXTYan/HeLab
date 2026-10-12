@@ -9,6 +9,10 @@ on:
       python-minor:
         required: true
         type: string
+      enabled:
+        description: Run this job; false records a skip without starting a runner
+        type: boolean
+        default: true
       experimental:
         description: Allow compatibility failures without failing CI
         type: boolean
@@ -23,6 +27,7 @@ permissions:
 jobs:
   test:
     name: Test on ${{ inputs.os }} py3.${{ inputs.python-minor }}
+    if: inputs.enabled
     runs-on: ${{ inputs.os }}-latest
     timeout-minutes: 15
     continue-on-error: ${{ inputs.experimental }}

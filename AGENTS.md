@@ -135,7 +135,9 @@ A folder's status shown in the tree can be **derived from its subfolders** (`som
 macOS, Windows and Ubuntu for every branch push and PR to `main`. Separate
 Python 3.11, 3.12 and 3.14 compatibility matrices run only on PRs to `main`,
 with soft failures. Shared steps live in `ci-test.yml` and `ci-build.yml`, with
-Codecov uploads. All matrices disable fail-fast; required failures do not cancel
+Codecov uploads. Compatibility matrices expand on pushes, but pass `enabled: false`
+to the called jobs, recording individual skips without starting runners. All
+matrices disable fail-fast; required failures do not cancel
 other OS tests/builds. All four matrices depend on branch/version selection;
 release waits for all four, but only required matrices and version selection
 must succeed (compatibility skips/failures are non-blocking). A new package

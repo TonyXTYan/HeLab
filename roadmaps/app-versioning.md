@@ -43,7 +43,9 @@ Priority and completion: [overview](_readme.md).
 - Required Python 3.13 tests/builds run on macOS, Windows and Ubuntu on every
   branch push and PR to `main`. Separate Python 3.11, 3.12 and 3.14 compatibility
   matrices run only on PRs to `main` and remain non-blocking. The matrices share
-  reusable test/build workflows and finish all configurations after a failure;
+  reusable test/build workflows. On pushes, compatibility entries expand but their
+  called jobs are disabled, recording explicit skips without starting runners.
+  All matrices finish all configurations after a failure;
   required failures no longer cancel the workflow. Branch/version detection feeds
   all four matrices in parallel, then release waits for all four. Its explicit
   status gate requires version selection and the two required matrices to succeed,

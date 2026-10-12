@@ -72,10 +72,10 @@ jobs:
       build-ref: ${{ needs.get-version.outputs.build_ref }}
       build-branch: ${{ needs.get-version.outputs.build_branch }}
 
-  # Full compatibility coverage is reserved for PRs targeting main.
+  # Expand compatibility entries so the graph can display each skipped job.
+  # The called jobs start runners only for PRs targeting main.
   test-compatibility:
     name: Compatibility tests
-    if: github.event_name == 'pull_request'
     needs: get-version
     strategy:
       fail-fast: false
@@ -86,13 +86,13 @@ jobs:
     with:
       os: ${{ matrix.os }}
       python-minor: ${{ matrix.python3-version }}
+      enabled: ${{ github.event_name == 'pull_request' }}
       experimental: true
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   build-compatibility:
     name: Compatibility builds
-    if: github.event_name == 'pull_request'
     needs: get-version
     strategy:
       fail-fast: false
@@ -103,6 +103,7 @@ jobs:
     with:
       os: ${{ matrix.os }}
       python-minor: ${{ matrix.python3-version }}
+      enabled: ${{ github.event_name == 'pull_request' }}
       experimental: true
       build-sha: ${{ needs.get-version.outputs.build_sha }}
       build-ref: ${{ needs.get-version.outputs.build_ref }}

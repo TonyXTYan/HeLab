@@ -26,3 +26,15 @@
   cancellation in the condition, unchanged other job behavior and 23 Bash blocks.
   Actionlint passed with the same pre-existing queue-key exclusion; diff check passed.
 - Follow-up validated locally before commit/push; live GitHub execution pending.
+
+## Explicit compatibility skips
+
+- Run 38258185459 succeeded with all six required jobs passing, but the summary
+  showed unexpanded compatibility matrices as pending while their job states were
+  completed/skipped. Tony approved trying explicit inner-job skips.
+- Removed compatibility caller conditions and passed a PR-only `enabled` boolean
+  to each reusable job (default true for required jobs). Pushes expand all entries,
+  then skip 18 compatibility jobs before runners start; PRs enable all 24 jobs.
+- Local event-count checks and all 4096 release-condition combinations passed.
+  Actionlint passed with the existing queue-key exclusion; diff check passed.
+- Summary icon rendering must be verified in the next GitHub run.
