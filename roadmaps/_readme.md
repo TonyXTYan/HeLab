@@ -34,6 +34,11 @@ How to use it:
   release there; stop pushing dev branches to `HeBECANU`. Proposed, Tony to
   confirm ([plan](app-updates.md#release-repos-proposed-2026-10-13-tony-to-confirm)) (2026-10-13).
 
+- [ ] Build size: ship one copy of the app per asset with symlinks kept (macOS
+  artifact 2152 MiB, `HeLab.app` alone zips to 276 MB), then exclude unused
+  packages (pyarrow, mypy), replace pytablericons/pygame, and decide on
+  QtWebEngine ([plan](build-size.md)) (2026-10-13).
+
 - [ ] Finish the status-message audit: verify load-phase labels for `merged`/
   `updated` sources ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#status-messages)) (2026-10-08).
 

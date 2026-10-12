@@ -9,6 +9,7 @@ Two repos exist: this one (`TonyXTYan/HeLab`) is the development branch; `HeBECA
 - Address the user as "🎓Tony" in conversation.
 - Always ask Tony before running `git commit`. Staging, diffing and reviewing are fine without asking.
 - Every Git commit must include both a concise subject and a meaningful description in the message body, separated by a blank line. The description should explain what changed and why, and include relevant validation.
+- Whenever possible (a task finished, a natural pause, or work that touches the same area), offer to take on open items from `roadmaps/_readme.md` that fit, saying which and why. Offer only; start one after Tony agrees.
 - CodeGraph (`codegraph_*` tools, `.cursor/rules/codegraph.mdc`) is reliable for definitions, signatures and source, but its callers, callees, trace and impact results miss many calls made through attributes (e.g. `self.model.cache.submit(...)` reaching `FolderCache.submit`). Confirm them with grep before relying on them.
 
 ## AI workspace (`.ai/`)
