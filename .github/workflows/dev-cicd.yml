@@ -42,297 +42,69 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python -m helab.release
 
+  # Required coverage runs to completion on every OS, even after a failure.
   test:
-    # name: Test on ${{ matrix.os }} - Python ${{ matrix.python-version }}
-    name: Test on ${{ matrix.os }} py3.${{ matrix.python3-version }}
-    runs-on: ${{ matrix.os }}-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      actions: write
-    # Python 3.13 is required; other versions provide non-blocking compatibility checks.
-    continue-on-error: ${{ matrix.python3-version != '13' }}
+    name: Required tests
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         os: [macos, windows, ubuntu]
-        # os: [macos, windows]
-        # python3-version: ["9", "10", "11", "12", "13", "14"]
-        python3-version: ["11", "12", "13", "14"]
-    env:
-      QT_QPA_PLATFORM: offscreen
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      # - name: Cache pip
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: ~/.cache/pip
-      #     key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}-py${{ matrix.python-version }}
-
-      # Install system dependencies for Ubuntu
-      - name: Install dependencies on Ubuntu
-        if: matrix.os == 'ubuntu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libegl1 \
-            libxcb-icccm4 \
-            libxcb-image0 \
-            libxcb-keysyms1 \
-            libxcb-randr0 \
-            libxcb-render-util0 \
-            libxcb-shape0 \
-            libxcb-xinerama0 \
-            libxcb-xkb1 \
-            xvfb \
-            x11-utils \
-            libopengl0
-
-      # For macOS, run a no-op command
-      - name: Install dependencies on macOS
-        if: matrix.os == 'macos'
-        run: |
-          echo "No dependencies to install on macOS."
-
-      # For Windows, run a no-op command
-      - name: Install dependencies on Windows
-        if: matrix.os == 'windows'
-        run: |
-          echo "No dependencies to install on Windows."
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: 3.${{ matrix.python3-version }}
-          cache: 'pip'
-
-      - name: Install dependencies
-        shell: bash
-        run: |
-          python -m venv venv
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            source venv/Scripts/activate
-          else
-            source venv/bin/activate
-          fi
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # pip install --force-reinstall -r requirements.txt
-          pip install -e .
-
-      - name: Run Tests
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            source venv/Scripts/activate
-          else
-            source venv/bin/activate
-          fi
-            pytest -n 4 --verbose --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
-
-#          pytest -n 1 -v --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy
-#          pytest -n 8 -v --cache-clear --cov=helab --junit-xml=pytest-report.xml
-      
-      - name: Upload Test Results
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-results-${{ matrix.os }}-py3${{ matrix.python3-version }}
-          path: junit.xml
-
-      - name: Upload test results to Codecov
-        if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v7
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          report_type: test_results
-
-      - name: Run test with code coverage report
-        if: matrix.python3-version == '13' && matrix.os == 'macos'
-        run: |  
-          source venv/bin/activate
-          pytest --cov=helab --cov-report=xml --cov-report=term --ignore=tests/test_typing.py --cache-clear --timeout=120 --timeout-method=thread
-
-      - name: Upload Code Coverage Report
-        if: matrix.python3-version == '13' && matrix.os == 'macos'
-        uses: codecov/codecov-action@v7
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-
-      - name: Report Python 3.13 test failure
-        if: matrix.python3-version == '13' && failure() && !cancelled()
-        shell: bash
-        env:
-          MATRIX_OS: ${{ matrix.os }}
-          PYTHON_MINOR: ${{ matrix.python3-version }}
-        run: |
-          echo "::error title=Python 3.${PYTHON_MINOR} test failed on ${MATRIX_OS}::Required test job failed on ${MATRIX_OS}-latest (${RUNNER_OS}/${RUNNER_ARCH}) with Python 3.${PYTHON_MINOR}. Cancelling the workflow; inspect this job's failed step for the cause."
-          {
-            echo "### Required test job failed"
-            echo ""
-            echo "- **OS target:** ${MATRIX_OS}-latest"
-            echo "- **Python target:** 3.${PYTHON_MINOR}"
-            echo "- **Runner:** ${RUNNER_OS} / ${RUNNER_ARCH}"
-            echo ""
-            echo "This failure triggers workflow cancellation. Inspect **Test on ${MATRIX_OS} py3.${PYTHON_MINOR}** in the [job logs](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}) for the failed step."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # Report first so the failure summary is uploaded before cancellation.
-      # Matrix fail-fast only stops tests; also cancel parallel builds.
-      - name: Cancel workflow on Python 3.13 failure
-        if: matrix.python3-version == '13' && failure() && !cancelled()
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"
+    uses: ./.github/workflows/ci-test.yml
+    with:
+      os: ${{ matrix.os }}
+      python-minor: '13'
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   build:
+    name: Required builds
     needs: get-version
-    # name: Build on ${{ matrix.os }} - Python ${{ matrix.python-version }}
-    # needs: test # speed up parallel jobs
-    name: Build on ${{ matrix.os }} py3.${{ matrix.python3-version }}
-    # Python 3.13 is required; other versions provide non-blocking compatibility checks.
-    continue-on-error: ${{ matrix.python3-version != '13' }}
-    runs-on: ${{ matrix.os }}-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      actions: write
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         os: [macos, windows, ubuntu]
-        # os: [macos, windows]
-        python3-version: ["11", "12", "13", "14"]
-    env:
-      HELAB_BUILD_REF: ${{ needs.get-version.outputs.build_ref }}
-      HELAB_BUILD_BRANCH: ${{ needs.get-version.outputs.build_branch }}
+    uses: ./.github/workflows/ci-build.yml
+    with:
+      os: ${{ matrix.os }}
+      python-minor: '13'
+      build-sha: ${{ needs.get-version.outputs.build_sha }}
+      build-ref: ${{ needs.get-version.outputs.build_ref }}
+      build-branch: ${{ needs.get-version.outputs.build_branch }}
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.get-version.outputs.build_sha }}
+  # Full compatibility coverage is reserved for PRs targeting main.
+  test-compatibility:
+    name: Compatibility tests
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos, windows, ubuntu]
+        python3-version: ['11', '12', '14']
+    uses: ./.github/workflows/ci-test.yml
+    with:
+      os: ${{ matrix.os }}
+      python-minor: ${{ matrix.python3-version }}
+      experimental: true
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
-      # - name: Cache pip
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: ~/.cache/pip
-      #     key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}-py${{ matrix.python-version }}
-
-      # For macOS, run a no-op command
-      - name: Install dependencies on macOS
-        if: matrix.os == 'macos'
-        run: |
-          echo "No dependencies to install on macOS."
-
-      # For Windows, run a no-op command
-      - name: Install dependencies on Windows
-        if: matrix.os == 'windows'
-        run: |
-          echo "No dependencies to install on Windows."
-
-      # Install system dependencies for Ubuntu
-      - name: Install dependencies on Ubuntu
-        if: matrix.os == 'ubuntu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libegl1 \
-            libxcb-icccm4 \
-            libxcb-image0 \
-            libxcb-keysyms1 \
-            libxcb-randr0 \
-            libxcb-render-util0 \
-            libxcb-shape0 \
-            libxcb-xinerama0 \
-            libxcb-xkb1 \
-            xvfb \
-            x11-utils \
-            libopengl0
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: 3.${{ matrix.python3-version }}
-          cache: 'pip'
-
-      - name: Install dependencies 
-        shell: bash
-        run: |
-          python -m venv venv
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            source venv/Scripts/activate
-          else
-            source venv/bin/activate
-          fi
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # pip install --force-reinstall -r requirements.txt
-          pip install -e .
-
-      - name: Test the older tagged commit before rebuilding recovery assets
-        if: matrix.python3-version == '13' && needs.get-version.outputs.build_sha != github.sha
-        shell: bash
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            source venv/Scripts/activate
-          else
-            source venv/bin/activate
-          fi
-          pytest -n 4 --verbose --timeout=120 --timeout-method=thread
-
-      - name: Build with PyInstaller
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            source venv/Scripts/activate
-          else
-            source venv/bin/activate
-          fi
-          pyinstaller HeLab.spec --clean -y
-
-      - name: Archive build artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: build-${{ matrix.os }}-py3${{ matrix.python3-version }}
-          # name: build-${{ matrix.os }}-py${{ format('{0}', matrix.python-version) | replace('.','') }}
-          # name: build-${{ matrix.os }}-py${{ replace(matrix.python-version, '.', '') }}
-          # name: build-${{ matrix.os }}-py${{ join(split(matrix.python-version, '.'), '') }}
-          path: |
-            dist/
-          retention-days: 1
-      - name: Report Python 3.13 build failure
-        if: matrix.python3-version == '13' && failure() && !cancelled()
-        shell: bash
-        env:
-          MATRIX_OS: ${{ matrix.os }}
-          PYTHON_MINOR: ${{ matrix.python3-version }}
-        run: |
-          echo "::error title=Python 3.${PYTHON_MINOR} build failed on ${MATRIX_OS}::Required build job failed on ${MATRIX_OS}-latest (${RUNNER_OS}/${RUNNER_ARCH}) with Python 3.${PYTHON_MINOR}. Cancelling the workflow; inspect this job's failed step for the cause."
-          {
-            echo "### Required build job failed"
-            echo ""
-            echo "- **OS target:** ${MATRIX_OS}-latest"
-            echo "- **Python target:** 3.${PYTHON_MINOR}"
-            echo "- **Runner:** ${RUNNER_OS} / ${RUNNER_ARCH}"
-            echo ""
-            echo "This failure triggers workflow cancellation. Inspect **Build on ${MATRIX_OS} py3.${PYTHON_MINOR}** in the [job logs](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}) for the failed step."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # Report first so the failure summary is uploaded before cancellation.
-      # Matrix fail-fast only stops builds; also cancel parallel tests.
-      - name: Cancel workflow on Python 3.13 failure
-        if: matrix.python3-version == '13' && failure() && !cancelled()
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"
+  build-compatibility:
+    name: Compatibility builds
+    if: github.event_name == 'pull_request'
+    needs: get-version
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos, windows, ubuntu]
+        python3-version: ['11', '12', '14']
+    uses: ./.github/workflows/ci-build.yml
+    with:
+      os: ${{ matrix.os }}
+      python-minor: ${{ matrix.python3-version }}
+      experimental: true
+      build-sha: ${{ needs.get-version.outputs.build_sha }}
+      build-ref: ${{ needs.get-version.outputs.build_ref }}
+      build-branch: ${{ needs.get-version.outputs.build_branch }}
 
   release:
     name: Tag tested main commit and create draft release

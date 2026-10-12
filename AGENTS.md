@@ -131,10 +131,14 @@ A folder's status shown in the tree can be **derived from its subfolders** (`som
 
 ## CI/CD
 
-`.github/workflows/dev-cicd.yml` tests/builds branch pushes and PRs to `main`
-(macOS, Windows, Ubuntu × Python 3.11–3.14), with Codecov uploads. Only Python
-3.13 tests/builds are blocking; other versions remain soft failures. A new package
-version on `main` creates an explicit tag and a draft release; tag pushes do not
+`.github/workflows/dev-cicd.yml` runs required Python 3.13 test/build matrices on
+macOS, Windows and Ubuntu for every branch push and PR to `main`. Separate
+Python 3.11, 3.12 and 3.14 compatibility matrices run only on PRs to `main`,
+with soft failures. Shared steps live in `ci-test.yml` and `ci-build.yml`, with
+Codecov uploads. All matrices disable fail-fast; required failures do not cancel
+other OS tests/builds. Release depends only on the required matrices and version
+selection. A new package version on `main` creates an explicit tag and a draft
+release; tag pushes do not
 trigger releases. `python -m helab.release` validates/selects the version in CI.
 `python -m helab.release_draft` validates archives and resumes draft uploads. API
 errors fail selection; they never mean "no release". Only authenticated main runs
