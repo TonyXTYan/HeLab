@@ -28,6 +28,12 @@ nothing appeared.
   cache's `snapshot_at`, the helper answers with **one folder stat**
   (`unchanged`). Tony chose the plain mtime comparison: lab clocks are
   internet-synced, so no skew margin. Otherwise it lists and merges.
+- A TXY file rewritten in place doesn't change the folder's mtime, so the
+  folder stat can't see it (Codex review of PR #5, 2026-10-13). Tony's rule:
+  **TXY files are written once; a repaired or regenerated file gets a new
+  name**, never overwrites existing data. The escape hatch is right-click
+  Retry / Refresh: the folder's next check (at once for the shown folder) is a
+  `full_check`, comparing every file's size and mtime with the cache.
 - Selecting a folder with saved counts and a disk cache skips the listing.
 - Check failure keeps the cached data: `Check failed`, error on line 1, Retry.
 - **Files still being written:** TXY written once and never modified, but

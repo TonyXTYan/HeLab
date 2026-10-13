@@ -127,6 +127,23 @@ def test_check_of_cached_data_is_one_folder_stat_until_the_folder_changes(
     assert not result.get("unchanged")
 
 
+def test_full_check_finds_a_file_rewritten_in_place(tmp_path: Path) -> None:
+    """Rewriting a file doesn't modify its folder: only a full check (Retry / Refresh) sees it."""
+    source = source_folder(tmp_path)
+    first = loaded(run_load(source, tmp_path))
+    memory = [list(entry) for entry in first["fingerprint"]]
+    folder = source.stat()
+    (source / "d_txy_forc2.txt").write_text("2,2,3\n2,5,6\n")
+    later = time.time() + 10
+    os.utime(source / "d_txy_forc2.txt", (later, later))
+    os.utime(source, ns=(folder.st_atime_ns, folder.st_mtime_ns))
+    assert loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"]))["unchanged"]
+    result = loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"],
+                             full_check=True))
+    assert not result.get("unchanged") and result["signature"] != first["signature"]
+    assert result["load_counts"]["modified_loaded"] == 1 and result["load_counts"]["reused_memory"] == 1
+
+
 @pytest.mark.parametrize("newline", [None, "\n", "\r\n"], ids=["native", "lf", "crlf"])
 def test_files_still_being_written_are_left_for_the_next_load(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, newline: str | None,
@@ -357,3 +374,25 @@ def test_scan_and_load_agree_while_a_file_is_still_being_written(
     # Otherwise the scan would report a change and drop the data just loaded.
     assert statuses[0]["txy"] == [1, 2] and statuses[0]["unsettled"] == 1
     assert statuses[0]["signature"] == loaded(run_load(source, tmp_path))["signature"]
+
+
+def test_refresh_checks_shown_data_file_by_file(
+    browser: FolderExplorer, qtbot: QtBot, tmp_path: Path,
+) -> None:
+    path = str(tmp_path)
+    signature, check = show_cached(browser, qtbot, path)
+    assert not check.payload["full_check"]  # Selecting: one folder stat may be the whole check.
+    service = browser.model.cache.service
+    service.resultReady.emit(check, {
+        "kind": "loaded", "unchanged": True, "signature": signature, "memory_shots": [1],
+        "fingerprint": [[1, 6, 123]], "files": 1, "total_files": 1, "failed_files": 0, "rows": 0,
+        "bytes": 0, "problematic": [], "source": "memory", "cached": True, "disk_cached": True,
+        "disk_cache_pending": False, "cache_info": browser.model.cache.cache_status(path).info,
+        "load_counts": {"reused_memory": 1, "read": 0}})
+    service.pending.remove(check)
+    assert not browser.shows_unchecked(path)
+    browser.refresh_folder(path)
+    qtbot.waitUntil(lambda: ("load", path) in browser.model.cache.jobs)
+    assert producer(browser.model.cache, path, "load").payload["full_check"] is True
+    assert browser.shows_unchecked(path)  # "Checking for changes…" until it completes.
+    assert not browser._full_check_paths  # Only this check, not later ones.

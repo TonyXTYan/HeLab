@@ -630,14 +630,15 @@ def load(path: str, output: str, send: Emit = emit,
          cache_options: dict[str, Any] | None = None,
          memory: list[list[int]] | None = None, base_signature: str = "",
          expected: str = "", *, limits: dict[str, Any] | None = None, allow_large: bool = False,
-         no_cache: bool = False) -> None:
+         no_cache: bool = False, full_check: bool = False) -> None:
     """Load converted TXY files, reusing unchanged shots from RAM and disk cache.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for shots the caller already holds
     in RAM. Unchanged ones are neither read nor sent; ``loaded`` names them in
     ``memory_shots``. The disk cache is updated after ``loaded`` is sent.
     ``base_signature`` names the dataset those shots belong to; if it is the cached
-    dataset and the folder is unmodified since, one folder stat is the whole check.
+    dataset and the folder is unmodified since, one folder stat is the whole check, unless
+    ``full_check`` (Retry / Refresh): then every TXY file's size and mtime is compared.
     After its scan phase (saved as the folder's summary), a load whose new data is large
     (``limits``) stops with ``too_large`` before reading anything, unless ``allow_large``.
     A folder the user chose not to cache (``no_cache``, or its saved flag) is read into RAM
@@ -666,7 +667,8 @@ def load(path: str, output: str, send: Emit = emit,
             no_cache = chosen or prefs.failed
         _load(path, output, send, store, guard, bool(cache_options), memory, base_signature, expected,
               (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
-              limits=limits, allow_large=allow_large, no_cache=no_cache, no_cache_reason=no_cache_reason)
+              limits=limits, allow_large=allow_large, no_cache=no_cache, no_cache_reason=no_cache_reason,
+              full_check=full_check)
     finally:
         if store is not None:
             store.close()
@@ -675,9 +677,10 @@ def load(path: str, output: str, send: Emit = emit,
 def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: SaveGuard | None, cache_on: bool,
           memory: list[list[int]] | None, base_signature: str, expected: str, budget: int | None,
           budget_set_at: float | None = None, *, limits: dict[str, Any] | None = None,
-          allow_large: bool = False, no_cache: bool = False, no_cache_reason: str = "") -> None:
+          allow_large: bool = False, no_cache: bool = False, no_cache_reason: str = "",
+          full_check: bool = False) -> None:
     from helab.utils.cache_store import StoreError
-    if (not no_cache and base_signature and store is not None and memory and expected in ("", base_signature)
+    if (not no_cache and not full_check and base_signature and store is not None and memory and expected in ("", base_signature)
             and _unchanged_since_cache(path, send, store, base_signature, memory)):
         return
     # These imports are deliberately local: scanning does not initialize numpy,
@@ -1302,7 +1305,8 @@ def main() -> None:
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),
                  expected=request.get("signature", ""), limits=request.get("limits"),
-                 allow_large=bool(request.get("allow_large")), no_cache=bool(request.get("no_cache")))
+                 allow_large=bool(request.get("allow_large")), no_cache=bool(request.get("no_cache")),
+                 full_check=bool(request.get("full_check")))
         elif operation == "cached":
             read_cached(request["path"], request["output"], cache_options=request.get("cache"),
                         limits=request.get("limits"), allow_large=bool(request.get("allow_large")))

@@ -321,9 +321,12 @@ def refuse_unsafe_cache_dir(path: str, candidates: List[str]) -> tuple[str, str,
     fallback = next((candidate for candidate in candidates if not cache_location_problem(candidate)
                      and usable_directory(candidate, create=True)), "")
     if not fallback:
+        # Change… can't help here (it moves a cache, and there is none): say what will.
+        default = candidates[0] if candidates else default_app_dir("caches")
         reason = (f"The saved cache folder {path} is {problem}, where the cache can't work safely, and no "
-                  f"safe default folder is available. The disk cache is off for this session; choose "
-                  f"another folder in Settings → General.")
+                  f"safe default folder is available: HeLab couldn't create {default}. The disk cache is "
+                  f"off for this session. Make that folder writable, then restart HeLab; it will use it, "
+                  f"and you can move the cache in Settings → General.")
         logging.error(reason)
         return path, reason, False
     reason = (f"The saved cache folder {path} is {problem}, where the cache can't work safely. "

@@ -153,6 +153,9 @@ class FolderExplorer(QWidget):
         # Folder whose displayed data came from memory or the disk cache and has
         # not been checked against the folder since it was selected.
         self._unchecked_path: str | None = None
+        # Folders whose next load compares every file with the cache (Retry / Refresh), not
+        # just the folder's mtime: a file rewritten in place doesn't change the folder's mtime.
+        self._full_check_paths: set[str] = set()
         # The disk cache is read at most once per selection of a folder.
         self._cache_read_path: str | None = None
         self._load_path: str | None = None
@@ -382,6 +385,18 @@ class FolderExplorer(QWidget):
     def _navigate_input(self) -> None:
         self.open_to_path(self.path_edit.text())
 
+    def refresh_folder(self, path: str) -> None:
+        """Right-click Retry / Refresh: list the folder again (no timeout), and check its cached
+        or shown data file by file. The selected folder's shown data is checked now."""
+        self.model.request_scan(path, priority=True, force=True, no_timeout=True)
+        if not (self.model.cache.disk_cached(path) or self.folder_opened_path == path):
+            return
+        self._full_check_paths.add(path)
+        if path == self.selected_path_globally and self.folder_opened_path == path and self.folder_opened_data is not None:
+            unchecked, self._unchecked_path = self._unchecked_path, path  # "Checking for changes…"
+            if not self.load_to_ram_cache(path, dwell=False) and not (self.loading and self._load_path == path):
+                self._unchecked_path = unchecked  # Nothing will check it (e.g. auto-load is off).
+
     def _retry(self) -> None:
         # A load retry keeps its per-file timeouts; a hung read is genuinely stuck.
         if (self.load_error or self.auto_load_paused_path == self.selected_path_globally
@@ -572,8 +587,11 @@ class FolderExplorer(QWidget):
 
     def _load_payload(self, path: str, deliberate: bool = False) -> dict[str, Any]:
         node = self.model.nodes.get(path)
+        full_check = path in self._full_check_paths
+        self._full_check_paths.discard(path)
         return {"cache": store_options(), "signature": node.signature if node else "",
-                "no_cache": self.model.cache.folder_prefs(path)["no_cache"], **self._large_payload(path, deliberate)}
+                "no_cache": self.model.cache.folder_prefs(path)["no_cache"], "full_check": full_check,
+                **self._large_payload(path, deliberate)}
 
     def _large_payload(self, path: str, deliberate: bool) -> dict[str, Any]:
         """The large-folder thresholds, whether the user asked for this request (asked about if
@@ -1649,8 +1667,7 @@ class FolderExplorer(QWidget):
         if clipboard:
             menu.addAction("Copy Pathname", lambda: clipboard.setText(path))
         # One folder the user asked for: no timeout, with elapsed time and Cancel.
-        retry = menu.addAction("Retry / Refresh", lambda: self.model.request_scan(path, priority=True, force=True,
-                                                                                 no_timeout=True))
+        retry = menu.addAction("Retry / Refresh", lambda: self.refresh_folder(path))
         if retry:
             retry.setEnabled(not self.model.refresh_pending(path))
         submenu = menu.addMenu("Check folder status")
