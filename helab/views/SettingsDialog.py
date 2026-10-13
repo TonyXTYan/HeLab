@@ -70,6 +70,16 @@ class SettingsDialog(QDialog):
             "One extra lane is reserved for browsing and the selected folder's load in the current tab; "
             "background work pauses while it runs. Running work finishes when the limit is lowered.")
         folder_io_form.addRow("Simultaneous background I/O operations:", self.simultaneous_io_spin)
+        self.check_level_combo = QComboBox()
+        for level, label in CHECK_LEVEL_LABELS.items():
+            self.check_level_combo.addItem(label, level)
+        self.check_level_combo.setToolTip(
+            "When a folder's cached data is shown, HeLab checks the folder. If the folder wasn't modified since "
+            "it was cached, it also checks these TXY files' sizes and modified times instead of listing the "
+            "folder; random files differ each time. If any differs or is missing, it lists and compares every "
+            "file. Full always does that (slower on network folders). Right-click › Retry / Refresh always "
+            "checks every file.")
+        folder_io_form.addRow("Check of cached data:", self.check_level_combo)
         self.general_layout.addLayout(folder_io_form)
         self.auto_scan_visible_checkbox = QCheckBox("Automatically check folder status in view")
         self.auto_scan_visible_checkbox.setToolTip(
@@ -252,6 +262,7 @@ class SettingsDialog(QDialog):
         self.dir_caches_edit.setText(cache_dir())
         self.load_mode_combo.setCurrentIndex(self.load_mode_combo.findData(read_load_mode(settings)))
         self.simultaneous_io_spin.setValue(read_io_concurrency(settings))
+        self.check_level_combo.setCurrentIndex(self.check_level_combo.findData(read_check_level(settings)))
         self.auto_scan_visible_checkbox.setChecked(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
         logging.debug("Settings loaded")
 
@@ -282,6 +293,7 @@ class SettingsDialog(QDialog):
         settings.setValue("dir_temps", self.dir_temps_edit.text())
         settings.setValue(LOAD_MODE_SETTING, self.load_mode_combo.currentData())
         settings.setValue(SIMULTANEOUS_IO_SETTING, self.simultaneous_io_spin.value())
+        settings.setValue(CHECK_LEVEL_SETTING, self.check_level_combo.currentData())
         settings.remove("simultaneous_folder_scans")
         settings.remove("simultaneous_folder_loads")
         settings.setValue(AUTO_SCAN_VISIBLE_SETTING, self.auto_scan_visible_checkbox.isChecked())

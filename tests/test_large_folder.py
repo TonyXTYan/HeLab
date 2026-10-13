@@ -133,7 +133,8 @@ def test_a_load_doesnt_unpack_a_cached_dataset_larger_than_the_folder_now_is(
     def unpack(packed: bytes) -> Any:
         raise AssertionError("the whole cached dataset was unpacked")
     monkeypatch.setattr("helab.utils.cache_store.unpack_dataset", unpack)
-    events = run_load(source, tmp_path, options, limits={"warn": left, "refuse": 1 << 40})
+    # (Shots 2 and 3 were deleted: loaded as the folder is now, as the user chose.)
+    events = run_load(source, tmp_path, options, limits={"warn": left, "refuse": 1 << 40}, allow_missing=True)
     loaded = next(e for e in events if e["kind"] == "loaded")
     assert loaded["files"] == 1 and loaded["cache_reason"] == "Cached dataset too large to reuse"
 
@@ -407,19 +408,16 @@ def test_a_large_cached_folder_doesnt_open_automatically(
         assert asked == [(cached, 20_000)]
         read = request_for(service, "cached", cached)
         assert read.payload["allow_large"] is True and read.payload["deliberate"] is True
-        # ...the yes was for that read only: an automatic load right after it is checked again.
-        explorer.load_to_ram_cache(cached)
-        assert ("load", cached) not in cache.jobs and explorer.large_state(cached) == (20_000, False)
-        # Once the read brings the data into RAM, its check runs: the earlier stop counted the
-        # whole folder, and the check adds only what changed.
+        # Its check runs beside it, under the same yes: it counts the cached shots as held, so
+        # it adds only what changed (the earlier stop counted the whole folder).
+        check = request_for(service, "load", cached)
+        assert check.payload["deliberate"] is True and check.payload["allow_large"] is True
+        assert check.payload["cache_base"] is True
         for event in ({"kind": "loaded", "signature": "s", "files": 1, "rows": 2, "bytes": 48, "verified": False,
                        "fingerprint": [[1, 20_000, 0]], "problematic": []}, {"kind": "done"}):
             service.resultReady.emit(read, event)
         service.pending.remove(read)
-        qtbot.waitUntil(lambda: ("load", cached) in cache.jobs)
-        # (Part of the same deliberate load, so it is deliberate too; the yes was for the read only.)
-        check = request_for(service, "load", cached)
-        assert check.payload["deliberate"] is True and check.payload["allow_large"] is False
+        assert request_for(service, "load", cached) is check
         assert explorer.large_state(cached) is None
         cache.cancel(explorer.model.owner)
         # ...then another folder; its data leaves RAM (a large folder is over the RAM budget).

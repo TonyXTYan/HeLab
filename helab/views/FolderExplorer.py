@@ -429,6 +429,11 @@ class FolderExplorer(QWidget):
                 self._cancelled_load_path = self._cache_read_path = None
                 self.auto_load_paused_path = None
                 self.selected_path_globally = path
+                dataset = self.displayed_dataset
+                if (self.folder_opened_path == path and dataset is not None and dataset.path == path
+                        and not self.model.cache.checked_recently(dataset)):
+                    # Back at the folder still shown: its data is checked again, as from memory.
+                    self._unchecked_path = path
             if not self._check_replaces_listing(path):
                 self.model.request_scan(path, priority=True)
             self.selectionPathChanged.emit(path)
@@ -533,7 +538,7 @@ class FolderExplorer(QWidget):
             self.load_to_ram_cache(path, dwell=False)
         self.loadStateChanged.emit()
 
-    def _release_load(self) -> None:
+    def _release_load(self, keep: str | None = None) -> None:
         """Stop showing the current load; depending on the mode it continues in the background."""
         self._stop_dwell()
         path = self._load_path
@@ -545,7 +550,10 @@ class FolderExplorer(QWidget):
             else:
                 del self._bg_paths[path]
         self.model.cache.cancel(self.model.owner, "load")
-        self.model.cache.cancel(self.model.owner, "cached")
+        for request in tuple(self.model.cache.requests(self.model.owner)):
+            # The cached read of the folder about to be checked runs beside that check.
+            if request.operation == "cached" and request.path != keep:
+                self.model.cache.cancel(self.model.owner, "cached", request.path)
         if path is not None and path not in self._bg_paths:
             self.model.set_load_state(path, "")
         self._load_path = None
@@ -589,8 +597,13 @@ class FolderExplorer(QWidget):
         node = self.model.nodes.get(path)
         full_check = path in self._full_check_paths
         self._full_check_paths.discard(path)
+        # The user's answer in the mismatched-folders window (``MissingShotsWindow``).
+        allow_missing = self.model.cache.take_allow_missing(path)
         return {"cache": store_options(), "signature": node.signature if node else "",
                 "no_cache": self.model.cache.folder_prefs(path)["no_cache"], "full_check": full_check,
+                # Its cached read runs now: the check counts those shots as held (see io_helper.load).
+                "cache_base": self.model.cache.has_request(self.model.owner, "cached", path),
+                "check_level": self.model.cache.check_level, "allow_missing": allow_missing,
                 **self._large_payload(path, deliberate)}
 
     def _large_payload(self, path: str, deliberate: bool) -> dict[str, Any]:
@@ -629,10 +642,9 @@ class FolderExplorer(QWidget):
             return False
         cached = self.model.cache.disk_cached(path)
         if self.folder_opened_path != path or self.folder_opened_data is None:
-            # Show data from memory or the local disk cache at once; it never
-            # waits for source-folder I/O. The check below follows the usual rules.
-            if self._show_cached(path, explicit):
-                return True
+            # Show data from memory or the local disk cache at once; it never waits for
+            # source-folder I/O. The check below runs beside a cached read, not after it.
+            self._show_cached(path, explicit)
         if not explicit and not cached and not self._has_data(path):
             return False
         if (self.folder_opened_path == path and self.folder_opened_data is not None
@@ -661,7 +673,7 @@ class FolderExplorer(QWidget):
                 self._update_activity()
                 self.loadStateChanged.emit()
             return True
-        self._release_load()
+        self._release_load(keep=path)
         self._begin_load(path)
         if path in self._bg_paths:
             del self._bg_paths[path]
@@ -744,6 +756,33 @@ class FolderExplorer(QWidget):
             self.loadStateChanged.emit()
         return True
 
+    def _shots_missing(self, request: IORequest, event: dict[str, Any], *, background: bool = False) -> None:
+        """The folder no longer has shots cached or loaded from it: nothing was read. Its cached
+        data isn't shown (it may be another folder's); ``FolderCache`` lists it for the user's answer
+        (``MissingShotsWindow``)."""
+        path = request.path
+        if not background:
+            self.model.cache.cancel(self.model.owner, "cached", path)
+            self.loading = self.load_paused = False
+            self._loading_data.clear()
+            self.model.set_load_state(path, "")
+            count = int(event.get("missing_count", 0))
+            self.load_error = f"{count} cached shot{'' if count == 1 else 's'} missing from this folder — Retry"
+            self._cancelled_load_path = path  # No automatic load tries again; Retry or the answer does.
+            shown = self.displayed_dataset
+            if self.folder_opened_path == path or (shown is not None and shown.path == path):
+                self.model.cache.release(self.model.owner)
+                self.folder_opened_path = self.model.folder_opened_path = None
+                self.folder_opened_data = self.displayed_dataset = None
+                self._unchecked_path = None
+                self.dataLoaded.emit(path)
+
+    def load_as_it_is_now(self, path: str) -> None:
+        """Load a mismatched folder as it is now (the user's answer): at once if it is the selected
+        folder, else queued like any explicit load. Its old cached data is replaced by the result."""
+        self.model.cache.answer_mismatches([path], "load")
+        self.queue_load(path)
+
     def _confirm_large(self, path: str, estimate: int) -> bool:
         from helab.views.LargeFolderDialog import confirm_large
         cache = self.model.cache
@@ -798,17 +837,19 @@ class FolderExplorer(QWidget):
         disk cache. True while that read is pending: the check waits for it, so
         it can reuse the shots instead of reading files."""
         cache = self.model.cache
+        if path in cache.mismatched:
+            return False  # Its cached data may be another folder's: nothing shows until a load completes.
         if cache.has_request(self.model.owner, "cached", path):
             return True
         dataset = cache.current_dataset(path) or cache.latest_dataset(path)
         if dataset is not None:
             self.load_source, self.load_cache_reason, self._load_cache_pending = "memory", "", False
             self.load_counts = {"reused_memory": len(dataset.data), "reused_disk": 0, "read": 0}
-            # Data matching this session's scan of the folder needs no check,
-            # as when a load is answered from memory.
+            # Data checked moments ago that matches this session's scan of the folder needs no
+            # check; older data is checked again (one folder stat when nothing changed).
             node = self.model.nodes.get(path)
-            matches = cache.confirmed(dataset) or (cache.verified(dataset) and node is not None
-                                                   and node.signature == dataset.signature)
+            matches = cache.checked_recently(dataset) and (cache.confirmed(dataset) or (
+                cache.verified(dataset) and node is not None and node.signature == dataset.signature))
             self._display(path, dataset, {"verified": matches})
             return False
         if not cache.disk_cached(path) or path == self._cache_read_path or cache.folder_prefs(path)["no_cache"]:
@@ -852,18 +893,30 @@ class FolderExplorer(QWidget):
                 self._display(path, event["dataset"], event)
         elif kind == "error":
             logging.info("Cached data %s: %s", path, event.get("message", ""))
+            # Its check counted those shots as held: a load of the files follows instead.
+            self._drop_check_beside_read(path)
         elif kind == "too_large":
+            self._drop_check_beside_read(path)
             self._stopped_large(request, event)
         deliberate = bool(request.payload.get("deliberate"))
         if kind in ("loaded", "error") and path == self.selected_path_globally and (self.auto_load_ram or deliberate):
-            # Now check the folder, reusing the shots just shown; a deliberate read's check is deliberate
-            # too (unless Cancel comes first).
+            # Check the folder if that isn't running already (it starts beside the read), reusing the
+            # shots just shown; a deliberate read's check is deliberate too (unless Cancel comes first).
             cancels = self._cancel_count
             QTimer.singleShot(0, lambda: self.selected_path_globally == path and not self.closed
                               and cancels == self._cancel_count
                               and self.load_to_ram_cache(path, dwell=not deliberate, explicit=deliberate))
         self._update_activity()
         self.loadStateChanged.emit()
+
+    def _drop_check_beside_read(self, path: str) -> None:
+        """Stop the check that ran beside this folder's cached read (it counted the cached shots
+        as held), when that read won't deliver them: too large, or the folder isn't cached now."""
+        if any(request.operation == "load" and request.path == path and request.payload.get("cache_base")
+               for request in self.model.cache.requests(self.model.owner)):
+            self.model.cache.cancel(self.model.owner, "load", path)
+            self.loading = self.load_paused = False
+            self.model.set_load_state(path, "")
 
     def queue_load(self, path: str) -> bool:
         """Explicit load: never cancels another load; runs now when idle, otherwise queues."""
@@ -896,13 +949,15 @@ class FolderExplorer(QWidget):
             self.model.set_load_state(path, "queued" if kind == "queued" else "loading")
         elif kind == "paused":
             self.model.set_load_state(path, "paused")
-        elif kind in ("loaded", "error", "cancelled", "too_large"):
+        elif kind in ("loaded", "error", "cancelled", "too_large", "shots_missing"):
             del self._bg_paths[path]
             self.model.set_load_state(path, "")
             if kind == "error":
                 logging.warning("Background load %s: %s", path, event.get("message", ""))
             if kind == "too_large":
                 self._stopped_large(request, event, background=True)
+            elif kind == "shots_missing":
+                self._shots_missing(request, event, background=True)
             elif kind == "loaded":
                 self._large_stops.pop(path, None)
         else:
@@ -1037,6 +1092,8 @@ class FolderExplorer(QWidget):
             self._loading_data.clear()
             self.model.set_load_state(request.path, "")
             self._stopped_large(request, event)
+        elif kind == "shots_missing":
+            self._shots_missing(request, event)
         self._update_activity()
         self.loadStateChanged.emit()
 
@@ -1749,6 +1806,7 @@ class FolderExplorer(QWidget):
         if prefs["no_cache"] and "cached" in self._drop_automatic(path, ("cached",)) and (
                 path == self.selected_path_globally and self.auto_load_ram and not prefs["no_auto_load"]):
             # Not from the cache, then: from the folder itself.
+            self._drop_check_beside_read(path)
             self._cache_read_path = None
             QTimer.singleShot(0, lambda: self.selected_path_globally == path and not self.closed
                               and self.load_to_ram_cache(path))

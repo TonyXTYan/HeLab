@@ -34,6 +34,36 @@ nothing appeared.
   name**, never overwrites existing data. The escape hatch is right-click
   Retry / Refresh: the folder's next check (at once for the shown folder) is a
   `full_check`, comparing every file's size and mtime with the cache.
+- Review of PR #5 (2026-10-13), Tony's decisions:
+  - The check runs **beside** the cached read, not after it; RAM data counts
+    as checked only for 10 s, so returning to a folder checks it again.
+  - The folder stat also stats sample cached files: levels Swift (last),
+    Fast (first+last), **Medium default** (+ max(3, 1%) random), High
+    (+ max(10, 3%)), Full (always list). Not inodes: they differ by OS, file
+    system and mount, and change on remounts.
+  - Cached/held shots missing from the folder: stop before reading, hide the
+    cached data. The check for missing shots runs before the cache is
+    unpacked; the folder's RAM data is dropped and not shown again until a
+    load completes. That flag is session-only (Tony: users will usually
+    rebuild the cache anyway), kept for up to 8192 (2^13) folders, oldest
+    dropped first.
+  - Mismatch handling (Tony, 2026-10-13): **one list window, not a popup per
+    folder**, so a large scan appends rows instead of flooding the screen
+    (non-modal; opens without taking focus; once closed it stays closed until
+    the next warning; status-bar "⚠ N mismatched" reopens it). Rows: folder,
+    "missing of known", TXY files now, found time · load/scan, answer. Buttons
+    Load as it is now / Don't load on the selected rows.
+  - At 2, 4, 8… mismatched folders loads and scans **pause** (Tony asked for
+    stop + tell; pause chosen so nothing is lost, with Cancel all loads and
+    scans offered), banner says why and to check the mounted drive. From 8:
+    Skip mismatched folders and keep going (session-only; no more holds or
+    window, rows still added).
+  - Scans detect it too: details / folder status check compare the listing
+    with the dataset record's fingerprint (one SQLite row, no data file, no
+    Blosc). Folders flagged Don't cache are ignored.
+  - Pause (not cancel) at 2^N: Tony agreed. Load as it is now reuses old
+    cached shots whose number, size and mtime_ns all match a current file;
+    anything else is read again (Tony agreed, 2026-10-13).
 - Selecting a folder with saved counts and a disk cache skips the listing.
 - Check failure keeps the cached data: `Check failed`, error on line 1, Retry.
 - **Files still being written:** TXY written once and never modified, but

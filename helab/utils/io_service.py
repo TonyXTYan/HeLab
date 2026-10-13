@@ -93,6 +93,9 @@ class IOService(QObject):
     CACHE_OPERATIONS = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin")
     LOCAL_CAP = 2
     PAUSABLE = ("load", "list", "details", "scan", "icons")
+    # Held while cached data doesn't match several folders (``mismatch_hold``): loads and scans.
+    # Browsing, cached reads, cache writes and icons go on.
+    MISMATCH_HELD = ("load", "details", "scan")
     LABELS = {"load": "Load data", "cached": "Read cached data", "list": "Browse folder", "details": "Folder details",
               "scan": "Check folder status", "resolve": "Browse folder", "invalidate": "Clear data cache",
               "scan_history": "Save scan history", "icons": "Folder icons",
@@ -119,6 +122,9 @@ class IOService(QObject):
         # the current cache options when they start (``cache_options``, set by FolderCache).
         self.cache_hold = False
         self.cache_options: Callable[[], dict[str, Any]] | None = None
+        # Cached data doesn't match several folders: loads and scans pause, and none start,
+        # until the user answers (``FolderCache.resume_after_mismatch`` and friends).
+        self.mismatch_hold = False
         # Set by the main window: a running request's tab, progress and time, for the I/O tooltip.
         self.request_note: Callable[[IORequest], str] | None = None
         self._foreground_busy_at = -math.inf
@@ -273,6 +279,29 @@ class IOService(QObject):
         self.cache_hold = False
         self.activityChanged.emit()
 
+    def set_mismatch_hold(self, held: bool) -> None:
+        """Pause running loads and scans, and start none (``MISMATCH_HELD``), or let them go on."""
+        if held != self.mismatch_hold:
+            self.mismatch_hold = held
+            self.reschedule()
+
+    def held_by_mismatch(self, request: IORequest) -> bool:
+        return self.mismatch_hold and request.operation in self.MISMATCH_HELD
+
+    def cancel_operations(self, operations: tuple[str, ...]) -> None:
+        """Cancel every queued or running request of these operations; a finished load still
+        writing its disk cache is left to finish."""
+        for request in list(self.pending):
+            if request.operation in operations:
+                self.pending.remove(request)
+                request.cancelled.set()
+                self.resultReady.emit(request, {"kind": "cancelled"})
+        for request in list(self.active):
+            if request.operation in operations and not request.completed:
+                self._retire(request)
+                self.resultReady.emit(request, {"kind": "cancelled"})
+        self.activityChanged.emit()
+
     def _start(self, request: IORequest, lane: str) -> None:
         if request.payload.get("cache") and self.cache_options is not None:
             # Queued before a cache move: it opens the cache where it is now, or none if the disk
@@ -295,7 +324,8 @@ class IOService(QObject):
         # A retry never runs beside its predecessor; it waits for confirmed exit.
         # The current tab's listing and selected load never wait for background work.
         for request in list(self.pending):
-            if self.blocker(request) is not None or (self.cache_hold and self.uses_cache(request)):
+            if (self.blocker(request) is not None or (self.cache_hold and self.uses_cache(request))
+                    or self.held_by_mismatch(request)):
                 continue
             if request.operation in self.LOCAL_OPERATIONS:
                 if self._local_room():
@@ -305,7 +335,8 @@ class IOService(QObject):
         hold = self.hold_background(now)
         for request in list(self.pending):
             if (self.blocker(request) is not None or self.wants_foreground(request)
-                    or request.operation in self.LOCAL_OPERATIONS or (self.cache_hold and self.uses_cache(request))):
+                    or request.operation in self.LOCAL_OPERATIONS or (self.cache_hold and self.uses_cache(request))
+                    or self.held_by_mismatch(request)):
                 continue
             if not self._background_room():
                 break
@@ -318,8 +349,8 @@ class IOService(QObject):
         hold_load = self._hold_foreground_load(now)
         for request in self.active:
             pause = (request.operation in self.PAUSABLE and not request.completed
-                     and (hold_background if request.lane != FOREGROUND
-                          else request.operation == "load" and hold_load))
+                     and (self.held_by_mismatch(request) or (hold_background if request.lane != FOREGROUND
+                                                             else request.operation == "load" and hold_load)))
             if pause != request.pause_requested:
                 with request.control:
                     request.pause_requested = pause
@@ -525,7 +556,9 @@ class IOService(QObject):
                 parts.append("\n".join(notes))
         paused = [f"{self.label(r)}: {r.path}" for r in self.active if r.paused]
         if paused:
-            parts.append("Paused while the current tab browses or loads:\n" + "\n".join(paused))
+            why = ("Paused: cached data doesn't match several folders (see the status bar's ⚠)"
+                   if self.mismatch_hold else "Paused while the current tab browses or loads")
+            parts.append(f"{why}:\n" + "\n".join(paused))
         rows: dict[tuple[str, str], str] = {}
         for request in self.pending:
             if self.blocker(request) is None:

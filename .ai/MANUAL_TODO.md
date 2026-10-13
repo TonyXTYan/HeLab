@@ -102,6 +102,13 @@ tested offscreen only. Check on native macOS (and once on a Windows lab PC):
   test reaching `api.github.com` from each lab PC; decide where the signing key
   is backed up and who can release after Tony leaves
   ([risks](../roadmaps/app-updates.md#risks)).
+- [ ] Cached-data check (added 2026-10-13): on `/Volumes/dld_output`, time selecting a
+  cached folder at each Settings → General → Check of cached data level; move an older
+  folder into a cached folder's path and confirm the mismatched-folders window (rows, button
+  tooltips, status-bar "⚠ N mismatched") for the shown folder, a background load and a
+  folder status check; with two or more moved folders confirm loads and scans pause with the
+  banner, then Resume / Cancel all, and from 8 Skip; return to a folder after adding a TXY
+  and confirm the new shot loads.
 - [ ] macOS release zip (added 2026-10-13): download the macOS CI artifact, check
   `HeLab-macos.zip` is ~300 MB and holds only `HeLab.app`, unzip it in Finder and
   open the app (right-click › Open for the ad-hoc signature)

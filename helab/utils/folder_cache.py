@@ -19,7 +19,8 @@ from PyQt6.QtGui import QIcon, QPixmap
 from helab.utils import large_folder
 from helab.utils.cache_store import APPROVAL_SHARE, store_root
 from helab.utils.constants import (
-    DEFAULT_DISK_BUDGET, DEFAULT_RAM_STEPS, DISK_CACHE_ENABLED, cache_dir, cache_dir_enabled, ram_step_bytes,
+    DEFAULT_CHECK_LEVEL, DEFAULT_DISK_BUDGET, DEFAULT_RAM_STEPS, DISK_CACHE_ENABLED, cache_dir, cache_dir_enabled,
+    ram_step_bytes,
 )
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.load_clock import LoadClock
@@ -138,6 +139,13 @@ class FolderCache(QObject):
     autoLoadPauseChanged = pyqtSignal(bool)
     # Usage crossed 80% of the budget (or rose another 10% after Ignore): ask the user once.
     diskNearlyFull = pyqtSignal()
+    # The folders whose cached data doesn't match them (``mismatched``), their answers, or the
+    # hold of loads and scans changed.
+    mismatchesChanged = pyqtSignal()
+    # A folder was found mismatched (again): the list window shows it.
+    mismatchFound = pyqtSignal(str)
+    # The session's count of mismatched folders reached 2, 4, 8…: loads and scans are held.
+    mismatchWarning = pyqtSignal(int)
     MAX_FOLDER_ICONS = 4096
     # Seconds before a sweep the queue rejected is tried again.
     SWEEP_RETRY = 5.0
@@ -146,6 +154,10 @@ class FolderCache(QObject):
     FRESH_SECONDS: float = 10.0
     MAX_SNAPSHOTS: int = 256
     MAX_ENTRIES: int = 100_000
+    # Folders remembered as mismatched (``mismatched``): small entries, ~2-4 MB at most.
+    MAX_MISMATCHED: int = 8192
+    # From this many mismatched folders, the user may skip them for the session.
+    SKIP_MISMATCHED_FROM = 8
     # After Ignore, the 80% dialog comes back when usage rises by this share of the budget.
     IGNORE_STEP = 0.1
 
@@ -156,6 +168,8 @@ class FolderCache(QObject):
         # The app's cache mover (S9, ``helab.views.CacheMover.cache_mover``): kept here so a move
         # outlives the Settings dialog that started it.
         self.cache_mover: QObject | None = None
+        # Settings → General's check of cached data, sent with every load (``io_helper.load``).
+        self.check_level = DEFAULT_CHECK_LEVEL
         # Each folder's flags, as the store or this session last said: {"no_cache", "no_auto_load", "set_at"}.
         self.prefs: OrderedDict[str, dict[str, Any]] = OrderedDict()
         # What the store last confirmed for each folder (listings, saves): shown again if a choice fails.
@@ -191,6 +205,25 @@ class FolderCache(QObject):
         self._finishing_epochs: dict[str, int] = {}
         # When each finishing load started: a removal since then voids its cache events.
         self._finishing_created: dict[str, float] = {}
+        # A folder check run beside its cached read (``cache_base``) that finished first: its
+        # events wait (by producer owner) until that read's dataset is in memory to complete it.
+        self._awaiting_cached: dict[str, list[dict[str, Any]]] = {}
+        # Folders that no longer have shots cached or loaded from them (a load's ``shots_missing``,
+        # a scan's ``cache_mismatch``): their data in RAM was dropped and their cached data isn't
+        # shown, until a load completes. Session-only; each entry is what was found
+        # (``missing``, ``missing_count``, ``known_count``, ``listed_count``), when
+        # (``found_at``), by what (``source``: load or scan), and the user's ``answer``
+        # ("", "load" or "dont_load").
+        self.mismatched: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        # Folders found mismatched this session (each counted when it joins ``mismatched``):
+        # at 2, 4, 8… loads and scans are held (``IOService.mismatch_hold``) until the user answers.
+        self.mismatch_count = 0
+        # The user chose to skip mismatched folders for the session: no more holds or windows.
+        self.skip_mismatched = False
+        # Folders whose next load reads them as they are now, although shots are missing
+        # (Load as it is now): sent as ``allow_missing`` and never with a RAM base.
+        self.allow_missing: set[str] = set()
+        self._awaiting_producers: dict[str, IORequest] = {}
         self._cache_states: OrderedDict[str, CacheStatus] = OrderedDict()
         # When each folder's disk cache was last cleared; older scans saw stale entries.
         self._cleared_at: OrderedDict[str, float] = OrderedDict()
@@ -441,6 +474,15 @@ class FolderCache(QObject):
         snapshot = self.snapshots.get(dataset.path)
         return (self.verified(dataset) and snapshot is not None
                 and snapshot.status.get("signature") == dataset.signature)
+
+    def checked_recently(self, dataset: Dataset) -> bool:
+        """Whether this data was checked against its folder in the last ``FRESH_SECONDS``: by
+        the load that made it, or by a scan of the folder that found the same files."""
+        checked = float(dataset.metadata.get("checked_at", -math.inf))
+        snapshot = self.snapshots.get(dataset.path)
+        if snapshot is not None and snapshot.status.get("signature") == dataset.signature:
+            checked = max(checked, snapshot.checked_at)
+        return time.monotonic() - checked < self.FRESH_SECONDS
 
     def disk_cached(self, path: str) -> bool:
         return path in self._disk_cached_paths
@@ -713,6 +755,8 @@ class FolderCache(QObject):
                     entry.metadata["verified"] = True
                 else:
                     entry = None
+            if entry and not self.checked_recently(entry):
+                entry = None  # Not checked lately: the load checks the folder (one stat when unchanged).
             if entry:
                 self._deliver(request, {"kind": "loaded", "dataset": entry, **entry.metadata,
                                         "cached": True, "source": "memory", "cache_reason": "",
@@ -765,7 +809,10 @@ class FolderCache(QObject):
             snapshot = self.snapshot(path)
             if snapshot:
                 snapshot.checked_at = 0
-        base = self._base(path) if operation == "load" else None
+        # The data of a folder that lost shots may be another folder's: never a load's base.
+        base = (self._base(path) if operation == "load" and path not in self.mismatched
+                and path not in self.allow_missing
+                and not payload.get("allow_missing") else None)
         if base:
             payload = {**payload, "memory": [list(entry) for entry in base.metadata["fingerprint"]
                                              if entry[0] in base.data],
@@ -828,6 +875,94 @@ class FolderCache(QObject):
     def _forget_job(self, job: SharedJob) -> None:
         self.jobs.pop((job.operation, job.path), None)
         self._producers.pop(job.owner, None)
+        self._awaiting_cached.pop(job.owner, None)
+        if job.operation == "cached" and job.path in self._awaiting_producers:
+            # A check waits for this read: completed by its dataset, or failed without it.
+            QTimer.singleShot(0, lambda: self._resume_awaiting(job.path))
+
+    def _resume_awaiting(self, path: str) -> None:
+        producer = self._awaiting_producers.pop(path, None)
+        if producer is None:
+            return
+        for event in self._awaiting_cached.pop(producer.owner, None) or ():
+            self._on_event(producer, event)
+
+    def _mismatch(self, path: str, event: dict[str, Any] | None = None, source: str = "load") -> None:
+        """``path`` no longer has shots cached or loaded from it: drop its data from RAM (tabs that
+        show it keep their pins until they let go), so nothing shows it again until a load completes.
+        A folder new to the list counts; at 2, 4, 8… loads and scans are held for the user."""
+        event = event or {}
+        earlier = self.mismatched.pop(path, None)
+        self.mismatched[path] = {
+            "missing": [int(shot) for shot in event.get("missing", [])],
+            "missing_count": int(event.get("missing_count", len(event.get("missing", [])))),
+            "known_count": int(event.get("known_count", 0)), "listed_count": int(event.get("listed_count", 0)),
+            "found_at": time.time(), "source": source,
+            # Found again (Retry, another check): the answer stands, unless it was to load it.
+            "answer": earlier["answer"] if earlier and earlier["answer"] != "load" else ""}
+        while len(self.mismatched) > self.MAX_MISMATCHED:
+            self.mismatched.popitem(last=False)  # The oldest.
+        for key in [key for key in self.datasets if key[0] == path]:
+            del self.datasets[key]
+        self.datasetChanged.emit(path)
+        if earlier is None:
+            self.mismatch_count += 1
+            count = self.mismatch_count
+            if not self.skip_mismatched and count >= 2 and count & (count - 1) == 0:
+                self.service.set_mismatch_hold(True)
+                logging.warning("Cached data doesn't match %d folders: loads and scans held", count)
+                self.mismatchWarning.emit(count)
+        self.mismatchFound.emit(path)
+        self.mismatchesChanged.emit()
+
+    def _matched(self, path: str) -> None:
+        """A load of ``path`` completed: its data matches the folder again."""
+        self.allow_missing.discard(path)
+        if self.mismatched.pop(path, None) is not None:
+            self.mismatchesChanged.emit()
+
+    def answer_mismatches(self, paths: list[str], answer: str) -> None:
+        """The user's answer for these folders: "load" (their next load reads them as they are
+        now) or "dont_load" (nothing is read; they stay listed)."""
+        for path in paths:
+            entry = self.mismatched.get(path)
+            if entry is None:
+                continue
+            entry["answer"] = answer
+            if answer == "load":
+                self.allow_missing.add(path)
+            else:
+                self.allow_missing.discard(path)
+        self.mismatchesChanged.emit()
+
+    def take_allow_missing(self, path: str) -> bool:
+        """Whether this load of ``path`` reads it as it is now (the user's answer); used once."""
+        if path in self.allow_missing:
+            self.allow_missing.discard(path)
+            return True
+        return False
+
+    def resume_after_mismatch(self) -> None:
+        """Let held loads and scans go on."""
+        self.service.set_mismatch_hold(False)
+        self.mismatchesChanged.emit()
+
+    def cancel_held_io(self) -> None:
+        """Cancel every load and scan (queued, running or held), then stop holding them."""
+        self.service.cancel_operations(self.service.MISMATCH_HELD)
+        self.resume_after_mismatch()
+
+    def skip_mismatches(self) -> None:
+        """For the rest of the session: mismatched folders are listed but nothing else is
+        shown, and loads and scans are no longer held for them."""
+        self.skip_mismatched = True
+        self.resume_after_mismatch()
+
+    def _fail_job(self, job: SharedJob, message: str) -> None:
+        self._forget_job(job)
+        self.service.cancel(job.owner)
+        for request in tuple(job.subscribers.values()):
+            self.resultReady.emit(request, {"kind": "error", "message": message})
 
     def _resume_load(self, job: SharedJob, producer: IORequest) -> None:
         """Keep completed shots as the retry's RAM base, validated by the helper."""
@@ -979,6 +1114,10 @@ class FolderCache(QObject):
         self._disk_cache_writers.clear()
         self._finishing_epochs.clear()
         self._finishing_created.clear()
+        self._awaiting_cached.clear()
+        self._awaiting_producers.clear()
+        self.mismatched.clear()
+        self.allow_missing.clear()
         self._cache_states.clear()
         self._cleared_at.clear()
         self.scan_summaries.clear()
@@ -1137,6 +1276,12 @@ class FolderCache(QObject):
                     self.snapshots[path].status = {**self.snapshots[path].status, "disk_cached": False,
                                                    "cache_info": {}}
             self.pendingSavesChanged.emit()
+            # Without its cached data, a mismatched folder simply loads as it is.
+            resolved = selected(self.mismatched)
+            for path in resolved:
+                del self.mismatched[path]
+            if resolved:
+                self.mismatchesChanged.emit()
         if "summaries" in kinds:
             for path in selected(self.scan_summaries):
                 del self.scan_summaries[path]
@@ -1326,6 +1471,9 @@ class FolderCache(QObject):
                 self._history_writes.pop(producer.owner, None)
                 self._started.pop(producer.owner, None)
             return
+        if producer.owner in self._awaiting_cached:
+            self._awaiting_cached[producer.owner].append(event)  # Replayed in order with its result.
+            return
         job = self._producers.get(producer.owner)
         if job is None and producer.owner in self._finishing:
             path = self._finishing[producer.owner]
@@ -1436,6 +1584,12 @@ class FolderCache(QObject):
                 return
             if kind == "folder_prefs":
                 self.remember_prefs(event["path"], event["prefs"], known=False)
+                return
+            if kind == "cache_mismatch":
+                # Its cached shots aren't all in the folder now. A folder not cached by choice
+                # never shows its cached data, so it needs no answer.
+                if not self.folder_prefs(job.path)["no_cache"] and not self._removed_since(job, "datasets", job.path):
+                    self._mismatch(job.path, event, "scan")
                 return
             if kind == "scan_mode":
                 job.scan_mode = event["mode"]
@@ -1568,6 +1722,10 @@ class FolderCache(QObject):
             if kind == "loaded":
                 job.clock.stop()
                 event = {"loaded_at": time.time(), **event}
+                if job.operation == "load":
+                    # When this data was last checked against its folder (a cached read isn't a check).
+                    event["checked_at"] = time.monotonic()
+                    self._matched(job.path)
                 if job.operation == "load" and job.clock.total_bytes:
                     # Only a load that read TXY files has a load time; a check
                     # answered from memory or the cache would show "took 0:00".
@@ -1589,6 +1747,16 @@ class FolderCache(QObject):
                 elif "disk_cached" in event:
                     self._observe_cache(job.path, event)
                 memory_shots = event.get("memory_shots", [])
+                if memory_shots and job.base is None:
+                    # A check run beside the cached read: its unchanged shots are that read's.
+                    job.base = self.dataset(job.path, str(event.get("base_signature") or ""))
+                    if job.base is None:
+                        if ("cached", job.path) in self.jobs:
+                            self._awaiting_cached[producer.owner] = [event]
+                            self._awaiting_producers[job.path] = producer
+                        else:
+                            self._fail_job(job, "Cached data couldn't be read — Retry")
+                        return
                 if memory_shots:
                     assert job.base is not None
                     for shot in memory_shots:
@@ -1634,6 +1802,8 @@ class FolderCache(QObject):
             self._defaults[candidates] = event["path"]
             if len(self._defaults) > 16:
                 self._defaults.popitem(last=False)
+        if job.operation == "load" and kind == "shots_missing":
+            self._mismatch(job.path, event, "load")
         if kind in ("done", "error", "cancelled"):
             self._forget_job(job)
         for request in tuple(job.subscribers.values()):

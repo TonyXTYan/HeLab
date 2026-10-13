@@ -44,6 +44,7 @@ from helab.views.FolderExplorer import (
 )
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
+from helab.views.MissingShotsWindow import MissingShotsWindow
 from helab.views.SettingsDialog import SettingsDialog
 from helab.views.DebugIconsWindow import DebugIconsWindow
 
@@ -117,6 +118,11 @@ class HelabMainWindow(QMainWindow):
         self.cache_dialogs = CacheDialogs(cache, self, lambda: self.show_settings_dialog(purge=True),
                                           self.show_status_notice)
         cache.autoLoadPauseChanged.connect(self._auto_load_pause_changed)
+        # Folders whose cached data doesn't match them: one list for the app, and its status-bar button.
+        self.missing_shots = MissingShotsWindow(cache, self)
+        self.missing_shots.loadRequested.connect(self._load_mismatched)
+        self.mismatch_button.clicked.connect(lambda: self.missing_shots.show_list(activate=True))
+        cache.mismatchesChanged.connect(self._update_mismatch_button)
 
         # Create Left Panel (File Tree View)
         self.tab_widget.currentChanged.connect(self.on_current_tab_changed)
@@ -150,6 +156,11 @@ class HelabMainWindow(QMainWindow):
         # A one-time notice shown before the tab's activity until it expires (monotonic time).
         self._status_notice: tuple[str, float] | None = None
 
+        # Shown while folders' cached data doesn't match them; opens their list.
+        self.mismatch_button = QToolButton()
+        self.mismatch_button.setAutoRaise(True)
+        self.mismatch_button.hide()
+        self.status_bar.addPermanentWidget(self.mismatch_button)
         self.status_bar.addPermanentWidget(self.status_bar_message_right)
         self.status_bar_message_right.setToolTip("(App resource usage) / (system total resource usage)")
 
@@ -318,6 +329,7 @@ class HelabMainWindow(QMainWindow):
                 read_io_concurrency(settings))
             set_disk_budget(read_disk_budget(settings))
             get_folder_cache(get_io_service()).set_ram_budget(read_ram_budget(settings))
+            get_folder_cache(get_io_service()).check_level = read_check_level(settings)
 
             self.view_toggle_auto_load_ram = QAction('Toggle Auto Load to RAM', self)
             self.view_toggle_auto_load_ram.setCheckable(True)
@@ -459,6 +471,7 @@ class HelabMainWindow(QMainWindow):
         self.apply_load_mode(read_load_mode(settings))
         get_io_service().configure_concurrency(
             read_io_concurrency(settings))
+        cache.check_level = read_check_level(settings)
         if read_disk_budget(settings) != store_options().get("budget"):
             # Saved without Save (e.g. Reset, then Cancel): the store is told until it has it.
             # (After Save it already has it: Settings saves a new disk budget only then.)
@@ -966,6 +979,25 @@ class HelabMainWindow(QMainWindow):
             self.current_tracking_folder_path_is_loading = False
             self._update_folder_details()
             self.update_placeholder_visibility()
+
+    def _update_mismatch_button(self) -> None:
+        cache = get_folder_cache(get_io_service())
+        count = len(cache.mismatched)
+        held = cache.service.mismatch_hold
+        self.mismatch_button.setText(f"⚠ {count:,} mismatched" + (" · loads paused" if held else ""))
+        self.mismatch_button.setToolTip(
+            f"Cached data doesn't match {count:,} folder{'' if count == 1 else 's'}"
+            + (": loads and scans are paused until you answer" if held else "") + ". Click to see the list.")
+        self.mismatch_button.setVisible(bool(count) or held)
+
+    def _load_mismatched(self, paths: list[str]) -> None:
+        """Load the chosen mismatched folders as they are now, from the current tab."""
+        current = self.tab_widget.currentWidget()
+        if not isinstance(current, FolderExplorer):
+            get_folder_cache(get_io_service()).answer_mismatches(paths, "load")  # Their next load does.
+            return
+        for path in paths:
+            current.load_as_it_is_now(path)
 
     def _explorers(self) -> list[tuple[int, FolderExplorer]]:
         return [(index, widget) for index in range(self.tab_widget.count())

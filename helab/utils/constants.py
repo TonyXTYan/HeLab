@@ -90,6 +90,16 @@ LOAD_MODE_LABELS = {"cancel": "Cancel the current load",
                     "queue": "Queue folders kept selected for 3 s"}
 DEFAULT_LOAD_MODE = "finish"
 
+# How much the quick check of a folder's cached data (folder not modified since it was
+# cached) also checks of its TXY files' sizes and times; Full lists the folder every time.
+CHECK_LEVEL_SETTING = "cached_data_check_level"
+CHECK_LEVEL_LABELS = {"swift": "Swift: the last file",
+                      "fast": "Fast: the first and last files",
+                      "medium": "Medium: first, last and at least 3 random files (1%)",
+                      "high": "High: first, last and at least 10 random files (3%)",
+                      "full": "Full: every file (lists the folder)"}
+DEFAULT_CHECK_LEVEL = "medium"
+
 SIMULTANEOUS_IO_SETTING = "simultaneous_folder_io_operations"
 AUTO_SCAN_VISIBLE_SETTING = "auto_basic_scan_visible_folders"
 DEFAULT_SIMULTANEOUS_IO = 1
@@ -158,6 +168,11 @@ def read_io_concurrency(settings: QSettings) -> int:
     except (TypeError, ValueError, OverflowError):
         return 1
     return max(1, min(MAX_SIMULTANEOUS_IO, value))
+
+
+def read_check_level(settings: QSettings) -> str:
+    level = settings.value(CHECK_LEVEL_SETTING, DEFAULT_CHECK_LEVEL, type=str)
+    return level if level in CHECK_LEVEL_LABELS else DEFAULT_CHECK_LEVEL
 
 
 def read_load_mode(settings: QSettings) -> str:

@@ -40,8 +40,10 @@ def loaded(events: list[dict[str, Any]]) -> dict[str, Any]:
     return next(event for event in events if event["kind"] == "loaded")
 
 
-def guard_source(monkeypatch: pytest.MonkeyPatch, source: Path, *, folder_stat: bool) -> list[str]:
-    """Record source access; the cache folder is elsewhere and stays usable."""
+def guard_source(monkeypatch: pytest.MonkeyPatch, source: Path, *, folder_stat: bool,
+                 files: tuple[str, ...] = ()) -> list[str]:
+    """Record source access (``files``: the names that may be stat'ed); the cache folder is
+    elsewhere and stays usable."""
     calls: list[str] = []
     real_scandir, real_stat = os.scandir, os.stat
 
@@ -52,7 +54,8 @@ def guard_source(monkeypatch: pytest.MonkeyPatch, source: Path, *, folder_stat: 
         return real_scandir(path)
 
     def stat(path: Any, *args: Any, **kwargs: Any) -> Any:
-        if str(path).startswith(str(source)) and not (folder_stat and str(path) == str(source)):
+        if str(path).startswith(str(source)) and not (folder_stat and str(path) == str(source)) and not (
+                os.path.dirname(str(path)) == str(source) and os.path.basename(str(path)) in files):
             calls.append(f"stat {path}")
             raise AssertionError("checked a source file")
         return real_stat(path, *args, **kwargs)
@@ -102,7 +105,8 @@ def test_check_of_cached_data_is_one_folder_stat_until_the_folder_changes(
     first = loaded(run_load(source, tmp_path))
     memory = [list(entry) for entry in first["fingerprint"]]
     with monkeypatch.context() as patched:
-        calls = guard_source(patched, source, folder_stat=True)
+        # The folder, and its first and last cached files (another folder moved here differs).
+        calls = guard_source(patched, source, folder_stat=True, files=("d_txy_forc1.txt", "d_txy_forc2.txt"))
         events = run_load(source, tmp_path, memory=memory, base_signature=first["signature"])
     assert not calls
     result = loaded(events)
@@ -127,9 +131,34 @@ def test_check_of_cached_data_is_one_folder_stat_until_the_folder_changes(
     assert not result.get("unchanged")
 
 
-def test_full_check_finds_a_file_rewritten_in_place(tmp_path: Path) -> None:
-    """Rewriting a file doesn't modify its folder: only a full check (Retry / Refresh) sees it."""
+def test_older_folder_moved_into_a_cached_path_is_not_taken_for_it(tmp_path: Path) -> None:
+    """A moved folder keeps its older mtime, so the folder stat alone would pass."""
     source = source_folder(tmp_path)
+    first = loaded(run_load(source, tmp_path))
+    memory = [list(entry) for entry in first["fingerprint"]]
+    older = tmp_path / "older"
+    older.mkdir()
+    (older / "d_txy_forc9.txt").write_text("9,2,3\n")
+    past = time.time() - 3600
+    os.utime(older / "d_txy_forc9.txt", (past, past))
+    os.utime(older, (past, past))
+    source.rename(tmp_path / "moved-away")
+    older.rename(source)
+    events = run_load(source, tmp_path, memory=memory, base_signature=first["signature"])
+    # Its shots 1 and 2 are missing: nothing is read until the user says to load it as it is.
+    missing = next(event for event in events if event["kind"] == "shots_missing")
+    assert missing["missing"] == [1, 2] and missing["listed_count"] == 1
+    assert not any(event["kind"] in ("loaded", "shot") for event in events)
+    result = loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"],
+                             allow_missing=True))
+    assert not result.get("unchanged") and result["memory_shots"] == []
+    assert [entry[0] for entry in result["fingerprint"]] == [9]
+
+
+def test_full_check_finds_a_file_rewritten_in_place(tmp_path: Path) -> None:
+    """Rewriting a file doesn't modify its folder: unless the quick check samples that file,
+    only a full check (Retry / Refresh) sees it."""
+    source = source_folder(tmp_path, shots=3)
     first = loaded(run_load(source, tmp_path))
     memory = [list(entry) for entry in first["fingerprint"]]
     folder = source.stat()
@@ -137,11 +166,13 @@ def test_full_check_finds_a_file_rewritten_in_place(tmp_path: Path) -> None:
     later = time.time() + 10
     os.utime(source / "d_txy_forc2.txt", (later, later))
     os.utime(source, ns=(folder.st_atime_ns, folder.st_mtime_ns))
-    assert loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"]))["unchanged"]
+    # Fast checks only the first and last files: it misses this one (Medium would sample it here).
+    assert loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"],
+                           check_level="fast"))["unchanged"]
     result = loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"],
                              full_check=True))
     assert not result.get("unchanged") and result["signature"] != first["signature"]
-    assert result["load_counts"]["modified_loaded"] == 1 and result["load_counts"]["reused_memory"] == 1
+    assert result["load_counts"]["modified_loaded"] == 1 and result["load_counts"]["reused_memory"] == 2
 
 
 @pytest.mark.parametrize("newline", [None, "\n", "\r\n"], ids=["native", "lf", "crlf"])
@@ -274,7 +305,10 @@ def show_cached(browser: FolderExplorer, qtbot: QtBot, path: str) -> tuple[str, 
     cache.service.resultReady.emit(listing, {"kind": "done"})
     cache.service.pending.remove(listing)
     qtbot.waitUntil(lambda: ("cached", path) in cache.jobs)
-    assert ("load", path) not in cache.jobs  # The check waits for the cached shots.
+    # The check runs beside the cached read, counting the cached shots as held.
+    qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
+    check = producer(cache, path, "load")
+    assert check.payload["cache_base"] is True and "memory" not in check.payload
     read = producer(cache, path, "cached")
     fingerprint = [[1, 6, 123]]
     cache.service.resultReady.emit(read, {"kind": "shot", "shot": 1, "array": np.ones((1, 3)),
@@ -285,9 +319,7 @@ def show_cached(browser: FolderExplorer, qtbot: QtBot, path: str) -> tuple[str, 
         "disk_cache_pending": False, "cache_info": cache.cache_status(path).info, "verified": False,
         "fingerprint": fingerprint, "memory_shots": [], "load_counts": {"reused_disk": 1, "read": 0}})
     cache.service.pending.remove(read)
-    qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
-    check = producer(cache, path, "load")
-    assert check.payload["base_signature"] == signature and check.payload["memory"] == fingerprint
+    assert producer(cache, path, "load") is check  # Still the one check.
     return signature, check
 
 
@@ -306,6 +338,7 @@ def test_cached_data_shows_before_the_folder_check_and_keeps_its_source(
     service.resultReady.emit(check, {"kind": "load_source", "source": "memory", "cache_reason": ""})
     service.resultReady.emit(check, {
         "kind": "loaded", "unchanged": True, "signature": signature, "memory_shots": [1],
+        "base_signature": signature,
         "modified": time.time() - 90,
         "fingerprint": [[1, 6, 123]], "files": 1, "total_files": 1, "failed_files": 0, "rows": 0,
         "bytes": 0, "problematic": [], "source": "memory", "cached": True, "disk_cached": True,
@@ -385,6 +418,7 @@ def test_refresh_checks_shown_data_file_by_file(
     service = browser.model.cache.service
     service.resultReady.emit(check, {
         "kind": "loaded", "unchanged": True, "signature": signature, "memory_shots": [1],
+        "base_signature": signature,
         "fingerprint": [[1, 6, 123]], "files": 1, "total_files": 1, "failed_files": 0, "rows": 0,
         "bytes": 0, "problematic": [], "source": "memory", "cached": True, "disk_cached": True,
         "disk_cache_pending": False, "cache_info": browser.model.cache.cache_status(path).info,
@@ -427,3 +461,224 @@ def test_cached_read_finishing_after_a_removal_is_not_marked_cached(
     dataset = browser.displayed_dataset
     assert dataset is not None and dataset.metadata["disk_cached"] is False and dataset.metadata["cache_info"] == {}
     assert not cache.disk_cached(path)
+
+
+def test_check_finishing_before_the_cached_read_waits_for_its_shots(
+    browser: FolderExplorer, qtbot: QtBot, tmp_path: Path,
+) -> None:
+    """The check (one folder stat) often beats unpacking the cache: it completes with the read."""
+    path = str(tmp_path)
+    cache = browser.model.cache
+    service = cache.service
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    listing = producer(cache, path, "list")
+    info = {"saved_at": time.time() - 60, "snapshot_at": time.time() - 60, "signature": "sig"}
+    service.resultReady.emit(listing, {"kind": "status", "status": "warning", "count": 1, "details": False,
+                                       "raw": [], "txy": [1], "disk_cached": True, "cache_info": info})
+    service.resultReady.emit(listing, {"kind": "done"})
+    service.pending.remove(listing)
+    qtbot.waitUntil(lambda: ("cached", path) in cache.jobs and ("load", path) in cache.jobs)
+    read, check = producer(cache, path, "cached"), producer(cache, path, "load")
+    unchanged = {"kind": "loaded", "unchanged": True, "signature": "sig", "base_signature": "sig",
+                 "memory_shots": [1], "fingerprint": [[1, 6, 123]], "files": 1, "total_files": 1,
+                 "failed_files": 0, "rows": 0, "bytes": 0, "problematic": [], "source": "memory", "cached": True,
+                 "disk_cached": True, "disk_cache_pending": False, "cache_info": info,
+                 "load_counts": {"reused_memory": 1, "read": 0}}
+    service.resultReady.emit(check, unchanged)
+    service.resultReady.emit(check, {"kind": "done"})
+    assert browser.folder_opened_data is None  # Waiting for the cached shots.
+    service.resultReady.emit(read, {"kind": "shot", "shot": 1, "array": np.ones((1, 3)), "fingerprint": [1, 6, 123]})
+    service.resultReady.emit(read, {
+        "kind": "loaded", "signature": "sig", "files": 1, "total_files": 1, "failed_files": 0, "rows": 1,
+        "bytes": 24, "problematic": [], "source": "disk", "cached": True, "disk_cached": True,
+        "disk_cache_pending": False, "cache_info": info, "verified": False, "fingerprint": [[1, 6, 123]],
+        "memory_shots": [], "load_counts": {"reused_disk": 1, "read": 0}})
+    qtbot.waitUntil(lambda: not browser.loading)
+    assert browser.folder_opened_data is not None and sorted(browser.folder_opened_data) == [1]
+    assert not browser.shows_unchecked(path) and not browser.load_error
+    assert ("load", path) not in cache.jobs and ("cached", path) not in cache.jobs
+
+
+def test_check_waiting_for_a_failed_cached_read_loads_the_files_instead(
+    browser: FolderExplorer, qtbot: QtBot, tmp_path: Path,
+) -> None:
+    path = str(tmp_path)
+    cache = browser.model.cache
+    service = cache.service
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    listing = producer(cache, path, "list")
+    info = {"saved_at": time.time() - 60, "snapshot_at": time.time() - 60, "signature": "sig"}
+    service.resultReady.emit(listing, {"kind": "status", "status": "warning", "count": 1, "details": False,
+                                       "raw": [], "txy": [1], "disk_cached": True, "cache_info": info})
+    service.resultReady.emit(listing, {"kind": "done"})
+    service.pending.remove(listing)
+    qtbot.waitUntil(lambda: ("cached", path) in cache.jobs and ("load", path) in cache.jobs)
+    read, check = producer(cache, path, "cached"), producer(cache, path, "load")
+    service.resultReady.emit(check, {"kind": "loaded", "unchanged": True, "signature": "sig",
+                                     "base_signature": "sig", "memory_shots": [1], "fingerprint": [[1, 6, 123]],
+                                     "files": 1, "rows": 0, "bytes": 0, "problematic": []})
+    service.resultReady.emit(read, {"kind": "error", "message": "Cached dataset invalid"})
+    # Its shots never came: that check can't complete, and a load of the files follows.
+    qtbot.waitUntil(lambda: ("load", path) in cache.jobs and producer(cache, path, "load") is not check)
+    assert producer(cache, path, "load").payload["cache_base"] is False
+    assert browser.loading and not browser.load_error
+
+
+@pytest.mark.parametrize(("level", "count", "checked"), [
+    ("swift", 1000, 1), ("fast", 1000, 2), ("medium", 50, 5), ("medium", 1000, 12), ("medium", 2, 2),
+    ("high", 50, 12), ("high", 1000, 32), ("high", 5, 5),
+])
+def test_check_levels_sample_the_ends_and_random_files(level: str, count: int, checked: int) -> None:
+    from helab.io_helper import _sample_indices
+    first = _sample_indices(count, level)
+    assert first is not None and len(first) == checked and len(set(first)) == checked
+    assert count - 1 in first and (level == "swift" or 0 in first)
+    assert _sample_indices(count, "full") is None
+
+
+def test_helper_default_check_level_matches_the_settings_default() -> None:
+    from helab import io_helper
+    from helab.utils import constants
+    assert io_helper.DEFAULT_CHECK_LEVEL == constants.DEFAULT_CHECK_LEVEL
+
+
+def test_full_check_level_always_lists_the_folder(tmp_path: Path) -> None:
+    source = source_folder(tmp_path)
+    first = loaded(run_load(source, tmp_path))
+    memory = [list(entry) for entry in first["fingerprint"]]
+    result = loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"], check_level="full"))
+    assert not result.get("unchanged") and result["memory_shots"] == [1, 2]
+
+
+MISSING = {"kind": "shots_missing", "missing": [1], "missing_count": 1, "known_count": 1, "listed_count": 1}
+
+
+@pytest.mark.parametrize("answer", ["load", "dont_load"])
+def test_missing_cached_shots_hide_the_cached_data_and_list_the_folder(
+    browser: FolderExplorer, qtbot: QtBot, tmp_path: Path, answer: str,
+) -> None:
+    path = str(tmp_path)
+    _, check = show_cached(browser, qtbot, path)
+    service = browser.model.cache.service
+    shown = browser.displayed_dataset
+    assert shown is not None
+    browser.model.cache.retain("another-tab", shown)  # Another tab still shows that data.
+    service.resultReady.emit(check, MISSING)
+    service.resultReady.emit(check, {"kind": "done"})
+    service.pending.remove(check)
+    # Not this folder's data, perhaps: no longer shown, and nothing was read.
+    assert browser.folder_opened_data is None and browser.displayed_dataset is None and not browser.loading
+    assert browser.load_error == "1 cached shot missing from this folder — Retry"
+    cache = browser.model.cache
+    assert path in cache.mismatched and cache.latest_dataset(path) is None  # Gone from RAM too.
+    entry = cache.mismatched[path]
+    assert (entry["missing"], entry["missing_count"], entry["source"], entry["answer"]) == ([1], 1, "load", "")
+    # Listed for an answer in the app's one window; one folder holds nothing.
+    assert cache.mismatch_count == 1 and not service.mismatch_hold
+    qtbot.wait(20)
+    assert ("load", path) not in cache.jobs
+    if answer == "load":
+        browser.load_as_it_is_now(path)
+        qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
+        load = producer(cache, path, "load")
+        # It reads the folder as it is: the dropped shots are neither shown nor sent as held.
+        assert load.payload["allow_missing"] is True and "memory" not in load.payload
+        assert cache.mismatched[path]["answer"] == "load" and path not in cache.allow_missing  # Used once.
+        assert browser.folder_opened_data is None and ("cached", path) not in cache.jobs
+        service.resultReady.emit(load, {"kind": "shot", "shot": 9, "array": np.ones((1, 3)),
+                                        "fingerprint": [9, 6, 123]})
+        service.resultReady.emit(load, {"kind": "loaded", "signature": "now", "files": 1, "rows": 1, "bytes": 24,
+                                        "problematic": [], "fingerprint": [[9, 6, 123]]})
+        assert browser.folder_opened_data is not None and sorted(browser.folder_opened_data) == [9]
+        assert path not in cache.mismatched
+    else:
+        cache.answer_mismatches([path], "dont_load")
+        assert cache.mismatched[path]["answer"] == "dont_load" and browser.load_error
+        # Selecting it again shows no cached data; its check finds the shots missing again.
+        browser._cache_read_path = None  # As a new selection of the folder does.
+        browser.load_to_ram_cache(path, dwell=False, explicit=True)
+        assert ("cached", path) not in cache.jobs and browser.folder_opened_data is None
+        again = producer(cache, path, "load")
+        assert "memory" not in again.payload and again.payload["allow_missing"] is False
+        service.resultReady.emit(again, MISSING)
+        # The same folder: not counted again, and its answer stands.
+        assert cache.mismatch_count == 1 and cache.mismatched[path]["answer"] == "dont_load"
+
+
+def test_mismatched_folders_are_remembered_up_to_8192_oldest_dropped_first(
+    browser: FolderExplorer, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = browser.model.cache
+    assert FolderCache.MAX_MISMATCHED == 8192
+    monkeypatch.setattr(cache, "MAX_MISMATCHED", 3)
+    cache.skip_mismatched = True  # Not about the hold.
+    for path in ("/a", "/b", "/c", "/d"):
+        cache._mismatch(path)
+    cache._mismatch("/b")  # Seen again: now the newest.
+    cache._mismatch("/e")
+    assert list(cache.mismatched) == ["/d", "/b", "/e"]
+    assert cache.mismatch_count == 5  # /b once.
+
+
+def test_a_cache_saved_without_file_names_gains_them_and_then_takes_the_quick_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    import json
+    import sqlite3
+    source = source_folder(tmp_path)
+    first = loaded(run_load(source, tmp_path))
+    database = next((tmp_path / "disk-cache").rglob("records.sqlite"))
+    with sqlite3.connect(database) as connection:  # As saved before names were kept.
+        connection.execute("UPDATE datasets SET info = json_remove(info, '$.names')")
+    memory = [list(entry) for entry in first["fingerprint"]]
+    check = loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"]))
+    assert not check.get("unchanged")  # One full check: it lists the folder...
+    with sqlite3.connect(database) as connection:
+        info = json.loads(connection.execute("SELECT info FROM datasets").fetchone()[0])
+    assert info["names"] == ["d_txy_forc1.txt", "d_txy_forc2.txt"]  # ...and records the names.
+    with monkeypatch.context() as patched:
+        calls = guard_source(patched, source, folder_stat=True, files=("d_txy_forc1.txt", "d_txy_forc2.txt"))
+        again = loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"]))
+    assert not calls and again["unchanged"]
+
+
+def test_a_moved_in_folder_stops_before_the_cache_is_unpacked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    source = source_folder(tmp_path)
+    loaded(run_load(source, tmp_path))
+    for shot in (1, 2):
+        (source / f"d_txy_forc{shot}.txt").unlink()
+    (source / "d_txy_forc9.txt").write_text("9,2,3\n")
+
+    def unpack(packed: bytes) -> Any:
+        raise AssertionError("the cached dataset was unpacked")
+    monkeypatch.setattr("helab.utils.cache_store.unpack_dataset", unpack)
+    events = run_load(source, tmp_path)
+    missing = next(event for event in events if event["kind"] == "shots_missing")
+    assert missing["missing"] == [1, 2] and not any(event["kind"] == "cache_warning" for event in events)
+
+
+def test_a_cached_read_failing_before_its_check_finishes_loads_the_files(
+    browser: FolderExplorer, qtbot: QtBot, tmp_path: Path,
+) -> None:
+    path = str(tmp_path)
+    cache = browser.model.cache
+    service = cache.service
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    listing = producer(cache, path, "list")
+    info = {"saved_at": time.time() - 60, "snapshot_at": time.time() - 60, "signature": "sig"}
+    service.resultReady.emit(listing, {"kind": "status", "status": "warning", "count": 1, "details": False,
+                                       "raw": [], "txy": [1], "disk_cached": True, "cache_info": info})
+    service.resultReady.emit(listing, {"kind": "done"})
+    service.pending.remove(listing)
+    qtbot.waitUntil(lambda: ("cached", path) in cache.jobs and ("load", path) in cache.jobs)
+    read, check = producer(cache, path, "cached"), producer(cache, path, "load")
+    service.resultReady.emit(read, {"kind": "error", "message": "Cached dataset invalid"})
+    service.pending.remove(read)
+    qtbot.wait(20)  # The follow-up load runs while the check would still be going.
+    # The check counted the cached shots as held: it went, and a load of the files followed.
+    assert check.cancelled.is_set() or check not in service.pending
+    qtbot.waitUntil(lambda: ("load", path) in cache.jobs and producer(cache, path, "load") is not check)
+    assert producer(cache, path, "load").payload["cache_base"] is False
+    assert not browser.load_error

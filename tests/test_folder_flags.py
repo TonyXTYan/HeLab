@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 from typing import Any
 
+import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6.QtCore import QSettings
@@ -346,12 +347,15 @@ def test_dont_cache_during_a_queued_cached_read_loads_from_the_folder_instead(
     try:
         cache._observe_cache(run, {"disk_cached": True, "cache_info": {"saved_at": time.time(), "signature": "s"}})
         select(qtbot, explorer, run)
-        assert ("cached", run) in cache.jobs and ("load", run) not in cache.jobs
+        # The check runs beside the cached read, counting its shots as held.
+        assert ("cached", run) in cache.jobs and ("load", run) in cache.jobs
         explorer.set_folder_flag(run, "no_cache", True)
         assert ("cached", run) not in cache.jobs
-        qtbot.waitUntil(lambda: ("load", run) in cache.jobs)
-        load_request = next(r for r in service.pending if r.operation == "load" and r.path == run)
-        assert load_request.payload["no_cache"] is True
+        qtbot.waitUntil(lambda: any(r.operation == "load" and r.path == run and r.payload["no_cache"]
+                                    for r in service.pending))
+        load_request = next(r for r in service.pending if r.operation == "load" and r.path == run
+                            and r.payload["no_cache"])
+        assert load_request.payload["cache_base"] is False
     finally:
         explorer.close_cleanup()
         service.shutdown()
@@ -507,4 +511,72 @@ def test_two_failed_choices_show_what_the_store_has(monkeypatch: pytest.MonkeyPa
         service.resultReady.emit(failed, {"kind": "error", "message": "disk full"})
         assert cache.folder_prefs("/z") == {"no_cache": True, "no_auto_load": False}
     finally:
+        service.shutdown()
+
+
+def test_returning_to_a_folder_in_ram_checks_it_again(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Data in RAM counts as checked only for a few seconds: back at the folder later, its check
+    runs again (one folder stat when nothing changed), so a TXY added meanwhile is found."""
+    service, cache = frozen(monkeypatch)
+    root = str(tmp_path)
+    explorer = make_explorer(qtbot, service, cache, root, ["run", "other"])
+    run, other = os.path.join(root, "run"), os.path.join(root, "other")
+    try:
+        select(qtbot, explorer, run)
+        load = next(r for r in service.pending if r.operation == "load" and r.path == run)
+        for event in ({"kind": "shot", "shot": 1, "array": np.ones((1, 3)), "fingerprint": [1, 6, 123]},
+                      {"kind": "loaded", "signature": "v1", "files": 1, "rows": 1, "bytes": 24, "problematic": [],
+                       "fingerprint": [[1, 6, 123]]}, {"kind": "done"}):
+            service.resultReady.emit(load, event)
+        service.pending.remove(load)
+        assert explorer.folder_opened_path == run and not explorer.shows_unchecked(run)
+        select(qtbot, explorer, other)
+        cache.cancel(explorer.model.owner)
+        # Back within the freshness window: shown as checked, nothing runs.
+        select(qtbot, explorer, run)
+        assert ("load", run) not in cache.jobs and not explorer.shows_unchecked(run)
+        select(qtbot, explorer, other)
+        cache.cancel(explorer.model.owner)
+        dataset = cache.current_dataset(run)
+        assert dataset is not None
+        dataset.metadata["checked_at"] -= cache.FRESH_SECONDS + 1
+        snapshot = cache.snapshot(run)
+        assert snapshot is not None
+        snapshot.checked_at -= cache.FRESH_SECONDS + 1  # Its scan was a check too.
+        # Later: shown at once, unchecked, and checked against the folder with the RAM shots held.
+        select(qtbot, explorer, run)
+        assert explorer.folder_opened_path == run and explorer.shows_unchecked(run)
+        check = next(r for r in service.pending if r.operation == "load" and r.path == run)
+        assert check.payload["memory"] == [[1, 6, 123]] and check.payload["base_signature"] == "v1"
+    finally:
+        explorer.close_cleanup()
+        service.shutdown()
+
+
+def test_missing_shots_in_a_background_load_list_the_folder(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service, cache = frozen(monkeypatch)
+    root = str(tmp_path)
+    explorer = make_explorer(qtbot, service, cache, root, ["run", "other"])
+    run, other = os.path.join(root, "run"), os.path.join(root, "other")
+    try:
+        select(qtbot, explorer, run)
+        assert explorer.queue_load(other)
+        background = next(r for r in service.pending if r.operation == "load" and r.path == other)
+        service.resultReady.emit(background, {"kind": "shots_missing", "missing": [1], "missing_count": 1,
+                                              "known_count": 1, "listed_count": 0})
+        service.resultReady.emit(background, {"kind": "done"})
+        service.pending.remove(background)
+        assert other in cache.mismatched and cache.mismatched[other]["listed_count"] == 0
+        assert not explorer.load_error  # The shown folder is left alone.
+        # Load as it is now (from the list window): queued like any explicit load.
+        explorer.load_as_it_is_now(other)
+        qtbot.waitUntil(lambda: any(r.operation == "load" and r.path == other and r.payload["allow_missing"]
+                                    for r in service.pending))
+        assert explorer.selected_path_globally == run
+    finally:
+        explorer.close_cleanup()
         service.shutdown()

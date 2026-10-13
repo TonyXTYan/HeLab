@@ -976,6 +976,27 @@ class CacheStore:
         except OSError as exc:
             return _error(f"Cached data file could not be read: {exc}")
 
+    def add_dataset_names(self, path: str, fingerprint: Sequence[Sequence[int]], names: Sequence[str],
+                          guard: SaveGuard) -> bool:
+        """Record a cached dataset's TXY file names (for the quick check's samples) without
+        rewriting it: for a dataset saved before names were kept, found unchanged by a full
+        check. Only while the row still has ``fingerprint``, under the job's save guard.
+        Returns whether the names were recorded."""
+        try:
+            with self.transaction():
+                self._check(guard, "datasets", path)
+                row = self._conn.execute("SELECT fingerprint, info FROM datasets WHERE path = ?", (path,)).fetchone()
+                if row is None or json.loads(row[0]) != [list(entry) for entry in fingerprint]:
+                    return False
+                info = json.loads(row[1])
+                if not isinstance(info, dict):
+                    return False
+                self._conn.execute("UPDATE datasets SET info = ? WHERE path = ?",
+                                   (_dumps({**info, "names": list(names)}), path))
+                return True
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+
     def touch_dataset(self, path: str, now: float | None = None) -> None:
         """Record that the dataset was used: shown from the cache, reused or confirmed."""
         try:

@@ -990,10 +990,18 @@ def test_changed_folder_reads_only_new_or_modified_txy_files(
         return original_read_csv(filename, *args, **kwargs)
 
     monkeypatch.setattr(pd, "read_csv", record_read_csv)
+    # Shot 3 is gone, which never happens to write-once TXY files: nothing is read until the user
+    # says to load the folder as it is now.
+    (tmp_path / "asked").mkdir()
+    asked: list[dict[str, Any]] = []
+    load(str(source), str(tmp_path / "asked"), asked.append, options)
+    missing = next(event for event in asked if event["kind"] == "shots_missing")
+    assert missing["missing"] == [3] and missing["missing_count"] == 1 and missing["known_count"] == 4
+    assert not read and not any(event["kind"] in ("loaded", "shot") for event in asked)
     output = tmp_path / "second"
     output.mkdir()
     events: list[dict[str, Any]] = []
-    load(str(source), str(output), events.append, options)
+    load(str(source), str(output), events.append, options, allow_missing=True)
     assert sorted(read) == ["d_txy_forc2.txt", "d_txy_forc5.txt"]
     assert next(event for event in events if event["kind"] == "load_source") == {"kind": "load_source", "source": "merged",
                          "cache_reason": "Reused 2 shots from disk cache; read 2 new or changed TXY files"}

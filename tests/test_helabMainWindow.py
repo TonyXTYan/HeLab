@@ -192,3 +192,31 @@ def test_handle_exit_main_window(main_window: HelabMainWindow, qtbot: QtBot) -> 
         main_window.handle_exit(signal.SIGINT, None)
         mock_close.assert_called_once()
 
+
+
+def test_mismatched_folders_show_in_the_status_bar_and_load_from_the_current_tab(
+    main_window: HelabMainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from helab.utils.folder_cache import get_folder_cache
+    from helab.utils.io_service import get_io_service
+    cache = get_folder_cache(get_io_service())
+    try:
+        cache.skip_mismatched = True  # Neither the hold nor the window: only the button and the routing.
+        assert not main_window.mismatch_button.isVisible()
+        cache._mismatch("/data/run", {"missing": [1], "missing_count": 1, "known_count": 2, "listed_count": 1})
+        assert main_window.mismatch_button.isVisible() and main_window.mismatch_button.text() == "⚠ 1 mismatched"
+        qtbot.waitUntil(lambda: isinstance(main_window.tab_widget.currentWidget(), FolderExplorer))
+        explorer = main_window.tab_widget.currentWidget()
+        assert isinstance(explorer, FolderExplorer)
+        loads: list[str] = []
+        monkeypatch.setattr(explorer, "load_as_it_is_now", loads.append)
+        main_window.missing_shots.loadRequested.emit(["/data/run"])
+        assert loads == ["/data/run"]
+        main_window.mismatch_button.click()
+        assert main_window.missing_shots.isVisible()
+    finally:
+        cache.mismatched.clear()
+        cache.allow_missing.clear()
+        cache.mismatch_count = 0
+        cache.skip_mismatched = False
+        cache.resume_after_mismatch()
