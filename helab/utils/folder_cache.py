@@ -1582,7 +1582,11 @@ class FolderCache(QObject):
                         source_snapshot.checked_at = 0
                     self.snapshotChanged.emit(job.path)
                     return
-                if "disk_cached" in event and not self._cleared_since(job, job.path):
+                if self._cleared_since(job, job.path):
+                    # Read before the folder's cached data was removed: the data is still right,
+                    # but no longer cached (as for datasets already in RAM, see ``removed``).
+                    event = {**event, "disk_cached": False, "cache_info": {}}
+                elif "disk_cached" in event:
                     self._observe_cache(job.path, event)
                 memory_shots = event.get("memory_shots", [])
                 if memory_shots:

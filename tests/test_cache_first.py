@@ -396,3 +396,34 @@ def test_refresh_checks_shown_data_file_by_file(
     assert producer(browser.model.cache, path, "load").payload["full_check"] is True
     assert browser.shows_unchecked(path)  # "Checking for changes…" until it completes.
     assert not browser._full_check_paths  # Only this check, not later ones.
+
+
+def test_cached_read_finishing_after_a_removal_is_not_marked_cached(
+    browser: FolderExplorer, qtbot: QtBot, tmp_path: Path,
+) -> None:
+    """Settings → Cache cleared the folder while its cached read ran (they share the local lane)."""
+    path = str(tmp_path)
+    cache = browser.model.cache
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    listing = producer(cache, path, "list")
+    cache.service.resultReady.emit(listing, {
+        "kind": "status", "status": "warning", "count": 1, "details": False, "raw": [], "txy": [1],
+        "disk_cached": True, "cache_info": {"saved_at": time.time() - 60, "snapshot_at": time.time() - 60,
+                                            "signature": "cached-signature"}})
+    cache.service.resultReady.emit(listing, {"kind": "done"})
+    cache.service.pending.remove(listing)
+    qtbot.waitUntil(lambda: ("cached", path) in cache.jobs)
+    read = producer(cache, path, "cached")
+    info = cache.cache_status(path).info
+    cache.removed([path], ["datasets"])
+    cache.service.resultReady.emit(read, {"kind": "shot", "shot": 1, "array": np.ones((1, 3)),
+                                          "fingerprint": [1, 6, 123]})
+    cache.service.resultReady.emit(read, {
+        "kind": "loaded", "signature": "cached-signature", "files": 1, "total_files": 1, "failed_files": 0,
+        "rows": 1, "bytes": 24, "problematic": [], "source": "disk", "cached": True, "disk_cached": True,
+        "disk_cache_pending": False, "cache_info": info, "verified": False,
+        "fingerprint": [[1, 6, 123]], "memory_shots": [], "load_counts": {"reused_disk": 1, "read": 0}})
+    cache.service.pending.remove(read)
+    dataset = browser.displayed_dataset
+    assert dataset is not None and dataset.metadata["disk_cached"] is False and dataset.metadata["cache_info"] == {}
+    assert not cache.disk_cached(path)
