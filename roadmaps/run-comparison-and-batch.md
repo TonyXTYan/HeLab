@@ -29,7 +29,9 @@ and explicit failure or missing-data entries.
 
 Build this after single-run execution and comparison are useful. Coordinate data
 loading with the existing I/O scheduler so bulk work does not block interactive
-browsing. Computation scheduling needs its own design.
+browsing. Computation scheduling needs its own design. The proposed
+[headless CLI](headless-analysis.md) could also run this batch without a GUI,
+using the same analysis and per-run result definitions.
 
 Acceptance: a batch agrees with independent single-run analyses, reports partial
 success honestly, remains responsive and can stop without discarding completed

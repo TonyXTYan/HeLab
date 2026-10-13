@@ -52,6 +52,11 @@ the disk cache for each arriving shot.
 
 Depends on the [analysis workflow](analysis-workflow.md) for managed reruns and
 result identity, plus the existing incremental loader and settling policy.
+Sharing completed Live result revisions with other machines belongs to the
+[network extension](network-runners-and-web.md#cross-machine-result-sharing).
+The proposed [runner result policy](analysis-job-runner.md#result-retention-and-caching)
+keeps intermediate Live analysis results in RAM by default; it is separate from
+the TXY dataset cache write policy above.
 
 New settled shots enter once, while incomplete shots remain excluded and
 reported. Expensive analysis never blocks navigation. Repeated arrivals do not

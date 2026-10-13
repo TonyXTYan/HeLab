@@ -52,6 +52,8 @@ backends where appropriate.
 
 Build on the browser's retained datasets, identities and truthful load outcomes.
 Use small fixtures with known counts/arrays for numerical verification.
+Use the shared [analysis job runner](analysis-job-runner.md) contract for
+execution and results, so GUI and headless clients agree on the same run.
 
 A user can select a loaded dataset, edit parameters, run a real analysis, see
 its results and export them without coding. A long run leaves navigation

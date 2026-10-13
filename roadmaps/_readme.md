@@ -61,6 +61,14 @@ How to use it:
   leaves badges stale ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#settings--cache-tab-helabviewssettingsdialogpy)) (2026-10-10).
   Fixed by the rebuilt Cache tab (`52201ca`).
 
+- [ ] Folder status icons vanish soon after startup: saved statuses show, then most
+  disappear; only folders checked again get theirs back (seen by Tony 2026-10-13, no
+  screenshot or log). Ruled out: changed folder identities (all 133 saved summaries
+  match) and removals at startup. Suspect: a parent's derived status recalculated
+  from unchecked subfolders and saved blank. It happened with caches saved before
+  the PR #5 fixes and went away after Clear all. Dropped or cleared statuses now
+  log their reason at DEBUG; if it recurs, run
+  `python -m helab 2>&1 | tee .ai/temp/helab-run.log` (2026-10-13).
 - [ ] Folders with over 100,000 entries record a scan failure.
 - [ ] Quitting cancels cache writes still running in the background (a finished
   load's `disk_cache_pending` save), so the next check redoes them. Quit should
@@ -85,12 +93,16 @@ How to use it:
   interrupted and malformed writes ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#sample-data)) (2026-10-08).
 - [ ] Empty folders in lighter grey; hidden folders that contain data in black
   (from the old README list).
+- [ ] Shared analysis job runner for GUI/agents: language adapters, ownership,
+  results and validated reuse ([plan](analysis-job-runner.md)) (2026-10-13).
 - [ ] Complete the dataset → parameters → background script → results workflow,
   with progress, cancellation and errors ([plan](analysis-workflow.md)) (2026-10-08).
 - [ ] Standard analyses: per-shot counts, T/X/Y distributions and shot selection
   ([plan](analysis-workflow.md#standard-analyses)) (2026-10-08).
 - [ ] Export results and figures with their data source and analysis settings
   ([plan](analysis-workflow.md#export)) (2026-10-08).
+- [ ] Headless analysis runner sharing GUI jobs/results; add its CLI afterward
+  for batch and agent use ([plan](headless-analysis.md)) (2026-10-13).
 - [ ] Update check (notify only): compare the running version with published
   GitHub releases, from source checkouts and frozen builds alike
   ([plan](app-updates.md#stage-1-notify-only)) (2026-10-13).
@@ -113,6 +125,8 @@ How to use it:
 
 ## Long term: reproducible scientific workflows
 
+- [ ] Network extension: mobile and cross-machine results, SSH remote runners,
+  machine/root mapping ([plan](network-runners-and-web.md)) (2026-10-13).
 - [ ] Batch analysis across multiple runs with per-run outcomes and cancellation
   ([plan](run-comparison-and-batch.md#batch-analysis)) (2026-10-08).
 - [ ] Integrate experiment metadata with shot/run data
