@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from pytestqt.qtbot import QtBot
+from PyQt6 import QtWebEngineWidgets  # noqa: F401  Shared worker cleanup imports WebEngine; preload before QApplication.
 
 from helab.io_helper import load, scan
 from helab.utils.folder_cache import FolderCache, get_folder_cache
@@ -127,18 +128,19 @@ def test_a_scan_finding_missing_cached_shots_lists_the_folder(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service, cache = frozen(monkeypatch)
-    cache.submit("tab", 0, "/run", "details", {})
-    job = cache.jobs[("details", "/run")]
+    run, quiet_path = cache.key("/run"), cache.key("/quiet")  # As FolderCache keys them (a drive on Windows).
+    cache.submit("tab", 0, run, "details", {})
+    job = cache.jobs[("details", run)]
     request = next(r for r in service.pending if r.owner == job.owner)
     event = {"kind": "cache_mismatch", "missing": [1, 2], "missing_count": 2, "known_count": 2, "listed_count": 5}
     service.resultReady.emit(request, event)
-    assert cache.mismatched["/run"]["source"] == "scan" and cache.mismatched["/run"]["listed_count"] == 5
+    assert cache.mismatched[run]["source"] == "scan" and cache.mismatched[run]["listed_count"] == 5
     # A folder not cached by choice never shows its cached data: nothing to answer.
-    cache.remember_prefs("/quiet", {"no_cache": True, "no_auto_load": False, "set_at": time.time()})
-    cache.submit("tab", 0, "/quiet", "details", {})
-    quiet = next(r for r in service.pending if r.path == "/quiet")
+    cache.remember_prefs(quiet_path, {"no_cache": True, "no_auto_load": False, "set_at": time.time()})
+    cache.submit("tab", 0, quiet_path, "details", {})
+    quiet = next(r for r in service.pending if r.path == quiet_path)
     service.resultReady.emit(quiet, event)
-    assert "/quiet" not in cache.mismatched
+    assert quiet_path not in cache.mismatched
     service.shutdown()
 
 
@@ -147,10 +149,11 @@ def test_clearing_a_mismatched_folders_cached_data_resolves_it(
 ) -> None:
     service, cache = frozen(monkeypatch)
     cache.skip_mismatched = True
-    found(cache, "/a")
-    found(cache, "/b")
-    cache.removed(["/a"], ["datasets"])
-    assert list(cache.mismatched) == ["/b"]
+    a, b = cache.key("/a"), cache.key("/b")  # As FolderCache keys them (a drive on Windows).
+    found(cache, a)
+    found(cache, b)
+    cache.removed([a], ["datasets"])
+    assert list(cache.mismatched) == [b]
     service.shutdown()
 
 
@@ -254,11 +257,12 @@ def test_a_held_load_waits_for_the_answer(qtbot: QtBot, monkeypatch: pytest.Monk
     found(cache, "/1")
     found(cache, "/2")
     assert service.mismatch_hold
-    cache.submit("tab", 0, "/next", "load", {})
-    request: IORequest = next(r for r in service.pending if r.path == "/next")
+    following = cache.key("/next")  # As FolderCache keys it (a drive on Windows).
+    cache.submit("tab", 0, following, "load", {})
+    request: IORequest = next(r for r in service.pending if r.path == following)
     assert request not in service.active
     cache.resume_after_mismatch()
-    assert any(r.path == "/next" for r in service.active)
+    assert any(r.path == following for r in service.active)
     service.shutdown()
 
 
