@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass, field
 import json
+import math
 import os
 import pathlib
 import sqlite3
@@ -137,7 +138,7 @@ class SaveGuard:
 
 class DatasetRecord(TypedDict):
     """What a load saves with its dataset file. ``info`` holds ``saved_at``,
-    ``snapshot_at``, ``signature``, ``counts``, ``unsettled``, ``kind`` and ``format``."""
+    ``snapshot_at``, ``signature``, ``counts``, ``unsettled``, ``kind``, ``format`` and ``names``."""
     ram_bytes: int
     rows: int
     shots: int
@@ -976,12 +977,14 @@ class CacheStore:
         except OSError as exc:
             return _error(f"Cached data file could not be read: {exc}")
 
-    def add_dataset_names(self, path: str, fingerprint: Sequence[Sequence[int]], names: Sequence[str],
-                          guard: SaveGuard) -> bool:
-        """Record a cached dataset's TXY file names (for the quick check's samples) without
-        rewriting it: for a dataset saved before names were kept, found unchanged by a full
-        check. Only while the row still has ``fingerprint``, under the job's save guard.
-        Returns whether the names were recorded."""
+    def confirm_dataset(self, path: str, fingerprint: Sequence[Sequence[int]], names: Sequence[str],
+                        snapshot_at: float, guard: SaveGuard) -> bool:
+        """Record that a full listing at ``snapshot_at`` found a cached dataset's TXY files all
+        unchanged (none still being written), without rewriting it: its file list now dates from
+        then (``snapshot_at``, so a later non-TXY change such as Finder's ``.DS_Store`` no longer
+        rules out the quick check), nothing is unsettled, and its file names (for the quick check's
+        samples; older caches have none) are kept. Only while the row still has ``fingerprint``,
+        under the job's save guard. Returns whether it was recorded."""
         try:
             with self.transaction():
                 self._check(guard, "datasets", path)
@@ -991,8 +994,11 @@ class CacheStore:
                 info = json.loads(row[1])
                 if not isinstance(info, dict):
                     return False
-                self._conn.execute("UPDATE datasets SET info = ? WHERE path = ?",
-                                   (_dumps({**info, "names": list(names)}), path))
+                previous = info.get("snapshot_at")
+                if isinstance(previous, (int, float)) and math.isfinite(previous):
+                    snapshot_at = max(snapshot_at, float(previous))
+                self._conn.execute("UPDATE datasets SET info = ? WHERE path = ?", (_dumps(
+                    {**info, "names": list(names), "snapshot_at": snapshot_at, "unsettled": 0}), path))
                 return True
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc

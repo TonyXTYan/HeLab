@@ -630,3 +630,102 @@ def test_a_load_starting_soon_spins_without_flashing_the_queued_indicator(
     finally:
         explorer.close_cleanup()
         service.shutdown()
+
+
+@pytest.mark.parametrize("reading", [False, True], ids=["checking", "reading"])
+def test_a_check_beside_its_cached_read_leaves_with_it(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reading: bool,
+) -> None:
+    """Leaving a cached folder while its check runs (Finish mode): a check that found nothing to
+    read is cancelled with the cached read, with no error; one reading new files finishes in the
+    background with its read, and both stop together."""
+    service, cache = frozen(monkeypatch)
+    root = str(tmp_path)
+    explorer = make_explorer(qtbot, service, cache, root, ["run", "other"])
+    run, other = os.path.join(root, "run"), os.path.join(root, "other")
+    errors: list[str] = []
+    try:
+        assert explorer.load_mode == "finish"
+        cache._observe_cache(run, {"disk_cached": True, "cache_info": {"saved_at": time.time(), "signature": "v1"}})
+        select(qtbot, explorer, run)
+        check = next(r for r in service.pending if r.operation == "load" and r.path == run)
+        assert check.payload["cache_base"] is True and ("cached", run) in cache.jobs
+        service.resultReady.emit(check, {"kind": "started"})
+        if reading:
+            service.resultReady.emit(check, {"kind": "progress", "progress": 0.0, "read_bytes": 0, "read_files": 0,
+                                             "total_read_bytes": 100})
+
+        def record(request: IORequest, event: dict[str, Any]) -> None:
+            if request.path == run and event["kind"] == "error":
+                errors.append(event["message"])
+        cache.resultReady.connect(record)
+        select(qtbot, explorer, other)
+        if not reading:
+            assert ("load", run) not in cache.jobs and ("cached", run) not in cache.jobs
+            assert run not in explorer._bg_paths and run not in explorer.model.load_states
+        else:
+            assert run in explorer._bg_paths
+            for operation in ("load", "cached"):
+                assert [owner for owner, _ in cache.jobs[(operation, run)].subscribers] == [explorer.bg_owner]
+            # Stopped in the background (trimmed, cancelled): its read stops too.
+            cache.cancel(explorer.bg_owner, "load", run)
+            assert ("load", run) not in cache.jobs and ("cached", run) not in cache.jobs
+        assert not errors
+    finally:
+        explorer.close_cleanup()
+        service.shutdown()
+
+
+def test_returning_to_a_background_check_brings_its_cached_read_back(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service, cache = frozen(monkeypatch)
+    root = str(tmp_path)
+    explorer = make_explorer(qtbot, service, cache, root, ["run", "other"])
+    run, other = os.path.join(root, "run"), os.path.join(root, "other")
+    try:
+        cache._observe_cache(run, {"disk_cached": True, "cache_info": {"saved_at": time.time(), "signature": "v1"}})
+        select(qtbot, explorer, run)
+        check = next(r for r in service.pending if r.operation == "load" and r.path == run)
+        for event in ({"kind": "started"}, {"kind": "progress", "progress": 0.0, "read_bytes": 0, "read_files": 0,
+                                             "total_read_bytes": 100}):
+            service.resultReady.emit(check, event)
+        read_job = cache.jobs[("cached", run)]
+        select(qtbot, explorer, other)
+        assert run in explorer._bg_paths
+        select(qtbot, explorer, run)
+        assert run not in explorer._bg_paths and explorer.loading
+        assert cache.jobs[("cached", run)] is read_job  # The same read, not a new one.
+        for operation in ("load", "cached"):
+            assert [owner for owner, _ in cache.jobs[(operation, run)].subscribers] == [explorer.model.owner]
+    finally:
+        explorer.close_cleanup()
+        service.shutdown()
+
+
+def test_missing_shots_offer_retry_and_review(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Retry stays (mounting the right drive is a fix); Review… shows the folder in the list window."""
+    from helab.views.FolderExplorer import MISMATCH_RETRY_TOOLTIP
+    service, cache = frozen(monkeypatch)
+    root = str(tmp_path)
+    explorer = make_explorer(qtbot, service, cache, root, ["run"])
+    run = os.path.join(root, "run")
+    reviewed: list[str] = []
+    explorer.reviewMismatchRequested.connect(reviewed.append)
+    try:
+        select(qtbot, explorer, run)
+        load = next(r for r in service.pending if r.operation == "load" and r.path == run)
+        service.resultReady.emit(load, {"kind": "shots_missing", "missing": [1, 2], "missing_count": 2,
+                                        "known_count": 3, "listed_count": 1})
+        service.resultReady.emit(load, {"kind": "done"})
+        service.pending.remove(load)
+        explorer._update_folder_summary()
+        assert explorer.load_error == "2 cached shots missing — Retry after checking the drive, or Review…"
+        assert not explorer.retry_button.isHidden() and explorer.retry_button.isEnabled()
+        assert explorer.retry_button.toolTip() == MISMATCH_RETRY_TOOLTIP
+        assert not explorer.review_button.isHidden()
+        explorer.review_button.click()
+        assert reviewed == [run]
+    finally:
+        explorer.close_cleanup()
+        service.shutdown()

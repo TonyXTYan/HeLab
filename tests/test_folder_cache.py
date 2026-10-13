@@ -1185,9 +1185,13 @@ def test_save_date_persists_and_cache_reuse_does_not_rewrite_it(tmp_path: Path) 
     assert loaded_event(events)["cache_info"] == saved
     assert loaded_event(events)["load_counts"]["reused_disk"] == 1
     assert not any(event["kind"] == "cache_saved" for event in events)
-    # Reuse records the use, not a new save date.
+    # Reuse records the use, not a new save date; that full listing found the cache complete, so its
+    # file list dates from then.
     used = saved_dataset(options, path)
-    assert used is not None and used[0]["info"] == saved and used[0]["last_used"] >= row[0]["last_used"]
+    assert used is not None and used[0]["last_used"] >= row[0]["last_used"]
+    info = used[0]["info"]
+    assert info["snapshot_at"] >= saved["snapshot_at"]
+    assert {**info, "snapshot_at": saved["snapshot_at"]} == saved
 
 
 @pytest.mark.parametrize("failure", ["file", "row"])

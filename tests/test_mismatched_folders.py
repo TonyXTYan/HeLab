@@ -260,3 +260,16 @@ def test_a_held_load_waits_for_the_answer(qtbot: QtBot, monkeypatch: pytest.Monk
     cache.resume_after_mismatch()
     assert any(r.path == "/next" for r in service.active)
     service.shutdown()
+
+
+def test_review_shows_the_window_with_that_folder_selected(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, cache = frozen(monkeypatch)
+    window = MissingShotsWindow(cache)
+    qtbot.addWidget(window)
+    found(cache, "/data/run1")
+    found(cache, "/data/run2")
+    window.close()  # Dismissed: a tab's Review… still shows it.
+    window.show_list(activate=True, select="/data/run1")
+    assert window.isVisible() and window.selected_paths() == ["/data/run1"]
+    assert window.load_button.isEnabled()
+    service.shutdown()

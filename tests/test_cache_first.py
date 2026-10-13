@@ -568,7 +568,7 @@ def test_missing_cached_shots_hide_the_cached_data_and_list_the_folder(
     service.pending.remove(check)
     # Not this folder's data, perhaps: no longer shown, and nothing was read.
     assert browser.folder_opened_data is None and browser.displayed_dataset is None and not browser.loading
-    assert browser.load_error == "1 cached shot missing from this folder — Retry"
+    assert browser.load_error == "1 cached shot missing — Retry after checking the drive, or Review…"
     cache = browser.model.cache
     assert path in cache.mismatched and cache.latest_dataset(path) is None  # Gone from RAM too.
     entry = cache.mismatched[path]
@@ -641,6 +641,35 @@ def test_a_cache_saved_without_file_names_gains_them_and_then_takes_the_quick_ch
         again = loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"]))
     assert not calls and again["unchanged"]
 
+
+
+def test_a_full_check_finding_the_cache_complete_brings_the_quick_check_back(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A folder modified after caching without any TXY change (Finder's .DS_Store, an analysis
+    output) gets one full check, which dates the cache's file list from then: the quick check
+    is back the next time."""
+    import json
+    import sqlite3
+    source = source_folder(tmp_path)
+    first = loaded(run_load(source, tmp_path))
+    database = next((tmp_path / "disk-cache").rglob("records.sqlite"))
+    now = time.time()
+    with sqlite3.connect(database) as connection:  # Cached a while ago...
+        connection.execute("UPDATE datasets SET info = json_set(info, '$.snapshot_at', ?, '$.unsettled', 1)",
+                           (now - 100,))
+    (source / ".DS_Store").write_text("")  # ...and the folder modified since, with no TXY change.
+    os.utime(source, (now - 50, now - 50))
+    memory = [list(entry) for entry in first["fingerprint"]]
+    check = loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"]))
+    assert not check.get("unchanged") and check["load_counts"]["read"] == 0
+    with sqlite3.connect(database) as connection:
+        info = json.loads(connection.execute("SELECT info FROM datasets").fetchone()[0])
+    assert now - 50 < info["snapshot_at"] <= time.time() and info["unsettled"] == 0
+    with monkeypatch.context() as patched:
+        calls = guard_source(patched, source, folder_stat=True, files=("d_txy_forc1.txt", "d_txy_forc2.txt"))
+        again = loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"]))
+    assert not calls and again["unchanged"]
 
 def test_a_moved_in_folder_stops_before_the_cache_is_unpacked(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,

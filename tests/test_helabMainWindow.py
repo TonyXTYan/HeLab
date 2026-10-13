@@ -214,7 +214,12 @@ def test_mismatched_folders_show_in_the_status_bar_and_load_from_the_current_tab
         assert loads == ["/data/run"]
         main_window.mismatch_button.click()
         assert main_window.missing_shots.isVisible()
+        main_window.missing_shots.close()
+        explorer.reviewMismatchRequested.emit("/data/run")  # A tab's Review…
+        assert main_window.missing_shots.isVisible()
+        assert main_window.missing_shots.selected_paths() == ["/data/run"]
     finally:
+        main_window.missing_shots.close()
         cache.mismatched.clear()
         cache.allow_missing.clear()
         cache.mismatch_count = 0

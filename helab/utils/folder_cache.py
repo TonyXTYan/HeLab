@@ -1061,9 +1061,9 @@ class FolderCache(QObject):
                 self.service.cancel(job.owner)
 
     def transfer(self, owner: str, generation: int, path: str,
-                 new_owner: str, new_generation: int) -> bool:
-        """Move a load subscription to another owner without interrupting the shared job."""
-        job = self.jobs.get(("load", self.key(path)))
+                 new_owner: str, new_generation: int, operation: str = "load") -> bool:
+        """Move a load (or cached read) subscription to another owner without interrupting the shared job."""
+        job = self.jobs.get((operation, self.key(path)))
         old = job.subscribers.get((owner, generation)) if job else None
         if job is None or old is None:
             return False
@@ -1072,7 +1072,7 @@ class FolderCache(QObject):
         replaced = job.subscribers.get((new_owner, new_generation))
         if replaced:
             replaced.cancelled.set()
-        request = IORequest(new_owner, new_generation, old.path, "load", old.payload, old.timeout)
+        request = IORequest(new_owner, new_generation, old.path, operation, old.payload, old.timeout)
         job.subscribers[(new_owner, new_generation)] = request
         self._catch_up(job, request)
         # Leaving or joining the current tab moves the load between I/O lanes.

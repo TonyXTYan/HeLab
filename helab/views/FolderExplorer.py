@@ -42,6 +42,10 @@ REFUSED_TOOLTIP = "Folders larger than 30% of RAM are never loaded."
 AUTO_LOAD_OFF = "Auto-load off for this folder"
 AUTO_LOAD_OFF_TOOLTIP = ("Load this folder now. You chose not to load it automatically "
                          "(right-click › Don't auto-load this folder).")
+MISMATCH_RETRY_TOOLTIP = ("Check this folder again. If the wrong drive was mounted, mount the right one first: "
+                          "its cached shots are then found and it loads as usual.")
+MISMATCH_REVIEW_TOOLTIP = ("Cached data doesn't match this folder: shots it had are missing now. Show it in the "
+                           "list of mismatched folders, where you can load it as it is now.")
 AMBER = "#b26a00"
 
 
@@ -111,6 +115,8 @@ class FolderExplorer(QWidget):
     selectionPathChanged = pyqtSignal(str)
     loadStateChanged = pyqtSignal()
     dataLoaded = pyqtSignal(str)
+    # Review… for a folder whose cached data doesn't match it: the main window shows its row in the list.
+    reviewMismatchRequested = pyqtSignal(str)
     DWELL_MS = 3000
     MAX_BACKGROUND_LOADS = 8
 
@@ -230,6 +236,11 @@ class FolderExplorer(QWidget):
         self.retry_button = QToolButton(self.folder_counts_row)
         self.retry_button.setText("Retry")
         self.retry_button.clicked.connect(self._retry)
+        # Shown with Retry while the selected folder's cached data doesn't match it (shots missing).
+        self.review_button = QToolButton(self.folder_counts_row)
+        self.review_button.setText("Review…")
+        self.review_button.setToolTip(MISMATCH_REVIEW_TOOLTIP)
+        self.review_button.clicked.connect(lambda: self.reviewMismatchRequested.emit(self.selected_path_globally))
         # Offered with the large-folder warning (S10): stop it coming up at all.
         self.no_auto_load_button = QToolButton(self.folder_counts_row)
         self.no_auto_load_button.setText("No auto-load")
@@ -241,8 +252,8 @@ class FolderExplorer(QWidget):
         self.deselect_button.setText("Deselect")
         self.deselect_button.setToolTip("Clear subfolder selection and view the displayed path")
         self.deselect_button.clicked.connect(self.clear_selection)
-        self.summary_buttons = (self.cancel_load_button, self.retry_button, self.no_auto_load_button,
-                                self.deselect_button)
+        self.summary_buttons = (self.cancel_load_button, self.retry_button, self.review_button,
+                                self.no_auto_load_button, self.deselect_button)
         for hidden in (self.selected_folder_label, *self.summary_buttons):
             hidden.hide()
         summary_font = self.folder_summary_label.font()
@@ -539,17 +550,30 @@ class FolderExplorer(QWidget):
         self.loadStateChanged.emit()
 
     def _release_load(self, keep: str | None = None) -> None:
-        """Stop showing the current load; depending on the mode it continues in the background."""
+        """Stop showing the current load; depending on the mode it continues in the background.
+
+        A check beside the folder's cached read (``cache_base``) needs that read's shots. While it
+        is only checking (no files to read found yet) it is cancelled with the read: the cache
+        holds the data, and the next visit checks again. Once it reads new files it is a real load,
+        and moves to the background with its read."""
         self._stop_dwell()
         path = self._load_path
-        if path is not None and self.loading and (
+        cache = self.model.cache
+        beside_read = path is not None and any(
+            request.operation == "load" and request.path == path and request.payload.get("cache_base")
+            for request in cache.requests(self.model.owner))
+        clock = cache.load_clock(path) if path is not None else None
+        only_checking = beside_read and not (clock is not None and clock.total_bytes)
+        if path is not None and self.loading and not only_checking and (
                 self.load_mode == "queue" or (self.load_mode == "finish" and not self.load_queued)):
             self._bg_paths[path] = None
-            if self.model.cache.transfer(self.model.owner, self.model.generation, path, self.bg_owner, 0):
+            if cache.transfer(self.model.owner, self.model.generation, path, self.bg_owner, 0):
+                if beside_read:
+                    cache.transfer(self.model.owner, self.model.generation, path, self.bg_owner, 0, "cached")
                 self._trim_background()
             else:
                 del self._bg_paths[path]
-        self.model.cache.cancel(self.model.owner, "load")
+        cache.cancel(self.model.owner, "load")
         for request in tuple(self.model.cache.requests(self.model.owner)):
             # The cached read of the folder about to be checked runs beside that check.
             if request.operation == "cached" and request.path != keep:
@@ -678,6 +702,8 @@ class FolderExplorer(QWidget):
         if path in self._bg_paths:
             del self._bg_paths[path]
             if self.model.cache.transfer(self.bg_owner, 0, path, self.model.owner, self.model.generation):
+                # Its cached read, if it moved with it, comes back too.
+                self.model.cache.transfer(self.bg_owner, 0, path, self.model.owner, self.model.generation, "cached")
                 self.model.cache.promote(path)
                 self.loadStateChanged.emit()
                 return True
@@ -767,7 +793,8 @@ class FolderExplorer(QWidget):
             self._loading_data.clear()
             self.model.set_load_state(path, "")
             count = int(event.get("missing_count", 0))
-            self.load_error = f"{count} cached shot{'' if count == 1 else 's'} missing from this folder — Retry"
+            self.load_error = (f"{count} cached shot{'' if count == 1 else 's'} missing — Retry after checking "
+                               "the drive, or Review…")
             self._cancelled_load_path = path  # No automatic load tries again; Retry or the answer does.
             shown = self.displayed_dataset
             if self.folder_opened_path == path or (shown is not None and shown.path == path):
@@ -952,6 +979,8 @@ class FolderExplorer(QWidget):
         elif kind in ("loaded", "error", "cancelled", "too_large", "shots_missing"):
             del self._bg_paths[path]
             self.model.set_load_state(path, "")
+            # The cached read that moved here with its check (``_release_load``) goes with it.
+            self.model.cache.cancel(self.bg_owner, "cached", path)
             if kind == "error":
                 logging.warning("Background load %s: %s", path, event.get("message", ""))
             if kind == "too_large":
@@ -1353,7 +1382,10 @@ class FolderExplorer(QWidget):
         self.retry_button.setEnabled(bool(self.load_error) or paused or offer_large or off
                                      or not self.model.refresh_pending(retry_path))
         self.no_auto_load_button.setVisible(large is not None and not off and idle and bool(store_options()))
-        self.retry_button.setToolTip("Load this folder again" if self.load_error else
+        mismatched = path in self.model.cache.mismatched
+        self.review_button.setVisible(mismatched and idle)
+        self.retry_button.setToolTip(MISMATCH_RETRY_TOOLTIP if mismatched and self.load_error else
+                                     "Load this folder again" if self.load_error else
                                      LARGE_TOOLTIP if offer_large else
                                      AUTO_LOAD_PAUSED_TOOLTIP if paused else
                                      AUTO_LOAD_OFF_TOOLTIP if off else

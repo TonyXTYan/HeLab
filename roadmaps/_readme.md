@@ -77,6 +77,10 @@ How to use it:
 - [ ] With the default of one background lane, folder details and status checks
   (including manual ones) wait for the selected load. As planned; revisit if
   it feels slow.
+- [ ] When a tab's shown data is dropped while it is shown (a folder status check finds
+  the folder mismatched, or its cache is cleared), the tab keeps its arrays and later
+  plots on screen; a load finding missing shots clears them. Clear the analysis view
+  or mark it stale, once plotting exists (Tony, 2026-10-14).
 
 ## Near term: useful analysis from loaded data
 

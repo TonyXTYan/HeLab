@@ -64,6 +64,19 @@ nothing appeared.
   - Pause (not cancel) at 2^N: Tony agreed. Load as it is now reuses old
     cached shots whose number, size and mtime_ns all match a current file;
     anything else is read again (Tony agreed, 2026-10-13).
+- Review of the uncommitted work (2026-10-14), Tony's decisions:
+  - Leaving a folder while its check runs beside the cached read: a check
+    that hasn't found files to read is **cancelled with its read** (the cache
+    holds the data; the next visit checks again). One reading new files is a
+    real load: in Finish/Queue mode it moves to the background **with** its
+    read, and they stop together. Moving every check with its read was
+    rejected: holding ↓ would unpack the cache of every folder passed.
+  - A full listing that finds the cache complete (none still being written)
+    moves `snapshot_at` forward to the listing's start: otherwise any non-TXY
+    change after caching (Finder's `.DS_Store`, analysis output) turned the
+    quick check off for good. The quick check itself never moves it.
+  - Missing shots: Retry stays enabled (mounting the right drive is a fix);
+    the line adds **Review…**, which opens the list window on that folder.
 - Selecting a folder with saved counts and a disk cache skips the listing.
 - Check failure keeps the cached data: `Check failed`, error on line 1, Retry.
 - **Files still being written:** TXY written once and never modified, but

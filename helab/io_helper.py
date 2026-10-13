@@ -1024,12 +1024,12 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     if store is not None and (cached or reused):
         _touch(store, path)
     names = [os.path.basename(filename) for _, filename in files]
-    if (cached and store is not None and guard is not None and not no_cache
-            and (not isinstance(cache_info.get("names"), list) or len(cache_info["names"]) != len(fingerprint))):
-        # Saved before file names were kept: record them, so the next check can be the quick one.
+    if cached and not young and store is not None and guard is not None and not no_cache:
+        # This listing found the cache complete: it dates from now (a later non-TXY change no longer
+        # rules out the quick check), and older caches get their file names for its samples.
         from helab.utils.cache_store import SaveRejected
         try:
-            store.add_dataset_names(path, fingerprint, names, guard)
+            store.confirm_dataset(path, fingerprint, names, listed_at, guard)
         except (StoreError, SaveRejected):
             pass  # Best effort: the next full check tries again.
     if store is None or guard is None or cached or no_cache:

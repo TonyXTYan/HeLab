@@ -130,11 +130,20 @@ class MissingShotsWindow(QDialog):
     def selected_paths(self) -> list[str]:
         return [str(item.data(0, Qt.ItemDataRole.UserRole)) for item in self.tree.selectedItems()]
 
-    def show_list(self, activate: bool = True) -> None:
+    def show_list(self, activate: bool = True, select: str | None = None) -> None:
         """Show the window; ``activate`` also brings it to the front with the keyboard focus (a
-        folder found while browsing only appears, without taking the focus)."""
+        folder found while browsing only appears, without taking the focus). ``select``: the
+        folder whose row is selected (a tab's Review…)."""
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, not activate)
         self.show()
+        if select is not None:
+            self.refresh()
+            for index in range(self.tree.topLevelItemCount()):
+                item = self.tree.topLevelItem(index)
+                if item is not None:
+                    item.setSelected(item.data(0, Qt.ItemDataRole.UserRole) == select)
+                    if item.isSelected():
+                        self.tree.scrollToItem(item)
         if activate:
             self.raise_()
             self.activateWindow()
