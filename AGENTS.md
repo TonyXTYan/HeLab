@@ -147,7 +147,9 @@ A folder's status shown in the tree can be **derived from its subfolders** (`som
 ## CI/CD
 
 `.github/workflows/dev-cicd.yml` runs required Python 3.13 test/build matrices on
-macOS, Windows and Ubuntu for every branch push and PR to `main`. Separate
+macOS, Windows and Ubuntu for every branch push and PR to `main`. A push to a
+branch with an open PR to `main` runs only the detection job, since the PR's own
+run tests the same commit (if the PR lookup fails, everything runs). Separate
 Python 3.11, 3.12 and 3.14 compatibility matrices run only on PRs to `main`,
 with soft failures. Shared steps live in `ci-test.yml` and `ci-build.yml`, with
 Codecov uploads. Compatibility matrices expand on pushes, but pass `enabled: false`

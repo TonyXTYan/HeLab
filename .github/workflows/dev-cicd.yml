@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: read  # A branch push checks whether its pull request already tests it.
 
 jobs:
   get-version:
@@ -21,22 +22,48 @@ jobs:
       build_sha: ${{ steps.compare.outputs.build_sha }}
       build_ref: ${{ steps.compare.outputs.build_ref }}
       build_branch: ${{ steps.compare.outputs.build_branch }}
+      covered_by_pr: ${{ steps.pr.outputs.covered }}
     steps:
+      # A push to a branch with an open PR to main starts this workflow twice: once for
+      # the push and once for the PR. The PR's run tests the same commit, so the push
+      # run stops here. An API error runs everything: a duplicate run beats none.
+      - name: Skip a branch push that its pull request also tests
+        id: pr
+        if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if ! prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --state open \
+                       --json number --jq 'map("#\(.number)") | join(", ")'); then
+            echo "::warning::Couldn't check for a pull request of $BRANCH; running all jobs."
+            prs=""
+          fi
+          if [ -n "$prs" ]; then
+            echo "covered=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping this push run: pull request $prs tests the same commit."
+            echo "Skipped: pull request $prs tests this commit in its own run." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Checkout code
+        if: steps.pr.outputs.covered != 'true'
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Set up Python
+        if: steps.pr.outputs.covered != 'true'
         uses: actions/setup-python@v7
         with:
           python-version: '3.13'
 
       - name: Install packaging
+        if: steps.pr.outputs.covered != 'true'
         run: pip install packaging
 
       - name: Validate package version and select main-branch release
+        if: steps.pr.outputs.covered != 'true'
         id: compare
         env:
           GH_TOKEN: ${{ github.token }}
@@ -46,6 +73,7 @@ jobs:
   required-tests:
     name: ${{ matrix.os }} + py3.13
     needs: get-version
+    if: needs.get-version.outputs.covered_by_pr != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -60,6 +88,7 @@ jobs:
   required-builds:
     name: ${{ matrix.os }} + py3.13
     needs: get-version
+    if: needs.get-version.outputs.covered_by_pr != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -77,6 +106,7 @@ jobs:
   compatibility-tests:
     name: ${{ matrix.os }} + py3.${{ matrix.python3-version }}
     needs: get-version
+    if: needs.get-version.outputs.covered_by_pr != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -94,6 +124,7 @@ jobs:
   compatibility-builds:
     name: ${{ matrix.os }} + py3.${{ matrix.python3-version }}
     needs: get-version
+    if: needs.get-version.outputs.covered_by_pr != 'true'
     strategy:
       fail-fast: false
       matrix:
