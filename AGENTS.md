@@ -51,6 +51,18 @@ pytest tests/test_foo.py      # single file
 pytest --cov=helab            # with coverage
 ```
 
+Windows: if pytest crashes during cleanup with `WinError 5` for
+`pytest-current`, use either option in PowerShell:
+
+```powershell
+pytest --basetemp="$env:TEMP/helab-pytest-fresh"
+pytest --basetemp=.ai/temp/pytest-fresh
+```
+
+Use a dedicated scratch directory per concurrent run: pytest clears it at startup.
+See [investigation notes](.ai/sessions/2026-10-13-codex-windows-pytest/notes.md)
+for details and a separate intermittent cache-move failure.
+
 Tests ending in `.disabled` are intentionally skipped (not collected) — don't try to "fix" them into passing without checking why they were disabled first.
 
 ## Type checking

@@ -231,7 +231,22 @@ We use [mypy]() and [pyright]() to enforce strict typing for this package.
 pytest
 ```
 
-Tests launch real Qt windows by default. To run headless (no windows popping up, e.g. over SSH or while doing other work), prefix with `QT_QPA_PLATFORM=offscreen` — this only affects that one command, not your shell session:
+Tests run Qt headlessly (`offscreen`) by default. Set `HELAB_SHOW_GUI=1` to watch
+the windows while debugging. An explicit `QT_QPA_PLATFORM` takes precedence.
+
+Windows: if pytest crashes during cleanup with `WinError 5` for
+`pytest-current`, use either option in PowerShell:
+
+```powershell
+pytest --basetemp="$env:TEMP/helab-pytest-fresh"
+pytest --basetemp=.ai/temp/pytest-fresh
+```
+
+Use a dedicated scratch directory per concurrent run: pytest clears it at startup.
+See [investigation notes](.ai/sessions/2026-10-13-codex-windows-pytest/notes.md)
+for details and a separate intermittent cache-move failure.
+
+To select offscreen Qt explicitly for one command in Bash:
 
 ```bash
 QT_QPA_PLATFORM=offscreen pytest
