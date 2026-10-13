@@ -119,12 +119,18 @@ jobs:
           fi
           pyinstaller HeLab.spec --clean -y
 
+      # Ship only HeLab.app on macOS (dist/HeLab is the same app again), zipped here
+      # so the Qt framework symlinks survive: upload-artifact would replace each
+      # link with a copy of its target (~2.1 GB instead of ~290 MB).
+      - name: Zip the macOS app, keeping its symlinks
+        if: inputs.os == 'macos'
+        run: ditto -c -k --norsrc --noextattr --noacl --keepParent dist/HeLab.app dist/HeLab-macos.zip
+
       - name: Archive build artifacts
         uses: actions/upload-artifact@v7
         with:
           name: build-${{ inputs.os }}-py3${{ inputs.python-minor }}
-          path: |
-            dist/
+          path: ${{ inputs.os == 'macos' && 'dist/HeLab-macos.zip' || 'dist/' }}
           retention-days: 1
 
       - name: Report Python 3.13 build failure

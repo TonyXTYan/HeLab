@@ -102,6 +102,10 @@ tested offscreen only. Check on native macOS (and once on a Windows lab PC):
   test reaching `api.github.com` from each lab PC; decide where the signing key
   is backed up and who can release after Tony leaves
   ([risks](../roadmaps/app-updates.md#risks)).
+- [ ] macOS release zip (added 2026-10-13): download the macOS CI artifact, check
+  `HeLab-macos.zip` is ~300 MB and holds only `HeLab.app`, unzip it in Finder and
+  open the app (right-click › Open for the ad-hoc signature)
+  ([build size step 1](../roadmaps/build-size.md#steps-cheapest-first)).
 - [ ] Record the required Python 3.13 suite/type-check and build results for the
   release commit. This is validation evidence, not a new testing feature.
 - [ ] Observe hover-menu tests in CI: real timers have approximately 200 ms of

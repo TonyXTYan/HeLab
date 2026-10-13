@@ -37,7 +37,8 @@ How to use it:
 - [ ] Build size: ship one copy of the app per asset with symlinks kept (macOS
   artifact 2152 MiB, `HeLab.app` alone zips to 276 MB), then exclude unused
   packages (pyarrow, mypy), replace pytablericons/pygame, and decide on
-  QtWebEngine ([plan](build-size.md)) (2026-10-13).
+  QtWebEngine ([plan](build-size.md)) (2026-10-13). Step 1 (macOS zip of
+  `HeLab.app` only, symlinks kept) done 2026-10-13; CI result to check.
 
 - [ ] Finish the status-message audit: verify load-phase labels for `merged`/
   `updated` sources ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#status-messages)) (2026-10-08).

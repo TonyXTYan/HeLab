@@ -50,6 +50,16 @@ build from a plain terminal. CI is unaffected.
    re-zipping. `release_draft --validate-only` reads each archive's build
    stamp, so its expected paths must follow the new layout. Expected macOS
    artifact: ~2.1 GB → ~280 MB.
+   **Done 2026-10-13:** `ci-build.yml` zips `dist/HeLab.app` with
+   `ditto -c -k --norsrc --noextattr --noacl --keepParent` and uploads only that
+   zip; the release job copies it. The stamp validation needed no change: the
+   zip has one stamp (`HeLab.app/Contents/Resources/helab/_build_info.json`),
+   since `Contents/Frameworks/helab` is a directory symlink. Locally: 290 MB,
+   1403 symlinks kept, no AppleDouble files; the unzipped app matches `dist/`
+   (`diff -rq --no-dereference`) and `--version` runs. `codesign --verify
+   --deep --strict` fails the same way on the unzipped and the original ad-hoc
+   build, so zipping doesn't cause it. CI artifact size and a launch of the
+   downloaded app are still to check.
 2. **Spec excludes:** `pyarrow`, `mypy`, `pydantic.mypy`, `IPython`, `tkinter`
    and the PyCharm backends; drop `pyarrow` from `requirements.txt` if no lab
    script needs it. About −130 MB. Check that plotly figures and the Dash pages

@@ -161,11 +161,10 @@ jobs:
           name: build-ubuntu-py313
           path: dist/ubuntu
 
-      - name: Compress macOS Build Artifact
+      - name: Copy the macOS zip made by the build job
         run: |
           mkdir -p dist/release
-          cd dist/macos
-          zip -r -9 ../release/HeLab-macos.zip HeLab.app HeLab
+          cp dist/macos/HeLab-macos.zip dist/release/HeLab-macos.zip
 
       - name: Compress Windows Build Artifact
         run: |
