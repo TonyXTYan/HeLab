@@ -51,7 +51,19 @@ pytest tests/test_foo.py      # single file
 pytest --cov=helab            # with coverage
 ```
 
-For the full suite, prefer the parallel form: `-n 12` runs 12 pytest-xdist workers (use at most the machine's CPU cores; CI uses `-n 4`). Never use `-n` without `--reruns` and `--reruns-delay` (pytest-rerunfailures): parallel workers can race (e.g. over temp folders) and Qt/timing tests fail now and then under load. Report any test that needed a `RERUN` rather than calling the run clean. Prefix `QT_QPA_PLATFORM=offscreen` to run without windows.
+For the full suite, prefer the parallel form: `-n 12` runs 12 pytest-xdist workers (use at most the machine's CPU cores; CI uses `-n 4`). Never use `-n` without `--reruns` and `--reruns-delay` (pytest-rerunfailures): parallel workers can race (e.g. over temp folders) and Qt/timing tests fail now and then under load. Report any test that needed a `RERUN` rather than calling the run clean. Tests run Qt offscreen by default; set `HELAB_SHOW_GUI=1` to see the windows.
+
+Windows: if pytest crashes during cleanup with `WinError 5` for
+`pytest-current`, use either option in PowerShell:
+
+```powershell
+pytest --basetemp="$env:TEMP/helab-pytest-fresh"
+pytest --basetemp=.ai/temp/pytest-fresh
+```
+
+Use a dedicated scratch directory per concurrent run: pytest clears it at startup.
+See [investigation notes](.ai/sessions/2026-10-13-codex-windows-pytest/notes.md)
+for details and a separate intermittent cache-move failure.
 
 Tests ending in `.disabled` are intentionally skipped (not collected) — don't try to "fix" them into passing without checking why they were disabled first.
 

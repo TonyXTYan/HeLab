@@ -213,17 +213,26 @@ pytest -n 12 --reruns 5 --reruns-delay 1 --verbose
 
 - `-n 12` runs 12 worker processes ([pytest-xdist](https://pypi.org/project/pytest-xdist/)). Use at most your number of CPU cores; CI uses `-n 4`.
 - `--reruns 5 --reruns-delay 1` retries a failed test up to 5 times, 1 s apart ([pytest-rerunfailures](https://pypi.org/project/pytest-rerunfailures/)). A test that passed only on a retry shows as `RERUN` in the output, so look at it if it keeps happening.
+- `--verbose` lists each test as it finishes.
 
 **Always use `-n` together with `--reruns` and `--reruns-delay`.** Parallel workers sometimes race each other, for example over temp folders, and Qt and timing tests are less reliable under heavy load. These failures come from running in parallel, not from the code, and a retry after a short delay usually passes. Without the retries, `-n` alone can fail a run for nothing.
-- `--verbose` lists each test as it finishes.
 
 Both plugins are in `requirements.txt`.
 
-Tests launch real Qt windows by default. To run headless (no windows popping up, e.g. over SSH or while doing other work), prefix with `QT_QPA_PLATFORM=offscreen` — this only affects that one command, not your shell session:
+Tests run Qt headlessly (`offscreen`) by default. Set `HELAB_SHOW_GUI=1` to watch
+the windows while debugging. An explicit `QT_QPA_PLATFORM` takes precedence.
 
-```bash
-QT_QPA_PLATFORM=offscreen pytest -n 12 --reruns 5 --reruns-delay 1 --verbose
+Windows: if pytest crashes during cleanup with `WinError 5` for
+`pytest-current`, use either option in PowerShell:
+
+```powershell
+pytest --basetemp="$env:TEMP/helab-pytest-fresh"
+pytest --basetemp=.ai/temp/pytest-fresh
 ```
+
+Use a dedicated scratch directory per concurrent run: pytest clears it at startup.
+See [investigation notes](.ai/sessions/2026-10-13-codex-windows-pytest/notes.md)
+for details and a separate intermittent cache-move failure.
 
 `tests/test_typing.py` runs mypy and pyright inside `pytest`, so type errors fail the suite. Test files ending in `.disabled` are skipped on purpose.
 
