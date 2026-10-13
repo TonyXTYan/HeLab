@@ -373,6 +373,10 @@ class IOService(QObject):
         """Whether a load is running or waiting, without filesystem access."""
         return any(r.operation == "load" and not r.completed for r in (*self.active, *self.pending))
 
+    def load_stopping(self) -> bool:
+        """Whether a cancelled or timed-out load's helper is still exiting."""
+        return any(r.operation == "load" for r in self.retired)
+
     def promote(self, owner: str) -> None:
         """Move an owner's pending requests ahead of other pending requests."""
         promoted = [r for r in self.pending if r.owner == owner]

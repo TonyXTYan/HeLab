@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from datetime import datetime
 import logging
+import math
 import os
 import time
 from typing import Any, Callable, Iterator
@@ -118,6 +119,12 @@ class FolderExplorer(QWidget):
     # Review… for a folder whose cached data doesn't match it: the main window shows its row in the list.
     reviewMismatchRequested = pyqtSignal(str)
     DWELL_MS = 3000
+    # Finish and Cancel modes: while loads are busy (running, queued or stopping, or one started
+    # moments ago), an automatic load waits until the selection has stayed this long, plus
+    # SETTLE_STEP for each queued I/O task, at most SETTLE_MAX seconds; when idle it starts at once.
+    SETTLE_SECONDS = 0.3
+    SETTLE_STEP = 0.1
+    SETTLE_MAX = 1.0
     MAX_BACKGROUND_LOADS = 8
 
     def __init__(self, model_root_path: str, target_path: str, view_path: str,
@@ -197,6 +204,10 @@ class FolderExplorer(QWidget):
         self._dwell.setSingleShot(True)
         self._dwell.timeout.connect(self._dwell_elapsed)
         self._dwell_path: str | None = None
+        # Seconds the current wait lasts when it is the short settle wait (Finish, Cancel); 0 for Queue's.
+        self._settle_wait = 0.0
+        # When this tab last started an automatic load or cached read (monotonic).
+        self._auto_load_at = -math.inf
         self.model = SnapshotFileSystemModel(self)
         self.bg_owner = f"{self.model.owner}:bg"
         if not self.model.cache.foreground_owners:
@@ -441,8 +452,9 @@ class FolderExplorer(QWidget):
                 self.auto_load_paused_path = None
                 self.selected_path_globally = path
                 dataset = self.displayed_dataset
+                node = self.model.nodes.get(path)
                 if (self.folder_opened_path == path and dataset is not None and dataset.path == path
-                        and not self.model.cache.checked_recently(dataset)):
+                        and not self.model.cache.counts_as_checked(dataset, node.signature if node else "")):
                     # Back at the folder still shown: its data is checked again, as from memory.
                     self._unchecked_path = path
             if not self._check_replaces_listing(path):
@@ -524,7 +536,8 @@ class FolderExplorer(QWidget):
         path = self.selected_path_globally
         prefix = "View the displayed path. "
         if self.load_waiting and self._dwell_path == path:
-            return prefix + "The selected folder will not be queued."
+            return prefix + ("The selected folder will not be loaded." if self._settle_wait else
+                             "The selected folder will not be queued.")
         if self.loading and self._load_path == path:
             if self.load_mode == "cancel":
                 return prefix + "This tab's load of the selected folder will be cancelled."
@@ -542,9 +555,11 @@ class FolderExplorer(QWidget):
     def _stop_dwell(self) -> None:
         self._dwell.stop()
         self._dwell_path = None
+        self._settle_wait = 0.0
 
     def _dwell_elapsed(self) -> None:
         path, self._dwell_path = self._dwell_path, None
+        self._settle_wait = 0.0
         if not self.closed and path is not None and path == self.selected_path_globally:
             self.load_to_ram_cache(path, dwell=False)
         self.loadStateChanged.emit()
@@ -665,10 +680,28 @@ class FolderExplorer(QWidget):
         if self._large_blocked(path, explicit):
             return False
         cached = self.model.cache.disk_cached(path)
+        if dwell and not explicit and self.settling and self._dwell_path == path:
+            # Already waiting for this selection to settle: a status update meanwhile keeps the
+            # deadline, even if loads went idle since. Only a new selection restarts the wait.
+            # Data that reached RAM meanwhile (another tab's load) shows at once, without a read.
+            if self.folder_opened_path != path or self.folder_opened_data is None:
+                self._show_cached(path, explicit, read=False)
+            if (self.folder_opened_path == path and self.folder_opened_data is not None
+                    and self._unchecked_path != path):
+                # Checked moments ago: nothing is left to wait for.
+                self._stop_dwell()
+                self._update_activity()
+                self.loadStateChanged.emit()
+                return False
+            return True
+        # Selections changing quickly, or loads busy: wait for the selection to settle (Finish, Cancel).
+        settle = (self.settle_seconds(path) if dwell and not explicit and self.load_mode != "queue"
+                  and path not in self._bg_paths and not (self.loading and self._load_path == path) else 0.0)
         if self.folder_opened_path != path or self.folder_opened_data is None:
             # Show data from memory or the local disk cache at once; it never waits for
             # source-folder I/O. The check below runs beside a cached read, not after it.
-            self._show_cached(path, explicit)
+            # While the selection settles, only data in RAM shows.
+            self._show_cached(path, explicit, read=not settle)
         if not explicit and not cached and not self._has_data(path):
             return False
         if (self.folder_opened_path == path and self.folder_opened_data is not None
@@ -693,10 +726,19 @@ class FolderExplorer(QWidget):
             # Browsing past folders must not fill the queue.
             if self._dwell_path != path or not self._dwell.isActive():
                 self._dwell_path = path
+                self._settle_wait = 0.0
                 self._dwell.start(self.DWELL_MS)
                 self._update_activity()
                 self.loadStateChanged.emit()
             return True
+        if settle:
+            # Each new selection restarts the wait (selecting stops it); folders passed on the way start nothing.
+            self._dwell_path, self._settle_wait = path, settle
+            self._dwell.start(round(settle * 1000))
+            self._update_activity()
+            self.loadStateChanged.emit()
+            return True
+        self._auto_load_at = time.monotonic()
         self._release_load(keep=path)
         self._begin_load(path)
         if path in self._bg_paths:
@@ -859,10 +901,21 @@ class FolderExplorer(QWidget):
         self._update_activity()
         self.loadStateChanged.emit()
 
-    def _show_cached(self, path: str, deliberate: bool = False) -> bool:
+    def settle_seconds(self, path: str) -> float:
+        """How long an automatic load of ``path`` waits for the selection to settle: 0 when no load
+        is running, queued or stopping and none started in the last SETTLE_SECONDS; otherwise
+        SETTLE_SECONDS plus SETTLE_STEP per queued I/O task (not this folder's own), at most SETTLE_MAX."""
+        service = self.model.service
+        if not (service.load_busy() or service.load_stopping()
+                or time.monotonic() - self._auto_load_at < self.SETTLE_SECONDS):
+            return 0.0
+        queued = sum(1 for request in service.pending if request.path != path)
+        return min(self.SETTLE_MAX, self.SETTLE_SECONDS + self.SETTLE_STEP * queued)
+
+    def _show_cached(self, path: str, deliberate: bool = False, read: bool = True) -> bool:
         """Display this folder's dataset from memory, or start reading it from the
-        disk cache. True while that read is pending: the check waits for it, so
-        it can reuse the shots instead of reading files."""
+        disk cache (unless not ``read``). True while that read is pending: the check
+        waits for it, so it can reuse the shots instead of reading files."""
         cache = self.model.cache
         if path in cache.mismatched:
             return False  # Its cached data may be another folder's: nothing shows until a load completes.
@@ -872,20 +925,24 @@ class FolderExplorer(QWidget):
         if dataset is not None:
             self.load_source, self.load_cache_reason, self._load_cache_pending = "memory", "", False
             self.load_counts = {"reused_memory": len(dataset.data), "reused_disk": 0, "read": 0}
-            # Data checked moments ago that matches this session's scan of the folder needs no
-            # check; older data is checked again (one folder stat when nothing changed).
+            # Data checked moments ago needs no check, by the same rule that answers a load from
+            # memory (``counts_as_checked``); older data is checked again (one folder stat when
+            # nothing changed).
             node = self.model.nodes.get(path)
-            matches = cache.checked_recently(dataset) and (cache.confirmed(dataset) or (
-                cache.verified(dataset) and node is not None and node.signature == dataset.signature))
+            matches = cache.counts_as_checked(dataset, node.signature if node else "")
             self._display(path, dataset, {"verified": matches})
             return False
-        if not cache.disk_cached(path) or path == self._cache_read_path or cache.folder_prefs(path)["no_cache"]:
-            return False  # Read (or unreadable) already, or not cached by choice: the load reads the files.
+        if (not read or not cache.disk_cached(path) or path == self._cache_read_path
+                or cache.folder_prefs(path)["no_cache"]):
+            # Not yet (the selection settles first); read (or unreadable) already, or not cached
+            # by choice: the load reads the files.
+            return False
         if large_folder.verdict(cache.cached_estimate(path), cache.large_limits(), self._allowing == path):
             # Too large to read whole: the load decides by the folder's own size, and reads
             # its files instead of unpacking the cache if that is what fits.
             return False
         self._cache_read_path = path
+        self._auto_load_at = time.monotonic()
         return cache.submit(self.model.owner, self.model.generation, path, "cached",
                             {"cache": store_options(), **self._large_payload(path, deliberate)}, priority=True)
 
@@ -1184,6 +1241,19 @@ class FolderExplorer(QWidget):
         return "Paused" if self.load_paused else "Checking" if self.load_is_check else "Loading"
 
     @property
+    def settling(self) -> bool:
+        """The selected folder waits for the selection to settle (Finish, Cancel), not Queue's 3 s."""
+        return self.load_waiting and bool(self._settle_wait)
+
+    @property
+    def waiting_note(self) -> str:
+        """Why the selected folder hasn't started loading yet (``load_waiting``)."""
+        if self._settle_wait:
+            return (f"Loads this folder if it stays selected for {self._settle_wait:.1f} s: selections are changing "
+                    "quickly or I/O is busy, so folders passed on the way don't start loading")
+        return f"Queues this folder if it stays selected for {self.DWELL_MS // 1000} s"
+
+    @property
     def dwell_seconds_left(self) -> int:
         """Seconds until a folder waiting to load is queued (memory only)."""
         # Rounded: a coarse timer can report a little over its interval just after starting.
@@ -1276,7 +1346,7 @@ class FolderExplorer(QWidget):
             parts.append(f"Retrying file: {os.path.basename(self.load_filename)}\n"
                          f"Attempt {self.load_attempt} of 3 for this file")
         if self.load_waiting:
-            parts.append(f"Queues this folder if it stays selected for {self.DWELL_MS // 1000} s")
+            parts.append(self.waiting_note)
         queue_details = self.model.service.queue_tooltip()
         if queue_details:
             parts.append(queue_details)
@@ -1445,7 +1515,8 @@ class FolderExplorer(QWidget):
             if self.load_error:
                 text += f" · {self.load_error}"
             elif self.load_waiting:
-                text += f" · Waiting {self.DWELL_MS // 1000} s before queueing"
+                text += (" · Waiting for the selection to settle" if self._settle_wait
+                         else f" · Waiting {self.DWELL_MS // 1000} s before queueing")
             elif self.auto_load_paused_path == path:
                 text += f" · {AUTO_LOAD_PAUSED}"
             elif off and not (self.loading and self._load_path == path):

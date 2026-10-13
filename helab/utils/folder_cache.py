@@ -469,11 +469,17 @@ class FolderCache(QObject):
         """Whether this dataset is still kept (not cleared, replaced or evicted)."""
         return any(entry is dataset for entry in self.datasets.values())
 
-    def confirmed(self, dataset: Dataset) -> bool:
-        """Checked data whose signature matches this session's scan of the folder."""
+    def counts_as_checked(self, dataset: Dataset, signature: str = "") -> bool:
+        """Whether this data needs no check of its folder now: the one rule for the tab's label
+        and for answering a load from memory. Within ``FRESH_SECONDS`` (``checked_recently``),
+        either this session's scan of the folder found the same files (as thorough as any check
+        level: it fingerprinted every TXY file), or the data was checked (``verified``) and
+        matches ``signature``, the folder's signature as the caller knows it. Data read from the
+        disk cache counts only by such a scan."""
         snapshot = self.snapshots.get(dataset.path)
-        return (self.verified(dataset) and snapshot is not None
-                and snapshot.status.get("signature") == dataset.signature)
+        scanned = snapshot is not None and snapshot.status.get("signature") == dataset.signature
+        return self.checked_recently(dataset) and (
+            scanned or (self.verified(dataset) and bool(signature) and signature == dataset.signature))
 
     def checked_recently(self, dataset: Dataset) -> bool:
         """Whether this data was checked against its folder in the last ``FRESH_SECONDS``: by
@@ -755,7 +761,7 @@ class FolderCache(QObject):
                     entry.metadata["verified"] = True
                 else:
                     entry = None
-            if entry and not self.checked_recently(entry):
+            if entry and not self.counts_as_checked(entry, payload.get("signature", "")):
                 entry = None  # Not checked lately: the load checks the folder (one stat when unchanged).
             if entry:
                 self._deliver(request, {"kind": "loaded", "dataset": entry, **entry.metadata,

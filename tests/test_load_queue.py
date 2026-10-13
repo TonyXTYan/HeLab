@@ -651,3 +651,185 @@ def test_queue_mode_keeps_queued_loads_in_the_foreground(
     assert cache.foreground_owners == {other.model.owner}
     other.close_cleanup()
     finish(explorer, service)
+
+
+def test_an_automatic_load_waits_for_the_selection_to_settle_only_while_loads_are_busy(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Finish mode: an isolated selection loads at once; while loads are busy (or one started
+    moments ago), a load waits until the selection settles, so folders passed on the way start
+    nothing (nor a cached read). Data in RAM still shows at once."""
+    monkeypatch.setattr(FolderExplorer, "SETTLE_MAX", 1.0)
+    service, cache, explorer, (a, b, c, d, _) = make_explorer(qtbot, monkeypatch, tmp_path, "finish")
+    select(explorer, a)
+    assert ("load", a) in cache.jobs and not explorer.settling  # Idle: at once.
+    start_load(cache, a)
+    complete_load(cache, a)
+    explorer._auto_load_at -= FolderExplorer.SETTLE_SECONDS  # A while later.
+    select(explorer, b)
+    assert ("load", b) in cache.jobs and not explorer.settling
+    cache._observe_cache(c, {"disk_cached": True, "cache_info": {"saved_at": time.time(), "signature": "v1"}})
+    select(explorer, c)  # B's load is busy: C waits, and doesn't read its cache yet.
+    assert explorer.settling and ("load", c) not in cache.jobs and ("cached", c) not in cache.jobs
+    assert ("load", b) not in cache.jobs  # B never started, so moving on cancelled it.
+    assert "stays selected" in explorer.loading_tooltip
+    select(explorer, a)  # In RAM and checked moments ago: shown at once, nothing to load.
+    assert explorer.folder_opened_path == a and ("load", a) not in cache.jobs
+    select(explorer, d)  # A load started moments ago: D waits too, then loads.
+    assert explorer.settling and ("load", d) not in cache.jobs
+    qtbot.waitUntil(lambda: ("load", d) in cache.jobs, timeout=3000)
+    assert not explorer.settling and ("load", c) not in cache.jobs and ("cached", c) not in cache.jobs
+    finish(explorer, service)
+
+
+def test_the_settle_wait_grows_with_queued_io_up_to_one_second(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(FolderExplorer, "SETTLE_MAX", 1.0)
+    service = service_for_test(monkeypatch)
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    explorer = explorer_for_test(qtbot, str(tmp_path))
+    explorer._auto_load_at = -float("inf")
+    service.pending.clear()
+    assert explorer.settle_seconds("/x") == 0.0  # Idle: no wait.
+    stopping = IORequest("old", 0, "/old", "load", {}, 60.0)
+    service.retired.append(stopping)  # A cancelled load still exiting counts as busy.
+    assert explorer.settle_seconds("/x") == pytest.approx(0.3)
+    service.retired.remove(stopping)
+    service.pending.append(IORequest("job", 0, "/busy", "load", {}, 60.0))
+    assert explorer.settle_seconds("/x") == pytest.approx(0.4)
+    for index in range(2):
+        service.pending.append(IORequest(f"scan{index}", 0, f"/s{index}", "details", {}, 60.0))
+    service.pending.append(IORequest("own", 0, "/x", "list", {}, 60.0))  # The folder's own listing: not counted.
+    assert explorer.settle_seconds("/x") == pytest.approx(0.6)
+    for index in range(10):
+        service.pending.append(IORequest(f"icons{index}", 0, f"/i{index}", "icons", {}, 60.0))
+    assert explorer.settle_seconds("/x") == pytest.approx(1.0)  # At most 1 s.
+    service.pending.clear()
+    explorer._auto_load_at = time.monotonic()  # A load started moments ago.
+    assert explorer.settle_seconds("/x") == pytest.approx(0.3)
+    explorer.close_cleanup()
+    service.shutdown()
+
+
+
+@pytest.mark.parametrize("loads", ["busy", "idle"])
+def test_a_status_update_during_the_settle_wait_keeps_its_deadline(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, loads: str,
+) -> None:
+    """A listing or details status for the selected folder re-requests its load
+    (``_status_ready`` → ``selectionPathChanged``): that must not restart the wait (status updates
+    near the deadline would keep postponing an unchanged selection), nor end it early once the
+    busy load finished and the recent-start window passed (no wait would be computed now)."""
+    monkeypatch.setattr(FolderExplorer, "SETTLE_MAX", 1.0)
+    service, cache, explorer, (a, b, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "finish")
+    select(explorer, a)
+    start_load(cache, a)  # Running: it finishes in the background when B is selected.
+    select(explorer, b)
+    assert explorer.settling and ("load", b) not in cache.jobs
+    if loads == "idle":
+        complete_load(cache, a)
+        explorer._auto_load_at -= FolderExplorer.SETTLE_SECONDS
+        assert explorer.settle_seconds(b) == 0.0  # Selected now, B would load at once.
+    qtbot.wait(100)  # Part of the wait passes: a restarted timer would have more time left.
+    before = explorer._dwell.remainingTime()
+    explorer._status_ready(b)  # A status update for the same selection.
+    assert explorer.settling and ("load", b) not in cache.jobs
+    assert 0 <= explorer._dwell.remainingTime() <= before  # The same deadline, neither restarted nor ended.
+    qtbot.waitUntil(lambda: ("load", b) in cache.jobs, timeout=3000)
+    finish(explorer, service)
+
+
+@pytest.mark.parametrize(("checked", "scanned"), [(True, False), (False, False), (False, True)],
+                         ids=["loaded", "cached-read", "cached-read-scanned"])
+def test_data_another_tab_brings_to_ram_shows_during_the_settle_wait(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, checked: bool, scanned: bool,
+) -> None:
+    """While B waits for the selection to settle, another tab's load (or cached read) of B puts its
+    data in RAM (``datasetChanged`` → ``selectionPathChanged``): it shows at once, without a read
+    or load of B starting early. Data that load just checked ends the wait; cached data, not
+    yet checked, keeps it, and B's check starts on the deadline with those shots held; cached data
+    that B's own scan from moments ago matches counts as checked, as a load from memory would."""
+    monkeypatch.setattr(FolderExplorer, "SETTLE_MAX", 1.0)
+    service, cache, explorer, (a, b, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "finish")
+    select(explorer, a)
+    start_load(cache, a)
+    select(explorer, b)
+    assert explorer.settling and explorer.folder_opened_path != b
+    snapshot = cache.snapshot(b)
+    assert snapshot is not None
+    if not scanned:
+        snapshot.checked_at -= cache.FRESH_SECONDS + 1  # B's own scan is too old to confirm cached data.
+    operation = "load" if checked else "cached"
+    assert cache.submit("other-tab", 0, b, operation, {} if checked else {"cache": {}})
+    request = producer(cache, operation, b)
+    cache.service.resultReady.emit(request, {"kind": "shot", "shot": 1, "array": np.array([[1, 2, 3]], dtype=np.float64),
+                                             "fingerprint": [1, 6, 1]})
+    cache.service.resultReady.emit(request, {"kind": "loaded", "signature": "v1", "bytes": 24, "rows": 1, "files": 1,
+                                             "problematic": [], "fingerprint": [[1, 6, 1]],
+                                             **({} if checked else {"verified": False, "source": "disk",
+                                                                    "cached": True, "disk_cached": True})})
+    cache.service.resultReady.emit(request, {"kind": "done"})
+    retire(cache, request)
+    assert explorer.folder_opened_path == b  # Shown at once.
+    assert ("cached", b) not in cache.jobs and ("load", b) not in cache.jobs  # Nothing started early.
+    if checked or scanned:
+        assert not explorer.settling and not explorer.shows_unchecked(b)
+        qtbot.wait(1200)  # Past any deadline: nothing loads.
+        assert ("load", b) not in cache.jobs and explorer.folder_opened_path == b
+    else:
+        assert explorer.settling and explorer.shows_unchecked(b)
+        qtbot.waitUntil(lambda: ("load", b) in cache.jobs, timeout=3000)
+        check = producer(cache, "load", b)
+        assert check.payload["memory"] == [[1, 6, 1]] and check.payload["base_signature"] == "v1"
+    finish(explorer, service)
+
+
+def read_from_cache_by_another_tab(cache: FolderCache, path: str) -> None:
+    """Another tab reads ``path``'s cached dataset (signature v1): in RAM, not yet checked."""
+    assert cache.submit("other-tab", 0, path, "cached", {"cache": {}})
+    request = producer(cache, "cached", path)
+    cache.service.resultReady.emit(request, {"kind": "shot", "shot": 1, "array": np.array([[1, 2, 3]], dtype=np.float64),
+                                             "fingerprint": [1, 6, 1]})
+    cache.service.resultReady.emit(request, {"kind": "loaded", "signature": "v1", "bytes": 24, "rows": 1, "files": 1,
+                                             "problematic": [], "fingerprint": [[1, 6, 1]], "verified": False,
+                                             "source": "disk", "cached": True, "disk_cached": True})
+    cache.service.resultReady.emit(request, {"kind": "done"})
+    retire(cache, request)
+
+
+@pytest.mark.parametrize("scanned", [True, False], ids=["scanned-moments-ago", "scan-too-old"])
+def test_the_tabs_label_and_the_memory_answer_agree_on_checked_data(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scanned: bool,
+) -> None:
+    """One rule (``FolderCache.counts_as_checked``): cached data that the folder's scan from the
+    last few seconds matches is shown as checked and its load is answered from memory; with an
+    older scan it shows "Checking for changes…" and the check runs."""
+    service, cache, explorer, (a, b, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "finish")
+    read_from_cache_by_another_tab(cache, b)
+    if not scanned:
+        snapshot = cache.snapshot(b)
+        assert snapshot is not None
+        snapshot.checked_at -= cache.FRESH_SECONDS + 1
+    select(explorer, b)
+    assert explorer.folder_opened_path == b
+    assert explorer.shows_unchecked(b) is not scanned
+    assert (("load", b) not in cache.jobs) is scanned  # Answered from memory, or checked.
+    finish(explorer, service)
+
+
+def test_counts_as_checked(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    service, cache, explorer, (a, b, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "finish")
+    read_from_cache_by_another_tab(cache, b)
+    dataset = cache.dataset(b, "v1")
+    snapshot = cache.snapshot(b)
+    assert dataset is not None and snapshot is not None and not cache.verified(dataset)
+    assert cache.counts_as_checked(dataset)  # Its folder's scan moments ago found the same files.
+    snapshot.status = {**snapshot.status, "signature": "other"}
+    assert not cache.counts_as_checked(dataset, "v1")  # Read from the cache: only a matching scan counts.
+    dataset.metadata.update(verified=True, checked_at=time.monotonic())  # Checked by a load just now.
+    assert cache.counts_as_checked(dataset, "v1") and not cache.counts_as_checked(dataset, "")
+    dataset.metadata["checked_at"] -= cache.FRESH_SECONDS + 1
+    snapshot.checked_at -= cache.FRESH_SECONDS + 1
+    assert not cache.counts_as_checked(dataset, "v1")  # Too long ago.
+    finish(explorer, service)

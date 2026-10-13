@@ -77,6 +77,22 @@ nothing appeared.
     quick check off for good. The quick check itself never moves it.
   - Missing shots: Retry stays enabled (mounting the right drive is a fix);
     the line adds **Review…**, which opens the list window on that folder.
+  - **Wait for the selection to settle** (Finish, Cancel): Tony asked for
+    0.3 s when I/O is busy, +0.1 s per queued I/O task (all kinds), at most
+    1 s, and none when idle. "Busy" is load-based (running, queued or
+    stopping, or an automatic load started < 0.3 s ago): any running I/O
+    would make most clicks wait for background details/icons, and without
+    "stopping" or "started moments ago" a held arrow slips through (each
+    press cancels the last load, so I/O looks free). The folder's own
+    listing isn't counted. In normal use I/O is idle and a click loads at
+    once; the wait is for held arrows, unfamiliar clicking, heavy I/O and
+    fresh starts. Cursor navigation itself is never delayed.
+  - **One rule for "counts as checked"** (`FolderCache.counts_as_checked`):
+    the tab's label and the memory answer of a load had drifted apart (cached
+    data matched by a scan from the last 10 s showed "Checking for changes…"
+    while its check was answered from memory). Tony: there shouldn't be two
+    rules. The check levels answer a different question (how thorough a check
+    is); a matching scan fingerprinted every TXY file, as thorough as Full.
 - Selecting a folder with saved counts and a disk cache skips the listing.
 - Check failure keeps the cached data: `Check failed`, error on line 1, Retry.
 - **Files still being written:** TXY written once and never modified, but

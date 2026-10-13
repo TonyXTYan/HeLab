@@ -155,6 +155,8 @@ class FolderDetailsPanel(QScrollArea):
             rows["state"] = (prefix + explorer.load_error, "\n".join(filter(None, (
                 "The cached data is still shown; it was not checked against the folder." if unchecked else "",
                 explorer.load_error))))
+        elif explorer.load_waiting and explorer.settling:
+            rows["state"] = ("Waiting · loads if still selected", explorer.waiting_note)
         elif explorer.load_waiting:
             rows["state"] = (f"Waiting · queues in {explorer.dwell_seconds_left} s if still selected",
                              "Another load is running; browsing past folders does not queue them.")

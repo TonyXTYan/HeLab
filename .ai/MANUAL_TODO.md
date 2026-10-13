@@ -108,7 +108,10 @@ tested offscreen only. Check on native macOS (and once on a Windows lab PC):
   tooltips, status-bar "⚠ N mismatched") for the shown folder, a background load and a
   folder status check; with two or more moved folders confirm loads and scans pause with the
   banner, then Resume / Cancel all, and from 8 Skip; return to a folder after adding a TXY
-  and confirm the new shot loads.
+  and confirm the new shot loads. Added 2026-10-14: hold ↓ across cached folders with
+  auto-load on (Finish mode) and confirm nothing loads until you stop, then the last
+  folder loads within 1 s; a single click on an idle app loads at once; Review… on a
+  mismatched folder opens the list on it.
 - [ ] macOS release zip (added 2026-10-13): download the macOS CI artifact, check
   `HeLab-macos.zip` is ~300 MB and holds only `HeLab.app`, unzip it in Finder and
   open the app (right-click › Open for the ad-hoc signature)

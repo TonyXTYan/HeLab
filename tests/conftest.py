@@ -31,3 +31,14 @@ os.environ["HELAB_APP_DIR_OVERRIDE"] = tempfile.mkdtemp(prefix=f"helab_test_app_
 # Tests write TXY files and load them at once; helpers would otherwise treat
 # them as still being written. Settling has its own tests.
 os.environ["HELAB_SETTLE_SECONDS"] = "0"
+
+
+import pytest  # noqa: E402  (after the environment above is set)
+
+
+@pytest.fixture(autouse=True)
+def no_selection_settle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests select folders back to back and expect their loads at once; the wait for the
+    selection to settle (Finish, Cancel) has its own tests, which set ``SETTLE_MAX`` again."""
+    from helab.views.FolderExplorer import FolderExplorer
+    monkeypatch.setattr(FolderExplorer, "SETTLE_MAX", 0.0)
