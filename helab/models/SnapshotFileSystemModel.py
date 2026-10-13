@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import logging
 import math
 import os
 import time
@@ -96,6 +97,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
     COLUMN_RIGHTFILL = 6
     STATUS_EXTRA_ICONS_ROLE = int(Qt.ItemDataRole.UserRole) + 1
     BUSY_ROLE = int(Qt.ItemDataRole.UserRole) + 10
+    # Seconds a load must wait before its row shows the queued indicator instead of a spinner.
+    QUEUED_INDICATOR_DELAY = 0.5
     LOAD_QUEUED_ROLE = int(Qt.ItemDataRole.UserRole) + 11
     statusReady = pyqtSignal(str)
     directoryLoaded = pyqtSignal(str)
@@ -129,6 +132,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         # Dataset loads by path ("queued", "loading" or "paused"); kept across root changes
         # because background loads outlive the visible tree.
         self.load_states: dict[str, str] = {}
+        # When each folder's load state last changed (monotonic), for the queued indicator's delay.
+        self.load_state_since: dict[str, float] = {}
         # The tab's selected folder whose automatic load waits while the disk cache is 80% full.
         self.auto_load_paused_path: str | None = None
         # Folders whose load stopped, or didn't start, for being large: (estimate, refused).
@@ -242,6 +247,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                     older = own_older or any(self.display_older(child) for child in node.children)
                 info = {"status": status, "older": older, "derived_at": time.time(), "identity": node.identity,
                         "data": len(data), "checked": len(checked), "total": len(statuses)}
+                if not status and node.subtree:
+                    logging.debug("Derived status of %s cleared (was %s): %d of %d subfolders checked, none with data",
+                                  node.path, node.subtree, len(checked), len(statuses))
                 if node.loaded:
                     self._save_subtree(node, info)
             else:
@@ -301,11 +309,15 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             return None
         column = index.column()
         load_state = self.load_states.get(node.path, "")
+        # A load queued for a moment (behind its folder's listing, or beside its cached read)
+        # shows as loading: the queued indicator would flash between two spinners.
+        briefly_queued = load_state == "queued" and (
+            time.monotonic() - self.load_state_since.get(node.path, 0.0) < self.QUEUED_INDICATOR_DELAY)
         if role == self.BUSY_ROLE:
-            return load_state == "loading" or node.state in ("queued", "running")
+            return load_state == "loading" or briefly_queued or node.state in ("queued", "running")
         if role == self.LOAD_QUEUED_ROLE:
             # A paused load waits like a queued one.
-            return load_state in ("queued", "paused")
+            return load_state in ("queued", "paused") and not briefly_queued
         if role == int(Qt.ItemDataRole.ToolTipRole):
             return self._tooltip(node, load_state)
         if role == int(Qt.ItemDataRole.ForegroundRole) and node.error:
@@ -521,9 +533,13 @@ class SnapshotFileSystemModel(QAbstractItemModel):
 
     def set_load_state(self, path: str, state: str) -> None:
         if state:
+            if self.load_states.get(path) != state:
+                self.load_state_since[path] = time.monotonic()
             self.load_states[path] = state
-        elif self.load_states.pop(path, None) is None:
-            return
+        else:
+            self.load_state_since.pop(path, None)
+            if self.load_states.pop(path, None) is None:
+                return
         node = self.nodes.get(path)
         if node:
             self.changed(node)
@@ -740,6 +756,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                     self.nodes[path] = child
                 else:
                     if child.identity is not None and entry.get("identity") is not None and child.identity != entry["identity"]:
+                        logging.debug("Status of %s dropped: a different folder (identity %s, saved %s)",
+                                      path, entry["identity"], child.identity)
                         child.report, child.signature = None, ""
                         child.raw_count = child.txy_count = 0
                         child.scanned_at, child.checked_at = None, 0
@@ -856,6 +874,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         for node in nodes:
             changed = False
             if "summaries" in kinds and node.cached_report:
+                logging.debug("Saved status of %s dropped: removed from the disk cache", node.path)
                 node.report, node.signature, node.cached_report = None, "", False
                 node.raw_count = node.txy_count = 0
                 node.scanned_at, node.checked_at = None, 0

@@ -580,3 +580,53 @@ def test_missing_shots_in_a_background_load_list_the_folder(
     finally:
         explorer.close_cleanup()
         service.shutdown()
+
+
+@pytest.mark.parametrize("cached", [False, True], ids=["files", "cached"])
+def test_a_load_starting_soon_spins_without_flashing_the_queued_indicator(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cached: bool,
+) -> None:
+    """Selecting a folder: its row spins until the data is in (no queued ring, no blank, in between)."""
+    from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel as Model
+    service, cache = frozen(monkeypatch)
+    root = str(tmp_path)
+    explorer = make_explorer(qtbot, service, cache, root, ["run"])
+    run = os.path.join(root, "run")
+
+    def shown() -> str:
+        index = explorer.model.path_index(run)
+        node = explorer.model.nodes[run]
+        return ("spin" if index.data(Model.BUSY_ROLE) else "queued" if index.data(Model.LOAD_QUEUED_ROLE)
+                else f"icon {node.report.status if node.report else ''}")
+    try:
+        if cached:
+            cache._observe_cache(run, {"disk_cached": True, "cache_info": {"saved_at": time.time(), "signature": "v1"}})
+        select(qtbot, explorer, run)
+        states = [shown()]
+        read = next((r for r in service.pending if r.operation == "cached" and r.path == run), None)
+        if read is not None:
+            for event in ({"kind": "shot", "shot": 1, "array": np.ones((1, 3)), "fingerprint": [1, 6, 1]},
+                          {"kind": "loaded", "signature": "v1", "files": 1, "rows": 1, "bytes": 24, "problematic": [],
+                           "fingerprint": [[1, 6, 1]], "verified": False, "source": "disk", "cached": True,
+                           "disk_cached": True}, {"kind": "done"}):
+                service.resultReady.emit(read, event)
+            service.pending.remove(read)
+            states.append(shown())
+        load = next(r for r in service.pending if r.operation == "load" and r.path == run)
+        service.resultReady.emit(load, {"kind": "started"})
+        states.append(shown())
+        assert set(states) == {"spin"}
+        for event in ({"kind": "shot", "shot": 1, "array": np.ones((1, 3)), "fingerprint": [1, 6, 1]},
+                      {"kind": "loaded", "signature": "v1", "files": 1, "rows": 1, "bytes": 24, "problematic": [],
+                       "fingerprint": [[1, 6, 1]]}, {"kind": "done"}):
+            service.resultReady.emit(load, event)
+        service.pending.remove(load)
+        assert run not in explorer.model.load_states and explorer.folder_opened_path == run
+        # A load that keeps waiting does show the queued indicator (with no scan of it running).
+        explorer.model.nodes[run].state = "idle"
+        explorer.model.set_load_state(run, "queued")
+        explorer.model.load_state_since[run] -= Model.QUEUED_INDICATOR_DELAY
+        assert shown() == "queued"
+    finally:
+        explorer.close_cleanup()
+        service.shutdown()
