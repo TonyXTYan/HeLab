@@ -46,10 +46,12 @@ python -m helab    # via module
 
 ```bash
 pytest                        # all tests
-pytest -n 4 --verbose         # parallel (4 workers)
+pytest -n 12 --reruns 5 --reruns-delay 1 --verbose   # faster: parallel, retries flaky tests
 pytest tests/test_foo.py      # single file
 pytest --cov=helab            # with coverage
 ```
+
+For the full suite, prefer the parallel form: `-n 12` runs 12 pytest-xdist workers (use at most the machine's CPU cores; CI uses `-n 4`). Never use `-n` without `--reruns` and `--reruns-delay` (pytest-rerunfailures): parallel workers can race (e.g. over temp folders) and Qt/timing tests fail now and then under load. Report any test that needed a `RERUN` rather than calling the run clean. Prefix `QT_QPA_PLATFORM=offscreen` to run without windows.
 
 Tests ending in `.disabled` are intentionally skipped (not collected) — don't try to "fix" them into passing without checking why they were disabled first.
 

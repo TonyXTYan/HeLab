@@ -195,6 +195,40 @@ Na, apparently github action is free for public repos, also much easier to setup
 
 
 
+## Testing
+
+Run the tests from the activated `venv`:
+
+```bash
+pytest                        # all tests, one process
+pytest tests/test_foo.py      # one file
+pytest --cov=helab            # with coverage
+```
+
+The full suite is slow in one process. To speed it up, run it in parallel and retry flaky tests:
+
+```bash
+pytest -n 12 --reruns 5 --reruns-delay 1 --verbose
+```
+
+- `-n 12` runs 12 worker processes ([pytest-xdist](https://pypi.org/project/pytest-xdist/)). Use at most your number of CPU cores; CI uses `-n 4`.
+- `--reruns 5 --reruns-delay 1` retries a failed test up to 5 times, 1 s apart ([pytest-rerunfailures](https://pypi.org/project/pytest-rerunfailures/)). A test that passed only on a retry shows as `RERUN` in the output, so look at it if it keeps happening.
+
+**Always use `-n` together with `--reruns` and `--reruns-delay`.** Parallel workers sometimes race each other, for example over temp folders, and Qt and timing tests are less reliable under heavy load. These failures come from running in parallel, not from the code, and a retry after a short delay usually passes. Without the retries, `-n` alone can fail a run for nothing.
+- `--verbose` lists each test as it finishes.
+
+Both plugins are in `requirements.txt`.
+
+Tests launch real Qt windows by default. To run headless (no windows popping up, e.g. over SSH or while doing other work), prefix with `QT_QPA_PLATFORM=offscreen` — this only affects that one command, not your shell session:
+
+```bash
+QT_QPA_PLATFORM=offscreen pytest -n 12 --reruns 5 --reruns-delay 1 --verbose
+```
+
+`tests/test_typing.py` runs mypy and pyright inside `pytest`, so type errors fail the suite. Test files ending in `.disabled` are skipped on purpose.
+
+
+
 ## Profiling
 
 ```bash
@@ -227,17 +261,7 @@ We use [mypy]() and [pyright]() to enforce strict typing for this package.
 *everything should be typed*.
 
 
-```
-pytest
-```
-
-Tests launch real Qt windows by default. To run headless (no windows popping up, e.g. over SSH or while doing other work), prefix with `QT_QPA_PLATFORM=offscreen` — this only affects that one command, not your shell session:
-
-```bash
-QT_QPA_PLATFORM=offscreen pytest
-```
-
-The same env var works for running the app itself headlessly:
+To run the app itself headlessly (no window), prefix it with `QT_QPA_PLATFORM=offscreen`:
 
 ```bash
 QT_QPA_PLATFORM=offscreen helab
