@@ -62,11 +62,20 @@ How to use it:
   Fixed by the rebuilt Cache tab (`52201ca`).
 
 - [ ] Folders with over 100,000 entries record a scan failure.
+- [ ] Quitting cancels cache writes still running in the background (a finished
+  load's `disk_cache_pending` save), so the next check redoes them. Quit should
+  finish them first, with Quit now to skip, as planned for
+  [live monitoring](live-monitoring.md#cache-writes-while-monitoring-decided-2026-10-13) (2026-10-13).
 - [ ] With the default of one background lane, folder details and status checks
   (including manual ones) wait for the selected load. As planned; revisit if
   it feels slow.
 
 ## Near term: useful analysis from loaded data
+
+- [ ] Refactor the largest modules into focused ones, without changing behaviour
+  (`FolderExplorer` 1908 lines/116 methods, `folder_cache` 1644, `io_helper`
+  1332, `cache_store` 1326), before live monitoring and the analysis workflow
+  add to them ([plan](refactoring.md)) (2026-10-13).
 
 - [ ] Apply other tabs' finished status checks during Refresh without source
   I/O ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#cross-tab-status-results)) (2026-10-08).
@@ -89,7 +98,9 @@ How to use it:
 ## Medium term: repeated lab work
 
 - [ ] Live monitoring: load new settled shots and update chosen analyses
-  ([plan](live-monitoring.md)) (2026-10-08).
+  ([plan](live-monitoring.md)) (2026-10-08). New shots stay in RAM and the disk
+  cache is written once when monitoring stops or HeLab quits
+  ([decided](live-monitoring.md#cache-writes-while-monitoring-decided-2026-10-13)) (2026-10-13).
 - [ ] Save analysis presets and reopen analysis workspaces
   ([plan](presets-and-workspaces.md)) (2026-10-08).
 - [ ] Cache-only browsing: browse and analyse cached data while the source is

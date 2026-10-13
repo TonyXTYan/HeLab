@@ -26,6 +26,28 @@ TXY is write-once after completion. Interrupted original writes are the relevant
 recovery case; this feature does not require general tracking of arbitrary
 edits to settled files.
 
+## Cache writes while monitoring (decided 2026-10-13)
+
+Tony's decision: new shots never clear the cache, and monitoring doesn't write
+the disk cache for each arriving shot.
+
+- Each check keeps every unchanged shot from RAM, reads only new settled files
+  and merges them, as loads do today (`memory_shots`, load source `updated`).
+- New shots stay in RAM only while Live is on. Today every load that read new
+  files recompresses and rewrites the folder's **whole** dataset file in the
+  background; for each shot of a large folder, that would mean rewriting
+  ~1 GB.
+- The disk cache is written once, when monitoring of that folder stops: a
+  different folder is selected, Live is turned off, or the tab closes.
+- Quitting HeLab first saves the unsaved shots, then shuts down. The window
+  says what it is saving and offers **Quit now**, which skips the save; a save
+  with no progress for the usual timeout stops by itself. Nothing is lost
+  either way: the source files remain, so the next check reads only the shots
+  that weren't saved. A crash is the same.
+- To decide while designing: whether a long session also saves periodically,
+  or when the unsaved part grows large, so a later check doesn't re-read many
+  shots.
+
 ## Dependencies and acceptance
 
 Depends on the [analysis workflow](analysis-workflow.md) for managed reruns and
