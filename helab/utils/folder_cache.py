@@ -860,6 +860,14 @@ class FolderCache(QObject):
             # Subfolder dates and identities still need the details scan.
             snapshot.status = {**snapshot.status, **{key: status[key] for key in (
                 "signature", "identity", "modified")}, "details": not status["has_dirs"]}
+        elif (snapshot and snapshot.status.get("signature") != status["signature"]
+              and float(status.get("scanned_at") or 0) > float(snapshot.status.get("scanned_at") or 0)):
+            # The folder changed after its details scan, and this load listed it later: its
+            # files are the current ones (else the finished load is dropped as out of date).
+            # Subfolder entries and their dates still come from the details scan.
+            snapshot.status = {**snapshot.status, **status,
+                               "details": bool(snapshot.status.get("details")) or not status["has_dirs"]}
+            self.snapshotChanged.emit(path)
 
     def _cancel_replays(self, path: str) -> None:
         for request in list(self._deliveries):

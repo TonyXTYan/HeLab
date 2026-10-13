@@ -1370,3 +1370,44 @@ def test_stopping_rows_merge_held_requests_and_cover_cancelled_final_and_cache_s
     service.pending.clear()
     assert service._stopping_row(load, now).endswith("· no retries left")
     service.shutdown()
+
+
+def load_summary(signature: str, scanned_at: float) -> dict[str, Any]:
+    """A load's own status of the folder, sent before it reads any file."""
+    return {"kind": "status", "details": True, "status": "ok", "count": 2, "empty": False, "has_dirs": False,
+            "scanned_at": scanned_at, "identity": [1, 2], "raw": [], "txy": [1, 2], "files": {},
+            "modified": scanned_at, "signature": signature, "unsettled": 0}
+
+
+@pytest.mark.parametrize("load_listed", ["after", "before"])
+def test_load_listing_newer_than_the_details_scan_is_kept(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_listed: str,
+) -> None:
+    """A shot added after the details scan: the load lists the folder later, so its signature wins.
+    A details scan newer than the load's listing still means the load's data is old."""
+    service = service_for_test(monkeypatch)
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    cache, path = get_folder_cache(service), str(tmp_path)
+    browser = explorer_for_test(qtbot, path)
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    finish_scan(cache, path, signature="v1")
+    snapshot = cache.snapshot(path)
+    assert snapshot is not None
+    snapshot.status = {**snapshot.status, "scanned_at": time.time()}
+    qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
+    request = producer(cache, path, "load")
+    listed_at = snapshot.status["scanned_at"] + (10 if load_listed == "after" else -10)
+    service.resultReady.emit(request, {"kind": "scan_summary", "status": load_summary("v2", listed_at)})
+    for shot in (1, 2):
+        service.resultReady.emit(request, {"kind": "shot", "shot": shot, "array": np.ones((1, 3))})
+    service.resultReady.emit(request, {"kind": "loaded", "signature": "v2", "bytes": 48, "rows": 2,
+                                       "files": 2, "problematic": []})
+    if load_listed == "after":
+        assert not request.cancelled.is_set()
+        assert snapshot.status["signature"] == "v2" and snapshot.status["txy"] == [1, 2]
+        assert browser.folder_opened_data is not None and sorted(browser.folder_opened_data) == [1, 2]
+    else:
+        assert request.cancelled.is_set() and snapshot.status["signature"] == "v1"
+        assert browser.folder_opened_data is None
+    browser.close_cleanup()
+    service.shutdown()
