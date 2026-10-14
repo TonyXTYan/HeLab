@@ -1,93 +1,83 @@
-# Refactoring large modules
+# Refactoring for independent feature work
 
-Added: 2026-10-13. Draft; nothing implemented.
+Added: 2026-10-13. Revised: 2026-10-14. Draft; nothing implemented.
 Priority and completion: [overview](_readme.md).
+Detailed design, code survey and proposed validation:
+[2026-10-14 session notes](../.ai/sessions/2026-10-14-codex-planning-for-future/refactoring.md).
 
-## Purpose
+## Goal
 
-The folder-browser and cache work grew a few modules to sizes that are hard to
-read, review and change safely. Live monitoring and the analysis workflow will
-add to the same files. The aim is to split them into focused modules **without
-changing behaviour**, before that work starts.
+Make it practical for multiple AI agents to develop separate HeLab features
+at the same time. Tony should be able to start another idea while existing
+workers continue, when the tasks have independent ownership and agreed
+interfaces. A human-supervised coordinator reviews the roadmap and active
+work, recommends assignments, and asks Tony before spawning workers,
+committing, pushing or merging.
 
-## Measurements (2026-10-13)
+**Functional decoupling comes first.** Split responsibilities and ownership
+of mutable state so a feature can change behind a tested interface without
+editing several unrelated areas. Smaller files help reading and token use,
+but size alone is not a reason to move code. Refactoring preserves current
+user-visible behaviour, wording and timing.
 
-| File | Lines | Shape |
-|---|---|---|
-| `helab/views/FolderExplorer.py` | 1908 | `FolderExplorer`: 116 methods (loading, large folders, summary wording, context menu, scans, flags, navigation) |
-| `helab/utils/folder_cache.py` | 1644 | `FolderCache`: 81 methods; `_on_event` alone is ~340 lines |
-| `helab/io_helper.py` | 1332 | 38 functions: every helper operation in one process entry module |
-| `helab/utils/cache_store.py` | 1326 | `CacheStore`: 66 methods over records, datasets and maintenance |
-| `helab/views/HelabMainWindow.py` | 1248 | `HelabMainWindow`: 59 methods |
-| `helab/models/SnapshotFileSystemModel.py` | 1050 | `SnapshotFileSystemModel`: 58 methods |
-| `tests/test_folder_cache.py` | 1413 | Follows `folder_cache` |
-| `tests/test_folder_summary.py` | 1204 | Follows the summary wording |
+This is a development workflow. The [shared analysis job
+runner](analysis-job-runner.md) is a separate product feature for running
+scientific analyses from the GUI or headless clients.
 
-## Rules for every step
+## Direction
 
-- Move code, don't change it. Behaviour, wording and timings stay the same;
-  clean-ups go in separate later commits.
-- One module per step, each its own commit. Each step passes the full suite
-  (`pytest -n 12 --reruns 5 --reruns-delay 1`) and strict mypy/pyright.
-- Keep the import rules:
-  - helper modules never import Qt GUI code;
-  - scanning doesn't import numpy or pandas (they stay local imports in the
-    loading code);
-  - `--version` loads no GUI services (`tests/test_versioning.py`);
-  - the frozen helper entry point in `helab/main.py` still runs first.
-- Check that the PyInstaller build still finds every moved module, and that a
-  packaged helper still runs a load.
-- Update references to moved names in `AGENTS.md`, `.ai/memory/results/` and
-  test monkeypatch targets (for example `helab.io_helper.SETTLE_SECONDS`).
+- Give source I/O and cache operations an explicit owner and public
+  request/result boundary. Keep their current scheduling, cache and recovery
+  safeguards.
+- Define a read-only dataset view with stable input identity and provenance
+  for analysis consumers. Quick scripts reuse arrays in RAM; longer or Live
+  work retains the view as needed, without per-update disk writes. Bind a
+  job to its input view, not to a mutable tab selection.
+- Keep analysis execution behind a versioned job/result contract and separate
+  it from browser widgets and Qt presentation state.
+- Let the browser, analysis and plot UI own their presentation workflows;
+  keep the main window focused on composition.
 
-## Proposed splits, in order
+These are proposed seams, not frozen APIs. The
+[session notes](../.ai/sessions/2026-10-14-codex-planning-for-future/refactoring.md#architectural-target)
+describe candidate ownership and the current coupling.
 
-The least coupled code goes first, and the GUI goes last.
+## Milestones
 
-1. **`io_helper.py` → a helper package.** It's pure functions behind a clear
-   process boundary.
-   - Keep `io_helper.py` as the entry point and dispatcher (`emit`, `Pause`,
-     `Heartbeat`, `main`).
-   - Move the operations into separate modules:
-     - browsing: `list_folder`, `scan`, summaries, subtrees;
-     - loading: `read_cached`, `load`, fingerprints, settling;
-     - `folder_icons`;
-     - `cache_admin` with its usage and pending-save events;
-     - `cache_move_job`.
-2. **`CacheStore` → parts that share one connection.**
-   - records: summaries, histories, subtrees, folder prefs;
-   - datasets: save, read, retire, sweep;
-   - maintenance: inventory, clear, purge, trim, adopt, discard, budget.
-3. **`FolderCache` → a job core plus stores.**
-   - the job core: submit, deliver, replay, cancel, transfer, and `_on_event`
-     split per operation;
-   - dataset memory: datasets, retain/release, RAM budget, eviction;
-   - disk-cache state: status, usage, pending saves, removals, admin, sweep;
-   - folder metadata: snapshots, summaries, histories, subtrees, prefs, icons.
-4. **`FolderExplorer` → the widget plus collaborators.**
-   - a load controller: selection loads, background loads, dwell, cached
-     display, large folders, `_io_event`;
-   - the summary and activity wording, moved to plain functions that tests can
-     call without widgets;
-   - the context menu with folder flags;
-   - basic-scan controls.
-   - Keep the public names that `FolderDetailsPanel`, `HelabMainWindow` and the
-     tests use, or forward them.
-5. Later, if still needed: `HelabMainWindow` (docks and menus) and
-   `SnapshotFileSystemModel` (node state versus Qt model glue).
+1. Map representative feature change paths, shared state, signals, imports,
+   tests and packaged entry points. Identify work that is already independent.
+2. Define the smallest typed contracts needed by real consumers, characterize
+   current behaviour and test both sides of each boundary.
+3. Extract responsibilities in reviewable slices around those contracts.
+   Sequence source I/O, cache, browser and UI changes by dependency rather
+   than module size. Independent feature work can continue where scopes do
+   not overlap.
+4. With Tony's approval, pilot one refactor slice alongside one independent
+   feature in isolated worktrees. Review and test the combined result, then
+   revise boundaries from the conflicts and integration effort observed.
 
-Split the tests along the same lines as their modules.
+The [session notes](../.ai/sessions/2026-10-14-codex-planning-for-future/refactoring.md#candidate-implementation-slices)
+give candidate code slices and the
+[supervised agent workflow](../.ai/sessions/2026-10-14-codex-planning-for-future/refactoring.md#human-supervised-parallel-work).
 
 ## Acceptance
 
-- No module over about 800 lines and no class over about 50 methods. This is a
-  guideline, not a hard rule.
-- The full suite and type checks pass after each step, and the import rules
-  above still hold.
-- A packaged app still browses, loads (in its helper) and moves the cache.
+- A feature can be changed and tested against documented contracts without
+  editing unrelated areas' internals; shared mutable state has one owner.
+- Two approved, distinct tasks can proceed in isolated worktrees and
+  integrate without avoidable shared-file conflicts or unreviewed contract
+  changes.
+- Existing behaviour remains covered. The full suite, strict type checks
+  and applicable packaged-helper checks pass for each integrated code slice;
+  native and real-volume checks stay in
+  [.ai/MANUAL_TODO.md](../.ai/MANUAL_TODO.md).
 
 ## Open decisions
 
-- When to start: after `v0.0.5a1` merges, as the first v0.0.6 work (proposed).
-- Package and module names (for example `helab/helper/` for step 1).
-- The size guideline, and whether a test should enforce it.
+- Whether to start after `v0.0.5a1` merges, as early v0.0.6 work, or sooner
+  for an isolated preparatory slice.
+- Exact contracts, package names and ownership after the change-path map.
+- Which independent feature to use in the pilot. The first daily-use lab
+  analysis can be selected later.
+- Where to track active worktree ownership without duplicating this
+  roadmap's priority and completion list.

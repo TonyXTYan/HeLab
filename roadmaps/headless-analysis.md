@@ -12,6 +12,12 @@ batch jobs and agents. The GUI and headless entry point should produce the same
 numerical result from the same dataset and effective settings, through the
 [shared job runner](analysis-job-runner.md).
 
+`helab` opens the GUI; `helab --headless` is the long-running local runner
+service; `helab analyze` submits a one-shot analysis request to that service.
+The CLI exposes useful capabilities of the same core, rather than mirroring
+each GUI panel. Lifecycle and exact CLI syntax remain to be designed. See the
+[planning notes](../.ai/sessions/2026-10-14-codex-planning-for-future/remote-headless.md#process-and-command-boundaries-proposed).
+
 ## Current foundation and dependency
 
 TXY loading already runs in isolated helpers, but `IOService` coordinates them
@@ -44,8 +50,8 @@ Human operators may use separately authorized manual controls; automation and
 AI agents must not receive override authority. Pause/resume is offered only
 when the analysis adapter supports it safely.
 
-A possible command is `helab analyze <folder> --config ... --output ...`; syntax
-and file formats are undecided. Verify CLI and GUI agree for the same request.
+The `helab analyze` command's arguments, wait behaviour and output format are
+undecided. Verify CLI and GUI agree for the same request.
 
 ## Later: batch and agent use
 

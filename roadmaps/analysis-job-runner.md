@@ -15,8 +15,9 @@ The GUI, CLI and agents use the same job, result and provenance definitions.
 
 ## Job contract
 
-- Register an analysis with a stable ID and version, runtime/adapter, declared
-  parameters (defaults, constraints and units), input requirements, result
+- Register an analysis with a stable ID, optional managed version, exact source
+  hash, runtime/adapter and declared parameters (defaults, constraints and
+  units), input requirements, result
   schema, and execution environment identity. Discovery must not run arbitrary
   analysis code in the GUI process.
 - Submit an immutable request with the selected dataset snapshot, shot selection
@@ -25,7 +26,8 @@ The GUI, CLI and agents use the same job, result and provenance definitions.
 - Give every job a stable ID and explicit queued, running, paused, completed,
   failed or cancelled state, progress/events, timestamps, structured errors
   and references to available result artifacts. Keep numerical values, units,
-  script/environment versions and input provenance together. Store large arrays
+  script identity (version when managed, filename and hash when unmanaged),
+  environment identity and input provenance together. Store large arrays
   and figures as artifacts rather than embedding them in status messages.
 - Version the request, event and result protocols so GUI, CLI and adapters can
   evolve without silently misreading older results.
@@ -44,6 +46,22 @@ script identity for reproducibility. Define time, memory, concurrency, logging
 and cancellation limits per job without assuming computation uses the source-I/O
 queue's limits. MATLAB licensing and installed runtime availability are
 capabilities reported by the adapter, not assumed on every lab PC.
+
+## Script catalogue and compatibility direction (2026-10-14)
+
+A repository may bundle several scripts with independent IDs and versions. An
+optional HeLab manifest declares each script's version source (such as tags or
+files), runtime needs and strict compatibility records. Keep older managed
+versions available side by side; record both declared script version and exact
+source commit/hash. Plain files, wrappers and repositories without the manifest
+remain usable as unmanaged scripts, identified by filename and content hash,
+without inferred managed compatibility. If the file's hash changes, warn that
+the script changed and its older cached results cannot be trusted as current
+or reused for the changed script. Keep those historical results viewable with
+their original identity. Discovery and execution must allow this initial path.
+Initially, treat compatibility as explicit compatible/incompatible; defer
+converters, reserving a future path that covers results **and** parameters.
+See [detailed planning](../.ai/sessions/2026-10-14-codex-planning-for-future/remote-headless.md#script-bundles-and-versioned-installation-proposed).
 
 ## Shared ownership and reuse
 
@@ -94,7 +112,8 @@ owner exits; it cannot silently transfer control to a read-only subscriber.
 ## Reuse
 
 Before starting work, compute a reuse key from the validated input snapshot,
-analysis ID/version, effective parameters, shot selection and execution
+analysis ID and exact managed version or unmanaged source hash, effective
+parameters, shot selection and execution
 environment. An identical request may attach read-only to a running job or reuse
 a completed result; changed input or code must not reuse it. Keep job IDs distinct
 from reuse keys, and make an explicit rerun possible. Coordinate data loading
@@ -108,7 +127,8 @@ rerun gets a new job ID even when the inputs match.
 ## Result retention and caching
 
 Keep analysis results separate from the TXY dataset cache. Each analysis
-declares a default result policy, and a run may override it: **RAM only**,
+declares capabilities and a default result policy; user defaults and
+per-folder/script settings determine the effective policy: **RAM only**,
 **cache on disk**, or an explicit **export/keep** action for a durable user file.
 Persist user policy overrides in local per-user settings, never in a tracked
 project configuration; the [network plan](network-runners-and-web.md#local-only-settings-and-portable-records)
@@ -120,17 +140,30 @@ but disappear after eviction or service exit; saved results remain available
 after restart, subject to input/version revalidation. A failed disk save must
 be reported while keeping the completed result available in RAM if possible.
 
-Proposed defaults for design: Live updates and interactive visualisations such
-as a 3D point cloud stay in bounded RAM; a completed analysis of a fixed folder
-is cached on disk. An expensive analysis can default to disk caching through
-its registered policy, informed by measured run cost and result size. Runtime
-alone must not silently decide retention. Live work may explicitly save a
-checkpoint or final result; whether stopping Live offers or automatically
-saves its last result remains open. Bound RAM history and disk usage, keep
-results visible while in use, and define user-controlled clearing and retention
-before enabling automatic deletion. Cache clearing must not remove explicit
+Quick and Live intermediate results stay in bounded RAM. Scripts declare three
+distinct capabilities: ordinary result caching for one-off runs, Live updates,
+and Live cache updates that advance an existing cached result through the Live
+protocol. Live cache updates require the other two capabilities; Live support
+alone does not imply them. Show **Auto-update cache** only for Live-cache-capable
+scripts. Coalesce/persist completed revisions under a bounded write policy,
+never rewrite a large artifact for every arriving shot; flush the latest at
+Live stop when enabled. A Live script without this capability can still update
+in RAM and, if ordinary caching is supported and enabled, save a final one-off
+result separately. An expensive
+fixed-folder analysis may default to disk caching, subject to the
+effective user/folder/script policy. Runtime alone must not silently decide
+retention. Bound RAM history and disk usage, keep results visible while in use,
+and define user-controlled clearing and retention before enabling automatic
+deletion. Cache clearing must not remove explicit
 exports. A disk-cached result is reused only when the dataset snapshot,
-analysis version, settings and environment still match.
+exact script version or hash, settings and environment still match.
+
+For incremental Live work, the runner knows the TXY shots and variants currently
+loaded in RAM. Each script reports the exact shot identities it has analysed;
+the runner compares that coverage with the loaded set and supplies missing
+shots through the script's declared update method. Acknowledged coverage and
+result revision stay tied to parameters and script identity, so reconnects,
+repaired variants and duplicate notifications cannot silently reuse old work.
 
 ## Staged delivery and acceptance
 
@@ -168,8 +201,8 @@ in the separate [network extension](network-runners-and-web.md).
 - Runner process lifetime, owner-exit policy, takeover, and whether GUI and CLI
   use the same service from the first milestone.
 - Local IPC transport, result/artifact location and retention policy.
-- Result-cache budget, user-controlled clearing, Live final-result handling and
-  the initial default policy for each analysis type.
+- Result-cache budget, user-controlled clearing, which script instances supply
+  the latest Live results, and the initial default policy for each analysis type.
 - Cancellation guarantees for external runtimes, including their child processes.
 - Human authorization for manual override, owner-exit control, and what happens
   to attached readers when an operator pauses or cancels a shared job.

@@ -20,6 +20,12 @@ workspace as an arrangement tied to data and analysis instances.
 - On reopening, distinguish restored configuration from computed results and
   source data that still needs loading or validation.
 
+User behaviour defaults may be overridden per folder and script. Saving changed
+parameters and caching results are separate toggles; a new folder/script starts
+from script parameter defaults. Each folder/script can retain run history with
+its own length and size limits. A workspace can hold multiple instances of one script,
+including pinned result panels. See [behaviour notes](../.ai/sessions/2026-10-14-codex-planning-for-future/analysis-behaviour.md).
+
 ## Dependencies and acceptance
 
 Depends on stable parameter/result interfaces from the

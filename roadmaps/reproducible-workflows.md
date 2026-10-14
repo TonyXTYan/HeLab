@@ -28,9 +28,11 @@ Save reusable ordered analyses with explicit inputs, outputs and dependencies.
 Reuse the single-analysis execution, cancellation and error conventions rather
 than inventing a second runner.
 
-Save result records containing dataset identity, script/code version, effective
-parameters, shot inclusion/exclusion and relevant metadata. Record enough
-environment information to explain numerical differences. Existing size/mtime
+Build on the core result record defined by the local
+[analysis runner](analysis-job-runner.md), which already records dataset identity,
+exact script version or hash, effective parameters and shot selection. Extend
+it for reusable analysis sequences, stronger input preservation/verification
+and documented rerun tolerances. Existing size/mtime
 fingerprints identify cached snapshots under the write-once TXY assumption;
 they are not cryptographic proofs of source content. Decide the required level
 of input preservation or verification during design.
@@ -56,5 +58,5 @@ Build on [analysis execution/export](analysis-workflow.md),
 [comparison/batch](run-comparison-and-batch.md).
 
 Open choices include metadata formats and keys, sequence representation,
-script-version capture, result-record schema, input retention, rerun tolerances
+extensions to the core result-record schema, input retention, rerun tolerances
 and which scientific analysis has the strongest immediate lab use.

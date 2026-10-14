@@ -33,6 +33,20 @@ components exist, but a common data-to-result workflow still needs definition.
 - Display results and plots with their source dataset, settings and outcome.
 - Preserve read-only shared arrays; analysis requiring mutation uses a copy.
 
+## Folder-following analysis behaviour (decided 2026-10-14)
+
+Selected scripts remain selected across folder changes. Unpinned analysis views
+follow the new folder; pinned views retain their panel and result. A script can
+have multiple instances. Each script declares whether it permits automatic
+runs. Show a saved outdated result immediately with an indicator, then run in
+the background only if permitted and notify when the new result is ready.
+Use script parameter defaults for a new folder. User defaults govern behaviours
+such as parameter saving and result caching; per-folder/script settings override
+those behaviours and may save changed parameters, shot selection and history.
+Parameter saving and result caching are separate settings. Every saved result retains its
+exact inputs, parameters and script identity. Detailed interaction rules and
+open cases: [planning notes](../.ai/sessions/2026-10-14-codex-planning-for-future/analysis-behaviour.md).
+
 ### Standard analyses
 
 Start with per-shot event counts, T/X/Y distributions and explicit shot selection

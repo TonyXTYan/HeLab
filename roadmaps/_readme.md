@@ -84,10 +84,10 @@ How to use it:
 
 ## Near term: useful analysis from loaded data
 
-- [ ] Refactor the largest modules into focused ones, without changing behaviour
-  (`FolderExplorer` 1908 lines/116 methods, `folder_cache` 1644, `io_helper`
-  1332, `cache_store` 1326), before live monitoring and the analysis workflow
-  add to them ([plan](refactoring.md)) (2026-10-13).
+- [ ] Decouple browser/cache, dataset, analysis and UI responsibilities so
+  agents can develop separate features in supervised, isolated worktrees
+  without changing current behaviour. Smaller modules are a secondary benefit
+  ([plan](refactoring.md)) (2026-10-13; revised 2026-10-14).
 
 - [ ] Apply other tabs' finished status checks during Refresh without source
   I/O ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#cross-tab-status-results)) (2026-10-08).
@@ -98,9 +98,11 @@ How to use it:
 - [ ] Empty folders in lighter grey; hidden folders that contain data in black
   (from the old README list).
 - [ ] Shared analysis job runner for GUI/agents: language adapters, ownership,
-  results and validated reuse ([plan](analysis-job-runner.md)) (2026-10-13).
+  results, validated reuse and optional versioned script bundles; plain files
+  remain usable ([plan](analysis-job-runner.md)) (2026-10-13; revised 2026-10-14).
 - [ ] Complete the dataset → parameters → background script → results workflow,
-  with progress, cancellation and errors ([plan](analysis-workflow.md)) (2026-10-08).
+  with folder-following views, pinning, progress, cancellation and errors
+  ([plan](analysis-workflow.md)) (2026-10-08; revised 2026-10-14).
 - [ ] Standard analyses: per-shot counts, T/X/Y distributions and shot selection
   ([plan](analysis-workflow.md#standard-analyses)) (2026-10-08).
 - [ ] Export results and figures with their data source and analysis settings
@@ -114,13 +116,18 @@ How to use it:
 ## Medium term: repeated lab work
 
 - [ ] Live monitoring: load new settled shots and update chosen analyses
-  ([plan](live-monitoring.md)) (2026-10-08). New shots stay in RAM and the disk
-  cache is written once when monitoring stops or HeLab quits
+  locally first ([plan](live-monitoring.md)) (2026-10-08; staged 2026-10-14).
+  New shots stay in RAM and the disk cache is written once when monitoring
+  stops or HeLab quits
   ([decided](live-monitoring.md#cache-writes-while-monitoring-decided-2026-10-13)) (2026-10-13).
+- [ ] QC script catalogue and safe derived-file repairs; migrate the current
+  status scan as its first provider ([plan](quality-control-and-repair.md))
+  (2026-10-14).
 - [ ] Save analysis presets and reopen analysis workspaces
   ([plan](presets-and-workspaces.md)) (2026-10-08).
 - [ ] Cache-only browsing: browse and analyse cached data while the source is
-  unavailable ([plan](cache-only-browsing.md)) (2026-10-08).
+  unavailable; offline mode makes no network request
+  ([plan](cache-only-browsing.md)) (2026-10-08; revised 2026-10-14).
 - [ ] Compare folders or experimental runs using consistent settings
   ([plan](run-comparison-and-batch.md#run-comparison)) (2026-10-08).
 - [ ] Self-update button for source checkouts (git + uv) and frozen builds
@@ -129,13 +136,16 @@ How to use it:
 
 ## Long term: reproducible scientific workflows
 
-- [ ] Network extension: mobile and cross-machine results, SSH remote runners,
-  machine/root mapping ([plan](network-runners-and-web.md)) (2026-10-13).
+- [ ] Network extension, after local Live/results: connect machines for
+  metadata and result access, then remote Live updates and later remote jobs;
+  start the mobile web with a view-only recent-results page
+  ([plan](network-runners-and-web.md)) (2026-10-13; revised 2026-10-14).
 - [ ] Batch analysis across multiple runs with per-run outcomes and cancellation
   ([plan](run-comparison-and-batch.md#batch-analysis)) (2026-10-08).
 - [ ] Integrate experiment metadata with shot/run data
   ([plan](reproducible-workflows.md#experiment-metadata)) (2026-10-08).
-- [ ] Reuse sequences of analyses and save reproducible result records
+- [ ] Reuse sequences of analyses and extend the local result record for
+  full reproducibility
   ([plan](reproducible-workflows.md#analysis-sequences-and-result-records)) (2026-10-08).
 - [ ] Add specialist analyses driven by agreed lab needs and scientific definitions
   ([plan](reproducible-workflows.md#specialist-analyses)) (2026-10-08).

@@ -22,6 +22,11 @@ continuous monitoring.
 - Keep last usable data/results when the source becomes unavailable; provide
   clear recovery controls rather than accumulating unchecked retries.
 
+Deliver Live updates for **local use first**. Then add remote connections for
+metadata and result access; remote Live revision notifications/push follow once
+those connections work. The local runner and result records must not depend on
+the remote stages.
+
 TXY is write-once after completion. Interrupted original writes are the relevant
 recovery case; this feature does not require general tracking of arbitrary
 edits to settled files.
@@ -48,6 +53,21 @@ the disk cache for each arriving shot.
   or when the unsaved part grows large, so a later check doesn't re-read many
   shots.
 
+Quick analyses consume the Live RAM view and keep intermediate results in RAM.
+HeLab tracks loaded TXY shot identities and each script reports which shots it
+has analysed; the runner sends missing shots through the script's Live-update
+method. Scripts separately declare ordinary one-off caching, Live updates and
+Live cache updates. Only scripts with all three can offer **Auto-update cache**
+to advance an older cached result during Live. Cache writes must be coalesced
+and bounded, not one large write per shot; save the latest completed revision
+at Live stop when enabled. A Live script without Live-cache support updates in
+RAM and may save a final one-off result only if ordinary caching is supported
+and enabled. This result policy is separate from the TXY dataset-cache
+write. The first local deployment can watch settled raw files, convert to TXY,
+and run QC and fast analyses. Remote notification/push follows the remote
+connection stage. See the
+[working design](../.ai/sessions/2026-10-14-codex-planning-for-future/remote-headless.md#live-acquisition-machine-proposed-near-term-scenario).
+
 ## Dependencies and acceptance
 
 Depends on the [analysis workflow](analysis-workflow.md) for managed reruns and
@@ -69,7 +89,8 @@ has a defined recovery path.
 - Polling versus filesystem notifications on the actual lab volume.
 - Monitoring scope after switching tabs and behavior on app restart.
 - Update cadence, manual versus automatic reruns and handling busy analyses.
-- Whether a displayed result follows arrivals or remains a fixed snapshot.
+- How a Live-following unpinned view presents revisions while a pinned view
+  keeps its chosen fixed result.
 
 Use real-volume/manual checks from [.ai/MANUAL_TODO.md](../.ai/MANUAL_TODO.md);
 record execution evidence in sessions rather than in this feature plan.

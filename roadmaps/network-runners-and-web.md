@@ -6,24 +6,29 @@ Priority and completion: [overview](_readme.md).
 
 ## Purpose and sequence
 
-Let HeLab users see job progress and completed analyses on a phone, let one
-HeLab read results produced by another machine, and optionally submit new work
-to that machine's runner. Reuse the
+Let one HeLab read results produced by another machine, then share completed
+Live revisions and optionally submit new work to that machine's runner. The
+initial phone page only views recent compatible results; richer job progress
+and controls can follow later. Reuse the
 [shared runner's](analysis-job-runner.md) versioned jobs, results, ownership and
-adapter protocol. Deliver read-only web and cross-machine result access first;
-add remote execution after data identity, access and failure handling are
-proven. This does not expose the current Plotly Dash page, which binds to
+adapter protocol. Build local Live updates and result records first, then
+remote metadata/result connections, then remote Live updates. Add remote job
+submission after data identity, access and failure handling are proven. This
+does not expose the current Plotly Dash page, which binds to
 loopback and has no job/result or remote-access contract.
 
 ## Read-only web view
 
-Serve an authenticated, phone-sized view of job state, progress, provenance,
-warnings, numerical results and available plot/artifact previews. It reads the
-runner's stored results and live events; a phone need not load TXY data or run
-an analysis. Start with read-only access. Network exposure, authentication,
-transport encryption and access scopes must be designed before serving it
-outside the machine. The web view does not grant manual override controls to
-automated clients.
+Start with an authenticated phone page listing recent compatible results;
+opening one shows a supported interactive view or static image. The page is
+read-only and sends no job commands. The same server may separately expose a
+versioned private GET/POST job API to authorized future Apple/Android clients.
+Design the read-only routes and service boundary so this can be added without
+replacing the result model; the first web milestone need not enable job routes.
+Hiding controls in the page is not authorization: enforce read and job-control
+roles server-side, without granting repair or manual override by default.
+Network exposure, authentication and transport encryption need design before
+serving outside the machine. See the [detailed scenario](../.ai/sessions/2026-10-14-codex-planning-for-future/remote-headless.md#live-acquisition-machine-proposed-near-term-scenario).
 
 ## Cross-machine result sharing
 
@@ -47,6 +52,21 @@ dataset may reuse a result only after root mapping and input-snapshot validation
 A machine without that mapping may still view the remote result by job ID, but
 must not claim it matches a local folder. Sharing results does not require
 copying raw TXY files or sharing the origin machine's SQLite cache.
+
+Normal folder browsing should distinguish local, remote and both result
+availability. Exchange metadata and mapped-folder/QC status asynchronously;
+offer optional source verification for mapped network volumes. Fetch artifacts
+when opened, with Keep local copy and a user-set size threshold for automatic
+downloads. New results give a soft status-bar notice by default. Strict
+[offline/cache-only browsing](cache-only-browsing.md) shows only local artifacts,
+including remote ones already downloaded; it makes no network request.
+
+Peers exchange app protocol, result-schema and managed-script compatibility
+capabilities. The first phase uses explicit compatible/incompatible decisions;
+unsupported results are labelled, not silently reinterpreted. Conversion of
+saved results and parameters is a later extension. The application contract
+must be transport-independent so desktop SSH access and later mobile clients
+can share its semantics. [Working design](../.ai/sessions/2026-10-14-codex-planning-for-future/remote-headless.md#version-and-capability-synchronization-proposed).
 
 ## HeLab-to-HeLab access over SSH
 
@@ -177,8 +197,10 @@ be added behind an adapter.
 
 ## Acceptance
 
-- A phone can view an active job and its completed result read-only through an
-  authorized connection, and cannot call manual override operations.
+- First, a phone web page can browse recent compatible results read-only through
+  an authorized connection. Later, a separately authorized API client can
+  request jobs only within its server-enforced role and cannot call manual
+  override.
 - Another HeLab can read and subscribe to the origin machine's completed
   results without re-running the analysis or mounting its source folder. A Live
   update shows the last retained completed revision and the shots it covers.
@@ -204,13 +226,15 @@ be added behind an adapter.
 
 ## Open decisions
 
-- Web access path on lab/mobile networks and its authentication model.
+- Web access path on lab/mobile networks, authentication model and job API
+  permissions for future clients.
 - SSH forwarding versus a remote command bridge; pairing and key management.
 - How roots are registered and verified across machines, especially when a
   shared volume has several aliases or no stable filesystem IDs.
 - When to transfer input data instead of executing on the machine that has it.
-- Which remote job controls, if any, are available to human operators on mobile.
+- Which remote job controls, if any, are available to separately authorized
+  mobile clients.
 - Live-result publication cadence, retained revisions, artifact download limits
-  and whether offline readers keep a local copy.
+  and when connected clients automatically keep local copies for later offline use.
 - Preferred runner selection per data root, resource quotas and the explicit
   fallback offered when that runner is unreachable.

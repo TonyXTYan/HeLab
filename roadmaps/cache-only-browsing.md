@@ -25,6 +25,12 @@ dataset is still cached.
 - Define Refresh, Retry, Check folder status and generic-icon behavior in this
   mode; freshness indicators must not initiate source checks.
 
+**Offline means no network** (Tony, 2026-10-14). Show local saved results and
+remote results only if their artifacts are already downloaded. Do not display
+remote-only availability from old metadata or fetch an artifact while offline.
+Apply the same source and network gates to GUI, headless and CLI paths. See the
+[mode interaction](../.ai/sessions/2026-10-14-codex-planning-for-future/remote-headless.md#offlinecache-only-interaction).
+
 ## Dependencies and acceptance
 
 Requires persisted listings, the separate no-I/O result-application path and
