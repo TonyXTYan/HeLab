@@ -1,0 +1,152 @@
+name: CI build
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        required: true
+        type: string
+      python-minor:
+        required: true
+        type: string
+      enabled:
+        description: Run this job; false records a skip without starting a runner
+        type: boolean
+        default: true
+      experimental:
+        description: Allow compatibility failures without failing CI
+        type: boolean
+        default: false
+      build-sha:
+        required: true
+        type: string
+      build-ref:
+        required: true
+        type: string
+      build-branch:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Keep skipped-job names literal; the caller identifies the configuration.
+    name: Build
+    if: inputs.enabled
+    runs-on: ${{ inputs.os }}-latest
+    timeout-minutes: 15
+    continue-on-error: ${{ inputs.experimental }}
+    env:
+      HELAB_BUILD_REF: ${{ inputs.build-ref }}
+      HELAB_BUILD_BRANCH: ${{ inputs.build-branch }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.build-sha }}
+
+      - name: Install dependencies on macOS
+        if: inputs.os == 'macos'
+        run: |
+          echo "No dependencies to install on macOS."
+
+      - name: Install dependencies on Windows
+        if: inputs.os == 'windows'
+        run: |
+          echo "No dependencies to install on Windows."
+
+      - name: Install dependencies on Ubuntu
+        if: inputs.os == 'ubuntu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1 \
+            xvfb \
+            x11-utils \
+            libopengl0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: 3.${{ inputs.python-minor }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m venv venv
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
+          else
+            source venv/bin/activate
+          fi
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Test the older tagged commit before rebuilding recovery assets
+        if: inputs.python-minor == '13' && inputs.build-sha != github.sha
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
+          else
+            source venv/bin/activate
+          fi
+          pytest -n 4 --verbose --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
+
+      - name: Build with PyInstaller
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
+          else
+            source venv/bin/activate
+          fi
+          pyinstaller HeLab.spec --clean -y
+
+      # Ship only HeLab.app on macOS (dist/HeLab is the same app again), zipped here
+      # so the Qt framework symlinks survive: upload-artifact would replace each
+      # link with a copy of its target (~2.1 GB instead of ~290 MB).
+      - name: Zip the macOS app, keeping its symlinks
+        if: inputs.os == 'macos'
+        run: ditto -c -k --norsrc --noextattr --noacl --keepParent dist/HeLab.app dist/HeLab-macos.zip
+
+      - name: Archive build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ inputs.os }}-py3${{ inputs.python-minor }}
+          path: ${{ inputs.os == 'macos' && 'dist/HeLab-macos.zip' || 'dist/' }}
+          retention-days: 1
+
+      - name: Report Python 3.13 build failure
+        if: inputs.python-minor == '13' && failure() && !cancelled()
+        shell: bash
+        env:
+          MATRIX_OS: ${{ inputs.os }}
+          PYTHON_MINOR: ${{ inputs.python-minor }}
+        run: |
+          echo "::error title=Python 3.${PYTHON_MINOR} build failed on ${MATRIX_OS}::Required build job failed on ${MATRIX_OS}-latest (${RUNNER_OS}/${RUNNER_ARCH}) with Python 3.${PYTHON_MINOR}. Other configurations will continue; inspect this job's failed step for the cause."
+          {
+            echo "### Required build job failed"
+            echo ""
+            echo "- **OS target:** ${MATRIX_OS}-latest"
+            echo "- **Python target:** 3.${PYTHON_MINOR}"
+            echo "- **Runner:** ${RUNNER_OS} / ${RUNNER_ARCH}"
+            echo ""
+            echo "Other configurations will continue. Inspect **${MATRIX_OS} + py3.${PYTHON_MINOR} / Build** in the [job logs](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}) for the failed step."
+          } >> "$GITHUB_STEP_SUMMARY"

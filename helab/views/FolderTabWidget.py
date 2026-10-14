@@ -4,6 +4,7 @@ import logging
 import os
 import platform
 import sys
+from types import ModuleType
 from typing import Tuple, List, Dict, Any
 
 from PIL.TiffTags import lookup
@@ -13,15 +14,22 @@ from PyQt6.QtWidgets import QTabWidget, QWidget, QMessageBox, QTabBar, QAbstract
 # from matplotlib.backend_bases import CloseEvent
 
 from helab.utils.constants import *
-from helab.utils.threading_setup import *
-from helab.utils.caching_setup import *
-from helab.models.HelabFileSystemModel import HelabFileSystemModel
+from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.views.FolderExplorer import FolderExplorer
-from helab.workers.DirectoryCheckWorker import DirectoryCheckWorker
-from helab.workers.LoadFolderToRamWorker import LoadFolderToRamWorker
-from helab.workers.StatusDeepWorker import StatusDeepWorker
-from helab.workers.StatusWorker import StatusWorker
-from helab.models.StatusReport import StatusReport
+
+
+def root_on_target_drive(model_root_path: str, target_path: str, path: ModuleType = os.path) -> str:
+    """Root a tab on the target's drive when it differs from the default root.
+
+    On Windows QDir.rootPath() is C:/, so a target on a mapped drive (Y:\\) or a
+    UNC share would otherwise fail validation and fall back to C:. POSIX paths
+    have no drive, so they are returned unchanged.
+    """
+    target_drive: str = path.splitdrive(target_path)[0]
+    sep: str = path.sep
+    if target_drive and path.normcase(target_drive) != path.normcase(path.splitdrive(model_root_path)[0]):
+        return target_drive + sep
+    return model_root_path
 
 
 class FolderTabWidget(QTabWidget):
@@ -38,10 +46,6 @@ class FolderTabWidget(QTabWidget):
                     }
                 """)
 
-        # Initialize shared resources
-        # self.status_cache: LRUCache[str, Tuple[str, int, List[str]]] = LRUCache(maxsize=10*1000)
-        # self.hasChildren_cache: TTLCache[str, bool] = TTLCache(maxsize=100*1000, ttl=24*60*60)
-        self.status_cache = status_cache
         self.tab_back_button_enabled = False
 
         self.currentChanged.connect(self.on_current_tab_changed)
@@ -106,12 +110,15 @@ class FolderTabWidget(QTabWidget):
         if model_root_path is None:
             model_root_path = QDir.rootPath()
 
+        default_candidates = DEV_POTENTIAL_DATA_PATHS if target_path is None else None
+        if target_path is None:
+            target_path = DEFAULT_DATA_PATH
+
+        model_root_path = root_on_target_drive(model_root_path, target_path)
+
         if view_path is None:
             view_path = model_root_path
 
-        if target_path is None:
-            target_path = DEFAULT_DATA_PATH
-    
         try:
             if not os.path.commonpath([model_root_path, target_path]) == os.path.abspath(model_root_path):
                 logging.warning(
@@ -124,11 +131,11 @@ class FolderTabWidget(QTabWidget):
             view_path = QDir.rootPath()
 
         columns_to_show = [
-            HelabFileSystemModel.COLUMN_NAME,
-            HelabFileSystemModel.COLUMN_DATE_MODIFIED,
-            HelabFileSystemModel.COLUMN_STATUS_NUMBER,
-            HelabFileSystemModel.COLUMN_STATUS_ICON,
-            HelabFileSystemModel.COLUMN_RIGHTFILL
+            SnapshotFileSystemModel.COLUMN_NAME,
+            SnapshotFileSystemModel.COLUMN_DATE_MODIFIED,
+            SnapshotFileSystemModel.COLUMN_STATUS_NUMBER,
+            SnapshotFileSystemModel.COLUMN_STATUS_ICON,
+            SnapshotFileSystemModel.COLUMN_RIGHTFILL
         ]
 
         logging.debug(f"folderTabsWidget.add_new_folder_explorer_tab: cleaned {model_root_path = }, {target_path = }, {view_path = }")
@@ -140,7 +147,8 @@ class FolderTabWidget(QTabWidget):
             target_path = target_path,
             view_path = view_path,
             columns_to_show = columns_to_show,
-            set_initial_expand_to_parent_level = set_initial_expand_to_parent_level
+            set_initial_expand_to_parent_level = False,
+            default_candidates = default_candidates,
         )
         index = self.addTab(folder_explorer, 'File Explorer')
 
@@ -155,7 +163,7 @@ class FolderTabWidget(QTabWidget):
 
         self.setCurrentIndex(index)
 
-        QTimer.singleShot(300, lambda: self.rescan_current_folder_explorer(user_intend = False))
+        # The explorer schedules exactly one initial scan after signal wiring.
         # QTimer.singleShot(600, lambda: self.rescan_current_folder_explorer(user_requested_scan = False))
 
 
@@ -207,16 +215,6 @@ class FolderTabWidget(QTabWidget):
             self.tab_back_button_enabled = current_folder_explorer.back_button_enabled
             logging.debug(f"folderTabWidget.on_back_button_clicked: {self.tab_back_button_enabled = }")
 
-    def clear_status_cache(self) -> None:
-        self.status_cache.clear()
-        running_workers_status.clear()
-        running_workers_deep.clear()
-        running_workers_hasChildren.clear()
-
-        logging.info("Status cache cleared.")
-        self.refresh_current_folder_explorer()
-
-
     def refresh_current_folder_explorer(self) -> None:
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
@@ -242,6 +240,8 @@ class FolderTabWidget(QTabWidget):
         self.update_tab_titles()
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
+            # The current tab's browsing and selected load use the foreground I/O lane.
+            current_folder_explorer.claim_foreground()
             currently_selected_path = current_folder_explorer.get_selected_path_from_model()
             logging.debug(f"Current tab dir_path: {current_folder_explorer.model_root_path}"
                           f", view_path: {current_folder_explorer.view_path}"
@@ -269,15 +269,9 @@ class FolderTabWidget(QTabWidget):
                 logging.debug(f"folderTabWidget.on_current_tab_changed: {ii = }, {other_folder_explorer.folder_opened_path = }")
                 if (other_folder_explorer.folder_opened_path is not None and
                     other_folder_explorer.folder_opened_path != currently_selected_path):
-                    other_sr = status_cache.get(other_folder_explorer.folder_opened_path, None)
-                    if isinstance(other_sr, StatusReport):
-                        logging.debug(f"{other_sr.status = }, {other_sr.extra_icons = }")
-                        other_sr.update_ram_status()
-                        emit_data_changed_signal(other_folder_explorer.folder_opened_path)
-                    else:
-                        logging.warning(f"folderTabWidget.on_current_tab_changed: other_sr is not a StatusReport instance. {other_sr = }")
-                    other_folder_explorer.folder_opened_data = None
-                    other_folder_explorer.folder_opened_path = None
+                    # Each tab owns its snapshot and pending requests. Switching
+                    # tabs does not read caches or invalidate another tab's data.
+                    pass
                 # other_folder_explorer.clear_selection()
             else:
                 logging.warning("folderTabWidget.on_current_tab_changed: other tab is not a FolderExplorer instance.")
@@ -303,12 +297,6 @@ class FolderTabWidget(QTabWidget):
         # self.widget(index).close_cleanup
         logging.debug(f"Removing tab at index {index}")
         current_folder_explorer = self.widget(index)
-        queue_depth = single_run_pools_total_activeThreadCount()
-        if queue_depth > 0:
-            QMessageBox.warning(self, "Please wait for background taks to finish",
-                                "There are ongoing background tasks. Please wait for them to complete or cancel them before closing the tab.",
-                                QMessageBox.StandardButton.Ok)
-            return
         if isinstance(current_folder_explorer, FolderExplorer):
             # if current_folder_explorer.is_running_status_worker():
             #     logging.debug(f"Stopping status worker for tab at index {index}")
@@ -325,5 +313,6 @@ class FolderTabWidget(QTabWidget):
         for index in reversed(range(self.count())):
             self.removeTab(0)
 
-        super().closeEvent(a0)
+        if a0 is not None:
+            super().closeEvent(a0)
         logging.debug("FolderTabWidget.closeEvent: finished")

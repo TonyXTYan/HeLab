@@ -1,11 +1,28 @@
-from setuptools import setup, find_packages
+from pathlib import Path
+import os
+import sys
 
-with open("README.md", "r", encoding="utf-8") as fh:
+from setuptools import setup, find_packages
+from setuptools.command.build_py import build_py
+
+ROOT = Path(__file__).resolve().parent
+os.chdir(ROOT)
+sys.path.insert(0, str(ROOT))
+from helab._version import __version__
+from helab.build_info import BUILD_INFO_FILENAME, write_build_info
+
+
+class BuildPy(build_py):
+    def run(self) -> None:
+        super().run()
+        write_build_info(ROOT, Path(self.build_lib) / "helab" / BUILD_INFO_FILENAME)
+
+with (ROOT / "README.md").open("r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
     name="helab",
-    version="0.0.4a",
+    version=__version__,
     author="Tony Yan",
     author_email="tony.yan@anu.edu.au",
     description="HELIUM Experiment Lab Information Unified Manager",
@@ -13,12 +30,14 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/TonyXTYan/HeLab",
     packages=find_packages(),
+    cmdclass={"build_py": BuildPy},
     include_package_data=True,
+    package_data={"helab.resources": ["*.svg"], "helab": [BUILD_INFO_FILENAME]},
     install_requires=[
         "PyQt6>=6.7.1",
         "pytablericons>=1.0.1",
-        "pygame>=2.6.1",
         "Pympler>=1.1",
+        "packaging",
         # Add other dependencies from requirements-pip.txt
     ],
     entry_points={

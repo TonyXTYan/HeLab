@@ -104,6 +104,12 @@ profile.json
 junit.xml
 _server alias/
 .ai/temp/
+.ai/local/
 venv
 side_projects/rga_visualiser/RGAData
 venv.nosync
+legacy/tdc_launcher/*
+
+*.lnk
+.ai/session-export-*/
+.codegraph/

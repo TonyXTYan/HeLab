@@ -7,6 +7,8 @@ import tempfile
 import logging
 from typing import List
 import hashlib
+from helab._version import __version__
+from helab.build_info import get_build_info
 
 from typing import Optional
 
@@ -63,57 +65,16 @@ QSPLITTER_STYLESHEET = """
 """
 
 
+APP_BUILD_INFO = get_build_info()
+
+
 def get_version() -> str:
-    """
-    Retrieve the version number from the setup.py file.
-
-    This function reads the setup.py file located in the current directory,
-    searches for the version string defined in the file, and returns it.
-
-    :return: The version string in the format x.y.z. If the version string
-             is not found, it returns '0.0.0' as the default version.
-    :rtype: str
-    """
-    dirs_to_try = ['setup.py', '../setup.py', '../../setup.py']  # Add more paths as needed
-    content = None
-
-    for path in dirs_to_try:
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                break
-        except FileNotFoundError:
-            continue
-
-    if content:
-        match = re.search(r'version\s*=\s*[\'"]([^\'"]+)[\'"]', content)
-        if match:
-            return match.group(1)
-    return '0.0.0'  # Default version if not found
+    """Return the package version, independent of the launch directory."""
+    return __version__
 
 def get_git_commit_hash() -> str:
-    """
-    Retrieve the current Git commit hash.
-
-    This function attempts to obtain the current Git commit hash of the repository
-    in which the script is located. It returns the first 6 characters of the commit
-    hash in uppercase. If the commit hash cannot be determined, it returns 'unknown'.
-
-    :return: The first 6 characters of the Git commit hash in uppercase, or 'unknown' if not found.
-    :rtype: str
-
-    :raises subprocess.CalledProcessError: If the Git command fails.
-    :raises FileNotFoundError: If Git is not installed or not found in the system path.
-    :raises Exception: For any other exceptions that may occur.
-    """
-    try:
-        commit_hash = subprocess.check_output(
-            ['git', 'rev-parse', 'HEAD'],
-            stderr=subprocess.STDOUT
-        ).decode('utf-8').strip()
-        return commit_hash[:6].upper()  # Return only the first 6 characters
-    except Exception:
-        return 'unknown'
+    """Return the embedded build commit, or this package's checkout commit."""
+    return APP_BUILD_INFO.short_commit
 
 APP_VERSION = get_version()
 APP_COMMIT_HASH = get_git_commit_hash()
@@ -121,7 +82,102 @@ APP_COMMIT_HASH = get_git_commit_hash()
 
 QSETTINGS_ORG_NAME = "ANU_HE_BEC_GROUP"
 QSETTINGS_APP_NAME = "HeLab"
-QSETTINGS_APP_NAME_SANDBOX = "Helab_SANDBOX"
+
+# What happens to a folder's load when another folder is selected.
+LOAD_MODE_SETTING = "load_on_select_mode"
+LOAD_MODE_LABELS = {"cancel": "Cancel the current load",
+                    "finish": "Finish the current load in the background",
+                    "queue": "Queue folders kept selected for 3 s"}
+DEFAULT_LOAD_MODE = "finish"
+
+# How much the quick check of a folder's cached data (folder not modified since it was
+# cached) also checks of its TXY files' sizes and times; Full lists the folder every time.
+CHECK_LEVEL_SETTING = "cached_data_check_level"
+CHECK_LEVEL_LABELS = {"swift": "Swift: the last file",
+                      "fast": "Fast: the first and last files",
+                      "medium": "Medium: first, last and at least 3 random files (1%)",
+                      "high": "High: first, last and at least 10 random files (3%)",
+                      "full": "Full: every file (lists the folder)"}
+DEFAULT_CHECK_LEVEL = "medium"
+
+SIMULTANEOUS_IO_SETTING = "simultaneous_folder_io_operations"
+AUTO_SCAN_VISIBLE_SETTING = "auto_basic_scan_visible_folders"
+DEFAULT_SIMULTANEOUS_IO = 1
+MAX_SIMULTANEOUS_IO = 32
+
+
+# The disk cache budget in bytes (Settings → Cache from S7). It counts live data only.
+DISK_BUDGET_SETTING = "disk_cache_budget"
+DEFAULT_DISK_BUDGET = 8 << 30
+MIN_DISK_BUDGET = 1 << 30
+
+
+def read_disk_budget(settings: QSettings) -> int:
+    """The saved disk cache budget, or the default for a missing or malformed value."""
+    try:
+        value = int(settings.value(DISK_BUDGET_SETTING, DEFAULT_DISK_BUDGET))
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_DISK_BUDGET
+    return max(MIN_DISK_BUDGET, value)
+
+
+# The RAM budget for loaded folders not shown in a tab, saved as steps of 1/128 of the
+# computer's RAM so it still makes sense after a RAM upgrade.
+RAM_BUDGET_SETTING = "ram_budget_steps"
+RAM_STEPS = 128
+DEFAULT_RAM_STEPS = 16
+MAX_RAM_STEPS = 64
+MIN_RAM_BUDGET = 1 << 30
+
+
+def total_ram() -> int:
+    import psutil
+    return int(psutil.virtual_memory().total)
+
+
+def ram_step_bytes(total: int | None = None) -> int:
+    return max(1, (total_ram() if total is None else total) // RAM_STEPS)
+
+
+def ram_step_range(total: int | None = None) -> tuple[int, int]:
+    """The allowed steps: at least max(1 GB, 1 step), at most half of RAM."""
+    step = ram_step_bytes(total)
+    return min(MAX_RAM_STEPS, max(1, -(-MIN_RAM_BUDGET // step))), MAX_RAM_STEPS
+
+
+def read_ram_budget_steps(settings: QSettings, total: int | None = None) -> int:
+    """The saved RAM budget in steps, or the default, within the allowed range."""
+    low, high = ram_step_range(total)
+    try:
+        value = int(settings.value(RAM_BUDGET_SETTING, DEFAULT_RAM_STEPS))
+    except (TypeError, ValueError, OverflowError):
+        value = DEFAULT_RAM_STEPS
+    return max(low, min(high, value))
+
+
+def read_ram_budget(settings: QSettings, total: int | None = None) -> int:
+    """The saved RAM budget in bytes."""
+    return read_ram_budget_steps(settings, total) * ram_step_bytes(total)
+
+
+def read_io_concurrency(settings: QSettings) -> int:
+    """Use a safe default for missing or malformed saved limits."""
+    try:
+        # Independent legacy limits do not imply an intended shared limit.
+        value = int(settings.value(SIMULTANEOUS_IO_SETTING, DEFAULT_SIMULTANEOUS_IO))
+    except (TypeError, ValueError, OverflowError):
+        return 1
+    return max(1, min(MAX_SIMULTANEOUS_IO, value))
+
+
+def read_check_level(settings: QSettings) -> str:
+    level = settings.value(CHECK_LEVEL_SETTING, DEFAULT_CHECK_LEVEL, type=str)
+    return level if level in CHECK_LEVEL_LABELS else DEFAULT_CHECK_LEVEL
+
+
+def read_load_mode(settings: QSettings) -> str:
+    mode = settings.value(LOAD_MODE_SETTING, DEFAULT_LOAD_MODE, type=str)
+    return mode if mode in LOAD_MODE_LABELS else DEFAULT_LOAD_MODE
 
 
 
@@ -139,19 +195,33 @@ logging.debug(f"{QDir_TEMP_DIRECTORY = }")
 
 TEMPFILE_PREFIX = tempfile.gettempdir()
 
+
+def default_app_dir(kind: str) -> str:
+    """Persistent per-user folder for HeLab's ``"caches"`` or ``"temps"``.
+
+    macOS ``~/Library/Caches/HeLab``, Windows ``%LOCALAPPDATA%\\HeLab``, otherwise
+    ``$XDG_CACHE_HOME/HeLab`` (``~/.cache/HeLab``). Unlike the system temp folder,
+    the OS does not delete these after a few days without use.
+    """
+    home = os.path.expanduser("~")
+    if sys.platform == "darwin":
+        base = os.path.join(home, "Library", "Caches")
+    elif sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+    else:
+        base = os.environ.get("XDG_CACHE_HOME") or os.path.join(home, ".cache")
+    return os.path.join(base, "HeLab", kind)
+
+
+# Created on first use; the last candidate keeps HeLab starting when the
+# per-user folder is not writable.
 DIR_TEMPS_CANDIDATES = [
-    tempfile.mkdtemp(prefix='helab_temps_'),
-    # os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps'),
-    # os.path.join(TEMPFILE_PREFIX, 'helab_temps_'),
-    QDir(QDir_WORKING_DIRECTORY).filePath('helab_temps'),
+    default_app_dir("temps"),
     QDir(QDir_TEMP_DIRECTORY).filePath('helab_temps'),
 ]
 
 DIR_CACHES_CANDIDATES = [
-    tempfile.mkdtemp(prefix='helab_caches_'),
-    # os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches'),
-    # os.path.join(TEMPFILE_PREFIX, 'helab_caches'),
-    QDir(QDir_WORKING_DIRECTORY).filePath('helab_caches'),
+    default_app_dir("caches"),
     QDir(QDir_TEMP_DIRECTORY).filePath('helab_caches'),
 ]
 
@@ -166,42 +236,183 @@ def INDICATOR_DOT_RANDOM(n: int = 1) -> str:
     return ''.join(random.sample(INDICATOR_DOTS, n))
 
 
-def get_path_from_setting_or_use_default(key: str, candidates: List[str], sandbox_app: Optional[str] = None) -> str:
-    """
-    This function attempts to retrieve a setting value using the provided key. If the value is found and is a valid path,
-    it is returned. If the value is not found or is invalid, the function will search through the provided list of 
-    candidate paths and return the first valid path. If no valid path is found, an error is raised.
+def usable_directory(path: str, *, create: bool = False) -> bool:
+    """A directory HeLab can write to, optionally created first.
 
-    :param sandbox_app: Optional application name for sandbox settings. Defaults to None.
-    :type sandbox_app: Optional[str]
+    Writing a probe file is the reliable test: on Windows ``os.access`` ignores
+    ACLs, e.g. a folder an elevated session created and Administrators own.
+    """
+    try:
+        if create:
+            os.makedirs(path, exist_ok=True)
+        if not os.path.isdir(path):
+            return False
+        with tempfile.TemporaryFile(dir=path):
+            return True
+    except OSError:
+        return False
+
+
+def get_path_from_setting_or_use_default(key: str, candidates: List[str], settings: Optional[QSettings] = None,
+                                         *, create: bool = False, persist: bool = True) -> str:
+    """
+    This function attempts to retrieve a setting value using the provided key. If the value is a writable
+    directory, it is returned. Otherwise the function returns the first usable candidate (creating it when
+    ``create`` is set) and saves it. If no candidate is usable, an error is raised.
+
+    :param settings: Optional QSettings to read/write instead of the app's own (e.g. an
+        ini file in a test's tmp dir). Defaults to None.
+    :type settings: Optional[QSettings]
     :raises NotADirectoryError: If no valid default path is found in the candidates.
     """
-    
-    settings = QSettings(QSETTINGS_ORG_NAME, sandbox_app or QSETTINGS_APP_NAME)
+
+    if settings is None:
+        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
     value = settings.value(key, type=str)
     if value and isinstance(value, str):
-        if os.path.exists(value):
+        # A path saved under another account (e.g. an elevated session) may exist but be read-only.
+        if usable_directory(value):
             return str(value)
-        else: 
-            logging.warning(f"Setting {key} with path {value} does not exist. Replacing with default.")
-        # settings.setValue(key, value)  # Save the used value
+        else:
+            logging.warning(f"Setting {key} with path {value} is not a writable folder. Replacing with default.")
     else:
         logging.warning(f"Setting {key} not found. Replacing with default.")
-    new_value = next((path for path in candidates if os.path.exists(path)), '')
+    new_value = next((path for path in candidates if usable_directory(path, create=create)), '')
     if new_value == '':
         logging.error(f"No valid default path found for {key}.")
         raise NotADirectoryError(f"No valid default path found for {key = }, {candidates = }.")
-    settings.setValue(key, new_value)  # Save the replaced value
+    if persist:
+        settings.setValue(key, new_value)  # Save the replaced value
     return new_value
 
 
-DIR_TEMPS = get_path_from_setting_or_use_default("dir_temps", DIR_TEMPS_CANDIDATES)
-DIR_CACHES = get_path_from_setting_or_use_default("dir_caches", DIR_CACHES_CANDIDATES)
+# QSettings persists dir_temps/dir_caches across processes and reuses
+# whatever path was saved last time, so concurrent processes (e.g. pytest-xdist
+# workers) that each expect a private cache dir would otherwise all resolve to
+# the same on-disk cache and race each other's clears and writes. These
+# overrides let a test process opt out of the persisted/shared path and force
+# its own private directory instead.
+def migrate_legacy_temp_dir(key: str, kind: str, settings: Optional[QSettings] = None,
+                            target: Optional[str] = None) -> None:
+    """Move a folder HeLab once created in the system temp folder to its persistent place.
 
-if DIR_TEMPS != DIR_TEMPS_CANDIDATES[0]:
-    os.rmdir(DIR_TEMPS_CANDIDATES[0])
-if DIR_CACHES != DIR_CACHES_CANDIDATES[0]:
-    os.rmdir(DIR_CACHES_CANDIDATES[0])
+    Older versions defaulted to ``tempfile.mkdtemp(prefix="helab_<kind>_")``, which the
+    OS may delete after a few days without use (losing the data cache and saved scan
+    results). Only that pattern is moved; a folder the user chose is left alone. The
+    move is a rename, so it is instant on the same volume; if it fails, the old folder
+    stays in use and the move is retried next launch.
+    """
+    if settings is None:
+        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+    value = settings.value(key, type=str)
+    if not value or not isinstance(value, str) or not os.path.isdir(value):
+        return
+    legacy = (os.path.realpath(os.path.dirname(value)) == os.path.realpath(tempfile.gettempdir())
+              and os.path.basename(value).startswith(f"helab_{kind}_"))
+    target = target or default_app_dir(kind)
+    if not legacy or os.path.exists(target):
+        return
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        os.rename(value, target)
+    except OSError as exc:
+        logging.warning(f"Could not move {key} from {value} to {target}: {exc}")
+        return
+    settings.setValue(key, target)
+    logging.info(f"Moved {key} from {value} to {target}")
+
+
+def refuse_unsafe_cache_dir(path: str, candidates: List[str]) -> tuple[str, str, bool]:
+    """``path``, or for this session a default folder if ``path`` is on a network or synced
+    folder, with the reason to tell the user and whether the disk cache can be used.
+
+    With no safe default the disk cache is off for the session, never left on the refused
+    folder. The saved setting is left for the user to change.
+    """
+    from helab.utils.cache_location import cache_location_problem
+    problem = cache_location_problem(path)
+    if not problem:
+        return path, "", True
+    fallback = next((candidate for candidate in candidates if not cache_location_problem(candidate)
+                     and usable_directory(candidate, create=True)), "")
+    if not fallback:
+        # Change… can't help here (it moves a cache, and there is none): say what will.
+        default = candidates[0] if candidates else default_app_dir("caches")
+        reason = (f"The saved cache folder {path} is {problem}, where the cache can't work safely, and no "
+                  f"safe default folder is available: HeLab couldn't create {default}. The disk cache is "
+                  f"off for this session. Make that folder writable, then restart HeLab; it will use it, "
+                  f"and you can move the cache in Settings → General.")
+        logging.error(reason)
+        return path, reason, False
+    reason = (f"The saved cache folder {path} is {problem}, where the cache can't work safely. "
+              f"HeLab uses {fallback} for this session; choose another folder in Settings → General.")
+    logging.warning(reason)
+    return fallback, reason, True
+
+
+_dir_temps_override = os.environ.get("HELAB_DIR_TEMPS_OVERRIDE")
+_dir_caches_override = os.environ.get("HELAB_DIR_CACHES_OVERRIDE")
+
+if _dir_temps_override:
+    os.makedirs(_dir_temps_override, exist_ok=True)
+    DIR_TEMPS = _dir_temps_override
+else:
+    migrate_legacy_temp_dir("dir_temps", "temps")
+    DIR_TEMPS = get_path_from_setting_or_use_default("dir_temps", DIR_TEMPS_CANDIDATES, create=True)
+
+def resolve_cache_dir(settings: Optional[QSettings] = None, *, persist: bool = False) -> tuple[str, str, bool]:
+    """The cache folder to use: the saved one if it is usable and safe, else a default; why the
+    saved one isn't used ("" when it is); and whether the disk cache can be used at all.
+    ``persist`` saves a default that replaced a missing or unusable setting: only at startup
+    while ``cache.lock`` is held (a cache move may be renaming the saved folder right now)."""
+    if _dir_caches_override:
+        os.makedirs(_dir_caches_override, exist_ok=True)
+        return _dir_caches_override, "", True
+    path = get_path_from_setting_or_use_default("dir_caches", DIR_CACHES_CANDIDATES, settings, create=True,
+                                                persist=persist)
+    return refuse_unsafe_cache_dir(path, DIR_CACHES_CANDIDATES)
+
+
+def start_cache_dir(settings: Optional[QSettings] = None, *, usable: bool = True, reason: str = "") -> None:
+    """At startup, with ``cache.lock`` held and any move recovered: move a legacy temp cache
+    folder, save a replaced setting, and use the cache folder the setting names now. If an
+    interrupted move couldn't be resolved (``usable`` False), the disk cache is off for this
+    session and nothing is saved: the store may be in a folder the setting doesn't name yet."""
+    if not usable:
+        set_cache_dir(cache_dir(), reason, False)
+        return
+    if not _dir_caches_override:
+        migrate_legacy_temp_dir("dir_caches", "caches", settings)
+    set_cache_dir(*resolve_cache_dir(settings, persist=True))
+# The cache folder when HeLab started. It can change while HeLab runs (a cache move, or a
+# move recovered at startup): read the current one with ``cache_dir()``.
+# DIR_CACHES_REFUSED: why the saved cache folder isn't used this session ("" when it is).
+# DISK_CACHE_ENABLED: False when it was refused and no safe default exists.
+DIR_CACHES, DIR_CACHES_REFUSED, DISK_CACHE_ENABLED = resolve_cache_dir()
+_cache_dir_state = [DIR_CACHES, DIR_CACHES_REFUSED, DISK_CACHE_ENABLED]
+
+
+def cache_dir() -> str:
+    """The cache folder in use now. Every cache path is read through this, never ``DIR_CACHES``."""
+    return str(_cache_dir_state[0])
+
+
+def cache_dir_refused() -> str:
+    return str(_cache_dir_state[1])
+
+
+def cache_dir_enabled() -> bool:
+    return bool(_cache_dir_state[2])
+
+
+def set_cache_dir(path: str, refused: str = "", enabled: bool = True) -> None:
+    """Switch the cache folder in place (after a move, or a move recovered at startup)."""
+    _cache_dir_state[:] = [path, refused, enabled]
+
+
+def app_folder() -> str:
+    """The per-user app folder, outside every cache: the cache-move record and the locks."""
+    return os.environ.get("HELAB_APP_DIR_OVERRIDE") or os.path.dirname(default_app_dir("caches"))
 
 
 # DIR_TEMPS = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_temps')
@@ -214,6 +425,7 @@ OS_DIR_CACHE_TTL = 60*60 # seconds
 MAX_DEPTH_INT = 1<<15
 
 DEV_POTENTIAL_DATA_PATHS = [
+    '/Volumes/dld_output',
     '/Volumes/tonyNVME Gold/dld output',
     '/Users/tonyyan/.cache/2024_Momentum_Bells_V2 - 20241200',
     # '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - Testing MS Teams/2024_Momentum_Bells_V2 - 20241200',
@@ -230,7 +442,9 @@ DEV_POTENTIAL_DATA_PATHS = [
     '',
 ]
 
-DEFAULT_DATA_PATH = next((path for path in DEV_POTENTIAL_DATA_PATHS if os.path.exists(path)), '')
+# This is a display hint; availability is resolved by an isolated I/O helper
+# after the window is shown. Never stat a remote mount at module import.
+DEFAULT_DATA_PATH = DEV_POTENTIAL_DATA_PATHS[0]
 
 
 DEV_PATH_TO_MATLAB = "/Applications/MATLAB_R2024b.app"
@@ -287,8 +501,6 @@ def hash_str_to_int(code: str) -> int:
 def assert_warn(condition: bool, message: str) -> None:
     if not condition:
         logging.warning(message)
-
-
 
 
 

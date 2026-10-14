@@ -4,9 +4,9 @@ from typing import Generator, Any
 from unittest.mock import patch
 
 import pytest
-from PyQt6.QtGui import QIcon, QResizeEvent
+from PyQt6.QtGui import QIcon, QCloseEvent
 from pytestqt.qtbot import QtBot
-from PyQt6.QtWidgets import QApplication, QMessageBox, QListWidget, QMenu, QWidget
+from PyQt6.QtWidgets import QApplication, QMessageBox, QListWidget, QMenu, QWidget, QMainWindow
 from PyQt6.QtCore import Qt
 
 from helab.resources.icons import StatusIcons, ToolIcons, PercentageIcon
@@ -21,6 +21,20 @@ def test_qtbot_add_widget(qtbot: QtBot) -> None:
     qtbot.addWidget(widget)
     widget.show()
     assert widget.isVisible()
+
+
+def test_about_displays_build_provenance(qtbot: QtBot) -> None:
+    from helab.utils.constants import APP_BUILD_INFO
+    class AboutWindow(HelabMainWindow):
+        def __init__(self) -> None:
+            QMainWindow.__init__(self)
+        def closeEvent(self, a0: QCloseEvent | None) -> None:
+            QMainWindow.closeEvent(self, a0)
+    window = AboutWindow()
+    qtbot.addWidget(window)
+    with patch.object(QMessageBox, "about") as about:
+        window.show_about_dialog()
+    about.assert_called_once_with(window, "About HeLab", APP_BUILD_INFO.description())
 
 
 @pytest.fixture
@@ -119,7 +133,6 @@ def test_close_event_main_window(main_window: HelabMainWindow, qtbot: QtBot) -> 
 #     assert debug_menu.title() == 'Debug'
 #     debug_actions = debug_menu.actions()
 #     expected_debug_actions = [
-#         'Clear Status Cache',
 #         'Draw a line in debug console',
 #         'Show all Icons',
 #         'Show Memory Usage',
@@ -174,16 +187,41 @@ def test_close_event_main_window(main_window: HelabMainWindow, qtbot: QtBot) -> 
 #         assert main_window.action_tab_folder_up.isEnabled()
 
 
-# def test_resize_event_main_window(main_window: HelabMainWindow, qtbot: QtBot) -> None:
-#     with patch.object(main_window, 'setUpdatesEnabled') as mock_set_updates:
-#         resize_event = QResizeEvent(main_window.size(), main_window.size())
-#         main_window.resizeEvent(resize_event)
-#         mock_set_updates.assert_any_call(False)
-#         mock_set_updates.assert_any_call(True)
-
-
 def test_handle_exit_main_window(main_window: HelabMainWindow, qtbot: QtBot) -> None:
     with patch.object(main_window, 'close') as mock_close:
         main_window.handle_exit(signal.SIGINT, None)
         mock_close.assert_called_once()
 
+
+
+def test_mismatched_folders_show_in_the_status_bar_and_load_from_the_current_tab(
+    main_window: HelabMainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from helab.utils.folder_cache import get_folder_cache
+    from helab.utils.io_service import get_io_service
+    cache = get_folder_cache(get_io_service())
+    try:
+        cache.skip_mismatched = True  # Neither the hold nor the window: only the button and the routing.
+        assert not main_window.mismatch_button.isVisible()
+        cache._mismatch("/data/run", {"missing": [1], "missing_count": 1, "known_count": 2, "listed_count": 1})
+        assert main_window.mismatch_button.isVisible() and main_window.mismatch_button.text() == "⚠ 1 mismatched"
+        qtbot.waitUntil(lambda: isinstance(main_window.tab_widget.currentWidget(), FolderExplorer))
+        explorer = main_window.tab_widget.currentWidget()
+        assert isinstance(explorer, FolderExplorer)
+        loads: list[str] = []
+        monkeypatch.setattr(explorer, "load_as_it_is_now", loads.append)
+        main_window.missing_shots.loadRequested.emit(["/data/run"])
+        assert loads == ["/data/run"]
+        main_window.mismatch_button.click()
+        assert main_window.missing_shots.isVisible()
+        main_window.missing_shots.close()
+        explorer.reviewMismatchRequested.emit("/data/run")  # A tab's Review…
+        assert main_window.missing_shots.isVisible()
+        assert main_window.missing_shots.selected_paths() == ["/data/run"]
+    finally:
+        main_window.missing_shots.close()
+        cache.mismatched.clear()
+        cache.allow_missing.clear()
+        cache.mismatch_count = 0
+        cache.skip_mismatched = False
+        cache.resume_after_mismatch()

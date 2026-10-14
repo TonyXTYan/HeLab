@@ -8,7 +8,7 @@
 
 <!-- **H**elium **E**xperiment **L**ab **I**nformation **U**nified **M**anager -->
 
-[![python](https://img.shields.io/badge/python-3.12-blue.svg?style=flat&logo=python&logoColor=white)](https://docs.python.org/3/whatsnew/3.12.html)
+[![python](https://img.shields.io/badge/python-3.13-blue.svg?style=flat&logo=python&logoColor=white)](https://docs.python.org/3/whatsnew/3.13.html)
 [![pyqt6](https://img.shields.io/badge/pyqt-6-000000.svg?style=flat&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/static/Docs/PyQt6/introduction.html)
 
 [![latest release](https://img.shields.io/github/v/release/TonyXTYan/HeLab?label=latest%20release)](https://github.com/TonyXTYan/HeLab/releases/latest)
@@ -71,7 +71,60 @@ Development branch: (all sorts of bugs and features) see: https://github.com/Ton
 
 ---
 
-I'm targeting Python3.12 for its new typing features. As of now this builds on python 3.11, 3.12 and 3.13. I'll try to maintain compatibility with 3.12 and 3.13 but might use newer features and drop support for lower python versions. For more information about which python version are supported, see the CI runs [here](https://github.com/TonyXTYan/HeLab/actions)
+HeLab targets **Python 3.13**: CI requires 3.13 to pass, and other versions (3.10–3.12) run as non-blocking compatibility checks. See the CI runs [here](https://github.com/TonyXTYan/HeLab/actions).
+
+## Setup (any machine)
+
+These steps use [uv](https://docs.astral.sh/uv/), which installs Python 3.13 by itself, so you don't need a system Python, conda, or admin rights.
+
+**1. Install uv** (once per machine):
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+```PowerShell
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Then open a **new** terminal so `uv` is on your `PATH`.
+
+**2. Clone, then create the Python 3.13 environment:**
+
+```bash
+git clone --recurse-submodules https://github.com/HeBECANU/HeLab.git   # or TonyXTYan/HeLab for dev
+cd HeLab
+uv python install 3.13
+uv venv --seed --python 3.13 venv
+```
+
+`--seed` puts `pip` inside the venv. Without it, a bare `pip install` in the activated venv can fall through to another Python on your `PATH`. If a `venv` folder already exists from an older setup, rename or delete it first.
+
+**3. Activate the environment and install HeLab:**
+
+```bash
+source venv/bin/activate       # macOS / Linux
+venv\Scripts\activate          # Windows (cmd or PowerShell)
+uv pip install -r requirements.txt -e .
+```
+
+**4. Run:**
+
+```bash
+helab              # or: python -m helab
+```
+
+On later runs, just activate `venv` and run `helab`. Without activating, run `venv/bin/helab` (macOS/Linux) or `venv\Scripts\helab` (Windows).
+
+Notes:
+- Bare `python` on lab PCs is often an old interpreter (for example Python 2.7). Use the one in `venv`.
+- On Windows, start HeLab from the desktop, not over SSH. An SSH session as an administrator runs elevated, and it can leave cache folders that a normal launch can't write to.
+- The submodule (`legacy/tdc_autoconverter`) is MATLAB reference code only. HeLab runs without it. In an existing clone, fetch it with `git submodule update --init --recursive`.
+- Without uv: if Python 3.13 is already installed, `python3.13 -m venv venv` then `pip install -r requirements.txt -e .` also works. With conda: `conda create -n HeLab python=3.13`, `conda activate HeLab`, then the same `pip install`.
+- macOS with iCloud Drive syncing this folder: create the environment as `venv.nosync` and symlink it (`ln -s venv.nosync venv`), which keeps the constantly changing venv files out of iCloud. Activation and imports work the same either way.
+
 <!-- maybe it would also work on Python 3.11? See CI run [here](https://github.com/TonyXTYan/HELIUM/actions/runs/11605700722) -->
 
 
@@ -94,8 +147,43 @@ random useful notes:
 ```bash
 pyinstaller HeLab.spec --clean
 pyinstaller HeLab.spec --clean -y 
-pyinstaller --onefile --windowed --name HELIUM helab/main.py
 ```
+
+## Versioning and releases
+
+Change the version only in `helab/_version.py`, using PEP 440 without a leading
+`v`, for example `0.0.5a1` (alpha), `0.0.5b1` (beta), or `0.0.5` (final).
+The app, Python package and CI use that value. Help → About HeLab shows the full
+version, commit, branch, build ref, UTC build date and whether the source was modified.
+`helab --version` (or `python -m helab --version`) prints the same provenance
+without starting the GUI, caches or Dash; windowed Windows builds use About.
+
+Start a development cycle from current `main`, for example on `dev/v0.0.5`
+with version `0.0.5a1`. The branch name is a label, not the version source.
+Development pushes and PRs run tests/builds without releasing. Set the intended
+release version in a commit on the PR branch **before final approval**; releasing
+an alpha is fine, and approval does not require removing its alpha suffix.
+
+After squash-merging to `main`, CI creates or resumes the version's unfinished draft.
+Once the required tests and builds pass, it prepares and validates all platform
+archives, explicitly creates `v<version>` on the tested commit, then creates or
+resumes a **draft** GitHub release. Review the packaged
+app and publish the draft manually. Alpha/beta/RC versions are marked as
+pre-releases; final versions are not. Tag pushes do not trigger a second release.
+Start the next cycle from updated `main` rather than continuing the squashed branch.
+
+An existing tag alone does not mean the release finished. Full reruns and later
+`main` pushes with the same version can resume missing drafts/assets. Recovery
+rebuilds the tagged commit, not the newer `main` commit; it checks lineage, version,
+tag SHA and embedded archive stamps. A draft manifest records asset sizes/digests
+so completed uploads are preserved. Published releases are left alone.
+Detached CI builds record their explicit source branch/build ref while retaining
+the actual checked-out Git commit; PR merge builds retain the PR merge ref.
+
+Build with `HeLab.spec` so commit and date metadata is embedded. Wheel builds
+also include it. Metadata is generated inside build output, never in the source
+package, so a checkout cannot accidentally use an older build's stamp.
+See [the versioning plan](roadmaps/app-versioning.md) for implementation details.
 
 
 ## ~~Setting up self hosted runners~~
@@ -107,47 +195,55 @@ Na, apparently github action is free for public repos, also much easier to setup
 
 
 
-## Notes of other random scripts
+## Testing
 
-
-```bash
-python -m venv venv
-source venv/bin/activate # for unix
-venv\Scripts\activate # for windows
-```
-
-On macOS with iCloud Drive syncing this folder, `venv` can be created as `venv.nosync`
-and symlinked to `venv` (`ln -s venv.nosync venv`) to keep it out of iCloud sync — venv
-files churn constantly and aren't worth uploading. Activation and imports work the same
-either way.
+Run the tests from the activated `venv`:
 
 ```bash
-pip install -r requirements.txt
+pytest                        # all tests, one process
+pytest tests/test_foo.py      # one file
+pytest --cov=helab            # with coverage
 ```
+
+The full suite is slow in one process. To speed it up, run it in parallel and retry flaky tests:
 
 ```bash
-pip install -e .
+pytest -n 12 --reruns 5 --reruns-delay 1 --verbose
 ```
+
+- `-n 12` runs 12 worker processes ([pytest-xdist](https://pypi.org/project/pytest-xdist/)). Use at most your number of CPU cores; CI uses `-n 4`.
+- `--reruns 5 --reruns-delay 1` retries a failed test up to 5 times, 1 s apart ([pytest-rerunfailures](https://pypi.org/project/pytest-rerunfailures/)). A test that passed only on a retry shows as `RERUN` in the output, so look at it if it keeps happening.
+- `--verbose` lists each test as it finishes.
+
+**Always use `-n` together with `--reruns` and `--reruns-delay`.** Parallel workers sometimes race each other, for example over temp folders, and Qt and timing tests are less reliable under heavy load. These failures come from running in parallel, not from the code, and a retry after a short delay usually passes. Without the retries, `-n` alone can fail a run for nothing.
+
+Both plugins are in `requirements.txt`.
+
+Tests run Qt headlessly (`offscreen`) by default. Set `HELAB_SHOW_GUI=1` to watch
+the windows while debugging. An explicit `QT_QPA_PLATFORM` takes precedence.
+
+Windows: if pytest crashes during cleanup with `WinError 5` for
+`pytest-current`, use either option in PowerShell:
+
+```powershell
+pytest --basetemp="$env:TEMP/helab-pytest-fresh"
+pytest --basetemp=.ai/temp/pytest-fresh
+```
+
+Use a dedicated scratch directory per concurrent run: pytest clears it at startup.
+See [investigation notes](.ai/sessions/2026-10-13-codex-windows-pytest/notes.md)
+for details and a separate intermittent cache-move failure.
+
+`tests/test_typing.py` runs mypy and pyright inside `pytest`, so type errors fail the suite. Test files ending in `.disabled` are skipped on purpose.
+
+
+
+## Profiling
 
 ```bash
-git submodule update --init --recursive # legacy/tdc_autoconverter (HeBECANU/tdc_autoconverter, MATLAB, reference only)
-```
-
-```PowerShell
-.\venv\Scripts\activate
-```
-
-
-
-```bash
-python -m cProfile -o helab_main.prof  helab/main.py
-snakeviz helab_main.pro
-```
-
-
-
-```
-conda create -n HeLab python=3.12
+uv pip install snakeviz        # not in requirements.txt
+python -m cProfile -o helab_main.prof helab/main.py
+snakeviz helab_main.prof
 ```
 
 
@@ -174,49 +270,16 @@ We use [mypy]() and [pyright]() to enforce strict typing for this package.
 *everything should be typed*.
 
 
-```
-pytest
-```
-
-Tests launch real Qt windows by default. To run headless (no windows popping up, e.g. over SSH or while doing other work), prefix with `QT_QPA_PLATFORM=offscreen` — this only affects that one command, not your shell session:
-
-```bash
-QT_QPA_PLATFORM=offscreen pytest
-```
-
-The same env var works for running the app itself headlessly:
+To run the app itself headlessly (no window), prefix it with `QT_QPA_PLATFORM=offscreen`:
 
 ```bash
 QT_QPA_PLATFORM=offscreen helab
 ```
 
-/Users/tonyyan/Library/Preferences/com.anu.HeLab.plist
+/Users/tonyyan/Library/Preferences/com.anu-he-bec-group.HeLab.plist
 
 
 ---
 # TODO
 
-- [ ] Add auto scan button 
-
-- [x] Add cancel recursive scan button
-  - [ ] probably should lock the tree view while scanning
-  - [ ] variable recursive scan depth
-  
-- [ ] nothing folder should be ligher gray, and hidden folder with data is black 
-
-- [ ] typing
-
-- [ ] unit tests
-
-    - [ ] some test experiment data
-
-- [ ] auto build? maybe?
-
-- [ ] cache github actions
-
-    
-- [ ]  hasChildren() scan at root is taking time
-
-- [ ] File reading system is blocking the main thread (?)
-
-- [ ] Code validation check in pipeline
+Open work, known issues and planned features are tracked in the [roadmap overview](roadmaps/_readme.md).
