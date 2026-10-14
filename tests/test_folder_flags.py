@@ -586,7 +586,7 @@ def test_missing_shots_in_a_background_load_list_the_folder(
 def test_a_load_starting_soon_spins_without_flashing_the_queued_indicator(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cached: bool,
 ) -> None:
-    """Selecting a folder: its row spins until the data is in (no queued ring, no blank, in between)."""
+    """Selecting a folder: its row spins until the data is in (no queued ring, no gap, in between)."""
     from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel as Model
     service, cache = frozen(monkeypatch)
     root = str(tmp_path)
@@ -594,10 +594,8 @@ def test_a_load_starting_soon_spins_without_flashing_the_queued_indicator(
     run = os.path.join(root, "run")
 
     def shown() -> str:
-        index = explorer.model.path_index(run)
-        node = explorer.model.nodes[run]
-        return ("spin" if index.data(Model.BUSY_ROLE) else "queued" if index.data(Model.LOAD_QUEUED_ROLE)
-                else f"icon {node.report.status if node.report else ''}")
+        activity = explorer.model.path_index(run, Model.COLUMN_STATUS_ICON).data(Model.ACTIVITY_ROLE)
+        return "spin" if activity in ("load", "check") else str(activity)
     try:
         if cached:
             cache._observe_cache(run, {"disk_cached": True, "cache_info": {"saved_at": time.time(), "signature": "v1"}})

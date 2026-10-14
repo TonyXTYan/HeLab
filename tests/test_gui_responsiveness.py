@@ -84,6 +84,39 @@ def test_compressed_cache_is_reused_and_validated(tmp_path: Path, monkeypatch: p
     np.testing.assert_array_equal(np.load(shot["artifact"]), [[1, 2, 3]])
 
 
+def test_status_icon_stays_while_the_folder_is_checked_or_loaded(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A load shows beside the row's status, in the RAM badge's place, and RAM takes it back;
+    a check spins on the status icon (painted by the delegate), so it has no badge."""
+    from helab.resources.icons import IconsInitUtil, StatusIcons
+    IconsInitUtil.initialise_icons()
+    service = frozen_service(qtbot, monkeypatch)
+    model = SnapshotFileSystemModel(service=service)
+    path = str(tmp_path)
+    model.setRootPath(path)
+    index = model.path_index(path, model.COLUMN_STATUS_ICON)
+
+    def row() -> tuple[object, str, list[object]]:
+        return (model.data(index, int(Qt.ItemDataRole.DecorationRole)), str(model.data(index, model.ACTIVITY_ROLE)),
+                list(model.data(index, model.STATUS_EXTRA_ICONS_ROLE)))  # type: ignore[call-overload]
+    # No status yet: the check spins in the status icon's place.
+    assert row() == (None, "check", [])
+    deliver(service, model, path, {"kind": "status", "status": "fixable", "count": 1, "raw": [1, 2], "txy": [1]})
+    fixable = StatusIcons.ICONS_STATUS["fixable"]
+    assert row() == (fixable, "check", [])  # A recheck: a small spinner on the status icon.
+    model.nodes[path].state = "idle"
+    monkeypatch.setattr(model.cache, "current_dataset", lambda p: object())
+    model.set_load_state(path, "loading")
+    assert row() == (fixable, "load", ["load"])
+    model.set_load_state(path, "paused")
+    assert row() == (fixable, "paused", [StatusIcons.ICON_LOAD_PAUSED])
+    model.set_load_state(path, "")
+    assert row() == (fixable, "", [StatusIcons.ICON_RAM_OPENED])
+    model.close_cleanup()
+    service.shutdown()
+
+
 def test_rendering_never_reads_filesystem_or_disk_cache(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:

@@ -141,6 +141,33 @@ def test_selected_load_pauses_for_listings_and_stalled_listings_do_not_block(
     service.shutdown()
 
 
+def test_selected_load_starting_after_its_listing_is_not_paused(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Selecting a folder lists it, then loads it: the listing has ended, so the load has nothing
+    to give way to. Only a load already paused waits the resume delay."""
+    service = lanes_service(monkeypatch, {"tab"})
+    service.submit("tab", 0, "/run", "list")
+    service._tick()
+    exit_helper(service, active(service, "tab", "list"))
+    assert time.monotonic() - service._listing_busy_at < service.RESUME_DELAY
+    service.submit("tab", 0, "/run", "load")
+    load = active(service, "tab", "load")
+    service._tick()
+    assert not load.pause_requested
+    # A listing while it loads pauses it, and it stays paused for the resume delay after.
+    service.submit("tab", 0, "/run/sub", "list")
+    service._tick()
+    assert load.pause_requested
+    exit_helper(service, active(service, "tab", "list"))
+    service._tick()
+    assert load.pause_requested
+    service._listing_busy_at -= service.RESUME_DELAY
+    service._tick()
+    assert not load.pause_requested
+    service.shutdown()
+
+
 @pytest.mark.parametrize("slot_free", [True, False])
 def test_load_leaving_foreground_takes_free_background_slot_or_is_requeued(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, slot_free: bool,

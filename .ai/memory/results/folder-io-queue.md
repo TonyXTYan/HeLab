@@ -130,13 +130,21 @@ nothing appeared.
   can't stop a call already stuck. While the foreground works, background
   loads/scans pause and none start; the selected load pauses while the tab
   lists. Resume **0.5 s** after the foreground goes idle (no stop–start
-  between consecutive expands). A paused helper keeps its slot (cap = the
+  between consecutive expands). The 0.5 s keeps an already paused load
+  paused; a selected load starting after the listings ended is not paused
+  (2026-10-14: each click paused its own load, right after the folder's own
+  listing, for ~0.5 s). A paused helper keeps its slot (cap = the
   setting) and its no-progress timer is frozen. Tiny history/cache-clear
   writes don't pause.
 - Selecting B while A loads (finish mode): A takes a free background slot and
   pauses, or, with none free, is stopped and requeued to restart from its RAM
   shots.
-- Display: "· Paused" on summary line 2, paused rows show the queued glyph,
+- Display: "· Paused" on summary line 2; a row's status icon stays while it
+  is checked or loaded. A load shows in the RAM badge's place (green
+  spinner = load, grey dotted circle = queued, green circle-pause = paused;
+  icons drawn once). A listing/status check is a blue spinner: full size in
+  the status icon's place before the first status, then a small one at the
+  status icon's bottom right, like the outdated clock (2026-10-14),
   queue tooltip "Paused while the current tab browses or loads", main status
   bar "N loads paused" / "N scans paused". Tony confirmed the app "works so
   much better now" (2026-10-08).

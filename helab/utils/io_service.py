@@ -228,11 +228,13 @@ class IOService(QObject):
             self._foreground_busy_at = now
         return now - self._foreground_busy_at < self.RESUME_DELAY
 
-    def _hold_foreground_load(self, now: float) -> bool:
-        """The selected load pauses while the current tab lists a folder."""
-        if any(r.lane == FOREGROUND and self._listing_progressing(r, now) for r in self.active):
+    def _hold_foreground_load(self, now: float) -> tuple[bool, bool]:
+        """The selected load pauses while the current tab lists a folder: whether a listing
+        runs now, and whether one ran within ``RESUME_DELAY``."""
+        listing = any(r.lane == FOREGROUND and self._listing_progressing(r, now) for r in self.active)
+        if listing:
             self._listing_busy_at = now
-        return now - self._listing_busy_at < self.RESUME_DELAY
+        return listing, now - self._listing_busy_at < self.RESUME_DELAY
 
     def _update_lanes(self, now: float) -> None:
         for request in list(self.active):
@@ -346,8 +348,11 @@ class IOService(QObject):
 
     def _apply_pauses(self, now: float) -> None:
         hold_background = self.hold_background(now)
-        hold_load = self._hold_foreground_load(now)
+        listing, listed_lately = self._hold_foreground_load(now)
         for request in self.active:
+            # A paused selected load stays paused for RESUME_DELAY so consecutive expands don't
+            # stop and start it; a load starting after the listings ended has nothing to give way to.
+            hold_load = listing or listed_lately and request.pause_requested
             pause = (request.operation in self.PAUSABLE and not request.completed
                      and (self.held_by_mismatch(request) or (hold_background if request.lane != FOREGROUND
                                                              else request.operation == "load" and hold_load)))

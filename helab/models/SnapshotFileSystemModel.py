@@ -95,11 +95,14 @@ class SnapshotFileSystemModel(QAbstractItemModel):
     COLUMN_STATUS_NUMBER = 4
     COLUMN_STATUS_ICON = 5
     COLUMN_RIGHTFILL = 6
+    # The badges after the status icon: QIcons, and "load" where the delegate draws the load's spinner.
     STATUS_EXTRA_ICONS_ROLE = int(Qt.ItemDataRole.UserRole) + 1
-    BUSY_ROLE = int(Qt.ItemDataRole.UserRole) + 10
+    # The row's activity: "load", "queued" or "paused" (its load), shown beside the status icon
+    # in the RAM badge's place; "check" (its listing or status check), a small spinner on the
+    # status icon, or a full one in its place before the first status; or "".
+    ACTIVITY_ROLE = int(Qt.ItemDataRole.UserRole) + 10
     # Seconds a load must wait before its row shows the queued indicator instead of a spinner.
     QUEUED_INDICATOR_DELAY = 0.5
-    LOAD_QUEUED_ROLE = int(Qt.ItemDataRole.UserRole) + 11
     statusReady = pyqtSignal(str)
     directoryLoaded = pyqtSignal(str)
     rootPathChanged = pyqtSignal(str)
@@ -313,11 +316,10 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         # shows as loading: the queued indicator would flash between two spinners.
         briefly_queued = load_state == "queued" and (
             time.monotonic() - self.load_state_since.get(node.path, 0.0) < self.QUEUED_INDICATOR_DELAY)
-        if role == self.BUSY_ROLE:
-            return load_state == "loading" or briefly_queued or node.state in ("queued", "running")
-        if role == self.LOAD_QUEUED_ROLE:
-            # A paused load waits like a queued one.
-            return load_state in ("queued", "paused") and not briefly_queued
+        activity = ("load" if load_state == "loading" or briefly_queued else load_state
+                    or ("check" if node.state in ("queued", "running") else ""))
+        if role == self.ACTIVITY_ROLE:
+            return activity
         if role == int(Qt.ItemDataRole.ToolTipRole):
             return self._tooltip(node, load_state)
         if role == int(Qt.ItemDataRole.ForegroundRole) and node.error:
@@ -338,8 +340,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             icon = self.cache.folder_icons.get(node.path)
             return icon if icon is not None and not icon.isNull() else self._folder_icon
         if role == int(Qt.ItemDataRole.DecorationRole) and column == self.COLUMN_STATUS_ICON:
+            # The last known status stays while the folder is checked or loaded.
             status = self.display_status(node)
-            if not load_state and node.state not in ("queued", "running") and status:
+            if status:
                 icons = StatusIcons.ICONS_STATUS_OLDER if self.display_older(node) else StatusIcons.ICONS_STATUS
                 return icons.get(status)
         if role == self.STATUS_EXTRA_ICONS_ROLE:
@@ -351,14 +354,26 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             prefs = self.cache.folder_prefs(node.path)
             extras += [key for key in ("no_cache", "no_auto_load") if prefs[key]]
             older = self.data_freshness(node) in (CacheFreshness.POSSIBLY_OLD, CacheFreshness.CHANGED)
-            if self.cache.current_dataset(node.path):
+            # A load takes the RAM badge's place (a check spins on the status icon instead).
+            badges: dict[str, QIcon | str] = {
+                "load": "load", "queued": StatusIcons.ICON_LOAD_QUEUED, "paused": StatusIcons.ICON_LOAD_PAUSED}
+            badge = badges.get(activity)
+            # The activity badge takes the RAM badge's place; the data cache's badge stays after it.
+            cached = ""
+            opened = bool(self.cache.current_dataset(node.path))
+            if opened:
                 extras.append("ram_opened")
                 if self.cache.disk_cached(node.path) and older:
-                    extras.append("cached_older")
+                    cached = "cached_older"
             elif self.cache.disk_cached(node.path):
-                extras.append("cached_older" if older else "cached")
-            return [StatusIcons.ICONS_EXTRA[k] for k in extras
-                    if k in StatusIcons.ICONS_EXTRA]
+                cached = "cached_older" if older else "cached"
+            shown: list[QIcon | str] = [StatusIcons.ICONS_EXTRA[k] for k in extras
+                                        if k in StatusIcons.ICONS_EXTRA and not (badge and k == "ram_opened")]
+            if badge is not None:
+                shown.append(badge)
+            if cached in StatusIcons.ICONS_EXTRA:
+                shown.append(StatusIcons.ICONS_EXTRA[cached])
+            return shown
         return None
 
     def _tooltip(self, node: FolderNode, load_state: str) -> str:

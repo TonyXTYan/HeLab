@@ -57,20 +57,31 @@ def large_text(estimate: int, refused: bool) -> str:
     return f"Large folder · ~{byte_size(estimate)} in RAM"
 
 
-def paint_spinner(painter: QPainter, rect: QRect, angle: int, selected: bool = False) -> None:
+# Spinner colours: a listing or status check is blue, a load green; lighter on a selected row.
+CHECK_SPINNER = ("#3989c9", "white")
+LOAD_SPINNER = ("#2ea043", "#b4f0c2")
+
+
+def paint_spinner(painter: QPainter, rect: QRect, angle: int, selected: bool = False,
+                  colors: tuple[str, str] = CHECK_SPINNER, width: float = 2.5) -> None:
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(QColor("white" if selected else "#3989c9"), 2.5))
+    painter.setPen(QPen(QColor(colors[selected]), width))
     painter.drawArc(rect, angle * 16, 260 * 16)
     painter.restore()
 
 
-def paint_queued(painter: QPainter, rect: QRect, selected: bool = False) -> None:
+def paint_spinner_badge(painter: QPainter, icon: QRect, angle: int) -> None:
+    """A recheck: a small spinner on a white disc at the status icon's bottom right, like its outdated clock."""
+    size = max(6, icon.width() // 2)
+    disc = QRect(icon.right() + 1 - size, icon.bottom() + 1 - size, size, size)
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(QColor("white" if selected else "#8a8a8a"), 1.5, Qt.PenStyle.DotLine))
-    painter.drawEllipse(rect)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor("white"))
+    painter.drawEllipse(disc.adjusted(-1, -1, 0, 0))
     painter.restore()
+    paint_spinner(painter, disc.adjusted(1, 1, -1, -1), angle, width=1.5)
 
 
 class ScanDelegate(QStyledItemDelegate):
@@ -80,7 +91,8 @@ class ScanDelegate(QStyledItemDelegate):
         if painter is None or option is None:
             return
         extras = index.data(SnapshotFileSystemModel.STATUS_EXTRA_ICONS_ROLE)
-        icons = [icon for icon in extras if isinstance(icon, QIcon)] if isinstance(extras, list) else []
+        # QIcons, and "load" for the load's spinner in the RAM badge's place.
+        icons = [icon for icon in extras if isinstance(icon, (QIcon, str))] if isinstance(extras, list) else []
         item = QStyleOptionViewItem(option)
         self.initStyleOption(item, index)
         text = item.text
@@ -90,14 +102,22 @@ class ScanDelegate(QStyledItemDelegate):
         if style:
             style.drawControl(QStyle.ControlElement.CE_ItemViewItem, item, painter, item.widget)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        rect = QRect(option.rect.left() + 7, option.rect.top() + (option.rect.height() - 10) // 2, 10, 10)
-        if index.data(SnapshotFileSystemModel.BUSY_ROLE):
-            paint_spinner(painter, rect, self.angle, selected)
-        elif index.data(SnapshotFileSystemModel.LOAD_QUEUED_ROLE):
-            paint_queued(painter, rect, selected)
+        if index.data(SnapshotFileSystemModel.ACTIVITY_ROLE) == "check":
+            icon_rect = (style.subElementRect(QStyle.SubElement.SE_ItemViewItemDecoration, item, item.widget)
+                         if style and index.data(Qt.ItemDataRole.DecorationRole) is not None else QRect())
+            if icon_rect.isValid():
+                # A recheck: the last status stays, with a small spinner on it.
+                paint_spinner_badge(painter, icon_rect, self.angle)
+            else:
+                # A first check: the spinner takes the status icon's place.
+                rect = QRect(option.rect.left() + 7, option.rect.top() + (option.rect.height() - 10) // 2, 10, 10)
+                paint_spinner(painter, rect, self.angle, selected)
         for i, icon in enumerate(icons):
-            icon.paint(painter, QRect(option.rect.left() + 24 + i * 18,
-                                     option.rect.top() + (option.rect.height() - 16) // 2, 16, 16))
+            rect = QRect(option.rect.left() + 24 + i * 18, option.rect.top() + (option.rect.height() - 16) // 2, 16, 16)
+            if isinstance(icon, QIcon):
+                icon.paint(painter, rect)
+            else:
+                paint_spinner(painter, rect.adjusted(3, 3, -3, -3), self.angle, selected, LOAD_SPINNER)
         if icons and text:
             left = option.rect.left() + 24 + len(icons) * 18 + 2
             rect = QRect(left, option.rect.top(), max(0, option.rect.right() - left), option.rect.height())

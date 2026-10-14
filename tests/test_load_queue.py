@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import time
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -13,7 +13,7 @@ from PyQt6.QtCore import QSettings, QTimer, Qt
 from PyQt6.QtGui import QAction, QCloseEvent
 from PyQt6.QtWidgets import QDialog, QMainWindow, QPushButton, QTabWidget, QToolButton
 
-from helab.resources.icons import IconsInitUtil
+from helab.resources.icons import IconsInitUtil, StatusIcons
 from helab.utils.constants import DEFAULT_LOAD_MODE, LOAD_MODE_LABELS, LOAD_MODE_SETTING, read_load_mode
 from helab.utils.constants import AUTO_SCAN_VISIBLE_SETTING, SIMULTANEOUS_IO_SETTING, read_disk_budget
 from helab.utils.folder_cache import FolderCache, get_folder_cache, store_options
@@ -625,8 +625,10 @@ def test_paused_selected_load_is_shown_in_summary_and_row(
     explorer._update_activity()
     assert explorer.loading_message == "456 of 1234 files checked (37%) · 456 loaded · Paused"
     assert "1,234 TXY found · 456 of 1234 files checked (37%) · 456 loaded · Paused" in explorer.folder_summary_label.text()
-    index = explorer.model.path_index(a)
-    assert explorer.model.data(index, explorer.model.LOAD_QUEUED_ROLE)
+    index = explorer.model.path_index(a, explorer.model.COLUMN_STATUS_ICON)
+    assert explorer.model.data(index, explorer.model.ACTIVITY_ROLE) == "paused"
+    assert StatusIcons.ICON_LOAD_PAUSED in cast(list[Any], explorer.model.data(
+        index, explorer.model.STATUS_EXTRA_ICONS_ROLE))
     service.resultReady.emit(request, {"kind": "resumed"})
     explorer._update_activity()
     assert "Paused" not in explorer.folder_summary_label.text()

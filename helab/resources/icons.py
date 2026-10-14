@@ -51,6 +51,24 @@ def _badged_icon(base: QIcon, badge: QIcon) -> QIcon:
     return QIcon(pixmap)
 
 
+def _load_wait_icon(paused: bool) -> QIcon:
+    """A waiting load's badge, drawn once: a dotted circle (queued) or a circle with pause bars (paused)."""
+    pixmap = QPixmap(128, 128)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    color = QColor("#2ea043" if paused else "#8a8a8a")
+    painter.setPen(QPen(color, 11, Qt.PenStyle.SolidLine if paused else Qt.PenStyle.DotLine))
+    painter.drawEllipse(QRect(18, 18, 92, 92))
+    if paused:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawRoundedRect(QRect(46, 42, 12, 44), 4, 4)
+        painter.drawRoundedRect(QRect(70, 42, 12, 44), 4, 4)
+    painter.end()
+    return QIcon(pixmap)
+
+
 class StatusIcons:
     """
     A class to manage and cache icons representing different statuses.
@@ -217,6 +235,9 @@ class StatusIcons:
     ICON_PACKAGE = QIcon()
     ICON_DATABASE_IMPORT = QIcon()
     ICON_CIRCLE = QIcon()
+    # A waiting load, shown in its row's activity badge (where the RAM badge goes).
+    ICON_LOAD_QUEUED = QIcon()
+    ICON_LOAD_PAUSED = QIcon()
 
     ICONS_EXTRA: Dict[str, QIcon] = {}
 
@@ -297,6 +318,8 @@ class StatusIcons:
         StatusIcons.ICON_PACKAGE = tablerIcon(OutlineIcon.PACKAGE, '#3989c9')
         StatusIcons.ICON_DATABASE_IMPORT = tablerIcon(OutlineIcon.DATABASE_IMPORT, '#3989c9')
         StatusIcons.ICON_CIRCLE = tablerIcon(OutlineIcon.CIRCLE, '#888888')
+        StatusIcons.ICON_LOAD_QUEUED = _load_wait_icon(paused=False)
+        StatusIcons.ICON_LOAD_PAUSED = _load_wait_icon(paused=True)
         StatusIcons.ICONS_EXTRA = {
             'database': StatusIcons.ICON_DATABASE,
             'report': StatusIcons.ICON_REPORT,
@@ -336,6 +359,8 @@ class StatusIcons:
             'progress': StatusIcons.ICON_CIRCLE,
             'progress_ram': StatusIcons.ICON_CIRCLE,
             'bug': StatusIcons.ICON_BUG,
+            'load_queued': StatusIcons.ICON_LOAD_QUEUED,
+            'load_paused': StatusIcons.ICON_LOAD_PAUSED,
         }
 
 class ToolIcons:
