@@ -140,11 +140,14 @@ nothing appeared.
   pauses, or, with none free, is stopped and requeued to restart from its RAM
   shots.
 - Display: "· Paused" on summary line 2; a row's status icon stays while it
-  is checked or loaded. A load shows in the RAM badge's place (green
-  spinner = load, grey dotted circle = queued, green circle-pause = paused;
-  icons drawn once). A listing/status check is a blue spinner: full size in
-  the status icon's place before the first status, then a small one at the
-  status icon's bottom right, like the outdated clock (2026-10-14),
+  is checked or loaded. Colour says the kind of work (blue = listing/status
+  check, green = load); a spinner runs, a still dotted ring waits in the queue
+  (after 0.5 s; shorter waits spin), circle-pause is paused. A load shows in
+  the RAM badge's place. A check is full size in the status icon's place
+  before the first status, then small at its bottom right, like the outdated
+  clock. Ring and pause icons are drawn once. Folder details' load bar is
+  green too (grey while paused, drawn by `LoadBar` on every platform);
+  the status bar's all-I/O spinner is grey (2026-10-14),
   queue tooltip "Paused while the current tab browses or loads", main status
   bar "N loads paused" / "N scans paused". Tony confirmed the app "works so
   much better now" (2026-10-08).

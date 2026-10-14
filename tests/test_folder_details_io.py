@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QApplication
 
 from helab.utils.folder_cache import get_folder_cache
 from helab.utils.io_service import IORequest, IOService
-from helab.views.FolderDetailsPanel import FolderDetailsPanel
+from helab.views.FolderDetailsPanel import FolderDetailsPanel, LoadBar
 
 
 def frozen(monkeypatch: pytest.MonkeyPatch) -> IOService:
@@ -142,3 +142,34 @@ def test_the_main_window_names_the_loads_tab_and_shows_its_folder(
         for widget in (other, explorer):
             widget.close_cleanup()
         service.shutdown()
+
+
+def test_load_bar_is_green_grey_while_paused_and_slides_while_busy(qtbot: QtBot) -> None:
+    from PyQt6.QtGui import QColor, QImage
+    from helab.views.FolderExplorer import LOAD_SPINNER
+    bar = LoadBar()
+    qtbot.addWidget(bar)
+    bar.resize(100, 8)
+    bar.setRange(0, 1000)
+    bar.setValue(500)
+    bar.show()
+
+    def color_at(x: int) -> str:
+        image: QImage = bar.grab().toImage()
+        return QColor(image.pixel(round(x * image.width() / 100), image.height() // 2)).name()
+    assert color_at(25) == LOAD_SPINNER[0]
+    bar.set_paused(True)
+    assert color_at(25) == LoadBar.PAUSED_COLOR
+    assert color_at(75) not in (LOAD_SPINNER[0], LoadBar.PAUSED_COLOR)  # The empty track.
+    # Busy until the first file is counted: a segment slides, driven by the bar's own timer.
+    bar.set_paused(False)
+    bar.setRange(0, 0)
+    bar.grab()
+    assert bar.busy() and bar._busy.isActive()
+    bar.setRange(0, 1000)
+    bar.grab()
+    assert not bar._busy.isActive()
+    bar.setRange(0, 0)
+    bar.grab()
+    bar.hide()
+    assert not bar._busy.isActive()

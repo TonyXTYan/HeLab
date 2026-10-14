@@ -51,18 +51,35 @@ def _badged_icon(base: QIcon, badge: QIcon) -> QIcon:
     return QIcon(pixmap)
 
 
-def _load_wait_icon(paused: bool) -> QIcon:
-    """A waiting load's badge, drawn once: a dotted circle (queued) or a circle with pause bars (paused)."""
+# Activity colours: a listing or status check is blue, a load green (spinners, queued rings, pause).
+CHECK_COLOR = "#3989c9"
+LOAD_COLOR = "#2ea043"
+
+
+def _wait_icon(color: str, paused: bool = False, badge: bool = False) -> QIcon:
+    """Waiting work, drawn once: a dotted ring in its kind's colour (queued), or a ring with pause
+    bars (paused). ``badge``: small, on a white disc, with fewer and bolder dots to read at 8 px."""
     pixmap = QPixmap(128, 128)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    color = QColor("#2ea043" if paused else "#8a8a8a")
-    painter.setPen(QPen(color, 11, Qt.PenStyle.SolidLine if paused else Qt.PenStyle.DotLine))
+    if badge:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("white"))
+        painter.drawEllipse(QRect(0, 0, 128, 128))
+        pen = QPen(QColor(color), 20, Qt.PenStyle.CustomDashLine)
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)  # Square caps would close the gaps.
+        pen.setDashPattern([1.0, 1.0])
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QRect(26, 26, 76, 76))
+        painter.end()
+        return QIcon(pixmap)
+    painter.setPen(QPen(QColor(color), 11, Qt.PenStyle.SolidLine if paused else Qt.PenStyle.DotLine))
     painter.drawEllipse(QRect(18, 18, 92, 92))
     if paused:
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(color)
+        painter.setBrush(QColor(color))
         painter.drawRoundedRect(QRect(46, 42, 12, 44), 4, 4)
         painter.drawRoundedRect(QRect(70, 42, 12, 44), 4, 4)
     painter.end()
@@ -238,6 +255,9 @@ class StatusIcons:
     # A waiting load, shown in its row's activity badge (where the RAM badge goes).
     ICON_LOAD_QUEUED = QIcon()
     ICON_LOAD_PAUSED = QIcon()
+    # A queued listing or status check: in the status icon's place, or as a badge on it.
+    ICON_CHECK_QUEUED = QIcon()
+    ICON_CHECK_QUEUED_BADGE = QIcon()
 
     ICONS_EXTRA: Dict[str, QIcon] = {}
 
@@ -318,8 +338,10 @@ class StatusIcons:
         StatusIcons.ICON_PACKAGE = tablerIcon(OutlineIcon.PACKAGE, '#3989c9')
         StatusIcons.ICON_DATABASE_IMPORT = tablerIcon(OutlineIcon.DATABASE_IMPORT, '#3989c9')
         StatusIcons.ICON_CIRCLE = tablerIcon(OutlineIcon.CIRCLE, '#888888')
-        StatusIcons.ICON_LOAD_QUEUED = _load_wait_icon(paused=False)
-        StatusIcons.ICON_LOAD_PAUSED = _load_wait_icon(paused=True)
+        StatusIcons.ICON_LOAD_QUEUED = _wait_icon(LOAD_COLOR)
+        StatusIcons.ICON_LOAD_PAUSED = _wait_icon(LOAD_COLOR, paused=True)
+        StatusIcons.ICON_CHECK_QUEUED = _wait_icon(CHECK_COLOR)
+        StatusIcons.ICON_CHECK_QUEUED_BADGE = _wait_icon(CHECK_COLOR, badge=True)
         StatusIcons.ICONS_EXTRA = {
             'database': StatusIcons.ICON_DATABASE,
             'report': StatusIcons.ICON_REPORT,
@@ -361,6 +383,8 @@ class StatusIcons:
             'bug': StatusIcons.ICON_BUG,
             'load_queued': StatusIcons.ICON_LOAD_QUEUED,
             'load_paused': StatusIcons.ICON_LOAD_PAUSED,
+            'check_queued': StatusIcons.ICON_CHECK_QUEUED,
+            'check_queued_badge': StatusIcons.ICON_CHECK_QUEUED_BADGE,
         }
 
 class ToolIcons:

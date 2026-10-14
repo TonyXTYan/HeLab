@@ -7,8 +7,8 @@ import time
 from datetime import datetime
 from typing import Any, Mapping
 
-from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QMouseEvent
+from PyQt6.QtCore import QEvent, QObject, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QHideEvent, QMouseEvent, QPainter, QPaintEvent, QPalette
 from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QProgressBar, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from helab.models.StatusReport import StatusReport
@@ -17,13 +17,76 @@ from helab.utils.io_service import IOService
 from helab.utils.time_format import clock as stopwatch, relative_age
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderExplorer import (
-    AMBER, AUTO_LOAD_OFF, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, LOAD_ORIGINS, REFUSED_TOOLTIP, FolderExplorer,
-    large_text,
+    AMBER, AUTO_LOAD_OFF, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, LOAD_ORIGINS, REFUSED_TOOLTIP,
+    LOAD_SPINNER, FolderExplorer, large_text,
 )
 
 
 # Marks the large-folder part of a state row, which is then amber.
 LARGE_MARK = "Update not loaded: "
+
+
+def paint_load_bar(painter: QPainter, rect: QRectF, text: QColor, fraction: float | None, paused: bool,
+                   phase: float = 0.0) -> None:
+    """A load bar: a track in the text colour, faint, and the load's green fill (grey while
+    paused); ``fraction`` None is busy, a segment ``phase`` (0–1) of the way across."""
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    radius = rect.height() / 2
+    track = QColor(text)
+    track.setAlpha(40)
+    painter.setBrush(track)
+    painter.drawRoundedRect(rect, radius, radius)
+    painter.setBrush(QColor(LoadBar.PAUSED_COLOR if paused else LOAD_SPINNER[0]))
+    if fraction is None:
+        width = rect.width() * 0.3
+        painter.setClipRect(rect)
+        painter.drawRoundedRect(QRectF(rect.left() - width + phase * (rect.width() + width), rect.top(),
+                                       width, rect.height()), radius, radius)
+    elif fraction > 0:
+        painter.drawRoundedRect(QRectF(rect.left(), rect.top(), max(rect.height(), rect.width() * fraction),
+                                       rect.height()), radius, radius)
+    painter.restore()
+
+
+class LoadBar(QProgressBar):
+    """The selected load's progress in the load spinner's green, grey while paused, drawn the same
+    on every platform (native macOS bars ignore the palette). Busy (range 0–0): a sliding segment."""
+    PAUSED_COLOR = "#9a9a9a"
+    BUSY_PERIOD = 1.2  # Seconds for the busy segment to cross the bar.
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.paused = False
+        self._busy = QTimer(self)
+        self._busy.setInterval(40)
+        self._busy.timeout.connect(self.update)
+
+    def set_paused(self, paused: bool) -> None:
+        if paused != self.paused:
+            self.paused = paused
+            self.update()
+
+    def busy(self) -> bool:
+        return self.minimum() == self.maximum()
+
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
+        if self.busy():
+            if not self._busy.isActive():
+                self._busy.start()
+            fraction = None
+        else:
+            self._busy.stop()
+            fraction = (self.value() - self.minimum()) / (self.maximum() - self.minimum())
+        painter = QPainter(self)
+        paint_load_bar(painter, QRectF(self.rect()), self.palette().color(QPalette.ColorRole.Text), fraction,
+                       self.paused, time.monotonic() % self.BUSY_PERIOD / self.BUSY_PERIOD)
+        painter.end()
+
+    def hideEvent(self, a0: QHideEvent | None) -> None:
+        self._busy.stop()
+        super().hideEvent(a0)
 
 
 class FolderDetailsPanel(QScrollArea):
@@ -58,7 +121,7 @@ class FolderDetailsPanel(QScrollArea):
         self.names: dict[str, QLabel] = {}
         self.values: dict[str, ElidedLabel] = {}
         # The selected load's progress, under its state.
-        self.progress = QProgressBar()
+        self.progress = LoadBar()
         self.progress.setTextVisible(False)
         self.progress.setFixedHeight(min(8, self.fontMetrics().height()))
         self.progress.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -231,6 +294,7 @@ class FolderDetailsPanel(QScrollArea):
             # Busy until the first file is counted; a paused bar stays still.
             self.progress.setRange(0, 1000 if explorer.load_paused else 0)
             self.progress.setValue(0)
+        self.progress.set_paused(explorer.load_paused)
         self.progress.setVisible(not explorer.load_queued)
         self.progress.setToolTip(explorer.loading_message)
         timing = explorer.loading_timing_message

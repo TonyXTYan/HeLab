@@ -98,8 +98,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
     # The badges after the status icon: QIcons, and "load" where the delegate draws the load's spinner.
     STATUS_EXTRA_ICONS_ROLE = int(Qt.ItemDataRole.UserRole) + 1
     # The row's activity: "load", "queued" or "paused" (its load), shown beside the status icon
-    # in the RAM badge's place; "check" (its listing or status check), a small spinner on the
-    # status icon, or a full one in its place before the first status; or "".
+    # in the RAM badge's place; "check" or "check_queued" (its listing or status check), a small
+    # spinner or dotted ring on the status icon, or a full one in its place before the first
+    # status; or "".
     ACTIVITY_ROLE = int(Qt.ItemDataRole.UserRole) + 10
     # Seconds a load must wait before its row shows the queued indicator instead of a spinner.
     QUEUED_INDICATOR_DELAY = 0.5
@@ -316,8 +317,11 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         # shows as loading: the queued indicator would flash between two spinners.
         briefly_queued = load_state == "queued" and (
             time.monotonic() - self.load_state_since.get(node.path, 0.0) < self.QUEUED_INDICATOR_DELAY)
+        # Likewise a listing or status check queued for a moment spins rather than flash its ring.
+        check_queued = node.state == "queued" and (
+            time.time() - (node.state_since or 0.0) >= self.QUEUED_INDICATOR_DELAY)
         activity = ("load" if load_state == "loading" or briefly_queued else load_state
-                    or ("check" if node.state in ("queued", "running") else ""))
+                    or ("check_queued" if check_queued else "check" if node.state in ("queued", "running") else ""))
         if role == self.ACTIVITY_ROLE:
             return activity
         if role == int(Qt.ItemDataRole.ToolTipRole):

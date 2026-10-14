@@ -40,7 +40,8 @@ from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HoverMenuToolButton import HoverMenuToolButton
 from helab.views.FolderExplorer import (
-    AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP, FolderExplorer, large_text, paint_spinner,
+    AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP, IO_SPINNER, FolderExplorer, large_text,
+    paint_spinner,
 )
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
@@ -226,7 +227,7 @@ class HelabMainWindow(QMainWindow):
         pixmap.setDevicePixelRatio(ratio)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
-        paint_spinner(painter, QRect(3, 3, 10, 10), self.status_bar_spinner_angle)
+        paint_spinner(painter, QRect(3, 3, 10, 10), self.status_bar_spinner_angle, colors=IO_SPINNER)
         painter.end()
         return pixmap
 

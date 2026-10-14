@@ -105,6 +105,11 @@ def test_status_icon_stays_while_the_folder_is_checked_or_loaded(
     deliver(service, model, path, {"kind": "status", "status": "fixable", "count": 1, "raw": [1, 2], "txy": [1]})
     fixable = StatusIcons.ICONS_STATUS["fixable"]
     assert row() == (fixable, "check", [])  # A recheck: a small spinner on the status icon.
+    # Queued for more than a moment: a still dotted ring instead (painted by the delegate).
+    node = model.nodes[path]
+    assert node.state == "queued" and node.state_since is not None
+    node.state_since -= model.QUEUED_INDICATOR_DELAY
+    assert row() == (fixable, "check_queued", [])
     model.nodes[path].state = "idle"
     monkeypatch.setattr(model.cache, "current_dataset", lambda p: object())
     model.set_load_state(path, "loading")

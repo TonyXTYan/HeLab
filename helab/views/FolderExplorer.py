@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (QApplication, QMessageBox, QHBoxLayout, QLineEdit, 
                              QStyle, QToolButton, QVBoxLayout, QWidget, QSizePolicy)
 from helab.models.SnapshotFileSystemModel import FolderNode, SnapshotFileSystemModel
 from helab.models.StatusReport import StatusReport
+from helab.resources.icons import CHECK_COLOR, LOAD_COLOR, StatusIcons
 from helab.utils.io_service import IORequest
 from helab.utils import large_folder
 from helab.utils.folder_cache import Dataset, store_options
@@ -58,8 +59,10 @@ def large_text(estimate: int, refused: bool) -> str:
 
 
 # Spinner colours: a listing or status check is blue, a load green; lighter on a selected row.
-CHECK_SPINNER = ("#3989c9", "white")
-LOAD_SPINNER = ("#2ea043", "#b4f0c2")
+# The status bar's spinner, for all I/O, is grey.
+CHECK_SPINNER = (CHECK_COLOR, "white")
+LOAD_SPINNER = (LOAD_COLOR, "#b4f0c2")
+IO_SPINNER = ("#8a8a8a", "white")
 
 
 def paint_spinner(painter: QPainter, rect: QRect, angle: int, selected: bool = False,
@@ -71,10 +74,29 @@ def paint_spinner(painter: QPainter, rect: QRect, angle: int, selected: bool = F
     painter.restore()
 
 
-def paint_spinner_badge(painter: QPainter, icon: QRect, angle: int) -> None:
-    """A recheck: a small spinner on a white disc at the status icon's bottom right, like its outdated clock."""
+def paint_check(painter: QPainter, cell: QRect, angle: int, selected: bool = False, queued: bool = False) -> None:
+    """A first check, in the status icon's place: a spinner, or a still dotted ring while queued."""
+    if not queued:
+        paint_spinner(painter, QRect(cell.left() + 7, cell.top() + (cell.height() - 10) // 2, 10, 10), angle, selected)
+    elif selected:
+        # The blue ring would vanish on the highlight.
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor("white"), 1.5, Qt.PenStyle.DotLine))
+        painter.drawEllipse(QRect(cell.left() + 7, cell.top() + (cell.height() - 10) // 2, 10, 10))
+        painter.restore()
+    else:
+        StatusIcons.ICON_CHECK_QUEUED.paint(painter, QRect(cell.left() + 4, cell.top() + (cell.height() - 16) // 2, 16, 16))
+
+
+def paint_check_badge(painter: QPainter, icon: QRect, angle: int, queued: bool = False) -> None:
+    """A recheck, at the status icon's bottom right like its outdated clock: a small spinner on a
+    white disc, or a still dotted ring while queued."""
     size = max(6, icon.width() // 2)
     disc = QRect(icon.right() + 1 - size, icon.bottom() + 1 - size, size, size)
+    if queued:
+        StatusIcons.ICON_CHECK_QUEUED_BADGE.paint(painter, disc.adjusted(-1, -1, 0, 0))
+        return
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
@@ -102,16 +124,17 @@ class ScanDelegate(QStyledItemDelegate):
         if style:
             style.drawControl(QStyle.ControlElement.CE_ItemViewItem, item, painter, item.widget)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        if index.data(SnapshotFileSystemModel.ACTIVITY_ROLE) == "check":
+        activity = index.data(SnapshotFileSystemModel.ACTIVITY_ROLE)
+        if activity in ("check", "check_queued"):
+            queued = activity == "check_queued"
             icon_rect = (style.subElementRect(QStyle.SubElement.SE_ItemViewItemDecoration, item, item.widget)
                          if style and index.data(Qt.ItemDataRole.DecorationRole) is not None else QRect())
             if icon_rect.isValid():
-                # A recheck: the last status stays, with a small spinner on it.
-                paint_spinner_badge(painter, icon_rect, self.angle)
+                # A recheck: the last status stays, with a small spinner or ring on it.
+                paint_check_badge(painter, icon_rect, self.angle, queued)
             else:
-                # A first check: the spinner takes the status icon's place.
-                rect = QRect(option.rect.left() + 7, option.rect.top() + (option.rect.height() - 10) // 2, 10, 10)
-                paint_spinner(painter, rect, self.angle, selected)
+                # A first check takes the status icon's place.
+                paint_check(painter, option.rect, self.angle, selected, queued)
         for i, icon in enumerate(icons):
             rect = QRect(option.rect.left() + 24 + i * 18, option.rect.top() + (option.rect.height() - 16) // 2, 16, 16)
             if isinstance(icon, QIcon):
