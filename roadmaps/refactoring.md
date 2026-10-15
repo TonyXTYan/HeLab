@@ -1,6 +1,6 @@
 # Refactoring for independent feature work
 
-Added: 2026-10-13. Revised: 2026-10-14. Draft; nothing implemented.
+Added: 2026-10-13. Revised: 2026-10-15. Draft; nothing implemented.
 Priority and completion: [overview](_readme.md).
 Detailed design, code survey and proposed validation:
 [2026-10-14 session notes](../.ai/sessions/2026-10-14-codex-planning-for-future/refactoring.md).
@@ -42,23 +42,33 @@ These are proposed seams, not frozen APIs. The
 [session notes](../.ai/sessions/2026-10-14-codex-planning-for-future/refactoring.md#architectural-target)
 describe candidate ownership and the current coupling.
 
-## Milestones
+## Milestones (feature-driven, decided 2026-10-15)
 
-1. Map representative feature change paths, shared state, signals, imports,
-   tests and packaged entry points. Identify work that is already independent.
-2. Define the smallest typed contracts needed by real consumers, characterize
-   current behaviour and test both sides of each boundary.
-3. Extract responsibilities in reviewable slices around those contracts.
-   Sequence source I/O, cache, browser and UI changes by dependency rather
-   than module size. Independent feature work can continue where scopes do
-   not overlap.
-4. With Tony's approval, pilot one refactor slice alongside one independent
-   feature in isolated worktrees. Review and test the combined result, then
-   revise boundaries from the conflicts and integration effort observed.
+Refactor **for features**, not from a complete map of the code first: each slice
+is chosen because a planned feature, or two parallel pieces of work, would
+otherwise edit the same code.
+
+1. **Dataset view first.** Add the read-only dataset view (input identity,
+   shot map, provenance, read-only arrays) as the seam between browser/cache
+   and analysis, while building the first analysis (the
+   [3D scatter](analysis-workflow.md#first-analysis-3d-scatter-decided-2026-10-15)).
+   It adds code beside the browser rather than moving it.
+2. **Split where work collides.** When two planned tasks need the same state
+   (`FolderCache`, `FolderExplorer`, `HelabMainWindow` wiring), extract the
+   smallest boundary that lets them proceed separately: characterize the
+   change path first (including calls through attributes and test patches),
+   then move ownership behind a typed contract.
+3. **Pilot.** Run two independent tasks in parallel with the
+   [agent workflow](agent-workflow.md),
+   then revise boundaries and the workflow from what conflicted.
 
 The [session notes](../.ai/sessions/2026-10-14-codex-planning-for-future/refactoring.md#candidate-implementation-slices)
-give candidate code slices and the
-[supervised agent workflow](../.ai/sessions/2026-10-14-codex-planning-for-future/refactoring.md#human-supervised-parallel-work).
+list candidate slices to draw from when a collision calls for one.
+
+## Parallel work
+
+Roles, branch and approval rules, Maestri floors, cloud agents and settings
+isolation: [parallel agent workflow](agent-workflow.md).
 
 ## Acceptance
 
@@ -76,8 +86,7 @@ give candidate code slices and the
 
 - Whether to start after `v0.0.5a1` merges, as early v0.0.6 work, or sooner
   for an isolated preparatory slice.
-- Exact contracts, package names and ownership after the change-path map.
-- Which independent feature to use in the pilot. The first daily-use lab
-  analysis can be selected later.
-- Where to track active worktree ownership without duplicating this
-  roadmap's priority and completion list.
+- Exact contracts and package names, decided per slice.
+- Which two tasks to use in the pilot (proposed: build size and small TXY
+  test fixtures, which touch neither `FolderCache` nor UI wiring).
+- Workflow and isolation questions: [agent workflow](agent-workflow.md).

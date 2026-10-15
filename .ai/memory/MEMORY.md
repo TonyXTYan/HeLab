@@ -2,7 +2,7 @@
 
 See `.ai/coding-workspace.md` for what belongs here vs `.ai/sessions/`.
 
-- [Ask before commit](feedback_ask_before_commit.md) — never `git commit` without asking first, even after verifying a fix works
+- [Ask before commit](feedback_ask_before_commit.md) — never `git commit` in Tony's checkout/branches without asking; agents on their own new branch commit freely and push once when done
 - [Maestri Chat and Codex caveats](results/maestri-chat-and-codex.md) — reply through `maestri say`; avoid heredocs for auto-approved commands; verify terminal identity live; Maestri color threads and Codex chats have separate histories
 - [Lab PC QtWebEngine black render](results/lab-pc-qtwebengine-black-render.md) — the Lab Side PC is Sandy Bridge/no-D3D11, so Qt plot panes never paint; export Plotly HTML to a browser instead
 - [Lab Side PC caveats](results/lab-side-pc-caveats.md) — HeLab runs from a uv Python 3.13 venv (uv for all users), bare py runs it; bare python is 2.7; conda off PATH, git on it; old Anaconda3 removed; maestri --raw mangles `\r`/`\v` paths, so send base64 Python

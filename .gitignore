@@ -113,3 +113,4 @@ legacy/tdc_launcher/*
 *.lnk
 .ai/session-export-*/
 .codegraph/
+.maestri/

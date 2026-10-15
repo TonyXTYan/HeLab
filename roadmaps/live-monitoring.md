@@ -31,42 +31,53 @@ TXY is write-once after completion. Interrupted original writes are the relevant
 recovery case; this feature does not require general tracking of arbitrary
 edits to settled files.
 
-## Cache writes while monitoring (decided 2026-10-13)
+## Dataset-cache writes while monitoring
 
-Tony's decision: new shots never clear the cache, and monitoring doesn't write
-the disk cache for each arriving shot.
+This section is the one home for how Live writes the **TXY dataset cache**.
+Analysis results during Live follow [result caching](result-caching.md)
+(rules 7 and 8), a separate store.
 
+Decided by Tony 2026-10-13; periodic saves decided 2026-10-15:
+
+- New shots never clear the cache, and monitoring doesn't write the disk cache
+  for each arriving shot.
 - Each check keeps every unchanged shot from RAM, reads only new settled files
   and merges them, as loads do today (`memory_shots`, load source `updated`).
-- New shots stay in RAM only while Live is on. Today every load that read new
-  files recompresses and rewrites the folder's **whole** dataset file in the
-  background; for each shot of a large folder, that would mean rewriting
-  ~1 GB.
-- The disk cache is written once, when monitoring of that folder stops: a
+- New shots stay in RAM while Live is on. Every load that read new files
+  recompresses and rewrites the folder's **whole** dataset file; doing that per
+  shot of a large folder would mean rewriting ~1 GB each time.
+- **Auto-save every N shots** (configurable; Settings → Cache, default to be
+  chosen): once N unsaved shots have arrived, the folder's dataset is saved in
+  the background, so a crash or quit re-reads at most N shots. Saves never
+  overlap: shots arriving during a save count towards the next one.
+- The disk cache is also written when monitoring of that folder stops: a
   different folder is selected, Live is turned off, or the tab closes.
 - Quitting HeLab first saves the unsaved shots, then shuts down. The window
   says what it is saving and offers **Quit now**, which skips the save; a save
   with no progress for the usual timeout stops by itself. Nothing is lost
   either way: the source files remain, so the next check reads only the shots
-  that weren't saved. A crash is the same.
-- To decide while designing: whether a long session also saves periodically,
-  or when the unsaved part grows large, so a later check doesn't re-read many
-  shots.
+  that weren't saved. A crash is the same. The same quit save applies to an
+  ordinary finished load's background save (`disk_cache_pending`), today
+  cancelled at quit ([known issue](_readme.md#known-issues)).
+- Auto-saves obey the disk budget, the folder's Don't cache flag and the
+  pending-save questions like any load's save.
 
-Quick analyses consume the Live RAM view and keep intermediate results in RAM.
-HeLab tracks loaded TXY shot identities and each script reports which shots it
-has analysed; the runner sends missing shots through the script's Live-update
-method. Scripts separately declare ordinary one-off caching, Live updates and
-Live cache updates. Only scripts with all three can offer **Auto-update cache**
-to advance an older cached result during Live. Cache writes must be coalesced
-and bounded, not one large write per shot; save the latest completed revision
-at Live stop when enabled. A Live script without Live-cache support updates in
-RAM and may save a final one-off result only if ordinary caching is supported
-and enabled. This result policy is separate from the TXY dataset-cache
-write. The first local deployment can watch settled raw files, convert to TXY,
-and run QC and fast analyses. Remote notification/push follows the remote
-connection stage. See the
+## Acquisition machine
+
+The first local deployment can watch settled raw files, convert them to TXY,
+and run QC and fast analyses on the machine that acquires the data. Remote
+notification/push follows the remote connection stage. See the
 [working design](../.ai/sessions/2026-10-14-codex-planning-for-future/remote-headless.md#live-acquisition-machine-proposed-near-term-scenario).
+
+## Stages
+
+| Stage | Delivers | Needs |
+|---|---|---|
+| L1 | Live on/off for the selected folder: new shots found by isolated I/O, settled shots merged into RAM, cache written at stop and quit (with Quit now) | Existing incremental loader |
+| L2 | Auto-save every N shots, with its setting | L1 |
+| L3 | Chosen analyses follow Live at a controlled cadence; unpinned views show revisions, pinned keep theirs | L1, [result caching](result-caching.md#stages) R3 |
+| L4 | Acquisition machine: raw → TXY conversion and QC as shots settle | L3, [QC](quality-control-and-repair.md) |
+| L5 | Remote Live revision notifications | [Network extension](network-runners-and-web.md), result caching R5 |
 
 ## Dependencies and acceptance
 
@@ -74,9 +85,8 @@ Depends on the [analysis workflow](analysis-workflow.md) for managed reruns and
 result identity, plus the existing incremental loader and settling policy.
 Sharing completed Live result revisions with other machines belongs to the
 [network extension](network-runners-and-web.md#cross-machine-result-sharing).
-The proposed [runner result policy](analysis-job-runner.md#result-retention-and-caching)
-keeps intermediate Live analysis results in RAM by default; it is separate from
-the TXY dataset cache write policy above.
+Live analysis results follow [result caching](result-caching.md), separate
+from the dataset-cache writes above.
 
 New settled shots enter once, while incomplete shots remain excluded and
 reported. Expensive analysis never blocks navigation. Repeated arrivals do not

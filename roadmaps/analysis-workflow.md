@@ -47,12 +47,30 @@ Parameter saving and result caching are separate settings. Every saved result re
 exact inputs, parameters and script identity. Detailed interaction rules and
 open cases: [planning notes](../.ai/sessions/2026-10-14-codex-planning-for-future/analysis-behaviour.md).
 
+### First analysis: 3D scatter (decided 2026-10-15)
+
+Tony's choice: an interactive **3D scatter** of the loaded T/X/Y events, built
+on Plotly and served by the existing Dash server (`helab/utils/dash_server.py`)
+so most interaction (rotate, zoom, hover, select) happens in Plotly itself. Its
+only default setting at first is **auto-crop to regions of interest**; more
+parameters come later. It builds on the current `plotly_3d_sactter.py` panel
+action and is the real consumer for the dataset view, the job contract and
+[result caching](result-caching.md) stage R1.
+
+- Show it in a browser tab as well as the plot area: lab PCs can't paint
+  QtWebEngine ([memory](../.ai/memory/results/lab-pc-qtwebengine-black-render.md)).
+- WebGL scatter can't draw every event of a large folder. Any display sampling
+  is labelled on the figure and never becomes the analysed data (see Export).
+- To decide while designing: how auto-crop finds the regions of interest (for
+  example density or percentile bounds on T, X and Y), whether the crop is
+  shown and adjustable, and whether crop limits count as parameters saved with
+  the result.
+
 ### Standard analyses
 
-Start with per-shot event counts, T/X/Y distributions and explicit shot selection
-or exclusion. Choose the first real analysis from Tony's daily lab work. Specify
-units, bins, normalization, aggregation and treatment of unreadable/unsettled
-shots before claiming a scientific result is correct.
+Then per-shot event counts, T/X/Y distributions and explicit shot selection or
+exclusion. Specify units, bins, normalization, aggregation and treatment of
+unreadable/unsettled shots before claiming a scientific result is correct.
 
 ### Export
 
@@ -77,7 +95,7 @@ the settings used and agree with the displayed numerical results.
 
 ## Open decisions
 
-- First daily-use analysis and its scientific definitions.
+- Auto-crop rule for the 3D scatter (above); the next analyses after it.
 - Script context, parameter and result interfaces; compatibility with existing scripts.
 - Execution isolation, cancellation semantics and memory limits.
 - Initial numerical/figure export formats and lab-PC plotting fallback.

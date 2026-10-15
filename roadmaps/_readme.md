@@ -70,10 +70,14 @@ How to use it:
   log their reason at DEBUG; if it recurs, run
   `python -m helab 2>&1 | tee .ai/temp/helab-run.log` (2026-10-13).
 - [ ] Folders with over 100,000 entries record a scan failure.
+- [ ] The temp folder (`DIR_TEMPS`, Settings → General) is created and can be
+  changed, but nothing uses it: helpers' private folders go to the system temp
+  dir (`tempfile.mkdtemp` in `IOService`). Remove the setting, or move helper
+  folders into it (2026-10-15).
 - [ ] Quitting cancels cache writes still running in the background (a finished
   load's `disk_cache_pending` save), so the next check redoes them. Quit should
   finish them first, with Quit now to skip, as planned for
-  [live monitoring](live-monitoring.md#cache-writes-while-monitoring-decided-2026-10-13) (2026-10-13).
+  [live monitoring](live-monitoring.md#dataset-cache-writes-while-monitoring) (2026-10-13).
 - [ ] With the default of one background lane, folder details and status checks
   (including manual ones) wait for the selected load. As planned; revisit if
   it feels slow.
@@ -86,8 +90,14 @@ How to use it:
 
 - [ ] Decouple browser/cache, dataset, analysis and UI responsibilities so
   agents can develop separate features in supervised, isolated worktrees
-  without changing current behaviour. Smaller modules are a secondary benefit
-  ([plan](refactoring.md)) (2026-10-13; revised 2026-10-14).
+  without changing current behaviour. Feature-driven: the dataset view first,
+  then splits where work collides ([plan](refactoring.md)) (2026-10-13;
+  revised 2026-10-15).
+- [ ] Parallel agent workflow on Maestri floors (cloud agents kept open): floor
+  setup script, then a hard-coded settings-defaults table (also for Restore
+  default and tooltips in the release) and per-checkout share/isolated
+  profiles, with `HELAB_SETTINGS_OVERRIDE`
+  ([plan](agent-workflow.md)) (2026-10-15).
 
 - [ ] Apply other tabs' finished status checks during Refresh without source
   I/O ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#cross-tab-status-results)) (2026-10-08).
@@ -99,10 +109,17 @@ How to use it:
   (from the old README list).
 - [ ] Shared analysis job runner for GUI/agents: language adapters, ownership,
   results, validated reuse and optional versioned script bundles; plain files
-  remain usable ([plan](analysis-job-runner.md)) (2026-10-13; revised 2026-10-14).
+  remain usable. Local runner first, open to remote later
+  ([plan](analysis-job-runner.md)) (2026-10-13; revised 2026-10-15).
+- [ ] First analysis: interactive 3D scatter (Plotly via the Dash server),
+  default auto-crop to regions of interest
+  ([plan](analysis-workflow.md#first-analysis-3d-scatter-decided-2026-10-15)) (2026-10-15).
 - [ ] Complete the dataset → parameters → background script → results workflow,
   with folder-following views, pinning, progress, cancellation and errors
   ([plan](analysis-workflow.md)) (2026-10-08; revised 2026-10-14).
+- [ ] Analysis result caching: RAM results (R1), then disk-cached one-off
+  results with exact-match reuse (R2); Live stages follow
+  ([plan](result-caching.md)) (2026-10-15).
 - [ ] Standard analyses: per-shot counts, T/X/Y distributions and shot selection
   ([plan](analysis-workflow.md#standard-analyses)) (2026-10-08).
 - [ ] Export results and figures with their data source and analysis settings
@@ -116,13 +133,13 @@ How to use it:
 ## Medium term: repeated lab work
 
 - [ ] Live monitoring: load new settled shots and update chosen analyses
-  locally first ([plan](live-monitoring.md)) (2026-10-08; staged 2026-10-14).
-  New shots stay in RAM and the disk cache is written once when monitoring
-  stops or HeLab quits
-  ([decided](live-monitoring.md#cache-writes-while-monitoring-decided-2026-10-13)) (2026-10-13).
-- [ ] QC script catalogue and safe derived-file repairs; migrate the current
-  status scan as its first provider ([plan](quality-control-and-repair.md))
-  (2026-10-14).
+  locally first, in stages L1–L5 ([plan](live-monitoring.md#stages)) (2026-10-08;
+  staged 2026-10-15). New shots stay in RAM; the disk cache is written every
+  N shots (configurable) and when monitoring stops or HeLab quits
+  ([decided](live-monitoring.md#dataset-cache-writes-while-monitoring)) (2026-10-13).
+- [ ] QC script catalogue and safe derived-file repairs, kept in HeLab's cache
+  folder; migrate the current status scan as its first provider
+  ([plan](quality-control-and-repair.md)) (2026-10-14; revised 2026-10-15).
 - [ ] Save analysis presets and reopen analysis workspaces
   ([plan](presets-and-workspaces.md)) (2026-10-08).
 - [ ] Cache-only browsing: browse and analyse cached data while the source is

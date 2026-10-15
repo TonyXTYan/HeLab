@@ -16,7 +16,13 @@ rendering memory-only.
 
 A QC provider may offer a user-initiated **Try auto fix** action bound to a
 compatible repair script. Repairs create a new derived file, never modify raw
-`d*.txt` or an existing `d_txy*.txt`, and record provenance. Analyses use the
+`d*.txt` or an existing `d_txy*.txt`, and record provenance. **Repaired files
+live in HeLab's cache folder, not the source folder** (Tony, 2026-10-15), so
+HeLab keeps never writing to source folders and other lab tools, the TXY
+matcher and the missing-shot checks never see them. They are their own kind
+in the store: never removed by budgets or Make room, cleared only on their own
+after asking (they may be expensive or impossible to recreate), and moved with
+the cache folder. Analyses use the
 repaired variant by default for that shot while retaining access to the
 original. A future HeLab-run TDC converter is a separate file-generation
 capability.
@@ -32,6 +38,6 @@ reruns against the repaired variant. Their result payloads remain immutable and
 viewable.
 
 Define QC severity/freshness aggregation, count semantics, repair naming and
-collision rules, selection among several repaired variants, and how the
-existing TXY filename matcher recognizes derived files without double-counting
-shots. The session note tracks these decisions in detail.
+collision rules, selection among several repaired variants, and how a repaired
+variant in the cache folder is tied to its source shot (path, shot number and
+the original's fingerprint), so a replaced original invalidates its repair. The session note tracks these decisions in detail.

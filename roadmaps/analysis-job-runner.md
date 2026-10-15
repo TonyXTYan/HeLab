@@ -2,7 +2,11 @@
 
 Horizon: foundation for the near-term analysis workflow, then shared GUI/agent
 operation and batch use. Added: 2026-10-13. Direction requested by Tony;
-protocol, storage and lifecycle details are draft.
+protocol, storage and lifecycle details are draft. **Local runner first**
+(Tony, 2026-10-15): build stages 1–2 for the 3D scatter, and keep the design
+open to remote coordination later (versioned protocol, job IDs not PIDs,
+results with origin identity) without building the service, ownership or
+override machinery before a second client needs it.
 Priority and completion: [overview](_readme.md).
 
 ## Purpose
@@ -126,44 +130,11 @@ rerun gets a new job ID even when the inputs match.
 
 ## Result retention and caching
 
-Keep analysis results separate from the TXY dataset cache. Each analysis
-declares capabilities and a default result policy; user defaults and
-per-folder/script settings determine the effective policy: **RAM only**,
-**cache on disk**, or an explicit **export/keep** action for a durable user file.
-Persist user policy overrides in local per-user settings, never in a tracked
-project configuration; the [network plan](network-runners-and-web.md#local-only-settings-and-portable-records)
-defines how machine-specific paths and endpoints stay local.
-
-The job record always says which policy took effect and whether its result is
-still available. RAM-only results can be reused by attached clients while held
-but disappear after eviction or service exit; saved results remain available
-after restart, subject to input/version revalidation. A failed disk save must
-be reported while keeping the completed result available in RAM if possible.
-
-Quick and Live intermediate results stay in bounded RAM. Scripts declare three
-distinct capabilities: ordinary result caching for one-off runs, Live updates,
-and Live cache updates that advance an existing cached result through the Live
-protocol. Live cache updates require the other two capabilities; Live support
-alone does not imply them. Show **Auto-update cache** only for Live-cache-capable
-scripts. Coalesce/persist completed revisions under a bounded write policy,
-never rewrite a large artifact for every arriving shot; flush the latest at
-Live stop when enabled. A Live script without this capability can still update
-in RAM and, if ordinary caching is supported and enabled, save a final one-off
-result separately. An expensive
-fixed-folder analysis may default to disk caching, subject to the
-effective user/folder/script policy. Runtime alone must not silently decide
-retention. Bound RAM history and disk usage, keep results visible while in use,
-and define user-controlled clearing and retention before enabling automatic
-deletion. Cache clearing must not remove explicit
-exports. A disk-cached result is reused only when the dataset snapshot,
-exact script version or hash, settings and environment still match.
-
-For incremental Live work, the runner knows the TXY shots and variants currently
-loaded in RAM. Each script reports the exact shot identities it has analysed;
-the runner compares that coverage with the loaded set and supplies missing
-shots through the script's declared update method. Acknowledged coverage and
-result revision stay tied to parameters and script identity, so reconnects,
-repaired variants and duplicate notifications cannot silently reuse old work.
+Retention policies (RAM only, cache on disk, export/keep), script capabilities,
+reuse rules and Live result updates are defined once in
+[analysis result caching](result-caching.md). The runner enforces them: it
+records the policy that took effect, validates capability declarations, computes
+the reuse key above and supplies missing shots to Live scripts.
 
 ## Staged delivery and acceptance
 
@@ -201,8 +172,7 @@ in the separate [network extension](network-runners-and-web.md).
 - Runner process lifetime, owner-exit policy, takeover, and whether GUI and CLI
   use the same service from the first milestone.
 - Local IPC transport, result/artifact location and retention policy.
-- Result-cache budget, user-controlled clearing, which script instances supply
-  the latest Live results, and the initial default policy for each analysis type.
+- Result-cache questions: see [result caching](result-caching.md#open-decisions).
 - Cancellation guarantees for external runtimes, including their child processes.
 - Human authorization for manual override, owner-exit control, and what happens
   to attached readers when an operator pauses or cancels a shared job.

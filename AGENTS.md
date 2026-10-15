@@ -7,7 +7,7 @@ Two repos exist: this one (`TonyXTYan/HeLab`) is the development branch; `HeBECA
 ## Working conventions
 
 - Address the user as "🎓Tony" in conversation.
-- Always ask Tony before running `git commit`. Staging, diffing and reviewing are fine without asking.
+- Always ask Tony before running `git commit` in his checkout or on his branches. Staging, diffing and reviewing are fine without asking. An agent working in its own worktree, Maestri floor or cloud environment, on a new branch started from the commit Tony or the coordinator chose, may commit there freely and pushes that branch once, when its work is done (to save CI runs); merging into Tony's branches, landing a floor and opening a PR still need his approval ([agent workflow](roadmaps/agent-workflow.md)).
 - Every Git commit must include both a concise subject and a meaningful description in the message body, separated by a blank line. The description should explain what changed and why, and include relevant validation.
 - Whenever possible (a task finished, a natural pause, or work that touches the same area), offer to take on open items from `roadmaps/_readme.md` that fit, saying which and why. Offer only; start one after Tony agrees.
 - CodeGraph (`codegraph_*` tools, `.cursor/rules/codegraph.mdc`) is reliable for definitions, signatures and source, but its callers, callees, trace and impact results miss many calls made through attributes (e.g. `self.model.cache.submit(...)` reaching `FolderCache.submit`). Confirm them with grep before relying on them.
@@ -17,6 +17,7 @@ Two repos exist: this one (`TonyXTYan/HeLab`) is the development branch; `HeBECA
 - `.ai/coding-workspace.md` — shared AI-workspace conventions for Tony's repos (what goes in memory vs sessions, working rules).
 - `roadmaps/_readme.md` — the product overview, single priority/completion list and feature-plan index. Add new product items there, not to README or memory.
 - `roadmaps/` — ongoing feature documents: purpose, scope, dependencies, acceptance criteria and open decisions. Link each from `_readme.md`; do not duplicate its priority/completion checklist. Session-specific investigations and validation evidence stay in `.ai/sessions/`.
+- `.ai/maestri-setup.md` — human guide to setting up Maestri (coordinator, floors, setup hook, landing) for the [agent workflow](roadmaps/agent-workflow.md).
 - `.ai/MANUAL_TODO.md` — ongoing manual-action list, including native UI checks, real-volume testing and release validation. Detailed results and evidence belong in `.ai/sessions/`, linked from the item.
 - `.ai/memory/MEMORY.md` — index of project memory. Read it first; load individual files only when relevant. Settled design decisions (with the reasons and Tony's chosen wording/icons) live in `.ai/memory/results/`; this file keeps only the codebase rules.
 - `.ai/sessions/YYYY-MM-DD-<tool>-<title>/` — per-session notes. `.ai/session-export-codex/` and `.ai/session-export-claude/` — raw exported transcripts. Search these for history; don't auto-load them.
