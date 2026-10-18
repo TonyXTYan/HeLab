@@ -373,6 +373,7 @@ class FolderExplorer(QWidget):
         self.model.cache.folderPrefsFailed.connect(self._folder_prefs_failed)
         self.model.cache.mountWarningChanged.connect(self._mount_warning_changed)
         self.model.cache.volumesVerified.connect(self._volumes_verified)
+        self.model.cache.rootDecided.connect(self._root_decided)
         self.model.activityChanged.connect(self._update_activity)
         self.animation = QTimer(self)
         self.animation.timeout.connect(self._animate)
@@ -1969,6 +1970,15 @@ class FolderExplorer(QWidget):
         return self.model.cache.submit(self.model.owner, self.model.generation, target, "root_create",
                                        {"cache": store_options(), "clicked": path}, priority=True)
 
+    def _root_decided(self, paths: list[str]) -> None:
+        """Same folder or Copy took effect: list those folders again where this tab shows them."""
+        if self.closed:
+            return
+        for path in paths:
+            if path in self.model.nodes:
+                self.refresh_folder(path)
+        self._update_activity()
+
     def _root_create_event(self, request: IORequest, event: dict[str, Any]) -> None:
         from helab.views.DataRootDialogs import TITLE, ManualMarkerDialog
         kind, path = event["kind"], request.path
@@ -2202,6 +2212,7 @@ class FolderExplorer(QWidget):
         self.model.cache.folderPrefsFailed.disconnect(self._folder_prefs_failed)
         self.model.cache.mountWarningChanged.disconnect(self._mount_warning_changed)
         self.model.cache.volumesVerified.disconnect(self._volumes_verified)
+        self.model.cache.rootDecided.disconnect(self._root_decided)
         self.model.cache.release(self.model.owner)
         self.folder_opened_data = None
         self.displayed_dataset = None

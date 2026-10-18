@@ -36,7 +36,7 @@ ENTRY_KEYS = {"datasets": ("disk_cached", "cache_info"), "summaries": ("scan_sta
               "histories": ("scan_history",), "subtrees": ("subtree",)}
 # The current tab's work that runs in the foreground I/O lane.
 # (``root_create``: the user's Enable disk cache here…, one small write, runs like a listing.)
-FOREGROUND_OPERATIONS = ("list", "resolve", "load", "root_create")
+FOREGROUND_OPERATIONS = ("list", "resolve", "load", "root_create", "root_reassign")
 
 
 @dataclass
@@ -154,6 +154,11 @@ class FolderCache(QObject):
     volumesVerified = pyqtSignal()
     # A folder became (or stopped being) a data root, or was found to have none (RAM only).
     dataRootsChanged = pyqtSignal(str)
+    # The locations waiting for Same folder or Copy changed; one was found (the window opens).
+    rootDuplicatesChanged = pyqtSignal()
+    rootDuplicateFound = pyqtSignal(str)
+    # A Same folder or Copy answer took effect: these folders are listed again by tabs showing them.
+    rootDecided = pyqtSignal(list)
     MAX_FOLDER_ICONS = 4096
     # Seconds before a sweep the queue rejected is tried again.
     SWEEP_RETRY = 5.0
@@ -248,6 +253,9 @@ class FolderCache(QObject):
         # the disk cache. Folders a helper found without one (RAM only), with the reason.
         self.data_roots: dict[str, tuple[str, str]] = {}
         self.unrooted: OrderedDict[str, str] = OrderedDict()
+        # Locations whose .helab-root is also at another location, awaiting Same folder or Copy
+        # (D4), by location key; each with its "answer" this session ("", "later" or "snoozed").
+        self.root_duplicates: OrderedDict[str, dict[str, Any]] = OrderedDict()
         # Native icons (including unsuccessful lookups) are session-only and bounded.
         self.folder_icons: OrderedDict[str, QIcon] = OrderedDict()
         self._history_writes: dict[str, str] = {}
@@ -392,6 +400,57 @@ class FolderCache(QObject):
         # (No label when the location's row couldn't be matched: keep the one known.)
         label = str(root["label"]) or (known[1] if known and known[0] == identifier else "")
         self._root_seen(folder, identifier, label)
+
+    def _root_duplicate(self, event: dict[str, Any]) -> None:
+        """Once per location per session the window opens; after Later, again at its next sighting;
+        after Remind me next session, not again this session."""
+        location = str(event["location"])
+        entry = self.root_duplicates.get(location)
+        answer = entry["answer"] if entry is not None else ""
+        found = entry is None or answer == "later"
+        self.root_duplicates[location] = {**event, "found_at": time.time(),
+                                          "answer": "" if found else answer}
+        self.rootDuplicatesChanged.emit()
+        if found:
+            self.rootDuplicateFound.emit(location)
+
+    def _duplicate_settled(self, *locations: str) -> None:
+        if any([self.root_duplicates.pop(location, None) is not None for location in locations]):
+            self.rootDuplicatesChanged.emit()
+
+    def pending_root(self, path: str) -> dict[str, Any] | None:
+        """The nearest location awaiting Same folder or Copy at or above ``path`` (its folder uses RAM only)."""
+        matches = [entry for entry in self.root_duplicates.values()
+                   if path == entry["path"] or path.startswith(str(entry["path"]).rstrip("/\\") + os.sep)]
+        return max(matches, key=lambda entry: len(entry["path"])) if matches else None
+
+    def answer_root_duplicate(self, location: str, answer: str) -> None:
+        """Later or Remind me next session (``snoozed``): the location stays RAM only meanwhile."""
+        if (entry := self.root_duplicates.get(location)) is not None and entry["answer"] != answer:
+            entry["answer"] = answer
+            self.rootDuplicatesChanged.emit()
+
+    def same_root(self, location: str) -> str:
+        """Same folder: the pending location uses its root's cached data (a local-lane job's owner)."""
+        entry = self.root_duplicates.get(location)
+        return self.cache_admin("root_same", location=location, uuid=entry["uuid"]) if entry else ""
+
+    def reassign_root(self, owner: str, generation: int, location: str, keep: str) -> bool:
+        """It's a copy…: the location not kept gets a new .helab-root. ``keep`` is the location
+        keeping the cached data: the pending one, or one of the root's known locations."""
+        entry = self.root_duplicates.get(location)
+        options = store_options()
+        if entry is None or not options:
+            return False
+        if keep == location:  # The pending copy keeps the data: the known folder is rewritten.
+            target = next((str(other["path"]) for other in entry.get("others", []) if other.get("path")), "")
+        else:
+            target = str(entry["path"])
+        if not target:
+            return False
+        return self.submit(owner, generation, target, "root_reassign",
+                           {"cache": options, "old_uuid": entry["uuid"], "keep": keep, "duplicate": location},
+                           priority=True)
 
     def _root_gone(self, path: str) -> None:
         if self.data_roots.pop(path, None) is not None:
@@ -1572,6 +1631,20 @@ class FolderCache(QObject):
         if isinstance(event.get("data_root"), dict):
             # The root of the folder listed, checked or loaded, wherever its root folder is.
             self._root_reported(event["data_root"])
+        if event["kind"] == "root_duplicate":
+            self._root_duplicate(event)
+        elif event["kind"] == "root_confirmed":
+            self._duplicate_settled(str(event["location"]))
+            if event.get("path"):
+                self._root_seen(str(event["path"]), str(event["uuid"]), str(event.get("label", "")))
+                self.rootDecided.emit([str(event["path"])])
+        elif event["kind"] == "root_reassigned":
+            duplicate = str(producer.payload.get("duplicate", ""))
+            self._duplicate_settled(duplicate, *event.get("moved", []))
+            self.rootDecided.emit([str(path) for path in dict.fromkeys((producer.path, event.get("kept") or ""))
+                                   if path])
+        elif event["kind"] in ("root_found", "root_created", "root_adopted") and event.get("location"):
+            self._duplicate_settled(str(event["location"]))
         if event["kind"] in ("root_found", "root_created", "root_adopted"):
             self._root_seen(str(event["path"]), str(event["uuid"]), str(event["label"]))
         if event["kind"] == "root_changed":
@@ -2023,6 +2096,10 @@ RAM_ONLY_TOOLTIP = ("No .helab-root at or above this folder, so its statuses, se
                     "RAM for this session.\nTo use the disk cache: right-click the top folder of this drive "
                     "or share › " + PLACE_ROOT_ACTION)
 NEEDS_ROOT_TOOLTIP = "No .helab-root above this folder: " + PLACE_ROOT_ACTION + " first"
+# A location whose .helab-root is also elsewhere, until Same folder or Copy (D4).
+PENDING_ROOT = "RAM only · this .helab-root is also at another location · Review…"
+PENDING_ROOT_TOOLTIP = ("HeLab found the same .helab-root at two locations. Say whether they're the same "
+                        "folder or a copy before its disk cache is used here.")
 
 
 def marker_path(root: str) -> str:
@@ -2031,6 +2108,8 @@ def marker_path(root: str) -> str:
 
 def data_root_text(cache: FolderCache, path: str) -> str:
     """The row tooltip's line: which .helab-root the folder uses, or RAM only ("" if not known yet)."""
+    if cache.pending_root(path) is not None:
+        return "RAM only: this .helab-root is also at another location (same folder or a copy?)"
     if (root := cache.root_of(path)) is not None:
         folder, _, label = root
         return f"Data root: {label or os.path.basename(folder)} · " + (
@@ -2040,6 +2119,8 @@ def data_root_text(cache: FolderCache, path: str) -> str:
 
 def data_root_row(cache: FolderCache, path: str) -> tuple[str, str]:
     """Folder details' Disk cache row and its tooltip, ("", "") if not known yet."""
+    if (pending := cache.pending_root(path)) is not None:
+        return PENDING_ROOT, f"{PENDING_ROOT_TOOLTIP}\n\n{marker_path(str(pending['path']))}"
     if (root := cache.root_of(path)) is not None:
         folder, identifier, label = root
         name = label or os.path.basename(folder)

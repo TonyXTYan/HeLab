@@ -461,6 +461,34 @@ class CacheStore:
         with self.transaction():
             self._conn.execute("DELETE FROM roots WHERE location=?", (location,))
 
+    def confirm_root(self, location: str, identifier: str) -> bool:
+        """The user said a pending location is the same folder as the root's others (D4)."""
+        with self.transaction():
+            changed = self._conn.execute(
+                "UPDATE roots SET decision='confirmed', verified_at=? WHERE location=? AND uuid=?",
+                (time.time(), location, identifier)).rowcount
+        return bool(changed)
+
+    def reassign_roots(self, old: str, new: str, label: str, *, only: str | None = None,
+                       keep: str | None = None) -> list[str]:
+        """A copy got a new marker (D4): move its location (``only``), or every confirmed location of
+        ``old`` but ``keep`` (the copy is the folder those reach), to ``new``. Data rows stay with
+        ``old``, so the copy starts fresh. Returns the locations moved."""
+        now = time.time()
+        with self.transaction():
+            if only is not None:
+                rows = self._conn.execute("SELECT location FROM roots WHERE location=? AND uuid=?",
+                                          (only, old)).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT location FROM roots WHERE uuid=? AND decision='confirmed' AND location<>?",
+                    (old, keep or "")).fetchall()
+            moved = [str(row[0]) for row in rows]
+            self._conn.executemany(
+                "UPDATE roots SET uuid=?, label=?, decision='confirmed', first_seen=?, last_seen=?, verified_at=? "
+                "WHERE location=?", [(new, label, now, now, now, location) for location in moved])
+        return moved
+
     def record_root(self, location: str, identifier: str, kind: str,
                     label: str, *, decision: Literal["confirmed", "pending"]) -> None:
         """Record a marker decision, retaining the location's first sighting."""

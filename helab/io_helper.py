@@ -265,8 +265,15 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                               marker.label, decision=decision)
             changed = old is None or old[0] != marker.uuid or old[2] != decision
             if decision == "pending":
+                # Hints for the user's answer (D4): where else it is, and each marker file's details.
+                others: list[dict[str, Any]] = [{"location": other, "path": _location_path(store, other),
+                                                 "marker": None} for other in duplicates]
+                for other in others:
+                    if other["path"]:
+                        other["marker"] = _marker_hint(str(other["path"]))
                 send({"kind": "root_duplicate", "path": path, "location": location,
-                      "uuid": marker.uuid, "other_locations": duplicates})
+                      "uuid": marker.uuid, "label": marker.label, "other_locations": duplicates,
+                      "marker": _marker_hint(path), "others": others})
                 return changed
             if old_key and old_key != f"root://{marker.uuid}":
                 moved = store.rekey_subtree(old_key, f"root://{marker.uuid}")
@@ -1516,7 +1523,68 @@ def _removed_event(removal: Any) -> dict[str, Any]:
 
 
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
-                 "forget_root")
+                 "forget_root", "root_same")
+
+
+def _marker_hint(folder: str) -> dict[str, Any] | None:
+    """A marker file's size, modified time and file ID: hints whether two locations are one folder."""
+    from helab.utils.data_roots import MARKER_NAME
+    try:
+        found = os.lstat(os.path.join(folder, MARKER_NAME))
+    except OSError:
+        return None
+    return {"size": found.st_size, "mtime": found.st_mtime, "file_id": f"{found.st_dev}:{found.st_ino}"}
+
+
+def reassign_root(path: str, cache_options: dict[str, Any], old_uuid: str, keep: str, send: Emit = emit) -> None:
+    """It's a copy… (D4): give the folder at ``path`` a new ``.helab-root`` (replacing the file in
+    one step), so it no longer shares cached data with ``old_uuid``'s other locations. ``keep`` is
+    the location that keeps the data: when it is the pending one, it is confirmed and the folder at
+    ``path`` (with all its confirmed aliases) moves; otherwise only ``path``'s location moves.
+
+    Without write permission nothing changes and ``root_manual`` hands out the new contents.
+    """
+    import uuid as uuids
+    from helab.utils.data_roots import MARKER_NAME, new_marker, read_marker
+    current = read_marker(path)
+    if current.uuid != old_uuid:
+        raise ValueError(f"The {MARKER_NAME} in {path} changed since HeLab found it. "
+                         "Retry / Refresh the folder, then answer again.")
+    marker, contents = new_marker(path)
+    file = os.path.join(path, MARKER_NAME)
+    temporary = os.path.join(path, f"{MARKER_NAME}.{uuids.uuid4().hex}.tmp")
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o644)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(contents)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, file)
+    except OSError as exc:
+        with contextlib.suppress(OSError):
+            os.remove(temporary)
+        send({"kind": "root_manual", "path": path, "name": MARKER_NAME,
+              "contents": contents.decode("utf-8"), "reason": str(exc), "replace": True})
+        return
+    _hide(file)
+    with _cache_store(cache_options["directory"], [path], allow_unrooted=True) as store:
+        location = store._location_key(path)
+        keep_pending = store.root_at(keep)
+        keep_path = _location_path(store, keep)
+        if keep_pending is not None and keep_pending[2] == "pending":
+            moved = store.reassign_roots(old_uuid, marker.uuid, marker.label, keep=keep)
+            store.confirm_root(keep, old_uuid)
+            if keep_path:
+                send({"kind": "root_found", "path": keep_path, "location": keep, "uuid": old_uuid,
+                      "label": keep_pending[1]})
+        else:
+            moved = store.reassign_roots(old_uuid, marker.uuid, marker.label, only=location)
+        for moved_location in moved:
+            if moved_path := _location_path(store, moved_location):
+                send({"kind": "root_changed", "path": moved_path, "location": moved_location,
+                      "uuid": marker.uuid, "label": marker.label})
+    send({"kind": "root_reassigned", "path": path, "uuid": marker.uuid, "label": marker.label,
+          "old_uuid": old_uuid, "moved": moved, "kept": keep_path})
 
 
 def _location_path(store: CacheStore, location: str) -> str:
@@ -1711,6 +1779,14 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             result["forgotten"] = location
             if path:
                 send({"kind": "root_changed", "path": path, "location": location, "reason": "forgotten"})
+        elif action == "root_same":
+            # Same folder (D4): the pending location uses the root's cached data from now on.
+            location, identifier = str(params["location"]), str(params["uuid"])
+            result["confirmed"] = store.confirm_root(location, identifier)
+            if result["confirmed"]:
+                found = store.root_at(location)
+                send({"kind": "root_confirmed", "location": location, "uuid": identifier,
+                      "path": _location_path(store, location), "label": found[1] if found else ""})
         elif action == "budget":
             if budget is not None and budget_set_at is not None:
                 # Lowering it (``fit``): not recorded if the data cached by now doesn't fit.
@@ -1799,7 +1875,8 @@ def _cache_move_step(mover: Any, action: str, app_dir: str, move: dict[str, Any]
 
 
 # Operations that only touch the disk cache.
-CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "volumes_verify")
+CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "volumes_verify",
+              "root_reassign")
 
 
 def main() -> None:
@@ -1874,6 +1951,8 @@ def main() -> None:
             verify_volumes(request["cache"])
         elif operation == "root_create":
             create_root(request["path"], request.get("cache"))
+        elif operation == "root_reassign":
+            reassign_root(request["path"], request["cache"], request["old_uuid"], request["keep"])
         else:
             raise ValueError(f"Unknown operation: {operation}")
         emit({"kind": "done"})

@@ -46,6 +46,7 @@ from helab.views.FolderExplorer import (
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
 from helab.views.MissingShotsWindow import MissingShotsWindow
+from helab.views.RootDuplicatesWindow import RootDuplicatesWindow
 from helab.views.SettingsDialog import SettingsDialog
 from helab.views.DebugIconsWindow import DebugIconsWindow
 
@@ -124,6 +125,10 @@ class HelabMainWindow(QMainWindow):
         self.missing_shots.loadRequested.connect(self._load_mismatched)
         self.mismatch_button.clicked.connect(lambda: self.missing_shots.show_list(activate=True))
         cache.mismatchesChanged.connect(self._update_mismatch_button)
+        # Locations whose .helab-root is also elsewhere: same folder or a copy? (data roots, D4)
+        self.root_duplicates = RootDuplicatesWindow(cache, self)
+        self.roots_button.clicked.connect(lambda: self.root_duplicates.show_list(activate=True))
+        cache.rootDuplicatesChanged.connect(self._update_roots_button)
 
         # Create Left Panel (File Tree View)
         self.tab_widget.currentChanged.connect(self.on_current_tab_changed)
@@ -162,6 +167,10 @@ class HelabMainWindow(QMainWindow):
         self.mismatch_button.setAutoRaise(True)
         self.mismatch_button.hide()
         self.status_bar.addPermanentWidget(self.mismatch_button)
+        self.roots_button = QToolButton()
+        self.roots_button.setAutoRaise(True)
+        self.roots_button.hide()
+        self.status_bar.addPermanentWidget(self.roots_button)
         self.status_bar.addPermanentWidget(self.status_bar_message_right)
         self.status_bar_message_right.setToolTip("(App resource usage) / (system total resource usage)")
 
@@ -712,6 +721,8 @@ class HelabMainWindow(QMainWindow):
         # Folder details below the tab_widget: the current tab's selected folder, load and I/O.
         self.folder_details = FolderDetailsPanel()
         self.folder_details.revealRequested.connect(self.reveal_load)
+        self.folder_details.reviewRootRequested.connect(
+            lambda location: self.root_duplicates.show_list(activate=True, select=location))
         get_io_service().request_note = self._request_note
         self.folder_details.setVisible(True)
         self.left_splitter.addWidget(self.folder_details)
@@ -980,6 +991,14 @@ class HelabMainWindow(QMainWindow):
             self.current_tracking_folder_path_is_loading = False
             self._update_folder_details()
             self.update_placeholder_visibility()
+
+    def _update_roots_button(self) -> None:
+        count = len(get_folder_cache(get_io_service()).root_duplicates)
+        self.roots_button.setText(f"⚓ {count:,} to confirm")
+        self.roots_button.setToolTip(
+            f"{count:,} location{'' if count == 1 else 's'} whose .helab-root is also elsewhere: say whether "
+            "each is the same folder or a copy (RAM only until then). Click to see the list.")
+        self.roots_button.setVisible(bool(count))
 
     def _update_mismatch_button(self) -> None:
         cache = get_folder_cache(get_io_service())

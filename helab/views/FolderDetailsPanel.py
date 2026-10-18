@@ -93,6 +93,8 @@ class LoadBar(QProgressBar):
 class FolderDetailsPanel(QScrollArea):
     # The All I/O row was clicked while it names one load: (its producer owner, its folder).
     revealRequested = pyqtSignal(str, str)
+    # The Disk cache row was clicked while it says Review…: the location awaiting Same folder or Copy.
+    reviewRootRequested = pyqtSignal(str)
     """Single-line rows that hide when empty; longer details are in each row's tooltip."""
 
     ROWS = (("folder", "Folder"), ("state", "State"), ("files", "Files"), ("time", "Time"), ("rate", "Rate"),
@@ -142,6 +144,8 @@ class FolderDetailsPanel(QScrollArea):
         # Clicking "Loading run_042" shows that folder in its tab.
         self._reveal: tuple[str, str] | None = None
         self.values["io"].installEventFilter(self)
+        self._review_root: str | None = None
+        self.values["cache"].installEventFilter(self)
         layout.addLayout(grid)
         layout.addStretch(1)
         self.setWidget(body)
@@ -165,6 +169,11 @@ class FolderDetailsPanel(QScrollArea):
                 and self._reveal is not None):
             self.revealRequested.emit(*self._reveal)
             return True
+        if (a0 is self.values["cache"] and isinstance(a1, QMouseEvent)
+                and a1.type() == QEvent.Type.MouseButtonRelease and a1.button() == Qt.MouseButton.LeftButton
+                and self._review_root is not None):
+            self.reviewRootRequested.emit(self._review_root)
+            return True
         return super().eventFilter(a0, a1)
 
     def text(self, key: str) -> str:
@@ -175,6 +184,12 @@ class FolderDetailsPanel(QScrollArea):
         """Show this tab's selected folder; reads memory only, so it can run on every GUI tick."""
         rows: dict[str, tuple[str, str]] = {key: ("", "") for key in self.values}
         self.progress.hide()
+        pending = (explorer.model.cache.pending_root(explorer.selected_path_globally)
+                   if explorer is not None else None)
+        self._review_root = str(pending["location"]) if pending is not None else None
+        cursor = Qt.CursorShape.PointingHandCursor if pending is not None else Qt.CursorShape.ArrowCursor
+        if self.values["cache"].cursor().shape() != cursor:
+            self.values["cache"].setCursor(cursor)
         if explorer is None:
             rows["state"] = ("Select a data folder", "")
         else:
