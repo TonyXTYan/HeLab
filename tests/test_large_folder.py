@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 
+from helab import io_helper
 from helab.io_helper import list_folder, load, read_cached
 from helab.utils import large_folder
 from helab.utils.cache_store import CacheStore, DatasetRow
@@ -42,7 +43,7 @@ def run_load(source: Path, tmp_path: Path, options: dict[str, Any] | None, **kwa
 
 
 def dataset_row(options: dict[str, Any], path: str) -> DatasetRow:
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [path]) as store:
         found = store.read_dataset_row(path)
     assert found.value is not None
     return found.value
@@ -78,7 +79,7 @@ def test_a_large_load_stops_after_its_scan_phase_unless_allowed(tmp_path: Path) 
     stopped = next(event for event in events if event["kind"] == "too_large")
     assert stopped == {"kind": "too_large", "estimate": size, "refused": False}
     # Its scan phase was saved first: the size is known next time without listing.
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [str(source)]) as store:
         summary = store.read_records("summaries", [str(source)])[str(source)].value
     assert summary is not None and summary["files"]["txy"]["bytes"] == size
     # Allowed (the user said yes): it loads, and saves the sizes with the dataset.
@@ -174,7 +175,7 @@ def test_a_large_cached_dataset_isnt_read_unless_allowed_and_listings_carry_its_
     # for a dataset saved before S8 it is summed from the fingerprint.
     older = tmp_path / "older"
     older.mkdir()
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [str(older)]) as store:
         store.save_dataset(str(older), store.write_dataset_file(b"x"), {
             "ram_bytes": 7, "rows": 1, "shots": 2, "fingerprint": [[1, 300, 0], [2, 200, 0]], "problematic": [],
             "info": {"saved_at": time.time(), "signature": "s"}}, store.start_dataset_job(str(older)))

@@ -38,6 +38,9 @@ def _webdav_unc(source: str) -> bool:
 
 def current_mounts() -> list[Mount]:
     if sys.platform == "win32":
+        test_mount = os.environ.get("HELAB_TEST_LOCAL_MOUNT")
+        if test_mount:
+            return [Mount(test_mount, test_mount, "local")]
         return _windows_mounts()
     import psutil
     mounts = []
@@ -48,7 +51,7 @@ def current_mounts() -> list[Mount]:
 
 
 def _windows_mounts() -> list[Mount]:
-    """Read mapped drive names without querying every drive's volume information."""
+    """Read mapped and local drives without querying source folders."""
     import ctypes
 
     kernel32 = getattr(ctypes, "windll").kernel32
@@ -58,10 +61,12 @@ def _windows_mounts() -> list[Mount]:
         if not mask & (1 << index):
             continue
         drive = f"{chr(65 + index)}:\\"
-        if kernel32.GetDriveTypeW(drive) != 4:  # DRIVE_REMOTE
-            continue
-        source = _windows_unc(drive)
-        mounts.append(Mount(source or drive, drive, "smb" if source else "remote", True))
+        drive_type = kernel32.GetDriveTypeW(drive)
+        if drive_type == 4:  # DRIVE_REMOTE
+            source = _windows_unc(drive)
+            mounts.append(Mount(source or drive, drive, "smb" if source else "remote", True))
+        elif drive_type in (2, 3):  # DRIVE_REMOVABLE, DRIVE_FIXED
+            mounts.append(Mount(drive, drive, "local"))
     return mounts
 
 

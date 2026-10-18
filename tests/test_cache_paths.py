@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -154,6 +155,19 @@ def test_windows_mapped_and_unc_paths_preserve_source_spelling(monkeypatch: pyte
         assert paths.key("\\\\Server\\Share\\a\\\\b\\") == paths.key(r"Z:\a\b")
 
 
+def test_windows_mounts_include_local_fixed_and_removable_drives(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ctypes
+    drives = {"C:\\": 3, "D:\\": 2, "Z:\\": 4}
+    kernel = SimpleNamespace(GetLogicalDrives=lambda: (1 << 2) | (1 << 3) | (1 << 25),
+                             GetDriveTypeW=lambda path: drives[path])
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(kernel32=kernel), raising=False)
+    monkeypatch.setattr(cache_paths, "_windows_unc", lambda _: r"\\server\share")
+    assert cache_paths._windows_mounts() == [
+        Mount("C:\\", "C:\\", "local"), Mount("D:\\", "D:\\", "local"),
+        Mount(r"\\server\share", "Z:\\", "smb", True),
+    ]
+
+
 def test_windows_webdav_drive_and_unc_are_not_given_smb_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     with monkeypatch.context() as patch:
         patch.setattr(sys, "platform", "win32")
@@ -197,6 +211,7 @@ def test_unsupported_remote_root_browses_with_typed_cache_notice(
     assert not any(event.get("kind") in ("error", "cache_warning") for event in events)
 
 
+@pytest.mark.no_auto_data_root
 def test_mount_lookup_failure_keeps_listing_successful(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from helab import io_helper
@@ -208,7 +223,7 @@ def test_mount_lookup_failure_keeps_listing_successful(
     def unavailable() -> CachePaths:
         raise RuntimeError("mount table unavailable")
 
-    monkeypatch.setattr(cache_paths, "current_cache_paths", unavailable)
+    monkeypatch.setattr(cache_paths, "current_mounts", unavailable)
     events: list[dict[str, object]] = []
     io_helper.list_folder(str(folder), events.append,
                           {"directory": str(tmp_path / "store-v2")})
@@ -217,7 +232,7 @@ def test_mount_lookup_failure_keeps_listing_successful(
     assert not any(event.get("kind") == "error" for event in events)
 
 
-def test_helper_listing_uses_share_key_and_returns_source_path(
+def test_helper_listing_uses_root_key_and_returns_source_path(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from helab import io_helper
 
@@ -230,8 +245,10 @@ def test_helper_listing_uses_share_key_and_returns_source_path(
     with io_helper._cache_store(root, [str(child)]) as store:
         store.set_prefs(str(child), True, True, time.time())
         with sqlite3.connect(store.database) as conn:
+            root_record = store.root_at("smb://example-server/share")
+            assert root_record is not None
             assert conn.execute("SELECT path FROM folder_prefs").fetchone()[0] == (
-                "smb://example-server/share/Run1")
+                f"root://{root_record[0]}/run1")
     events: list[dict[str, object]] = []
     io_helper.list_folder(str(mount), events.append, {"directory": root})
     batches = [event["entries"] for event in events if event.get("kind") == "entries"]
@@ -250,8 +267,9 @@ def test_refused_child_does_not_fail_parent_scan_or_lose_sibling_cache(
     remote = parent / "remote"
     normal.mkdir(parents=True)
     remote.mkdir()
-    monkeypatch.setattr(cache_paths, "current_mounts",
-                        lambda: [Mount("server:/export", str(remote), "nfs", True)])
+    monkeypatch.setattr(cache_paths, "current_mounts", lambda: [
+        Mount(str(tmp_path), str(tmp_path), "apfs"),
+        Mount("server:/export", str(remote), "nfs", True)])
     root = str(tmp_path / "store-v2")
     with io_helper._cache_store(root, [str(normal)]) as store:
         store.set_prefs(str(normal), True, True, time.time())
@@ -279,9 +297,12 @@ def test_refused_subtree_does_not_lose_other_batch_saves(
     remote = tmp_path / "remote"
     remote.mkdir()
     local = str(tmp_path / "local")
-    monkeypatch.setattr(cache_paths, "current_mounts",
-                        lambda: [Mount("server:/export", str(remote), "nfs", True)])
+    monkeypatch.setattr(cache_paths, "current_mounts", lambda: [
+        Mount(str(tmp_path), str(tmp_path), "apfs"),
+        Mount("server:/export", str(remote), "nfs", True)])
     root = str(tmp_path / "store-v2")
+    with io_helper._cache_store(root, [local]):
+        pass  # Seed the test root before the local-lane save.
     events: list[dict[str, object]] = []
     io_helper.save_subtrees({"directory": root},
                             [{"path": local, "status": "nothing", "derived_at": 1.0},

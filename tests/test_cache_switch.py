@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from helab import io_helper
 from helab.io_helper import cache_admin, list_folder, load, read_cached, scan
 from helab.utils import cache_location, file_kinds
 from helab.utils.cache_location import cache_location_problem
@@ -42,7 +43,7 @@ def run_load(source: Path, tmp_path: Path, options: dict[str, Any] | None, **kwa
 
 
 def dataset_row(options: dict[str, Any], path: str) -> DatasetRow:
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [path]) as store:
         found = store.read_dataset_row(path)
     assert found.value is not None
     return found.value
@@ -73,7 +74,7 @@ def test_scan_saves_per_kind_counts_and_txy_size(tmp_path: Path) -> None:
     status = next(event for event in events if event["kind"] == "status")
     assert status["files"] == {"raw": {"count": 3}, "txy": {"count": 2, "bytes": txy_bytes}}
     assert status["status"] == "fixable"  # Classification still works from the counts.
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [str(source)]) as store:
         saved = store.read_record("summaries", str(source)).value
     assert saved is not None and saved["files"] == status["files"]
     assert (saved["raw_count"], saved["txy_count"]) == (3, 2)
@@ -187,7 +188,7 @@ def test_folder_cache_submits_the_cleanup_once(monkeypatch: pytest.MonkeyPatch) 
         # The sweep, and the inventory that restores saves still waiting for an answer.
         assert [r.payload for r in requests] == [{"cache": store_options(), "action": action, "params": {}}
                                                  for action in ("sweep", "inventory")]
-        assert store_options()["directory"].endswith("store-v2")
+        assert store_options()["directory"].endswith("store-v3")
         assert "cache_admin" in service.LOCAL_OPERATIONS
     finally:
         service.shutdown()
@@ -413,7 +414,8 @@ def test_clear_while_a_load_starts_up_is_not_undone(monkeypatch: pytest.MonkeyPa
         # The load is already running, initialising pandas, when the folder's cache is cleared.
         if name == "pandas" and not cleared:
             cleared.append(True)
-            with CacheStore(options["directory"]) as store:
+            from helab import io_helper
+            with io_helper._cache_store(options["directory"], [path]) as store:
                 store.remove(("datasets",), [path])
         return original_import(name, *args, **kwargs)
     monkeypatch.setattr(builtins, "__import__", clear_while_importing)
@@ -424,7 +426,8 @@ def test_clear_while_a_load_starts_up_is_not_undone(monkeypatch: pytest.MonkeyPa
     assert not any(event["kind"] == "cache_saved" for event in events)
     failed = next(event for event in events if event["kind"] == "cache_save_failed")
     assert failed["message"] == "Cache was cleared before saving completed"
-    with CacheStore(options["directory"]) as store:
+    from helab import io_helper
+    with io_helper._cache_store(options["directory"], [path]) as store:
         assert store.read_dataset_row(path).missing
 
 

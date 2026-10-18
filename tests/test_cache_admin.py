@@ -11,6 +11,7 @@ import pytest
 from pytestqt.qtbot import QtBot
 
 from helab.io_helper import cache_admin, list_folder, load, scan
+from helab import io_helper
 from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.utils.cache_store import (
     APPROVAL_SHARE, ORPHAN_MIN_AGE, PENDING_MAX_AGE, RETIRE_GRACE, CacheStore, DatasetRecord, SaveRejected,
@@ -225,7 +226,7 @@ def source_folder(tmp_path: Path, name: str = "source", rows: int = 1) -> Path:
 
 
 def options_for(tmp_path: Path, budget: int | None = None) -> dict[str, Any]:
-    options: dict[str, Any] = {"directory": str(tmp_path / "caches" / "store-v2")}
+    options: dict[str, Any] = {"directory": str(tmp_path / "caches" / "store-v3")}
     if budget is not None:
         options["budget"] = budget
     return options
@@ -270,8 +271,8 @@ def test_load_that_does_not_fit_is_held_and_make_room_adopts_it(tmp_path: Path) 
     final = result[-1]
     assert final["kind"] == "admin_result" and final["adopted"] and final["path"] == str(second)
     assert final["cache_info"]["signature"] and final["next_deadline"] is not None
-    with CacheStore(options["directory"]) as store:
-        assert dataset_paths(store) == {str(second)}
+    with io_helper._cache_store(options["directory"], [str(second)]) as store:
+        assert dataset_paths(store) == {store._path_key(str(second))}
 
 
 def test_inventory_lists_pending_saves_with_their_job_order(store: CacheStore) -> None:
@@ -301,7 +302,7 @@ def test_inventory_clear_purge_trim_and_discard_through_the_helper(tmp_path: Pat
 
 def removal_during(kind: str, options: dict[str, Any], path: str) -> None:
     if kind == "invalidate":
-        with CacheStore(options["directory"]) as store:
+        with io_helper._cache_store(options["directory"], [path]) as store:
             store.remove(("datasets",), [path])
     elif kind == "clear":
         admin(options, "clear", kinds=["datasets", "summaries"])
@@ -312,8 +313,8 @@ def removal_during(kind: str, options: dict[str, Any], path: str) -> None:
         admin(options, "trim", budget=0)
     elif kind == "make room":
         # Make room for another folder takes this one's dataset.
-        with CacheStore(options["directory"]) as store:
-            other = f"/elsewhere-{time.monotonic_ns()}"
+        with io_helper._cache_store(options["directory"], [path]) as store:
+            other = str(Path(path).parent / f"elsewhere-{time.monotonic_ns()}")
             guard = store.start_dataset_job(other)
             budget = store.usage()
             # As big as this folder's dataset: only removing it makes room.
@@ -348,7 +349,7 @@ def test_removal_while_a_load_runs_or_saves_does_not_come_back(
         monkeypatch.undo()
         assert done, moment
         assert not any(event["kind"] == "cache_saved" for event in events), moment
-        with CacheStore(options["directory"]) as store:
+        with io_helper._cache_store(options["directory"], [path]) as store:
             assert store.read_dataset_row(path).missing, moment
         run_load(source, tmp_path, options)  # Cached again for the next moment.
 
@@ -638,7 +639,7 @@ def test_scan_history_helper_uses_the_scan_guard(tmp_path: Path) -> None:
     import sys
     options = options_for(tmp_path)
     path = str(tmp_path)
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [path]) as store:
         guard = store.guard([path], ("summaries", "histories"))
         store.remove(("histories",))
     request = {"operation": "scan_history", "path": path, "cache": options,
@@ -894,14 +895,14 @@ def test_failed_listing_history_write_keeps_the_listing_guard(
     finally:
         service.shutdown()
     # The user forgets scan failures before the queued writer runs: it saves nothing.
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [path]) as store:
         store.remove(("histories",))
     completed = subprocess.run([sys.executable, "-m", "helab.io_helper"],
                                input=json.dumps({"operation": "scan_history", "path": path, **writer.payload}) + "\n",
                                capture_output=True, text=True, timeout=60, check=True)
     assert json.loads(completed.stdout.strip().splitlines()[-1])["message"] == \
         "Cache was cleared before saving completed"
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [path]) as store:
         assert store.read_record("histories", path).missing
 
 

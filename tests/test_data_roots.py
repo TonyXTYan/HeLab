@@ -33,6 +33,22 @@ def resolver(mounts: list[Mount], rows: list[RootLocation],
                      local_source=local.source)
 
 
+def test_location_matching_ignores_case_on_smb_and_windows_volumes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identifier = str(uuid.uuid4())
+    share = resolver([Mount("//host/share", "/Volumes/Share", "smbfs", True)],
+                     [RootLocation("smb://host/share/Data", identifier)])
+    assert share.key("/Volumes/Share/data/Run") == f"root://{identifier}/run"
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "platform", "win32")
+        volume = LocalVolumes([(Mount("C:\\", "C:\\", "local"), "1234abcd")])
+        local = DataRoots(CachePaths([]), [RootLocation("vol://1234abcd/Data", identifier)],
+                          local_location=volume.location, local_source=volume.source,
+                          case_insensitive_volumes=True)
+        assert local.key("C:\\data\\Run") == f"root://{identifier}/run"
+
+
 def test_nested_markers_nearest_wins_and_store_uses_root_keys(tmp_path: Path) -> None:
     outer = tmp_path / "share"
     inner = outer / "data"
@@ -105,8 +121,8 @@ def test_local_volume_ids_are_locations_only_and_separate_same_named_disks(tmp_p
     path = str(tmp_path / "USB" / "run")
     first_uuid, second_uuid = str(uuid.uuid4()), str(uuid.uuid4())
     mount = Mount("/dev/disk5", str(tmp_path / "USB"), "apfs")
-    first_volume = current_local_volumes([mount], lambda _: "volume-a", paths=[path])
-    second_volume = current_local_volumes([mount], lambda _: "volume-b", paths=[path])
+    first_volume = current_local_volumes([mount], paths=[path], id_reader=lambda _: "volume-a")
+    second_volume = current_local_volumes([mount], paths=[path], id_reader=lambda _: "volume-b")
     first = resolver([mount], [RootLocation("vol://volume-a", first_uuid)], first_volume)
     second = resolver([mount], [RootLocation("vol://volume-b", second_uuid)], second_volume)
     assert first_volume.location(path) == "vol://volume-a/run"
@@ -118,8 +134,8 @@ def test_local_volume_ids_are_locations_only_and_separate_same_named_disks(tmp_p
 
 def test_startup_disk_firmlink_uses_volume_group_id_without_data_identity() -> None:
     mount = Mount("/dev/disk3s1", "/", "apfs")
-    volumes = current_local_volumes([mount], lambda _: "APFS-GROUP-ID",
-                                    paths=["/Users/tony/data/run"])
+    volumes = current_local_volumes([mount], paths=["/Users/tony/data/run"],
+                                    id_reader=lambda _: "APFS-GROUP-ID")
     source = "/Users/tony/data/run"
     assert volumes.location(source) == "vol://apfs-group-id/Users/tony/data/run"
     identifier = str(uuid.uuid4())
@@ -131,8 +147,8 @@ def test_windows_drive_letter_uses_injected_serial(monkeypatch: pytest.MonkeyPat
     with monkeypatch.context() as patch:
         patch.setattr(sys, "platform", "win32")
         mount = Mount("C:\\", "C:\\", "ntfs")
-        volumes = current_local_volumes([mount], lambda _: "1234abcd",
-                                        paths=["C:\\data\\run"])
+        volumes = current_local_volumes([mount], paths=["C:\\data\\run"],
+                                        id_reader=lambda _: "1234abcd")
         source = "C:\\data\\run"
         identifier = str(uuid.uuid4())
         paths = resolver([mount], [RootLocation("vol://1234abcd/data", identifier)], volumes)
@@ -185,9 +201,23 @@ def test_volume_capture_probes_only_requested_mount() -> None:
         checked.append(mount.path)
         return "id-b"
 
-    volumes = current_local_volumes(mounts, read_id, paths=["/Volumes/USB/run"])
+    volumes = current_local_volumes(mounts, paths=["/Volumes/USB/run"], id_reader=read_id)
     assert checked == ["/Volumes/USB"]
     assert volumes.location("/Volumes/USB/run") == "vol://id-b/run"
+
+
+@pytest.mark.skipif(os.environ.get("HELAB_TEST_REAL_VOLUME") != "1",
+                    reason="opt in to a native volume-ID check")
+def test_native_volume_reader_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.utils.data_roots import _volume_id
+    from helab.utils.cache_paths import current_mounts
+    monkeypatch.delenv("HELAB_TEST_VOLUME_ID", raising=False)
+    monkeypatch.delenv("HELAB_TEST_LOCAL_MOUNT", raising=False)
+    mounts = current_mounts()
+    local = next((mount for mount in mounts if not mount.remote), None)
+    if local is None:
+        pytest.skip("no local volume available")
+    assert _volume_id(local)
 
 
 def test_utf8_bom_and_harmless_label_dots_are_accepted(tmp_path: Path) -> None:
@@ -212,6 +242,9 @@ def test_old_store_is_preserved_and_not_opened_as_root_store(tmp_path: Path) -> 
     with CacheStore(str(old)) as store:
         store.save_record("summaries", "old", {"old": True},
                           store.guard(["old"], ["summaries"]))
+        database = store.database
+    with sqlite3.connect(database) as conn:
+        conn.execute("UPDATE meta SET value='2' WHERE key='layout_version'")
     with pytest.raises(StoreError, match="unsupported layout version"):
         CacheStore(str(old), root_mode=True)
     assert (old / "records.sqlite").exists()

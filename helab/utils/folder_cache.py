@@ -17,7 +17,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 
 from helab.utils import large_folder
-from helab.utils.cache_store import APPROVAL_SHARE, store_root
+from helab.utils.cache_store import APPROVAL_SHARE, KINDS, store_root
 from helab.utils.constants import (
     DEFAULT_CHECK_LEVEL, DEFAULT_DISK_BUDGET, DEFAULT_RAM_STEPS, DISK_CACHE_ENABLED, cache_dir, cache_dir_enabled,
     ram_step_bytes,
@@ -248,6 +248,9 @@ class FolderCache(QObject):
         self._subtree_writer = ""
         self._subtree_options: dict[str, Any] = {}
         self._cleanup = ""
+        self._root_verify_owner = ""
+        self._roots_mounts: tuple[tuple[str, str], ...] | None = None
+        self._mounts_observed: tuple[tuple[str, str], ...] | None = None
         # cache_admin jobs by owner: their action.
         self._admin: dict[str, str] = {}
         # When cache_admin jobs and history writes started: removals since then void their results.
@@ -1173,6 +1176,16 @@ class FolderCache(QObject):
         if self._cleanup == "failed":
             self._schedule_sweep(time.time() + self.SWEEP_RETRY)
         self.restore_pending()
+        self._verify_roots()
+
+    def _verify_roots(self) -> None:
+        """Queue one background source helper for remembered marker locations."""
+        options = store_options()
+        if not options or self.service.closed or self._root_verify_owner:
+            return
+        owner = uuid4().hex
+        if self.service.submit(owner, 0, options["directory"], "roots_verify", {"cache": options}):
+            self._root_verify_owner = owner
 
     def sync_budget(self) -> None:
         """Make the store record the app's disk budget (``store_options``), retrying until a job
@@ -1477,6 +1490,30 @@ class FolderCache(QObject):
                                      "" if kind == "done" else str(event.get("message") or "Cancelled"))
 
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        if event["kind"] == "root_changed":
+            root_path = str(event["path"])
+            known = ({root_path, *self._cache_states, *self.scan_summaries,
+                      *self.scan_histories, *self.subtrees, *self._disk_cached_paths})
+            affected = [path for path in known if path == root_path or path.startswith(root_path.rstrip("/\\") + os.sep)]
+            self.removed(affected, list(KINDS))
+        if event["kind"] == "mounts_seen":
+            self._mounts_observed = tuple(tuple(pair) for pair in event["mounts"])
+            if self._mounts_observed != self._roots_mounts:
+                self._verify_roots()
+            return
+        if producer.owner == self._root_verify_owner:
+            if event["kind"] == "roots_verified":
+                self._roots_mounts = tuple(tuple(pair) for pair in event["mounts"])
+            elif event["kind"] == "removed":
+                self.removed(event.get("paths"), event["kinds"])
+            elif event["kind"] in ("error", "cancelled"):
+                logging.warning("Data-root verification: %s", event.get("message", "Cancelled"))
+            if event["kind"] in ("done", "error", "cancelled"):
+                self._root_verify_owner = ""
+                if (event["kind"] == "done" and self._roots_mounts is not None
+                        and self._mounts_observed is not None and self._mounts_observed != self._roots_mounts):
+                    self._verify_roots()
+            return
         if event["kind"] == "cache_skipped":
             self._remember_mount_warning(event)
             return

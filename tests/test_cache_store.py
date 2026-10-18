@@ -14,6 +14,8 @@ from typing import Any, Iterator
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.no_auto_data_root
+
 from helab.utils.cache_store import (
     KINDS, LAYOUT_VERSION, ORPHAN_MIN_AGE, PENDING_MAX_AGE, RETIRE_GRACE, CacheStore, DatasetRecord,
     SaveGuard, SaveRejected, StoreError, StoreReadOnly, pack_dataset, unpack_dataset,
@@ -76,7 +78,7 @@ def test_new_store_is_versioned_and_readable_with_sqlite(store: CacheStore, root
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         meta = dict(conn.execute("SELECT key, value FROM meta"))
         saved = conn.execute("SELECT record, identity FROM folder_summaries").fetchone()
-    assert json.loads(meta["layout_version"]) == 2 and all(meta[f"gen_{kind}"] == "0" for kind in KINDS)
+    assert json.loads(meta["layout_version"]) == LAYOUT_VERSION and all(meta[f"gen_{kind}"] == "0" for kind in KINDS)
     assert json.loads(saved[0]) == {"status": "ok", "identity": [1, 2]} and saved[1] is None
     with CacheStore(root) as again:
         assert again.store_id == store.store_id
@@ -338,12 +340,12 @@ def test_newer_layout_opens_read_only(root: str) -> None:
         store.save_record("summaries", "a", {"status": "ok"}, store.guard(["a"], ["summaries"]))
         database = store.database
     with sqlite3.connect(database) as conn:
-        conn.execute("UPDATE meta SET value = '3' WHERE key = 'layout_version'")
+        conn.execute("UPDATE meta SET value = ? WHERE key = 'layout_version'", (str(LAYOUT_VERSION + 1),))
         conn.commit()
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     before = Path(database).read_bytes()
     with CacheStore(root) as newer:
-        assert newer.read_only and newer.layout_version == 3
+        assert newer.read_only and newer.layout_version == LAYOUT_VERSION + 1
         assert newer.read_record("summaries", "a").value == {"status": "ok"}
         with pytest.raises(StoreReadOnly):
             newer.save_record("summaries", "a", {"status": "changed"}, newer.guard(["a"], ["summaries"]))
@@ -369,7 +371,7 @@ def test_read_only_open_handles_uri_characters_in_the_path(tmp_path: Path, name:
     with CacheStore(str(root)) as store:
         store.save_record("summaries", "a", {"status": "ok"}, store.guard(["a"], ["summaries"]))
     with sqlite3.connect(root / "records.sqlite") as conn:
-        conn.execute("UPDATE meta SET value = '3' WHERE key = 'layout_version'")
+        conn.execute("UPDATE meta SET value = ? WHERE key = 'layout_version'", (str(LAYOUT_VERSION + 1),))
     with CacheStore(str(root)) as newer:
         assert newer.read_only and newer.read_record("summaries", "a").value == {"status": "ok"}
     # Nothing was opened or created anywhere else.

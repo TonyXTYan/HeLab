@@ -14,7 +14,7 @@ import os
 import random
 import sys
 import time
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from helab.utils import file_kinds, large_folder
 
@@ -88,7 +88,8 @@ def _cache_info(info: object) -> dict[str, Any]:
     return {}
 
 
-def _open_store(cache_options: dict[str, Any] | None, send: Emit, path: str) -> CacheStore | None:
+def _open_store(cache_options: dict[str, Any] | None, send: Emit, path: str,
+                *, local_lane: bool = False) -> CacheStore | None:
     """The disk cache, or None without one or if it can't be opened.
 
     An opening error is sent as a ``cache_warning``; what the cache holds is then
@@ -99,7 +100,7 @@ def _open_store(cache_options: dict[str, Any] | None, send: Emit, path: str) -> 
     from helab.utils.cache_paths import UnresolvedRemotePath
     from helab.utils.cache_store import StoreError
     try:
-        return _cache_store(cache_options["directory"], [path])
+        return _cache_store(cache_options["directory"], [path], local_lane=local_lane)
     except UnresolvedRemotePath as exc:
         send({"kind": "cache_skipped", "paths": [path], "mounts": [
             {"path": exc.mount_path, "type": exc.mount_type, "detail": str(exc)}]})
@@ -110,19 +111,135 @@ def _open_store(cache_options: dict[str, Any] | None, send: Emit, path: str) -> 
         return None
 
 
-def _cache_store(root: str, source_paths: list[str] | None = None) -> CacheStore:
-    """Open a store using the mounted share, rather than its temporary volume name, as key."""
-    from helab.utils.cache_paths import UnresolvedRemotePath, current_cache_paths
+def _cache_store(root: str, source_paths: list[str] | None = None,
+                 *, local_lane: bool = False, allow_unrooted: bool = False) -> CacheStore:
+    """Open root-keyed records; the local lane uses only captured volume IDs."""
+    from helab.utils.cache_paths import CachePaths, UnresolvedRemotePath, current_mounts
     from helab.utils.cache_store import CacheStore, StoreError
+    from helab.utils.data_roots import DataRoots, LocalVolumes, RootLocation, current_local_volumes
+    store: CacheStore | None = None
     try:
-        paths = current_cache_paths()
+        mounts = current_mounts()
+        paths = CachePaths(mounts)
+        store = CacheStore(root, root_mode=True)
+        if local_lane:
+            known = {(path, source): identifier for path, source, identifier in store.volume_locations()}
+            volumes = LocalVolumes((mount, known[(mount.path, mount.source)]) for mount in mounts
+                                   if (mount.path, mount.source) in known)
+        else:
+            volumes = current_local_volumes(mounts, paths=source_paths or ())
+            if not store.read_only:
+                for mount, identifier in volumes.volumes:
+                    store.record_volume(mount.path, mount.source, identifier)
+        resolver = DataRoots(paths, (RootLocation(*row) for row in store.root_locations()),
+                             local_location=volumes.location, local_source=volumes.source,
+                             case_insensitive_volumes=sys.platform == "win32")
         for path in source_paths or ():
-            paths.key(path)
+            if not allow_unrooted:
+                resolver.key(path)
     except UnresolvedRemotePath:
+        if store is not None:
+            store.close()
         raise
     except Exception as exc:
+        if store is not None:
+            store.close()
         raise StoreError(f"Mount information is unavailable: {exc}") from exc
-    return CacheStore(root, path_key=paths.key, source_path=paths.source)
+    store._path_key = resolver.key
+    store._source_path = resolver.source
+    store._location_key = resolver.location
+    return store
+
+
+def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | None,
+                   send: Emit) -> None:
+    """Reconcile the marker found by a source listing with the local roots table."""
+    if not cache_options:
+        return
+    from helab.utils.cache_paths import UnresolvedRemotePath
+    from helab.utils.cache_store import KINDS, StoreError
+    from helab.utils.data_roots import NoDataRoot, read_marker
+    try:
+        with _cache_store(cache_options["directory"], [path], allow_unrooted=True) as store:
+            location = store._location_key(path)
+            old = store.root_at(location)
+            if not present:
+                if old is not None:
+                    store.forget_root(location)
+                    send({"kind": "root_changed", "path": path, "location": location,
+                          "reason": "marker removed"})
+                return
+            try:
+                marker = read_marker(path)
+            except (OSError, ValueError) as exc:
+                if old is not None:
+                    store.forget_root(location)
+                send({"kind": "cache_warning", "message": f"Invalid {path}/.helab-root: {exc}"})
+                return
+            duplicates = store.other_root_locations(marker.uuid, location)
+            decision: Literal["confirmed", "pending"] = (
+                "pending" if old is not None and old[0] == marker.uuid and old[2] == "pending"
+                else "confirmed" if old is not None and old[0] == marker.uuid
+                else "pending" if duplicates else "confirmed")
+            old_key = ""
+            if decision == "confirmed" and (old is None or old[0] != marker.uuid):
+                try:
+                    old_key = store._path_key(path)
+                except NoDataRoot:
+                    pass
+            store.record_root(location, marker.uuid,
+                              "smb" if location.startswith("smb://") else "vol",
+                              marker.label, decision=decision)
+            if decision == "pending":
+                send({"kind": "root_duplicate", "path": path, "location": location,
+                      "uuid": marker.uuid, "other_locations": duplicates})
+                return
+            if old_key and old_key != f"root://{marker.uuid}":
+                moved = store.rekey_subtree(old_key, f"root://{marker.uuid}")
+                if moved:
+                    sources = [store._source_path(key) for key in moved]
+                    send({"kind": "removed", "kinds": list(KINDS), "paths": sources})
+                    send({"kind": "root_rekeyed", "path": path, "count": len(moved)})
+            send({"kind": "root_changed" if old and old[0] != marker.uuid else "root_found",
+                  "path": path, "location": location, "uuid": marker.uuid, "label": marker.label})
+    except UnresolvedRemotePath:
+        # The subsequent optional-cache open reports the typed skip once.
+        return
+    except StoreError as exc:
+        send({"kind": "cache_warning", "message": f"Data root could not be recorded: {exc}"})
+
+
+def _mount_fingerprint() -> list[list[str]] | None:
+    from helab.utils.cache_paths import current_mounts
+    try:
+        return sorted([[mount.path, mount.source] for mount in current_mounts()])
+    except (OSError, RuntimeError):
+        return None
+
+
+def verify_known_roots(cache_options: dict[str, Any], send: Emit = emit) -> None:
+    """Check remembered marker locations in a background source helper.
+
+    Only the recorded marker folders are visited. Missing mounts are left alone;
+    a mounted folder whose marker changed is reconciled like a listing.
+    """
+    from helab.utils.cache_paths import CachePaths, current_mounts
+    from helab.utils.cache_store import CacheStore
+    from helab.utils.data_roots import current_local_volumes
+    mounts = current_mounts()
+    with CacheStore(cache_options["directory"], root_mode=True) as store:
+        roots = store.root_locations()
+    local = current_local_volumes(mounts, paths=[mount.path for mount in mounts if not mount.remote])
+    locations = CachePaths(mounts)
+    beat = Heartbeat(send, "verifying data roots")
+    for location, _, _ in roots:
+        beat()
+        source = (locations.source(location) if location.startswith("smb://")
+                  else local.source(location))
+        if source == location or not os.path.isdir(source):
+            continue
+        _discover_root(source, os.path.lexists(os.path.join(source, ".helab-root")), cache_options, send)
+    send({"kind": "roots_verified", "mounts": sorted([[mount.path, mount.source] for mount in mounts])})
 
 
 def _saved_folders(store: CacheStore, paths: list[str], send: Emit) -> dict[str, dict[str, Any]]:
@@ -264,41 +381,49 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
     this sends first.
     """
     from helab.utils.cache_store import StoreError
-    store = _open_store(cache_options, send, path)
+    store: CacheStore | None = None
     try:
+        early_events: list[dict[str, Any]] = []
+        store = _open_store(cache_options, early_events.append, path)
+        if store is not None:
+            for event in early_events:
+                send(event)
         try:
             _send_guard(store, path, send)
         except StoreError:
-            pass  # Without it the app saves a failure with a fresh guard; browsing goes on.
-        _, root_saved = _send_saved(store, path, send)
+            pass
+        _send_saved(store, path, send)
         found: dict[str, set[int]] = {}
         entries: list[dict[str, Any]] = []
         has_dirs = False
         empty = True
+        marker_present = False
         listed_at = time.time()
         beat = Heartbeat(send, "listing")
-
-        def flush() -> None:
-            if store is not None:
-                saved = _saved_folders(store, [child["path"] for child in entries], send)
-                for child in entries:
-                    child.update(saved.get(child["path"], {}))
-            send({"kind": "entries", "entries": entries})
-
         with os.scandir(path) as directory:
             for entry in directory:
                 beat()
+                if entry.name == ".helab-root":
+                    marker_present = True
+                    continue
                 empty = False
                 if matched := file_kinds.match(entry.name):
                     found.setdefault(matched[0].name, set()).add(matched[1])
                 elif entry.is_dir(follow_symlinks=False):
                     has_dirs = True
                     entries.append({"path": entry.path, "name": entry.name})
-                    if len(entries) >= 128:
-                        flush()
-                        entries = []
-        if entries:
-            flush()
+        _discover_root(path, marker_present, cache_options, send)
+        if store is not None:
+            store.close()
+        store = _open_store(cache_options, send, path)
+        _, root_saved = _send_saved(store, path, send)
+        for start in range(0, len(entries), 128):
+            batch = entries[start:start + 128]
+            if store is not None:
+                saved = _saved_folders(store, [child["path"] for child in batch], send)
+                for child in batch:
+                    child.update(saved.get(child["path"], {}))
+            send({"kind": "entries", "entries": batch})
         raw, txy = _shots(found)
         status, count = _classify(raw, txy, has_dirs)
         report: dict[str, Any] = {"kind": "status", "details": False, "status": status, "count": count,
@@ -307,6 +432,8 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                                   "files": file_kinds.files_summary(found, {}), **_dataset_flags(store, path, send)}
         if root_saved is not None:
             report["saved_root"] = root_saved
+        if (mounts := _mount_fingerprint()) is not None:
+            send({"kind": "mounts_seen", "mounts": mounts})
         send(report)
     finally:
         if store is not None:
@@ -427,7 +554,7 @@ def save_subtrees(cache_options: dict[str, Any], records: list[dict[str, Any]], 
     from helab.utils.cache_paths import UnresolvedRemotePath
     skipped: list[str] = []
     saved: list[str] = []
-    with _cache_store(cache_options["directory"]) as store:
+    with _cache_store(cache_options["directory"], local_lane=True) as store:
         batch: dict[str, dict[str, Any] | None] = {}
         for record in records:
             path = str(record["path"])
@@ -483,6 +610,8 @@ def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | No
     with os.scandir(path) as directory:
         for entry in directory:
             beat()
+            if entry.name == ".helab-root":
+                continue
             empty = False
             if matched := file_kinds.match(entry.name):
                 kind, shot = matched
@@ -627,7 +756,7 @@ def read_cached(path: str, output: str, send: Emit = emit,
     """
     import numpy as np
     from helab.utils.cache_store import unpack_dataset
-    store = _open_store(cache_options, send, path)
+    store = _open_store(cache_options, send, path, local_lane=True)
     if store is None:
         raise ValueError("Disk cache unavailable")
     try:
@@ -1241,7 +1370,7 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     old: list[str] = []
     if action == "sweep":
         old = remove_old_caches(os.path.dirname(os.path.abspath(root)), Heartbeat(send, "cleaning up"))
-    with _cache_store(root) as store:
+    with _cache_store(root, local_lane=True) as store:
         if (budget is not None and budget_set_at is not None and not store.read_only
                 and action not in ("trim", "budget")):
             # Every job tells the store the app's budget, so running loads save within it.
@@ -1443,7 +1572,7 @@ def main() -> None:
         elif operation == "scan_history":
             from helab.utils.scan_history import write_outcome
             from helab.utils.cache_store import SaveGuard as Guard
-            with _cache_store(request["cache"]["directory"], [request["path"]]) as store:
+            with _cache_store(request["cache"]["directory"], [request["path"]], local_lane=True) as store:
                 # The scan's own guard when the app has it: a Clear after that scan started
                 # must not get its outcome back.
                 saved = request.get("guard")
@@ -1465,7 +1594,7 @@ def main() -> None:
             read_cached(request["path"], request["output"], cache_options=request.get("cache"),
                         limits=request.get("limits"), allow_large=bool(request.get("allow_large")))
         elif operation == "invalidate":
-            with _cache_store(request["cache"]["directory"], [request["path"]]) as store:
+            with _cache_store(request["cache"]["directory"], [request["path"]], local_lane=True) as store:
                 # Bumps the folder's epoch: a load started before cannot save it back.
                 emit(_removed_event(store.remove(("datasets",), [request["path"]])))
                 emit({"kind": "admin_result", "action": "invalidate", "next_deadline": _deadline(store),
@@ -1474,6 +1603,8 @@ def main() -> None:
             cache_move_job(request["move"])
         elif operation == "cache_admin":
             cache_admin(request["cache"], request["action"], **request.get("params", {}))
+        elif operation == "roots_verify":
+            verify_known_roots(request["cache"])
         else:
             raise ValueError(f"Unknown operation: {operation}")
         emit({"kind": "done"})

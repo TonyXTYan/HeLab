@@ -27,14 +27,14 @@ def blocked_folder(tmp_path: Path) -> tuple[str, dict[str, Any]]:
     source.mkdir()
     (source / "d_txy_forc1.txt").write_text("1,2,3\n")
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [str(source)]) as store:
         write_outcome(store, str(source), {"operation_id": "failed", "revision": 11, "kind": "timeout",
             "at": time.time() - 60, "attempts": 1, "reason": "I/O timeout"}, history_guard(store, str(source)))
     return str(source), options
 
 
 def saved_history(options: dict[str, Any], path: str) -> dict[str, Any]:
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [path]) as store:
         found = store.read_record("histories", path)
     assert found.value is not None
     return found.value
@@ -117,7 +117,7 @@ def test_begin_scan_decides_blocked_under_the_lock(
     assert not any(e["kind"] == "status" for e in events)
     # A skipped scan writes nothing, not even its start.
     assert not saved_history(options, path)["starts"]
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [path]) as store:
         with pytest.raises(ScanSkipped):
             begin_scan(store, path, "auto", 20, history_guard(store, path), manual=False, automatic=automatic)
         # A manual scan still runs.
@@ -238,28 +238,34 @@ def subtree_record(path: str) -> dict[str, Any]:
 
 def test_failed_subtree_save_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
+    path = str(tmp_path / "a")
+    with io_helper._cache_store(options["directory"], [path]):
+        pass
 
     def fail(*args: Any, **kwargs: Any) -> None:
         raise StoreError("Disk cache could not be written: disk I/O error")
     monkeypatch.setattr(CacheStore, "save_records", fail)
     events: list[dict[str, Any]] = []
     with pytest.raises(StoreError, match="disk I/O error"):
-        save_subtrees(options, [subtree_record("a")], events.append)
+        save_subtrees(options, [subtree_record(path)], events.append)
     assert not events
 
 
 def test_subtree_save_waits_for_a_held_write_lock(tmp_path: Path) -> None:
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
-    save_subtrees(options, [subtree_record("b")], lambda event: None)
+    a, b = str(tmp_path / "a"), str(tmp_path / "b")
+    with io_helper._cache_store(options["directory"], [a, b]):
+        pass
+    save_subtrees(options, [subtree_record(b)], lambda event: None)
     holder = hold_write_lock(options, 0.5)
     events: list[dict[str, Any]] = []
-    save_subtrees(options, [subtree_record("a"), {"path": "b", "status": ""}], events.append)
+    save_subtrees(options, [subtree_record(a), {"path": b, "status": ""}], events.append)
     holder.join(5)
-    assert events == [{"kind": "subtree_saved", "paths": ["a", "b"]}]
-    with CacheStore(options["directory"]) as store:
-        saved = store.read_record("subtrees", "a")
+    assert events == [{"kind": "subtree_saved", "paths": [a, b]}]
+    with io_helper._cache_store(options["directory"], [a, b]) as store:
+        saved = store.read_record("subtrees", a)
         assert saved.value is not None and saved.value["status"] == "something"
-        assert store.read_record("subtrees", "b").missing
+        assert store.read_record("subtrees", b).missing
 
 
 def test_failed_summary_save_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

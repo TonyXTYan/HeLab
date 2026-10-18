@@ -14,6 +14,7 @@ from pytestqt.qtbot import QtBot
 from PyQt6.QtCore import QSettings
 
 from helab.io_helper import cache_admin, list_folder, load
+from helab import io_helper
 from helab.resources.icons import IconsInitUtil, StatusIcons
 from helab.utils.cache_store import KINDS, CacheStore, DatasetRecord, SaveRejected
 from helab.utils.folder_cache import FolderCache, get_folder_cache, store_options
@@ -83,13 +84,13 @@ def test_a_superseded_choice_removes_nothing(tmp_path: Path) -> None:
     source = data_folder(tmp_path)
     options: dict[str, Any] = {"directory": str(tmp_path / "caches" / "store-v2")}
     run_load(source, tmp_path, options)
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [str(source)]) as store:
         store.set_prefs(str(source), True, False, 20.0)  # Don't cache, keep the cached data (the newer choice).
     events: list[dict[str, Any]] = []
     cache_admin(options, "prefs", events.append, path=str(source), no_cache=True, no_auto_load=False,
                 set_at=10.0, remove_cached=True)  # An older request, arriving late.
     assert events[0]["prefs"]["set_at"] == 20.0 and not any(e["kind"] == "removed" for e in events)
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [str(source)]) as store:
         assert store.read_dataset_row(str(source)).value is not None
 
 
@@ -98,7 +99,7 @@ def test_a_cached_read_asked_for_before_dont_cache_reads_nothing(tmp_path: Path)
     source = data_folder(tmp_path)
     options: dict[str, Any] = {"directory": str(tmp_path / "caches" / "store-v2")}
     run_load(source, tmp_path, options)
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [str(source)]) as store:
         store.set_prefs(str(source), True, False, time.time())
     output = tmp_path / "out"
     output.mkdir()
@@ -111,7 +112,7 @@ def test_a_folder_not_cached_is_never_saved_even_by_a_load_already_running(tmp_p
     source = data_folder(tmp_path)
     options: dict[str, Any] = {"directory": str(tmp_path / "caches" / "store-v2")}
     run_load(source, tmp_path, options)  # Cached before the choice.
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [str(source)]) as store:
         guard = store.start_dataset_job(str(source))  # A load already running...
         store.set_prefs(str(source), True, False, time.time())  # ...when the user ticks Don't cache.
         with pytest.raises(SaveRejected, match="Not cached: your choice"):
@@ -125,7 +126,7 @@ def test_a_folder_not_cached_is_never_saved_even_by_a_load_already_running(tmp_p
     assert loaded["disk_cache_pending"] is False  # No save to wait for (so no "Cache update failed").
     assert not any(e["kind"] in ("cache_saved", "cache_full", "cache_approval", "cache_save_failed", "cache_warning")
                    for e in events)  # Not even tried.
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [str(source)]) as store:
         assert store.read_dataset_row(str(source)).value == before
 
 

@@ -24,9 +24,8 @@ import time
 from typing import Any, Callable, Generator, Generic, Iterable, Literal, Mapping, Sequence, TypeVar, TypedDict, cast
 import uuid
 
-LAYOUT_VERSION = 2
-STORE_DIRNAME = "store-v2"
-# D1 reserves a separate clean store for root identities. D2 activates it.
+LAYOUT_VERSION = 3
+STORE_DIRNAME = "store-v3"
 ROOT_LAYOUT_VERSION = 3
 ROOT_STORE_DIRNAME = "store-v3"
 DATASET_FORMAT = "blosc-pickle-1"
@@ -86,6 +85,9 @@ CREATE TABLE IF NOT EXISTS roots (
     verified_at REAL NOT NULL, decision TEXT NOT NULL
         CHECK (decision IN ('confirmed', 'pending')));
 CREATE INDEX IF NOT EXISTS roots_uuid ON roots (uuid);
+CREATE TABLE IF NOT EXISTS root_volumes (
+    mount_path TEXT NOT NULL, mount_source TEXT NOT NULL, volume_id TEXT NOT NULL,
+    seen_at REAL NOT NULL, PRIMARY KEY (mount_path, mount_source));
 """
 
 
@@ -321,6 +323,7 @@ class CacheStore:
         self.root = root
         self._path_key = path_key or (lambda path: path)
         self._source_path = source_path or (lambda path: path)
+        self._location_key: Callable[[str], str] = lambda path: path
         self._expected_layout = ROOT_LAYOUT_VERSION if root_mode else LAYOUT_VERSION
         self._root_mode = root_mode
         self.datasets_dir = os.path.join(root, "datasets")
@@ -373,10 +376,9 @@ class CacheStore:
                     for statement in SCHEMA.split(";"):
                         if statement.strip():
                             conn.execute(statement)
-                    if self._root_mode:
-                        for statement in ROOT_SCHEMA.split(";"):
-                            if statement.strip():
-                                conn.execute(statement)
+                    for statement in ROOT_SCHEMA.split(";"):
+                        if statement.strip():
+                            conn.execute(statement)
                     defaults: dict[str, object] = {
                         "layout_version": self._expected_layout, "store_id": uuid.uuid4().hex, "created_at": time.time(),
                         **{f"gen_{kind}": 0 for kind in KINDS}}
@@ -413,6 +415,38 @@ class CacheStore:
         return [(str(location), str(identifier), str(decision))
                 for location, identifier, decision in rows]
 
+    def root_at(self, location: str) -> tuple[str, str, str] | None:
+        row = self._conn.execute(
+            "SELECT uuid, label, decision FROM roots WHERE location=?", (location,)).fetchone()
+        return (str(row[0]), str(row[1]), str(row[2])) if row is not None else None
+
+    def other_root_locations(self, identifier: str, location: str) -> list[str]:
+        return [str(row[0]) for row in self._conn.execute(
+            "SELECT location FROM roots WHERE uuid=? AND location<>? AND decision='confirmed'",
+            (identifier, location))]
+
+    def volume_locations(self) -> list[tuple[str, str, str]]:
+        """Mounted-volume hints captured earlier by source helpers."""
+        try:
+            rows = self._conn.execute(
+                "SELECT mount_path, mount_source, volume_id FROM root_volumes").fetchall()
+        except sqlite3.Error as exc:
+            raise StoreError(f"Data-root volumes could not be read: {exc}") from exc
+        return [(str(path), str(source), str(identifier)) for path, source, identifier in rows]
+
+    def record_volume(self, mount_path: str, mount_source: str, identifier: str) -> None:
+        with self.transaction():
+            self._conn.execute(
+                "INSERT INTO root_volumes (mount_path, mount_source, volume_id, seen_at) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(mount_path, mount_source) DO UPDATE SET "
+                "volume_id=excluded.volume_id, seen_at=excluded.seen_at",
+                (mount_path, mount_source, identifier, time.time()))
+
+    def forget_root(self, location: str) -> None:
+        """A listing saw that this folder no longer contains its marker."""
+        with self.transaction():
+            self._conn.execute("DELETE FROM roots WHERE location=?", (location,))
+
     def record_root(self, location: str, identifier: str, kind: str,
                     label: str, *, decision: Literal["confirmed", "pending"]) -> None:
         """Record a marker decision, retaining the location's first sighting."""
@@ -425,6 +459,58 @@ class CacheStore:
                 "first_seen=CASE WHEN roots.uuid=excluded.uuid THEN roots.first_seen ELSE excluded.first_seen END, "
                 "last_seen=excluded.last_seen, verified_at=excluded.verified_at, decision=excluded.decision",
                 (location, identifier, kind, label, now, now, now, decision))
+
+    def rekey_subtree(self, old: str, new: str) -> list[str]:
+        """Move rows below a newly found nested marker in one transaction.
+
+        The newer row wins a collision. Replaced dataset files are retired so
+        concurrent readers can finish before the sweep deletes them.
+        Returns the old stored keys whose in-memory flags must be reset.
+        """
+        if not old.startswith("root://") or not new.startswith("root://") or old == new:
+            return []
+        tables = ("folder_epochs", "folder_summaries", "scan_histories", "subtrees",
+                  "folder_prefs", "pending_saves", "datasets")
+        timestamps = {"folder_summaries": "saved_at", "scan_histories": "saved_at",
+                      "subtrees": "saved_at", "folder_prefs": "set_at",
+                      "pending_saves": "created_at", "datasets": "last_used"}
+        moved: set[str] = set()
+        try:
+            with self.transaction():
+                for table in tables:
+                    columns = [str(row[1]) for row in self._conn.execute(f"PRAGMA table_info({table})")]
+                    rows = self._conn.execute(
+                        f"SELECT * FROM {table} WHERE path=? OR (path>=? AND path<?)",
+                        (old, old + "/", old + "0")).fetchall()
+                    for row in rows:
+                        values = dict(zip(columns, row))
+                        source = str(values["path"])
+                        target = new + source[len(old):]
+                        previous = self._conn.execute(
+                            f"SELECT * FROM {table} WHERE path=?", (target,)).fetchone()
+                        moved.add(source)
+                        if previous is not None:
+                            existing = dict(zip(columns, previous))
+                            if table == "folder_epochs":
+                                self._conn.execute(
+                                    "UPDATE folder_epochs SET epoch=?, job_seq=? WHERE path=?",
+                                    (max(int(values["epoch"]), int(existing["epoch"])),
+                                     max(int(values["job_seq"]), int(existing["job_seq"])), target))
+                                self._conn.execute("DELETE FROM folder_epochs WHERE path=?", (source,))
+                                continue
+                            stamp = timestamps[table]
+                            source_wins = float(values[stamp]) > float(existing[stamp])
+                            if table in ("datasets", "pending_saves"):
+                                loser = existing if source_wins else values
+                                self._retire(str(loser["file"]), time.time())
+                            if not source_wins:
+                                self._conn.execute(f"DELETE FROM {table} WHERE path=?", (source,))
+                                continue
+                            self._conn.execute(f"DELETE FROM {table} WHERE path=?", (target,))
+                        self._conn.execute(f"UPDATE {table} SET path=? WHERE path=?", (target, source))
+            return sorted(moved)
+        except sqlite3.Error as exc:
+            raise StoreError(f"Data-root subtree could not be re-keyed: {exc}") from exc
 
     @contextlib.contextmanager
     def transaction(self, write: bool = True) -> Generator[None, None, None]:

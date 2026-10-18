@@ -681,7 +681,7 @@ def test_cancel_button_preserves_another_tabs_shared_load(
 def test_scan_metadata_survives_restart_without_reading_txy_contents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from helab.utils.cache_store import CacheStore
+    from helab import io_helper
     import pandas as pd
     import blosc
     root, child = tmp_path / "source", tmp_path / "source" / "run"
@@ -699,7 +699,7 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
     scan(str(child), events.append, options)
     initial = next(e for e in events if e["kind"] == "status")
     assert initial["count"] == 1 and initial["status"] == "ok"
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [str(child)]) as store:
         # Scan persistence exists without any loaded data.
         assert store.read_dataset_row(str(child)).missing
         saved = store.read_record("summaries", str(child)).value
@@ -723,7 +723,7 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
     assert {"kind": "scan_cached", "status": saved} in events
     assert next(e for e in events if e["kind"] == "status")["scanned_at"] >= saved["scanned_at"]
     # A failed refresh retains the previous date and count in persistent storage.
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [str(child)]) as store:
         previous = store.read_record("summaries", str(child)).value
 
     def unavailable(path: str) -> Any:
@@ -734,7 +734,7 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
     with pytest.raises(OSError, match="Volume unavailable"):
         scan(str(child), events.append, options)
     assert next(e for e in events if e["kind"] == "scan_cached")["status"] == previous
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [str(child)]) as store:
         assert store.read_record("summaries", str(child)).value == previous
 
 

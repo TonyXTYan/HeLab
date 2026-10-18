@@ -25,6 +25,7 @@ from helab.views.FolderExplorer import FolderExplorer
 from helab.views.CentralHint import CentralHint
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HelabMainWindow import HelabMainWindow
+from helab import io_helper
 from helab.io_helper import list_folder, load, scan
 from helab.utils.cache_store import CacheStore, DatasetRow, unpack_dataset
 from helab.resources.icons import IconsInitUtil, StatusIcons
@@ -32,7 +33,7 @@ from helab.resources.icons import IconsInitUtil, StatusIcons
 
 def saved_dataset(options: dict[str, Any], path: str) -> tuple[DatasetRow, dict[int, Any]] | None:
     """The folder's cached dataset row and its shots, or None."""
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [path]) as store:
         found = store.read_dataset(path)
     assert not found.failed, found.error
     if found.value is None:
@@ -890,7 +891,8 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
     def record(owner: str, generation: int, path: str, operation: str,
                payload: dict[str, Any] | None = None, *, priority: bool = False,
                timeout: float = 15.0) -> bool:
-        operations.append(operation)
+        if operation != "roots_verify":
+            operations.append(operation)
         return original(owner, generation, path, operation, payload, priority=priority, timeout=timeout)
 
     monkeypatch.setattr(service, "submit", record)
@@ -949,6 +951,9 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
 def test_disk_cache_reused_after_process_restart_and_rejects_changed_files(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
+    from helab import io_helper
+    with io_helper._cache_store(str(tmp_path / "cache"), [str(source)]):
+        pass
     converted = source / "d_txy_forc1.txt"
     converted.write_text("1,2,3\n")
     program = """
@@ -1184,7 +1189,7 @@ def test_disk_clear_epoch_prevents_older_load_from_repopulating_cache(tmp_path: 
     def clear_during_delivery(event: dict[str, Any]) -> None:
         events.append(event)
         if event["kind"] == "shot":
-            with CacheStore(options["directory"]) as store:
+            with io_helper._cache_store(options["directory"], [str(source)]) as store:
                 store.remove(("datasets",), [str(source)])
 
     load(str(source), str(output), clear_during_delivery, options)
@@ -1293,7 +1298,7 @@ def test_corrupt_disk_cache_reports_failure_and_loads_source(tmp_path: Path) -> 
     converted.write_text("1,2,3\n")
     info = converted.stat()
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
-    with CacheStore(options["directory"]) as store:
+    with io_helper._cache_store(options["directory"], [str(source)]) as store:
         guard = store.start_dataset_job(str(source))
         file = store.write_dataset_file(b"invalid compressed dataset")
         store.save_dataset(str(source), file, {"ram_bytes": 24, "rows": 1, "shots": 1,

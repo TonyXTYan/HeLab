@@ -78,8 +78,8 @@ class LocalVolumes:
 
 
 def current_local_volumes(mounts: Iterable[Mount],
-                          id_reader: Callable[[Mount], str | None] | None = None,
-                          *, paths: Iterable[str] = ()) -> LocalVolumes:
+                          *, paths: Iterable[str],
+                          id_reader: Callable[[Mount], str | None] | None = None) -> LocalVolumes:
     """Capture IDs only for the volumes containing requested paths."""
     candidates = tuple(mounts)
     selected: list[Mount] = []
@@ -102,6 +102,9 @@ def current_local_volumes(mounts: Iterable[Mount],
 
 def _volume_id(mount: Mount) -> str | None:
     """OS volume ID for a *location*, never for the data's identity."""
+    test_id = os.environ.get("HELAB_TEST_VOLUME_ID")
+    if test_id:
+        return test_id
     if sys.platform == "darwin":
         import subprocess
         try:
@@ -113,8 +116,13 @@ def _volume_id(mount: Mount) -> str | None:
     if sys.platform == "win32":
         import ctypes
         serial = ctypes.c_ulong()
-        ok = ctypes.windll.kernel32.GetVolumeInformationW(  # type: ignore[attr-defined]
-            mount.path, None, 0, ctypes.byref(serial), None, None, None, 0)
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        previous = kernel32.SetErrorMode(0x0001)  # SEM_FAILCRITICALERRORS: empty card readers do not prompt.
+        try:
+            ok = kernel32.GetVolumeInformationW(
+                mount.path, None, 0, ctypes.byref(serial), None, None, None, 0)
+        finally:
+            kernel32.SetErrorMode(previous)
         return f"{serial.value:08x}" if ok else None
     # Linux's by-uuid names identify the device independently of mount path.
     directory = "/dev/disk/by-uuid"
@@ -201,10 +209,12 @@ class DataRoots:
 
     def __init__(self, locations: CachePaths, roots: Iterable[RootLocation],
                  *, local_location: Callable[[str], str] | None = None,
-                 local_source: Callable[[str], str] | None = None) -> None:
+                 local_source: Callable[[str], str] | None = None,
+                 case_insensitive_volumes: bool = False) -> None:
         self.locations = locations
         self.local_location = local_location or (lambda path: path)
         self.local_source = local_source or (lambda location: location)
+        self.case_insensitive_volumes = case_insensitive_volumes
         self.roots = tuple(roots)
         self._source: dict[str, str] = {}
 
@@ -218,9 +228,15 @@ class DataRoots:
         if path.startswith("root://"):
             return path
         location = self.location(path)
-        matches = [(root, suffix) for root in self.roots
-                   if root.decision == "confirmed"
-                   if (suffix := _relative(location, root.location)) is not None]
+        matches = []
+        for root in self.roots:
+            if root.decision != "confirmed":
+                continue
+            insensitive = location.startswith("smb://") or self.case_insensitive_volumes
+            suffix = _relative(location.casefold() if insensitive else location,
+                               root.location.casefold() if insensitive else root.location)
+            if suffix is not None:
+                matches.append((root, suffix))
         if not matches:
             raise NoDataRoot(path)
         root, suffix = max(matches, key=lambda pair: len(pair[0].location))
