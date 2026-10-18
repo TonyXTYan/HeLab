@@ -59,6 +59,7 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     from helab.utils.cache_store import CacheStore, store_root
 
     monkeypatch.setattr(data_roots, "_volume_id", lambda _: "test-volume")
+    monkeypatch.setattr(io_helper, "_volume_id_cache", {})
     if os.name == "nt":
         mount_root = Path(tempfile.gettempdir()).anchor
         monkeypatch.setattr(cache_paths, "_windows_mounts",
@@ -114,10 +115,12 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     original = io_helper._cache_store
 
     def open_seeded(root: str, source_paths: list[str] | None = None, *,
-                    local_lane: bool = False, allow_unrooted: bool = False) -> CacheStore:
+                    local_lane: bool = False, allow_unrooted: bool = False,
+                    verified_volumes: list[list[str]] | None = None) -> CacheStore:
         for source in source_paths or ():
             seed(root, source)
-        return original(root, source_paths, local_lane=local_lane, allow_unrooted=allow_unrooted)
+        return original(root, source_paths, local_lane=local_lane, allow_unrooted=allow_unrooted,
+                        verified_volumes=verified_volumes)
 
     monkeypatch.setattr(io_helper, "_cache_store", open_seeded)
 

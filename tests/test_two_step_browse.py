@@ -1123,3 +1123,25 @@ def test_open_tooltip_is_rebuilt_when_its_row_changes(qtbot: QtBot, tree: Folder
     model.changed(node)
     assert "Listing folder… since " in QToolTip.text()
     QToolTip.hideText()
+
+
+def test_entries_sent_again_after_root_discovery_replace_those_streamed_first(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A listing whose folder's key changed (a marker found) sends its names again with the new
+    root's records (``replace``): they take the earlier entries' places, not add to them."""
+    service = frozen_service(monkeypatch)
+    cache = get_folder_cache(service)
+    path = str(tmp_path)
+    run, other = os.path.join(path, "run"), os.path.join(path, "other")
+    assert cache.submit("tab", 0, path, "list", {})
+    request = producer(cache, path, "list")
+    service.resultReady.emit(request, {"kind": "entries", "entries": [
+        {"path": run, "name": "run", "prefs": {}}, {"path": other, "name": "other", "prefs": {}}]})
+    service.resultReady.emit(request, {"kind": "entries", "replace": True, "entries": [
+        {"path": run, "name": "run", "prefs": {"no_cache": True}}]})
+    entries = cache.jobs[("list", path)].entries
+    assert [entry["path"] for entry in entries] == [run, other]
+    assert entries[0]["prefs"] == {"no_cache": True}
+    assert cache.folder_prefs(run)["no_cache"]
+    service.shutdown()

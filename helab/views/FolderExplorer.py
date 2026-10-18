@@ -212,8 +212,10 @@ class FolderExplorer(QWidget):
         # Folders whose next load compares every file with the cache (Retry / Refresh), not
         # just the folder's mtime: a file rewritten in place doesn't change the folder's mtime.
         self._full_check_paths: set[str] = set()
-        # The disk cache is read at most once per selection of a folder.
+        # The disk cache is read at most once per selection of a folder, or once more after its
+        # volume is verified if the first read waited for that (``_volumes_verified``).
         self._cache_read_path: str | None = None
+        self._cache_read_waits: str | None = None
         self._load_path: str | None = None
         self._cancelled_load_path: str | None = None
         # Large folders (S8): the folder the user just said yes to, only while the call that asked
@@ -369,6 +371,7 @@ class FolderExplorer(QWidget):
         self.model.cache.folderPrefsChanged.connect(self._folder_prefs_changed)
         self.model.cache.folderPrefsFailed.connect(self._folder_prefs_failed)
         self.model.cache.mountWarningChanged.connect(self._mount_warning_changed)
+        self.model.cache.volumesVerified.connect(self._volumes_verified)
         self.model.activityChanged.connect(self._update_activity)
         self.animation = QTimer(self)
         self.animation.timeout.connect(self._animate)
@@ -988,7 +991,21 @@ class FolderExplorer(QWidget):
         self._cache_read_path = path
         self._auto_load_at = time.monotonic()
         return cache.submit(self.model.owner, self.model.generation, path, "cached",
-                            {"cache": store_options(), **self._large_payload(path, deliberate)}, priority=True)
+                            {"cache": store_options(), "verified_volumes": cache.verified_volumes(),
+                             **self._large_payload(path, deliberate)}, priority=True)
+
+    def _volumes_verified(self) -> None:
+        """A cached read that waited for its volume's verification runs now, if the folder is
+        still selected and shows nothing yet (its load, from the folder itself, may still run)."""
+        path, self._cache_read_waits = self._cache_read_waits, None
+        if (self.closed or path is None or path != self.selected_path_globally
+                or path != self._cache_read_path
+                or (self.folder_opened_path == path and self.folder_opened_data is not None)):
+            return
+        self._cache_read_path = None
+        self._show_cached(path)
+        self._update_activity()
+        self.loadStateChanged.emit()
 
     def _display(self, path: str, dataset: Dataset, event: dict[str, Any] | None = None) -> None:
         """Show a dataset; data not from a completed load stays unchecked until one completes."""
@@ -1021,6 +1038,8 @@ class FolderExplorer(QWidget):
                 self._display(path, event["dataset"], event)
         elif kind == "error":
             logging.info("Cached data %s: %s", path, event.get("message", ""))
+            if event.get("unverified"):
+                self._cache_read_waits = path  # Read again once verification checks its volume.
             # Its check counted those shots as held: a load of the files follows instead.
             self._drop_check_beside_read(path)
         elif kind == "too_large":
@@ -2119,6 +2138,7 @@ class FolderExplorer(QWidget):
         self.model.cache.folderPrefsChanged.disconnect(self._folder_prefs_changed)
         self.model.cache.folderPrefsFailed.disconnect(self._folder_prefs_failed)
         self.model.cache.mountWarningChanged.disconnect(self._mount_warning_changed)
+        self.model.cache.volumesVerified.disconnect(self._volumes_verified)
         self.model.cache.release(self.model.owner)
         self.folder_opened_data = None
         self.displayed_dataset = None

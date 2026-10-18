@@ -1,4 +1,4 @@
-"""The disk cache: SQLite records and compressed dataset files (``store-v2``).
+"""The disk cache: SQLite records and compressed dataset files (``store-v3``).
 
 Only isolated helpers open a store; the GUI process never does. Design, rules
 and the reasons behind them: ``roadmaps/cache-storage-and-settings.md``.
@@ -26,8 +26,8 @@ import uuid
 
 LAYOUT_VERSION = 3
 STORE_DIRNAME = "store-v3"
-ROOT_LAYOUT_VERSION = 3
-ROOT_STORE_DIRNAME = "store-v3"
+ROOT_LAYOUT_VERSION = LAYOUT_VERSION
+ROOT_STORE_DIRNAME = STORE_DIRNAME
 DATASET_FORMAT = "blosc-pickle-1"
 BUSY_TIMEOUT = 30.0
 # Retired dataset files outlive any reader that looked up their row.

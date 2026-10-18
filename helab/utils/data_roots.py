@@ -32,6 +32,23 @@ class NoDataRoot(UnresolvedRemotePath):
         super().__init__(path, "no data root", f"Disk cache off: no data root for {path}")
 
 
+class VolumeUnverified(NoDataRoot):
+    """A local lane read whose volume hint this session hasn't checked yet (the disk at that
+    mount may have been swapped): it waits for verification instead of trusting the hint."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(path)
+        self.args = (f"The volume of {path} is not yet verified",)
+
+
+def fixed_mount(mount: Mount) -> bool:
+    """The system volume: another disk can't be mounted in its place, so its hint stays valid."""
+    if sys.platform == "win32":
+        drive = os.environ.get("SystemDrive", "C:")
+        return _normal(mount.path) == _normal(drive.rstrip("\\") + "\\")
+    return mount.path in ("/", "/System/Volumes/Data", "/home")
+
+
 @dataclass(frozen=True)
 class Marker:
     uuid: str
@@ -230,16 +247,17 @@ class DataRoots:
         location = self.location(path)
         matches = []
         for root in self.roots:
-            if root.decision != "confirmed":
-                continue
             insensitive = location.startswith("smb://") or self.case_insensitive_volumes
-            suffix = _relative(location.casefold() if insensitive else location,
-                               root.location.casefold() if insensitive else root.location)
-            if suffix is not None:
+            matched = _relative(location.casefold() if insensitive else location,
+                                root.location.casefold() if insensitive else root.location)
+            if matched is not None:
+                suffix = location[len(root.location):].lstrip("/")
                 matches.append((root, suffix))
         if not matches:
             raise NoDataRoot(path)
         root, suffix = max(matches, key=lambda pair: len(pair[0].location))
+        if root.decision != "confirmed":
+            raise NoDataRoot(path)
         key = f"root://{root.uuid}" + ("/" + suffix if suffix else "")
         self._source[key] = path
         return key

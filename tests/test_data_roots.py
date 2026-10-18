@@ -39,14 +39,14 @@ def test_location_matching_ignores_case_on_smb_and_windows_volumes(
     identifier = str(uuid.uuid4())
     share = resolver([Mount("//host/share", "/Volumes/Share", "smbfs", True)],
                      [RootLocation("smb://host/share/Data", identifier)])
-    assert share.key("/Volumes/Share/data/Run") == f"root://{identifier}/run"
+    assert share.key("/Volumes/Share/data/Run") == f"root://{identifier}/Run"
     with monkeypatch.context() as patch:
         patch.setattr(sys, "platform", "win32")
         volume = LocalVolumes([(Mount("C:\\", "C:\\", "local"), "1234abcd")])
         local = DataRoots(CachePaths([]), [RootLocation("vol://1234abcd/Data", identifier)],
                           local_location=volume.location, local_source=volume.source,
                           case_insensitive_volumes=True)
-        assert local.key("C:\\data\\Run") == f"root://{identifier}/run"
+        assert local.key("C:\\data\\Run") == f"root://{identifier}/Run"
 
 
 def test_nested_markers_nearest_wins_and_store_uses_root_keys(tmp_path: Path) -> None:

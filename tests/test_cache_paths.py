@@ -248,7 +248,7 @@ def test_helper_listing_uses_root_key_and_returns_source_path(
             root_record = store.root_at("smb://example-server/share")
             assert root_record is not None
             assert conn.execute("SELECT path FROM folder_prefs").fetchone()[0] == (
-                f"root://{root_record[0]}/run1")
+                f"root://{root_record[0]}/Run1")
     events: list[dict[str, object]] = []
     io_helper.list_folder(str(mount), events.append, {"directory": root})
     batches = [event["entries"] for event in events if event.get("kind") == "entries"]

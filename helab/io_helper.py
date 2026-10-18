@@ -25,6 +25,17 @@ Emit = Callable[[dict[str, Any]], None]
 # Another computer may still be writing a file modified this recently; it is
 # left for the next load rather than read half-written. Tests set it to 0.
 SETTLE_SECONDS = float(os.environ.get("HELAB_SETTLE_SECONDS", "5"))
+# One helper handles one request. Reusing a volume ID within that request avoids
+# repeated diskutil calls during discovery and listing without persisting stale IDs.
+_volume_id_cache: dict[tuple[str, str], str | None] = {}
+
+
+def _cached_volume_id(mount: Any) -> str | None:
+    from helab.utils.data_roots import _volume_id
+    key = (str(mount.path), str(mount.source))
+    if key not in _volume_id_cache:
+        _volume_id_cache[key] = _volume_id(mount)
+    return _volume_id_cache[key]
 
 
 def emit(event: dict[str, Any]) -> None:
@@ -89,18 +100,24 @@ def _cache_info(info: object) -> dict[str, Any]:
 
 
 def _open_store(cache_options: dict[str, Any] | None, send: Emit, path: str,
-                *, local_lane: bool = False) -> CacheStore | None:
+                *, local_lane: bool = False,
+                verified_volumes: list[list[str]] | None = None) -> CacheStore | None:
     """The disk cache, or None without one or if it can't be opened.
 
     An opening error is sent as a ``cache_warning``; what the cache holds is then
     unknown, never "nothing saved" (callers check ``cache_options`` to tell).
+    A volume not yet verified (``VolumeUnverified``) is raised to the caller.
     """
     if not cache_options:
         return None
     from helab.utils.cache_paths import UnresolvedRemotePath
     from helab.utils.cache_store import StoreError
+    from helab.utils.data_roots import VolumeUnverified
     try:
-        return _cache_store(cache_options["directory"], [path], local_lane=local_lane)
+        return _cache_store(cache_options["directory"], [path], local_lane=local_lane,
+                            verified_volumes=verified_volumes)
+    except VolumeUnverified:
+        raise
     except UnresolvedRemotePath as exc:
         send({"kind": "cache_skipped", "paths": [path], "mounts": [
             {"path": exc.mount_path, "type": exc.mount_type, "detail": str(exc)}]})
@@ -112,31 +129,52 @@ def _open_store(cache_options: dict[str, Any] | None, send: Emit, path: str,
 
 
 def _cache_store(root: str, source_paths: list[str] | None = None,
-                 *, local_lane: bool = False, allow_unrooted: bool = False) -> CacheStore:
-    """Open root-keyed records; the local lane uses only captured volume IDs."""
-    from helab.utils.cache_paths import CachePaths, UnresolvedRemotePath, current_mounts
+                 *, local_lane: bool = False, allow_unrooted: bool = False,
+                 verified_volumes: list[list[str]] | None = None) -> CacheStore:
+    """Open root-keyed records; the local lane uses only captured volume IDs.
+
+    With ``verified_volumes`` (the mounts the app's last data-root verification checked), the
+    local lane trusts only those hints and the system volume's: a disk swapped in at the same
+    mount path and device would otherwise inherit the previous disk's ID, and its cached data.
+    A source path on another hinted mount raises ``VolumeUnverified``.
+    """
+    from helab.utils.cache_paths import CachePaths, UnresolvedRemotePath, _inside, _normal, current_mounts
     from helab.utils.cache_store import CacheStore, StoreError
-    from helab.utils.data_roots import DataRoots, LocalVolumes, RootLocation, current_local_volumes
+    from helab.utils.data_roots import (DataRoots, LocalVolumes, NoDataRoot, RootLocation, VolumeUnverified,
+                                        current_local_volumes, fixed_mount)
     store: CacheStore | None = None
+    held: list[str] = []
     try:
         mounts = current_mounts()
         paths = CachePaths(mounts)
         store = CacheStore(root, root_mode=True)
         if local_lane:
             known = {(path, source): identifier for path, source, identifier in store.volume_locations()}
-            volumes = LocalVolumes((mount, known[(mount.path, mount.source)]) for mount in mounts
-                                   if (mount.path, mount.source) in known)
+            hinted = [mount for mount in mounts if (mount.path, mount.source) in known]
+            if verified_volumes is not None:
+                verified = {(path, source) for path, source in verified_volumes}
+                held = [mount.path for mount in hinted
+                        if (mount.path, mount.source) not in verified and not fixed_mount(mount)]
+                hinted = [mount for mount in hinted if mount.path not in held]
+            volumes = LocalVolumes((mount, known[(mount.path, mount.source)]) for mount in hinted)
         else:
-            volumes = current_local_volumes(mounts, paths=source_paths or ())
+            volumes = current_local_volumes(mounts, paths=source_paths or (), id_reader=_cached_volume_id)
             if not store.read_only:
+                known = {(path, source): identifier for path, source, identifier in store.volume_locations()}
                 for mount, identifier in volumes.volumes:
-                    store.record_volume(mount.path, mount.source, identifier)
+                    if known.get((mount.path, mount.source)) != identifier:
+                        store.record_volume(mount.path, mount.source, identifier)
         resolver = DataRoots(paths, (RootLocation(*row) for row in store.root_locations()),
                              local_location=volumes.location, local_source=volumes.source,
                              case_insensitive_volumes=sys.platform == "win32")
         for path in source_paths or ():
             if not allow_unrooted:
-                resolver.key(path)
+                try:
+                    resolver.key(path)
+                except NoDataRoot:
+                    if not any(_inside(_normal(path), _normal(mount)) for mount in held):
+                        raise
+                    raise VolumeUnverified(path) from None
     except UnresolvedRemotePath:
         if store is not None:
             store.close()
@@ -171,7 +209,10 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                 return
             try:
                 marker = read_marker(path)
-            except (OSError, ValueError) as exc:
+            except OSError as exc:
+                send({"kind": "cache_warning", "message": f"Cannot read {path}/.helab-root: {exc}"})
+                return
+            except ValueError as exc:
                 if old is not None:
                     store.forget_root(location)
                 send({"kind": "cache_warning", "message": f"Invalid {path}/.helab-root: {exc}"})
@@ -182,7 +223,7 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                 else "confirmed" if old is not None and old[0] == marker.uuid
                 else "pending" if duplicates else "confirmed")
             old_key = ""
-            if decision == "confirmed" and (old is None or old[0] != marker.uuid):
+            if decision == "confirmed" and old is None:
                 try:
                     old_key = store._path_key(path)
                 except NoDataRoot:
@@ -225,11 +266,26 @@ def verify_known_roots(cache_options: dict[str, Any], send: Emit = emit) -> None
     """
     from helab.utils.cache_paths import CachePaths, current_mounts
     from helab.utils.cache_store import CacheStore
-    from helab.utils.data_roots import current_local_volumes
+    from helab.utils.data_roots import MARKER_NAME, current_local_volumes
     mounts = current_mounts()
     with CacheStore(cache_options["directory"], root_mode=True) as store:
         roots = store.root_locations()
-    local = current_local_volumes(mounts, paths=[mount.path for mount in mounts if not mount.remote])
+        known_mounts = {(path, source) for path, source, _ in store.volume_locations()}
+    local = current_local_volumes(mounts, paths=[mount.path for mount in mounts
+                                                 if (mount.path, mount.source) in known_mounts],
+                                  id_reader=_cached_volume_id)
+    verified: list[list[str]] = []
+    if local.volumes:
+        with CacheStore(cache_options["directory"], root_mode=True) as store:
+            known = {(path, source): identifier for path, source, identifier in store.volume_locations()}
+            for mount, identifier in local.volumes:
+                if known.get((mount.path, mount.source)) != identifier and not store.read_only:
+                    store.record_volume(mount.path, mount.source, identifier)
+                    known[(mount.path, mount.source)] = identifier
+                if known.get((mount.path, mount.source)) == identifier:
+                    verified.append([mount.path, mount.source])
+    # The local lane may trust these hints now; the slower marker visits follow.
+    send({"kind": "volumes_verified", "volumes": sorted(verified)})
     locations = CachePaths(mounts)
     beat = Heartbeat(send, "verifying data roots")
     for location, _, _ in roots:
@@ -238,7 +294,14 @@ def verify_known_roots(cache_options: dict[str, Any], send: Emit = emit) -> None
                   else local.source(location))
         if source == location or not os.path.isdir(source):
             continue
-        _discover_root(source, os.path.lexists(os.path.join(source, ".helab-root")), cache_options, send)
+        try:
+            os.lstat(os.path.join(source, MARKER_NAME))
+            present = True
+        except FileNotFoundError:
+            present = False
+        except OSError:
+            continue  # Unknown: the root is kept, as for a marker that can't be read.
+        _discover_root(source, present, cache_options, send)
     send({"kind": "roots_verified", "mounts": sorted([[mount.path, mount.source] for mount in mounts])})
 
 
@@ -376,25 +439,56 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
     One scandir with no per-entry stat (``is_dir`` uses the listing's file type).
     Each subfolder's saved summary, scan history and cache flags are read from the
     local cache, never the source, so saved badges appear with the names.
-    The ``details`` scan (step 2) adds the signature and dates. Nothing is written
-    here; a failed listing's history is saved later by the app, with the guard
-    this sends first.
+    The ``details`` scan (step 2) adds the signature and dates. A listing writes
+    only root-discovery metadata; a failed listing's history is saved later by
+    the app, with the guard this sends first.
+
+    The folder's own marker is looked up (one lstat) and reconciled before the
+    scandir, so the names stream with the right root's saved results. A marker
+    the scandir doesn't find (or finds unexpectedly) is reconciled after it, and
+    if that changes the folder's key the entries are sent again (``replace``).
     """
     from helab.utils.cache_store import StoreError
+    from helab.utils.data_roots import MARKER_NAME
     store: CacheStore | None = None
     try:
+        marker_before = False  # Absent, or unknown: decided by the scandir below.
+        if cache_options:
+            try:
+                os.lstat(os.path.join(path, MARKER_NAME))
+                marker_before = True
+            except OSError:
+                pass
+        if marker_before:
+            _discover_root(path, True, cache_options, send)
         early_events: list[dict[str, Any]] = []
         store = _open_store(cache_options, early_events.append, path)
-        if store is not None:
+        if store is not None or marker_before:
             for event in early_events:
                 send(event)
+            early_events.clear()
         try:
             _send_guard(store, path, send)
         except StoreError:
             pass
-        _send_saved(store, path, send)
+        _, root_saved = _send_saved(store, path, send)
+        before_key = store._path_key(path) if store is not None else ""
         found: dict[str, set[int]] = {}
         entries: list[dict[str, Any]] = []
+        batch: list[dict[str, Any]] = []
+
+        def flush() -> None:
+            nonlocal batch
+            if not batch:
+                return
+            if store is not None:
+                saved = _saved_folders(store, [child["path"] for child in batch], send)
+                for child in batch:
+                    child.update(saved.get(child["path"], {}))
+            send({"kind": "entries", "entries": batch})
+            entries.extend(batch)
+            batch = []
+
         has_dirs = False
         empty = True
         marker_present = False
@@ -403,7 +497,7 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
         with os.scandir(path) as directory:
             for entry in directory:
                 beat()
-                if entry.name == ".helab-root":
+                if entry.name == MARKER_NAME:
                     marker_present = True
                     continue
                 empty = False
@@ -411,19 +505,30 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                     found.setdefault(matched[0].name, set()).add(matched[1])
                 elif entry.is_dir(follow_symlinks=False):
                     has_dirs = True
-                    entries.append({"path": entry.path, "name": entry.name})
-        _discover_root(path, marker_present, cache_options, send)
-        if store is not None:
-            store.close()
-        store = _open_store(cache_options, send, path)
-        _, root_saved = _send_saved(store, path, send)
-        for start in range(0, len(entries), 128):
-            batch = entries[start:start + 128]
+                    batch.append({"path": entry.path, "name": entry.name})
+                    if len(batch) >= 128:
+                        flush()
+        flush()
+        if marker_present != marker_before or not marker_present:
+            # A marker removed (its row is forgotten) or one seen only now.
+            _discover_root(path, marker_present, cache_options, send)
             if store is not None:
-                saved = _saved_folders(store, [child["path"] for child in batch], send)
-                for child in batch:
-                    child.update(saved.get(child["path"], {}))
-            send({"kind": "entries", "entries": batch})
+                store.close()
+            store = _open_store(cache_options, send, path)
+            after_key = store._path_key(path) if store is not None else ""
+            if after_key != before_key:
+                _, root_saved = _send_saved(store, path, send)
+        else:
+            after_key = before_key
+        if before_key != after_key:
+            for start in range(0, len(entries), 128):
+                patch = [{"path": child["path"], "name": child["name"]}
+                         for child in entries[start:start + 128]]
+                if store is not None:
+                    saved = _saved_folders(store, [child["path"] for child in patch], send)
+                    for child in patch:
+                        child.update(saved.get(child["path"], {}))
+                send({"kind": "entries", "entries": patch, "replace": True})
         raw, txy = _shots(found)
         status, count = _classify(raw, txy, has_dirs)
         report: dict[str, Any] = {"kind": "status", "details": False, "status": status, "count": count,
@@ -747,16 +852,19 @@ def _cached_signature(row: Any) -> str:
 
 def read_cached(path: str, output: str, send: Emit = emit,
                 cache_options: dict[str, Any] | None = None, *,
-                limits: dict[str, Any] | None = None, allow_large: bool = False) -> None:
+                limits: dict[str, Any] | None = None, allow_large: bool = False,
+                verified_volumes: list[list[str]] | None = None) -> None:
     """Send a folder's dataset from the local disk cache, never touching the source folder.
 
     The caller shows it as not yet checked; a later ``load`` with it as the RAM
     base checks the folder. A large dataset (its TXY files' size) stops with
-    ``too_large`` before it is read, unless ``allow_large``.
+    ``too_large`` before it is read, unless ``allow_large``. On a volume not yet
+    verified (``verified_volumes``) it fails with ``VolumeUnverified``; the app
+    reads it again once verification has checked that volume.
     """
     import numpy as np
     from helab.utils.cache_store import unpack_dataset
-    store = _open_store(cache_options, send, path, local_lane=True)
+    store = _open_store(cache_options, send, path, local_lane=True, verified_volumes=verified_volumes)
     if store is None:
         raise ValueError("Disk cache unavailable")
     try:
@@ -1592,7 +1700,8 @@ def main() -> None:
                  allow_missing=bool(request.get("allow_missing")))
         elif operation == "cached":
             read_cached(request["path"], request["output"], cache_options=request.get("cache"),
-                        limits=request.get("limits"), allow_large=bool(request.get("allow_large")))
+                        limits=request.get("limits"), allow_large=bool(request.get("allow_large")),
+                        verified_volumes=request.get("verified_volumes"))
         elif operation == "invalidate":
             with _cache_store(request["cache"]["directory"], [request["path"]], local_lane=True) as store:
                 # Bumps the folder's epoch: a load started before cannot save it back.
@@ -1609,7 +1718,9 @@ def main() -> None:
             raise ValueError(f"Unknown operation: {operation}")
         emit({"kind": "done"})
     except Exception as exc:
-        emit({"kind": "error", "message": str(exc)})
+        from helab.utils.data_roots import VolumeUnverified
+        emit({"kind": "error", "message": str(exc), **({"unverified": True}
+                                                        if isinstance(exc, VolumeUnverified) else {})})
 
 
 if __name__ == "__main__":

@@ -148,6 +148,9 @@ class FolderCache(QObject):
     mismatchFound = pyqtSignal(str)
     # The session's count of mismatched folders reached 2, 4, 8…: loads and scans are held.
     mismatchWarning = pyqtSignal(int)
+    # Data-root verification checked the local volume hints (``verified_volumes``): a cached
+    # read that waited for its volume can run now.
+    volumesVerified = pyqtSignal()
     MAX_FOLDER_ICONS = 4096
     # Seconds before a sweep the queue rejected is tried again.
     SWEEP_RETRY = 5.0
@@ -249,6 +252,9 @@ class FolderCache(QObject):
         self._subtree_options: dict[str, Any] = {}
         self._cleanup = ""
         self._root_verify_owner = ""
+        # The local mounts (path, device) whose volume IDs this session's last verification
+        # checked: the only hints a cached read trusts, besides the system volume's.
+        self._verified_volumes: tuple[tuple[str, str], ...] = ()
         self._roots_mounts: tuple[tuple[str, str], ...] | None = None
         self._mounts_observed: tuple[tuple[str, str], ...] | None = None
         # cache_admin jobs by owner: their action.
@@ -1187,6 +1193,11 @@ class FolderCache(QObject):
         if self.service.submit(owner, 0, options["directory"], "roots_verify", {"cache": options}):
             self._root_verify_owner = owner
 
+    def verified_volumes(self) -> list[list[str]]:
+        """For a cached read (``verified_volumes``): a disk swapped in at the same mount path and
+        device would otherwise inherit the previous disk's volume hint, and show its cached data."""
+        return [list(pair) for pair in self._verified_volumes]
+
     def sync_budget(self) -> None:
         """Make the store record the app's disk budget (``store_options``), retrying until a job
         has: a running load saves within the store's. (Settings cancelled while the store took
@@ -1498,11 +1509,17 @@ class FolderCache(QObject):
             self.removed(affected, list(KINDS))
         if event["kind"] == "mounts_seen":
             self._mounts_observed = tuple(tuple(pair) for pair in event["mounts"])
+            # A mount gone since may come back as another disk: verified again first.
+            self._verified_volumes = tuple(pair for pair in self._verified_volumes
+                                           if pair in self._mounts_observed)
             if self._mounts_observed != self._roots_mounts:
                 self._verify_roots()
             return
         if producer.owner == self._root_verify_owner:
-            if event["kind"] == "roots_verified":
+            if event["kind"] == "volumes_verified":
+                self._verified_volumes = tuple(tuple(pair) for pair in event["volumes"])
+                self.volumesVerified.emit()
+            elif event["kind"] == "roots_verified":
                 self._roots_mounts = tuple(tuple(pair) for pair in event["mounts"])
             elif event["kind"] == "removed":
                 self.removed(event.get("paths"), event["kinds"])
@@ -1693,7 +1710,11 @@ class FolderCache(QObject):
                         self.remember_prefs(entry["path"], entry["prefs"], known=False)
                     if "disk_cached" in entry and not self._cleared_since(job, entry["path"]):
                         self._observe_cache(entry["path"], entry)
-                job.entries.extend(event["entries"])
+                if event.get("replace"):
+                    changed = {entry["path"]: entry for entry in event["entries"]}
+                    job.entries = [changed.get(entry["path"], entry) for entry in job.entries]
+                else:
+                    job.entries.extend(event["entries"])
                 if len(job.entries) > self.MAX_ENTRIES:
                     logging.warning("%s failed: %s — Folder exceeds snapshot entry limit (%s entries)",
                                     self.service.LABELS.get(job.operation, job.operation), job.path,

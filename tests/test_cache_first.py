@@ -1,6 +1,7 @@
 """Cached data shows at once from the local disk cache; the folder check follows."""
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 import time
@@ -711,3 +712,54 @@ def test_a_cached_read_failing_before_its_check_finishes_loads_the_files(
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs and producer(cache, path, "load") is not check)
     assert producer(cache, path, "load").payload["cache_base"] is False
     assert not browser.load_error
+
+
+def test_a_cached_read_waiting_for_its_volume_runs_once_verification_checks_it(
+    browser: FolderExplorer, qtbot: QtBot, tmp_path: Path,
+) -> None:
+    """A disk swapped in at the same mount must not show the previous disk's cached data: the
+    read waits for the volume's verification (the load reads the files meanwhile), then runs."""
+    path = str(tmp_path)
+    cache = browser.model.cache
+    service = cache.service
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    listing = producer(cache, path, "list")
+    info = {"saved_at": time.time() - 60, "snapshot_at": time.time() - 60, "signature": "sig"}
+    service.resultReady.emit(listing, {"kind": "status", "status": "warning", "count": 1, "details": False,
+                                       "raw": [], "txy": [1], "disk_cached": True, "cache_info": info})
+    service.resultReady.emit(listing, {"kind": "done"})
+    service.pending.remove(listing)
+    qtbot.waitUntil(lambda: ("cached", path) in cache.jobs and ("load", path) in cache.jobs)
+    read, check = producer(cache, path, "cached"), producer(cache, path, "load")
+    assert read.payload["verified_volumes"] == []  # Nothing verified yet this session.
+    service.resultReady.emit(read, {"kind": "error", "message": "The volume is not yet verified",
+                                    "unverified": True})
+    service.pending.remove(read)
+    qtbot.waitUntil(lambda: ("load", path) in cache.jobs and producer(cache, path, "load") is not check)
+    files_load = producer(cache, path, "load")
+    assert files_load.payload["cache_base"] is False
+    assert ("cached", path) not in cache.jobs
+
+    volumes = [["/Volumes/USB", "/dev/disk4s1"]]
+    verify = IORequest("verify", 0, "", "roots_verify", {}, math.inf)
+    cache._root_verify_owner = verify.owner
+    service.resultReady.emit(verify, {"kind": "volumes_verified", "volumes": volumes})
+    qtbot.waitUntil(lambda: ("cached", path) in cache.jobs)
+    again = producer(cache, path, "cached")
+    assert again.payload["verified_volumes"] == volumes
+    service.resultReady.emit(again, {"kind": "shot", "shot": 1, "array": np.ones((1, 3)),
+                                     "fingerprint": [1, 6, 123]})
+    service.resultReady.emit(again, {
+        "kind": "loaded", "signature": "sig", "files": 1, "total_files": 1, "failed_files": 0,
+        "rows": 1, "bytes": 24, "problematic": [], "source": "disk", "cached": True, "disk_cached": True,
+        "disk_cache_pending": False, "cache_info": info, "verified": False,
+        "fingerprint": [[1, 6, 123]], "memory_shots": [], "load_counts": {"reused_disk": 1, "read": 0}})
+    service.pending.remove(again)
+    qtbot.waitUntil(lambda: browser.folder_opened_path == path and browser.folder_opened_data is not None)
+    assert browser.shows_unchecked(path)  # Shown at once, as unchecked; the files' load goes on.
+    assert producer(cache, path, "load") is files_load
+
+    # Read once per verification: a later one doesn't read again.
+    service.resultReady.emit(verify, {"kind": "volumes_verified", "volumes": volumes})
+    qtbot.wait(20)
+    assert ("cached", path) not in cache.jobs
