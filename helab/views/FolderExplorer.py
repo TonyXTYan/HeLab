@@ -1965,8 +1965,9 @@ class FolderExplorer(QWidget):
         target = ask_place_root(self, self.model.cache, path)
         if target is None:
             return False
+        # The folder right-clicked is listed again too when the marker went to its drive's top.
         return self.model.cache.submit(self.model.owner, self.model.generation, target, "root_create",
-                                       {"cache": store_options()}, priority=True)
+                                       {"cache": store_options(), "clicked": path}, priority=True)
 
     def _root_create_event(self, request: IORequest, event: dict[str, Any]) -> None:
         from helab.views.DataRootDialogs import TITLE, ManualMarkerDialog
@@ -1976,8 +1977,11 @@ class FolderExplorer(QWidget):
             ManualMarkerDialog(self, str(event["path"]), str(event["name"]), str(event["contents"]),
                                str(event.get("reason", ""))).show()
         elif kind in ("root_created", "root_adopted"):
-            # Its listing (and the subfolders' saved results) under the new root.
-            self.refresh_folder(path)
+            # Its listing (and the subfolders' saved results) under the new root; folders not in
+            # this tab's tree are skipped.
+            for folder in dict.fromkeys((path, str(request.payload.get("clicked") or path))):
+                if folder in self.model.nodes:
+                    self.refresh_folder(folder)
         elif kind == "error":
             box = QMessageBox(QMessageBox.Icon.Warning, TITLE,
                               f"{path}\n\n{event.get('message', 'The .helab-root could not be placed')}", parent=self)

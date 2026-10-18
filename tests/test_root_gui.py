@@ -10,7 +10,7 @@ import uuid
 import numpy as np
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from helab import io_helper
@@ -245,3 +245,58 @@ def test_settings_lists_roots_and_forgets_a_location_after_asking(
     assert jobs[-1] == ("forget_root", {"location": "smb://server/dld_output"})
     page.detach()
     service.shutdown()
+
+
+def test_confirmation_buttons_and_cancel_by_default_with_warnings(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = frozen_service(monkeypatch)
+    cache = FolderCache(service)
+    share = os.path.join(os.sep, "Volumes", "dld_output")
+    deep = os.path.join(share, "run_042")
+    mounts(cache, os.sep, share)
+
+    def clicked(path: str, button: str) -> tuple[str | None, str]:
+        box = DataRootDialogs.PlaceRootBox(None, cache, path)
+        default = box.defaultButton()
+        target = {"top": box.at_top, "here": box.here,
+                  "cancel": box.button(QMessageBox.StandardButton.Cancel)}[button]
+        assert target is not None
+        target.click()
+        return box.choice(), default.text() if default is not None else ""
+
+    assert clicked(deep, "top") == (share, "Cancel")  # Return never writes where you didn't click.
+    assert clicked(deep, "here") == (deep, "Cancel")
+    assert clicked(deep, "cancel") == (None, "Cancel")
+    assert clicked(share, "here") == (share, "Place .helab-root")  # No warnings: the action is the default.
+    service.shutdown()
+
+
+def test_saving_by_hand_uses_a_visible_name_and_says_to_rename_it(qtbot: QtBot, tmp_path: Path) -> None:
+    folder = str(tmp_path / "share")
+    _, contents = data_roots.new_marker(folder)
+    dialog = ManualMarkerDialog(None, folder, ".helab-root", contents.decode("utf-8"), "Read-only file system")
+    qtbot.addWidget(dialog)
+    target = tmp_path / DataRootDialogs.SAVE_NAME
+    dialog.write(str(target))
+    assert target.read_bytes() == contents
+    assert dialog.intro.text() == DataRootDialogs.SAVED_TEXT.format(target=target, name=".helab-root",
+                                                                    folder=folder)
+
+
+def test_placing_at_the_top_lists_the_clicked_folder_again_too(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tab: FolderExplorer, tmp_path: Path,
+) -> None:
+    cache = tab.model.cache
+    replay(qtbot, cache, str(tmp_path), "list", lambda send: list_folder(str(tmp_path), send,
+                                                                        tab.model._cache_options))
+    clicked, top = str(tmp_path / "run"), str(tmp_path.parent)  # The top isn't in this tab's tree.
+    monkeypatch.setattr(DataRootDialogs, "ask_place_root", lambda parent, folder_cache, path: top)
+    assert tab.place_root(clicked)
+    request = producer(cache, top, "root_create")
+    assert request.payload["clicked"] == clicked
+    cache.service.pending.remove(request)
+    cache.service.resultReady.emit(request, {"kind": "root_created", "path": top, "uuid": str(uuid.uuid4()),
+                                             "label": "top"})
+    qtbot.waitUntil(lambda: ("list", clicked) in cache.jobs)
+    assert ("list", top) not in cache.jobs

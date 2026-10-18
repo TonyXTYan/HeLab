@@ -8,8 +8,8 @@ import sys
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFontDatabase
-from PyQt6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFileDialog, QLabel, QMessageBox,
-                             QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QAbstractButton, QApplication, QDialog, QDialogButtonBox, QFileDialog, QLabel,
+                             QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
 from helab.utils.folder_cache import PLACE_ROOT_ACTION, FolderCache, marker_path
 
@@ -24,6 +24,9 @@ SYSTEM = ("This is a system or home folder: a .helab-root here would cover every
           "Place it in a data folder instead.")
 MANUAL_TITLE = "Place the data-root file manually"
 MANUAL_TEXT = "HeLab can't write {name} in {folder} ({reason}).\nPut this file in {folder}, then Retry / Refresh that folder."
+# A visible name for Save as…: save panels refuse or hide names starting with a dot.
+SAVE_NAME = "helab-root.txt"
+SAVED_TEXT = "Saved as {target}. Rename it to {name} and move it into {folder}, then Retry / Refresh that folder."
 
 
 def _system_folders() -> set[str]:
@@ -58,20 +61,41 @@ def placement_checks(cache: FolderCache, path: str) -> tuple[str | None, list[st
     return top, warnings
 
 
+class PlaceRootBox(QMessageBox):
+    """The confirmation: "Place at <top>" first when the folder isn't the top of its drive or share,
+    then "Place here" (or "Place .helab-root"), and Cancel. With warnings Cancel is the default, so
+    Return never writes into a folder the user didn't click."""
+
+    def __init__(self, parent: QWidget | None, cache: FolderCache, path: str) -> None:
+        self.top, warnings = placement_checks(cache, path)
+        super().__init__(QMessageBox.Icon.Warning if warnings else QMessageBox.Icon.Question, TITLE,
+                         CONFIRM.format(path=path), parent=parent)
+        self.path = path
+        if warnings:
+            self.setInformativeText("\n\n".join(warnings))
+        self.at_top: QAbstractButton | None = (
+            self.addButton(f"Place at {self.top}", QMessageBox.ButtonRole.AcceptRole) if self.top else None)
+        self.here: QAbstractButton | None = self.addButton("Place here" if self.top else "Place .helab-root",
+                                                           QMessageBox.ButtonRole.AcceptRole)
+        cancel = self.addButton(QMessageBox.StandardButton.Cancel)
+        if warnings and cancel is not None:
+            self.setDefaultButton(cancel)
+        elif isinstance(self.here, QPushButton):
+            self.setDefaultButton(self.here)
+
+    def choice(self) -> str | None:
+        """The folder to write the marker in, from the button clicked; None for Cancel."""
+        clicked = self.clickedButton()
+        if clicked is not None and clicked is self.at_top:
+            return self.top
+        return self.path if clicked is not None and clicked is self.here else None
+
+
 def ask_place_root(parent: QWidget | None, cache: FolderCache, path: str) -> str | None:
     """Confirm, with the checks' warnings: the folder to write the marker in, or None."""
-    top, warnings = placement_checks(cache, path)
-    box = QMessageBox(QMessageBox.Icon.Warning if warnings else QMessageBox.Icon.Question, TITLE,
-                      CONFIRM.format(path=path), parent=parent)
-    if warnings:
-        box.setInformativeText("\n\n".join(warnings))
-    at_top = box.addButton(f"Place at {top}", QMessageBox.ButtonRole.AcceptRole) if top else None
-    here = box.addButton("Place here" if top else "Place .helab-root", QMessageBox.ButtonRole.AcceptRole)
-    box.addButton(QMessageBox.StandardButton.Cancel)
-    box.setDefaultButton(at_top or here)
+    box = PlaceRootBox(parent, cache, path)
     box.exec()
-    clicked = box.clickedButton()
-    return top if clicked is at_top and top else path if clicked is here else None
+    return box.choice()
 
 
 class ManualMarkerDialog(QDialog):
@@ -85,6 +109,7 @@ class ManualMarkerDialog(QDialog):
         layout = QVBoxLayout(self)
         intro = QLabel(MANUAL_TEXT.format(name=name, folder=folder, reason=reason))
         intro.setWordWrap(True)
+        self.intro = intro
         intro.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(intro)
         layout.addWidget(QLabel(f"File name: {name}"))
@@ -97,7 +122,8 @@ class ManualMarkerDialog(QDialog):
         copy.setToolTip("Copy the file's contents")
         copy.clicked.connect(self.copy)
         save = QPushButton("Save as…")
-        save.setToolTip(f"Save {name} in a folder you can write, then move it into {folder}")
+        save.setToolTip(f"Save it as {SAVE_NAME} in a folder you can write, then rename it to {name} and "
+                        f"move it into {folder}")
         save.clicked.connect(self.save_as)
         buttons.addButton(copy, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.addButton(save, QDialogButtonBox.ButtonRole.ActionRole)
@@ -110,7 +136,7 @@ class ManualMarkerDialog(QDialog):
 
     def save_as(self) -> None:
         target, _ = QFileDialog.getSaveFileName(self, "Save .helab-root", os.path.join(os.path.expanduser("~"),
-                                                                                       self.name))
+                                                                                       SAVE_NAME))
         if target:
             self.write(target)
 
@@ -121,6 +147,9 @@ class ManualMarkerDialog(QDialog):
                 stream.write(self.contents.encode("utf-8"))
         except OSError as exc:
             QMessageBox.warning(self, MANUAL_TITLE, f"Couldn't save {target}: {exc}")
+            return
+        if os.path.basename(target) != self.name:
+            self.intro.setText(SAVED_TEXT.format(target=target, name=self.name, folder=self.folder))
 
 
 __all__ = ["PLACE_ROOT_ACTION", "ManualMarkerDialog", "ask_place_root", "placement_checks"]
