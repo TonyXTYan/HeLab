@@ -47,23 +47,26 @@ def _server(location: str) -> str:
 
 
 def duplicate_hints(entry: dict[str, Any]) -> str:
-    """Hints whether the locations are one folder: server and the marker files' details. The user decides."""
+    """Hints whether the locations are one folder: server and the marker files' details. The user decides.
+
+    A copy keeps the marker's size and modified time (cp -p, rsync -a, Finder), so identical markers
+    aren't evidence of one folder. The file number is, but only on one server: device numbers differ
+    for every mount, and other servers number their files independently."""
     others = entry.get("others") or []
     if not others:
         return ""
     other = others[0]
-    hints = ["same server" if _server(str(entry["location"])) == _server(str(other["location"]))
-             else "different server"]
+    same_server = _server(str(entry["location"])) == _server(str(other["location"]))
+    hints = ["same server" if same_server else "different server"]
     mine, theirs = entry.get("marker"), other.get("marker")
     if isinstance(mine, dict) and isinstance(theirs, dict):
-        same_time = abs(float(mine["mtime"]) - float(theirs["mtime"])) < 1.0
-        if mine["size"] == theirs["size"] and same_time:
-            hints.append("marker same size and modified time")
-        elif not same_time:
-            hints.append("marker modified at different times")
+        if same_server and mine.get("ino") and theirs.get("ino"):
+            hints.append("same file number on the server" if mine["ino"] == theirs["ino"]
+                         else "different file number on the server")
+        if mine["size"] == theirs["size"] and abs(float(mine["mtime"]) - float(theirs["mtime"])) < 1.0:
+            hints.append("marker identical (a copy would be too)")
         else:
-            hints.append("marker files differ in size")
-        hints.append("same file ID" if mine["file_id"] == theirs["file_id"] else "different file ID")
+            hints.append("markers differ")
     return " · ".join(hints)
 
 

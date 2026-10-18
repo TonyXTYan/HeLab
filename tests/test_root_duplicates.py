@@ -59,9 +59,10 @@ def test_a_second_location_waits_with_hints(two: tuple[Path, Path, str, dict[str
     assert event["uuid"] == identifier and event["label"] == "first"
     assert [(other["location"], other["path"]) for other in event["others"]] == [("smb://host/first", str(first))]
     assert event["marker"]["size"] == event["others"][0]["marker"]["size"]
-    assert event["marker"]["file_id"] != event["others"][0]["marker"]["file_id"]
+    assert event["marker"]["ino"] != event["others"][0]["marker"]["ino"]  # Two files (a copy).
     assert duplicate_hints(event).startswith("same server · ")
-    assert duplicate_hints(event).endswith("different file ID")
+    assert duplicate_hints(event) == ("same server · different file number on the server · "
+                                      "marker identical (a copy would be too)")
     with pytest.raises(data_roots.NoDataRoot):  # RAM only until answered.
         with io_helper._cache_store(cache["directory"], [str(second / "run")]):
             pass
@@ -156,9 +157,9 @@ def sighting(cache: FolderCache, path: str = "/Volumes/second", location: str = 
     request = IORequest("tab", 0, path, "list", {}, 60.0)
     cache.service.resultReady.emit(request, {
         "kind": "root_duplicate", "path": path, "location": location, "uuid": "u", "label": "second",
-        "other_locations": ["smb://host/first"], "marker": {"size": 10, "mtime": 1.0, "file_id": "1:2"},
+        "other_locations": ["smb://host/first"], "marker": {"size": 10, "mtime": 1.0, "ino": 7},
         "others": [{"location": "smb://host/first", "path": "/Volumes/first",
-                    "marker": {"size": 10, "mtime": 1.0, "file_id": "1:2"}}]})
+                    "marker": {"size": 10, "mtime": 1.0, "ino": 7}}]})
 
 
 def test_the_window_opens_once_per_session_again_after_later_never_after_snooze(cache: FolderCache) -> None:
@@ -187,7 +188,8 @@ def test_window_answers_go_to_the_cache(qtbot: QtBot, monkeypatch: pytest.Monkey
     sighting(cache)
     assert window.isVisible() and window.tree.topLevelItemCount() == 1
     item = window.tree.topLevelItem(0)
-    assert item is not None and item.text(3) == "same server · marker same size and modified time · same file ID"
+    assert item is not None and item.text(3) == ("same server · same file number on the server · "
+                                                 "marker identical (a copy would be too)")
     admin: list[tuple[str, dict[str, Any]]] = []
     def cache_admin(action: str, **params: Any) -> str:
         admin.append((action, params))
@@ -223,3 +225,34 @@ def test_keeping_the_new_location_needs_the_known_folder_mounted(qtbot: QtBot) -
     known, new = dialog.choices
     assert known.isChecked() and not new.isEnabled()
     assert dialog.keep() == "smb://host/first"
+
+
+def test_file_numbers_are_compared_only_on_one_server() -> None:
+    """One share mounted twice has a different device number per mount: only the file number counts,
+    and only on the same server."""
+    marker = {"size": 10, "mtime": 1.0, "ino": 7}
+    entry: dict[str, Any] = {"location": "smb://host/dld_output", "path": "/Volumes/dld_output",
+                             "marker": marker,
+                             "others": [{"location": "smb://host/C/data/dld_output", "path": "/Volumes/C/data/dld_output",
+                                         "marker": {**marker}}]}
+    assert duplicate_hints(entry) == "same server · same file number on the server · marker identical (a copy would be too)"
+    entry["others"][0]["location"] = "smb://other-host/dld_output"
+    assert duplicate_hints(entry) == "different server · marker identical (a copy would be too)"
+    entry["others"][0]["marker"] = {"size": 10, "mtime": 99.0, "ino": 7}
+    assert duplicate_hints(entry) == "different server · markers differ"
+
+
+def test_a_marker_left_half_replaced_is_not_listed_as_data(tmp_path: Path) -> None:
+    folder = tmp_path / "share"
+    (folder / "run").mkdir(parents=True)
+    (folder / ".helab-root.0123abcd.tmp").write_text("{")  # A crash before os.replace.
+    events: list[dict[str, Any]] = []
+    io_helper.list_folder(str(folder), events.append)
+    names = [entry["name"] for event in events if event["kind"] == "entries" for entry in event["entries"]]
+    assert names == ["run"]
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    (empty / ".helab-root.0123abcd.tmp").write_text("{")
+    scanned: list[dict[str, Any]] = []
+    io_helper.scan(str(empty), scanned.append)
+    assert next(event for event in scanned if event["kind"] == "status")["empty"] is True

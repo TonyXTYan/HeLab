@@ -558,6 +558,8 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                 if entry.name == MARKER_NAME:
                     marker_present = True
                     continue
+                if _marker_temporary(entry.name):
+                    continue
                 empty = False
                 if matched := file_kinds.match(entry.name):
                     found.setdefault(matched[0].name, set()).add(matched[1])
@@ -780,7 +782,7 @@ def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | No
     with os.scandir(path) as directory:
         for entry in directory:
             beat()
-            if entry.name == ".helab-root":
+            if entry.name == ".helab-root" or _marker_temporary(entry.name):
                 continue
             empty = False
             if matched := file_kinds.match(entry.name):
@@ -1526,14 +1528,20 @@ ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "swe
                  "forget_root", "root_same")
 
 
+def _marker_temporary(name: str) -> bool:
+    """A marker being replaced (``reassign_root``'s temporary file, left by a crash): not data."""
+    return name.startswith(".helab-root.") and name.endswith(".tmp")
+
+
 def _marker_hint(folder: str) -> dict[str, Any] | None:
-    """A marker file's size, modified time and file ID: hints whether two locations are one folder."""
+    """A marker file's size, modified time and file number: hints whether two locations are one
+    folder. (The device number differs for every mount, even of one share, so it is left out.)"""
     from helab.utils.data_roots import MARKER_NAME
     try:
         found = os.lstat(os.path.join(folder, MARKER_NAME))
     except OSError:
         return None
-    return {"size": found.st_size, "mtime": found.st_mtime, "file_id": f"{found.st_dev}:{found.st_ino}"}
+    return {"size": found.st_size, "mtime": found.st_mtime, "ino": found.st_ino}
 
 
 def reassign_root(path: str, cache_options: dict[str, Any], old_uuid: str, keep: str, send: Emit = emit) -> None:
@@ -1874,7 +1882,7 @@ def _cache_move_step(mover: Any, action: str, app_dir: str, move: dict[str, Any]
         raise ValueError(f"Unknown cache move action: {action}")
 
 
-# Operations that only touch the disk cache.
+# Operations that need the disk cache on.
 CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "volumes_verify",
               "root_reassign")
 
