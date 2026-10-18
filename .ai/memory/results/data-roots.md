@@ -34,7 +34,15 @@ Decided with Tony in Maestri chat (2026-10-16 and 2026-10-18). Code:
   computers see it as a top folder.
 - Sanity checks before writing: not the top of its drive or share ("Place at
   <top>" offered first; Cancel is the default with warnings, per review),
-  already inside another root, a system or home folder.
+  already inside another root, a home folder (`C:\Users`, `/Users`, `/home`,
+  `~`), the startup disk's top (`/`, `/System/Volumes/Data`: read-only on
+  macOS, never offered as "Place at") or `/Volumes` itself.
+- Placement rule (Tony, 2026-10-18): a marker identifies a drive or share
+  across machines, so it goes as high as every machine can see (the shortest
+  path), never above the top of a share some machine uses. Windows `C:\` is a
+  drive top like any other (a lab PC shares its whole `C:`; the Mac mounts
+  `//<pc>/C`): offered as "Place at C:\", no warning, only a note that it may
+  need admin rights (the manual dialog follows a refusal).
 - RAM only is shown in the **Folder details** panel ("RAM only · no
   .helab-root above this folder", how to enable it in the tooltip), for the
   selected folder or the tab's folder when none is selected; the tooltip and

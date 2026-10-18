@@ -65,11 +65,22 @@ Name `.helab-root` (Tony, 2026-10-18). Small JSON, written once:
 
 ## Where markers can't be written
 
-Markers are universal, but some roots are read-only:
+A marker identifies a drive or share across machines, so it goes in a folder
+every machine sees, as high as possible (the shortest path), but never above
+the top of a share some machine uses (Tony, 2026-10-18). Some roots are
+read-only, or not drives:
 
-- **macOS startup disk:** `/` is the sealed, read-only system volume. Mark a
-  folder instead (e.g. `~/data`); `/Users/...` is writable through firmlinks.
-- **Windows `C:\`:** the root needs admin rights. Mark a data folder instead.
+- **Windows `C:\`:** a drive top like any other: a lab PC may share its whole
+  `C:` drive (the Mac mounts `//<pc>/C`), and `C:\.helab-root` is then the
+  ideal marker, the same file the Mac sees at the share's top. Writing there
+  may need admin rights; if it's refused, the manual flow below hands out the
+  file. `C:\Users` and home folders warn: they hold more than data, and other
+  computers rarely see them at that path.
+- **macOS startup disk:** `/` is the sealed, read-only system volume, and
+  `/System/Volumes/Data` and Linux's `/` aren't data either: they warn and are
+  never offered as "Place at". Mark the top folder holding the data instead
+  (e.g. `~/data`); `/Users/...` is writable through firmlinks. `/Volumes`
+  itself is the folder of mounted drives, not a drive.
 - **Read-only shares, write-protected USB disks:** the manual flow above, or
   RAM only.
 
@@ -150,12 +161,13 @@ Answers are remembered per PC, so a confirmed location doesn't ask again:
   `smb://` rows).
 - Markers on every root, local and USB included; no OS volume IDs.
 - Equivalent locations are remembered per PC; each newly found one alerts.
+- Markers as high as every machine can see; `C:\` allowed.
 
 ## Wording and icon (Tony, 2026-10-18)
 
 - Right-click **Place .helab-root here…**, with checks before writing (not
-  the top of its drive or share, inside another root, a system or home
-  folder). The **ANCHOR** badge marks root folders beside their status icon.
+  the top of its drive or share, inside another root, a home folder or the
+  startup disk's top). The **ANCHOR** badge marks root folders beside their status icon.
 - RAM only and the .helab-root in use are shown in the Folder details panel
   and the row tooltip; Settings → Data roots lists the known locations.
 - "Same folder or a copy?" opens once per location per session; Later asks

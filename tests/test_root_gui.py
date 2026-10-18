@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import types
 from typing import Any, Callable, Iterator
 import uuid
 
@@ -21,7 +22,8 @@ from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, PLACE_ROOT_TOOLTIP, RA
                                       data_root_row)
 from helab.utils.io_service import IORequest, IOService
 from helab.views import DataRootDialogs
-from helab.views.DataRootDialogs import NESTED, NOT_TOP, SYSTEM, ManualMarkerDialog, placement_checks
+from helab.views.DataRootDialogs import (ADMIN, HOME, NESTED, NOT_TOP, STARTUP, VOLUMES, ManualMarkerDialog,
+                                        placement_checks)
 from helab.views.DataRootsTab import DataRootsTab
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.FolderExplorer import FolderExplorer
@@ -95,9 +97,57 @@ def test_checks_warn_below_the_top_of_a_share_inside_a_root_and_on_system_folder
     top, warnings = placement_checks(cache, deep)
     assert top == share and warnings[1] == NESTED.format(label="dld_output",
                                                          marker=os.path.join(share, ".helab-root"))
-    # The system volume's top is never suggested; a system or home folder is warned about.
+    # The startup disk's top is never suggested; a home folder is warned about.
     assert placement_checks(cache, os.path.join(os.path.expanduser("~"), "data")) == (None, [])
-    assert placement_checks(cache, os.path.expanduser("~")) == (None, [SYSTEM])
+    assert placement_checks(cache, os.path.expanduser("~")) == (None, [HOME])
+    service.shutdown()
+
+
+def test_posix_startup_disk_home_folders_and_volumes_warn_with_their_reasons(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = frozen_service(monkeypatch)
+    cache = FolderCache(service)
+    monkeypatch.setattr(DataRootDialogs, "sys", types.SimpleNamespace(platform="darwin"))
+    monkeypatch.setenv("HOME", "/Users/tony")
+    monkeypatch.setattr(cache, "mount_of", lambda path: "/")
+    assert placement_checks(cache, "/") == (None, [STARTUP])
+    assert placement_checks(cache, "/System/Volumes/Data") == (None, [STARTUP])
+    assert placement_checks(cache, "/Volumes") == (None, [VOLUMES])
+    assert placement_checks(cache, "/Users") == (None, [HOME])
+    assert placement_checks(cache, "/Users/tony") == (None, [HOME])
+    # Never "Place at /" from a folder on the startup disk.
+    assert placement_checks(cache, "/Users/tony/data") == (None, [])
+    assert "read-only" in STARTUP and "~/data" in STARTUP
+    service.shutdown()
+
+
+def test_windows_system_drive_top_is_a_drive_top_like_any_other(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A lab PC may share its whole C: drive: C:\.helab-root is the file the Mac sees at //pc/C.
+    service = frozen_service(monkeypatch)
+    cache = FolderCache(service)
+    monkeypatch.setattr(DataRootDialogs, "sys", types.SimpleNamespace(platform="win32"))
+    monkeypatch.setenv("SystemDrive", "C:")
+    monkeypatch.setenv("HOME", "C:\\Users\\tony")
+    monkeypatch.setenv("USERPROFILE", "C:\\Users\\tony")
+    monkeypatch.setattr(cache, "mount_of", lambda path: "C:\\")
+    drive, data = "C:\\", "C:\\data\\run_042"
+    assert placement_checks(cache, drive) == (None, [])
+    assert placement_checks(cache, data) == (drive, [NOT_TOP.format(top=drive)])
+    assert placement_checks(cache, "C:\\Users") == (drive, [HOME, NOT_TOP.format(top=drive)])
+    assert placement_checks(cache, "c:\\users\\TONY") == (drive, [HOME, NOT_TOP.format(top=drive)])
+    note = ADMIN.format(drive=drive)
+    box = DataRootDialogs.PlaceRootBox(None, cache, drive)
+    default = box.defaultButton()
+    # A note, not a warning: Return still places it.
+    assert box.informativeText() == note and default is not None and default.text() == "Place .helab-root"
+    box = DataRootDialogs.PlaceRootBox(None, cache, data)
+    assert box.at_top is not None and box.at_top.text() == "Place at C:\\"
+    assert box.informativeText() == f"{NOT_TOP.format(top=drive)}\n\n{note}"
+    default = box.defaultButton()
+    assert default is not None and default.text() == "Cancel"
     service.shutdown()
 
 

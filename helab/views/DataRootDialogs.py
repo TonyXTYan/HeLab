@@ -16,12 +16,16 @@ from helab.utils.folder_cache import PLACE_ROOT_ACTION, FolderCache, marker_path
 TITLE = "Place .helab-root"
 CONFIRM = ("HeLab will write a small hidden file, .helab-root, in {path}. Its subfolders will use the "
            "disk cache too. The folder's modified date changes once.")
-NOT_TOP = ("This folder isn't the top of its drive or share ({top}). Place .helab-root as high up as "
-           "possible, unless this folder is also shared on its own, so other computers see it as a top folder.")
+NOT_TOP = ("This folder isn't the top of its drive or share ({top}). Place .helab-root at the top, so every "
+           "computer sees the same marker; put it here only if this folder is also shared on its own.")
 NESTED = ("This folder is already inside data root “{label}” ({marker}). A .helab-root here gives it its "
           "own identity, and its subfolders' cached data moves to it.")
-SYSTEM = ("This is a system or home folder: a .helab-root here would cover everything under it. "
-          "Place it in a data folder instead.")
+HOME = ("A home folder holds more than data, and other computers rarely see it at this path. "
+        "Place .helab-root at the top of the drive or share the data is on.")
+STARTUP = ("This is the top of the startup disk, which holds the system (on macOS it is read-only): "
+           "mark the top folder holding the data instead, e.g. ~/data.")
+VOLUMES = "This is the folder of mounted drives, not a drive: choose a drive or share inside it."
+ADMIN = "Writing in {drive} may need administrator rights. If Windows refuses, HeLab shows the file to place by hand."
 MANUAL_TITLE = "Place the data-root file manually"
 MANUAL_TEXT = "HeLab can't write {name} in {folder} ({reason}).\nPut this file in {folder}, then Retry / Refresh that folder."
 # A visible name for Save as…: save panels refuse or hide names starting with a dot.
@@ -29,19 +33,24 @@ SAVE_NAME = "helab-root.txt"
 SAVED_TEXT = "Saved as {target}. Rename it to {name} and move it into {folder}, then Retry / Refresh that folder."
 
 
-def _system_folders() -> set[str]:
+def _system_folders() -> dict[str, str]:
+    """Folders that warn, and why. A marker belongs as high as every computer sees the data,
+    so a drive's top is fine, the Windows system drive's included (Tony, 2026-10-18)."""
     home = os.path.expanduser("~")
     if sys.platform == "win32":
-        drive = os.environ.get("SystemDrive", "C:") + "\\"
-        return {ntpath.normcase(path) for path in (drive, ntpath.join(drive, "Users"), home)}
-    return {"/", "/System/Volumes/Data", "/Users", "/home", "/Volumes", home}
+        drive = _system_drive()
+        return {ntpath.normcase(path): HOME for path in (ntpath.join(drive, "Users"), home)}
+    return {"/": STARTUP, "/System/Volumes/Data": STARTUP, "/Volumes": VOLUMES,
+            "/Users": HOME, "/home": HOME, home: HOME}
+
+
+def _system_drive() -> str:
+    return os.environ.get("SystemDrive", "C:") + "\\"
 
 
 def _system_mount(mount: str) -> bool:
-    """A system volume's top can't take a marker (read-only, or needs admin): never suggest it."""
-    if sys.platform == "win32":
-        return ntpath.normcase(mount) == ntpath.normcase(os.environ.get("SystemDrive", "C:") + "\\")
-    return mount in ("/", "/System/Volumes/Data", "/home")
+    """The startup disk's top (read-only on macOS, the system's on Linux): never suggest it."""
+    return sys.platform != "win32" and mount in ("/", "/System/Volumes/Data", "/home")
 
 
 def placement_checks(cache: FolderCache, path: str) -> tuple[str | None, list[str]]:
@@ -49,8 +58,8 @@ def placement_checks(cache: FolderCache, path: str) -> tuple[str | None, list[st
     the marker there instead), and the warnings to show. Memory only."""
     warnings: list[str] = []
     normal = ntpath.normcase(path) if sys.platform == "win32" else path
-    if normal in _system_folders():
-        warnings.append(SYSTEM)
+    if (warning := _system_folders().get(normal)) is not None:
+        warnings.append(warning)
     top = cache.mount_of(path)
     if top is None or top == path or _system_mount(top):
         top = None
@@ -59,6 +68,15 @@ def placement_checks(cache: FolderCache, path: str) -> tuple[str | None, list[st
     if (root := cache.root_of(path)) is not None and root[0] != path:
         warnings.append(NESTED.format(label=root[2] or os.path.basename(root[0]), marker=marker_path(root[0])))
     return top, warnings
+
+
+def placement_notes(path: str, top: str | None) -> list[str]:
+    """Not warnings (Return still places): writing at the Windows system drive's top may need admin."""
+    drive = _system_drive()
+    if sys.platform == "win32" and any(folder is not None and ntpath.normcase(folder) == ntpath.normcase(drive)
+                                       for folder in (path, top)):
+        return [ADMIN.format(drive=drive)]
+    return []
 
 
 class PlaceRootBox(QMessageBox):
@@ -71,8 +89,8 @@ class PlaceRootBox(QMessageBox):
         super().__init__(QMessageBox.Icon.Warning if warnings else QMessageBox.Icon.Question, TITLE,
                          CONFIRM.format(path=path), parent=parent)
         self.path = path
-        if warnings:
-            self.setInformativeText("\n\n".join(warnings))
+        if info := warnings + placement_notes(path, self.top):
+            self.setInformativeText("\n\n".join(info))
         self.at_top: QAbstractButton | None = (
             self.addButton(f"Place at {self.top}", QMessageBox.ButtonRole.AcceptRole) if self.top else None)
         self.here: QAbstractButton | None = self.addButton("Place here" if self.top else "Place .helab-root",
