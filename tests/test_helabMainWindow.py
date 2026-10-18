@@ -334,17 +334,20 @@ def test_review_from_settings_is_modal_only_while_settings_is_open(
     try:
         cache.root_duplicates[location] = {"path": "/Volumes/review", "location": location, "uuid": "u",
                                            "label": "review", "answer": "later", "found_at": 0.0, "others": []}
+        # Settings opens only with no modal widget up (an earlier test's may still be closing).
+        monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: None))
         main_window.show_settings_dialog()
-        assert modality == [Qt.WindowModality.ApplicationModal]
+        assert modality == [Qt.WindowModality.ApplicationModal], "Review… from Settings is modal"
         # Settings closed: the window stays open, no longer modal.
-        assert window.isVisible() and window.windowModality() == Qt.WindowModality.NonModal
+        qtbot.waitUntil(window.isVisible)
+        assert window.windowModality() == Qt.WindowModality.NonModal, "non-modal once Settings closed"
         window.hide()
         # An automatic sighting (not through review_root) opens it without blocking the main window.
         cache.service.resultReady.emit(IORequest("helper", 0, "/Volumes/other", "list", {}, 60.0), {
             "kind": "root_duplicate", "path": "/Volumes/other", "location": "smb://server/other", "uuid": "v",
             "label": "other", "other_locations": [], "marker": None, "others": []})
         qtbot.waitUntil(window.isVisible)
-        assert window.windowModality() == Qt.WindowModality.NonModal
+        assert window.windowModality() == Qt.WindowModality.NonModal, "an automatic sighting isn't modal"
     finally:
         for key in (location, "smb://server/other"):
             cache.root_duplicates.pop(key, None)
