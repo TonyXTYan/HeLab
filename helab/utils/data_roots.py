@@ -133,7 +133,7 @@ def _volume_id(mount: Mount) -> str | None:
     if sys.platform == "win32":
         import ctypes
         serial = ctypes.c_ulong()
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32 = getattr(ctypes, "windll").kernel32
         previous = kernel32.SetErrorMode(0x0001)  # SEM_FAILCRITICALERRORS: empty card readers do not prompt.
         try:
             ok = kernel32.GetVolumeInformationW(

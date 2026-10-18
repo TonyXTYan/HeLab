@@ -54,7 +54,7 @@ def test_nested_markers_nearest_wins_and_store_uses_root_keys(tmp_path: Path) ->
     inner = outer / "data"
     first = marker(outer, str(uuid.uuid4()), "outer")
     second = marker(inner, str(uuid.uuid4()), "inner", future_field="ignored")
-    mounts = [Mount("//user@host/Share", str(outer), "smbfs", True)]
+    mounts = [Mount("//host/Share", str(outer), "smbfs", True)]
     root = tmp_path / ROOT_STORE_DIRNAME
     with CacheStore(str(root), root_mode=True) as store:
         store.record_root("smb://host/share", first.uuid, "smb", first.label, decision="confirmed")
@@ -228,8 +228,9 @@ def test_utf8_bom_and_harmless_label_dots_are_accepted(tmp_path: Path) -> None:
     assert read_marker(str(folder)).label == "v1..2"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="FIFO marker is POSIX-only")
 def test_fifo_marker_is_rejected_without_blocking(tmp_path: Path) -> None:
+    if sys.platform == "win32":  # (A check type checkers follow: no os.mkfifo there.)
+        pytest.skip("FIFO marker is POSIX-only")
     folder = tmp_path / "data"
     folder.mkdir()
     os.mkfifo(folder / ".helab-root")

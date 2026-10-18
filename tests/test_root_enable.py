@@ -165,8 +165,9 @@ def test_an_invalid_marker_is_never_overwritten(share: Path, tmp_path: Path) -> 
     assert (share / ".helab-root").read_text() == "not json"
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS file flags")
 def test_a_marker_created_on_macos_is_flagged_hidden(share: Path, tmp_path: Path) -> None:
+    if sys.platform != "darwin":  # (A check type checkers follow: st_flags is macOS/BSD only.)
+        pytest.skip("macOS file flags")
     io_helper.create_root(str(share), options(tmp_path), lambda _: None)
     assert os.stat(share / ".helab-root").st_flags & stat.UF_HIDDEN
 

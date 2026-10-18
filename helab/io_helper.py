@@ -602,7 +602,8 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                                   **_data_root(store, path)}
         if root_saved is not None:
             report["saved_root"] = root_saved
-        if (mounts := _mount_fingerprint()) is not None:
+        # Only the cache needs it (its volume checks); without it a listing reads nothing more.
+        if cache_options and (mounts := _mount_fingerprint()) is not None:
             send({"kind": "mounts_seen", "mounts": mounts})
         send(report)
     finally:

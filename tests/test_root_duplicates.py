@@ -21,6 +21,11 @@ from helab.views.RootDuplicatesWindow import CopyRootDialog, RootDuplicatesWindo
 
 pytestmark = pytest.mark.no_auto_data_root
 
+# Paths as helpers report them on this OS (FolderCache matches folders by os.sep).
+FIRST = os.path.abspath(os.path.join(os.sep, "Volumes", "first"))
+SECOND = os.path.abspath(os.path.join(os.sep, "Volumes", "second"))
+SECOND_RUN = os.path.join(SECOND, "run")
+
 
 def write_marker(folder: Path, identifier: str) -> None:
     (folder / ".helab-root").write_text(
@@ -153,12 +158,12 @@ def cache(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> Iterator[FolderCache
     service.shutdown()
 
 
-def sighting(cache: FolderCache, path: str = "/Volumes/second", location: str = "smb://host/second") -> None:
+def sighting(cache: FolderCache, path: str = SECOND, location: str = "smb://host/second") -> None:
     request = IORequest("tab", 0, path, "list", {}, 60.0)
     cache.service.resultReady.emit(request, {
         "kind": "root_duplicate", "path": path, "location": location, "uuid": "u", "label": "second",
         "other_locations": ["smb://host/first"], "marker": {"size": 10, "mtime": 1.0, "ino": 7},
-        "others": [{"location": "smb://host/first", "path": "/Volumes/first",
+        "others": [{"location": "smb://host/first", "path": FIRST,
                     "marker": {"size": 10, "mtime": 1.0, "ino": 7}}]})
 
 
@@ -174,12 +179,12 @@ def test_the_window_opens_once_per_session_again_after_later_never_after_snooze(
     cache.answer_root_duplicate("smb://host/second", "snoozed")
     sighting(cache)
     assert len(found) == 2 and cache.root_duplicates["smb://host/second"]["answer"] == "snoozed"
-    assert cache.pending_root("/Volumes/second/run") is not None
-    assert data_root_row(cache, "/Volumes/second/run")[0] == PENDING_ROOT
+    assert cache.pending_root(SECOND_RUN) is not None
+    assert data_root_row(cache, SECOND_RUN)[0] == PENDING_ROOT
     request = IORequest("admin", 0, "", "cache_admin", {}, 60.0)
     cache.service.resultReady.emit(request, {"kind": "root_confirmed", "location": "smb://host/second",
-                                             "uuid": "u", "path": "/Volumes/second", "label": "second"})
-    assert not cache.root_duplicates and cache.root_of("/Volumes/second/run") is not None
+                                             "uuid": "u", "path": SECOND, "label": "second"})
+    assert not cache.root_duplicates and cache.root_of(SECOND_RUN) is not None
 
 
 def test_window_answers_go_to_the_cache(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, cache: FolderCache) -> None:
@@ -200,7 +205,7 @@ def test_window_answers_go_to_the_cache(qtbot: QtBot, monkeypatch: pytest.Monkey
     monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: {"directory": "/tmp/cache"})
     window.choose_keep = lambda entry: "smb://host/first"
     window.copy()
-    job = cache.jobs[("root_reassign", "/Volumes/second")]
+    job = cache.jobs[("root_reassign", SECOND)]
     assert job.payload["keep"] == "smb://host/first" and job.payload["old_uuid"] == "u"
     window.later_button.click()
     assert cache.root_duplicates["smb://host/second"]["answer"] == "later"

@@ -14,6 +14,9 @@ from helab.utils.cache_paths import CachePaths, Mount, UnresolvedRemotePath, _sm
 from helab.utils.cache_store import CacheStore, DatasetRecord, Kind
 
 RECORD_KINDS: tuple[Kind, ...] = ("summaries", "histories", "subtrees")
+# macOS mount sources carry the SMB account (//user@host/share); on Windows that shape is a
+# WebDAV UNC, and /Volumes suffixes don't exist. Windows paths have their own tests below.
+macos_mounts = pytest.mark.skipif(sys.platform == "win32", reason="macOS SMB mount sources")
 
 
 def mounts(c_suffix: str, r_suffix: str) -> CachePaths:
@@ -30,6 +33,7 @@ def opened(root: Path, paths: CachePaths) -> CacheStore:
     return CacheStore(str(root), path_key=paths.key, source_path=paths.source)
 
 
+@macos_mounts
 def test_share_keys_survive_suffix_swap_and_isolate_all_cache_kinds(tmp_path: Path) -> None:
     first = mounts("-1", "-2")
     later = mounts("-2", "-1")
@@ -77,6 +81,7 @@ def test_share_keys_survive_suffix_swap_and_isolate_all_cache_kinds(tmp_path: Pa
         assert store.read_dataset_row(c_after).missing
 
 
+@macos_mounts
 def test_smb_account_and_nested_mount_source_share_one_key() -> None:
     expected = "smb://host.local/share/Documents%20and%20Settings/run"
     sources = [
@@ -109,6 +114,7 @@ def test_unmounted_account_free_share_keeps_pending_save_visible(tmp_path: Path)
     assert CachePaths([]).source("smb://[bad-bracket/share/run") == "smb://[bad-bracket/share/run"
 
 
+@macos_mounts
 def test_guard_from_old_share_cannot_save_history_to_reused_mount_path(tmp_path: Path) -> None:
     root = tmp_path / "store-v2"
     path = "/Volumes/example-server-1/run"
@@ -120,6 +126,7 @@ def test_guard_from_old_share_cannot_save_history_to_reused_mount_path(tmp_path:
         assert store.read_record("histories", path).missing
 
 
+@macos_mounts
 def test_purge_uses_stored_key_after_share_mounts_at_literal_path(tmp_path: Path) -> None:
     root = tmp_path / "store-v2"
     path = "/Volumes/example-server-1/run"
@@ -240,7 +247,7 @@ def test_helper_listing_uses_root_key_and_returns_source_path(
     child = mount / "Run1"
     child.mkdir(parents=True)
     monkeypatch.setattr(cache_paths, "current_mounts",
-                        lambda: [Mount("//operator@example-server/Share", str(mount), "smbfs")])
+                        lambda: [Mount("//example-server/Share", str(mount), "smbfs")])
     root = str(tmp_path / "store-v2")
     with io_helper._cache_store(root, [str(child)]) as store:
         store.set_prefs(str(child), True, True, time.time())

@@ -60,10 +60,7 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 
     monkeypatch.setattr(data_roots, "_volume_id", lambda _: "test-volume")
     monkeypatch.setattr(io_helper, "_volume_id_cache", {})
-    if os.name == "nt":
-        mount_root = Path(tempfile.gettempdir()).anchor
-        monkeypatch.setattr(cache_paths, "_windows_mounts",
-                            lambda: [cache_paths.Mount(mount_root, mount_root, "local")])
+    # (On Windows, HELAB_TEST_LOCAL_MOUNT above stands in for the drive list.)
     if request.node.get_closest_marker("no_auto_data_root"):
         return
     identifiers: dict[str, str] = {}
@@ -123,6 +120,15 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                         verified_volumes=verified_volumes)
 
     monkeypatch.setattr(io_helper, "_cache_store", open_seeded)
+
+
+@pytest.fixture(autouse=True)
+def default_budget_is_newest(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each worker shares one store, which keeps the newest budget it was sent; a budget an
+    earlier test lowered must not hold later tests' saves. Budget tests set their own again."""
+    import time
+    from helab.utils import folder_cache
+    monkeypatch.setattr(folder_cache, "_disk_budget_set_at", time.time())
 
 
 @pytest.fixture(autouse=True)
