@@ -225,3 +225,65 @@ def test_mismatched_folders_show_in_the_status_bar_and_load_from_the_current_tab
         cache.mismatch_count = 0
         cache.skip_mismatched = False
         cache.resume_after_mismatch()
+
+
+def test_file_menu_places_a_root_in_the_current_tabs_selected_folder(
+    main_window: HelabMainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
+) -> None:
+    import os
+    import uuid
+    from helab.utils.folder_cache import PLACE_ROOT_TOOLTIP
+    from helab.views import DataRootDialogs
+    from helab.views.HelabMainWindow import PLACE_ROOT_MENU
+    qtbot.waitUntil(lambda: isinstance(main_window.tab_widget.currentWidget(), FolderExplorer))
+    explorer = main_window.tab_widget.currentWidget()
+    assert isinstance(explorer, FolderExplorer)
+    menu = next(action.menu() for action in main_window.menu_bar.actions() if action.text() == "File")
+    assert isinstance(menu, QMenu)
+    texts = [action.text() for action in menu.actions()]
+    place = main_window.action_place_root
+    assert menu.actions().index(place) < texts.index(main_window.action_tab_cancel.text())
+    top = explorer.model_root_path
+    name = os.path.basename(top.rstrip("/\\")) or top
+
+    def shown() -> tuple[str, bool, str]:
+        menu.aboutToShow.emit()
+        return place.text(), place.isEnabled(), place.toolTip()
+    # Nothing selected: the tab's top folder, which isn't a tree row.
+    assert shown() == (f" Place .helab-root in “{name}”…", True, f"{top}\n{PLACE_ROOT_TOOLTIP}")
+    asked: list[str] = []
+    submitted: list[tuple[str, str, dict[str, Any]]] = []
+
+    def ask(parent: Any, cache: Any, path: str) -> str:
+        asked.append(path)
+        return path
+
+    def submit(owner: str, generation: int, path: str, operation: str, payload: dict[str, Any],
+               **kwargs: Any) -> bool:
+        submitted.append((path, operation, payload))
+        return True
+    monkeypatch.setattr(DataRootDialogs, "ask_place_root", ask)
+    monkeypatch.setattr(explorer.model.cache, "submit", submit)
+    place.trigger()
+    assert asked == [top] and submitted[0][:2] == (top, "root_create") and submitted[0][2]["clicked"] == top
+    # A selected folder, with a long name elided in the middle.
+    selected = str(tmp_path / ("run_" + "x" * 60))
+    explorer.selected_path_globally = selected
+    text, enabled, _ = shown()
+    assert enabled and text.startswith(" Place .helab-root in “run_xxx") and "…" in text[:-1] and len(text) < 70
+    asked.clear()
+    place.trigger()
+    assert asked == [selected]
+    # Already a root: greyed, with the tree menu's tooltip; triggering does nothing.
+    explorer.model.cache._root_seen(selected, str(uuid.uuid4()), "run")
+    assert shown()[1:] == (False, f"{selected}\nThis folder already has a .helab-root")
+    asked.clear()
+    assert not main_window.place_root_in_current_tab() and not asked
+    explorer.model.cache._root_gone(selected)
+    # The disk cache off for this session.
+    monkeypatch.setattr("helab.views.FolderExplorer.store_options", lambda: {})
+    assert shown()[1:] == (False, f"{selected}\nThe disk cache is off for this session")
+    # No folder tab.
+    monkeypatch.setattr(main_window.tab_widget, "currentWidget", lambda: None)
+    assert shown() == (PLACE_ROOT_MENU, False, "Open a folder tab first")
+    assert not main_window.place_root_in_current_tab()

@@ -57,6 +57,8 @@ import plotly
 import pyqtgraph as pg
 import pyqtgraph.parametertree as ptree
 
+PLACE_ROOT_MENU = " Place .helab-root…"
+
 
 class HelabMainWindow(QMainWindow):
     DEFAULT_WIDTH = 1600
@@ -190,6 +192,37 @@ class HelabMainWindow(QMainWindow):
         if cache_dir_refused():
             QTimer.singleShot(0, lambda: QMessageBox.warning(self, "Cache folder not used", cache_dir_refused()))
 
+    def _place_root_target(self) -> tuple[FolderExplorer, str] | None:
+        """The current tab and its selected folder (at first the tab's top folder)."""
+        current = self.tab_widget.currentWidget()
+        if not isinstance(current, FolderExplorer) or current.closed:
+            return None
+        return current, current.selected_path_globally or current.model_root_path
+
+    def update_place_root_action(self) -> None:
+        """File › Place .helab-root…: named for its folder, enabled as the tree's menu item would be."""
+        target = self._place_root_target()
+        if target is None:
+            self.action_place_root.setText(PLACE_ROOT_MENU)
+            self.action_place_root.setEnabled(False)
+            self.action_place_root.setToolTip("Open a folder tab first")
+            return
+        explorer, path = target
+        name = os.path.basename(path.rstrip("/\\")) or path  # A drive's top keeps its path, Z:\.
+        if len(name) > 40:
+            name = f"{name[:24]}…{name[-15:]}"
+        enabled, tooltip = explorer.place_root_state(path)
+        self.action_place_root.setText(f" Place .helab-root in “{name}”…")
+        self.action_place_root.setEnabled(enabled)
+        self.action_place_root.setToolTip(f"{path}\n{tooltip}")
+
+    def place_root_in_current_tab(self) -> bool:
+        """As the tree's Place .helab-root here… does, for the current tab's selected folder."""
+        target = self._place_root_target()
+        if target is None or not target[0].place_root_state(target[1])[0]:
+            return False
+        return target[0].place_root(target[1])
+
     def update_status_bar_left(self) -> None:
         if self._closing:
             return
@@ -275,6 +308,15 @@ class HelabMainWindow(QMainWindow):
                 service = get_io_service()
                 service.resultReady.connect(self._on_drive_result)
                 QTimer.singleShot(0, lambda: service.submit(self._drive_owner, 0, "", "drives"))
+
+            # The tab's top folder isn't a tree row (a drive's top can't be right-clicked): this
+            # places one in the tab's selected folder, which starts as its top folder.
+            self.action_place_root = QAction(PLACE_ROOT_MENU, self)
+            self.action_place_root.setEnabled(False)  # Until the menu shows (aboutToShow).
+            self.action_place_root.triggered.connect(self.place_root_in_current_tab)
+            menu_file.addAction(self.action_place_root)
+            menu_file.setToolTipsVisible(True)
+            menu_file.aboutToShow.connect(self.update_place_root_action)
 
             menu_file.addSeparator()
 

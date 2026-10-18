@@ -24,6 +24,10 @@ real experiment data without deciding where its top should be.
   Retry / Refresh finds it.
 - [ ] The placement checks: a share's subfolder offers "Place at <top>", Return
   cancels, a nested root and a home folder warn.
+- [ ] Windows, a tab at a mapped drive's top (e.g. `Z:\`), nothing selected:
+  File › Place .helab-root in “Z:\”… writes `Z:\.helab-root`; with a subfolder
+  selected the item names it instead. A tab at `C:\` gets the system-folder
+  warning with Cancel as default.
 - [ ] One folder through two mounts (e.g. `C/.../dld_output` and the separate
   `dld_output` share): "Same folder or a copy?" opens once; Same folder shares
   one cache; Later reopens at the next sighting; Remind me next session stays

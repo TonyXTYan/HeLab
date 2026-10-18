@@ -156,7 +156,7 @@ class DataRootsTab(QWidget):
         else:
             count = len(self.roots)
             text = f"{count:,} location{'' if count == 1 else 's'}" if count else (
-                "None yet: right-click a folder › Place .helab-root here…")
+                "None yet: right-click a folder › Place .helab-root here…, or File › Place .helab-root…")
         self.status_label.setText(text)
         idle = self.enabled and not self._job and not self._inventory_owner
         self.refresh_button.setEnabled(self.enabled and not self._inventory_owner)
