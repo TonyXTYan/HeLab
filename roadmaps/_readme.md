@@ -46,7 +46,8 @@ How to use it:
   asks same folder or copy, remembered per PC. Next after the SMB key change,
   with one more cache clear; the root UUID becomes the network plan's logical
   root ID ([plan](data-roots.md), [stages](../.ai/sessions/2026-10-16-claude-data-roots/plan.md))
-  (2026-10-16; decided 2026-10-18).
+  (2026-10-16; decided 2026-10-18). D1–D4 implemented on `dev/data-roots`
+  (2026-10-18); native checks pending ([manual to-do](../.ai/MANUAL_TODO.md#data-roots-dev-data-roots-added-2026-10-18)).
 
 - [ ] Finish the status-message audit: verify load-phase labels for `merged`/
   `updated` sources ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#status-messages)) (2026-10-08).

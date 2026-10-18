@@ -53,7 +53,7 @@ Name `.helab-root` (Tony, 2026-10-18). Small JSON, written once:
   many users lack and would race between PCs; put that elsewhere if needed.
 - Hidden: the dot prefix on macOS/Linux, plus the Windows hidden attribute
   (check that a marker written from macOS over SMB is hidden on Windows).
-- Created only when the user asks: right-click **Enable disk cache here…** on
+- Created only when the user asks: right-click **Place .helab-root here…** on
   a mount root (`/Volumes/<name>`, `N:\`) or any folder. Written with exclusive
   create, then read back; if one already exists, HeLab adopts it.
 - Without write permission, HeLab shows the exact file name and contents with
@@ -151,7 +151,18 @@ Answers are remembered per PC, so a confirmed location doesn't ask again:
 - Markers on every root, local and USB included; no OS volume IDs.
 - Equivalent locations are remembered per PC; each newly found one alerts.
 
-## Open decisions
+## Wording and icon (Tony, 2026-10-18)
 
-- Wording and icon of the Enable disk cache action, the RAM-only line and the
-  equivalent-location window.
+- Right-click **Place .helab-root here…**, with checks before writing (not
+  the top of its drive or share, inside another root, a system or home
+  folder). The **ANCHOR** badge marks root folders beside their status icon.
+- RAM only and the .helab-root in use are shown in the Folder details panel
+  and the row tooltip; Settings → Data roots lists the known locations.
+- "Same folder or a copy?" opens once per location per session; Later asks
+  again at the next sighting, Remind me next session not until then.
+- Details and the reasons: `.ai/memory/results/data-roots.md`.
+
+## Status
+
+Stages D1–D4 implemented on `dev/data-roots` (2026-10-18), each reviewed;
+native checks are in `.ai/MANUAL_TODO.md` (Data roots).

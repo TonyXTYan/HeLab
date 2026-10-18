@@ -1,7 +1,10 @@
 # Data roots: single-machine plan
 
 Session: Terminal #4 (Claude), 2026-10-16. Roadmap: [data roots](../../../roadmaps/data-roots.md).
-Status: decisions confirmed 2026-10-18; S0 committed, ready to start D1.
+Status: decisions confirmed 2026-10-18; D1–D4 implemented on `dev/data-roots` (2026-10-18), each
+reviewed by Terminal #4 (Codex D1–D2, Claude Terminal #3 from the D2 fixes on). The D3 wording differs
+from the draft below: the action is "Place .helab-root here…" and RAM only shows in Folder details
+(`.ai/memory/results/data-roots.md`).
 
 Builds on the SMB cache-key change ("S0", [notes](../2026-10-15-codex-status-remount/notes.md)):
 its mount-table capture, `CachePaths.key`/`source` hook in `CacheStore`, and the

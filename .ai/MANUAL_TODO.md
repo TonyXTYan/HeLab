@@ -10,7 +10,38 @@ New confirmed product issues go in `roadmaps/_readme.md` with a link to the evid
 
 The v0.0.5a checks below were added on 2026-10-08 and remain pending.
 
-## v0.0.5a: real data volume and cache
+## Data roots (`dev/data-roots`, added 2026-10-18)
+
+Native checks of the data-roots stages D1–D4 ([plan](sessions/2026-10-16-claude-data-roots/plan.md)).
+Use disposable folders or shares where possible; never place a `.helab-root` on
+real experiment data without deciding where its top should be.
+
+- [ ] Place .helab-root here… from macOS on an SMB share: the marker is hidden in
+  Windows Explorer on the lab PCs (`UF_HIDDEN`), and from Windows it gets the
+  hidden attribute. The folder's cache works after the relisting.
+- [ ] A read-only share (or write-protected USB disk): the manual dialog's Copy and
+  Save as… (`helab-root.txt`) give the exact file; placed and renamed by hand,
+  Retry / Refresh finds it.
+- [ ] The placement checks: a share's subfolder offers "Place at <top>", Return
+  cancels, a nested root and a home folder warn.
+- [ ] One folder through two mounts (e.g. `C/.../dld_output` and the separate
+  `dld_output` share): "Same folder or a copy?" opens once; Same folder shares
+  one cache; Later reopens at the next sighting; Remind me next session stays
+  quiet; "⚓ N to confirm" reopens it.
+- [ ] A copied folder or cloned USB disk: It's a copy… keeping either side; the
+  other gets a new marker and an empty cache; the original keeps its data.
+- [ ] Two same-named USB disks used in turn at `/Volumes/USB`: each keeps its own
+  cache; at startup a restored tab on the second disk doesn't show the first
+  disk's cached data.
+- [ ] The macOS startup disk: a marker in `~/data` works through the firmlinked
+  `/Users` path; Windows `C:\` refuses, a data folder works.
+- [ ] Folder details shows ⚓ with the marker in use, or RAM only; the tree's ANCHOR
+  badge; greyed disk-cache menu items on RAM-only folders; Settings → Data roots
+  lists and forgets locations.
+- [ ] The TDC converter and the lab MATLAB scripts ignore `.helab-root`.
+- [ ] Before using this build: `store-v3` starts empty; move the old `store-v2`
+  folder to the Trash by hand once you no longer need it.
+
 
 - [ ] In the full app on `/Volumes/dld_output`, exercise cache-first display,
   two-step browse and names-only Refresh. Confirm reselecting a RAM-held folder
