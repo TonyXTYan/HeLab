@@ -884,6 +884,10 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     service = IOService()
+    trace: list[str] = []  # TEMPORARY Windows CI diagnostics.
+    service.resultReady.connect(lambda r, e: trace.append(
+        f"{r.operation} {r.path} {e.get('kind')} " + str({k: v for k, v in e.items() if k not in (
+            'kind', 'entries', 'shot', 'data', 'rows')})[:400]))
     monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
     operations: list[str] = []
     original = service.submit
@@ -917,9 +921,15 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
     assert first.folder_opened_data is not None and second.folder_opened_data is not None
     assert first.folder_opened_data[1] is second.folder_opened_data[1]
     source.write_text("10,20,30\n")
+    trace.append("---- rescan")
     first.rescan(True)
-    qtbot.waitUntil(lambda: second.folder_opened_data is not None and second.folder_opened_data[1][0, 0] == 10,
-                   timeout=15000)
+    try:
+        qtbot.waitUntil(lambda: second.folder_opened_data is not None and second.folder_opened_data[1][0, 0] == 10,
+                       timeout=15000)
+    except Exception:
+        print("\n".join(trace), "\nops", operations, "\nlabel", second.folder_cache_label.text(),
+              first.folder_summary_label.text(), second.folder_summary_label.text())
+        raise
     # The listing finds the same names; the details scan finds the modified file.
     assert operations == ["list", "load", "list", "details", "load"]
     assert first.folder_opened_data[1] is second.folder_opened_data[1]
