@@ -83,6 +83,8 @@ class SharedJob:
     scan_mode: str = "scan"
     history_saved: bool = False
     cache_warning: str = ""
+    # The helper found no disk cache for this folder by design (no data root, unsupported mount).
+    cache_off: bool = False
     # The scan helper's save guard, handed to the follow-up history write.
     save_guard: dict[str, Any] | None = None
     completed_scan: FolderSnapshot | None = None
@@ -571,11 +573,9 @@ class FolderCache(QObject):
         self.remember_history(job.path, apply_outcome(history, outcome))
         # Successful helpers persist their result before done. Compatibility
         # producers only need a write when recovering an existing failure.
-        if job.history_saved or success and not history["failures"]:
-            return
+        # Without a disk cache (off, or off by design for this folder) it stays in RAM: nothing failed.
         options = job.payload.get("cache")
-        if not options:
-            self.scan_history_errors[job.path] = "Scan history could not be saved; suppression is session-only."
+        if job.history_saved or not options or job.cache_off or success and not history["failures"]:
             return
         owner = uuid4().hex
         self._history_writes[owner] = job.path
@@ -1698,6 +1698,8 @@ class FolderCache(QObject):
             return
         if event["kind"] == "cache_skipped":
             self._remember_mount_warning(event)
+            if (job := self._producers.get(producer.owner)) is not None and job.path in event.get("paths", ()):
+                job.cache_off = True
             return
         if producer.owner in self._admin:
             self._on_admin_event(producer, event)

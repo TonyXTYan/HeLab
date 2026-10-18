@@ -55,7 +55,16 @@ startup, holding up all other I/O.
   a fresh successful scan clears the flag.** Replaying cached results or
   loading data does not. Clearing the loaded-data cache keeps the history.
 - If the history can't be saved, suppression stays session-only with a
-  warning.
+  warning. If it can't be read (the cache won't open, or its read fails),
+  scans that aren't manual are skipped: a saved failure may be there.
+- A folder with **no disk cache** (the cache off, or off by design for it: no
+  `.helab-root` above it, a root pending confirmation, or an NFS/AFP/WebDAV
+  mount) has no saved history. Its details and automatic scans run, guarded by
+  the session's history alone (`FolderCache.submit` checks it for every
+  automatic entry point), and failures stay in RAM without the "could not be
+  saved" warning: Folder details already says RAM only (2026-10-18; before,
+  such folders got no details or automatic scans, so only a load showed their
+  status).
 
 ## Display
 

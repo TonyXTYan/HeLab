@@ -134,24 +134,36 @@ def _open_store(cache_options: dict[str, Any] | None, send: Emit, path: str,
     unknown, never "nothing saved" (callers check ``cache_options`` to tell).
     A volume not yet verified (``VolumeUnverified``) is raised to the caller.
     """
+    return _store_or_off(cache_options, send, path, local_lane=local_lane,
+                         verified_volumes=verified_volumes)[0]
+
+
+def _store_or_off(cache_options: dict[str, Any] | None, send: Emit, path: str,
+                  *, local_lane: bool = False,
+                  verified_volumes: list[list[str]] | None = None) -> tuple[CacheStore | None, bool]:
+    """``_open_store``, and whether this folder has no disk cache by design.
+
+    That is a folder without a confirmed data root or on an unsupported mount (``cache_skipped``):
+    nothing is saved for it, so nothing saved can be missed, unlike a cache that can't be opened.
+    """
     if not cache_options:
-        return None
+        return None, False
     from helab.utils.cache_paths import UnresolvedRemotePath
     from helab.utils.cache_store import StoreError
     from helab.utils.data_roots import VolumeUnverified
     try:
         return _cache_store(cache_options["directory"], [path], local_lane=local_lane,
-                            verified_volumes=verified_volumes)
+                            verified_volumes=verified_volumes), False
     except VolumeUnverified:
         raise
     except UnresolvedRemotePath as exc:
         send({"kind": "cache_skipped", "paths": [path], "mounts": [
             {"path": exc.mount_path, "type": exc.mount_type, "detail": str(exc)}]})
-        return None
+        return None, True
     except (StoreError, OSError) as exc:
         # Optional cache metadata must not prevent browsing source folders.
         send({"kind": "cache_warning", "message": f"Disk cache could not be opened: {exc}"})
-        return None
+        return None, False
 
 
 def _cache_store(root: str, source_paths: list[str] | None = None,
@@ -614,12 +626,18 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
 def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = None, *,
          manual: bool = True, automatic: bool = False,
          operation_id: str = "", revision: int = 0) -> None:
-    """Full scan: a basic scan, or browse step 2 (``details``). Saves summary and history."""
+    """Full scan: a basic scan, or browse step 2 (``details``). Saves summary and history.
+
+    A folder with no disk cache (off, or off by design for it) has no saved history: the app's
+    session history is then the only one, and it skips blocked folders before submitting.
+    """
     from uuid import uuid4
     from helab.utils.cache_store import StoreError
     from helab.utils.scan_history import ScanSkipped, begin_scan, write_outcome
     send({"kind": "scan_mode", "mode": "metadata"})
-    store = _open_store(cache_options, send, path)
+    store, cache_off = _store_or_off(cache_options, send, path)
+    # Whether this folder has saved history that may be unreadable now.
+    saved_history = bool(cache_options) and not cache_off
     try:
         guard: SaveGuard | None = None
         if store is not None:
@@ -631,13 +649,13 @@ def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = No
                 guard = None
         history, _ = _send_saved(store, path, send)
         blocked = history is not None and history["blocked"]
-        if not manual and (blocked or automatic and history is None):
+        if not manual and (blocked or automatic and history is None and saved_history):
             # Browsing a blocked folder lists it (step 1) without this scan.
             send({"kind": "scan_mode", "mode": "skipped"})
             return
         operation_id = operation_id or uuid4().hex
         revision = revision or time.time_ns()
-        if guard is None and cache_options:
+        if guard is None and saved_history:
             send({"kind": "scan_history_warning", "message": "The cache could not be opened"})
             if not manual:
                 # Without the saved history this may be a blocked folder.
@@ -748,6 +766,31 @@ def save_subtrees(cache_options: dict[str, Any], records: list[dict[str, Any]], 
     if skipped:
         result["skipped"] = skipped
     send(result)
+
+
+def save_scan_history(cache_options: dict[str, Any], path: str, outcome: dict[str, Any],
+                      saved_guard: dict[str, Any] | None, send: Emit = emit,
+                      *, verified_volumes: list[list[str]] | None = None) -> None:
+    """Save a scan's outcome. A folder with no disk cache by design keeps it in the app's RAM."""
+    from helab.utils.cache_paths import UnresolvedRemotePath
+    from helab.utils.cache_store import SaveGuard as Guard
+    from helab.utils.data_roots import VolumeUnverified
+    from helab.utils.scan_history import write_outcome
+    try:
+        store = _cache_store(cache_options["directory"], [path], local_lane=True,
+                             verified_volumes=verified_volumes)
+    except VolumeUnverified:
+        raise
+    except UnresolvedRemotePath as exc:
+        send({"kind": "cache_skipped", "paths": [path], "mounts": [
+            {"path": exc.mount_path, "type": exc.mount_type, "detail": str(exc)}]})
+        return
+    with store:
+        # The scan's own guard when the app has it: a Clear after that scan started
+        # must not get its outcome back.
+        guard = (Guard(saved_guard["generations"], saved_guard["epochs"]) if saved_guard
+                 else store.guard([path], ("histories",)))
+        send({"kind": "scan_history_saved", "history": write_outcome(store, path, outcome, guard)})
 
 
 def _save_summary(store: CacheStore, path: str, report: dict[str, Any], guard: SaveGuard, send: Emit) -> None:
@@ -1918,17 +1961,8 @@ def main() -> None:
                  automatic=request.get("automatic", False),
                  operation_id=request.get("scan_operation_id", ""), revision=request.get("scan_revision", 0))
         elif operation == "scan_history":
-            from helab.utils.scan_history import write_outcome
-            from helab.utils.cache_store import SaveGuard as Guard
-            with _cache_store(request["cache"]["directory"], [request["path"]], local_lane=True,
-                              verified_volumes=request.get("verified_volumes")) as store:
-                # The scan's own guard when the app has it: a Clear after that scan started
-                # must not get its outcome back.
-                saved = request.get("guard")
-                guard = (Guard(saved["generations"], saved["epochs"]) if saved
-                         else store.guard([request["path"]], ("histories",)))
-                history = write_outcome(store, request["path"], request["outcome"], guard)
-                emit({"kind": "scan_history_saved", "history": history})
+            save_scan_history(request["cache"], request["path"], request["outcome"], request.get("guard"),
+                              verified_volumes=request.get("verified_volumes"))
         elif operation == "subtree_save":
             save_subtrees(request["cache"], request["records"],
                           verified_volumes=request.get("verified_volumes"))
