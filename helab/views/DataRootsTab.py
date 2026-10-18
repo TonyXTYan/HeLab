@@ -10,12 +10,13 @@ import sys
 from datetime import datetime
 from typing import Any, Callable
 
-from PyQt6.QtCore import QPoint, QProcess, Qt, QUrl
+from PyQt6.QtCore import QPoint, QProcess, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabel, QMenu, QMessageBox,
                              QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from helab.utils.folder_cache import FolderCache, marker_path, store_options
+from helab.utils.number_format import byte_size
 from helab.utils.io_service import IORequest
 
 INTRO = ("Folders holding a .helab-root that HeLab has seen on this computer. Each one identifies its folder "
@@ -32,6 +33,11 @@ DELETE_TEXT = ("Deletes {marker}. This folder and its subfolders use RAM only on
                ".helab-root is placed again. Their cached data stays on this computer under this root's ID; "
                "a new marker gets a new ID and starts fresh. Other computers that use this drive lose their "
                "disk cache for it too.")
+CLEAR = "Clear cached data…"
+CLEAR_TOOLTIP = ("Clear what this computer cached below this data root (datasets and saved folder status). "
+                 "The .helab-root and folder flags stay.")
+REVIEW = "Review…"
+REVIEW_TOOLTIP = "Same folder or a copy? This location uses RAM only until answered"
 REFUSED_TEXT = ("HeLab can't delete {file} ({reason}). Delete it by hand ({show} finds it), then Refresh "
                 "this list.")
 
@@ -56,7 +62,8 @@ def show_command(marker: str) -> tuple[str, list[str]] | None:
 
 
 class DataRootsTab(QWidget):
-    COLUMNS = ("Data root", "Folder", "Status", "Last seen")
+    COLUMNS = ("Data root", "Folder", "Status", "Last seen", "Cached")
+    reviewRequested = pyqtSignal(str)  # A pending location: RootDuplicatesWindow at it.
 
     def __init__(self, cache: FolderCache | None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -66,6 +73,7 @@ class DataRootsTab(QWidget):
         self.message = ""
         self._inventory_owner = ""
         self._job = ""
+        self._job_name = ""
         self._remove_job = ""
         self.owner = f"data-roots-{id(self)}"
         self.confirm: Callable[[str, str, str], bool] = self._confirm
@@ -101,6 +109,14 @@ class DataRootsTab(QWidget):
         self.delete_button.setToolTip(DELETE_TOOLTIP)
         self.delete_button.clicked.connect(self.delete_selected)
         footer.addWidget(self.delete_button)
+        self.clear_button = QPushButton(CLEAR)
+        self.clear_button.setToolTip(CLEAR_TOOLTIP)
+        self.clear_button.clicked.connect(self.clear_selected)
+        footer.addWidget(self.clear_button)
+        self.review_button = QPushButton(REVIEW)
+        self.review_button.setToolTip(REVIEW_TOOLTIP)
+        self.review_button.clicked.connect(self.review_selected)
+        footer.addWidget(self.review_button)
         layout.addLayout(footer)
         if cache is not None:
             cache.cacheAdminResult.connect(self._on_result)
@@ -151,6 +167,7 @@ class DataRootsTab(QWidget):
                             f"{mounted}", "Forget"):
             return
         self._job = self.cache.cache_admin("forget_root", location=row["location"])
+        self._job_name = "Forget location"
         self.message = "" if self._job else "Disk cache queue full — try again"
         self._update()
 
@@ -176,11 +193,15 @@ class DataRootsTab(QWidget):
         show = menu.addAction(show_label(), self.show_selected)
         copy = menu.addAction("Copy path", self.copy_selected)
         menu.addSeparator()
+        review = menu.addAction(REVIEW, self.review_selected) if self.review_button.isEnabled() else None
+        clear = menu.addAction(CLEAR, self.clear_selected)
         forget = menu.addAction(FORGET, self.forget_selected)
         delete = menu.addAction(DELETE, self.delete_selected)
         for action, enabled, tooltip in (
                 (show, mounted, show_tooltip() if mounted else NOT_MOUNTED_TOOLTIP),
                 (copy, row is not None, "The .helab-root file's path" if mounted else "The location"),
+                (review, True, REVIEW_TOOLTIP),
+                (clear, self.clear_button.isEnabled(), CLEAR_TOOLTIP),
                 (forget, self.forget_button.isEnabled(), FORGET_TOOLTIP),
                 (delete, self.delete_button.isEnabled(), DELETE_TOOLTIP if mounted else NOT_MOUNTED_TOOLTIP)):
             if action is not None:
@@ -201,6 +222,26 @@ class DataRootsTab(QWidget):
         row = self.selected()
         if row is not None and (clipboard := QApplication.clipboard()) is not None:
             clipboard.setText(marker_path(row["path"]) if row["path"] else row["location"])
+
+    def review_selected(self) -> None:
+        if (row := self.selected()) is not None and row["decision"] == "pending":
+            self.reviewRequested.emit(row["location"])
+
+    def clear_selected(self) -> None:
+        row = self.selected()
+        if row is None or self.cache is None or self._job:
+            return
+        cached = row.get("cached")
+        what = (f"{cached['folders']:,} cached folder{'' if cached['folders'] == 1 else 's'} "
+                f"({byte_size(cached['bytes'])})" if cached else "the cached data")
+        if not self.confirm("Clear this data root's cached data?",
+                            f"Clears {what} for data root “{row['label']}” on this computer. "
+                            "The .helab-root and folder flags stay.", "Clear"):
+            return
+        self._job = self.cache.cache_admin("clear_root", uuid=row["uuid"])
+        self._job_name = "Clear cached data"
+        self.message = "" if self._job else "Disk cache queue full — try again"
+        self._update()
 
     def delete_selected(self) -> None:
         row = self.selected()
@@ -250,7 +291,7 @@ class DataRootsTab(QWidget):
                 self.message = f"Could not read the disk cache: {message}"
         elif owner == self._job:
             self._job = ""
-            self.message = f"Forget location failed: {message}" if message else ""
+            self.message = f"{self._job_name} failed: {message}" if message else ""
             self.refresh()
         else:
             return
@@ -263,13 +304,17 @@ class DataRootsTab(QWidget):
             item = QTreeWidgetItem([
                 row["label"], folder or f"Not mounted · {row['location']}",
                 DECISIONS.get(row["decision"], row["decision"]),
-                f"{datetime.fromtimestamp(row['last_seen']):%Y-%m-%d %H:%M}"])
+                f"{datetime.fromtimestamp(row['last_seen']):%Y-%m-%d %H:%M}",
+                byte_size(row["cached"]["bytes"]) if row.get("cached") else "—"])
             item.setData(0, Qt.ItemDataRole.UserRole, row)
             item.setToolTip(0, f"{row['label']} · {row['uuid']}")
             item.setToolTip(1, "\n".join(filter(None, (marker_path(folder) if folder else "",
                                                         f"Location: {row['location']}"))))
             first = datetime.fromtimestamp(row["first_seen"])
             item.setToolTip(3, f"First seen {first:%Y-%m-%d %H:%M}")
+            cached = row.get("cached")
+            item.setToolTip(4, f"{cached['folders']:,} folders cached below this data root on this computer"
+                            if cached else "Nothing cached below this data root on this computer")
             self.list.addTopLevelItem(item)
         for column in range(len(self.COLUMNS)):
             self.list.resizeColumnToContents(column)
@@ -293,3 +338,5 @@ class DataRootsTab(QWidget):
         self.forget_button.setEnabled(idle and row is not None)
         self.delete_button.setEnabled(idle and row is not None and bool(row["path"]))
         self.delete_button.setToolTip(DELETE_TOOLTIP if row is None or row["path"] else NOT_MOUNTED_TOOLTIP)
+        self.clear_button.setEnabled(idle and row is not None)
+        self.review_button.setEnabled(row is not None and row["decision"] == "pending")

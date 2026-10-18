@@ -48,6 +48,10 @@ real experiment data without deciding where its top should be.
   gives the file's path. Delete .helab-root… removes it (on Windows too, with
   its hidden attribute), and the folder turns RAM only in Folder details; on a
   read-only share it names the file instead.
+- [ ] Settings → Data roots › Clear cached data… on a root with cached folders:
+  the confirmation names the label and size; afterwards those folders show
+  no cached data (a load reads the source), another root's folders keep
+  theirs, and Don't cache / Don't auto-load flags stay.
 - [ ] The TDC converter and the lab MATLAB scripts ignore `.helab-root`.
 - [ ] Before using this build: `store-v3` starts empty; move the old `store-v2`
   folder to the Trash by hand once you no longer need it.

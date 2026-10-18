@@ -129,7 +129,7 @@ class HelabMainWindow(QMainWindow):
         cache.mismatchesChanged.connect(self._update_mismatch_button)
         # Locations whose .helab-root is also elsewhere: same folder or a copy? (data roots, D4)
         self.root_duplicates = RootDuplicatesWindow(cache, self)
-        self.roots_button.clicked.connect(lambda: self.root_duplicates.show_list(activate=True))
+        self.roots_button.clicked.connect(lambda: self.review_root(None))
         cache.rootDuplicatesChanged.connect(self._update_roots_button)
 
         # Create Left Panel (File Tree View)
@@ -191,6 +191,18 @@ class HelabMainWindow(QMainWindow):
         get_folder_cache(get_io_service()).clean_up_cache()
         if cache_dir_refused():
             QTimer.singleShot(0, lambda: QMessageBox.warning(self, "Cache folder not used", cache_dir_refused()))
+
+    def review_root(self, location: str | None) -> None:
+        """Same folder or a copy?, at ``location``. From Settings (a modal dialog) the window is
+        modal too, else it couldn't take input until Settings closed."""
+        window = self.root_duplicates
+        modal = QApplication.activeModalWidget()
+        wanted = (Qt.WindowModality.ApplicationModal if modal is not None and modal is not window
+                  else Qt.WindowModality.NonModal)
+        if window.windowModality() != wanted:
+            window.hide()  # Modality changes only while hidden.
+            window.setWindowModality(wanted)
+        window.show_list(activate=True, select=location)
 
     def _place_root_target(self) -> tuple[FolderExplorer, str] | None:
         """The current tab and its selected folder (at first the tab's top folder)."""
@@ -516,6 +528,8 @@ class HelabMainWindow(QMainWindow):
             return
         cache = get_folder_cache(get_io_service())
         self.settings_dialog = SettingsDialog(self, cache=cache)
+        if (roots := getattr(self.settings_dialog, "roots_tab", None)) is not None:
+            roots.reviewRequested.connect(self.review_root)
         if purge:
             self.settings_dialog.show_purge()
         self.settings_dialog.exec()
@@ -763,8 +777,7 @@ class HelabMainWindow(QMainWindow):
         # Folder details below the tab_widget: the current tab's selected folder, load and I/O.
         self.folder_details = FolderDetailsPanel()
         self.folder_details.revealRequested.connect(self.reveal_load)
-        self.folder_details.reviewRootRequested.connect(
-            lambda location: self.root_duplicates.show_list(activate=True, select=location))
+        self.folder_details.reviewRootRequested.connect(self.review_root)
         get_io_service().request_note = self._request_note
         self.folder_details.setVisible(True)
         self.left_splitter.addWidget(self.folder_details)

@@ -1569,7 +1569,7 @@ def _removed_event(removal: Any) -> dict[str, Any]:
 
 
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
-                 "forget_root", "root_same")
+                 "forget_root", "root_same", "clear_root")
 
 
 def _marker_temporary(name: str) -> bool:
@@ -1656,8 +1656,15 @@ def _root_rows(store: CacheStore, send: Emit) -> list[dict[str, Any]] | None:
     except StoreError as exc:
         send({"kind": "cache_warning", "message": str(exc)})
         return None
+    try:
+        usage = store.root_usage()
+    except StoreError as exc:
+        send({"kind": "cache_warning", "message": str(exc)})
+        usage = {}
     for row in rows:
         row["path"] = _location_path(store, row["location"])
+        if row["uuid"] in usage:
+            row["cached"] = usage[row["uuid"]]
     return rows
 
 
@@ -1868,6 +1875,9 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             result["forgotten"] = location
             if path:
                 send({"kind": "root_changed", "path": path, "location": location, "reason": "forgotten"})
+        elif action == "clear_root":
+            # Everything cached below one data root on this computer; roots, flags and marker stay.
+            send(_removed_event(store.clear_root(str(params["uuid"]))))
         elif action == "root_same":
             # Same folder (D4): the pending location uses the root's cached data from now on.
             location, identifier = str(params["location"]), str(params["uuid"])

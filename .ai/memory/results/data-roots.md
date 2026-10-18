@@ -66,6 +66,12 @@ Decided with Tony in Maestri chat (2026-10-16 and 2026-10-18). Code:
   UUID is deleted (never an invalid or replaced one: "changed since… Refresh
   the list"); without permission: "HeLab can't delete <file> (<reason>).
   Delete it by hand (Show in Finder finds it), then Refresh this list."
+- **Clear cached data…** (Tony, 2026-10-18; button and row-menu item, for any
+  row, mounted or not): everything this computer cached below that root's
+  UUID. Confirmation, Cancel default: "Clears N cached folders (X) for data
+  root “label” on this computer. The .helab-root and folder flags stay." (or
+  "Clears the cached data…" when the inventory has no size). The list shows
+  each root's cached size (Cached column).
 
 ## Same folder or a copy? (D4, Tony, 2026-10-18)
 

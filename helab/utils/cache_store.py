@@ -91,6 +91,12 @@ CREATE TABLE IF NOT EXISTS root_volumes (
 """
 
 
+def _root_epoch(key: str) -> str | None:
+    """The ``folder_epochs`` row a data root's Clear bumps, for a ``root://<uuid>/…`` key (a name
+    no folder key has)."""
+    return f"root-clear://{key[7:].partition('/')[0]}" if key.startswith("root://") else None
+
+
 class StoreError(Exception):
     """The store can't be opened, read or written. Never means "nothing saved"."""
 
@@ -695,6 +701,7 @@ class CacheStore:
             with self.transaction(write=False):
                 meta = self._meta()
                 epochs = {path: self._epoch(path) for path in paths}
+                epochs.update({root: self._epoch(root) for path in paths if (root := _root_epoch(path))})
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be read: {exc}") from exc
         return SaveGuard({kind: int(meta[f"gen_{kind}"]) for kind in kinds}, epochs)
@@ -713,10 +720,13 @@ class CacheStore:
                                    "ON CONFLICT (path) DO UPDATE SET job_seq = job_seq + 1", (path,))
                 epoch, job_seq = self._conn.execute(
                     "SELECT epoch, job_seq FROM folder_epochs WHERE path = ?", (path,)).fetchone()
+                epochs = {path: int(epoch)}
+                if root := _root_epoch(path):
+                    epochs[root] = self._epoch(root)
                 meta = self._meta()
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
-        return SaveGuard({kind: int(meta[f"gen_{kind}"]) for kind in kinds}, {path: int(epoch)}, int(job_seq))
+        return SaveGuard({kind: int(meta[f"gen_{kind}"]) for kind in kinds}, epochs, int(job_seq))
 
     def _epoch(self, path: str) -> int:
         row = self._conn.execute("SELECT epoch FROM folder_epochs WHERE path = ?", (path,)).fetchone()
@@ -729,8 +739,12 @@ class CacheStore:
             # a fresh one: that would let the old outcome write to the new share.
             raise ValueError(f"The save guard doesn't cover {kind} for {path}")
         meta = self._meta()
+        # A data root's Clear cached data bumps its root epoch: a guard taken before it (or one
+        # without it) no longer holds for any folder below that root.
+        root = _root_epoch(path)
         return (int(meta[f"gen_{kind}"]) == guard.generations[kind]
-                and self._epoch(path) == guard.epochs[path])
+                and self._epoch(path) == guard.epochs[path]
+                and (root is None or self._epoch(root) == guard.epochs.get(root, 0)))
 
     def _check(self, guard: SaveGuard, kind: Kind, path: str) -> None:
         if not self._guard_holds(guard, kind, path):
@@ -1218,6 +1232,44 @@ class CacheStore:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
 
     # Removals and cleanup
+
+    def root_usage(self) -> dict[str, dict[str, int]]:
+        """Per data root UUID: folders with cached records or data, and their datasets' bytes."""
+        usage: dict[str, dict[str, int]] = {}
+        folders: dict[str, set[str]] = {}
+        try:
+            with self.transaction(write=False):
+                for table in (*TABLES.values(), "pending_saves"):
+                    for path, size in self._conn.execute(
+                            f"SELECT path, {'bytes' if table == 'datasets' else '0'} FROM {table} "
+                            "WHERE substr(path, 1, 7) = 'root://'"):
+                        identifier = str(path)[7:].partition("/")[0]
+                        entry = usage.setdefault(identifier, {"folders": 0, "bytes": 0})
+                        entry["bytes"] += int(size)
+                        folders.setdefault(identifier, set()).add(str(path))
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be read: {exc}") from exc
+        for identifier, paths in folders.items():
+            usage[identifier]["folders"] = len(paths)
+        return usage
+
+    def clear_root(self, identifier: str) -> Removal:
+        """Settings › Data roots › Clear cached data…: every record and dataset keyed below this
+        data root (``root://<uuid>``), in one transaction. Its root epoch is bumped, so a save
+        already running anywhere below it can't bring data back. ``roots``, folder flags and the
+        marker stay; dataset files are retired (the sweep deletes them)."""
+        top = f"root://{identifier}"
+        try:
+            with self.transaction():
+                paths = sorted({str(path) for table in (*TABLES.values(), "pending_saves")
+                                for (path,) in self._conn.execute(
+                                    f"SELECT path FROM {table} WHERE path = ? OR substr(path, 1, ?) = ?",
+                                    (top, len(top) + 1, top + "/"))})
+                self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) "
+                                   "ON CONFLICT (path) DO UPDATE SET epoch = epoch + 1", (_root_epoch(top),))
+                return self.remove(KINDS, paths, _stored_keys=True)
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
 
     def remove(self, kinds: Iterable[Kind], paths: Iterable[str] | None = None, *,
                _stored_keys: bool = False) -> Removal:
