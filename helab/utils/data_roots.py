@@ -8,7 +8,7 @@ I/O helpers and must never happen during a cached read.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import ntpath
 import os
@@ -197,6 +197,27 @@ def parse_marker(raw: bytes) -> Marker:
     except ValueError as exc:
         raise ValueError("Invalid data-root creation time") from exc
     return Marker(identifier, label, stamp)
+
+
+def new_marker(folder: str) -> tuple[Marker, bytes]:
+    """A new root for ``folder``, and the exact bytes to write: the helper writes these, and
+    the manual flow (no write permission) shows the same text."""
+    marker = Marker(str(uuid.uuid4()), marker_label(folder),
+                    datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    text = json.dumps({"helab": "root", "version": MARKER_VERSION, "uuid": marker.uuid,
+                       "label": marker.label, "created_at": marker.created_at},
+                      indent=2, ensure_ascii=False) + "\n"
+    return marker, text.encode("utf-8")
+
+
+def marker_label(folder: str) -> str:
+    """The folder's name (a drive's letter for a drive root), as ``parse_marker`` accepts it."""
+    module = ntpath if sys.platform == "win32" else os.path
+    name = module.basename(module.normpath(folder))
+    if not name and sys.platform == "win32":
+        name = ntpath.splitdrive(folder)[0].rstrip(":").lstrip("\\")
+    name = "".join(character for character in name if ord(character) >= 32).replace("\\", "_").strip()
+    return name if name and name not in (".", "..") else "data"
 
 
 def read_marker(folder: str) -> Marker:

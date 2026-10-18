@@ -35,7 +35,8 @@ SCANS = ("list", "details", "scan")
 ENTRY_KEYS = {"datasets": ("disk_cached", "cache_info"), "summaries": ("scan_status",),
               "histories": ("scan_history",), "subtrees": ("subtree",)}
 # The current tab's work that runs in the foreground I/O lane.
-FOREGROUND_OPERATIONS = ("list", "resolve", "load")
+# (``root_create``: the user's Enable disk cache here…, one small write, runs like a listing.)
+FOREGROUND_OPERATIONS = ("list", "resolve", "load", "root_create")
 
 
 @dataclass
@@ -151,6 +152,8 @@ class FolderCache(QObject):
     # Data-root verification checked the local volume hints (``verified_volumes``): a cached
     # read that waited for its volume can run now.
     volumesVerified = pyqtSignal()
+    # A folder became (or stopped being) a data root, or was found to have none (RAM only).
+    dataRootsChanged = pyqtSignal(str)
     MAX_FOLDER_ICONS = 4096
     # Seconds before a sweep the queue rejected is tried again.
     SWEEP_RETRY = 5.0
@@ -241,6 +244,10 @@ class FolderCache(QObject):
         self.cache_read_errors: OrderedDict[str, str] = OrderedDict()
         # One unsupported-network notice per mount for this session.
         self.mount_warnings: dict[str, tuple[str, str]] = {}
+        # Data roots seen this session (folder → uuid, label): their folders and subfolders use
+        # the disk cache. Folders a helper found without one (RAM only), with the reason.
+        self.data_roots: dict[str, tuple[str, str]] = {}
+        self.unrooted: OrderedDict[str, str] = OrderedDict()
         # Native icons (including unsuccessful lookups) are session-only and bounded.
         self.folder_icons: OrderedDict[str, QIcon] = OrderedDict()
         self._history_writes: dict[str, str] = {}
@@ -351,9 +358,46 @@ class FolderCache(QObject):
                    if path == mount or path.startswith(mount.rstrip("/\\") + os.sep)]
         return max(matches, key=lambda item: len(item[0]))[1] if matches else None
 
+    def root_of(self, path: str) -> tuple[str, str, str] | None:
+        """The nearest data root seen this session at or above ``path``: (folder, uuid, label)."""
+        matches = [(root, info) for root, info in self.data_roots.items()
+                   if path == root or path.startswith(root.rstrip("/\\") + os.sep)]
+        if not matches:
+            return None
+        root, (identifier, label) = max(matches, key=lambda item: len(item[0]))
+        return root, identifier, label
+
+    def no_root(self, path: str) -> str | None:
+        """Why this folder uses RAM only (no data root, or one not yet confirmed), if a helper said so."""
+        return self.unrooted.get(path)
+
+    def _root_seen(self, path: str, identifier: str, label: str) -> None:
+        cleared = [folder for folder in self.unrooted
+                   if folder == path or folder.startswith(path.rstrip("/\\") + os.sep)]
+        for folder in cleared:
+            del self.unrooted[folder]
+        if self.data_roots.get(path) != (identifier, label) or cleared:
+            self.data_roots[path] = (identifier, label)
+            self.dataRootsChanged.emit(path)
+
+    def _root_gone(self, path: str) -> None:
+        if self.data_roots.pop(path, None) is not None:
+            self.dataRootsChanged.emit(path)
+
+    def _remember_unrooted(self, path: str, detail: str) -> None:
+        if self.unrooted.get(path) != detail:
+            self.unrooted[path] = detail
+            self.unrooted.move_to_end(path)
+            while len(self.unrooted) > self.MAX_FOLDER_ICONS:
+                self.unrooted.popitem(last=False)
+            self.dataRootsChanged.emit(path)
+
     def _remember_mount_warning(self, event: dict[str, Any]) -> None:
         for mount in event.get("mounts", []):
             path = str(mount["path"])
+            if mount["type"] == "no data root":
+                self._remember_unrooted(path, str(mount["detail"]))
+                continue
             if path in self.mount_warnings:
                 continue
             kind = str(mount["type"])
@@ -367,6 +411,8 @@ class FolderCache(QObject):
             self.mountWarningChanged.emit(path)
 
     def _clear_mount_warning(self, path: str) -> None:
+        if self.unrooted.pop(path, None) is not None:
+            self.dataRootsChanged.emit(path)
         for mount in list(self.mount_warnings):
             if path == mount or path.startswith(mount.rstrip("/\\") + os.sep):
                 del self.mount_warnings[mount]
@@ -1510,7 +1556,13 @@ class FolderCache(QObject):
                                      "" if kind == "done" else str(event.get("message") or "Cancelled"))
 
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        if event["kind"] in ("root_found", "root_created", "root_adopted"):
+            self._root_seen(str(event["path"]), str(event["uuid"]), str(event["label"]))
         if event["kind"] == "root_changed":
+            if "uuid" in event:
+                self._root_seen(str(event["path"]), str(event["uuid"]), str(event["label"]))
+            else:
+                self._root_gone(str(event["path"]))
             root_path = str(event["path"])
             known = ({root_path, *self._cache_states, *self.scan_summaries,
                       *self.scan_histories, *self.subtrees, *self._disk_cached_paths})

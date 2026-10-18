@@ -324,6 +324,8 @@ class CacheStore:
         self._path_key = path_key or (lambda path: path)
         self._source_path = source_path or (lambda path: path)
         self._location_key: Callable[[str], str] = lambda path: path
+        # A root location's folder on this computer now, or the location itself if not mounted.
+        self._location_source: Callable[[str], str] = lambda location: location
         self._expected_layout = ROOT_LAYOUT_VERSION if root_mode else LAYOUT_VERSION
         self._root_mode = root_mode
         self.datasets_dir = os.path.join(root, "datasets")
@@ -414,6 +416,18 @@ class CacheStore:
             raise StoreError(f"Data roots could not be read: {exc}") from exc
         return [(str(location), str(identifier), str(decision))
                 for location, identifier, decision in rows]
+
+    def root_rows(self) -> list[dict[str, Any]]:
+        """Every remembered root location, for Settings → Cache."""
+        try:
+            rows = self._conn.execute(
+                "SELECT location, uuid, kind, label, first_seen, last_seen, decision FROM roots "
+                "ORDER BY label, location").fetchall()
+        except sqlite3.Error as exc:
+            raise StoreError(f"Data roots could not be read: {exc}") from exc
+        return [{"location": str(location), "uuid": str(identifier), "kind": str(kind), "label": str(label),
+                 "first_seen": float(first), "last_seen": float(last), "decision": str(decision)}
+                for location, identifier, kind, label, first, last, decision in rows]
 
     def root_at(self, location: str) -> tuple[str, str, str] | None:
         row = self._conn.execute(

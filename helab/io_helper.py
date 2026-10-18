@@ -188,6 +188,8 @@ def _cache_store(root: str, source_paths: list[str] | None = None,
     store._path_key = resolver.key
     store._source_path = resolver.source
     store._location_key = resolver.location
+    store._location_source = lambda location: (paths.source(location) if location.startswith("smb://")
+                                               else volumes.source(location))
     return store
 
 
@@ -1485,7 +1487,80 @@ def _removed_event(removal: Any) -> dict[str, Any]:
             "datasets": removal.datasets, "bytes": removal.dataset_bytes}
 
 
-ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs")
+ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
+                 "forget_root")
+
+
+def _location_path(store: CacheStore, location: str) -> str:
+    """The folder of a root location on this computer now, or "" if it isn't mounted."""
+    try:
+        path = store._location_source(location)
+    except (OSError, ValueError):
+        return ""
+    return "" if path.startswith(("smb://", "vol://")) else path
+
+
+def _root_rows(store: CacheStore, send: Emit) -> list[dict[str, Any]] | None:
+    """The roots table, each location with its folder now ("" if not mounted); None if unreadable."""
+    from helab.utils.cache_store import StoreError
+    try:
+        rows = store.root_rows()
+    except StoreError as exc:
+        send({"kind": "cache_warning", "message": str(exc)})
+        return None
+    for row in rows:
+        row["path"] = _location_path(store, row["location"])
+    return rows
+
+
+def create_root(path: str, cache_options: dict[str, Any] | None, send: Emit = emit) -> None:
+    """Right-click › Enable disk cache here…: write the folder's ``.helab-root`` (exclusive create,
+    hidden on Windows, read back), or adopt the one already there, and record it as a listing would.
+
+    Without write permission nothing is left behind and ``root_manual`` hands the app the exact
+    file name and contents to place by hand.
+    """
+    from helab.utils.data_roots import MARKER_NAME, new_marker, read_marker
+    marker, contents = new_marker(path)
+    file = os.path.join(path, MARKER_NAME)
+    created = False
+    try:
+        descriptor = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o644)
+    except FileExistsError:
+        pass  # Another PC (or an earlier click) was first: adopt it.
+    except OSError as exc:
+        send({"kind": "root_manual", "path": path, "name": MARKER_NAME,
+              "contents": contents.decode("utf-8"), "reason": str(exc)})
+        return
+    else:
+        created = True
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(contents)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                os.remove(file)  # Never leave a partial marker.
+            send({"kind": "root_manual", "path": path, "name": MARKER_NAME,
+                  "contents": contents.decode("utf-8"), "reason": str(exc)})
+            return
+        _hide(file)
+    found = read_marker(path)  # Raises on an unreadable or invalid marker: an error, said as such.
+    _discover_root(path, True, cache_options, send)
+    send({"kind": "root_created" if created and found.uuid == marker.uuid else "root_adopted",
+          "path": path, "uuid": found.uuid, "label": found.label})
+
+
+def _hide(file: str) -> None:
+    """The Windows hidden attribute; the dot prefix hides it elsewhere."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    kernel32 = getattr(ctypes, "windll").kernel32
+    attributes = kernel32.GetFileAttributesW(file)
+    if attributes != -1 and attributes != 0xFFFFFFFF:
+        kernel32.SetFileAttributesW(file, attributes | 0x2)  # FILE_ATTRIBUTE_HIDDEN
 
 
 def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, **params: Any) -> None:
@@ -1524,6 +1599,7 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                     if entry["reason"] == "over_budget":
                         with contextlib.suppress(SaveRejected, StoreError):
                             entry["room"] = asdict(store.room_plan(entry["pending_id"], int(budget)))
+            inventory["roots"] = _root_rows(store, send)
             send({"kind": "inventory", "inventory": inventory})
         elif action == "sweep":
             try:
@@ -1588,6 +1664,15 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
         elif action == "clear_prefs":
             cleared_at = time.time()
             send({"kind": "prefs_cleared", "paths": store.clear_prefs(cleared_at), "set_at": cleared_at})
+        elif action == "forget_root":
+            # Only where a marker was seen: data stays with its root, and the marker in place.
+            # A folder there is RAM-only until a listing finds its marker again.
+            location = str(params["location"])
+            path = _location_path(store, location)
+            store.forget_root(location)
+            result["forgotten"] = location
+            if path:
+                send({"kind": "root_changed", "path": path, "location": location, "reason": "forgotten"})
         elif action == "budget":
             if budget is not None and budget_set_at is not None:
                 # Lowering it (``fit``): not recorded if the data cached by now doesn't fit.
@@ -1749,6 +1834,8 @@ def main() -> None:
             verify_known_roots(request["cache"])
         elif operation == "volumes_verify":
             verify_volumes(request["cache"])
+        elif operation == "root_create":
+            create_root(request["path"], request.get("cache"))
         else:
             raise ValueError(f"Unknown operation: {operation}")
         emit({"kind": "done"})
