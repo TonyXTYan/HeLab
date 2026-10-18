@@ -110,6 +110,7 @@ def test_posix_startup_disk_home_folders_and_volumes_warn_with_their_reasons(
     cache = FolderCache(service)
     monkeypatch.setattr(DataRootDialogs, "sys", types.SimpleNamespace(platform="darwin"))
     monkeypatch.setenv("HOME", "/Users/tony")
+    monkeypatch.setenv("USERPROFILE", "/Users/tony")  # (Where expanduser looks on Windows.)
     monkeypatch.setattr(cache, "mount_of", lambda path: "/")
     assert placement_checks(cache, "/") == (None, [STARTUP])
     assert placement_checks(cache, "/System/Volumes/Data") == (None, [STARTUP])

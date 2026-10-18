@@ -229,7 +229,7 @@ def test_delete_asks_then_runs_root_remove_in_the_foreground(
     page.confirm = lambda title, text, verb: True
     page.delete_selected()
     request = next(r for r in service.pending if r.operation == "root_remove")
-    assert request.path == ROWS[0]["path"]
+    assert request.path == page.cache.key(ROWS[0]["path"])
     assert {key: request.payload[key] for key in ("uuid", "location")} == {
         "uuid": ROWS[0]["uuid"], "location": ROWS[0]["location"]}
     # Not the current tab's work, yet in the foreground like the user's other marker writes.
