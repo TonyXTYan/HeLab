@@ -14,6 +14,7 @@ pytest-rerunfailures
 pytest-timeout
 pympler
 pyinstaller
+packaging
 psutil
 coloredlogs
 plotly
@@ -25,7 +26,6 @@ uncertainties
 pandas
 scipy
 joblib
-diskcache
 pyarrow
 zstandard
 blosc

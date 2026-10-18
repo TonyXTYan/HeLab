@@ -1,6 +1,7 @@
 # SettingsDialog.py
 import logging
 import sys
+import time
 from re import S
 from typing import Optional, Dict, Any
 
@@ -8,15 +9,21 @@ from PyQt6.QtGui import QCloseEvent, QDesktopServices
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QLineEdit, QLabel, QTabWidget, \
     QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem
 from PyQt6.QtCore import QSettings, QUrl
-from diskcache import FanoutCache
 
-from helab.utils.caching_setup import *
+from helab.utils.folder_cache import FolderCache, store_options
+from helab.utils.number_format import fnum
 from helab.utils.constants import *
+from helab.views.DataRootsTab import DataRootsTab
+from helab.views.CacheTab import CacheTab
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None, *, settings: QSettings | None = None,
+                 cache: FolderCache | None = None) -> None:
         super().__init__(parent)
+        self.settings = settings if settings is not None else QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        self.cache = cache
+        self.mover: Any = None  # CacheMover, made on the first Change…
         self.setWindowTitle("Settings")
         self.setMinimumSize(800, 500)
         self.main_layout = QVBoxLayout(self)
@@ -49,6 +56,37 @@ class SettingsDialog(QDialog):
         self.general_layout.addWidget(QLabel("Example Text:"))
         self.general_layout.addWidget(self.example_text)
 
+        self.load_mode_combo = QComboBox()
+        for mode, label in LOAD_MODE_LABELS.items():
+            self.load_mode_combo.addItem(label, mode)
+        self.general_layout.addSpacerItem(QSpacerItem(0, 10))
+        self.general_layout.addWidget(QLabel("When selecting another folder:"))
+        self.general_layout.addWidget(self.load_mode_combo)
+
+        folder_io_form = QFormLayout()
+        self.simultaneous_io_spin = QSpinBox()
+        self.simultaneous_io_spin.setRange(1, MAX_SIMULTANEOUS_IO)
+        self.simultaneous_io_spin.setToolTip(
+            "Shared across all tabs for background loads, folder details, folder status checks and cache writes. "
+            "One extra lane is reserved for browsing and the selected folder's load in the current tab; "
+            "background work pauses while it runs. Running work finishes when the limit is lowered.")
+        folder_io_form.addRow("Simultaneous background I/O operations:", self.simultaneous_io_spin)
+        self.check_level_combo = QComboBox()
+        for level, label in CHECK_LEVEL_LABELS.items():
+            self.check_level_combo.addItem(label, level)
+        self.check_level_combo.setToolTip(
+            "When a folder's cached data is shown, HeLab checks the folder. If the folder wasn't modified since "
+            "it was cached, it also checks these TXY files' sizes and modified times instead of listing the "
+            "folder; random files differ each time. If any differs or is missing, it lists and compares every "
+            "file. Full always does that (slower on network folders). Right-click › Retry / Refresh always "
+            "checks every file.")
+        folder_io_form.addRow("Check of cached data:", self.check_level_combo)
+        self.general_layout.addLayout(folder_io_form)
+        self.auto_scan_visible_checkbox = QCheckBox("Automatically check folder status in view")
+        self.auto_scan_visible_checkbox.setToolTip(
+            "Scan visible folders that have no saved scan results. Cached results are kept until a manual scan or refresh.")
+        self.general_layout.addWidget(self.auto_scan_visible_checkbox)
+
 
         # DIR_TEMPS and DIR_CACHES
         self.general_layout.addSpacerItem(QSpacerItem(0, 10))
@@ -66,21 +104,25 @@ class SettingsDialog(QDialog):
         self.dir_caches_edit = QLineEdit()
 
         self.dir_temps_edit.setText(DIR_TEMPS)
-        self.dir_caches_edit.setText(DIR_CACHES)
+        # The cache folder changes only by moving the cache (Change…), never by typing a path.
+        self.dir_caches_edit.setReadOnly(True)
+        self.dir_caches_edit.setText(cache_dir())
 
         self.dir_temps_browse_btn = QPushButton("Browse...")
-        self.dir_caches_browse_btn = QPushButton("Browse...")
+        self.dir_caches_browse_btn = QPushButton("Change…")
+        self.dir_caches_browse_btn.setToolTip("Move the disk cache to another folder. HeLab pauses loading and "
+                                              "folder checks while it moves.")
         self.dir_temps_open_btn = QPushButton("Open Path")
         self.dir_caches_open_btn = QPushButton("Open Path")
         self.dir_temps_reset_btn = QPushButton("Reset to Default")
-        self.dir_caches_reset_btn = QPushButton("Reset to Default")
 
         self.dir_temps_browse_btn.clicked.connect(self.browse_dir_temps)
-        self.dir_caches_browse_btn.clicked.connect(self.browse_dir_caches)
+        self.dir_caches_browse_btn.clicked.connect(self.change_cache_folder)
+        self.dir_caches_browse_btn.setEnabled(self.cache is not None and bool(store_options()))
         self.dir_temps_open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.dir_temps_edit.text())))
         self.dir_caches_open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.dir_caches_edit.text())))
-        self.dir_temps_reset_btn.clicked.connect(lambda: self.dir_temps_edit.setText(get_path_from_setting_or_use_default("dir_temps", DIR_TEMPS_CANDIDATES)))
-        self.dir_caches_reset_btn.clicked.connect(lambda: self.dir_caches_edit.setText(get_path_from_setting_or_use_default("dir_caches", DIR_CACHES_CANDIDATES)))
+        # Reset shows the persistent default; it is saved (and created on next launch) with Save.
+        self.dir_temps_reset_btn.clicked.connect(lambda: self.dir_temps_edit.setText(default_app_dir("temps")))
 
 
 
@@ -92,12 +134,11 @@ class SettingsDialog(QDialog):
         dir_temps_btn_layout.addWidget(self.dir_temps_reset_btn)
         self.dir_scroll_layout.addLayout(dir_temps_btn_layout)
 
-        self.dir_scroll_layout.addWidget(QLabel("DIR_CACHES:"))
+        self.dir_scroll_layout.addWidget(QLabel("Cache folder (moving it keeps its contents):"))
         self.dir_scroll_layout.addWidget(self.dir_caches_edit)
         dir_caches_btn_layout = QHBoxLayout()
         dir_caches_btn_layout.addWidget(self.dir_caches_browse_btn)
         dir_caches_btn_layout.addWidget(self.dir_caches_open_btn)
-        dir_caches_btn_layout.addWidget(self.dir_caches_reset_btn)
         self.dir_scroll_layout.addLayout(dir_caches_btn_layout)
 
         self.dir_scroll_area.setWidget(self.dir_scroll_content)
@@ -134,13 +175,14 @@ class SettingsDialog(QDialog):
 
 
         self._make_tab_cache()
+        self.cache_tab.budgetApplied.connect(self._budget_applied)
 
 
         # Buttons
         self.button_layout = QHBoxLayout()
         self.save_button = QPushButton("Save")
         self.cancel_button = QPushButton("Cancel")
-        self.reset_button = QPushButton("Reset")
+        self.reset_button = QPushButton("Reset all settings…")
         self.button_layout.addWidget(self.save_button)
         self.button_layout.addWidget(self.cancel_button)
         self.button_layout.addWidget(self.reset_button)
@@ -156,258 +198,112 @@ class SettingsDialog(QDialog):
         # self.main_layout.setStretch(1, 0)
 
     def _make_tab_cache(self) -> None:
-        # Cache Tab
-        self.cache_tab = QWidget()
-        self.cache_layout = QVBoxLayout(self.cache_tab)
-
-        self.cache_widgets = []
-        self.cache_params_ui: Dict[str, Dict[str, Any]] = {}
-
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(scroll_content)
-
-        experimental_label = QLabel(
-            "Warning: Changing these settings may cause unexpected behaviour. \n"
-            "To change the cache settings, please edit in the raw .py file.")
-        experimental_label.setWordWrap(True)
-        scroll_layout.addWidget(experimental_label)
-
-
-        force_save_button = QPushButton("Force Save Cache to Disk")
-        force_save_button.clicked.connect(self.save_cache_to_disk)
-        scroll_layout.addWidget(force_save_button)
-
-        clear_all_button = QPushButton("Clear All Caches")
-        clear_all_button.clicked.connect(self.clear_all_caches)
-        scroll_layout.addWidget(clear_all_button)
-
-        for cache_name, cache in caches.items():
-            cache_widget = QWidget()
-            cache_layout = QHBoxLayout(cache_widget)
-
-            # cache_label = QLabel(f"<b>{cache_name}</b>")
-            cache_label = QLabel(cache_name)
-            cache_label.setStyleSheet("font-weight: bold")
-            cache_layout.addWidget(cache_label)
-
-            cache_hits_label = QLabel()
-            cache_layout.addWidget(cache_hits_label)
-
-            cache_miss_label = QLabel()
-            cache_layout.addWidget(cache_miss_label)
-
-            cache_size_label = QLabel()
-            cache_layout.addWidget(cache_size_label)
-
-            clear_button = QPushButton("Clear Cache")
-            clear_button.clicked.connect(lambda _, c=cache: self.clear_cache(c))
-            cache_layout.addWidget(clear_button)
-
-            # # logging.debug(f"Cache: {cache_name}, {sys.getsizeof(cache)}")
-            # connection = cache._sql
-            # ram_usage = connection.execeute("PRAGMA cache_size").fetchone()[0]
-            # ram_highwater = connection.execeute("PRAGMA memory_highwater").fetchone()[0]
-            # logging.debug(f"Cache: {cache_name}, {ram_usage = }, {ram_highwater = }")
-
-            # hits, miss = cache.stats()
-
-            self.cache_widgets.append({
-                'cache_name': cache_name,
-                'cache': cache,
-                'hits_label': cache_hits_label,
-                'miss_label': cache_miss_label,
-                'size_label': cache_size_label,
-            })
-            scroll_layout.addWidget(cache_widget)
-
-
-            form_widget = QWidget()
-            form_layout = QFormLayout(form_widget)
-
-            # form_layout.addRow(QLabel(f"<b>{cache_name}</b>"), QLabel(""))
-            self.cache_params_ui[cache_name] = {}
-            param_keys = CACHE_PARAMS_DEFAULTS.keys()
-            existing_params = load_cache_param(cache_name)
-            for pkey in param_keys:
-                lbl = QLabel(pkey)
-                if pkey == "statistics":
-                    pass
-                elif pkey == "sqlite_journal_mode":
-                    cb = QComboBox()
-                    modes = [
-                        "delete",
-                        "truncate",
-                        "persist",
-                        "memory",
-                        "wal",
-                        "off"
-                    ]
-                    cb.addItems(modes)
-                    idx = cb.findText(str(existing_params[pkey]))
-                    if idx >= 0:
-                        cb.setCurrentIndex(idx)
-                    form_layout.addRow(lbl, cb)
-                    self.cache_params_ui[cache_name][pkey] = cb
-                elif pkey == "eviction_policy":
-                    # example: a combo box for known policies
-                    cb = QComboBox()
-                    policies = [
-                        "least-recently-stored",
-                        "least-recently-used",
-                        "least-frequently-used",
-                        "none"
-                    ]
-                    cb.addItems(policies)
-                    idx = cb.findText(str(existing_params[pkey]))
-                    if idx >= 0:
-                        cb.setCurrentIndex(idx)
-                    form_layout.addRow(lbl, cb)
-                    self.cache_params_ui[cache_name][pkey] = cb
-                else:
-                    # # Use a line edit for numeric/bool/string
-                    # le = QLineEdit(str(existing_params[pkey]))
-                    # form_layout.addRow(lbl, le)
-                    # self.cache_params_ui[cache_name][pkey] = le
-                    number_filed = QSpinBox()
-                    number_filed.setMaximum(1<<14)
-                    # number_filed.setValue(existing_params[pkey])
-
-                     # Auto-select unit for the existing value
-                    size_in_bytes = int(existing_params[pkey])
-
-                    units = ["B", "KB", "MB", "GB", "TB"] if pkey != "sqlite_cache_size" else ["I", "K", "M", "G", "T"]
-
-                    unit_idx = 0
-                    while size_in_bytes >= 1024 and unit_idx < len(units) - 1:
-                        size_in_bytes >>= 10
-                        unit_idx += 1
-                    if (unit_idx >= 3 and size_in_bytes > 100) or unit_idx >= 4:
-                        logging.warning(f"Cache {cache_name} param {pkey} is large: {size_in_bytes} {units[unit_idx]}")
-
-                    number_filed.setValue(size_in_bytes)
-                    unit_selector = QComboBox()
-                    unit_selector.addItems(units)
-                    unit_selector.setCurrentIndex(unit_idx)
-
-                    unit_layout = QHBoxLayout()
-                    unit_layout.addWidget(number_filed)
-                    unit_layout.addWidget(unit_selector)
-
-                    unit_widget = QWidget()
-                    unit_widget.setLayout(unit_layout)
-                    form_layout.addRow(lbl, unit_widget)
-                    self.cache_params_ui[cache_name][pkey] = (number_filed, unit_selector)
-
-            # self.cache_layout.addWidget(form_widget)
-            # self.cache_layout.addWidget(cache_widget)
-
-            scroll_layout.addWidget(form_widget)
-            form_widget.setEnabled(False)
-
-        scroll_area.setWidget(scroll_content)
-        self.cache_layout.addWidget(scroll_area)
-        # self.cache_layout.addWidget(clear_all_button)
+        # The GUI never opens the store: the tab asks a helper (FolderCache.cache_admin).
+        self.cache_tab = CacheTab(self.cache, self.settings)
         self.tabs.addTab(self.cache_tab, "Cache")
-        self.update_cache_info()
+        self.roots_tab = DataRootsTab(self.cache)
+        self.tabs.addTab(self.roots_tab, "Data roots")
+
+    def show_purge(self) -> None:
+        """Open at the Cache tab's Remove old entries (from the disk cache's 80% warning)."""
+        self.tabs.setCurrentWidget(self.cache_tab)
+        self.cache_tab.focus_purge()
+
+    def done(self, a0: int) -> None:
+        if self.mover is not None and self.mover.busy:
+            return  # A cache move switches folders (or is cancelled) first.
+        if self.cache_tab.applying and self.cache is not None:
+            # Closed while the store records a new budget: the one in effect stays. Set again
+            # now, so it is newer than the change, and sent until the store has it.
+            self.cache.restore_budget()
+        self.cache_tab.detach()
+        self.roots_tab.detach()
+        if self.mover is not None:
+            # The mover outlives this dialog (e.g. deleting the old folder): stop listening.
+            self.mover.switched.disconnect(self._cache_switched)
+            self.mover.finished.disconnect(self._cache_move_ended)
+            self.mover.window = None
+            self.mover = None
+        super().done(a0)
 
     def browse_dir_temps(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select DIR_TEMPS Folder")
         if folder:
             self.dir_temps_edit.setText(folder)
 
-    def browse_dir_caches(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select DIR_CACHES Folder")
-        if folder:
-            self.dir_caches_edit.setText(folder)
+    def change_cache_folder(self, folder: str = "") -> None:
+        """Move the disk cache to an empty or new folder (``CacheMover``)."""
+        if self.cache is None:
+            return
+        from helab.views.CacheMover import cache_mover
+        mover = cache_mover(self.cache, self.settings)
+        if mover.running:
+            return
+        folder = folder or QFileDialog.getExistingDirectory(self, "Move the disk cache to an empty folder")
+        if not folder:
+            return
+        if self.mover is None:
+            self.mover = mover
+            mover.switched.connect(self._cache_switched)
+            mover.finished.connect(self._cache_move_ended)
+        self.dir_caches_browse_btn.setEnabled(False)
+        if not mover.change(folder, self):
+            self.dir_caches_browse_btn.setEnabled(True)
 
-    def save_cache_to_disk(self) -> None:
-        for cache_info in self.cache_widgets:
-            cache = cache_info['cache']
-            cache.close()
-        self.update_cache_info()
+    def _cache_switched(self) -> None:
+        self.dir_caches_edit.setText(cache_dir())
+        self.cache_tab.show_location()
 
+    def _cache_move_ended(self, moved: bool) -> None:
+        self.dir_caches_browse_btn.setEnabled(True)
+        self._cache_switched()
 
     def load_settings(self) -> None:
-        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        settings = self.settings
         self.example_checkbox.setChecked(settings.value("example_checkbox", False, type=bool))
         self.example_text.setText(settings.value("example_text", "", type=str))
         self.dir_temps_edit.setText(settings.value("dir_temps", DIR_TEMPS, type=str))
-        self.dir_caches_edit.setText(settings.value("dir_caches", DIR_CACHES, type=str))
+        self.dir_caches_edit.setText(cache_dir())
+        self.load_mode_combo.setCurrentIndex(self.load_mode_combo.findData(read_load_mode(settings)))
+        self.simultaneous_io_spin.setValue(read_io_concurrency(settings))
+        self.check_level_combo.setCurrentIndex(self.check_level_combo.findData(read_check_level(settings)))
+        self.auto_scan_visible_checkbox.setChecked(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
         logging.debug("Settings loaded")
 
     def save_settings(self) -> None:
-        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        applied = self.cache_tab.apply_budget()
+        if applied is None:
+            # Saved once the store has the new disk budget.
+            self.save_button.setEnabled(False)
+            self.reset_button.setEnabled(False)
+        elif applied:
+            self._write_settings()
+        else:
+            # Declined, or it couldn't be queued: save nothing, stay open.
+            self.tabs.setCurrentWidget(self.cache_tab)
+
+    def _budget_applied(self, applied: bool) -> None:
+        self.save_button.setEnabled(True)
+        self.reset_button.setEnabled(True)
+        if applied:
+            self._write_settings()
+        else:
+            self.tabs.setCurrentWidget(self.cache_tab)
+
+    def _write_settings(self) -> None:
+        settings = self.settings
         settings.setValue("example_checkbox", self.example_checkbox.isChecked())
         settings.setValue("example_text", self.example_text.text())
         settings.setValue("dir_temps", self.dir_temps_edit.text())
-        settings.setValue("dir_caches", self.dir_caches_edit.text())
-
-        # Save DiskCache parameters overrides
-        for cache_name, param_widgets in self.cache_params_ui.items():
-            for param_key, widget in param_widgets.items():
-                setting_path = f"diskcache/{cache_name}/{param_key}"
-                default_val = CACHE_PARAMS_DEFAULTS[param_key]
-
-                # If it's a combo
-                if isinstance(widget, QComboBox):
-                    val_str = widget.currentText()
-                    settings.setValue(setting_path, val_str)
-
-                # If it's a line edit
-                elif isinstance(widget, QLineEdit):
-                    text_val = widget.text().strip()
-                    if isinstance(default_val, bool):
-                        val = text_val.lower() in ("true", "1", "yes")
-                    elif isinstance(default_val, int):
-                        try:
-                            val = int(text_val) # type: ignore
-                        except ValueError:
-                            val = default_val   # type: ignore
-                    else:
-                        val = text_val # type: ignore   #TODO: FIXME: TYPING ERROR
-                    settings.setValue(setting_path, val)
-
-                # Handle (QSpinBox, QComboBox) tuple
-                elif isinstance(widget, tuple) and len(widget) == 2:
-                    number_filed, unit_selector = widget
-                    base_val = number_filed.value()
-                    unit = unit_selector.currentText()
-                    if param_key != "sqlite_cache_size":
-                        factors = ["B", "KB", "MB", "GB", "TB"]
-                    else:
-                        factors = ["I", "K", "M", "G", "T"]
-
-                    factor_idx = factors.index(unit)
-                    for _ in range(factor_idx):
-                        base_val <<= 10
-                    settings.setValue(setting_path, base_val)
-
-
+        settings.setValue(LOAD_MODE_SETTING, self.load_mode_combo.currentData())
+        settings.setValue(SIMULTANEOUS_IO_SETTING, self.simultaneous_io_spin.value())
+        settings.setValue(CHECK_LEVEL_SETTING, self.check_level_combo.currentData())
+        settings.remove("simultaneous_folder_scans")
+        settings.remove("simultaneous_folder_loads")
+        settings.setValue(AUTO_SCAN_VISIBLE_SETTING, self.auto_scan_visible_checkbox.isChecked())
+        self.cache_tab.save(settings)
         self.accept()
         logging.debug("Settings saved")
-
-    def clear_cache(self, cache: FanoutCache) -> None:
-        cache.clear()
-        self.update_cache_info()
-
-    def clear_all_caches(self) -> None:
-        for cache_info in self.cache_widgets:
-            cache_info['cache'].clear()
-        self.update_cache_info()
-
-    def update_cache_info(self) -> None:
-        for cache_info in self.cache_widgets:
-            cache = cache_info['cache']
-            size_label = cache_info['size_label']
-            hits_label = cache_info['hits_label']
-            miss_label = cache_info['miss_label']
-            hits, miss = cache.stats()
-            hits_label.setText(f"Hits: {fnum(hits)}")
-            miss_label.setText(f"Miss: {fnum(miss)}")
-            size_label.setText(f"Size: {fnum(cache.volume())}B")
-
 
     def closeEvent(self, a0: QCloseEvent|None) -> None:
         # self.save_settings()
@@ -419,7 +315,18 @@ class SettingsDialog(QDialog):
         self.deleteLater()
 
     def reset_settings(self) -> None:
-        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        if not self.cache_tab.confirm(
+                "Reset all settings?",
+                "Resets every HeLab setting to its default: folders, load options, both cache budgets, window "
+                "and view choices. The disk cache's contents are kept.", "Reset all settings"):
+            return
+        settings = self.settings
+        # Where the disk cache is isn't a preference: it stays (moving it is Change…).
+        caches = settings.value("dir_caches", type=str)
         settings.clear()
+        if caches:
+            settings.setValue("dir_caches", caches)
         self.load_settings()
+        self.cache_tab.disk_budget.setValue(read_disk_budget(settings) / (1 << 30))
+        self.cache_tab.ram_budget.setValue(read_ram_budget_steps(settings, self.cache_tab.ram_budget.total))
         logging.debug("Settings reset to default")

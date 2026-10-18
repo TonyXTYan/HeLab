@@ -6,6 +6,7 @@ from typing import Dict, List
 from PIL.ImageQt import ImageQt
 from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtGui import QIcon, QPixmap, QImage, QPainter, QFont, QColor, QPen, QBrush
+from PyQt6.QtWidgets import QApplication, QStyle
 from pytablericons import TablerIcons, OutlineIcon, FilledIcon
 
 # from helab.utils.constants import helab_mono_font
@@ -32,6 +33,56 @@ def tablerIcon(icon: OutlineIcon | FilledIcon, color: str, size: int=128) -> QIc
     pixmap = pixmap.scaled(size, size,
                            Qt.AspectRatioMode.KeepAspectRatio,
                            Qt.TransformationMode.SmoothTransformation)
+    return QIcon(pixmap)
+
+
+def _badged_icon(base: QIcon, badge: QIcon) -> QIcon:
+    """Keep the familiar cache glyph with a readable freshness badge."""
+    pixmap = QPixmap(128, 128)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    base.paint(painter, QRect(0, 0, 112, 112))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor("white"))
+    painter.drawEllipse(QRect(62, 62, 66, 66))
+    badge.paint(painter, QRect(64, 64, 64, 64))
+    painter.end()
+    return QIcon(pixmap)
+
+
+# Activity colours: a listing or status check is blue, a load green (spinners, queued rings, pause).
+CHECK_COLOR = "#3989c9"
+LOAD_COLOR = "#2ea043"
+
+
+def _wait_icon(color: str, paused: bool = False, badge: bool = False) -> QIcon:
+    """Waiting work, drawn once: a dotted ring in its kind's colour (queued), or a ring with pause
+    bars (paused). ``badge``: small, on a white disc, with fewer and bolder dots to read at 8 px."""
+    pixmap = QPixmap(128, 128)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    if badge:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("white"))
+        painter.drawEllipse(QRect(0, 0, 128, 128))
+        pen = QPen(QColor(color), 20, Qt.PenStyle.CustomDashLine)
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)  # Square caps would close the gaps.
+        pen.setDashPattern([1.0, 1.0])
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QRect(26, 26, 76, 76))
+        painter.end()
+        return QIcon(pixmap)
+    painter.setPen(QPen(QColor(color), 11, Qt.PenStyle.SolidLine if paused else Qt.PenStyle.DotLine))
+    painter.drawEllipse(QRect(18, 18, 92, 92))
+    if paused:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(color))
+        painter.drawRoundedRect(QRect(46, 42, 12, 44), 4, 4)
+        painter.drawRoundedRect(QRect(70, 42, 12, 44), 4, 4)
+    painter.end()
     return QIcon(pixmap)
 
 
@@ -80,6 +131,31 @@ class StatusIcons:
         'ram',
         'ram_single',
         'ram_opened',
+        'cached',
+        'cached_older',
+        'status_cache_older',
+        'scan_failed',
+        'data_root',
+        'root_pending',
+        'device_floppy',
+        'device_sd_card',
+        'device_usb',
+        'server',
+        'server_2',
+        'file_database',
+        'archive',
+        'box',
+        'hard_drive',
+        'optical_disc_drive',
+        'network_drive',
+        'cpu',
+        'cpu_2',
+        'disc',
+        'cylinder',
+        'folder_check',
+        'file_zip',
+        'package',
+        'database_import',
         'live',
         'waiting',
         'loading',
@@ -95,6 +171,31 @@ class StatusIcons:
         'ram':           11,
         'ram_single':    12,
         'ram_opened':    13,
+        'cached':        14,
+        'cached_older':  15,
+        'status_cache_older': 16,
+        'scan_failed': 10,
+        'data_root': 9,
+        'root_pending': 8,
+        'device_floppy': 14,
+        'device_sd_card': 15,
+        'device_usb':    16,
+        'server':        17,
+        'server_2':      18,
+        'file_database': 19,
+        'archive':       20,
+        'box':           21,
+        'hard_drive':    22,
+        'optical_disc_drive': 23,
+        'network_drive': 24,
+        'cpu':           25,
+        'cpu_2':         26,
+        'disc':          27,
+        'cylinder':      28,
+        'folder_check':  29,
+        'file_zip':      30,
+        'package':       31,
+        'database_import': 32,
         'progress_ram':  11,
         'loading_ram':   10,
         'loading':        0,
@@ -119,6 +220,7 @@ class StatusIcons:
     ICON_BUG = QIcon()
 
     ICONS_STATUS: Dict[str, QIcon] = {}
+    ICONS_STATUS_OLDER: Dict[str, QIcon] = {}
 
     ICON_WAITING = QIcon()
     ICON_DATABASE = QIcon()
@@ -127,7 +229,41 @@ class StatusIcons:
     ICON_RAM = QIcon()
     ICON_RAM_SINGLE = QIcon()
     ICON_RAM_OPENED = QIcon()
+    ICON_CACHED = QIcon()
+    ICON_CACHED_OLDER = QIcon()
+    ICON_STATUS_CACHE_OLDER = QIcon()
+    ICON_SCAN_FAILED = QIcon()
+    ICON_DATA_ROOT = QIcon()
+    ICON_ROOT_PENDING = QIcon()
+    # Folder flags (the user's choice): not cached, not auto-loaded.
+    ICON_NO_CACHE = QIcon()
+    ICON_NO_AUTO_LOAD = QIcon()
+    ICON_DEVICE_FLOPPY = QIcon()
+    ICON_DEVICE_SD_CARD = QIcon()
+    ICON_DEVICE_USB = QIcon()
+    ICON_SERVER = QIcon()
+    ICON_SERVER_2 = QIcon()
+    ICON_FILE_DATABASE = QIcon()
+    ICON_ARCHIVE = QIcon()
+    ICON_BOX = QIcon()
+    ICON_HARD_DRIVE = QIcon()
+    ICON_OPTICAL_DISC_DRIVE = QIcon()
+    ICON_NETWORK_DRIVE = QIcon()
+    ICON_CPU = QIcon()
+    ICON_CPU_2 = QIcon()
+    ICON_DISC = QIcon()
+    ICON_CYLINDER = QIcon()
+    ICON_FOLDER_CHECK = QIcon()
+    ICON_FILE_ZIP = QIcon()
+    ICON_PACKAGE = QIcon()
+    ICON_DATABASE_IMPORT = QIcon()
     ICON_CIRCLE = QIcon()
+    # A waiting load, shown in its row's activity badge (where the RAM badge goes).
+    ICON_LOAD_QUEUED = QIcon()
+    ICON_LOAD_PAUSED = QIcon()
+    # A queued listing or status check: in the status icon's place, or as a badge on it.
+    ICON_CHECK_QUEUED = QIcon()
+    ICON_CHECK_QUEUED_BADGE = QIcon()
 
     ICONS_EXTRA: Dict[str, QIcon] = {}
 
@@ -144,8 +280,8 @@ class StatusIcons:
         StatusIcons.ICON_WARNING = tablerIcon(OutlineIcon.ALERT_CIRCLE, '#f8c350')
         StatusIcons.ICON_LOADING = tablerIcon(OutlineIcon.LOADER, '#000000')  # TODO: replace this with PERCENTAGE
         StatusIcons.ICON_LIVE = tablerIcon(OutlineIcon.EYE, '#000000')
-        StatusIcons.ICON_NOTHING = tablerIcon(FilledIcon.POINT, '#bbbbbb')
-        StatusIcons.ICON_SOMETHING = tablerIcon(OutlineIcon.CIRCLE_DOT, '#bbbbbb')
+        StatusIcons.ICON_NOTHING = tablerIcon(FilledIcon.POINT, '#e0e0e0')
+        StatusIcons.ICON_SOMETHING = tablerIcon(OutlineIcon.CIRCLE_DOT, '#707070')
         StatusIcons.ICON_UNKNOWN = tablerIcon(OutlineIcon.CIRCLE_DASHED, '#bbbbbb')
         StatusIcons.ICON_MISSING = tablerIcon(OutlineIcon.ERROR_404, '#bbbbbb')
         StatusIcons.ICON_CANCELLED = tablerIcon(OutlineIcon.PROGRESS_X, '#9923bd')
@@ -167,6 +303,11 @@ class StatusIcons:
             'maybe': StatusIcons.ICON_MAYBE,
             'bug': StatusIcons.ICON_BUG,
         }
+        clock = tablerIcon(OutlineIcon.CLOCK, '#c48618')
+        StatusIcons.ICON_STATUS_CACHE_OLDER = clock
+        StatusIcons.ICONS_STATUS_OLDER = {
+            name: _badged_icon(icon, clock) for name, icon in StatusIcons.ICONS_STATUS.items()
+        }
         StatusIcons.ICON_WAITING = tablerIcon(OutlineIcon.HOURGLASS, '#888888')
         StatusIcons.ICON_DATABASE = tablerIcon(OutlineIcon.DATABASE, '#888888')
         StatusIcons.ICON_REPORT = tablerIcon(OutlineIcon.REPORT_ANALYTICS, '#888888')
@@ -174,7 +315,43 @@ class StatusIcons:
         StatusIcons.ICON_RAM = tablerIcon(OutlineIcon.CONTAINER, '#888888')
         StatusIcons.ICON_RAM_SINGLE = tablerIcon(OutlineIcon.CONTAINER, '#FF44BB')
         StatusIcons.ICON_RAM_OPENED = tablerIcon(OutlineIcon.CONTAINER, '#00FF00')
+        StatusIcons.ICON_CACHED = tablerIcon(OutlineIcon.PACKAGE, '#888888')
+        StatusIcons.ICON_SCAN_FAILED = tablerIcon(OutlineIcon.ZOOM_EXCLAMATION, '#c48618')
+        StatusIcons.ICON_NO_CACHE = tablerIcon(OutlineIcon.DATABASE_OFF, '#888888')
+        # The folder holds a .helab-root: it and its subfolders use the disk cache under that identity.
+        StatusIcons.ICON_DATA_ROOT = tablerIcon(OutlineIcon.ANCHOR, '#3989c9')
+        # Below a location whose .helab-root is also elsewhere: RAM only until Same folder or Copy.
+        StatusIcons.ICON_ROOT_PENDING = tablerIcon(OutlineIcon.ALERT_TRIANGLE, '#c48618')
+        StatusIcons.ICON_NO_AUTO_LOAD = tablerIcon(OutlineIcon.PLAYER_PAUSE, '#888888')
+        StatusIcons.ICON_CACHED_OLDER = _badged_icon(
+            StatusIcons.ICON_CACHED, clock)
+        StatusIcons.ICON_DEVICE_FLOPPY = tablerIcon(OutlineIcon.DEVICE_FLOPPY, '#3989c9')
+        StatusIcons.ICON_DEVICE_SD_CARD = tablerIcon(OutlineIcon.DEVICE_SD_CARD, '#3989c9')
+        StatusIcons.ICON_DEVICE_USB = tablerIcon(OutlineIcon.DEVICE_USB, '#3989c9')
+        StatusIcons.ICON_SERVER = tablerIcon(OutlineIcon.SERVER, '#3989c9')
+        StatusIcons.ICON_SERVER_2 = tablerIcon(OutlineIcon.SERVER_2, '#3989c9')
+        StatusIcons.ICON_FILE_DATABASE = tablerIcon(OutlineIcon.FILE_DATABASE, '#3989c9')
+        StatusIcons.ICON_ARCHIVE = tablerIcon(OutlineIcon.ARCHIVE, '#3989c9')
+        StatusIcons.ICON_BOX = tablerIcon(OutlineIcon.BOX, '#3989c9')
+        style = QApplication.style()
+        if style is None:
+            raise RuntimeError("Icon initialization requires a QApplication")
+        StatusIcons.ICON_HARD_DRIVE = style.standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon)
+        StatusIcons.ICON_OPTICAL_DISC_DRIVE = style.standardIcon(QStyle.StandardPixmap.SP_DriveCDIcon)
+        StatusIcons.ICON_NETWORK_DRIVE = style.standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon)
+        StatusIcons.ICON_CPU = tablerIcon(OutlineIcon.CPU, '#3989c9')
+        StatusIcons.ICON_CPU_2 = tablerIcon(OutlineIcon.CPU_2, '#3989c9')
+        StatusIcons.ICON_DISC = tablerIcon(OutlineIcon.DISC, '#3989c9')
+        StatusIcons.ICON_CYLINDER = tablerIcon(OutlineIcon.CYLINDER, '#3989c9')
+        StatusIcons.ICON_FOLDER_CHECK = tablerIcon(OutlineIcon.FOLDER_CHECK, '#3989c9')
+        StatusIcons.ICON_FILE_ZIP = tablerIcon(OutlineIcon.FILE_ZIP, '#3989c9')
+        StatusIcons.ICON_PACKAGE = tablerIcon(OutlineIcon.PACKAGE, '#3989c9')
+        StatusIcons.ICON_DATABASE_IMPORT = tablerIcon(OutlineIcon.DATABASE_IMPORT, '#3989c9')
         StatusIcons.ICON_CIRCLE = tablerIcon(OutlineIcon.CIRCLE, '#888888')
+        StatusIcons.ICON_LOAD_QUEUED = _wait_icon(LOAD_COLOR)
+        StatusIcons.ICON_LOAD_PAUSED = _wait_icon(LOAD_COLOR, paused=True)
+        StatusIcons.ICON_CHECK_QUEUED = _wait_icon(CHECK_COLOR)
+        StatusIcons.ICON_CHECK_QUEUED_BADGE = _wait_icon(CHECK_COLOR, badge=True)
         StatusIcons.ICONS_EXTRA = {
             'database': StatusIcons.ICON_DATABASE,
             'report': StatusIcons.ICON_REPORT,
@@ -182,6 +359,33 @@ class StatusIcons:
             'ram': StatusIcons.ICON_RAM,
             'ram_single': StatusIcons.ICON_RAM_SINGLE,
             'ram_opened': StatusIcons.ICON_RAM_OPENED,
+            'cached': StatusIcons.ICON_CACHED,
+            'cached_older': StatusIcons.ICON_CACHED_OLDER,
+            'status_cache_older': StatusIcons.ICON_STATUS_CACHE_OLDER,
+            'scan_failed': StatusIcons.ICON_SCAN_FAILED,
+            'data_root': StatusIcons.ICON_DATA_ROOT,
+            'root_pending': StatusIcons.ICON_ROOT_PENDING,
+            'no_cache': StatusIcons.ICON_NO_CACHE,
+            'no_auto_load': StatusIcons.ICON_NO_AUTO_LOAD,
+            'device_floppy': StatusIcons.ICON_DEVICE_FLOPPY,
+            'device_sd_card': StatusIcons.ICON_DEVICE_SD_CARD,
+            'device_usb': StatusIcons.ICON_DEVICE_USB,
+            'server': StatusIcons.ICON_SERVER,
+            'server_2': StatusIcons.ICON_SERVER_2,
+            'file_database': StatusIcons.ICON_FILE_DATABASE,
+            'archive': StatusIcons.ICON_ARCHIVE,
+            'box': StatusIcons.ICON_BOX,
+            'hard_drive': StatusIcons.ICON_HARD_DRIVE,
+            'optical_disc_drive': StatusIcons.ICON_OPTICAL_DISC_DRIVE,
+            'network_drive': StatusIcons.ICON_NETWORK_DRIVE,
+            'cpu': StatusIcons.ICON_CPU,
+            'cpu_2': StatusIcons.ICON_CPU_2,
+            'disc': StatusIcons.ICON_DISC,
+            'cylinder': StatusIcons.ICON_CYLINDER,
+            'folder_check': StatusIcons.ICON_FOLDER_CHECK,
+            'file_zip': StatusIcons.ICON_FILE_ZIP,
+            'package': StatusIcons.ICON_PACKAGE,
+            'database_import': StatusIcons.ICON_DATABASE_IMPORT,
             'live': StatusIcons.ICON_LIVE,
             'waiting': StatusIcons.ICON_WAITING,
             'loading': StatusIcons.ICON_LOADING,
@@ -189,6 +393,10 @@ class StatusIcons:
             'progress': StatusIcons.ICON_CIRCLE,
             'progress_ram': StatusIcons.ICON_CIRCLE,
             'bug': StatusIcons.ICON_BUG,
+            'load_queued': StatusIcons.ICON_LOAD_QUEUED,
+            'load_paused': StatusIcons.ICON_LOAD_PAUSED,
+            'check_queued': StatusIcons.ICON_CHECK_QUEUED,
+            'check_queued_badge': StatusIcons.ICON_CHECK_QUEUED_BADGE,
         }
 
 class ToolIcons:

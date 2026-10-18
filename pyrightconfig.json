@@ -1,4 +1,6 @@
 {
+    "venvPath": ".",
+    "venv": "venv",
     "exclude": [
         "helab/scripts/legacy_plotly"
     ]

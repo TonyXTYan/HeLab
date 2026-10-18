@@ -1,0 +1,142 @@
+name: CI test
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        required: true
+        type: string
+      python-minor:
+        required: true
+        type: string
+      enabled:
+        description: Run this job; false records a skip without starting a runner
+        type: boolean
+        default: true
+      experimental:
+        description: Allow compatibility failures without failing CI
+        type: boolean
+        default: false
+    secrets:
+      CODECOV_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Skipped jobs may leave input expressions unevaluated in their names.
+    # The caller's matrix name identifies the OS and Python version.
+    name: Tests
+    if: inputs.enabled
+    runs-on: ${{ inputs.os }}-latest
+    timeout-minutes: 15
+    continue-on-error: ${{ inputs.experimental }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install dependencies on Ubuntu
+        if: inputs.os == 'ubuntu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1 \
+            xvfb \
+            x11-utils \
+            libopengl0
+
+      - name: Install dependencies on macOS
+        if: inputs.os == 'macos'
+        run: |
+          echo "No dependencies to install on macOS."
+
+      - name: Install dependencies on Windows
+        if: inputs.os == 'windows'
+        run: |
+          echo "No dependencies to install on Windows."
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: 3.${{ inputs.python-minor }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m venv venv
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
+          else
+            source venv/bin/activate
+          fi
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Run Tests
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
+          else
+            source venv/bin/activate
+          fi
+          pytest -n 4 --verbose --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
+
+      - name: Upload Test Results
+        if: ${{ !cancelled() && hashFiles('junit.xml') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ inputs.os }}-py3${{ inputs.python-minor }}
+          path: junit.xml
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          report_type: test_results
+
+      - name: Run test with code coverage report
+        if: inputs.python-minor == '13' && inputs.os == 'macos'
+        run: |
+          source venv/bin/activate
+          pytest --cov=helab --cov-report=xml --cov-report=term --ignore=tests/test_typing.py --cache-clear --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
+
+      - name: Upload Code Coverage Report
+        if: inputs.python-minor == '13' && inputs.os == 'macos'
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Report Python 3.13 test failure
+        if: inputs.python-minor == '13' && failure() && !cancelled()
+        shell: bash
+        env:
+          MATRIX_OS: ${{ inputs.os }}
+          PYTHON_MINOR: ${{ inputs.python-minor }}
+        run: |
+          echo "::error title=Python 3.${PYTHON_MINOR} test failed on ${MATRIX_OS}::Required test job failed on ${MATRIX_OS}-latest (${RUNNER_OS}/${RUNNER_ARCH}) with Python 3.${PYTHON_MINOR}. Other configurations will continue; inspect this job's failed step for the cause."
+          {
+            echo "### Required test job failed"
+            echo ""
+            echo "- **OS target:** ${MATRIX_OS}-latest"
+            echo "- **Python target:** 3.${PYTHON_MINOR}"
+            echo "- **Runner:** ${RUNNER_OS} / ${RUNNER_ARCH}"
+            echo ""
+            echo "Other configurations will continue. Inspect **${MATRIX_OS} + py3.${PYTHON_MINOR} / Tests** in the [job logs](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}) for the failed step."
+          } >> "$GITHUB_STEP_SUMMARY"
