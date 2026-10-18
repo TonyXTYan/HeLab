@@ -10,11 +10,14 @@ import uuid
 from typing import Any
 
 import pytest
+from pytestqt.qtbot import QtBot
 
 from helab import io_helper
 from helab.utils import cache_paths, data_roots
 from helab.utils.cache_paths import Mount
 from helab.utils.cache_store import CacheStore, DatasetRecord
+from helab.utils.folder_cache import FolderCache
+from helab.utils.io_service import IORequest, IOService
 
 pytestmark = pytest.mark.no_auto_data_root
 
@@ -609,3 +612,38 @@ def test_unrooted_subtree_save_skips_row(unrooted: tuple[Path, dict[str, Any]]) 
     io_helper.save_subtrees(cache, [{"path": str(folder), "status": "something"}], events.append)
     assert events[-1] == {"kind": "subtree_saved", "paths": [], "skipped": [str(folder)]}
     assert_no_cached_rows(cache)
+
+
+def test_verification_is_asked_once_per_mount_table_and_waits_behind_other_background_work(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_dispatch", lambda: None)
+    cache = FolderCache(service)
+    monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: options(tmp_path))
+    listing = IORequest("tab", 0, str(tmp_path), "list", {}, 60.0)
+
+    def seen(*mounts: list[str]) -> None:
+        service.resultReady.emit(listing, {"kind": "mounts_seen", "mounts": list(mounts)})
+        qtbot.waitUntil(lambda: not cache._deliveries)
+
+    def queued(operation: str) -> list[IORequest]:
+        return [request for request in service.pending if request.operation == operation]
+
+    try:
+        seen(["/", "disk1"])
+        volumes = queued("volumes_verify")
+        assert len(volumes) == 1 and len(queued("roots_verify")) == 1
+        service.resultReady.emit(volumes[0], {"kind": "done"})
+        service.pending.remove(volumes[0])
+        seen(["/", "disk1"])  # Listed again while the roots check waits: nothing new to verify.
+        assert not queued("volumes_verify") and len(queued("roots_verify")) == 1
+        seen(["/", "disk1"], ["/Volumes/USB", "disk2"])  # A disk appeared: its volume ID is checked.
+        assert len(queued("volumes_verify")) == 1 and len(queued("roots_verify")) == 1
+        # Maintenance nothing waits for goes after background work queued later.
+        assert service.submit("tab", 0, str(tmp_path), "details")
+        background = [request.operation for request in service.pending if request.operation != "volumes_verify"]
+        assert background == ["details", "roots_verify"]
+    finally:
+        service.shutdown()

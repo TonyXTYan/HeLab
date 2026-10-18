@@ -98,6 +98,8 @@ class IOService(QObject):
     # Held while cached data doesn't match several folders (``mismatch_hold``): loads and scans.
     # Browsing, cached reads, cache writes and icons go on.
     MISMATCH_HELD = ("load", "details", "scan")
+    # Maintenance nothing waits for: other background work queued later still goes first.
+    LAST = ("roots_verify",)
     LABELS = {"load": "Load data", "cached": "Read cached data", "list": "Browse folder", "details": "Folder details",
               "scan": "Check folder status", "resolve": "Browse folder", "invalidate": "Clear data cache",
               "scan_history": "Save scan history", "icons": "Folder icons",
@@ -159,9 +161,12 @@ class IOService(QObject):
         request = IORequest(owner, generation, path, operation, payload or {},
                             self.NO_PROGRESS_TIMEOUT if timeout is None else timeout,
                             priority=priority or operation == "load")
-        # Navigation and loads precede bulk scans, with FIFO within each group.
+        # Navigation and loads precede bulk scans, which precede maintenance; FIFO within each group.
         if request.priority:
             index = next((i for i, r in enumerate(self.pending) if not r.priority), len(self.pending))
+            self.pending.insert(index, request)
+        elif operation not in self.LAST:
+            index = next((i for i, r in enumerate(self.pending) if r.operation in self.LAST), len(self.pending))
             self.pending.insert(index, request)
         else:
             self.pending.append(request)

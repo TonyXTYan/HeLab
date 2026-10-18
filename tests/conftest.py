@@ -4,6 +4,7 @@ import tempfile
 import json
 import uuid
 from pathlib import Path
+from typing import Iterator
 
 # Run Qt headless (offscreen) by default so tests don't pop up windows.
 # Set HELAB_SHOW_GUI=1 to force a real, visible display (e.g. when a test
@@ -47,12 +48,14 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.fixture(autouse=True)
 def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                        request: pytest.FixtureRequest) -> None:
+                        request: pytest.FixtureRequest) -> Iterator[None]:
     """Give existing cache tests a marker and stable fake volume ID in test dirs.
 
     Individual root tests opt out and construct their own marker state. The
     wrapper seeds each test store through its roots table before the production
-    helper resolver opens it; no production fallback is introduced.
+    helper resolver opens it; no production fallback is introduced. The worker's
+    shared store forgets the test's roots afterwards, so a later test's
+    ``roots_verify`` checks only its own.
     """
     from helab import io_helper
     from helab.utils import cache_paths, data_roots
@@ -62,6 +65,7 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(io_helper, "_volume_id_cache", {})
     # (On Windows, HELAB_TEST_LOCAL_MOUNT above stands in for the drive list.)
     if request.node.get_closest_marker("no_auto_data_root"):
+        yield
         return
     identifiers: dict[str, str] = {}
 
@@ -77,6 +81,9 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                     "label": target.name, "created_at": "2026-10-18T00:00:00Z"}),
                         encoding="utf-8")
         return identifier
+
+    main_store = store_root(os.environ["HELAB_DIR_CACHES_OVERRIDE"])
+    seeded: set[str] = set()  # Root locations recorded in the shared store.
 
     def seed(store_dir: str, source: str) -> None:
         mounts = cache_paths.current_mounts()
@@ -99,6 +106,8 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
         with CacheStore(store_dir, root_mode=True) as store:
             if store.read_only:
                 return
+            if store_dir == main_store:
+                seeded.add(location)
             if store.root_at(location) is None:
                 store.record_root(location, identifier,
                                   "smb" if location.startswith("smb://") else "vol",
@@ -106,7 +115,6 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
             for volume_mount, volume_id in volumes.volumes:
                 store.record_volume(volume_mount.path, volume_mount.source, volume_id)
 
-    main_store = store_root(os.environ["HELAB_DIR_CACHES_OVERRIDE"])
     ensure_marker(str(tmp_path))
     seed(main_store, str(tmp_path))
     original = io_helper._cache_store
@@ -120,6 +128,18 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                         verified_volumes=verified_volumes)
 
     monkeypatch.setattr(io_helper, "_cache_store", open_seeded)
+    yield
+    if not seeded:
+        return
+    monkeypatch.undo()  # Tests that forbid I/O patch it out; this cleanup reads the store.
+    from helab.utils.cache_store import StoreError
+    try:
+        with CacheStore(main_store, root_mode=True) as store:
+            for location, _, _ in store.root_locations():
+                if any(location == root or location.startswith(root + "/") for root in seeded):
+                    store.forget_root(location)
+    except (StoreError, OSError):
+        pass  # (A test that left the store unusable; the next one's roots are its own anyway.)
 
 
 @pytest.fixture(autouse=True)

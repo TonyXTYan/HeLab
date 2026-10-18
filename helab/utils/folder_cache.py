@@ -273,6 +273,9 @@ class FolderCache(QObject):
         self._verified_volumes: tuple[tuple[str, str], ...] = ()
         self._roots_mounts: tuple[tuple[str, str], ...] | None = None
         self._mounts_observed: tuple[tuple[str, str], ...] | None = None
+        # The mounts listings had reported when verification was last asked for: listed again
+        # while it waits, the same mounts don't ask again.
+        self._verify_asked: tuple[tuple[str, str], ...] | None = None
         # cache_admin jobs by owner: their action.
         self._admin: dict[str, str] = {}
         # When cache_admin jobs and history writes started: removals since then void their results.
@@ -1311,6 +1314,7 @@ class FolderCache(QObject):
         options = store_options()
         if not options or self.service.closed:
             return
+        self._verify_asked = self._mounts_observed
         if not self._volume_verify_owner:
             owner = uuid4().hex
             if self.service.submit(owner, 0, options["directory"], "volumes_verify", {"cache": options}):
@@ -1662,7 +1666,7 @@ class FolderCache(QObject):
             # A mount gone since may come back as another disk: verified again first.
             self._verified_volumes = tuple(pair for pair in self._verified_volumes
                                            if pair in self._mounts_observed)
-            if self._mounts_observed != self._roots_mounts:
+            if self._mounts_observed not in (self._roots_mounts, self._verify_asked):
                 self._verify_roots()
             return
         if producer.owner == self._volume_verify_owner:
@@ -1671,6 +1675,7 @@ class FolderCache(QObject):
                 self.volumesVerified.emit()
             elif event["kind"] in ("error", "cancelled"):
                 logging.warning("Volume verification: %s", event.get("message", "Cancelled"))
+                self._verify_asked = None  # The next listing asks again.
             if event["kind"] in ("done", "error", "cancelled"):
                 self._volume_verify_owner = ""
             return
@@ -1684,6 +1689,7 @@ class FolderCache(QObject):
                 self.removed(event.get("paths"), event["kinds"])
             elif event["kind"] in ("error", "cancelled"):
                 logging.warning("Data-root verification: %s", event.get("message", "Cancelled"))
+                self._verify_asked = None
             if event["kind"] in ("done", "error", "cancelled"):
                 self._root_verify_owner = ""
                 if (event["kind"] == "done" and self._roots_mounts is not None
