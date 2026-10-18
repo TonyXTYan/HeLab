@@ -461,6 +461,17 @@ class CacheStore:
         with self.transaction():
             self._conn.execute("DELETE FROM roots WHERE location=?", (location,))
 
+    def forget_root_tree(self, locations: list[str], identifier: str) -> list[str]:
+        """Its marker was deleted: forget these locations of ``identifier`` and its locations below
+        them. Data rows stay with the UUID. Returns the locations forgotten."""
+        with self.transaction():
+            rows = [str(row[0]) for row in self._conn.execute(
+                "SELECT location FROM roots WHERE uuid=?", (identifier,))]
+            gone = [location for location in rows if any(
+                location == top or location.startswith(top.rstrip("/") + "/") for top in locations)]
+            self._conn.executemany("DELETE FROM roots WHERE location=?", [(location,) for location in gone])
+        return gone
+
     def confirm_root(self, location: str, identifier: str) -> bool:
         """The user said a pending location is the same folder as the root's others (D4)."""
         with self.transaction():

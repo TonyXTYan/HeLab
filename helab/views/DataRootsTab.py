@@ -1,18 +1,22 @@
 """Settings → Data roots: the .helab-root locations HeLab has seen on this computer.
 
 Like the Cache tab, it never opens the store: the list comes from a ``cache_admin inventory``
-helper job, and Forget location is a ``forget_root`` job (``FolderCache.cache_admin``).
+helper job, Forget location is a ``forget_root`` job (``FolderCache.cache_admin``), and Delete
+.helab-root… a foreground ``root_remove`` job. Show in Finder only launches the file manager.
 """
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from typing import Any, Callable
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QMessageBox, QPushButton, QTreeWidget,
-                             QTreeWidgetItem, QVBoxLayout, QWidget)
+from PyQt6.QtCore import QPoint, QProcess, Qt, QUrl
+from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabel, QMenu, QMessageBox,
+                             QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from helab.utils.folder_cache import FolderCache, marker_path, store_options
+from helab.utils.io_service import IORequest
 
 INTRO = ("Folders holding a .helab-root that HeLab has seen on this computer. Each one identifies its folder "
          "and subfolders in the disk cache, whichever drive or share reaches them. Folders without one use "
@@ -21,6 +25,34 @@ FORGET = "Forget location…"
 FORGET_TOOLTIP = ("Forget location (found again if its .helab-root is still there). Its cached data and the "
                   "file itself stay.")
 DECISIONS = {"confirmed": "In use", "pending": "Waiting: same folder or a copy?"}
+DELETE = "Delete .helab-root…"
+DELETE_TOOLTIP = "Delete this folder's .helab-root file: the folder and its subfolders use RAM only until one is placed again"
+NOT_MOUNTED_TOOLTIP = "Not mounted on this computer now"
+DELETE_TEXT = ("Deletes {marker}. This folder and its subfolders use RAM only on every computer until a "
+               ".helab-root is placed again. Their cached data stays on this computer under this root's ID; "
+               "a new marker gets a new ID and starts fresh. Other computers that use this drive lose their "
+               "disk cache for it too.")
+REFUSED_TEXT = ("HeLab can't delete {file} ({reason}). Delete it by hand ({show} finds it), then Refresh "
+                "this list.")
+
+
+def show_label() -> str:
+    return {"darwin": "Show in Finder", "win32": "Show in File Explorer"}.get(sys.platform, "Show in File Manager")
+
+
+def show_tooltip() -> str:
+    hidden = {"darwin": "press Cmd+Shift+. in Finder to see it",
+              "win32": "View › Show › Hidden items shows it"}.get(sys.platform, "show hidden files to see it")
+    return f"Shows the .helab-root file, which is hidden: {hidden}"
+
+
+def show_command(marker: str) -> tuple[str, list[str]] | None:
+    """The file manager revealing ``marker``; None to open its folder instead (Linux)."""
+    if sys.platform == "darwin":
+        return "open", ["-R", marker]
+    if sys.platform == "win32":
+        return "explorer", ["/select,", marker]
+    return None
 
 
 class DataRootsTab(QWidget):
@@ -34,7 +66,14 @@ class DataRootsTab(QWidget):
         self.message = ""
         self._inventory_owner = ""
         self._job = ""
+        self._remove_job = ""
+        self.owner = f"data-roots-{id(self)}"
         self.confirm: Callable[[str, str, str], bool] = self._confirm
+        # Replaceable in tests: launching the file manager (never waited for), and a message box.
+        self.launch: Callable[[str, list[str]], bool] = lambda program, arguments: QProcess.startDetached(
+            program, arguments)[0]
+        self.open_folder: Callable[[str], bool] = lambda folder: QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+        self.alert: Callable[[str], None] = self._alert
         layout = QVBoxLayout(self)
         layout.setSpacing(2)
         intro = QLabel(INTRO)
@@ -45,6 +84,8 @@ class DataRootsTab(QWidget):
         self.list.setRootIsDecorated(False)
         self.list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.list.itemSelectionChanged.connect(self._update)
+        self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._context_menu)
         layout.addWidget(self.list, 1)
         footer = QHBoxLayout()
         self.status_label = QLabel("Checking…")
@@ -56,10 +97,15 @@ class DataRootsTab(QWidget):
         self.forget_button.setToolTip(FORGET_TOOLTIP)
         self.forget_button.clicked.connect(self.forget_selected)
         footer.addWidget(self.forget_button)
+        self.delete_button = QPushButton(DELETE)
+        self.delete_button.setToolTip(DELETE_TOOLTIP)
+        self.delete_button.clicked.connect(self.delete_selected)
+        footer.addWidget(self.delete_button)
         layout.addLayout(footer)
         if cache is not None:
             cache.cacheAdminResult.connect(self._on_result)
             cache.cacheAdminDone.connect(self._on_done)
+            cache.resultReady.connect(self._on_remove)
         self._update()
         self.refresh()
 
@@ -67,12 +113,15 @@ class DataRootsTab(QWidget):
         if self.cache is not None:
             self.cache.cacheAdminResult.disconnect(self._on_result)
             self.cache.cacheAdminDone.disconnect(self._on_done)
+            self.cache.resultReady.disconnect(self._on_remove)
             self.cache = None
 
     def _confirm(self, title: str, text: str, verb: str) -> bool:
         box = QMessageBox(QMessageBox.Icon.Question, title, text, parent=self)
         accept = box.addButton(verb, QMessageBox.ButtonRole.AcceptRole)
-        box.addButton(QMessageBox.StandardButton.Cancel)
+        cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+        if cancel is not None:
+            box.setDefaultButton(cancel)  # Return never forgets or deletes.
         box.exec()
         return box.clickedButton() is accept
 
@@ -103,6 +152,86 @@ class DataRootsTab(QWidget):
             return
         self._job = self.cache.cache_admin("forget_root", location=row["location"])
         self.message = "" if self._job else "Disk cache queue full — try again"
+        self._update()
+
+    def _alert(self, text: str) -> None:
+        box = QMessageBox(QMessageBox.Icon.Warning, DELETE.removesuffix("…"), text, parent=self)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.open()
+
+    def _context_menu(self, position: QPoint) -> None:
+        item = self.list.itemAt(position)
+        if item is None:
+            return
+        self.list.setCurrentItem(item)
+        if (viewport := self.list.viewport()) is not None:
+            self.context_menu().exec(viewport.mapToGlobal(position))
+
+    def context_menu(self) -> QMenu:
+        """The selected row's menu: Show, Copy path, Forget location…, Delete .helab-root…."""
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        row = self.selected()
+        mounted = bool(row and row["path"])
+        show = menu.addAction(show_label(), self.show_selected)
+        copy = menu.addAction("Copy path", self.copy_selected)
+        menu.addSeparator()
+        forget = menu.addAction(FORGET, self.forget_selected)
+        delete = menu.addAction(DELETE, self.delete_selected)
+        for action, enabled, tooltip in (
+                (show, mounted, show_tooltip() if mounted else NOT_MOUNTED_TOOLTIP),
+                (copy, row is not None, "The .helab-root file's path" if mounted else "The location"),
+                (forget, self.forget_button.isEnabled(), FORGET_TOOLTIP),
+                (delete, self.delete_button.isEnabled(), DELETE_TOOLTIP if mounted else NOT_MOUNTED_TOOLTIP)):
+            if action is not None:
+                action.setEnabled(enabled)
+                action.setToolTip(tooltip)
+        return menu
+
+    def show_selected(self) -> bool:
+        """Reveal the row's marker in the file manager, without waiting or touching the folder."""
+        row = self.selected()
+        if row is None or not row["path"]:
+            return False
+        marker = marker_path(row["path"])
+        command = show_command(marker)
+        return self.launch(*command) if command is not None else self.open_folder(row["path"])
+
+    def copy_selected(self) -> None:
+        row = self.selected()
+        if row is not None and (clipboard := QApplication.clipboard()) is not None:
+            clipboard.setText(marker_path(row["path"]) if row["path"] else row["location"])
+
+    def delete_selected(self) -> None:
+        row = self.selected()
+        if row is None or not row["path"] or self.cache is None or self._job:
+            return
+        if not self.confirm("Delete this .helab-root?", DELETE_TEXT.format(marker=marker_path(row["path"])),
+                            "Delete"):
+            return
+        if self.cache.remove_root(self.owner, row["path"], row["uuid"], row["location"]):
+            self._job = self._remove_job = row["path"]
+            self.message = ""
+        else:
+            self.message = "The I/O queue is full — try again"
+        self._update()
+
+    def _on_remove(self, request: IORequest, event: dict[str, Any]) -> None:
+        if request.owner != self.owner or request.operation != "root_remove":
+            return
+        kind = event["kind"]
+        if kind == "root_removed":
+            self.message = f"Deleted {marker_path(str(event['path']))}"
+        elif kind == "root_remove_refused":
+            text = REFUSED_TEXT.format(file=event["file"], reason=event["reason"], show=show_label())
+            self.message = f"Could not delete {event['file']}"
+            self.alert(text)
+        elif kind == "error":
+            self.message = f"Delete .helab-root failed: {event.get('message', '')}"
+            self.alert(str(event.get("message", "")))
+        if kind in ("done", "error", "cancelled") and self._job == self._remove_job:
+            self._job = self._remove_job = ""
+            self.refresh()
         self._update()
 
     def _on_result(self, action: str, event: dict[str, Any]) -> None:
@@ -160,4 +289,7 @@ class DataRootsTab(QWidget):
         self.status_label.setText(text)
         idle = self.enabled and not self._job and not self._inventory_owner
         self.refresh_button.setEnabled(self.enabled and not self._inventory_owner)
-        self.forget_button.setEnabled(idle and self.selected() is not None)
+        row = self.selected()
+        self.forget_button.setEnabled(idle and row is not None)
+        self.delete_button.setEnabled(idle and row is not None and bool(row["path"]))
+        self.delete_button.setToolTip(DELETE_TOOLTIP if row is None or row["path"] else NOT_MOUNTED_TOOLTIP)

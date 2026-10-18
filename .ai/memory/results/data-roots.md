@@ -52,8 +52,20 @@ Decided with Tony in Maestri chat (2026-10-16 and 2026-10-18). Code:
 - No write permission: a dialog with the file name, folder and exact JSON,
   Copy and Save as… (saved as `helab-root.txt`, then renamed by the user).
 - A separate **Settings → Data roots** page lists the known locations;
-  "Forget location (found again if its .helab-root is still there)". No
-  delete-marker action.
+  "Forget location (found again if its .helab-root is still there)".
+- Row menu (Tony, 2026-10-18): **Show in Finder** / Show in File Explorer /
+  Show in File Manager (tooltip: the file is hidden; Cmd+Shift+. in Finder,
+  View › Show › Hidden items in Explorer), **Copy path**, Forget location…,
+  **Delete .helab-root…** (also a footer button). Show and Delete are greyed
+  for Not mounted rows ("Not mounted on this computer now").
+- Delete confirmation, Cancel default: "Deletes <marker>. This folder and its
+  subfolders use RAM only on every computer until a .helab-root is placed
+  again. Their cached data stays on this computer under this root's ID; a new
+  marker gets a new ID and starts fresh. Other computers that use this drive
+  lose their disk cache for it too." Only the marker still holding the row's
+  UUID is deleted (never an invalid or replaced one: "changed since… Refresh
+  the list"); without permission: "HeLab can't delete <file> (<reason>).
+  Delete it by hand (Show in Finder finds it), then Refresh this list."
 
 ## Same folder or a copy? (D4, Tony, 2026-10-18)
 

@@ -106,14 +106,14 @@ class IOService(QObject):
               "subtree_save": "Save subfolder status", "cache_admin": "Clean up disk cache",
               "cache_move": "Move disk cache", "roots_verify": "Verify data roots",
               "volumes_verify": "Verify volumes", "root_create": "Enable disk cache",
-              "root_reassign": "Make a copy's data root"}
+              "root_reassign": "Make a copy's data root", "root_remove": "Remove .helab-root"}
     NOUNS = {"load": "load", "cached": "cached data read", "list": "folder listing", "details": "folder details scan",
              "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup",
              "subtree_save": "subfolder-status save", "cache_admin": "disk cache cleanup",
              "cache_move": "disk cache move", "roots_verify": "data-root verification",
              "volumes_verify": "volume verification", "root_create": "disk cache enabling",
-             "root_reassign": "data-root reassignment"}
+             "root_reassign": "data-root reassignment", "root_remove": ".helab-root removal"}
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -491,7 +491,7 @@ class IOService(QObject):
                   "subtree_save": "Saving subfolder status", "cache_admin": "Cleaning up disk cache",
                   "drives": "Listing drives", "roots_verify": "Verifying data roots",
                   "volumes_verify": "Verifying volumes", "root_create": "Enabling disk cache",
-                  "root_reassign": "Giving a copy its own data root"}
+                  "root_reassign": "Giving a copy its own data root", "root_remove": "Removing .helab-root"}
 
     def activity_summary(self) -> str:
         """App-wide status-bar phrase from memory; zero counts are left out."""

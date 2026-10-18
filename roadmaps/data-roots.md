@@ -169,7 +169,10 @@ Answers are remembered per PC, so a confirmed location doesn't ask again:
   the top of its drive or share, inside another root, a home folder or the
   startup disk's top). The **ANCHOR** badge marks root folders beside their status icon.
 - RAM only and the .helab-root in use are shown in the Folder details panel
-  and the row tooltip; Settings → Data roots lists the known locations.
+  and the row tooltip; Settings → Data roots lists the known locations, and
+  each row's menu has Show in Finder / File Explorer, Copy path, Forget
+  location… and **Delete .helab-root…** (the marker only while it still holds
+  that row's UUID; its cached data stays under the UUID).
 - "Same folder or a copy?" opens once per location per session; Later asks
   again at the next sighting, Remind me next session not until then.
 - Details and the reasons: `.ai/memory/results/data-roots.md`.
@@ -177,4 +180,6 @@ Answers are remembered per PC, so a confirmed location doesn't ask again:
 ## Status
 
 Stages D1–D4 implemented on `dev/data-roots` (2026-10-18), each reviewed;
-native checks are in `.ai/MANUAL_TODO.md` (Data roots).
+native checks are in `.ai/MANUAL_TODO.md` (Data roots). Later on
+`dev/root-placement`: the placement rule (C:\ allowed), and Settings → Data
+roots' Show, Copy path and Delete .helab-root….

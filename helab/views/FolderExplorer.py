@@ -1971,12 +1971,16 @@ class FolderExplorer(QWidget):
                                        {"cache": store_options(), "clicked": path}, priority=True)
 
     def _root_decided(self, paths: list[str]) -> None:
-        """Same folder or Copy took effect: list those folders again where this tab shows them."""
+        """Same folder, Copy or Delete .helab-root took effect: list those folders again where this
+        tab shows them, and its top and selected folders inside them, so ⚓ and RAM only update."""
         if self.closed:
             return
-        for path in paths:
-            if path in self.model.nodes:
-                self.refresh_folder(path)
+        shown = (self.model.rootPath(), self.selected_path_globally)
+        again = [path for path in paths if path in self.model.nodes]
+        again += [folder for folder in shown if folder in self.model.nodes and any(
+            folder.startswith(path.rstrip("/\\") + os.sep) for path in paths)]
+        for path in dict.fromkeys(again):
+            self.refresh_folder(path)
         self._update_activity()
 
     def _root_create_event(self, request: IORequest, event: dict[str, Any]) -> None:

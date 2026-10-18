@@ -350,3 +350,27 @@ def test_placing_at_the_top_lists_the_clicked_folder_again_too(
                                              "label": "top"})
     qtbot.waitUntil(lambda: ("list", clicked) in cache.jobs)
     assert ("list", top) not in cache.jobs
+
+
+def test_deleting_a_root_lists_the_tabs_folders_inside_it_again(
+    qtbot: QtBot, tab: FolderExplorer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tab.model.cache
+    replay(qtbot, cache, str(tmp_path), "list", lambda send: list_folder(str(tmp_path), send,
+                                                                        tab.model._cache_options))
+    run = str(tmp_path / "run")
+    tab.selected_path_globally = run
+    refreshed: list[str] = []
+    monkeypatch.setattr(tab, "refresh_folder", refreshed.append)
+    request = IORequest("settings", 0, str(tmp_path), "root_remove", {}, 60.0)
+    cache.service.resultReady.emit(request, {"kind": "root_changed", "path": str(tmp_path),
+                                             "location": "vol://test/x", "reason": "removed"})
+    cache.service.resultReady.emit(request, {"kind": "root_removed", "path": str(tmp_path),
+                                             "uuid": str(uuid.uuid4()), "forgotten": ["vol://test/x"]})
+    assert refreshed == [str(tmp_path), run]  # The tab's top folder, and its selection inside the root.
+    assert cache.root_of(run) is None
+    refreshed.clear()
+    # A root above the tab's top folder (which is no row of its own here): its top and selection.
+    cache.service.resultReady.emit(request, {"kind": "root_removed", "path": str(tmp_path.parent),
+                                             "uuid": str(uuid.uuid4()), "forgotten": []})
+    assert refreshed == ([str(tmp_path), run] if str(tmp_path) in tab.model.nodes else [run])

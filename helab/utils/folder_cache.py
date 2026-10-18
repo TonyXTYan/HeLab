@@ -36,7 +36,9 @@ ENTRY_KEYS = {"datasets": ("disk_cached", "cache_info"), "summaries": ("scan_sta
               "histories": ("scan_history",), "subtrees": ("subtree",)}
 # The current tab's work that runs in the foreground I/O lane.
 # (``root_create``: the user's Enable disk cache here…, one small write, runs like a listing.)
-FOREGROUND_OPERATIONS = ("list", "resolve", "load", "root_create", "root_reassign")
+FOREGROUND_OPERATIONS = ("list", "resolve", "load", "root_create", "root_reassign", "root_remove")
+# The user's marker writes: in the foreground whoever asked (a tab, Settings or a window).
+MARKER_OPERATIONS = ("root_create", "root_reassign", "root_remove")
 
 
 @dataclass
@@ -321,7 +323,8 @@ class FolderCache(QObject):
     def _is_foreground(self, request: IORequest) -> bool:
         job = self._producers.get(request.owner)
         return (job is not None and job.operation in FOREGROUND_OPERATIONS
-                and any(r.owner in self.foreground_owners for r in job.subscribers.values()))
+                and (job.operation in MARKER_OPERATIONS
+                     or any(r.owner in self.foreground_owners for r in job.subscribers.values())))
 
     def set_foreground(self, owners: set[str]) -> None:
         """Make these subscribers' work the foreground; the previous tab's becomes background."""
@@ -439,6 +442,14 @@ class FolderCache(QObject):
         """Same folder: the pending location uses its root's cached data (a local-lane job's owner)."""
         entry = self.root_duplicates.get(location)
         return self.cache_admin("root_same", location=location, uuid=entry["uuid"]) if entry else ""
+
+    def remove_root(self, owner: str, path: str, identifier: str, location: str) -> bool:
+        """Delete .helab-root…: the marker in ``path`` goes if it still holds ``identifier``, and its
+        location is forgotten; open tabs list the folder again (``rootDecided``)."""
+        options = store_options()
+        return bool(options) and self.submit(owner, 0, path, "root_remove",
+                                             {"cache": options, "uuid": identifier, "location": location},
+                                             priority=True)
 
     def reassign_root(self, owner: str, generation: int, location: str, keep: str) -> bool:
         """It's a copy…: the location not kept gets a new .helab-root. ``keep`` is the location
@@ -1647,6 +1658,8 @@ class FolderCache(QObject):
             self._duplicate_settled(duplicate, *event.get("moved", []))
             self.rootDecided.emit([str(path) for path in dict.fromkeys((producer.path, event.get("kept") or ""))
                                    if path])
+        elif event["kind"] == "root_removed":
+            self.rootDecided.emit([str(event["path"])])
         elif event["kind"] in ("root_found", "root_created", "root_adopted") and event.get("location"):
             self._duplicate_settled(str(event["location"]))
         if event["kind"] in ("root_found", "root_created", "root_adopted"):

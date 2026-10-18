@@ -1704,6 +1704,43 @@ def create_root(path: str, cache_options: dict[str, Any] | None, send: Emit = em
           "path": path, "uuid": found.uuid, "label": found.label})
 
 
+def remove_root(path: str, cache_options: dict[str, Any], expected: str, location: str = "",
+                send: Emit = emit) -> None:
+    """Settings › Data roots › Delete .helab-root…: delete the folder's marker, only when it is still
+    the regular file holding ``expected`` (never an invalid or replaced one), then forget its
+    location, and those below it with the same UUID, in the roots table. Cached data stays, keyed
+    by the UUID. Without permission the file stays and ``root_remove_refused`` names it."""
+    import stat
+    from helab.utils.data_roots import MARKER_NAME, read_marker
+    file = os.path.join(path, MARKER_NAME)
+    try:
+        found = os.lstat(file)
+    except FileNotFoundError:
+        raise ValueError(f"There is no {MARKER_NAME} in {path} now. Refresh the list.") from None
+    if not stat.S_ISREG(found.st_mode):
+        raise ValueError(f"{file} isn't a file: HeLab leaves it alone.")
+    try:
+        marker = read_marker(path)
+    except ValueError as exc:
+        raise ValueError(f"{file} can't be read as a .helab-root ({exc}): HeLab never deletes it.") from None
+    if marker.uuid != expected:
+        raise ValueError(f"The {MARKER_NAME} in {path} changed since HeLab found it. Refresh the list.")
+    try:
+        if sys.platform == "win32" and not found.st_mode & stat.S_IWRITE:
+            os.chmod(file, stat.S_IWRITE)  # Read-only blocks deleting on Windows (hidden doesn't).
+        os.remove(file)
+    except OSError as exc:
+        send({"kind": "root_remove_refused", "path": path, "file": file, "reason": exc.strerror or str(exc)})
+        return
+    with _cache_store(cache_options["directory"], [path], allow_unrooted=True) as store:
+        here = store._location_key(path)
+        forgotten = store.forget_root_tree([top for top in (location, here) if top], expected)
+        for gone in forgotten:
+            if gone_path := _location_path(store, gone):
+                send({"kind": "root_changed", "path": gone_path, "location": gone, "reason": "removed"})
+    send({"kind": "root_removed", "path": path, "uuid": expected, "forgotten": forgotten})
+
+
 def _hide(file: str) -> None:
     """Hidden: the dot prefix, plus the Windows hidden attribute. From macOS, UF_HIDDEN, which
     smbfs maps to that attribute on a share (best effort: lab PCs browse those shares)."""
@@ -1928,7 +1965,7 @@ def _cache_move_step(mover: Any, action: str, app_dir: str, move: dict[str, Any]
 
 # Operations that need the disk cache on.
 CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "volumes_verify",
-              "root_reassign")
+              "root_reassign", "root_remove")
 
 
 def main() -> None:
@@ -1996,6 +2033,8 @@ def main() -> None:
             create_root(request["path"], request.get("cache"))
         elif operation == "root_reassign":
             reassign_root(request["path"], request["cache"], request["old_uuid"], request["keep"])
+        elif operation == "root_remove":
+            remove_root(request["path"], request["cache"], request["uuid"], request.get("location", ""))
         else:
             raise ValueError(f"Unknown operation: {operation}")
         emit({"kind": "done"})

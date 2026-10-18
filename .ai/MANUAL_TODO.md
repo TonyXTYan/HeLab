@@ -42,6 +42,12 @@ real experiment data without deciding where its top should be.
 - [ ] Folder details shows ⚓ with the marker in use, or RAM only; the tree's ANCHOR
   badge; greyed disk-cache menu items on RAM-only folders; Settings → Data roots
   lists and forgets locations.
+- [ ] Settings → Data roots, a mounted row: Show in Finder (macOS) and Show in
+  File Explorer (Windows) open the folder with the hidden `.helab-root`
+  selected (visible after Cmd+Shift+. / View › Show › Hidden items); Copy path
+  gives the file's path. Delete .helab-root… removes it (on Windows too, with
+  its hidden attribute), and the folder turns RAM only in Folder details; on a
+  read-only share it names the file instead.
 - [ ] The TDC converter and the lab MATLAB scripts ignore `.helab-root`.
 - [ ] Before using this build: `store-v3` starts empty; move the old `store-v2`
   folder to the Trash by hand once you no longer need it.
