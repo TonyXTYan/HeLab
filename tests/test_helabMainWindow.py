@@ -309,3 +309,43 @@ def test_review_root_opens_the_duplicates_window_at_that_location(
         for location in locations:
             cache.root_duplicates.pop(location, None)
         main_window.root_duplicates.hide()
+
+
+def test_review_from_settings_is_modal_only_while_settings_is_open(
+    main_window: HelabMainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PyQt6.QtWidgets import QDialog
+    from helab.utils.folder_cache import get_folder_cache
+    from helab.utils.io_service import IORequest, get_io_service
+    from helab.views.SettingsDialog import SettingsDialog
+    cache = get_folder_cache(get_io_service())
+    window = main_window.root_duplicates
+    location = "smb://server/review"
+    modality: list[Qt.WindowModality] = []
+
+    def settings_open(dialog: SettingsDialog) -> int:
+        # Review… in Settings › Data roots while the (modal) dialog is open.
+        monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: dialog))
+        main_window.review_root(location)
+        modality.append(window.windowModality())
+        monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: None))
+        return int(QDialog.DialogCode.Rejected)
+    monkeypatch.setattr(SettingsDialog, "exec", settings_open)
+    try:
+        cache.root_duplicates[location] = {"path": "/Volumes/review", "location": location, "uuid": "u",
+                                           "label": "review", "answer": "later", "found_at": 0.0, "others": []}
+        main_window.show_settings_dialog()
+        assert modality == [Qt.WindowModality.ApplicationModal]
+        # Settings closed: the window stays open, no longer modal.
+        assert window.isVisible() and window.windowModality() == Qt.WindowModality.NonModal
+        window.hide()
+        # An automatic sighting (not through review_root) opens it without blocking the main window.
+        cache.service.resultReady.emit(IORequest("helper", 0, "/Volumes/other", "list", {}, 60.0), {
+            "kind": "root_duplicate", "path": "/Volumes/other", "location": "smb://server/other", "uuid": "v",
+            "label": "other", "other_locations": [], "marker": None, "others": []})
+        qtbot.waitUntil(window.isVisible)
+        assert window.windowModality() == Qt.WindowModality.NonModal
+    finally:
+        for key in (location, "smb://server/other"):
+            cache.root_duplicates.pop(key, None)
+        window.hide()

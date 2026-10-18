@@ -197,12 +197,21 @@ class HelabMainWindow(QMainWindow):
         modal too, else it couldn't take input until Settings closed."""
         window = self.root_duplicates
         modal = QApplication.activeModalWidget()
-        wanted = (Qt.WindowModality.ApplicationModal if modal is not None and modal is not window
-                  else Qt.WindowModality.NonModal)
-        if window.windowModality() != wanted:
-            window.hide()  # Modality changes only while hidden.
-            window.setWindowModality(wanted)
+        self._set_root_window_modality(Qt.WindowModality.ApplicationModal if modal is not None and modal is not window
+                                       else Qt.WindowModality.NonModal)
         window.show_list(activate=True, select=location)
+
+    def _set_root_window_modality(self, wanted: Qt.WindowModality) -> None:
+        """Modality changes only while hidden; a window open stays open. NonModal again once
+        Settings closes, so a later automatic sighting never blocks the main window."""
+        window: RootDuplicatesWindow | None = getattr(self, "root_duplicates", None)
+        if window is None or window.windowModality() == wanted:
+            return
+        shown = window.isVisible()
+        window.hide()
+        window.setWindowModality(wanted)
+        if shown:
+            window.show()
 
     def _place_root_target(self) -> tuple[FolderExplorer, str] | None:
         """The current tab and its selected folder (at first the tab's top folder)."""
@@ -533,6 +542,7 @@ class HelabMainWindow(QMainWindow):
         if purge:
             self.settings_dialog.show_purge()
         self.settings_dialog.exec()
+        self._set_root_window_modality(Qt.WindowModality.NonModal)  # Review… from Settings made it modal.
         settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
         self.apply_load_mode(read_load_mode(settings))
         get_io_service().configure_concurrency(
