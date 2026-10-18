@@ -88,9 +88,11 @@ class IOService(QObject):
     RESUME_DELAY = 0.5
     LISTINGS = ("list", "resolve")
     # Operations in the local lane: they never wait for or pause with source-folder I/O.
-    LOCAL_OPERATIONS = ("cached", "subtree_save", "cache_admin", "cache_move")
+    # (``volumes_verify`` reads mounted volumes' IDs, never source folders.)
+    LOCAL_OPERATIONS = ("cached", "subtree_save", "cache_admin", "cache_move", "volumes_verify")
     # Operations that open the disk cache whatever their payload says.
-    CACHE_OPERATIONS = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify")
+    CACHE_OPERATIONS = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify",
+                        "volumes_verify")
     LOCAL_CAP = 2
     PAUSABLE = ("load", "list", "details", "scan", "icons", "roots_verify")
     # Held while cached data doesn't match several folders (``mismatch_hold``): loads and scans.
@@ -100,12 +102,14 @@ class IOService(QObject):
               "scan": "Check folder status", "resolve": "Browse folder", "invalidate": "Clear data cache",
               "scan_history": "Save scan history", "icons": "Folder icons",
               "subtree_save": "Save subfolder status", "cache_admin": "Clean up disk cache",
-              "cache_move": "Move disk cache", "roots_verify": "Verify data roots"}
+              "cache_move": "Move disk cache", "roots_verify": "Verify data roots",
+              "volumes_verify": "Verify volumes"}
     NOUNS = {"load": "load", "cached": "cached data read", "list": "folder listing", "details": "folder details scan",
              "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup",
              "subtree_save": "subfolder-status save", "cache_admin": "disk cache cleanup",
-             "cache_move": "disk cache move", "roots_verify": "data-root verification"}
+             "cache_move": "disk cache move", "roots_verify": "data-root verification",
+             "volumes_verify": "volume verification"}
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -478,7 +482,8 @@ class IOService(QObject):
     ACTIVITIES = {"resolve": "Finding default folder", "cached": "Reading cached data", "invalidate": "Clearing data cache",
                   "scan_history": "Saving scan history", "icons": "Fetching folder icons",
                   "subtree_save": "Saving subfolder status", "cache_admin": "Cleaning up disk cache",
-                  "drives": "Listing drives", "roots_verify": "Verifying data roots"}
+                  "drives": "Listing drives", "roots_verify": "Verifying data roots",
+                  "volumes_verify": "Verifying volumes"}
 
     def activity_summary(self) -> str:
         """App-wide status-bar phrase from memory; zero counts are left out."""

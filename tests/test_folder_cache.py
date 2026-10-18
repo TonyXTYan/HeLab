@@ -891,7 +891,7 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
     def record(owner: str, generation: int, path: str, operation: str,
                payload: dict[str, Any] | None = None, *, priority: bool = False,
                timeout: float = 15.0) -> bool:
-        if operation != "roots_verify":
+        if operation not in ("roots_verify", "volumes_verify"):
             operations.append(operation)
         return original(owner, generation, path, operation, payload, priority=priority, timeout=timeout)
 

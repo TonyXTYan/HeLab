@@ -19,7 +19,9 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 from helab.utils import file_kinds, large_folder
 
 if TYPE_CHECKING:
+    from helab.utils.cache_paths import Mount
     from helab.utils.cache_store import CacheStore, SaveGuard
+    from helab.utils.data_roots import LocalVolumes
 
 Emit = Callable[[dict[str, Any]], None]
 # Another computer may still be writing a file modified this recently; it is
@@ -190,10 +192,14 @@ def _cache_store(root: str, source_paths: list[str] | None = None,
 
 
 def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | None,
-                   send: Emit) -> None:
-    """Reconcile the marker found by a source listing with the local roots table."""
+                   send: Emit) -> bool:
+    """Reconcile the marker found by a source listing with the local roots table.
+
+    Returns whether this location's root changed (found, replaced, removed or now pending),
+    so the folder's records may have another key.
+    """
     if not cache_options:
-        return
+        return False
     from helab.utils.cache_paths import UnresolvedRemotePath
     from helab.utils.cache_store import KINDS, StoreError
     from helab.utils.data_roots import NoDataRoot, read_marker
@@ -206,17 +212,17 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                     store.forget_root(location)
                     send({"kind": "root_changed", "path": path, "location": location,
                           "reason": "marker removed"})
-                return
+                return old is not None
             try:
                 marker = read_marker(path)
             except OSError as exc:
                 send({"kind": "cache_warning", "message": f"Cannot read {path}/.helab-root: {exc}"})
-                return
+                return False
             except ValueError as exc:
                 if old is not None:
                     store.forget_root(location)
                 send({"kind": "cache_warning", "message": f"Invalid {path}/.helab-root: {exc}"})
-                return
+                return old is not None
             duplicates = store.other_root_locations(marker.uuid, location)
             decision: Literal["confirmed", "pending"] = (
                 "pending" if old is not None and old[0] == marker.uuid and old[2] == "pending"
@@ -231,10 +237,11 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
             store.record_root(location, marker.uuid,
                               "smb" if location.startswith("smb://") else "vol",
                               marker.label, decision=decision)
+            changed = old is None or old[0] != marker.uuid or old[2] != decision
             if decision == "pending":
                 send({"kind": "root_duplicate", "path": path, "location": location,
                       "uuid": marker.uuid, "other_locations": duplicates})
-                return
+                return changed
             if old_key and old_key != f"root://{marker.uuid}":
                 moved = store.rekey_subtree(old_key, f"root://{marker.uuid}")
                 if moved:
@@ -243,11 +250,13 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                     send({"kind": "root_rekeyed", "path": path, "count": len(moved)})
             send({"kind": "root_changed" if old and old[0] != marker.uuid else "root_found",
                   "path": path, "location": location, "uuid": marker.uuid, "label": marker.label})
+            return changed
     except UnresolvedRemotePath:
         # The subsequent optional-cache open reports the typed skip once.
-        return
+        return False
     except StoreError as exc:
         send({"kind": "cache_warning", "message": f"Data root could not be recorded: {exc}"})
+        return False
 
 
 def _mount_fingerprint() -> list[list[str]] | None:
@@ -258,18 +267,19 @@ def _mount_fingerprint() -> list[list[str]] | None:
         return None
 
 
-def verify_known_roots(cache_options: dict[str, Any], send: Emit = emit) -> None:
-    """Check remembered marker locations in a background source helper.
+def verify_volumes(cache_options: dict[str, Any], send: Emit = emit,
+                   mounts: list[Mount] | None = None) -> LocalVolumes:
+    """Refresh the saved volume IDs of mounts that have them, and send ``volumes_verified``:
+    the mounts whose hints the local lane may trust now.
 
-    Only the recorded marker folders are visited. Missing mounts are left alone;
-    a mounted folder whose marker changed is reconciled like a listing.
+    Reads only mounted volumes' IDs (diskutil, GetVolumeInformationW), never source folders,
+    so it runs on the local lane at startup and after a mount change (``volumes_verify``).
     """
-    from helab.utils.cache_paths import CachePaths, current_mounts
+    from helab.utils.cache_paths import current_mounts
     from helab.utils.cache_store import CacheStore
-    from helab.utils.data_roots import MARKER_NAME, current_local_volumes
-    mounts = current_mounts()
+    from helab.utils.data_roots import current_local_volumes
+    mounts = current_mounts() if mounts is None else mounts
     with CacheStore(cache_options["directory"], root_mode=True) as store:
-        roots = store.root_locations()
         known_mounts = {(path, source) for path, source, _ in store.volume_locations()}
     local = current_local_volumes(mounts, paths=[mount.path for mount in mounts
                                                  if (mount.path, mount.source) in known_mounts],
@@ -284,8 +294,23 @@ def verify_known_roots(cache_options: dict[str, Any], send: Emit = emit) -> None
                     known[(mount.path, mount.source)] = identifier
                 if known.get((mount.path, mount.source)) == identifier:
                     verified.append([mount.path, mount.source])
-    # The local lane may trust these hints now; the slower marker visits follow.
     send({"kind": "volumes_verified", "volumes": sorted(verified)})
+    return local
+
+
+def verify_known_roots(cache_options: dict[str, Any], send: Emit = emit) -> None:
+    """Check remembered marker locations in a background source helper.
+
+    Only the recorded marker folders are visited. Missing mounts are left alone;
+    a mounted folder whose marker changed is reconciled like a listing.
+    """
+    from helab.utils.cache_paths import CachePaths, current_mounts
+    from helab.utils.cache_store import CacheStore
+    from helab.utils.data_roots import MARKER_NAME
+    mounts = current_mounts()
+    with CacheStore(cache_options["directory"], root_mode=True) as store:
+        roots = store.root_locations()
+    local = verify_volumes(cache_options, send, mounts)
     locations = CachePaths(mounts)
     beat = Heartbeat(send, "verifying data roots")
     for location, _, _ in roots:
@@ -509,17 +534,21 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                     if len(batch) >= 128:
                         flush()
         flush()
-        if marker_present != marker_before or not marker_present:
-            # A marker removed (its row is forgotten) or one seen only now.
-            _discover_root(path, marker_present, cache_options, send)
+        after_key = before_key
+        # A marker seen only now, or one removed (its row is forgotten). Without one, a store
+        # already open tells whether this location has a row to forget.
+        if (marker_present != marker_before or not marker_present and (
+                store is None or store.root_at(store._location_key(path)) is not None)) and (
+                _discover_root(path, marker_present, cache_options, send)):
             if store is not None:
                 store.close()
+            early_events.clear()  # The new store's own are sent instead.
             store = _open_store(cache_options, send, path)
             after_key = store._path_key(path) if store is not None else ""
             if after_key != before_key:
                 _, root_saved = _send_saved(store, path, send)
-        else:
-            after_key = before_key
+        for event in early_events:
+            send(event)
         if before_key != after_key:
             for start in range(0, len(entries), 128):
                 patch = [{"path": child["path"], "name": child["name"]}
@@ -650,16 +679,18 @@ def _valid_subtree(info: object) -> dict[str, Any]:
     return {}
 
 
-def save_subtrees(cache_options: dict[str, Any], records: list[dict[str, Any]], send: Emit = emit) -> None:
+def save_subtrees(cache_options: dict[str, Any], records: list[dict[str, Any]], send: Emit = emit,
+                  *, verified_volumes: list[list[str]] | None = None) -> None:
     """Save (or, with status "", remove) folders' statuses derived from their subfolders.
 
-    Resolvable paths are saved in one transaction; unresolved remote paths are
-    reported as skipped. A failed write raises rather than reporting saved.
+    Resolvable paths are saved in one transaction; paths without a data root (or on a volume
+    not yet verified, ``verified_volumes``) are reported as skipped: a later listing derives
+    them again. A failed write raises rather than reporting saved.
     """
     from helab.utils.cache_paths import UnresolvedRemotePath
     skipped: list[str] = []
     saved: list[str] = []
-    with _cache_store(cache_options["directory"], local_lane=True) as store:
+    with _cache_store(cache_options["directory"], local_lane=True, verified_volumes=verified_volumes) as store:
         batch: dict[str, dict[str, Any] | None] = {}
         for record in records:
             path = str(record["path"])
@@ -675,7 +706,7 @@ def save_subtrees(cache_options: dict[str, Any], records: list[dict[str, Any]], 
             saved = list(batch)
     if skipped:
         send({"kind": "cache_warning", "message":
-              f"Subfolder status cache skipped {len(skipped)} folder(s) with unresolved remote mounts."})
+              f"Subfolder status cache skipped {len(skipped)} folder(s) without a usable data root."})
     result: dict[str, Any] = {"kind": "subtree_saved", "paths": saved}
     if skipped:
         result["skipped"] = skipped
@@ -1645,7 +1676,7 @@ def _cache_move_step(mover: Any, action: str, app_dir: str, move: dict[str, Any]
 
 
 # Operations that only touch the disk cache.
-CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin")
+CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "volumes_verify")
 
 
 def main() -> None:
@@ -1680,7 +1711,8 @@ def main() -> None:
         elif operation == "scan_history":
             from helab.utils.scan_history import write_outcome
             from helab.utils.cache_store import SaveGuard as Guard
-            with _cache_store(request["cache"]["directory"], [request["path"]], local_lane=True) as store:
+            with _cache_store(request["cache"]["directory"], [request["path"]], local_lane=True,
+                              verified_volumes=request.get("verified_volumes")) as store:
                 # The scan's own guard when the app has it: a Clear after that scan started
                 # must not get its outcome back.
                 saved = request.get("guard")
@@ -1689,7 +1721,8 @@ def main() -> None:
                 history = write_outcome(store, request["path"], request["outcome"], guard)
                 emit({"kind": "scan_history_saved", "history": history})
         elif operation == "subtree_save":
-            save_subtrees(request["cache"], request["records"])
+            save_subtrees(request["cache"], request["records"],
+                          verified_volumes=request.get("verified_volumes"))
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),
@@ -1714,6 +1747,8 @@ def main() -> None:
             cache_admin(request["cache"], request["action"], **request.get("params", {}))
         elif operation == "roots_verify":
             verify_known_roots(request["cache"])
+        elif operation == "volumes_verify":
+            verify_volumes(request["cache"])
         else:
             raise ValueError(f"Unknown operation: {operation}")
         emit({"kind": "done"})

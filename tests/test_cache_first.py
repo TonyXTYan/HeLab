@@ -741,8 +741,9 @@ def test_a_cached_read_waiting_for_its_volume_runs_once_verification_checks_it(
     assert ("cached", path) not in cache.jobs
 
     volumes = [["/Volumes/USB", "/dev/disk4s1"]]
-    verify = IORequest("verify", 0, "", "roots_verify", {}, math.inf)
-    cache._root_verify_owner = verify.owner
+    # The quick local-lane check of saved volume IDs (``volumes_verify``).
+    verify = IORequest("verify", 0, "", "volumes_verify", {}, math.inf)
+    cache._volume_verify_owner = verify.owner
     service.resultReady.emit(verify, {"kind": "volumes_verified", "volumes": volumes})
     qtbot.waitUntil(lambda: ("cached", path) in cache.jobs)
     again = producer(cache, path, "cached")
@@ -759,7 +760,9 @@ def test_a_cached_read_waiting_for_its_volume_runs_once_verification_checks_it(
     assert browser.shows_unchecked(path)  # Shown at once, as unchecked; the files' load goes on.
     assert producer(cache, path, "load") is files_load
 
-    # Read once per verification: a later one doesn't read again.
-    service.resultReady.emit(verify, {"kind": "volumes_verified", "volumes": volumes})
+    # Read once per verification: a later one (here the marker check's) doesn't read again.
+    markers = IORequest("markers", 0, "", "roots_verify", {}, math.inf)
+    cache._root_verify_owner = markers.owner
+    service.resultReady.emit(markers, {"kind": "volumes_verified", "volumes": volumes})
     qtbot.wait(20)
     assert ("cached", path) not in cache.jobs

@@ -252,6 +252,7 @@ class FolderCache(QObject):
         self._subtree_options: dict[str, Any] = {}
         self._cleanup = ""
         self._root_verify_owner = ""
+        self._volume_verify_owner = ""
         # The local mounts (path, device) whose volume IDs this session's last verification
         # checked: the only hints a cached read trusts, besides the system volume's.
         self._verified_volumes: tuple[tuple[str, str], ...] = ()
@@ -409,7 +410,8 @@ class FolderCache(QObject):
                    for _ in range(min(256, len(self._subtree_pending)))]
         owner = uuid4().hex
         if self.service.submit(owner, 0, records[0]["path"], "subtree_save",
-                               {"cache": self._subtree_options, "records": records}):
+                               {"cache": self._subtree_options, "records": records,
+                                "verified_volumes": self.verified_volumes()}):
             self._subtree_writer = owner
             return
         for record in records:  # Queue full: try again later, newer derivations first.
@@ -457,7 +459,8 @@ class FolderCache(QObject):
         owner = uuid4().hex
         self._history_writes[owner] = job.path
         self._started[owner] = time.monotonic()
-        payload: dict[str, Any] = {"cache": options, "outcome": outcome}
+        payload: dict[str, Any] = {"cache": options, "outcome": outcome,
+                                   "verified_volumes": self.verified_volumes()}
         if job.save_guard is not None:
             payload["guard"] = job.save_guard
         if not self.service.submit(owner, 0, job.path, "scan_history", payload, priority=True):
@@ -1185,13 +1188,19 @@ class FolderCache(QObject):
         self._verify_roots()
 
     def _verify_roots(self) -> None:
-        """Queue one background source helper for remembered marker locations."""
+        """Check the saved volume IDs at once on the local lane (cached reads of external volumes
+        wait for that), and queue one background source helper for remembered marker locations."""
         options = store_options()
-        if not options or self.service.closed or self._root_verify_owner:
+        if not options or self.service.closed:
             return
-        owner = uuid4().hex
-        if self.service.submit(owner, 0, options["directory"], "roots_verify", {"cache": options}):
-            self._root_verify_owner = owner
+        if not self._volume_verify_owner:
+            owner = uuid4().hex
+            if self.service.submit(owner, 0, options["directory"], "volumes_verify", {"cache": options}):
+                self._volume_verify_owner = owner
+        if not self._root_verify_owner:
+            owner = uuid4().hex
+            if self.service.submit(owner, 0, options["directory"], "roots_verify", {"cache": options}):
+                self._root_verify_owner = owner
 
     def verified_volumes(self) -> list[list[str]]:
         """For a cached read (``verified_volumes``): a disk swapped in at the same mount path and
@@ -1514,6 +1523,15 @@ class FolderCache(QObject):
                                            if pair in self._mounts_observed)
             if self._mounts_observed != self._roots_mounts:
                 self._verify_roots()
+            return
+        if producer.owner == self._volume_verify_owner:
+            if event["kind"] == "volumes_verified":
+                self._verified_volumes = tuple(tuple(pair) for pair in event["volumes"])
+                self.volumesVerified.emit()
+            elif event["kind"] in ("error", "cancelled"):
+                logging.warning("Volume verification: %s", event.get("message", "Cancelled"))
+            if event["kind"] in ("done", "error", "cancelled"):
+                self._volume_verify_owner = ""
             return
         if producer.owner == self._root_verify_owner:
             if event["kind"] == "volumes_verified":

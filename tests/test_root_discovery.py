@@ -328,6 +328,33 @@ def test_verification_reports_checked_volumes_before_visiting_markers(
             store._path_key(str(run))
 
 
+def test_volume_check_alone_refreshes_hints_without_visiting_markers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``volumes_verify`` runs on the local lane: volume IDs only, never a source folder."""
+    run, mount, cache = usb_root(tmp_path, monkeypatch)
+    monkeypatch.setattr(io_helper, "_volume_id_cache", {})
+    monkeypatch.setattr(data_roots, "_volume_id", lambda _: "disk-b")
+    monkeypatch.setattr(os, "lstat", lambda *_: pytest.fail("visited a source folder"))
+    monkeypatch.setattr(data_roots, "read_marker", lambda _: pytest.fail("read a marker"))
+    events: list[dict[str, Any]] = []
+    io_helper.verify_volumes(cache, events.append)
+    assert events == [{"kind": "volumes_verified", "volumes": [[mount.path, mount.source]]}]
+    with CacheStore(cache["directory"], root_mode=True) as store:
+        assert ("disk-b" in {identifier for _, _, identifier in store.volume_locations()})
+
+
+def test_writes_on_an_unverified_volume_are_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run, mount, cache = usb_root(tmp_path, monkeypatch)
+    record = {"path": str(run), "status": "something", "count": 1}
+    events: list[dict[str, Any]] = []
+    io_helper.save_subtrees(cache, [record], events.append, verified_volumes=[])
+    assert events[-1] == {"kind": "subtree_saved", "paths": [], "skipped": [str(run)]}
+    events = []
+    io_helper.save_subtrees(cache, [record], events.append, verified_volumes=[[mount.path, mount.source]])
+    assert events[-1] == {"kind": "subtree_saved", "paths": [str(run)]}
+
+
 def test_verification_keeps_a_root_whose_marker_cannot_be_checked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -479,6 +506,31 @@ def test_marker_found_only_by_the_scandir_resends_entries_with_its_records(
         assert store._path_key(str(run)) == f"root://{inner_id}/run"
 
 
+def test_listing_an_unmarked_subfolder_skips_discovery(tmp_path: Path,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "share"
+    run = root / "run"
+    (run / "shot").mkdir(parents=True)
+    write_marker(root, str(uuid.uuid4()))
+    monkeypatch.setattr(cache_paths, "current_mounts",
+                        lambda: [Mount("//host/share", str(root), "smbfs", True)])
+    cache = options(tmp_path)
+    io_helper.list_folder(str(root), lambda _: None, cache)
+    discovered: list[str] = []
+    original = io_helper._discover_root
+
+    def discover(path: str, present: bool, *args: Any) -> bool:
+        discovered.append(path)
+        return original(path, present, *args)
+
+    monkeypatch.setattr(io_helper, "_discover_root", discover)
+    events: list[dict[str, Any]] = []
+    io_helper.list_folder(str(run), events.append, cache)
+    assert discovered == []  # No marker, and the open store has no row here to forget.
+    assert [entry["path"] for event in events if event["kind"] == "entries"
+            for entry in event["entries"]] == [str(run / "shot")]
+
+
 def test_listing_with_a_known_marker_streams_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "share"
     (root / "run").mkdir(parents=True)
@@ -515,7 +567,7 @@ def test_unrooted_listing_is_ram_only(unrooted: tuple[Path, dict[str, Any]]) -> 
     events: list[dict[str, Any]] = []
     io_helper.list_folder(str(folder), events.append, cache)
     assert any(event["kind"] == "status" for event in events)
-    assert any(event["kind"] == "cache_skipped" for event in events)
+    assert sum(event["kind"] == "cache_skipped" for event in events) == 1
     assert_no_cached_rows(cache)
 
 
