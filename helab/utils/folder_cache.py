@@ -380,6 +380,13 @@ class FolderCache(QObject):
             self.data_roots[path] = (identifier, label)
             self.dataRootsChanged.emit(path)
 
+    def _root_reported(self, root: dict[str, Any]) -> None:
+        folder, identifier = str(root["path"]), str(root["uuid"])
+        known = self.data_roots.get(folder)
+        # (No label when the location's row couldn't be matched: keep the one known.)
+        label = str(root["label"]) or (known[1] if known and known[0] == identifier else "")
+        self._root_seen(folder, identifier, label)
+
     def _root_gone(self, path: str) -> None:
         if self.data_roots.pop(path, None) is not None:
             self.dataRootsChanged.emit(path)
@@ -1556,6 +1563,9 @@ class FolderCache(QObject):
                                      "" if kind == "done" else str(event.get("message") or "Cancelled"))
 
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        if isinstance(event.get("data_root"), dict):
+            # The root of the folder listed, checked or loaded, wherever its root folder is.
+            self._root_reported(event["data_root"])
         if event["kind"] in ("root_found", "root_created", "root_adopted"):
             self._root_seen(str(event["path"]), str(event["uuid"]), str(event["label"]))
         if event["kind"] == "root_changed":

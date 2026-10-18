@@ -133,3 +133,55 @@ def test_folder_cache_tracks_roots_and_ram_only_folders(qtbot: QtBot, monkeypatc
     assert cache.root_of(run) is None
     assert changed == [run, share, share]
     service.shutdown()
+
+
+def test_a_folder_deep_in_a_root_reports_that_root(share: Path, tmp_path: Path) -> None:
+    """A restored tab inside a root whose folder this session never listed still learns it."""
+    cache = options(tmp_path)
+    io_helper.create_root(str(share), cache, lambda _: None)
+    deep = share / "run" / "a"
+    deep.mkdir()
+    (deep / "d_txy_forc1.txt").write_text("1,2,3\n")
+    identifier = data_roots.read_marker(str(share)).uuid
+    expected = {"path": str(share), "uuid": identifier, "label": "share"}
+    events: list[dict[str, Any]] = []
+    io_helper.list_folder(str(deep), events.append, cache)
+    assert next(event for event in events if event["kind"] == "status")["data_root"] == expected
+    output = tmp_path / "output"
+    output.mkdir()
+    loaded: list[dict[str, Any]] = []
+    io_helper.load(str(deep), str(output), loaded.append, cache)
+    assert next(event for event in loaded if event["kind"] == "loaded")["data_root"] == expected
+    cached: list[dict[str, Any]] = []
+    io_helper.read_cached(str(deep), str(output), cached.append, cache)
+    # The local lane too, from the roots table alone.
+    assert next(event for event in cached if event["kind"] == "loaded")["data_root"] == expected
+
+
+def test_an_invalid_marker_is_never_overwritten(share: Path, tmp_path: Path) -> None:
+    (share / ".helab-root").write_text("not json")
+    with pytest.raises(ValueError, match="already exists here but can't be used.*Fix or remove it"):
+        io_helper.create_root(str(share), options(tmp_path), lambda _: None)
+    assert (share / ".helab-root").read_text() == "not json"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS file flags")
+def test_a_marker_created_on_macos_is_flagged_hidden(share: Path, tmp_path: Path) -> None:
+    io_helper.create_root(str(share), options(tmp_path), lambda _: None)
+    assert os.stat(share / ".helab-root").st_flags & stat.UF_HIDDEN
+
+
+def test_folder_cache_learns_a_root_from_a_deep_folder(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+                                                       tmp_path: Path) -> None:
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_dispatch", lambda: None)
+    cache = get_folder_cache(service)
+    share, deep = str(tmp_path / "share"), str(tmp_path / "share" / "run" / "a")
+    request = IORequest("tab", 0, deep, "cached", {}, 60.0)
+    identifier = str(uuid.uuid4())
+    for label in ("share", ""):  # A later result without the label keeps the known one.
+        service.resultReady.emit(request, {"kind": "progress", "progress": 0.5,
+                                           "data_root": {"path": share, "uuid": identifier, "label": label}})
+    assert cache.root_of(deep) == (share, identifier, "share")
+    service.shutdown()

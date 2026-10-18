@@ -101,6 +101,30 @@ def _cache_info(info: object) -> dict[str, Any]:
     return {}
 
 
+def _data_root(store: CacheStore | None, path: str) -> dict[str, Any]:
+    """``data_root`` for a result: the folder holding the marker that ``path`` is keyed by, so
+    the app knows the root of a folder whose root folder it hasn't listed (a restored tab deep
+    inside one). Empty without one."""
+    import sqlite3
+    from helab.utils.cache_paths import UnresolvedRemotePath
+    from helab.utils.cache_store import StoreError
+    if store is None:
+        return {}
+    try:
+        key = store._path_key(path)
+        if not key.startswith("root://"):
+            return {}
+        identifier, _, suffix = key[len("root://"):].partition("/")
+        folder = path
+        for _ in suffix.split("/") if suffix else ():
+            folder = os.path.dirname(folder)
+        found = store.root_at(store._location_key(folder))
+    except (UnresolvedRemotePath, StoreError, sqlite3.Error):
+        return {}
+    return {"data_root": {"path": folder, "uuid": identifier,
+                          "label": found[1] if found is not None and found[0] == identifier else ""}}
+
+
 def _open_store(cache_options: dict[str, Any] | None, send: Emit, path: str,
                 *, local_lane: bool = False,
                 verified_volumes: list[list[str]] | None = None) -> CacheStore | None:
@@ -565,7 +589,8 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
         report: dict[str, Any] = {"kind": "status", "details": False, "status": status, "count": count,
                                   "empty": empty, "has_dirs": has_dirs, "scanned_at": listed_at,
                                   "raw": sorted(raw), "txy": sorted(txy),
-                                  "files": file_kinds.files_summary(found, {}), **_dataset_flags(store, path, send)}
+                                  "files": file_kinds.files_summary(found, {}), **_dataset_flags(store, path, send),
+                                  **_data_root(store, path)}
         if root_saved is not None:
             report["saved_root"] = root_saved
         if (mounts := _mount_fingerprint()) is not None:
@@ -782,7 +807,8 @@ def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | No
     report = {**_summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, empty, settled, time.time()),
               "unsettled": len(fingerprint) - len(settled),
               # Without a cache nothing is cached; a cache that couldn't be opened is unknown.
-              **({} if cache_on else {"disk_cached": False, "cache_info": {}}), **_dataset_flags(store, path, send)}
+              **({} if cache_on else {"disk_cached": False, "cache_info": {}}), **_dataset_flags(store, path, send),
+              **_data_root(store, path)}
     # Publish the completed source check before optional cache writes, so even a
     # stalled cache writer cannot turn it into a failed basic scan.
     send(report)
@@ -924,6 +950,7 @@ def read_cached(path: str, output: str, send: Emit = emit,
         if data is None:
             raise ValueError("No cached data for this folder")
         _touch(store, path)
+        root = _data_root(store, path)
     finally:
         store.close()
     saved = _saved_fingerprint(row)
@@ -962,7 +989,7 @@ def read_cached(path: str, output: str, send: Emit = emit,
           "disk_cached": True, "disk_cache_pending": False, "cache_info": info,
           "load_counts": {"reused_memory": 0, "reused_disk": len(shots), "new": 0, "modified": 0,
                           "removed": 0, "read": 0, "new_loaded": 0, "modified_loaded": 0},
-          "cache_reason": "", "fingerprint": fingerprint, "memory_shots": [], "verified": False,
+          "cache_reason": "", "fingerprint": fingerprint, "memory_shots": [], "verified": False, **root,
           "signature": info.get("signature") or _fingerprint_signature(fingerprint)})
 
 
@@ -994,6 +1021,7 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
     send({"kind": "loaded", "rows": 0, "bytes": 0, "files": len(held), "loaded_at": time.time(),
           "total_files": len(fingerprint), "failed_files": len(fingerprint) - len(held), "unsettled_files": 0,
           "problematic": problematic, "source": "memory", "cached": True, "disk_cached": True,
+          **_data_root(store, path),
           "disk_cache_pending": False, "cache_info": info, "unchanged": True, "modified": modified,
           "modified_observed_at": time.time(),
           "load_counts": {"reused_memory": len(held), "reused_disk": 0, "new": 0, "modified": 0,
@@ -1329,7 +1357,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           "total_files": len(files) + len(young), "failed_files": len(files) - loaded - len(late),
           "unsettled_files": unsettled,
           "problematic": sorted(set(problematic)),
-          "source": source, "cached": cached,
+          "source": source, "cached": cached, **_data_root(store, path),
           # Left out when the cache couldn't be read: unknown, not "not cached".
           **({} if had_dataset is None and not cached else {"disk_cached": cached or bool(had_dataset)}),
           "disk_cache_pending": guard is not None and not cached and not no_cache,
@@ -1546,14 +1574,24 @@ def create_root(path: str, cache_options: dict[str, Any] | None, send: Emit = em
                   "contents": contents.decode("utf-8"), "reason": str(exc)})
             return
         _hide(file)
-    found = read_marker(path)  # Raises on an unreadable or invalid marker: an error, said as such.
+    try:
+        found = read_marker(path)
+    except ValueError as exc:  # Never overwritten: the user decides what it should be.
+        raise ValueError(f"A {MARKER_NAME} already exists here but can't be used: {exc}. "
+                         "Fix or remove it, then try again.") from None
     _discover_root(path, True, cache_options, send)
     send({"kind": "root_created" if created and found.uuid == marker.uuid else "root_adopted",
           "path": path, "uuid": found.uuid, "label": found.label})
 
 
 def _hide(file: str) -> None:
-    """The Windows hidden attribute; the dot prefix hides it elsewhere."""
+    """Hidden: the dot prefix, plus the Windows hidden attribute. From macOS, UF_HIDDEN, which
+    smbfs maps to that attribute on a share (best effort: lab PCs browse those shares)."""
+    if sys.platform == "darwin":
+        import stat
+        with contextlib.suppress(OSError, AttributeError):
+            os.chflags(file, os.stat(file).st_flags | stat.UF_HIDDEN)
+        return
     if sys.platform != "win32":
         return
     import ctypes
