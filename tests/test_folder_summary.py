@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any, Iterator
 import time
 import os
+import re
 
 import numpy as np
 import pytest
@@ -493,7 +494,8 @@ def test_detected_disk_cache_is_available_before_loading(
     complete_scan(browser, qtbot, path, options)
     qtbot.waitUntil(lambda: browser.model.nodes[path].loaded)
     assert browser.folder_summary_label.text() == "1 TXY found · Not loaded"
-    assert browser.folder_cache_label.text() == "Cached data found · Cached just now"
+    # ("just now" under 1 s: a slow runner can take longer to load and list.)
+    assert re.fullmatch(r"Cached data found · Cached (just now|\d+s ago)", browser.folder_cache_label.text())
     assert "freshness is checked when loading" in browser.folder_cache_label.toolTip()
 
 
