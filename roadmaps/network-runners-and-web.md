@@ -104,6 +104,11 @@ integrity checks; list metadata before downloading large files.
 
 ## Machine, data-root and path identity
 
+Decided 2026-10-18: [data roots](data-roots.md) give each root a UUID stored
+in a `.helab-root` marker on every kind of disk. That UUID is the logical
+root ID below, and the `smb://` key becomes a local location key.
+The rest of this section predates that plan.
+
 The current `cache_paths.py` SMB URL is a **machine-local disk-cache key** for
 surviving mount-order changes. It is neither the logical root ID below nor
 proof that two machines see the same physical folder: one machine may use a

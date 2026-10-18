@@ -45,7 +45,8 @@ source load. Returning online has an explicit validation path.
 ## Open decisions
 
 - User-facing name and entry/exit controls.
-- Listing schema, retention policy and source-root identity across machines.
+- Listing schema and retention policy. Source-root identity: proposed
+  [data roots](data-roots.md) (2026-10-16).
 - Treatment of source jobs already running when entering the mode.
 - Explicit-only switching versus automatic switching after an asynchronous
   reachability failure; automatic switching remains an idea, not a requirement.

@@ -40,6 +40,14 @@ How to use it:
   QtWebEngine ([plan](build-size.md)) (2026-10-13). Step 1 (macOS zip of
   `HeLab.app` only, symlinks kept) done 2026-10-13; CI result to check.
 
+- [ ] Data roots: disk caching only below a hidden `.helab-root` marker (UUID,
+  created on request, on every kind of disk; nearest wins, so equivalent
+  folders share one cache); RAM only otherwise; each new equivalent location
+  asks same folder or copy, remembered per PC. Next after the SMB key change,
+  with one more cache clear; the root UUID becomes the network plan's logical
+  root ID ([plan](data-roots.md), [stages](../.ai/sessions/2026-10-16-claude-data-roots/plan.md))
+  (2026-10-16; decided 2026-10-18).
+
 - [ ] Finish the status-message audit: verify load-phase labels for `merged`/
   `updated` sources ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#status-messages)) (2026-10-08).
 

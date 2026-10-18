@@ -1024,4 +1024,5 @@ Notes from finished sessions:
 ## Still open
 
 - Whether `/Volumes/dld_output`'s `st_dev` changes across remounts (MANUAL_TODO). If it does,
-  folder identity needs another source before cache-only browsing.
+  folder identity needs another source before cache-only browsing. It does (2026-10-15):
+  SMB share keys for now, then proposed [data roots](data-roots.md) (2026-10-16).
