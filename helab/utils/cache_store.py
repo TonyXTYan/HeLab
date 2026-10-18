@@ -26,6 +26,9 @@ import uuid
 
 LAYOUT_VERSION = 2
 STORE_DIRNAME = "store-v2"
+# D1 reserves a separate clean store for root identities. D2 activates it.
+ROOT_LAYOUT_VERSION = 3
+ROOT_STORE_DIRNAME = "store-v3"
 DATASET_FORMAT = "blosc-pickle-1"
 BUSY_TIMEOUT = 30.0
 # Retired dataset files outlive any reader that looked up their row.
@@ -74,6 +77,15 @@ CREATE TABLE IF NOT EXISTS datasets (
     rows INTEGER NOT NULL, shots INTEGER NOT NULL, fingerprint TEXT NOT NULL, problematic TEXT NOT NULL,
     info TEXT NOT NULL, last_used REAL NOT NULL, job_seq INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS datasets_last_used ON datasets (last_used);
+"""
+
+ROOT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS roots (
+    location TEXT PRIMARY KEY, uuid TEXT NOT NULL, kind TEXT NOT NULL,
+    label TEXT NOT NULL, first_seen REAL NOT NULL, last_seen REAL NOT NULL,
+    verified_at REAL NOT NULL, decision TEXT NOT NULL
+        CHECK (decision IN ('confirmed', 'pending')));
+CREATE INDEX IF NOT EXISTS roots_uuid ON roots (uuid);
 """
 
 
@@ -303,11 +315,14 @@ class CacheStore:
 
     def __init__(self, root: str, *, busy_timeout: float | None = None,
                  path_key: Callable[[str], str] | None = None,
-                 source_path: Callable[[str], str] | None = None) -> None:
+                 source_path: Callable[[str], str] | None = None,
+                 root_mode: bool = False) -> None:
         busy_timeout = BUSY_TIMEOUT if busy_timeout is None else busy_timeout
         self.root = root
         self._path_key = path_key or (lambda path: path)
         self._source_path = source_path or (lambda path: path)
+        self._expected_layout = ROOT_LAYOUT_VERSION if root_mode else LAYOUT_VERSION
+        self._root_mode = root_mode
         self.datasets_dir = os.path.join(root, "datasets")
         self.database = os.path.join(root, "records.sqlite")
         self.read_only = False
@@ -343,10 +358,10 @@ class CacheStore:
                 version = _layout_version(probe)
             finally:
                 probe.close()
-            if version is not None and version > LAYOUT_VERSION:
+            if version is not None and version > self._expected_layout:
                 self.read_only = True
                 return self._connect(busy_timeout, read_only=True)
-            if version is not None and version < LAYOUT_VERSION:
+            if version is not None and version < self._expected_layout:
                 raise sqlite3.DatabaseError(f"unsupported layout version {version}")
         os.makedirs(self.datasets_dir, exist_ok=True)
         conn = self._connect(busy_timeout, read_only=False)
@@ -358,8 +373,12 @@ class CacheStore:
                     for statement in SCHEMA.split(";"):
                         if statement.strip():
                             conn.execute(statement)
+                    if self._root_mode:
+                        for statement in ROOT_SCHEMA.split(";"):
+                            if statement.strip():
+                                conn.execute(statement)
                     defaults: dict[str, object] = {
-                        "layout_version": LAYOUT_VERSION, "store_id": uuid.uuid4().hex, "created_at": time.time(),
+                        "layout_version": self._expected_layout, "store_id": uuid.uuid4().hex, "created_at": time.time(),
                         **{f"gen_{kind}": 0 for kind in KINDS}}
                     # Another helper may have created it meanwhile: keep its values.
                     conn.executemany("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
@@ -369,7 +388,7 @@ class CacheStore:
                     conn.execute("ROLLBACK")
                     raise
             version = _layout_version(conn)
-            if version != LAYOUT_VERSION:
+            if version != self._expected_layout:
                 raise sqlite3.DatabaseError(f"unsupported layout version {version}")
         except BaseException:
             conn.close()
@@ -384,6 +403,28 @@ class CacheStore:
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+    def root_locations(self) -> list[tuple[str, str, str]]:
+        """Return the local root-location index without touching source folders."""
+        try:
+            rows = self._conn.execute("SELECT location, uuid, decision FROM roots").fetchall()
+        except sqlite3.Error as exc:
+            raise StoreError(f"Data roots could not be read: {exc}") from exc
+        return [(str(location), str(identifier), str(decision))
+                for location, identifier, decision in rows]
+
+    def record_root(self, location: str, identifier: str, kind: str,
+                    label: str, *, decision: Literal["confirmed", "pending"]) -> None:
+        """Record a marker decision, retaining the location's first sighting."""
+        now = time.time()
+        with self.transaction():
+            self._conn.execute(
+                "INSERT INTO roots (location, uuid, kind, label, first_seen, last_seen, verified_at, decision) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(location) DO UPDATE SET "
+                "uuid=excluded.uuid, kind=excluded.kind, label=excluded.label, "
+                "first_seen=CASE WHEN roots.uuid=excluded.uuid THEN roots.first_seen ELSE excluded.first_seen END, "
+                "last_seen=excluded.last_seen, verified_at=excluded.verified_at, decision=excluded.decision",
+                (location, identifier, kind, label, now, now, now, decision))
 
     @contextlib.contextmanager
     def transaction(self, write: bool = True) -> Generator[None, None, None]:
