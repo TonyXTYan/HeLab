@@ -1665,6 +1665,8 @@ class FolderCache(QObject):
         if event["kind"] in ("root_found", "root_created", "root_adopted"):
             self._root_seen(str(event["path"]), str(event["uuid"]), str(event["label"]))
         if event["kind"] == "root_changed":
+            if event.get("location"):
+                self._duplicate_settled(str(event["location"]))  # Forgotten, removed or replaced.
             if "uuid" in event:
                 self._root_seen(str(event["path"]), str(event["uuid"]), str(event["label"]))
             else:
@@ -2123,14 +2125,26 @@ PENDING_ROOT_TOOLTIP = ("HeLab found the same .helab-root at two locations. Say 
                         "folder or a copy before its disk cache is used here.")
 
 
+PENDING_SUMMARY = "RAM only · this .helab-root is also at another location"
+REVIEW_ROOT_TOOLTIP = "Same folder or a copy? Answer in the data-root window"
+
+
+def pending_root_text(pending: dict[str, Any]) -> str:
+    """The row tooltip's line (and the summary's tooltip) for a folder below a pending location."""
+    label = str(pending.get("label") or os.path.basename(str(pending["path"]).rstrip("/\\")))
+    other = next(iter(pending.get("others") or ()), None)
+    where = (str(other.get("path") or other["location"]) if other is not None else "another location")
+    return f"Data root “{label}” also seen at {where}: same folder or a copy? RAM only until answered."
+
+
 def marker_path(root: str) -> str:
     return os.path.join(root, ".helab-root")
 
 
 def data_root_text(cache: FolderCache, path: str) -> str:
     """The row tooltip's line: which .helab-root the folder uses, or RAM only ("" if not known yet)."""
-    if cache.pending_root(path) is not None:
-        return "RAM only: this .helab-root is also at another location (same folder or a copy?)"
+    if (pending := cache.pending_root(path)) is not None:
+        return pending_root_text(pending)
     if (root := cache.root_of(path)) is not None:
         folder, _, label = root
         return f"Data root: {label or os.path.basename(folder)} · " + (

@@ -151,6 +151,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.savedRefreshed.connect(self._saved_refreshed)
         self.cache.cacheRemoved.connect(self._cache_removed)
         self.cache.dataRootsChanged.connect(self._data_root_changed)
+        # Locations waiting for Same folder or Copy: their rows show ROOT_PENDING (memory only).
+        self._pending_roots = {str(entry["path"]) for entry in self.cache.root_duplicates.values()}
+        self.cache.rootDuplicatesChanged.connect(self._root_duplicates_changed)
 
     def node(self, index: QModelIndex) -> FolderNode | None:
         return cast(FolderNode, index.internalPointer()) if index.isValid() else None
@@ -375,6 +378,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                       if k not in ("ram", "ram_single", "ram_opened", "cached", "cached_older", "scan_failed")]
             if node.path in self.cache.data_roots:
                 extras.insert(0, "data_root")  # Beside the status icon: this folder holds a .helab-root.
+            if self.cache.pending_root(node.path) is not None:
+                extras.insert(0, "root_pending")  # Same folder or a copy? RAM only until answered.
             if self.cache.scan_history(node.path)["blocked"]:
                 extras.append("scan_failed")
             prefs = self.cache.folder_prefs(node.path)
@@ -605,6 +610,16 @@ class SnapshotFileSystemModel(QAbstractItemModel):
     def _data_root_changed(self, path: str) -> None:
         if not self.closed and (node := self.nodes.get(path)) is not None:
             self.changed(node)
+
+    def _root_duplicates_changed(self) -> None:
+        """A location became pending or was answered: its rows and their descendants change."""
+        if self.closed:
+            return
+        pending = {str(entry["path"]) for entry in self.cache.root_duplicates.values()}
+        touched, self._pending_roots = pending ^ self._pending_roots, pending
+        for path, node in self.nodes.items():
+            if any(path == top or path.startswith(top.rstrip("/\\") + os.sep) for top in touched):
+                self.changed(node)
 
     def _folder_icon_changed(self, path: str) -> None:
         if not self.closed and path in self.nodes:
@@ -1132,3 +1147,4 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.savedRefreshed.disconnect(self._saved_refreshed)
         self.cache.cacheRemoved.disconnect(self._cache_removed)
         self.cache.dataRootsChanged.disconnect(self._data_root_changed)
+        self.cache.rootDuplicatesChanged.disconnect(self._root_duplicates_changed)

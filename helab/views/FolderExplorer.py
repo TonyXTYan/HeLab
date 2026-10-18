@@ -20,8 +20,9 @@ from helab.models.StatusReport import StatusReport
 from helab.resources.icons import CHECK_COLOR, LOAD_COLOR, StatusIcons
 from helab.utils.io_service import IORequest
 from helab.utils import large_folder
-from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, PLACE_ROOT_ACTION, PLACE_ROOT_TOOLTIP, Dataset,
-                                     marker_path, store_options)
+from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, PENDING_ROOT_TOOLTIP, PENDING_SUMMARY, PLACE_ROOT_ACTION,
+                                      PLACE_ROOT_TOOLTIP, REVIEW_ROOT_TOOLTIP, Dataset, pending_root_text,
+                                      marker_path, store_options)
 from helab.utils.number_format import byte_size
 from helab.utils.constants import DEFAULT_LOAD_MODE
 from helab.utils.load_clock import LoadClock
@@ -162,6 +163,7 @@ class FolderExplorer(QWidget):
     dataLoaded = pyqtSignal(str)
     # Review… for a folder whose cached data doesn't match it: the main window shows its row in the list.
     reviewMismatchRequested = pyqtSignal(str)
+    reviewRootRequested = pyqtSignal(str)  # A pending location: Same folder or a copy?
     DWELL_MS = 3000
     # Finish and Cancel modes: while loads are busy (running, queued or stopping, or one started
     # moments ago), an automatic load waits until the selection has stayed this long, plus
@@ -298,6 +300,11 @@ class FolderExplorer(QWidget):
         self.review_button.setText("Review…")
         self.review_button.setToolTip(MISMATCH_REVIEW_TOOLTIP)
         self.review_button.clicked.connect(lambda: self.reviewMismatchRequested.emit(self.selected_path_globally))
+        # The selected folder is below a location whose .helab-root is also elsewhere (pending).
+        self.root_review_button = QToolButton(self.folder_counts_row)
+        self.root_review_button.setText("Review…")
+        self.root_review_button.setToolTip(REVIEW_ROOT_TOOLTIP)
+        self.root_review_button.clicked.connect(self._review_root)
         # Offered with the large-folder warning (S10): stop it coming up at all.
         self.no_auto_load_button = QToolButton(self.folder_counts_row)
         self.no_auto_load_button.setText("No auto-load")
@@ -310,7 +317,7 @@ class FolderExplorer(QWidget):
         self.deselect_button.setToolTip("Clear subfolder selection and view the displayed path")
         self.deselect_button.clicked.connect(self.clear_selection)
         self.summary_buttons = (self.cancel_load_button, self.retry_button, self.review_button,
-                                self.no_auto_load_button, self.deselect_button)
+                                self.root_review_button, self.no_auto_load_button, self.deselect_button)
         for hidden in (self.selected_folder_label, *self.summary_buttons):
             hidden.hide()
         summary_font = self.folder_summary_label.font()
@@ -374,6 +381,7 @@ class FolderExplorer(QWidget):
         self.model.cache.mountWarningChanged.connect(self._mount_warning_changed)
         self.model.cache.volumesVerified.connect(self._volumes_verified)
         self.model.cache.rootDecided.connect(self._root_decided)
+        self.model.cache.rootDuplicatesChanged.connect(self._update_activity)
         self.model.activityChanged.connect(self._update_activity)
         self.animation = QTimer(self)
         self.animation.timeout.connect(self._animate)
@@ -1532,6 +1540,7 @@ class FolderExplorer(QWidget):
         self.no_auto_load_button.setVisible(large is not None and not off and idle and bool(store_options()))
         mismatched = path in self.model.cache.mismatched
         self.review_button.setVisible(mismatched and idle)
+        self.root_review_button.setVisible(self.model.cache.pending_root(path) is not None and not mismatched)
         self.retry_button.setToolTip(MISMATCH_RETRY_TOOLTIP if mismatched and self.load_error else
                                      "Load this folder again" if self.load_error else
                                      LARGE_TOOLTIP if offer_large else
@@ -1681,6 +1690,10 @@ class FolderExplorer(QWidget):
         cache = self.model.cache
         node = self.model.nodes.get(path)
         # The line is always shown, so the summary keeps its height.
+        if (pending := cache.pending_root(path)) is not None:
+            self.folder_cache_label.setText(PENDING_SUMMARY)
+            self.folder_cache_label.setToolTip(f"{pending_root_text(pending)}\n\n{PENDING_ROOT_TOOLTIP}")
+            return
         if not cache.disk_cache_known(path):
             self.folder_cache_label.setText("Cache not checked")
             self.folder_cache_label.setToolTip("Cache availability is reported by the folder listing or a load.")
@@ -1970,6 +1983,10 @@ class FolderExplorer(QWidget):
         return self.model.cache.submit(self.model.owner, self.model.generation, target, "root_create",
                                        {"cache": store_options(), "clicked": path}, priority=True)
 
+    def _review_root(self) -> None:
+        if (pending := self.model.cache.pending_root(self.selected_path_globally)) is not None:
+            self.reviewRootRequested.emit(str(pending["location"]))
+
     def _root_decided(self, paths: list[str]) -> None:
         """Same folder, Copy or Delete .helab-root took effect: list those folders again where this
         tab shows them, and its top and selected folders inside them, so ⚓ and RAM only update."""
@@ -2217,6 +2234,7 @@ class FolderExplorer(QWidget):
         self.model.cache.mountWarningChanged.disconnect(self._mount_warning_changed)
         self.model.cache.volumesVerified.disconnect(self._volumes_verified)
         self.model.cache.rootDecided.disconnect(self._root_decided)
+        self.model.cache.rootDuplicatesChanged.disconnect(self._update_activity)
         self.model.cache.release(self.model.owner)
         self.folder_opened_data = None
         self.displayed_dataset = None

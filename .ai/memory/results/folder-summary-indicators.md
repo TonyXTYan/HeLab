@@ -37,6 +37,10 @@ between the two clicks of a double-click. Every line is single-line and elided
    cache information, `No data to cache` for folders without TXY files. The
    tooltip has origin ("Loaded from disk cache"), the cache-miss reason, reuse
    counts, and the exact save date.
+   Below a data-root location waiting for Same folder or a copy? it says
+   `RAM only · this .helab-root is also at another location` (full wording in
+   the tooltip), and line 1 shows **Review…**, which opens the data-root
+   window at that location (2026-10-18).
 3. **Freshness:** `Status scan: 3m ago · … · Live updates off`, or
    `Basic scan failed 2h ago · Retry manually` (see
    [[basic-scan-defaults-and-failures]]).

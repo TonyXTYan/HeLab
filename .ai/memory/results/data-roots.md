@@ -83,3 +83,12 @@ Decided with Tony in Maestri chat (2026-10-16 and 2026-10-18). Code:
   "⚓ N to confirm". Until answered the location is RAM only.
 - It's a copy…: the location keeping the original UUID keeps the cached data;
   the other gets a new .helab-root and starts empty.
+- Unanswered locations are visible (Tony, 2026-10-18): the tree shows
+  **ROOT_PENDING** (amber Tabler ALERT_TRIANGLE, before the anchor, beside the
+  status icon) on the pending folder and its shown descendants; the row
+  tooltip's data-root line says "Data root “label” also seen at <other>: same
+  folder or a copy? RAM only until answered."; the selected folder's summary
+  cache line says "RAM only · this .helab-root is also at another location"
+  with **Review…** (line 1's buttons); Settings → Data roots has Review… on
+  pending rows. Each opens the window at that location. Answering, forgetting
+  or removing the location clears them.

@@ -374,3 +374,100 @@ def test_deleting_a_root_lists_the_tabs_folders_inside_it_again(
     cache.service.resultReady.emit(request, {"kind": "root_removed", "path": str(tmp_path.parent),
                                              "uuid": str(uuid.uuid4()), "forgotten": []})
     assert refreshed == ([str(tmp_path), run] if str(tmp_path) in tab.model.nodes else [run])
+
+
+def pending(cache: FolderCache, path: str, other: str = "/Volumes/C/data") -> str:
+    """A helper found this folder's .helab-root also at ``other``: Same folder or a copy?"""
+    location = f"smb://server/share/{os.path.basename(path)}"
+    request = IORequest("helper", 0, path, "list", {}, 60.0)
+    cache.service.resultReady.emit(request, {
+        "kind": "root_duplicate", "path": path, "location": location, "uuid": str(uuid.uuid4()),
+        "label": "run", "other_locations": ["smb://pc/c/data"], "marker": None,
+        "others": [{"location": "smb://pc/c/data", "path": other, "marker": None}]})
+    return location
+
+
+def test_a_pending_location_warns_on_its_rows_tooltip_and_summary_until_answered(
+    qtbot: QtBot, tab: FolderExplorer, tmp_path: Path,
+) -> None:
+    from helab.utils.folder_cache import PENDING_SUMMARY
+    model, cache = tab.model, tab.model.cache
+    run, inner = tmp_path / "run", tmp_path / "run" / "a"
+    inner.mkdir()
+    replay(qtbot, cache, str(tmp_path), "list", lambda send: list_folder(str(tmp_path), send, model._cache_options))
+    model.request_scan(str(run), priority=True)
+    qtbot.waitUntil(lambda: ("list", str(run)) in cache.jobs)
+    replay(qtbot, cache, str(run), "list", lambda send: list_folder(str(run), send, model._cache_options))
+    warning = StatusIcons.ICONS_EXTRA["root_pending"].cacheKey()
+
+    def badges(path: Path) -> list[int]:
+        icons = model.data(model.path_index(str(path), model.COLUMN_STATUS_ICON), model.STATUS_EXTRA_ICONS_ROLE)
+        assert isinstance(icons, list)
+        return [icon.cacheKey() for icon in icons if not isinstance(icon, str)]
+
+    def tooltip(path: Path) -> str:
+        return str(model.data(model.path_index(str(path), model.COLUMN_NAME), Qt.ItemDataRole.ToolTipRole))
+    changed: list[int] = []
+    model.dataChanged.connect(lambda top, bottom, roles: changed.append(top.row()))
+    location = pending(cache, str(run))
+    assert changed  # The rows were told to repaint.
+    line = "Data root “run” also seen at /Volumes/C/data: same folder or a copy? RAM only until answered."
+    for path in (run, inner):
+        assert badges(path)[0] == warning  # Beside the status icon, before the anchor.
+        assert line in tooltip(path).splitlines()
+    assert warning not in badges(tmp_path / "other")
+    tab.selected_path_globally = str(inner)
+    tab._update_activity()
+    assert tab.folder_cache_label.text() == PENDING_SUMMARY
+    assert line in tab.folder_cache_label.toolTip()
+    assert not tab.root_review_button.isHidden()
+    reviews: list[str] = []
+    tab.reviewRootRequested.connect(reviews.append)
+    tab.root_review_button.click()
+    assert reviews == [location]
+    # Same folder: the warnings go.
+    cache.service.resultReady.emit(IORequest("helper", 0, str(run), "cache_admin", {}, 60.0), {
+        "kind": "root_confirmed", "location": location, "path": str(run), "uuid": str(uuid.uuid4()),
+        "label": "run"})
+    for path in (run, inner):
+        assert warning not in badges(path) and line not in tooltip(path).splitlines()
+    tab._update_activity()
+    assert tab.folder_cache_label.text() != PENDING_SUMMARY and tab.root_review_button.isHidden()
+    # Pending again, then It's a copy… (reassigned), then forgotten: each clears it.
+    location = pending(cache, str(run))
+    assert badges(run)[0] == warning
+    cache.service.resultReady.emit(IORequest("helper", 0, str(run), "root_reassign", {"duplicate": location},
+                                             60.0), {"kind": "root_reassigned", "path": str(run), "moved": []})
+    assert warning not in badges(run)
+    location = pending(cache, str(run))
+    cache.service.resultReady.emit(IORequest("helper", 0, str(run), "cache_admin", {}, 60.0), {
+        "kind": "root_changed", "path": str(run), "location": location, "reason": "forgotten"})
+    assert warning not in badges(inner)
+
+
+def test_settings_review_opens_the_duplicates_window_at_a_pending_row(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from helab.views.DataRootsTab import REVIEW
+    service = frozen_service(monkeypatch)
+    cache = FolderCache(service)
+    monkeypatch.setattr(cache, "cache_admin", lambda action, **params: "job")
+    monkeypatch.setattr("helab.views.DataRootsTab.store_options", lambda: {"directory": str(tmp_path)})
+    page = DataRootsTab(cache)
+    qtbot.addWidget(page)
+    rows = [{"location": loc, "uuid": str(uuid.uuid4()), "kind": "smb", "label": "run", "first_seen": 1.0e9,
+             "last_seen": 1.7e9, "decision": decision, "path": "/Volumes/run"}
+            for loc, decision in (("smb://a/run", "confirmed"), ("smb://b/run", "pending"))]
+    cache.cacheAdminResult.emit("inventory", {"kind": "inventory", "inventory": {"roots": rows}})
+    asked: list[str] = []
+    page.reviewRequested.connect(asked.append)
+    for index, expected in ((0, False), (1, True)):
+        item = page.list.topLevelItem(index)
+        assert item is not None
+        page.list.setCurrentItem(item)
+        assert page.review_button.isEnabled() is expected
+        assert any(action.text() == REVIEW for action in page.context_menu().actions()) is expected
+    page.review_button.click()
+    assert asked == ["smb://b/run"]
+    page.detach()
+    service.shutdown()

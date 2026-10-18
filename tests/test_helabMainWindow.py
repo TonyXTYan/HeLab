@@ -287,3 +287,25 @@ def test_file_menu_places_a_root_in_the_current_tabs_selected_folder(
     monkeypatch.setattr(main_window.tab_widget, "currentWidget", lambda: None)
     assert shown() == (PLACE_ROOT_MENU, False, "Open a folder tab first")
     assert not main_window.place_root_in_current_tab()
+
+
+def test_review_root_opens_the_duplicates_window_at_that_location(
+    main_window: HelabMainWindow, qtbot: QtBot,
+) -> None:
+    from helab.utils.folder_cache import get_folder_cache
+    from helab.utils.io_service import get_io_service
+    cache = get_folder_cache(get_io_service())
+    locations = ("smb://server/a", "smb://server/b")
+    try:
+        for location in locations:
+            cache.root_duplicates[location] = {"path": f"/Volumes/{location[-1]}", "location": location,
+                                               "uuid": "u", "label": location[-1], "answer": "later",
+                                               "found_at": 0.0, "others": []}
+        main_window.review_root("smb://server/b")
+        window = main_window.root_duplicates
+        assert window.isVisible() and window.selected() == "smb://server/b"
+        assert window.windowModality() == Qt.WindowModality.NonModal  # Nothing modal open.
+    finally:
+        for location in locations:
+            cache.root_duplicates.pop(location, None)
+        main_window.root_duplicates.hide()

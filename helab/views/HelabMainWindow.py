@@ -1181,6 +1181,7 @@ class HelabMainWindow(QMainWindow):
                 lambda _, fe=current_folder_explorer: self.on_folder_explorer_selection_changed(QItemSelection(), fe))
             current_folder_explorer.reviewMismatchRequested.connect(
                 lambda path: self.missing_shots.show_list(activate=True, select=path))
+            current_folder_explorer.reviewRootRequested.connect(self.review_root)
             current_folder_explorer.loadStateChanged.connect(self._update_folder_details)
             current_folder_explorer.loadStateChanged.connect(self._update_cancel_loading_action)
             current_folder_explorer.dataLoaded.connect(

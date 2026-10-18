@@ -22,6 +22,7 @@ Loading dataset…                                        ← load state only
 Here: 2 shots, all converted                            ← own files ("no TXY files", "empty folder", "not checked yet")
 Subfolders: none                                        ← "3 · TXY data in 1 · may be outdated", "not listed yet", "… · saved <date>"
 Folder modified: 2026-10-09 00:45:18 (just now)         ← stated once, the reference for both caches
+Data root: dld_output · /Volumes/dld_output/.helab-root  ← or "RAM only: no .helab-root above this folder", or (pending) "Data root “run” also seen at <other>: same folder or a copy? RAM only until answered."
 Status cache: 2026-10-09 00:43:18 (2m ago) · may be outdated   ← or "Status checked: …" (this session)
 Data cache: 2026-10-09 00:43:18 (2m ago) · may be outdated
 Data: shared RAM dataset open (read-only arrays)        ← mirrors the RAM badge

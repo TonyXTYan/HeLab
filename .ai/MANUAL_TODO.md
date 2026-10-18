@@ -52,6 +52,12 @@ real experiment data without deciding where its top should be.
   the confirmation names the label and size; afterwards those folders show
   no cached data (a load reads the source), another root's folders keep
   theirs, and Don't cache / Don't auto-load flags stay.
+- [ ] A location answered Later (one folder through two mounts): its folder and
+  subfolders show the amber warning triangle beside their status icons, the
+  row tooltip names the other location, the selected folder's summary says
+  "RAM only · this .helab-root is also at another location" with Review…,
+  and Settings → Data roots' Review… opens the window (usable while Settings
+  stays open); after Same folder they all go.
 - [ ] The TDC converter and the lab MATLAB scripts ignore `.helab-root`.
 - [ ] Before using this build: `store-v3` starts empty; move the old `store-v2`
   folder to the Trash by hand once you no longer need it.
