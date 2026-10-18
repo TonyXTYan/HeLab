@@ -12,6 +12,7 @@ from PyQt6.QtGui import QColor, QFont, QHideEvent, QMouseEvent, QPainter, QPaint
 from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QProgressBar, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from helab.models.StatusReport import StatusReport
+from helab.utils.folder_cache import data_root_row
 from helab.utils.number_format import fnum
 from helab.utils.io_service import IOService
 from helab.utils.time_format import clock as stopwatch, relative_age
@@ -259,6 +260,8 @@ class FolderDetailsPanel(QScrollArea):
                              + ("" if large[1] else " · Load anyway…"),
                              REFUSED_TOOLTIP if large[1] else LARGE_TOOLTIP)
         cache = explorer.model.cache
+        # Which .helab-root the folder uses, or RAM only (the tab's own folder when none is selected).
+        rows["cache"] = data_root_row(cache, path)
         if path in cache.pending_saves and (waiting := cache.cache_status(path).error):
             # A save held for the user's answer (Make room / Save update); one question at a time.
             rows["cache"] = (waiting, "The disk cache asks before this save: Make room or Save update, or don't "

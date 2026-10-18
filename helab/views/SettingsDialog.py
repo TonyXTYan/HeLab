@@ -13,6 +13,7 @@ from PyQt6.QtCore import QSettings, QUrl
 from helab.utils.folder_cache import FolderCache, store_options
 from helab.utils.number_format import fnum
 from helab.utils.constants import *
+from helab.views.DataRootsTab import DataRootsTab
 from helab.views.CacheTab import CacheTab
 
 
@@ -200,6 +201,8 @@ class SettingsDialog(QDialog):
         # The GUI never opens the store: the tab asks a helper (FolderCache.cache_admin).
         self.cache_tab = CacheTab(self.cache, self.settings)
         self.tabs.addTab(self.cache_tab, "Cache")
+        self.roots_tab = DataRootsTab(self.cache)
+        self.tabs.addTab(self.roots_tab, "Data roots")
 
     def show_purge(self) -> None:
         """Open at the Cache tab's Remove old entries (from the disk cache's 80% warning)."""
@@ -214,6 +217,7 @@ class SettingsDialog(QDialog):
             # now, so it is newer than the change, and sent until the store has it.
             self.cache.restore_budget()
         self.cache_tab.detach()
+        self.roots_tab.detach()
         if self.mover is not None:
             # The mover outlives this dialog (e.g. deleting the old folder): stop listening.
             self.mover.switched.disconnect(self._cache_switched)

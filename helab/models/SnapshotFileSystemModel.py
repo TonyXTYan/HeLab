@@ -22,7 +22,7 @@ from helab.models.StatusReport import StatusReport
 from helab.resources.icons import StatusIcons
 from helab.utils.io_service import IORequest, IOService, get_io_service
 from helab.utils.number_format import byte_size
-from helab.utils.folder_cache import SCANS, get_folder_cache, store_options
+from helab.utils.folder_cache import SCANS, data_root_text, get_folder_cache, store_options
 from helab.utils.time_format import relative_age
 from helab.utils.cache_freshness import CacheFreshness, cache_freshness, data_as_of, metadata_date
 
@@ -150,6 +150,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.subtreeChanged.connect(self._shared_subtree_changed)
         self.cache.savedRefreshed.connect(self._saved_refreshed)
         self.cache.cacheRemoved.connect(self._cache_removed)
+        self.cache.dataRootsChanged.connect(self._data_root_changed)
 
     def node(self, index: QModelIndex) -> FolderNode | None:
         return cast(FolderNode, index.internalPointer()) if index.isValid() else None
@@ -372,6 +373,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             # Build icons from in-memory values; never call methods that update caches.
             extras = [k for k in (node.report.extra_icons if node.report else [])
                       if k not in ("ram", "ram_single", "ram_opened", "cached", "cached_older", "scan_failed")]
+            if node.path in self.cache.data_roots:
+                extras.insert(0, "data_root")  # Beside the status icon: this folder holds a .helab-root.
             if self.cache.scan_history(node.path)["blocked"]:
                 extras.append("scan_failed")
             prefs = self.cache.folder_prefs(node.path)
@@ -448,6 +451,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         disk_cached = self.cache.disk_cached(node.path)
         if report or disk_cached:
             lines.append("Folder modified: " + (_stamp(node.modified) if node.modified is not None else "not known yet"))
+        if text := data_root_text(self.cache, node.path):
+            lines.append(text)
         if report:
             # Loaded from cache and not rechecked, or checked in this session: a fresh
             # check only notes a later sign of change.
@@ -596,6 +601,10 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             return True
         return self.cache.submit(self.owner, self.generation, self.root.path, "icons",
                                  {"paths": missing}, timeout=5.0)
+
+    def _data_root_changed(self, path: str) -> None:
+        if not self.closed and (node := self.nodes.get(path)) is not None:
+            self.changed(node)
 
     def _folder_icon_changed(self, path: str) -> None:
         if not self.closed and path in self.nodes:
@@ -1122,3 +1131,4 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.subtreeChanged.disconnect(self._shared_subtree_changed)
         self.cache.savedRefreshed.disconnect(self._saved_refreshed)
         self.cache.cacheRemoved.disconnect(self._cache_removed)
+        self.cache.dataRootsChanged.disconnect(self._data_root_changed)

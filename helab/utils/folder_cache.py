@@ -367,6 +367,12 @@ class FolderCache(QObject):
         root, (identifier, label) = max(matches, key=lambda item: len(item[0]))
         return root, identifier, label
 
+    def mount_of(self, path: str) -> str | None:
+        """The mount point holding ``path``, from the mount table listings last reported (memory)."""
+        mounts = [mount for mount, _ in self._mounts_observed or ()
+                  if path == mount or path.startswith(mount.rstrip("/\\") + os.sep)]
+        return max(mounts, key=len) if mounts else None
+
     def no_root(self, path: str) -> str | None:
         """Why this folder uses RAM only (no data root, or one not yet confirmed), if a helper said so."""
         return self.unrooted.get(path)
@@ -2005,3 +2011,41 @@ def get_folder_cache(service: IOService) -> FolderCache:
     if service.folder_cache is None:
         service.folder_cache = FolderCache(service)
     return service.folder_cache
+
+
+# Data roots (Tony, 2026-10-18): the right-click action, and how a folder's disk cache is described.
+PLACE_ROOT_ACTION = "Place .helab-root here…"
+PLACE_ROOT_TOOLTIP = ("No .helab-root found above this folder, so it uses RAM only.\n"
+                      "Place it as high up as possible (the top folder of the drive or share), unless this "
+                      "folder is also shared on its own, so other computers see it as a top folder.")
+RAM_ONLY = "RAM only · no .helab-root above this folder"
+RAM_ONLY_TOOLTIP = ("No .helab-root at or above this folder, so its statuses, settings and loaded data stay in "
+                    "RAM for this session.\nTo use the disk cache: right-click the top folder of this drive "
+                    "or share › " + PLACE_ROOT_ACTION)
+NEEDS_ROOT_TOOLTIP = "No .helab-root above this folder: " + PLACE_ROOT_ACTION + " first"
+
+
+def marker_path(root: str) -> str:
+    return os.path.join(root, ".helab-root")
+
+
+def data_root_text(cache: FolderCache, path: str) -> str:
+    """The row tooltip's line: which .helab-root the folder uses, or RAM only ("" if not known yet)."""
+    if (root := cache.root_of(path)) is not None:
+        folder, _, label = root
+        return f"Data root: {label or os.path.basename(folder)} · " + (
+            ".helab-root in this folder" if folder == path else marker_path(folder))
+    return "RAM only: no .helab-root above this folder" if cache.no_root(path) is not None else ""
+
+
+def data_root_row(cache: FolderCache, path: str) -> tuple[str, str]:
+    """Folder details' Disk cache row and its tooltip, ("", "") if not known yet."""
+    if (root := cache.root_of(path)) is not None:
+        folder, identifier, label = root
+        name = label or os.path.basename(folder)
+        return (f"⚓ {name} · {marker_path(folder)}",
+                f"Disk cache on, using {marker_path(folder)} (data root “{name}”, {identifier}).\n"
+                "Folders inside it share this identity, whichever drive or share reaches them.")
+    if (detail := cache.no_root(path)) is not None:
+        return RAM_ONLY, f"{RAM_ONLY_TOOLTIP}\n\n{detail}"
+    return "", ""

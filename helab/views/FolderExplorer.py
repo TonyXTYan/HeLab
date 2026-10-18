@@ -20,7 +20,8 @@ from helab.models.StatusReport import StatusReport
 from helab.resources.icons import CHECK_COLOR, LOAD_COLOR, StatusIcons
 from helab.utils.io_service import IORequest
 from helab.utils import large_folder
-from helab.utils.folder_cache import Dataset, store_options
+from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, PLACE_ROOT_ACTION, PLACE_ROOT_TOOLTIP, Dataset,
+                                     marker_path, store_options)
 from helab.utils.number_format import byte_size
 from helab.utils.constants import DEFAULT_LOAD_MODE
 from helab.utils.load_clock import LoadClock
@@ -1128,6 +1129,9 @@ class FolderExplorer(QWidget):
         if request.operation == "cached":
             self._cached_event(request, event)
             return
+        if request.operation == "root_create":
+            self._root_create_event(request, event)
+            return
         if request.operation == "resolve":
             if kind == "resolved":
                 self.open_to_path(event["path"])
@@ -1911,20 +1915,75 @@ class FolderExplorer(QWidget):
             submenu.addAction("Custom depth…", lambda: self._choose_scan_depth_for(path))
         menu.addAction("Load data", lambda: self.queue_load(path))
         prefs = self.model.cache.folder_prefs(path)
+        # Folder flags and cached data live in the disk cache: a RAM-only folder has neither.
+        ram_only = self.model.cache.no_root(path) is not None
         for key, label in (("no_cache", "Don't cache this folder"), ("no_auto_load", "Don't auto-load this folder")):
             flag = menu.addAction(label)
             if flag:
                 flag.setCheckable(True)
                 flag.setChecked(prefs[key])
-                flag.setToolTip("This folder only, never its subfolders")
+                flag.setToolTip(NEEDS_ROOT_TOOLTIP if ram_only else "This folder only, never its subfolders")
+                flag.setEnabled(not ram_only)
                 flag.toggled.connect(lambda on, k=key: self.set_folder_flag(path, k, on))
-        menu.addAction("Clear loaded data cache", lambda: self.clear_data_cache(path))
+        clear = menu.addAction("Clear loaded data cache", lambda: self.clear_data_cache(path))
+        if clear and ram_only:
+            clear.setEnabled(False)
+            clear.setToolTip(NEEDS_ROOT_TOOLTIP)
+        menu.addSeparator()
+        place = menu.addAction(PLACE_ROOT_ACTION, lambda: self.place_root(path))
+        if place:
+            enabled, tooltip = self.place_root_state(path)
+            place.setEnabled(enabled)
+            place.setToolTip(tooltip)
+        menu.setToolTipsVisible(True)
         cancel_action = menu.addAction("Cancel Loading", self.cancel_loading)
         if cancel_action:
             cancel_action.setEnabled(self.can_cancel_loading)
         viewport = self.tree.viewport()
         if viewport:
             menu.exec(viewport.mapToGlobal(position))
+
+    def place_root_state(self, path: str) -> tuple[bool, str]:
+        """Whether Place .helab-root here… is offered for this folder, and its tooltip (memory only)."""
+        cache = self.model.cache
+        if not store_options():
+            return False, "The disk cache is off for this session"
+        root = cache.root_of(path)
+        if root is not None and root[0] == path:
+            return False, "This folder already has a .helab-root"
+        if root is not None:
+            return True, (f"Inside data root “{root[2] or os.path.basename(root[0])}” ({marker_path(root[0])}). "
+                          "A .helab-root here would give this folder its own identity.")
+        return True, PLACE_ROOT_TOOLTIP
+
+    def place_root(self, path: str) -> bool:
+        """Right-click › Place .helab-root here…: confirm (with the checks' warnings), then write the
+        marker in the chosen folder, or adopt the one there. Whether it was submitted."""
+        from helab.views.DataRootDialogs import ask_place_root
+        if self.closed or not store_options():
+            return False
+        target = ask_place_root(self, self.model.cache, path)
+        if target is None:
+            return False
+        return self.model.cache.submit(self.model.owner, self.model.generation, target, "root_create",
+                                       {"cache": store_options()}, priority=True)
+
+    def _root_create_event(self, request: IORequest, event: dict[str, Any]) -> None:
+        from helab.views.DataRootDialogs import TITLE, ManualMarkerDialog
+        kind, path = event["kind"], request.path
+        if kind == "root_manual":
+            # Non-modal: the user places the file, then Retry / Refresh finds it.
+            ManualMarkerDialog(self, str(event["path"]), str(event["name"]), str(event["contents"]),
+                               str(event.get("reason", ""))).show()
+        elif kind in ("root_created", "root_adopted"):
+            # Its listing (and the subfolders' saved results) under the new root.
+            self.refresh_folder(path)
+        elif kind == "error":
+            box = QMessageBox(QMessageBox.Icon.Warning, TITLE,
+                              f"{path}\n\n{event.get('message', 'The .helab-root could not be placed')}", parent=self)
+            box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            box.open()
+        self._update_activity()
 
     def auto_load_off(self, path: str | None) -> bool:
         """The user chose not to auto-load this folder, and its data isn't open here."""

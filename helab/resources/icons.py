@@ -135,6 +135,7 @@ class StatusIcons:
         'cached_older',
         'status_cache_older',
         'scan_failed',
+        'data_root',
         'device_floppy',
         'device_sd_card',
         'device_usb',
@@ -173,6 +174,7 @@ class StatusIcons:
         'cached_older':  15,
         'status_cache_older': 16,
         'scan_failed': 10,
+        'data_root': 9,
         'device_floppy': 14,
         'device_sd_card': 15,
         'device_usb':    16,
@@ -229,6 +231,7 @@ class StatusIcons:
     ICON_CACHED_OLDER = QIcon()
     ICON_STATUS_CACHE_OLDER = QIcon()
     ICON_SCAN_FAILED = QIcon()
+    ICON_DATA_ROOT = QIcon()
     # Folder flags (the user's choice): not cached, not auto-loaded.
     ICON_NO_CACHE = QIcon()
     ICON_NO_AUTO_LOAD = QIcon()
@@ -312,6 +315,8 @@ class StatusIcons:
         StatusIcons.ICON_CACHED = tablerIcon(OutlineIcon.PACKAGE, '#888888')
         StatusIcons.ICON_SCAN_FAILED = tablerIcon(OutlineIcon.ZOOM_EXCLAMATION, '#c48618')
         StatusIcons.ICON_NO_CACHE = tablerIcon(OutlineIcon.DATABASE_OFF, '#888888')
+        # The folder holds a .helab-root: it and its subfolders use the disk cache under that identity.
+        StatusIcons.ICON_DATA_ROOT = tablerIcon(OutlineIcon.ANCHOR, '#3989c9')
         StatusIcons.ICON_NO_AUTO_LOAD = tablerIcon(OutlineIcon.PLAYER_PAUSE, '#888888')
         StatusIcons.ICON_CACHED_OLDER = _badged_icon(
             StatusIcons.ICON_CACHED, clock)
@@ -353,6 +358,7 @@ class StatusIcons:
             'cached_older': StatusIcons.ICON_CACHED_OLDER,
             'status_cache_older': StatusIcons.ICON_STATUS_CACHE_OLDER,
             'scan_failed': StatusIcons.ICON_SCAN_FAILED,
+            'data_root': StatusIcons.ICON_DATA_ROOT,
             'no_cache': StatusIcons.ICON_NO_CACHE,
             'no_auto_load': StatusIcons.ICON_NO_AUTO_LOAD,
             'device_floppy': StatusIcons.ICON_DEVICE_FLOPPY,

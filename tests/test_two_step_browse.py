@@ -1083,8 +1083,10 @@ def test_tooltips_share_one_layout_for_leaf_and_busy_folders(
     saved = tooltip().splitlines()
     assert saved[1:3] == ["Here: 2 shots, all converted", "Subfolders: none"]
     assert saved[3].startswith("Folder modified: 20")
-    assert saved[4].startswith("Status cache: ") and saved[4].endswith(") · folder not modified since")
-    assert saved[5:] == ["Select the folder to check it again."]
+    # The .helab-root it uses: the tab's folder (the test's data root) holds it.
+    assert saved[4] == f"Data root: {tmp_path.name} · {tmp_path / '.helab-root'}"
+    assert saved[5].startswith("Status cache: ") and saved[5].endswith(") · folder not modified since")
+    assert saved[6:] == ["Select the folder to check it again."]
     # Busy: a start time (an open tooltip is not rebuilt while the mouse rests), no outdated hint or action.
     model.request_scan(str(leaf), priority=True)
     qtbot.waitUntil(lambda: ("list", str(leaf)) in model.cache.jobs)
@@ -1094,8 +1096,9 @@ def test_tooltips_share_one_layout_for_leaf_and_busy_folders(
     assert busy[2:4] == ["Here: 2 shots, all converted", "Subfolders: none"] and "Select the folder" not in busy[-1]
     replay(qtbot, model.cache, str(leaf), "list", lambda send: list_folder(str(leaf), send, model._cache_options))
     lines = tooltip().splitlines()
-    assert lines[1:3] == ["Here: 2 shots, all converted", "Subfolders: none"] and len(lines) == 5
-    assert lines[4].startswith("Status checked: ") and lines[4].endswith(")")  # No freshness note.
+    assert lines[1:3] == ["Here: 2 shots, all converted", "Subfolders: none"] and len(lines) == 6
+    assert lines[4].startswith("Data root: ")
+    assert lines[5].startswith("Status checked: ") and lines[5].endswith(")")  # No freshness note.
     restarted.close_cleanup()
 
 
