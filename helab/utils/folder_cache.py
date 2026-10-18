@@ -8,7 +8,7 @@ import logging
 import math
 import os
 import time
-from typing import Any
+from typing import Any, Iterable
 from uuid import uuid4
 
 import numpy as np
@@ -25,7 +25,7 @@ from helab.utils.constants import (
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.load_clock import LoadClock
 from helab.utils.time_format import clock as clock_text
-from helab.utils.scan_history import ScanHistory, empty_history, parse_history, apply_outcome, for_identity, folder_identity
+from helab.utils.scan_history import ScanHistory, empty_history, parse_history, apply_outcome
 
 
 # Folder checks that list a folder: browse step 1 (names only), browse step 2
@@ -125,6 +125,8 @@ class FolderCache(QObject):
     # A flag couldn't be saved (path, why, the owner that set it); memory shows the saved state again.
     folderPrefsFailed = pyqtSignal(str, str, str)
     subtreeChanged = pyqtSignal(str)
+    savedRefreshed = pyqtSignal(str)
+    mountWarningChanged = pyqtSignal(str)
     # A removal from the disk cache: paths (None: every path) and the kinds removed.
     cacheRemoved = pyqtSignal(object, object)
     # Pending saves (waiting for Make room / Save update) were added or answered.
@@ -234,9 +236,10 @@ class FolderCache(QObject):
         self.scan_history_errors: dict[str, str] = {}
         # A listing or scan that couldn't read the disk cache: its saved flags are unknown.
         self.cache_read_errors: OrderedDict[str, str] = OrderedDict()
+        # One unsupported-network notice per mount for this session.
+        self.mount_warnings: dict[str, tuple[str, str]] = {}
         # Native icons (including unsuccessful lookups) are session-only and bounded.
         self.folder_icons: OrderedDict[str, QIcon] = OrderedDict()
-        self._history_identity_dates: dict[str, float] = {}
         self._history_writes: dict[str, str] = {}
         # Statuses derived from subfolders, newest per folder; status "" marks a removal.
         # Saved by one batched helper write at a time, after a short delay.
@@ -317,6 +320,48 @@ class FolderCache(QObject):
         while len(self.scan_summaries) > self.MAX_SNAPSHOTS:
             self.scan_summaries.popitem(last=False)
 
+    def refresh_saved(self, paths: Iterable[str]) -> None:
+        """Let a toolbar relisting replace these paths' RAM status with its saved records."""
+        keys = {self.key(path) for path in paths}
+        for path in keys:
+            self.scan_summaries.pop(path, None)
+            self.scan_histories.pop(path, None)
+            self.scan_history_errors.pop(path, None)
+            self.subtrees.pop(path, None)
+            self._subtree_pending.pop(path, None)
+            self.snapshots.pop(path, None)
+        for dataset in (*self.datasets.values(), *self.pins.values()):
+            if dataset.path in keys:
+                dataset.metadata["checked_at"] = float("-inf")
+        for path in keys:
+            self.savedRefreshed.emit(path)
+
+    def mount_warning(self, path: str) -> tuple[str, str] | None:
+        matches = [(mount, warning) for mount, warning in self.mount_warnings.items()
+                   if path == mount or path.startswith(mount.rstrip("/\\") + os.sep)]
+        return max(matches, key=lambda item: len(item[0]))[1] if matches else None
+
+    def _remember_mount_warning(self, event: dict[str, Any]) -> None:
+        for mount in event.get("mounts", []):
+            path = str(mount["path"])
+            if path in self.mount_warnings:
+                continue
+            kind = str(mount["type"])
+            label = {"nfs": "NFS", "nfs4": "NFS", "afpfs": "AFP", "webdav": "WebDAV",
+                     "davfs": "WebDAV"}.get(kind.lower(), kind.upper())
+            short = ("Disk cache off: this SMB drive's share couldn't be identified"
+                     if kind == "unidentified SMB" else
+                     f"Disk cache off: only SMB network drives are supported (this is {label})")
+            detail = f"{short}\n{mount['detail']}\nMount: {path}. Browsing and source checks still work."
+            self.mount_warnings[path] = (short, detail)
+            self.mountWarningChanged.emit(path)
+
+    def _clear_mount_warning(self, path: str) -> None:
+        for mount in list(self.mount_warnings):
+            if path == mount or path.startswith(mount.rstrip("/\\") + os.sep):
+                del self.mount_warnings[mount]
+                self.mountWarningChanged.emit(mount)
+
     def subtree(self, path: str, saved: object = None) -> dict[str, Any] | None:
         """The newest derived status for the folder: this session's or ``saved`` (from a listing)."""
         current = self.subtrees.get(path)
@@ -365,35 +410,21 @@ class FolderCache(QObject):
     def scan_history(self, path: str) -> ScanHistory:
         return self.scan_histories.get(self.key(path), empty_history())
 
-    def remember_history(self, path: str, value: object, *, identity: object = None,
-                         observed_at: float = 0) -> None:
+    def remember_history(self, path: str, value: object) -> None:
         path = self.key(path)
         current = self.scan_histories.get(path)
-        observed = folder_identity(identity)
-        if observed is not None:
-            if observed_at < self._history_identity_dates.get(path, 0):
-                return
-            self._history_identity_dates[path] = observed_at
-            if current is not None:
-                current = for_identity(current, observed)
-                self.scan_histories[path] = current
         if value is None and current is None:
             return
         history = parse_history(value) if value is not None else current
         if history is None:
             return
-        if observed is not None:
-            history = for_identity(history, observed)
-        if current is not None and (current["revision"] > history["revision"] or
-                current["identity"] is not None and history["identity"] is not None
-                and current["identity"] != history["identity"]):
+        if current is not None and current["revision"] > history["revision"]:
             return
         self.scan_histories[path] = history
         self.scan_histories.move_to_end(path)
         while len(self.scan_histories) > 4096:
             removed, _ = self.scan_histories.popitem(last=False)
             self.scan_history_errors.pop(removed, None)
-            self._history_identity_dates.pop(removed, None)
         self.scanHistoryChanged.emit(path)
 
     def _record_scan_outcome(self, job: SharedJob, event: dict[str, Any], *, success: bool = False) -> None:
@@ -404,11 +435,7 @@ class FolderCache(QObject):
             "kind": "success" if success else "timeout" if event.get("timeout") else "io_error",
             "at": job.status.get("scanned_at", time.time()) if success and job.status else time.time(),
             "attempts": event.get("attempt", job.attempt),
-            "reason": event.get("message", "Folder status check failed").removesuffix(" — Retry"),
-            "identity": job.status.get("identity") if success and job.status else job.payload.get("identity")}
-        if (not success and history["identity"] is not None and outcome["identity"] is not None
-                and history["identity"] != outcome["identity"]):
-            return  # The failed job belonged to a directory replaced at this path.
+            "reason": event.get("message", "Folder status check failed").removesuffix(" — Retry")}
         self.remember_history(job.path, apply_outcome(history, outcome))
         # Successful helpers persist their result before done. Compatibility
         # producers only need a write when recovering an existing failure.
@@ -998,9 +1025,9 @@ class FolderCache(QObject):
         snapshot = self.snapshots.get(path)
         if (snapshot and not snapshot.status.get("signature")
                 and snapshot.status.get("txy") == status["txy"] and snapshot.status.get("raw") == status["raw"]):
-            # Subfolder dates and identities still need the details scan.
+            # Subfolder dates still need the details scan.
             snapshot.status = {**snapshot.status, **{key: status[key] for key in (
-                "signature", "identity", "modified")}, "details": not status["has_dirs"]}
+                "signature", "modified")}, "details": not status["has_dirs"]}
         elif (snapshot and snapshot.status.get("signature") != status["signature"]
               and float(status.get("scanned_at") or 0) > float(snapshot.status.get("scanned_at") or 0)):
             # The folder changed after its details scan, and this load listed it later: its
@@ -1133,7 +1160,6 @@ class FolderCache(QObject):
         self.scan_history_errors.clear()
         self.cache_read_errors.clear()
         self.folder_icons.clear()
-        self._history_identity_dates.clear()
         self._subtree_timer.stop()
         self.subtrees.clear()
         self._subtree_pending.clear()
@@ -1451,6 +1477,9 @@ class FolderCache(QObject):
                                      "" if kind == "done" else str(event.get("message") or "Cancelled"))
 
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        if event["kind"] == "cache_skipped":
+            self._remember_mount_warning(event)
+            return
         if producer.owner in self._admin:
             self._on_admin_event(producer, event)
             return
@@ -1612,8 +1641,13 @@ class FolderCache(QObject):
             if kind == "entries":
                 event = {**event, "entries": [self._fresh_entry(job, entry) for entry in event["entries"]]}
                 for entry in event["entries"]:
-                    self.remember_history(entry["path"], entry.get("scan_history"), identity=entry.get("identity"),
-                                          observed_at=entry.get("modified_observed_at", time.time()))
+                    if entry.get("saved_read"):
+                        self._clear_mount_warning(entry["path"])
+                if job.operation == "list" and any(
+                        request.payload.get("refresh_sequence") for request in job.subscribers.values()):
+                    self.refresh_saved(entry["path"] for entry in event["entries"] if entry.get("saved_read"))
+                for entry in event["entries"]:
+                    self.remember_history(entry["path"], entry.get("scan_history"))
                     if entry.get("scan_status"):
                         self.remember_scan(entry["path"], entry["scan_status"])
                     if entry.get("subtree"):
@@ -1635,11 +1669,22 @@ class FolderCache(QObject):
                         self.resultReady.emit(request, {"kind": "error", "message": "Folder exceeds snapshot entry limit"})
                 return
             if kind == "status":
+                saved_root = event.get("saved_root")
+                if isinstance(saved_root, dict) and saved_root.get("saved_read"):
+                    self._clear_mount_warning(job.path)
+                if job.operation == "list" and any(
+                        request.payload.get("refresh_sequence") for request in job.subscribers.values()):
+                    if isinstance(saved_root, dict) and saved_root.get("saved_read"):
+                        self.refresh_saved([job.path])
+                        self.remember_history(job.path, saved_root["scan_history"])
+                        if saved_root.get("scan_status"):
+                            self.remember_scan(job.path, saved_root["scan_status"])
+                        if saved_root.get("subtree"):
+                            self.remember_subtree(job.path, saved_root["subtree"], notify=False)
                 if not job.cache_warning and job.path in self.cache_read_errors:
                     del self.cache_read_errors[job.path]
                     self.scanHistoryChanged.emit(job.path)
-                self.remember_history(job.path, None, identity=event.get("identity"),
-                                      observed_at=event.get("scanned_at", time.time()))
+                self.remember_history(job.path, None)
                 if "disk_cached" in event and not self._cleared_since(job, job.path):
                     self._observe_cache(job.path, event)
                 job.status = event

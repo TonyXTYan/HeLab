@@ -42,9 +42,11 @@ startup, holding up all other I/O.
   mark the scan failed).
 - Stored in the disk cache's `scan_histories` table, written
   only by isolated helpers. Keeps the latest 10 failures, ordered by a scan
-  revision (not wall-clock time) and tied to the folder's `(st_dev, st_ino)`
-  identity. A delayed write, or a different folder now at the same path, can't
-  restore old suppression.
+  revision (not wall-clock time) and keyed by folder path within its SMB share
+  (or by local path on ordinary volumes). A delayed write cannot restore old
+  suppression after a later successful check. Mount device and inode numbers
+  do not reset a failure. A record saved under a plain path while a share is
+  unmounted is not used after an SMB share mounts at that path.
 - A flagged folder skips **every automatic entry point**: startup, scrolling,
   toggling auto-scan, and snapshot revalidation. The saved state is read before
   any work is scheduled. Last successful counts, status, and loaded data are

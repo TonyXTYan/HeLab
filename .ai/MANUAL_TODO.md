@@ -37,10 +37,38 @@ The v0.0.5a checks below were added on 2026-10-08 and remain pending.
   time-left estimate (settles within a few seconds, stays steady, excludes
   paused time) and the short status bar. Added 2026-10-09.
 
-- [ ] Check whether `/Volumes/dld_output`'s `st_dev` changes across unmount/
-  remount (`python -c "import os;print(os.stat('/Volumes/dld_output').st_dev)"`
-  before and after). If it changes, saved summaries and failure history are
-  dropped on every remount ([audit](sessions/2026-10-10-claude-cache-audit/notes.md), finding 9). Added 2026-10-10.
+- [x] Confirm `/Volumes/dld_output`'s `st_dev` changes across mounts. A read-only
+  comparison of saved identities with the mounted folders found hundreds of
+  device-only differences; the cache no longer uses those IDs for status
+  validity ([investigation](sessions/2026-10-15-codex-status-remount/notes.md)).
+- [ ] Before first launching the account-independent SMB-key build, quit HeLab
+  and move `store-v2` from the active cache directory to the Trash for a fresh
+  store. Alternatively, launch the new build, answer Don't cache to any old
+  pending-save prompts, then use Settings → Cache → Clear all and the separate
+  Folder preferences Clear action. Repeat on each lab PC being upgraded;
+  HeLab does not remove the old cache itself.
+- [ ] Restart the native GUI with `/Volumes/dld_output` mounted: after one
+  completed check has saved share-keyed records, saved status icons and
+  blocked-scan badges should remain across a remount, changed folder mtimes
+  should show an amber clock, and automatic visible scanning should not recheck
+  those saved statuses ([investigation](sessions/2026-10-15-codex-status-remount/notes.md)).
+- [ ] Remount two disposable SMB shares in opposite orders on a test volume and
+  restart the native GUI: each share should retain only its own status, scan
+  history, preferences and datasets. After the cache clear, each share's first
+  visit should build its own saved records.
+  Also remount while HeLab stays open: when the saved records can be read,
+  toolbar Refresh should replace the shown branches' saved badges and mark RAM
+  data unchecked; restart still refreshes paths outside those branches and
+  other tabs' loaded data.
+- [ ] On a Windows lab PC, verify a mixed-case mapped folder and its UNC spelling
+  resolve to the same cache record and that Clear, Make room and pending-save
+  dialogs return the folder's original path spelling. With a disconnected mapped
+  drive, time mount lookup and print `_windows_mounts()` with the drive both
+  connected and disconnected (Explorer red X). Confirm WNetGetConnectionW gives
+  the share name or fails safely, browsing does not block or record a scan
+  failure, and repeated cache warnings do not flood the tab line or tooltip.
+  On a disposable NFS/AFP/WebDAV mount, confirm one short Disk cache off line
+  with the mount type and full tooltip detail, while browsing still works.
 
 ## v0.0.5a: cache rebuild (native checks, added 2026-10-11)
 

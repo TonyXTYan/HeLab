@@ -77,7 +77,7 @@ def test_new_store_is_versioned_and_readable_with_sqlite(store: CacheStore, root
         meta = dict(conn.execute("SELECT key, value FROM meta"))
         saved = conn.execute("SELECT record, identity FROM folder_summaries").fetchone()
     assert json.loads(meta["layout_version"]) == 2 and all(meta[f"gen_{kind}"] == "0" for kind in KINDS)
-    assert json.loads(saved[0]) == {"status": "ok", "identity": [1, 2]} and json.loads(saved[1]) == [1, 2]
+    assert json.loads(saved[0]) == {"status": "ok", "identity": [1, 2]} and saved[1] is None
     with CacheStore(root) as again:
         assert again.store_id == store.store_id
 

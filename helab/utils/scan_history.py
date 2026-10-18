@@ -25,7 +25,6 @@ class ScanHistory(TypedDict):
     blocked: bool
     last_success_at: float | None
     success_revision: int
-    identity: list[int] | None
     failures: list[ScanFailure]
     starts: dict[str, int]
 
@@ -35,15 +34,8 @@ HISTORY_LIMIT = 10
 
 def empty_history() -> ScanHistory:
     return {"version": 1, "sequence": 0, "revision": 0, "blocked": False,
-            "last_success_at": None, "success_revision": 0, "identity": None,
+            "last_success_at": None, "success_revision": 0,
             "failures": [], "starts": {}}
-
-
-def folder_identity(value: object) -> list[int] | None:
-    if (isinstance(value, (list, tuple)) and len(value) == 2
-            and all(type(v) is int and v >= 0 for v in value)):
-        return list(value)
-    return None
 
 
 def parse_history(value: object) -> ScanHistory | None:
@@ -71,7 +63,7 @@ def parse_history(value: object) -> ScanHistory | None:
     if not isinstance(starts, dict) or not all(isinstance(k, str) and type(v) is int and v > 0
                                               for k, v in starts.items()):
         return None
-    history = cast(ScanHistory, {**value, "identity": folder_identity(value.get("identity")),
+    history = cast(ScanHistory, {**{key: item for key, item in value.items() if key != "identity"},
         "last_success_at": metadata_date(value.get("last_success_at")),
         "starts": dict(starts), "failures": sorted(failures.values(), key=lambda f: f["revision"])[-HISTORY_LIMIT:]})
     if history["blocked"] and not history["failures"]:
@@ -100,16 +92,6 @@ def read_histories(store: CacheStore, paths: list[str]) -> dict[str, ScanHistory
             for path, found in store.read_records("histories", paths).items()}
 
 
-def for_identity(history: ScanHistory, identity: object) -> ScanHistory:
-    observed = folder_identity(identity)
-    if observed is not None and history["identity"] is not None and observed != history["identity"]:
-        # A different directory at the same path owns a new history. Keep the
-        # ordering counter so delayed writes for the old directory stay older.
-        return {**empty_history(), "sequence": history["sequence"], "revision": history["revision"],
-                "identity": observed}
-    return {**history, "identity": observed} if observed is not None else history
-
-
 class ScanSkipped(Exception):
     """A scan that is not manual found its folder blocked (or, if automatic, its history unreadable)."""
 
@@ -119,18 +101,15 @@ class ScanSkipped(Exception):
 
 
 def begin_scan(store: CacheStore, path: str, operation_id: str, revision: int, guard: SaveGuard,
-               identity: object = None, *, manual: bool = True,
-               automatic: bool = False) -> tuple[ScanHistory, int]:
+               *, manual: bool = True, automatic: bool = False) -> tuple[ScanHistory, int]:
     with store.transaction():
         # Decided here, under the write lock, from a read that raises on error.
         found = _saved(store, path)
-        if found is not None:
-            found = for_identity(found, identity)
         if not manual and (found["blocked"] if found is not None else automatic):
             raise ScanSkipped(found)
         # A manual or details check repairs malformed metadata; real read errors
         # still propagate.
-        history = found or for_identity(empty_history(), identity)
+        history = found or empty_history()
         starts = dict(history["starts"])
         issued = starts.get(operation_id, max(revision, history["sequence"] + 1))
         starts[operation_id] = issued
@@ -142,11 +121,6 @@ def begin_scan(store: CacheStore, path: str, operation_id: str, revision: int, g
 
 def apply_outcome(history: ScanHistory, outcome: dict[str, Any]) -> ScanHistory:
     revision = int(outcome["revision"])
-    identity = folder_identity(outcome.get("identity"))
-    if identity is not None and history["identity"] is not None and identity != history["identity"]:
-        if revision <= history["revision"] or revision < history["sequence"]:
-            return history
-        history = for_identity(history, identity)
     updated: ScanHistory = {**history, "sequence": max(history["sequence"], revision),
                            "failures": list(history["failures"]), "starts": dict(history["starts"])}
     if outcome["kind"] == "success":
@@ -163,8 +137,6 @@ def apply_outcome(history: ScanHistory, outcome: dict[str, Any]) -> ScanHistory:
     if revision >= history["revision"]:
         updated["revision"] = revision
         updated["blocked"] = outcome["kind"] != "success"
-        if identity is not None:
-            updated["identity"] = identity
     return updated
 
 

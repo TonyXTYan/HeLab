@@ -368,6 +368,7 @@ class FolderExplorer(QWidget):
         self.model.cache.autoLoadPauseChanged.connect(self._auto_load_pause_changed)
         self.model.cache.folderPrefsChanged.connect(self._folder_prefs_changed)
         self.model.cache.folderPrefsFailed.connect(self._folder_prefs_failed)
+        self.model.cache.mountWarningChanged.connect(self._mount_warning_changed)
         self.model.activityChanged.connect(self._update_activity)
         self.animation = QTimer(self)
         self.animation.timeout.connect(self._animate)
@@ -1378,6 +1379,9 @@ class FolderExplorer(QWidget):
         large = self.large_state(self.selected_path_globally)
         if large is not None and not self.loading:
             return large_text(*large)
+        warning = self.model.cache.mount_warning(self.selected_path_globally)
+        if warning is not None:
+            return warning[0]
         return ""
 
     @property
@@ -1398,6 +1402,8 @@ class FolderExplorer(QWidget):
         reason = self.load_cache_warning or self.load_cache_reason
         if reason:
             parts.append(reason)
+        if warning := self.model.cache.mount_warning(self.selected_path_globally):
+            parts.append(warning[1])
         return "\n\n".join(parts)
 
     def _update_activity(self) -> None:
@@ -1420,7 +1426,12 @@ class FolderExplorer(QWidget):
         self.activity_tooltip = ("Loading in the background:\n" + "\n".join(
             f"{path} ({self.model.load_states.get(path) or 'queued'})" for path in self._bg_paths)
             if self._bg_paths else "")
+        if warning := self.model.cache.mount_warning(self.selected_path_globally):
+            self.activity_tooltip = "\n\n".join(filter(None, (self.activity_tooltip, warning[1])))
         self.activity_busy = bool(requests or self.loading or self._bg_paths or self._basic_active)
+
+    def _mount_warning_changed(self, _path: str) -> None:
+        self._update_activity()
 
     def _basic_progress(self) -> str:
         """Submitted folders may still be queued or paused; only started ones are scanning."""
@@ -1601,6 +1612,7 @@ class FolderExplorer(QWidget):
                 load_details += "\nLoaded data belongs to the previous folder contents. Load data to update it."
         self.folder_summary_label.setToolTip("\n".join(filter(None, (
             path, load_details, scan_error, self.load_error, self.loading_tooltip,
+            (mount_notice[1] if (mount_notice := self.model.cache.mount_warning(path)) else ""),
             (REFUSED_TOOLTIP if large[1] else LARGE_TOOLTIP) if large else ""))))
         self._update_cache_summary(path, report)
         checked_at = node.checked_at if node else 0
@@ -2106,6 +2118,7 @@ class FolderExplorer(QWidget):
         self.model.cache.autoLoadPauseChanged.disconnect(self._auto_load_pause_changed)
         self.model.cache.folderPrefsChanged.disconnect(self._folder_prefs_changed)
         self.model.cache.folderPrefsFailed.disconnect(self._folder_prefs_failed)
+        self.model.cache.mountWarningChanged.disconnect(self._mount_warning_changed)
         self.model.cache.release(self.model.owner)
         self.folder_opened_data = None
         self.displayed_dataset = None

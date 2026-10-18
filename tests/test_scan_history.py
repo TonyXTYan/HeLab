@@ -15,7 +15,7 @@ from helab.utils.folder_cache import FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.cache_store import CacheStore
 from helab.utils.scan_history import (
-    ScanHistory, apply_outcome, begin_scan, empty_history, for_identity,
+    ScanHistory, apply_outcome, begin_scan, empty_history,
     history_tooltip, read_history, write_outcome,
 )
 from helab.views.FolderExplorer import FolderExplorer
@@ -25,15 +25,13 @@ def options_for(tmp_path: Path) -> dict[str, Any]:
     return {"directory": str(tmp_path / "cache")}
 
 
-def failure(operation: str, revision: int, *, identity: list[int] | None = None) -> dict[str, Any]:
+def failure(operation: str, revision: int) -> dict[str, Any]:
     return {"operation_id": operation, "revision": revision, "kind": "timeout",
-            "at": time.time() - 7200, "attempts": 3, "reason": "I/O timeout (3 attempts)",
-            "identity": identity}
+            "at": time.time() - 7200, "attempts": 3, "reason": "I/O timeout (3 attempts)"}
 
 
-def begin(store: CacheStore, path: str, operation_id: str, revision: int,
-          identity: object = None) -> tuple[ScanHistory, int]:
-    return begin_scan(store, path, operation_id, revision, store.guard([path], ("histories",)), identity)
+def begin(store: CacheStore, path: str, operation_id: str, revision: int) -> tuple[ScanHistory, int]:
+    return begin_scan(store, path, operation_id, revision, store.guard([path], ("histories",)))
 
 
 def outcome(store: CacheStore, path: str, value: dict[str, Any]) -> ScanHistory:
@@ -63,11 +61,11 @@ def run_scan(cache: FolderCache, path: str, operation: str = "scan") -> None:
     def send(event: dict[str, Any]) -> None:
         cache.service.resultReady.emit(request, event)
     if operation == "list":
-        list_folder(path, send, payload.get("cache"), identity=payload.get("identity"))
+        list_folder(path, send, payload.get("cache"))
     else:
         scan(path, send, payload.get("cache"), manual=payload.get("scan_manual", False),
              automatic=payload.get("automatic", False), operation_id=payload["scan_operation_id"],
-             revision=payload["scan_revision"], identity=payload.get("identity"))
+             revision=payload["scan_revision"])
     cache.service.resultReady.emit(request, {"kind": "done"})
     cache.service.pending.remove(request)
 
@@ -112,17 +110,18 @@ def test_retry_history_is_deduplicated_bounded_and_ordered(tmp_path: Path) -> No
         assert "later scan succeeded" in history_tooltip(restored, time.time())
 
 
-def test_folder_replacement_rejects_old_outcomes(tmp_path: Path) -> None:
-    old = apply_outcome(empty_history(), failure("old", 10, identity=[1, 2]))
-    replaced = for_identity(old, [1, 3])
-    assert not replaced["blocked"] and not replaced["failures"]
-    assert apply_outcome(replaced, failure("late-old", 10, identity=[1, 2])) == replaced
+def test_legacy_identity_does_not_reset_blocked_history(tmp_path: Path) -> None:
+    old = apply_outcome(empty_history(), failure("old", 10))
+    old_record = {**old, "identity": [1, 2]}
     options = options_for(tmp_path)
     with CacheStore(options["directory"]) as cache:
-        save_history(cache, "folder", dict(old))
-        started, new_revision = begin(cache, "folder", "replacement", 12, [1, 3])
-        late = outcome(cache, "folder", failure("retired-old", 11, identity=[1, 2]))
-        assert late == started and new_revision == 12
+        save_history(cache, "folder", old_record)
+        restored = read_history(cache, "folder")
+        assert restored is not None and restored["blocked"] and "identity" not in restored
+        started, new_revision = begin(cache, "folder", "manual-check", 12)
+        assert started["blocked"] and new_revision == 12
+        late = outcome(cache, "folder", failure("retired-old", 11))
+        assert late["blocked"]
 
 
 @pytest.mark.parametrize("had_counts", [False, True])
@@ -276,9 +275,8 @@ def test_visible_folder_restores_failure_before_selection_load_and_manual_recove
         "cache": options, "signature": explorer.model.nodes[p].signature})
     if had_counts:
         scan(path, lambda e: None, options, revision=10)
-    stat = child.stat()
     with CacheStore(options["directory"]) as disk:
-        outcome(disk, path, failure("saved-failure", 11, identity=[stat.st_dev, stat.st_ino]))
+        outcome(disk, path, failure("saved-failure", 11))
     browse(qtbot, cache, str(root))
     qtbot.waitUntil(lambda: path in explorer.model.nodes)
     node = explorer.model.nodes[path]
@@ -344,18 +342,20 @@ def datetime_date(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp).astimezone().strftime("%Y-%m-%d")
 
 
-def test_identity_observations_and_late_writer_cannot_restore_old_folder_failure(
+def test_late_history_cannot_restore_old_folder_failure(
     qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = frozen_service(monkeypatch)
     cache, path = get_folder_cache(service), str(tmp_path)
-    old = apply_outcome(empty_history(), failure("old", 10, identity=[1, 2]))
-    cache.remember_history(path, old, identity=[1, 2], observed_at=100)
-    cache.remember_history(path, old, identity=[1, 3], observed_at=200)
-    assert not cache.scan_history(path)["blocked"]
-    cache.remember_history(path, old, identity=[1, 2], observed_at=150)
-    cache.remember_history(path, apply_outcome(old, failure("old-writer", 11, identity=[1, 2])))
-    assert not cache.scan_history(path)["blocked"] and cache.scan_history(path)["identity"] == [1, 3]
+    old = apply_outcome(empty_history(), failure("old", 10))
+    cache.remember_history(path, {**old, "identity": [1, 2]})
+    assert cache.scan_history(path)["blocked"]
+    recovered = apply_outcome(old, {"operation_id": "recovered", "revision": 12,
+                                   "kind": "success", "at": time.time()})
+    cache.remember_history(path, recovered)
+    cache.remember_history(path, {**old, "identity": [1, 3]})
+    cache.remember_history(path, apply_outcome(old, failure("old-writer", 11)))
+    assert not cache.scan_history(path)["blocked"] and cache.scan_history(path)["revision"] == 12
     service.shutdown()
 
 

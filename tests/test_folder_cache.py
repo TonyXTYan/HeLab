@@ -658,7 +658,7 @@ def test_rescan_reuses_open_dataset_and_receives_only_new_shots(
     service.shutdown()
 
 
-def test_refresh_relists_expanded_branches_without_checks_or_loads_in_any_tab(
+def test_refresh_relists_expanded_branches_without_loads_in_any_tab(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     service = service_for_test(monkeypatch)
@@ -695,10 +695,7 @@ def test_refresh_relists_expanded_branches_without_checks_or_loads_in_any_tab(
     monkeypatch.setattr(first.model, "viewport_paths",
                         lambda: [str(expanded), str(old_child), str(collapsed)])
     collapsed_node = first.model.nodes[str(collapsed)]
-    collapsed_report = collapsed_node.report
-    summaries = {path: dict(cache.scan_summaries[path]) for path in (root, str(expanded), str(collapsed))}
-    checked = [(explorer.model.nodes[root].signature, explorer.model.nodes[root].scanned_at,
-                explorer.model.nodes[root].checked_at) for explorer in (first, second)]
+    assert collapsed_node.report is not None
     arrays = [explorer.folder_opened_data for explorer in (first, second)]
     # A changed shot list would normally restart the selected root's load in tab 2.
     (tmp_path / "d_txy_forc2.txt").write_text("4,5,6\n")
@@ -722,12 +719,14 @@ def test_refresh_relists_expanded_branches_without_checks_or_loads_in_any_tab(
     assert first.tree.isExpanded(first.model.path_index(str(expanded)))
     assert first.selected_path_globally == str(collapsed)
     assert first.model.nodes[str(collapsed)] is collapsed_node
-    assert collapsed_node.report is collapsed_report
-    assert summaries == {path: dict(cache.scan_summaries[path]) for path in summaries}
+    assert collapsed_node.report is None  # The relisting found no saved result for this path.
+    assert not any(path in cache.scan_summaries for path in (root, str(expanded), str(collapsed)))
     for i, explorer in enumerate((first, second)):
         node = explorer.model.nodes[root]
-        assert (node.signature, node.scanned_at, node.checked_at) == checked[i]
+        assert (node.signature, node.scanned_at, node.checked_at) == ("", None, 0)
         assert explorer.folder_opened_data is arrays[i]
+    dataset = cache.current_dataset(root)
+    assert dataset is not None and not cache.counts_as_checked(dataset, dataset.signature)
     assert not [request for request in service.pending if request.operation in ("list", "scan", "load")]
     # Afterwards only folders with new subfolders get details, for their dates.
     qtbot.waitUntil(lambda: any(request.operation == "details" for request in service.pending))
@@ -735,6 +734,37 @@ def test_refresh_relists_expanded_branches_without_checks_or_loads_in_any_tab(
         root, str(expanded)}
     first.close_cleanup()
     second.close_cleanup()
+    service.shutdown()
+
+
+def test_unsupported_mount_warning_is_short_and_once_per_mount(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = service_for_test(monkeypatch)
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    remote = str(tmp_path / "remote")
+    (tmp_path / "remote").mkdir()
+    explorer = explorer_for_test(qtbot, str(tmp_path))
+    cache = explorer.model.cache
+    qtbot.waitUntil(lambda: ("list", str(tmp_path)) in cache.jobs)
+    finish_scan(cache, str(tmp_path), children=[remote])
+    if ("load", str(tmp_path)) in cache.jobs:
+        finish_load(cache, str(tmp_path))
+    explorer.selected_path_globally = remote
+    notices: list[str] = []
+    cache.mountWarningChanged.connect(notices.append)
+    event = {"kind": "cache_skipped", "paths": [remote], "mounts": [
+        {"path": remote, "type": "nfs", "detail": "NFS mount has no supported disk-cache key"}]}
+    request = IORequest("unsupported", 0, remote, "list", {}, 60)
+    cache._on_event(request, event)
+    cache._on_event(request, event)
+    explorer._update_activity()
+    assert notices == [remote]
+    assert explorer.activity_brief == "Disk cache off: only SMB network drives are supported (this is NFS)"
+    assert "NFS mount has no supported disk-cache key" in explorer.activity_tooltip
+    cache._clear_mount_warning(remote)  # A later successful cache read at this mount clears the notice.
+    assert notices == [remote, remote] and cache.mount_warning(remote) is None
+    explorer.close_cleanup()
     service.shutdown()
 
 

@@ -88,7 +88,7 @@ def _cache_info(info: object) -> dict[str, Any]:
     return {}
 
 
-def _open_store(cache_options: dict[str, Any] | None, send: Emit) -> CacheStore | None:
+def _open_store(cache_options: dict[str, Any] | None, send: Emit, path: str) -> CacheStore | None:
     """The disk cache, or None without one or if it can't be opened.
 
     An opening error is sent as a ``cache_warning``; what the cache holds is then
@@ -96,25 +96,64 @@ def _open_store(cache_options: dict[str, Any] | None, send: Emit) -> CacheStore 
     """
     if not cache_options:
         return None
-    from helab.utils.cache_store import CacheStore, StoreError
+    from helab.utils.cache_paths import UnresolvedRemotePath
+    from helab.utils.cache_store import StoreError
     try:
-        return CacheStore(cache_options["directory"])
+        return _cache_store(cache_options["directory"], [path])
+    except UnresolvedRemotePath as exc:
+        send({"kind": "cache_skipped", "paths": [path], "mounts": [
+            {"path": exc.mount_path, "type": exc.mount_type, "detail": str(exc)}]})
+        return None
     except (StoreError, OSError) as exc:
         # Optional cache metadata must not prevent browsing source folders.
         send({"kind": "cache_warning", "message": f"Disk cache could not be opened: {exc}"})
         return None
 
 
-def _saved_folders(store: CacheStore, paths: list[str], send: Emit,
-                   identities: dict[str, object] | None = None) -> dict[str, dict[str, Any]]:
+def _cache_store(root: str, source_paths: list[str] | None = None) -> CacheStore:
+    """Open a store using the mounted share, rather than its temporary volume name, as key."""
+    from helab.utils.cache_paths import UnresolvedRemotePath, current_cache_paths
+    from helab.utils.cache_store import CacheStore, StoreError
+    try:
+        paths = current_cache_paths()
+        for path in source_paths or ():
+            paths.key(path)
+    except UnresolvedRemotePath:
+        raise
+    except Exception as exc:
+        raise StoreError(f"Mount information is unavailable: {exc}") from exc
+    return CacheStore(root, path_key=paths.key, source_path=paths.source)
+
+
+def _saved_folders(store: CacheStore, paths: list[str], send: Emit) -> dict[str, dict[str, Any]]:
     """Each folder's saved history, summary, subfolder status and dataset flags, in a few queries.
 
     A read error is unknown, never "nothing saved": a history that can't be read is
     None, and an unreadable summary, subfolder status or dataset leaves its keys out,
     so the GUI keeps what it knew. The error is sent as a ``cache_warning``.
-    A record saved for another directory at the same path is left out.
+    Saved statuses are last-known results for their paths until those folders are checked.
     """
-    from helab.utils.scan_history import for_identity, read_histories
+    from helab.utils.cache_paths import UnresolvedRemotePath
+    from helab.utils.scan_history import read_histories
+    usable: list[str] = []
+    refused: list[str] = []
+    mounts: dict[str, dict[str, str]] = {}
+    for path in paths:
+        try:
+            store._path_key(path)
+        except UnresolvedRemotePath as exc:
+            refused.append(path)
+            mounts[exc.mount_path] = {"path": exc.mount_path, "type": exc.mount_type, "detail": str(exc)}
+        else:
+            usable.append(path)
+    if refused:
+        # A child mount does not make the parent's own saved result uncertain.
+        # FolderCache associates cache_warning with the request root, so report
+        # this separately rather than putting a false warning on that parent.
+        send({"kind": "cache_skipped", "paths": refused, "mounts": list(mounts.values())})
+    paths = usable
+    if not paths:
+        return {}
     histories = read_histories(store, paths)
     summaries = store.read_records("summaries", paths)
     subtrees = store.read_records("subtrees", paths)
@@ -123,22 +162,17 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit,
     saved: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
     for path in paths:
-        identity = (identities or {}).get(path)
         history = histories[path]
-        if history is not None:
-            history = for_identity(history, identity)
         entry: dict[str, Any] = {"scan_history": history}
         if summaries[path].failed:
             errors.append(summaries[path].error)
         else:
             summary = _valid_summary(summaries[path].value)
-            if summary.get("identity") is not None and identity is not None and summary["identity"] != identity:
-                summary = {}
             entry["scan_status"] = summary
         if subtrees[path].failed:
             errors.append(subtrees[path].error)
         else:
-            entry["subtree"] = _valid_subtree(subtrees[path].value, identity)
+            entry["subtree"] = _valid_subtree(subtrees[path].value)
         if prefs[path].failed:
             errors.append(prefs[path].error)
         else:
@@ -151,6 +185,9 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit,
             entry["disk_cached"] = dataset.value is not None
             entry["cache_info"] = {} if dataset.value is None else _listed_sizes(
                 _cache_info(dataset.value["info"]), dataset.value)
+        entry["saved_read"] = (history is not None and not summaries[path].failed
+                               and not subtrees[path].failed and not prefs[path].failed
+                               and not dataset.failed)
         saved[path] = entry
     if errors:
         more = f" (and {len(errors) - 1} more)" if len(errors) > 1 else ""
@@ -174,12 +211,12 @@ def _dataset_flags(store: CacheStore | None, path: str, send: Emit) -> dict[str,
     return {key: saved[key] for key in ("disk_cached", "cache_info") if key in saved}
 
 
-def _send_saved(store: CacheStore | None, path: str, send: Emit, identity: object) -> Any:
-    """Send this folder's saved history and summary; returns the history (None if unreadable)."""
+def _send_saved(store: CacheStore | None, path: str, send: Emit) -> tuple[Any, dict[str, Any] | None]:
+    """Send this folder's saved records; return the history and read result."""
     if store is None:
         send({"kind": "scan_history", "history": None})
-        return None
-    saved = _saved_folders(store, [path], send, {path: identity})[path]
+        return None, None
+    saved = _saved_folders(store, [path], send)[path]
     send({"kind": "scan_history", "history": saved["scan_history"]})
     if saved.get("scan_status"):
         send({"kind": "scan_cached", "status": saved["scan_status"]})
@@ -187,7 +224,7 @@ def _send_saved(store: CacheStore | None, path: str, send: Emit, identity: objec
         send({"kind": "subtree_cached", "subtree": saved["subtree"]})
     if "prefs" in saved:
         send({"kind": "folder_prefs", "path": path, "prefs": saved["prefs"]})
-    return saved["scan_history"]
+    return saved["scan_history"], saved
 
 
 def _send_guard(store: CacheStore | None, path: str, send: Emit) -> SaveGuard | None:
@@ -216,25 +253,24 @@ def _classify(raw: set[int], txy: set[int], has_dirs: bool) -> tuple[str, int]:
     return ("warning", len(raw | txy)) if not raw or not txy else ("critical", 0)
 
 
-def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = None, *,
-                identity: object = None) -> None:
+def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = None) -> None:
     """Browse step 1: names only, so a slow volume shows subfolders and counts first.
 
     One scandir with no per-entry stat (``is_dir`` uses the listing's file type).
     Each subfolder's saved summary, scan history and cache flags are read from the
-    local cache, never the source, so saved badges appear with the names; their
-    identity is checked by the ``details`` scan (step 2), which also adds the
-    signature and dates. Nothing is written here; a failed listing's history is saved
-    later by the app, with the guard this sends first.
+    local cache, never the source, so saved badges appear with the names.
+    The ``details`` scan (step 2) adds the signature and dates. Nothing is written
+    here; a failed listing's history is saved later by the app, with the guard
+    this sends first.
     """
     from helab.utils.cache_store import StoreError
-    store = _open_store(cache_options, send)
+    store = _open_store(cache_options, send, path)
     try:
         try:
             _send_guard(store, path, send)
         except StoreError:
             pass  # Without it the app saves a failure with a fresh guard; browsing goes on.
-        _send_saved(store, path, send, identity)
+        _, root_saved = _send_saved(store, path, send)
         found: dict[str, set[int]] = {}
         entries: list[dict[str, Any]] = []
         has_dirs = False
@@ -246,7 +282,7 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
             if store is not None:
                 saved = _saved_folders(store, [child["path"] for child in entries], send)
                 for child in entries:
-                    child.update(saved[child["path"]])
+                    child.update(saved.get(child["path"], {}))
             send({"kind": "entries", "entries": entries})
 
         with os.scandir(path) as directory:
@@ -269,6 +305,8 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                                   "empty": empty, "has_dirs": has_dirs, "scanned_at": listed_at,
                                   "raw": sorted(raw), "txy": sorted(txy),
                                   "files": file_kinds.files_summary(found, {}), **_dataset_flags(store, path, send)}
+        if root_saved is not None:
+            report["saved_root"] = root_saved
         send(report)
     finally:
         if store is not None:
@@ -277,13 +315,13 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
 
 def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = None, *,
          manual: bool = True, automatic: bool = False,
-         operation_id: str = "", revision: int = 0, identity: object = None) -> None:
+         operation_id: str = "", revision: int = 0) -> None:
     """Full scan: a basic scan, or browse step 2 (``details``). Saves summary and history."""
     from uuid import uuid4
     from helab.utils.cache_store import StoreError
     from helab.utils.scan_history import ScanSkipped, begin_scan, write_outcome
     send({"kind": "scan_mode", "mode": "metadata"})
-    store = _open_store(cache_options, send)
+    store = _open_store(cache_options, send, path)
     try:
         guard: SaveGuard | None = None
         if store is not None:
@@ -293,7 +331,7 @@ def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = No
                 guard = _send_guard(store, path, send)
             except StoreError:
                 guard = None
-        history = _send_saved(store, path, send, identity)
+        history, _ = _send_saved(store, path, send)
         blocked = history is not None and history["blocked"]
         if not manual and (blocked or automatic and history is None):
             # Browsing a blocked folder lists it (step 1) without this scan.
@@ -309,7 +347,7 @@ def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = No
                 return
         if store is not None and guard is not None:
             try:
-                history, revision = begin_scan(store, path, operation_id, revision, guard, identity,
+                history, revision = begin_scan(store, path, operation_id, revision, guard,
                                                manual=manual, automatic=automatic)
                 send({"kind": "scan_history", "history": history, "revision": revision})
             except ScanSkipped as skipped:
@@ -328,7 +366,7 @@ def scan(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = No
         if store is not None and guard is not None:
             try:
                 history = write_outcome(store, path, {"operation_id": operation_id, "revision": revision,
-                    "kind": "success", "at": report["scanned_at"], "identity": report["identity"]}, guard)
+                    "kind": "success", "at": report["scanned_at"]}, guard)
                 send({"kind": "scan_history", "history": history, "revision": revision, "saved": True})
             except Exception as exc:
                 send({"kind": "scan_history_warning", "message": str(exc)})
@@ -363,13 +401,12 @@ def _summary(path: str, found: dict[str, set[int]], sizes: dict[str, int], has_d
     status, count = _classify(raw, txy, has_dirs)
     return {"kind": "status", "details": True, "status": status, "count": count, "empty": empty,
             "has_dirs": has_dirs, "scanned_at": scanned_at,
-            "identity": [folder_stat.st_dev, folder_stat.st_ino],
             "raw": sorted(raw), "txy": sorted(txy), "files": file_kinds.files_summary(found, sizes),
             "modified": folder_stat.st_mtime,
             "signature": hashlib.sha256(json.dumps(sorted(fingerprint)).encode()).hexdigest()}
 
 
-def _valid_subtree(info: object, identity: object = None) -> dict[str, Any]:
+def _valid_subtree(info: object) -> dict[str, Any]:
     """A folder's saved status derived from its subfolders (not their contents), else {}."""
     if (isinstance(info, dict) and info.get("version") == 1
             and info.get("status") in ("something", "nothing")
@@ -377,9 +414,6 @@ def _valid_subtree(info: object, identity: object = None) -> dict[str, Any]:
             and math.isfinite(info["derived_at"]) and 0 < info["derived_at"] < 253402300799
             and isinstance(info.get("older"), bool)
             and all(isinstance(info.get(key), int) and info[key] >= 0 for key in ("data", "checked", "total"))):
-        # Another directory now at this path does not inherit the result.
-        if info.get("identity") is not None and identity is not None and info["identity"] != identity:
-            return {}
         return info
     return {}
 
@@ -387,15 +421,33 @@ def _valid_subtree(info: object, identity: object = None) -> dict[str, Any]:
 def save_subtrees(cache_options: dict[str, Any], records: list[dict[str, Any]], send: Emit = emit) -> None:
     """Save (or, with status "", remove) folders' statuses derived from their subfolders.
 
-    One transaction, all or nothing: a failed write raises (the job reports an
-    error) rather than reporting saved.
+    Resolvable paths are saved in one transaction; unresolved remote paths are
+    reported as skipped. A failed write raises rather than reporting saved.
     """
-    from helab.utils.cache_store import CacheStore
-    with CacheStore(cache_options["directory"]) as store:
-        batch = {record["path"]: {"version": 1, **{k: v for k, v in record.items() if k != "path"}}
-                 if record["status"] else None for record in records}
-        store.save_records("subtrees", batch, store.guard(list(batch), ("subtrees",)))
-    send({"kind": "subtree_saved", "paths": [record["path"] for record in records]})
+    from helab.utils.cache_paths import UnresolvedRemotePath
+    skipped: list[str] = []
+    saved: list[str] = []
+    with _cache_store(cache_options["directory"]) as store:
+        batch: dict[str, dict[str, Any] | None] = {}
+        for record in records:
+            path = str(record["path"])
+            try:
+                store._path_key(path)
+            except UnresolvedRemotePath:
+                skipped.append(path)
+                continue
+            batch[path] = ({"version": 1, **{k: v for k, v in record.items() if k != "path"}}
+                           if record["status"] else None)
+        if batch:
+            store.save_records("subtrees", batch, store.guard(list(batch), ("subtrees",)))
+            saved = list(batch)
+    if skipped:
+        send({"kind": "cache_warning", "message":
+              f"Subfolder status cache skipped {len(skipped)} folder(s) with unresolved remote mounts."})
+    result: dict[str, Any] = {"kind": "subtree_saved", "paths": saved}
+    if skipped:
+        result["skipped"] = skipped
+    send(result)
 
 
 def _save_summary(store: CacheStore, path: str, report: dict[str, Any], guard: SaveGuard, send: Emit) -> None:
@@ -421,10 +473,9 @@ def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | No
 
     def flush() -> None:
         if store is not None:
-            saved = _saved_folders(store, [child["path"] for child in entries], send,
-                                   {child["path"]: child["identity"] for child in entries})
+            saved = _saved_folders(store, [child["path"] for child in entries], send)
             for child in entries:
-                child.update(saved[child["path"]])
+                child.update(saved.get(child["path"], {}))
         send({"kind": "entries", "entries": entries})
 
     beat = Heartbeat(send, "listing")
@@ -445,17 +496,12 @@ def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | No
             if entry.is_dir(follow_symlinks=False):
                 has_dirs = True
                 try:
-                    # Windows DirEntry.stat() reports zero device/inode IDs.
-                    # Use the same source as _summary so saved metadata belongs
-                    # to this directory, and replacements are detected reliably.
                     stat = os.stat(entry.path, follow_symlinks=False)
                     modified: float | None = stat.st_mtime
-                    identity: list[int] | None = [stat.st_dev, stat.st_ino]
                 except OSError:
                     modified = None
-                    identity = None
                 entries.append({"path": entry.path, "name": entry.name, "modified": modified,
-                                "identity": identity, "modified_observed_at": time.time()})
+                                "modified_observed_at": time.time()})
                 if len(entries) >= 128:
                     flush()
                     entries = []
@@ -581,7 +627,7 @@ def read_cached(path: str, output: str, send: Emit = emit,
     """
     import numpy as np
     from helab.utils.cache_store import unpack_dataset
-    store = _open_store(cache_options, send)
+    store = _open_store(cache_options, send, path)
     if store is None:
         raise ValueError("Disk cache unavailable")
     try:
@@ -712,7 +758,7 @@ def load(path: str, output: str, send: Emit = emit,
     only: its cached data is neither used nor written.
     """
     from helab.utils.cache_store import StoreError
-    store = _open_store(cache_options, send)
+    store = _open_store(cache_options, send, path)
     no_cache_reason = NOT_CACHED_REASON
     try:
         guard: SaveGuard | None = None
@@ -1195,7 +1241,7 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     old: list[str] = []
     if action == "sweep":
         old = remove_old_caches(os.path.dirname(os.path.abspath(root)), Heartbeat(send, "cleaning up"))
-    with CacheStore(root) as store:
+    with _cache_store(root) as store:
         if (budget is not None and budget_set_at is not None and not store.read_only
                 and action not in ("trim", "budget")):
             # Every job tells the store the app's budget, so running loads save within it.
@@ -1387,19 +1433,17 @@ def main() -> None:
             else:
                 raise FileNotFoundError("No available default data folder")
         elif operation == "list":
-            list_folder(request["path"], cache_options=request.get("cache"), identity=request.get("identity"))
+            list_folder(request["path"], cache_options=request.get("cache"))
         elif operation == "icons":
             folder_icons(request["paths"])
         elif operation in ("scan", "details"):
             scan(request["path"], cache_options=request.get("cache"), manual=request.get("scan_manual", False),
                  automatic=request.get("automatic", False),
-                 operation_id=request.get("scan_operation_id", ""), revision=request.get("scan_revision", 0),
-                 identity=request.get("identity"))
+                 operation_id=request.get("scan_operation_id", ""), revision=request.get("scan_revision", 0))
         elif operation == "scan_history":
-            from helab.utils.cache_store import CacheStore
             from helab.utils.scan_history import write_outcome
             from helab.utils.cache_store import SaveGuard as Guard
-            with CacheStore(request["cache"]["directory"]) as store:
+            with _cache_store(request["cache"]["directory"], [request["path"]]) as store:
                 # The scan's own guard when the app has it: a Clear after that scan started
                 # must not get its outcome back.
                 saved = request.get("guard")
@@ -1421,8 +1465,7 @@ def main() -> None:
             read_cached(request["path"], request["output"], cache_options=request.get("cache"),
                         limits=request.get("limits"), allow_large=bool(request.get("allow_large")))
         elif operation == "invalidate":
-            from helab.utils.cache_store import CacheStore
-            with CacheStore(request["cache"]["directory"]) as store:
+            with _cache_store(request["cache"]["directory"], [request["path"]]) as store:
                 # Bumps the folder's epoch: a load started before cannot save it back.
                 emit(_removed_event(store.remove(("datasets",), [request["path"]])))
                 emit({"kind": "admin_result", "action": "invalidate", "next_deadline": _deadline(store),

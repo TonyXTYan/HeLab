@@ -24,7 +24,6 @@ from helab.utils.io_service import IORequest, IOService, get_io_service
 from helab.utils.number_format import byte_size
 from helab.utils.folder_cache import SCANS, get_folder_cache, store_options
 from helab.utils.time_format import relative_age
-from helab.utils.scan_history import folder_identity
 from helab.utils.cache_freshness import CacheFreshness, cache_freshness, data_as_of, metadata_date
 
 
@@ -57,6 +56,7 @@ class FolderNode:
     error: str = ""
     modified: float | None = None
     modified_observed_at: float | None = None
+    saved_modified: float | None = None
     scanned_at: float | None = None
     report: StatusReport | None = None
     signature: str = ""
@@ -65,7 +65,6 @@ class FolderNode:
     cached_report: bool = False
     raw_count: int = 0
     txy_count: int = 0
-    identity: list[int] | None = None
     scan_skipped: bool = False
     # A manual retry with no timeout: when it was requested, and entries listed so far.
     retry_since: float | None = None
@@ -149,6 +148,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.scanHistoryChanged.connect(self._shared_dataset_changed)
         self.cache.folderIconChanged.connect(self._folder_icon_changed)
         self.cache.subtreeChanged.connect(self._shared_subtree_changed)
+        self.cache.savedRefreshed.connect(self._saved_refreshed)
         self.cache.cacheRemoved.connect(self._cache_removed)
 
     def node(self, index: QModelIndex) -> FolderNode | None:
@@ -202,6 +202,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             self.request_scan(node.path)
 
     def status_freshness(self, node: FolderNode) -> CacheFreshness:
+        if (node.cached_report and node.saved_modified is not None and node.modified is not None
+                and abs(node.modified - node.saved_modified) >= 2.0):
+            return CacheFreshness.POSSIBLY_OLD
         return cache_freshness(node.scanned_at, node.modified)
 
     def data_freshness(self, node: FolderNode) -> CacheFreshness:
@@ -249,16 +252,27 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                       and all(status in StatusReport.STATUS_NOTHING for status, _ in checked)):
                     status = "nothing"
                     older = own_older or any(self.display_older(child) for child in node.children)
-                info = {"status": status, "older": older, "derived_at": time.time(), "identity": node.identity,
-                        "data": len(data), "checked": len(checked), "total": len(statuses)}
-                if not status and node.subtree:
+                info = {"status": status, "older": older, "derived_at": time.time(),
+                        "modified": node.modified, "data": len(data), "checked": len(checked),
+                        "total": len(statuses)}
+                if not status and (not node.loaded or bool(node.children)):
+                    # Partial listings and unchecked children cannot disprove a saved result.
+                    saved = self.cache.subtree(node.path, node.subtree_saved)
+                    if saved:
+                        # A child checked in this session may contradict that saved result.
+                        # Keep it visible, but signal that it needs rechecking.
+                        checked_here = any((child.report is not None and not child.cached_report)
+                                           or child.subtree_live for _, child in checked)
+                        info, live = ({**saved, "older": True}
+                                      if checked_here and saved["status"] == "something" else saved), False
+                if not info["status"] and node.subtree:
                     logging.debug("Derived status of %s cleared (was %s): %d of %d subfolders checked, none with data",
                                   node.path, node.subtree, len(checked), len(statuses))
-                if node.loaded:
+                if node.loaded and live:
                     self._save_subtree(node, info)
             else:
                 saved = self.cache.subtree(node.path, node.subtree_saved)
-                if saved and self._same_folder(node, saved):
+                if saved:
                     info = saved
         subtree = info["status"] if info else ""
         older = False if info is None else info["older"] if live else self._saved_subtree_older(node, info)
@@ -269,6 +283,10 @@ class SnapshotFileSystemModel(QAbstractItemModel):
     @staticmethod
     def _saved_subtree_older(node: FolderNode, info: dict[str, Any]) -> bool:
         """A saved derivation may be outdated when the folder changed after it."""
+        saved_modified = metadata_date(info.get("modified"))
+        if (saved_modified is not None and node.modified is not None
+                and abs(node.modified - saved_modified) >= 2.0):
+            return True
         return bool(info["older"]) or cache_freshness(info["derived_at"], node.modified) == CacheFreshness.POSSIBLY_OLD
 
     def _save_subtree(self, node: FolderNode, info: dict[str, Any]) -> None:
@@ -277,7 +295,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         saved = self.cache.subtree(node.path, node.subtree_saved)
         if saved is None and not info["status"]:
             return
-        if saved and (saved["status"], self._saved_subtree_older(node, saved)) == (info["status"], info["older"]):
+        if (saved and (saved["status"], self._saved_subtree_older(node, saved)) == (info["status"], info["older"])
+                and (node.modified is None or saved.get("modified") == node.modified)):
             return
         self.cache.save_subtree(node.path, info, self._cache_options)
 
@@ -626,7 +645,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         node.retry_since = time.monotonic() if no_timeout else None
         payload = {"cache": self._cache_options, "metadata_only": metadata_only,
                    "scan_manual": force and not automatic, "automatic": automatic or metadata_only and not force,
-                   "identity": node.identity, "listing_only": listing_only}
+                   "listing_only": listing_only}
         if not self.cache.submit(self.owner, self.generation, path, operation, payload,
                                  priority=priority, force=force, timeout=math.inf if no_timeout else None):
             node.state, node.error = "error", "Scan queue full — Retry"
@@ -648,17 +667,12 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if (snapshot and snapshot.status.get("details") or loading
                 or self.cache.has_request(self.owner, "details", key)):
             return
-        payload = {"cache": self._cache_options, "scan_manual": manual, "identity": node.identity}
+        payload = {"cache": self._cache_options, "scan_manual": manual}
         self.cache.submit(self.owner, self.generation, node.path, "details", payload)
-
-    @staticmethod
-    def _same_folder(node: FolderNode, summary: dict[str, Any]) -> bool:
-        """A saved summary for another directory at this path must not be restored."""
-        saved = folder_identity(summary.get("identity"))
-        return saved is None or node.identity is None or saved == node.identity
 
     def _restore_summary(self, node: FolderNode, status: dict[str, Any]) -> None:
         node.scanned_at = metadata_date(status.get("scanned_at"))
+        node.saved_modified = metadata_date(status.get("modified"))
         self._observe_modified(node, status.get("modified"), node.scanned_at)
         scanned_at = status.get("scanned_at", time.time())
         node.checked_at = time.monotonic() - max(0, time.time() - scanned_at)
@@ -687,12 +701,13 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             self._scan_seen.pop(request, None)
             return
         if kind == "queued":
-            if request not in self._scan_seen:
+            if request not in self._scan_seen and request.operation != "details":
                 self._tree_requests[node.path] = request
             self._scan_seen[request] = set()
         elif kind == "started" and request not in self._scan_seen:
             # Joined another tab's running job: it is now this row's activity.
-            self._tree_requests[node.path] = request
+            if request.operation != "details":
+                self._tree_requests[node.path] = request
             self._scan_seen[request] = None
         seen = self._scan_seen.get(request)
         if kind in ("done", "error", "cancelled"):
@@ -738,8 +753,11 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         elif kind == "entries":
             if seen is not None:
                 seen.update(entry["path"] for entry in event["entries"])
-            if not owns_tree:
+            if not owns_tree and request.operation != "details":
                 return  # A newer listing/check owns the folder names in this view.
+            if request.payload.get("refresh_sequence") and any(
+                    entry.get("saved_read") for entry in event["entries"]):
+                self._refresh_details.add(node.path)  # Re-observe dates for the replacement share.
             new: list[FolderNode] = []
             for entry in event["entries"]:
                 path = entry["path"]
@@ -747,11 +765,10 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 if child is None:
                     # A names-only listing has no dates; the details scan adds them.
                     child = FolderNode(path, node, len(node.children) + len(new))
-                    child.identity = entry.get("identity")
                     if "modified" in entry:
                         self._observe_modified(child, entry["modified"], entry.get("modified_observed_at"))
                     cached = self.cache.snapshot(path)
-                    if cached and (child.identity is None or cached.status.get("identity") in (None, child.identity)):
+                    if cached:
                         status = cached.status
                         child.report = StatusReport(path, status["status"], status["count"], [],
                                                     list(status["raw"]), list(status["txy"]),
@@ -759,35 +776,24 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                         child.signature = status.get("signature", "")
                         child.checked_at = cached.checked_at
                         child.scanned_at = metadata_date(status.get("scanned_at"))
+                        child.saved_modified = metadata_date(status.get("modified"))
                         child.empty = status.get("empty")
                         child.has_dirs = status.get("has_dirs")
                         child.raw_count, child.txy_count = len(status["raw"]), len(status["txy"])
                         child.loaded = not cached.entries
                     elif summary := entry.get("scan_status") or self.cache.scan_summaries.get(path):
                         self._restore_summary(child, summary)
-                        if child.identity is None:
-                            # Provisional until a details entry reports the folder's identity;
-                            # a different folder at this path then drops the saved summary.
-                            child.identity = folder_identity(summary.get("identity"))
                     child.subtree_saved = entry.get("subtree") or None
                     self._derive(child)
                     new.append(child)
                     self.nodes[path] = child
                 else:
-                    if child.identity is not None and entry.get("identity") is not None and child.identity != entry["identity"]:
-                        logging.debug("Status of %s dropped: a different folder (identity %s, saved %s)",
-                                      path, entry["identity"], child.identity)
-                        child.report, child.signature = None, ""
-                        child.raw_count = child.txy_count = 0
-                        child.scanned_at, child.checked_at = None, 0
-                        child.subtree_saved = None
                     if entry.get("subtree"):
                         child.subtree_saved = entry["subtree"]
-                    child.identity = entry.get("identity", child.identity)
                     if "modified" in entry:
                         self._observe_modified(child, entry["modified"], entry.get("modified_observed_at"))
                     summary = entry.get("scan_status") or self.cache.scan_summaries.get(path)
-                    if child.report is None and summary and self._same_folder(child, summary):
+                    if child.report is None and summary:
                         self._restore_summary(child, summary)
                     self._derive(child)
                     self.changed(child)
@@ -800,13 +806,22 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             self._update_ancestors(node)
         elif kind == "status":
             if request.payload.get("listing_only"):
-                # Refresh changes the tree, not the last checked status or dataset.
+                # A completed listing can replace this folder's saved result;
+                # an unavailable cache or failed listing leaves RAM as it was.
+                saved_root = event.get("saved_root")
+                if (request.payload.get("refresh_sequence") and isinstance(saved_root, dict)
+                        and saved_root.get("saved_read")):
+                    self._refresh_details.add(node.path)
+                    if saved_root.get("scan_status"):
+                        self._restore_summary(node, saved_root["scan_status"])
+                    node.subtree_saved = saved_root.get("subtree") or None
+                    self._update_ancestors(node)
                 node.empty = event.get("empty", node.empty)
                 node.has_dirs = event.get("has_dirs", node.has_dirs)
                 self.changed(node)
                 return
             node.cached_report = False
-            node.identity = event.get("identity", node.identity)
+            node.saved_modified = metadata_date(event.get("modified"))
             node.raw_count, node.txy_count = len(event["raw"]), len(event["txy"])
             extras = list(node.report.extra_icons) if node.report else []
             node.checked_at = event.get("checked_at", time.monotonic())
@@ -867,7 +882,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         for stale in [r for r in self._scan_seen if r.path == node.path and r not in active]:
             del self._scan_seen[stale]
         previous = next((r for r in reversed(self._scan_seen)
-                         if r.path == node.path and not r.cancelled.is_set()), None)
+                         if r.path == node.path and r.operation != "details"
+                         and not r.cancelled.is_set()), None)
         if previous is None:
             self._tree_requests.pop(node.path, None)
             node.state = "idle"
@@ -904,6 +920,23 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             if changed:
                 self._update_ancestors(node)
                 self.changed(node)
+
+    def _saved_refreshed(self, path: str) -> None:
+        """A toolbar relisting will supply this path's saved status anew."""
+        node = self.nodes.get(path)
+        if self.closed or node is None:
+            return
+        node.report = None
+        node.signature = ""
+        node.cached_report = False
+        node.scanned_at = node.saved_modified = node.modified = node.modified_observed_at = None
+        node.checked_at = 0
+        node.raw_count = node.txy_count = 0
+        node.empty = node.has_dirs = None
+        node.subtree = ""
+        node.subtree_older = node.subtree_live = False
+        node.subtree_info = node.subtree_saved = None
+        self.changed(node)
 
     def _shared_subtree_changed(self, path: str) -> None:
         """Another tab saved a derived status; it shows here unless derived here now."""
@@ -1006,8 +1039,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.refreshStateChanged.emit()
 
     def _request_refresh_details(self) -> None:
-        """Details cancelled or deferred by Refresh, and folders it found new
-        subfolders in, get their dates, signature and identities."""
+        """Details deferred by Refresh re-observe dates after saved results change."""
         if self.closed or self.refreshing:
             return
         paths, self._refresh_details = self._refresh_details, set()
@@ -1017,7 +1049,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 self._request_details(node, manual=False)
 
     def refresh(self) -> None:
-        """Relist the root and expanded branches on screen, without checking files."""
+        """Relist shown branches; re-observe dates in the background when saved results change."""
         if self.closed or self.root is None:
             return
         root_path = self.root.path
@@ -1033,8 +1065,11 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self._refresh_sequence += 1
         sequence, generation = self._refresh_sequence, self.generation
         self._refresh_submitting = True
-        self._refresh_details.update(request.path for request in self.cache.cancel_automatic_scans(self.owner)
-                                     if request.operation == "details")
+        for request in self.cache.cancel_automatic_scans(self.owner):
+            if request.operation == "details":
+                self._refresh_details.add(request.path)
+                if node := self.nodes.get(request.path):
+                    self._release_row(node)  # Prune a replaced request that cannot finish.
         self._refresh_paths = set(paths)
         self.refreshStateChanged.emit()
         rows = list(paths)
@@ -1085,4 +1120,5 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.diskCacheChanged.disconnect(self._shared_dataset_changed)
         self.cache.folderIconChanged.disconnect(self._folder_icon_changed)
         self.cache.subtreeChanged.disconnect(self._shared_subtree_changed)
+        self.cache.savedRefreshed.disconnect(self._saved_refreshed)
         self.cache.cacheRemoved.disconnect(self._cache_removed)

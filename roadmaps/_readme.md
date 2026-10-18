@@ -61,14 +61,14 @@ How to use it:
   leaves badges stale ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#settings--cache-tab-helabviewssettingsdialogpy)) (2026-10-10).
   Fixed by the rebuilt Cache tab (`52201ca`).
 
-- [ ] Folder status icons vanish soon after startup: saved statuses show, then most
-  disappear; only folders checked again get theirs back (seen by Tony 2026-10-13, no
-  screenshot or log). Ruled out: changed folder identities (all 133 saved summaries
-  match) and removals at startup. Suspect: a parent's derived status recalculated
-  from unchecked subfolders and saved blank. It happened with caches saved before
-  the PR #5 fixes and went away after Clear all. Dropped or cleared statuses now
-  log their reason at DEBUG; if it recurs, run
-  `python -m helab 2>&1 | tee .ai/temp/helab-run.log` (2026-10-13).
+- [ ] Finish and verify the folder-status remount fix in the native GUI on `/Volumes/dld_output`.
+  Saved icons disappeared because SMB remounts changed `st_dev`, which the status
+  cache treated as a different folder. The fix keeps last-known
+  statuses and failure history across device changes and keys the disk store by
+  SMB source plus relative folder path, avoiding macOS's mount-order suffixes.
+  No migration: the old cache is cleared by hand before first launch. Automated
+  tests pass; the native remount check remains in [MANUAL_TODO](../.ai/MANUAL_TODO.md); see the
+  [investigation](../.ai/sessions/2026-10-15-codex-status-remount/notes.md).
 - [ ] Folders with over 100,000 entries record a scan failure.
 - [ ] The temp folder (`DIR_TEMPS`, Settings → General) is created and can be
   changed, but nothing uses it: helpers' private folders go to the system temp

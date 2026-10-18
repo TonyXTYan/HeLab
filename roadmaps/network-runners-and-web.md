@@ -104,6 +104,26 @@ integrity checks; list metadata before downloading large files.
 
 ## Machine, data-root and path identity
 
+The current `cache_paths.py` SMB URL is a **machine-local disk-cache key** for
+surviving mount-order changes. It is neither the logical root ID below nor
+proof that two machines see the same physical folder: one machine may use a
+local path while another uses SMB, and aliases, accounts or shares may differ.
+The key includes the server address, so it must not be placed in shared result
+metadata either. Do not publish or synchronize SQLite rows by that key. Use
+the configured root mapping and validated input snapshot for cross-machine
+equivalence.
+
+The share-root identity is the normalized `smb://server/share` URL, without the
+account or the local mount-point suffix. Future alias support will reuse the root-equivalence
+mapping below for aliases on the **same machine** as well as across machines.
+A nested mount whose source URL is a path inside that share maps directly to
+the parent share plus that relative path; several mount paths may bind to the
+same folder. Separately exported shares can also point to the same physical
+directory: for example, `smb://example-server/dld_output` may be the same
+folder as `smb://example-server/C/path/to/dld_output`. Their URLs alone do not
+prove that. Different server spellings and such separate exports need an
+explicit, validated equivalence mapping, not a guessed match.
+
 - Give each HeLab installation a persistent machine ID, separate from its
   changeable hostname, IP address and runner-process ID. Show a friendly name
   and verified SSH identity when pairing machines.
@@ -111,7 +131,8 @@ integrity checks; list metadata before downloading large files.
   maps that root ID to its own local path. Jobs carry the root ID and path
   relative to that root, plus the validated input snapshot; they do not assume
   absolute paths match across machines.
-- Configure root equivalence deliberately and verify it against source metadata
+- Configure root equivalence deliberately, including aliases on one machine,
+  and verify it against source metadata
   or shot fingerprints before reusing results. A missing or ambiguous mapping
   is an error, not a guessed path. Reject `..` escapes and verify that a
   resolved target stays inside its configured root in an isolated helper.

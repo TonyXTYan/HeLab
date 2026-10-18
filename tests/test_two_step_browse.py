@@ -13,7 +13,10 @@ from PyQt6.QtGui import QIcon
 from pytestqt.qtbot import QtBot
 
 from helab.io_helper import list_folder, load, save_subtrees, scan
-from helab.utils.cache_store import CacheStore
+from helab.utils.cache_store import CacheStore, Read
+from helab.utils.cache_paths import Mount
+from helab.utils import cache_paths
+from helab.utils.cache_freshness import CacheFreshness
 from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.resources.icons import IconsInitUtil, StatusIcons
 from helab.utils.folder_cache import FolderCache, get_folder_cache
@@ -111,7 +114,7 @@ def test_listing_reads_names_only_and_never_writes(tmp_path: Path, monkeypatch: 
     assert not {"signature", "modified", "identity"} & set(status)
     entries = [entry for event in events if event["kind"] == "entries" for entry in event["entries"]]
     assert [(entry["path"], entry["name"]) for entry in entries] == [(str(source / "run"), "run")]
-    # Saved cache metadata comes along; dates and identities need a stat (step 2).
+    # Saved cache metadata comes along; dates need a stat (step 2).
     assert {"scan_history", "scan_status", "disk_cached", "cache_info"} <= set(entries[0])
     assert not {"modified", "identity"} & set(entries[0])
     # The folder's own saved summary is restored; nothing is written.
@@ -180,6 +183,108 @@ def test_refresh_does_not_complete_a_running_folder_status_check(
     service.shutdown()
 
 
+def test_refresh_replaces_newer_ram_status_history_and_subtree_with_saved_listing(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    service = frozen_service(monkeypatch)
+    child = tmp_path / "run"
+    data_folder(child, subfolder=False)
+    root, path = str(tmp_path), str(child)
+    explorer = FolderExplorer(root, root, root, [0, 4, 5])
+    explorer.auto_load_ram = False
+    qtbot.addWidget(explorer)
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    scan(path, lambda event: None, options)
+    with CacheStore(options["directory"]) as store:
+        saved_status = store.read_record("summaries", path).value
+        assert saved_status is not None
+        saved_history = apply_outcome(empty_history(), {
+            "operation_id": "saved", "revision": 1, "kind": "timeout", "at": time.time() - 60,
+            "attempts": 1, "reason": "Saved failure"})
+        saved_subtree = {"version": 1, "status": "nothing", "older": False,
+                         "derived_at": time.time() - 60, "data": 0, "checked": 0, "total": 0}
+        guard = store.guard([path], ("histories", "subtrees"))
+        store.save_record("histories", path, saved_history, guard)
+        store.save_record("subtrees", path, saved_subtree, guard)
+    qtbot.waitUntil(lambda: ("list", root) in cache.jobs)
+    replay(qtbot, cache, root, "list", lambda send: list_folder(root, send, options))
+    node = explorer.model.nodes[path]
+    newer_status = {**saved_status, "status": "warning", "scanned_at": time.time() + 120}
+    cache.remember_scan(path, newer_status)
+    explorer.model._restore_summary(node, newer_status)
+    cache.remember_history(path, apply_outcome(saved_history, {
+        "operation_id": "newer", "revision": 2, "kind": "success", "at": time.time(),
+        "attempts": 1, "reason": ""}))
+    cache.remember_subtree(path, {**saved_subtree, "status": "something", "derived_at": time.time() + 120})
+    node.subtree_saved = cache.subtrees[path]
+    cache._subtree_pending[path] = {"path": path, **cache.subtrees[path]}
+    explorer.refresh()
+    replay(qtbot, cache, root, "list", lambda send: list_folder(root, send, options))
+    assert cache.scan_summaries[path] == saved_status
+    assert cache.scan_history(path) == saved_history
+    assert cache.subtrees[path] == saved_subtree
+    assert path not in cache._subtree_pending
+    assert node.report is not None and node.report.status == saved_status["status"]
+    assert node.subtree_saved == saved_subtree
+    # Even without new children, Refresh observes dates again so freshness
+    # does not stay unknown after clearing the previous share's mtime.
+    qtbot.waitUntil(lambda: ("details", root) in cache.jobs)
+    replay(qtbot, cache, root, "details", lambda send: scan(root, send, options))
+    assert node.modified is not None
+    assert explorer.model.status_freshness(node) is not CacheFreshness.UNKNOWN
+    explorer.close_cleanup()
+    service.shutdown()
+
+
+@pytest.mark.parametrize("cache_mode", ["off", "unsupported", "read_error"])
+def test_refresh_keeps_ram_status_when_saved_records_cannot_be_read(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cache_mode: str,
+) -> None:
+    service = frozen_service(monkeypatch)
+    child = tmp_path / "run"
+    child.mkdir()
+    root, path = str(tmp_path), str(child)
+    explorer = FolderExplorer(root, root, root, [0, 4, 5])
+    explorer.auto_load_ram = False
+    qtbot.addWidget(explorer)
+    cache, options = explorer.model.cache, explorer.model._cache_options
+    status = {"status": "ok", "count": 1, "raw": [1], "txy": [1], "scanned_at": time.time()}
+    cache.remember_scan(path, status)
+    qtbot.waitUntil(lambda: ("list", root) in cache.jobs)
+    replay(qtbot, cache, root, "list", lambda send: list_folder(root, send, None))
+    node = explorer.model.nodes[path]
+    report = node.report
+    assert report is not None
+    history = apply_outcome(empty_history(), {
+        "operation_id": "failed", "revision": 1, "kind": "timeout", "at": time.time(),
+        "attempts": 1, "reason": "Unavailable"})
+    cache.remember_history(path, history)
+    subtree = {"version": 1, "status": "something", "older": False,
+               "derived_at": time.time(), "data": 1, "checked": 1, "total": 1}
+    cache.remember_subtree(path, subtree)
+    explorer.refresh()
+    if cache_mode == "unsupported":
+        monkeypatch.setattr(cache_paths, "current_mounts",
+                            lambda: [Mount("server:/export", root, "nfs", True)])
+    if cache_mode == "read_error":
+        original = CacheStore.read_records
+
+        def fail_summaries(store: CacheStore, kind: Any, paths: Any) -> Any:
+            if kind == "summaries":
+                return {item: Read("error", error="Disk read failed") for item in paths}
+            return original(store, kind, paths)
+
+        monkeypatch.setattr(CacheStore, "read_records", fail_summaries)
+    replay(qtbot, cache, root, "list", lambda send: list_folder(
+        root, send, None if cache_mode == "off" else options))
+    assert node.report is report
+    assert cache.scan_summaries[path] == status
+    assert cache.scan_history(path) == history
+    assert cache.subtrees[path] == subtree
+    explorer.close_cleanup()
+    service.shutdown()
+
+
 @pytest.fixture
 def checked_browser(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
                     ) -> Iterator[tuple[IOService, FolderExplorer, str]]:
@@ -206,6 +311,7 @@ def test_refresh_disables_only_its_folder_retry_until_terminal_outcome(
     service, explorer, path = checked_browser
     cache, options = explorer.model.cache, explorer.model._cache_options
     (tmp_path / "d_txy_forc3.txt").write_text("3,2,3\n")
+    previous_report = explorer.model.nodes[path].report
     explorer.refresh()
     qtbot.waitUntil(lambda: not explorer.model._refresh_submitting)
     assert explorer.model.refresh_pending(path) and not explorer.retry_button.isEnabled()
@@ -225,6 +331,8 @@ def test_refresh_disables_only_its_folder_retry_until_terminal_outcome(
         service.pending.remove(refresh)
     else:
         cache.cancel(explorer.model.owner, "list", path)
+    if outcome != "done":
+        assert explorer.model.nodes[path].report is previous_report
     assert not explorer.model.refreshing and explorer.retry_button.isEnabled()
     explorer._retry()
     assert producer(cache, path, "list").timeout == float("inf")
@@ -602,6 +710,13 @@ def test_startup_restores_saved_subfolder_status_without_rescanning(
     options = explorer.model._cache_options
     for child in children:
         scan(str(child), lambda event: None, options)  # Saved by a previous session.
+    # A prior version stored mount-dependent IDs. Their mismatch must not erase statuses.
+    with CacheStore(options["directory"]) as store:
+        for child in children:
+            saved = store.read_record("summaries", str(child)).value
+            assert saved is not None
+            store.save_record("summaries", str(child), {**saved, "identity": [999, 888]},
+                              store.guard([str(child)], ("summaries",)))
     explorer.resize(420, 350)
     explorer.show()
     explorer.set_auto_scan_visible(True)
@@ -614,15 +729,19 @@ def test_startup_restores_saved_subfolder_status_without_rescanning(
     # The root loads (it has TXY files) and still gets details for its subfolders.
     assert ("load", path) in cache.jobs and ("details", path) in cache.jobs
     replay(qtbot, cache, path, "details", lambda send: scan(path, send, options))
-    assert all(node.modified is not None and node.identity is not None for node in nodes)
-    assert all(node.report is not None for node in nodes)
+    assert all(node.modified is not None for node in nodes)
+    assert all(node.report is not None and node.cached_report for node in nodes)
+    explorer._check_visible_folders()
+    assert not [r for r in service.pending if r.operation == "scan"]
     explorer.close_cleanup()
     service.shutdown()
 
 
-def test_saved_summary_of_a_replaced_folder_is_dropped_by_details(
-    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+@pytest.mark.parametrize("mtime_shift", [-60, 60])
+def test_saved_summary_of_a_replaced_folder_stays_with_clock_until_checked(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mtime_shift: int,
 ) -> None:
+    IconsInitUtil.initialise_icons()
     service = frozen_service(monkeypatch)
     child = tmp_path / "run"
     data_folder(child, subfolder=False)
@@ -633,15 +752,18 @@ def test_saved_summary_of_a_replaced_folder_is_dropped_by_details(
     options = explorer.model._cache_options
     scan(str(child), lambda event: None, options)
     # The folder is replaced by another one with the same name.
+    saved_mtime = child.stat().st_mtime
     os.rename(child, tmp_path / "old-run")
     data_folder(child, subfolder=False)
+    os.utime(child, (saved_mtime + mtime_shift, saved_mtime + mtime_shift))
     qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
     replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
     node = explorer.model.nodes[str(child)]
     assert node.report is not None  # Saved summary shown provisionally.
     replay(qtbot, cache, path, "details", lambda send: scan(path, send, options))
-    stat = child.stat()
-    assert node.identity == [stat.st_dev, stat.st_ino] and node.report is None
+    assert node.report is not None and node.cached_report
+    assert explorer.model.status_freshness(node) == CacheFreshness.POSSIBLY_OLD
+    assert status_icon(explorer, child) == StatusIcons.ICONS_STATUS_OLDER["ok"].cacheKey()
     explorer.close_cleanup()
     service.shutdown()
 
@@ -795,6 +917,12 @@ def test_derived_status_survives_restart_without_listing_the_folder(
     # B's background details scan saves its summary (a names-only listing does not).
     scan(str(a / "B"), lambda event: None, tree.model._cache_options)
     assert set(save_queued_subtrees(qtbot, tree)) == {str(a), str(tmp_path)}
+    with CacheStore(tree.model._cache_options["directory"]) as store:
+        for path in (str(a), str(tmp_path)):
+            saved = store.read_record("subtrees", path).value
+            assert saved is not None
+            store.save_record("subtrees", path, {**saved, "identity": [999, 888]},
+                              store.guard([path], ("subtrees",)))
     restarted = restart(qtbot, monkeypatch, tree, tmp_path)
     browse(qtbot, restarted, tmp_path)
     node = restarted.model.nodes[str(a)]
@@ -836,6 +964,60 @@ def test_saved_derivation_follows_a_recheck_and_folder_changes(
     restarted.model.observe_modified(str(a), later, later)
     assert node.subtree_older
     assert status_icon(restarted, a) == StatusIcons.ICONS_STATUS_OLDER["nothing"].cacheKey()
+    restarted.close_cleanup()
+
+
+def test_saved_subtree_uses_folder_mtime_in_both_directions(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tree: FolderExplorer, tmp_path: Path,
+) -> None:
+    a = tmp_path / "A"
+    a.mkdir()
+    data_folder(a / "B", subfolder=False)
+    browse(qtbot, tree, tmp_path)
+    browse(qtbot, tree, a)
+    browse(qtbot, tree, a / "B")
+    # The parent's details pass supplies A's mtime after the first derivation.
+    replay(qtbot, tree.model.cache, str(tmp_path), "details",
+           lambda send: scan(str(tmp_path), send, tree.model._cache_options))
+    save_queued_subtrees(qtbot, tree)
+    restarted = restart(qtbot, monkeypatch, tree, tmp_path)
+    browse(qtbot, restarted, tmp_path)
+    node = restarted.model.nodes[str(a)]
+    saved_modified = node.subtree_info["modified"] if node.subtree_info else None
+    assert isinstance(saved_modified, float)
+    restarted.model.observe_modified(str(a), saved_modified, time.time() + 60)
+    assert shown(restarted, a) == "something" and not node.subtree_older
+    restarted.model.observe_modified(str(a), saved_modified - 60, time.time() + 120)
+    assert node.subtree_older
+    assert status_icon(restarted, a) == StatusIcons.ICONS_STATUS_OLDER["something"].cacheKey()
+    restarted.close_cleanup()
+
+
+def test_partial_listing_keeps_saved_derivation_with_clock_after_child_recheck(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tree: FolderExplorer, tmp_path: Path,
+) -> None:
+    a = tmp_path / "A"
+    a.mkdir()
+    data_folder(a / "B", subfolder=False)
+    (a / "C").mkdir()
+    browse(qtbot, tree, tmp_path)
+    browse(qtbot, tree, a)
+    browse(qtbot, tree, a / "B")
+    scan(str(a / "B"), lambda event: None, tree.model._cache_options)
+    save_queued_subtrees(qtbot, tree)
+    restarted = restart(qtbot, monkeypatch, tree, tmp_path)
+    browse(qtbot, restarted, tmp_path)
+    browse(qtbot, restarted, a)
+    assert shown(restarted, a) == "something"
+    for file in (a / "B").iterdir():
+        file.unlink()
+    browse(qtbot, restarted, a / "B", force=True)
+    node = restarted.model.nodes[str(a)]
+    assert shown(restarted, a) == "something" and node.subtree_older and not node.subtree_live
+    assert not any(record["path"] == str(a) and not record["status"]
+                   for record in restarted.model.cache._subtree_pending.values())
+    browse(qtbot, restarted, a / "C")
+    assert shown(restarted, a) == "nothing" and node.subtree_live
     restarted.close_cleanup()
 
 

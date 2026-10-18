@@ -28,8 +28,8 @@ Tests: end of `tests/test_two_step_browse.py`.
   cache, nothing deeper. Why: walking saved descendants could be a very long
   recursion.
 - **Saved so it survives restarts** (Tony: more useful than session-only):
-  the disk cache's `subtrees` table with status, `derived_at`,
-  folder identity, `older`, and data/checked/total subfolder counts. Saved only
+  the disk cache's `subtrees` table with status, `derived_at`, observed folder
+  mtime, `older`, and data/checked/total subfolder counts. Saved only
   after a complete listing and only when status or outdated hint differs from
   the saved one; an empty folder listing removes it. Written by a batched
   `subtree_save` helper (500 ms debounce, one at a time, up to 256 records) in
@@ -40,9 +40,13 @@ Tests: end of `tests/test_two_step_browse.py`.
   [[folder-row-tooltip]].
 - **Outdated hint (clock icon)**: derived now → `something` when every data
   subfolder (or the folder) may be outdated, `nothing` when any may be; saved →
-  its `older` flag or the folder modified after `derived_at`. A folder's mtime
+  its `older` flag or an observed folder mtime differing from the saved mtime
+  (allowing for timestamp rounding). Older saved records without an mtime use
+  the folder-modified-after-`derived_at` hint. A folder's mtime
   changes only with its direct entries, so changes deeper down show on the
-  subfolder, not the parent. No timer expires a derived status.
+  subfolder, not the parent. An incomplete listing retains the saved derived
+  status; a newly checked child that no longer supports it adds the clock until
+  the remaining children are checked. No timer expires a derived status.
 - **Expandability is cached too** (Tony, 2026-10-09): an unlisted folder
   whose saved summary says it has no subfolders (`has_dirs`) shows no expand
   arrow, instead of an arrow that vanishes when clicked. Unknown stays

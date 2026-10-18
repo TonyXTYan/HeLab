@@ -50,7 +50,7 @@ def freshness_tooltip(label: str, saved_at: object, modified: object,
 
     reason = {
         CacheFreshness.UNKNOWN: "Freshness unknown: a cache/scan date or folder modification date is missing.",
-        CacheFreshness.POSSIBLY_OLD: "May be outdated: observed folder modification time is newer.",
+        CacheFreshness.POSSIBLY_OLD: "May be outdated: observed folder modification time suggests the saved result may have changed.",
         CacheFreshness.CHANGED: "Changes detected: a later folder status check found different TXY fingerprints.",
         CacheFreshness.UNCHANGED: "No newer folder modification time observed; TXY contents have not been verified by this comparison.",
     }[freshness]
