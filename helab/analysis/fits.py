@@ -201,7 +201,8 @@ def bin_centres(edges: npt.ArrayLike) -> Array:
 def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | FitModel = "gaussian", *,
                   weights: Weights = "poisson", sigma: npt.ArrayLike | None = None,
                   max_evaluations: int = MAX_EVALUATIONS,
-                  max_radius_ratio: float = MAX_RADIUS_RATIO) -> FitResult:
+                  max_radius_ratio: float = MAX_RADIUS_RATIO,
+                  covariance_of: Callable[[Array, Array, Array], Array] | None = None) -> FitResult:
     """Fit ``model`` (a ``MODELS`` key or a ``FitModel``) to a histogram's bin centres and
     raw counts. ``sigma``, when given, is each bin's error (absolute) and replaces
     ``weights``: pass it for anything that isn't raw counts. Bins with a non-finite centre,
@@ -209,7 +210,13 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
 
     ``max_radius_ratio`` caps R/σ_th in models with a ``ratio`` parameter (bimodal; see
     ``bimodal_model`` for why 2, and when to raise it). A fit that ends at the cap says so;
-    the cap goes in the result's ``options`` and record."""
+    the cap goes in the result's ``options`` and record.
+
+    ``covariance_of(x, values, fitted)``, when given, replaces the fitted parameters' covariance
+    (data units, from the weights alone) before anything reads it: the SEs, the "consistent
+    with 0" gating and its notes, the undetermined check and the extras. For data whose bins
+    are correlated (a smoothed curve: ``profiles.fit_smoothed``), where only the caller knows
+    the real spread; ``x`` are the bins fitted."""
     fit_model = MODELS[model] if isinstance(model, str) else model
     has_ratio = RATIO in fit_model.names
     if has_ratio and not max_radius_ratio > MIN_RADIUS_RATIO:
@@ -312,7 +319,9 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
 
     chi2, found, covariance_n = best
     values = to_data(found)
-    covariance = covariance_n * np.outer(scale, scale)
+    fitted_covariance = covariance_n * np.outer(scale, scale)
+    covariance = fitted_covariance if covariance_of is None else np.asarray(
+        covariance_of(x, values, fitted_covariance), dtype=np.float64)
     dof = len(x) - count
     finite_covariance = bool(np.all(np.isfinite(covariance)))
     variances = np.diag(covariance) if finite_covariance else np.full(count, math.nan)

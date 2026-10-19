@@ -1,8 +1,8 @@
 # D1 handoff
 
 Branch `agent/dld-d1`, from `e7d0aba` (`agent/dld-f0a`). Not pushed or merged. The
-worktree's `venv` is an untracked, ignored symlink to the main checkout's venv. Two commits:
-`05e5401` (D1) and the review fixes after it.
+worktree's `venv` is an untracked, ignored symlink to the main checkout's venv. Three commits:
+`05e5401` (D1), `679657f` and the third (review fixes).
 
 ## Done
 
@@ -56,6 +56,19 @@ untouched and its tests pass.
    condition, so it can't also wait for a fit to be on (the tip says it applies to every fit).
    The blank lines are removed.
 
+## Second review fixes (third commit)
+
+1. **Gating on honest SEs:** `fit_histogram` takes a `covariance_of` hook; `fit_smoothed` passes
+   its sandwich, so the SEs, the "consistent with 0" gating and notes, the undetermined check
+   and the extras (bimodal R) all read it. Reviewer's probe: thermal-only condensate gated in
+   28/30 seeds (was 4/30; unsmoothed 28/30). Test on 10 fixed seeds.
+2. **Cost:** refits start from the last fit only, at most 3 after the first: a smoothed bimodal
+   axis 0.65 → 0.25 s (0.29 s at 5 000 bins). Live policy kept (notes.md).
+3. **Runner:** a failing `result_found` is logged and gives `found = {}`; the run completes.
+   Test in `tests/test_analysis.py`.
+4. **`found`** documented as read-only at the top level only.
+5. **Smoothed model** applies S only on its own bin centres (count and positions); tested.
+
 ## Remaining / not D1
 
 - D4: N0/N, Tc, TF + arrival-time bimodal, TF^{3/2} for slices, the R/σ_th cap as a setting.
@@ -65,6 +78,11 @@ untouched and its tests pass.
 - Release time from T₀ − t_f (separate detection, per the roadmap).
 
 ## Checks
+
+Third commit: targeted (`test_histogram_fits`, `test_fits`, `test_analysis`,
+`test_analysis_gui`, `test_live_plots`, `-n 2 --reruns 5 --reruns-delay 1`): 173 passed, no
+reruns. `mypy helab tests --strict`: no issues (153 files); `pyright helab tests` (venv): 0
+errors; `git diff --check`: clean.
 
 Second commit:
 - Targeted (`test_histogram_fits`, `test_fits`, `test_analysis`, `test_analysis_gui`,

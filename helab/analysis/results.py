@@ -122,6 +122,8 @@ class AnalysisResult:
     input_signature: str = ""  # the input revision's own dataset signature (``DatasetView.signature``)
     # What the run found or used beyond its parameters, as JSON values (``DatasetAnalysis.result_found``:
     # fit results, the constants used). Part of the record, kept when the plot is released.
+    # Read-only at the top level only (a MappingProxyType over a copy of the script's dict): the
+    # lists and dicts inside are shared, so readers must not change them.
     found: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
     @classmethod

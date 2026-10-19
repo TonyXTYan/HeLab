@@ -105,6 +105,16 @@ class AnalysisRunner(QObject):
             # released to free RAM must free its input (``helab.analysis.budget``).
             del job
 
+    @staticmethod
+    def _found(script: DatasetAnalysis, context: AnalysisContext, data: Any) -> dict[str, Any]:
+        """The run's ``found`` record; a script whose record fails still has its result (the
+        plot draws, without those record lines), and the error is logged."""
+        try:
+            return script.result_found(context.action, data)
+        except Exception:
+            logging.exception("Analysis %s: its record of what the run found failed", context.analysis.short())
+            return {}
+
     def _run(self, script: DatasetAnalysis, context: AnalysisContext) -> None:
         started = time.time()
         if context.cancelled():
@@ -114,7 +124,7 @@ class AnalysisRunner(QObject):
             try:
                 data = script.compute(context.action, context)
                 state: State = "cancelled" if context.cancelled() else "completed"
-                found = script.result_found(context.action, data) if state == "completed" else {}
+                found = self._found(script, context, data) if state == "completed" else {}
                 result = AnalysisResult.of(context, state, data if state == "completed" else None,
                                            started_at=started, found=found)
             except Cancelled:

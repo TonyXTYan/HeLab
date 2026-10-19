@@ -481,3 +481,37 @@ def test_t_is_shown_in_seconds_over_a_long_range(qtbot: QtBot) -> None:
     assert plot.getAxis("bottom").labelText == "T (s)"
     bars = plot.listDataItems()[0]
     assert bars.getOriginalDataset()[0][0] == pytest.approx(result.data.items[0].edges[0])  # not scaled
+
+
+def test_a_smoothed_bimodal_fit_of_a_thermal_cloud_finds_no_condensate() -> None:
+    """The gating ("consistent with 0") reads the honest SEs: a thermal-only cloud's condensate
+    is noted as absent as often as in the unsmoothed fit (with the weights-only SEs, ~4×
+    too small, it was in 4 of 30 seeds against 28)."""
+    sigma_s = 2e-4
+    gated = {"smoothed": 0, "unsmoothed": 0}
+    for seed in range(10):
+        x = np.random.default_rng(seed).normal(0, velocity_spread(1e-6) * DEFAULTS.fall_time, 20_000)
+        low, high = np.percentile(x, [0.5, 99.5])
+        bins, _ = smoothing_bins(float(low), float(high), sigma_s)
+        counts, edges = np.histogram(x, bins=bins, range=(low, high))
+        for name, smoothing in (("smoothed", sigma_s), ("unsmoothed", None)):
+            fitted = fit_axis("X", edges.astype(np.float64), counts.astype(np.float64), BIMODAL, DEFAULTS,
+                              smoothing=smoothing)
+            assert fitted.ok, fitted.failure
+            if any("consistent with 0" in note for note in fitted.notes):
+                gated[name] += 1
+                assert math.isnan(fitted.fit["radius"].se)  # R isn't determined without a condensate
+    assert gated["smoothed"] >= 8 and abs(gated["smoothed"] - gated["unsmoothed"]) <= 1, gated
+
+
+def test_the_smoothed_model_is_smoothed_on_its_own_bins_only() -> None:
+    centres = np.linspace(-1.0, 1.0, 41)
+    smoothing = Smoothing(41, 3.0)
+    model = profiles.smoothed_model(MODELS["gaussian"], smoothing, centres)
+    values = (1.0, 0.0, 0.2, 0.0)
+    plain = fits.gaussian(centres, *values)
+    assert model.function(centres, *values) == pytest.approx(smoothing.apply(plain))
+    shifted = centres + 0.01  # same count, other positions: not the bins S belongs to
+    assert model.function(shifted, *values) == pytest.approx(fits.gaussian(shifted, *values))
+    fine = np.linspace(-1.0, 1.0, 400)
+    assert model.function(fine, *values) == pytest.approx(fits.gaussian(fine, *values))

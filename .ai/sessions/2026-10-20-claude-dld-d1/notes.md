@@ -111,6 +111,21 @@ order (tested: recovered within SE).
     out about the same), so the option is for comparison with the front panel.
   - Drawn: the smoothed model on the bins, over the smoothed curve; the title says
     "Gaussian ⊗ smoothing: …".
+  - Second review (`679657f`): the sandwich replaced the SEs only after `fit_histogram` had
+    gated with its weights-only SEs, so a thermal-only cloud's condensate was "consistent with
+    0" in 4/30 seeds (unsmoothed 28/30) and R showed at the cap with an SE. Now
+    `fit_histogram(…, covariance_of=…)` takes the covariance from the caller before anything
+    reads it (SEs, gating and notes, undetermined check, extras); the probe gives 28/30, as
+    unsmoothed. Tested on 10 fixed seeds (≥ 8 gated, within 1 of the unsmoothed count).
+  - Cost: refits start from the last fit only (not the bimodal model's four starts and its
+    Gaussian seed fit), at most 3 after the first. A smoothed bimodal axis went from 0.65 s to
+    0.25 s (2 400 bins; 0.29 s at 5 000), a smoothed Gaussian ~0.07 s; widths and SEs unchanged.
+    The Live policy stays "every shot": `live_policy` is per action, not per setting, and three
+    smoothed bimodal axes (< 1 s) are well under a shot's interval. **Proposed:** a per-setting
+    policy if Live ever runs faster.
+  - The smoothed model applies S only on its own bins (same count and positions within 10⁻⁶ of
+    a bin); anywhere else it is the unsmoothed model. If `fit_histogram` left bins out, the
+    covariance hook returns nan and the fit fails as undetermined rather than misapplying S.
 - Drawn: faint bars behind a darker smoothed line.
 
 ## Fits
@@ -132,7 +147,9 @@ order (tested: recovered within SE).
   `DatasetAnalysis.result_found(action, data)` (default `{}`, so other plots are unchanged), it
   survives `RamResults.released`, and the base `result_record` shows its `record_lines` in the
   dock's tooltip ("Fit T: …" with reduced χ² and notes, "Constants: …"). Not in `reuse_key`
-  (it is output, not input).
+  (it is output, not input). It is read-only at the top level only (shared inner lists and
+  dicts; documented). A `result_found` that raises is logged and gives `found = {}`; the run
+  still completes and draws.
 - Fall time: the arrival-time model is built from h and g (its fall is √(2h/g)); a hand-set
   fall time is used by X/Y temperatures only. The Fall time tip says so, and the plot already
   notes a disagreeing hand-set fall time. (Kept: building the T model from a hand-set t_f would
