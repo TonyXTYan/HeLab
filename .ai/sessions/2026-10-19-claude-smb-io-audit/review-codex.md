@@ -57,3 +57,57 @@ Reviewed `36c2a12..e3802af` against the Part 1 constraints and the Part 2 handof
 - `mypy helab/ --strict` and `mypy tests --strict`, both again with `--platform win32`: **all pass** (77 and 58 source files respectively).
 - `pyright helab tests` and `pyright helab tests --pythonplatform Windows`: **0 errors, 0 warnings** each.
 - `git diff --check 486cf56..HEAD`: **pass** at `6eb6a9c`. `e3802af..HEAD` changes only the Windows trace test expectation. No implementation files were edited in this review.
+
+# Round 3 review at 49c1132 (Claude)
+
+Reviewed `515bb22..49c1132` (47d9def, 9773b8a, 49c1132) against Tony's round 3 decisions, then a short pass over `486cf56..HEAD` against the AGENTS.md I/O rules. Codex's recheck on 515bb22 was stopped, so this replaces it. **Verdict: no blocker.** Both decisions are implemented as specified. The findings below are documentation, a quit-time wording gap and Windows caveats.
+
+## 1. Settle age only (47d9def): pass
+
+- `_whole_last_row`, `RECENT_SECONDS` and `_recent` are gone, and so are Live's tail and whole-row checks (`helab/io_helper.py`; no references are left in `helab/` or `tests/`). `_read_txy_file` returns only the frame (`:232`). `read_txy` in `_load` (`:1643-1650`) and Live's read (`:2133-2140`) no longer judge content.
+- Kept as Tony asked: `SETTLE_SECONDS` (`:26-32`, now documenting the decision), Live's metadata-only `seen` rule, the before- and after-read stats in loads (`:1664-1668`) and Live, and Live's single data open per new file.
+- The cache-save reread (`:1742-1752`) no longer raises "still being written". Its other failure paths are unchanged.
+- Tests: `test_a_writer_stalled_longer_than_the_settle_age_is_read_as_it_is` (`tests/test_io_trace.py`) documents the accepted stall: shot 3 is shown as problematic with no unsettled count, and the finished file is read again as `modified_loaded`. `test_a_file_ending_mid_row_is_read_once_unchanged_a_check_apart` (`tests/test_live_check.py`) documents Live reading it after two unchanged looks. `test_loader_preserves_shots_and_drops_nan_rows` is back to a fresh file. I found no regression in other load or Live paths. The Live identity, sample, pending-only stats and `save_held` are untouched by this commit.
+
+## 2. Trace as a per-session toggle (9773b8a): pass
+
+- Help › Record I/O trace (this session) is checkable and unchecked at every start, and nothing saves it (`helab/views/HelabMainWindow.py:503-516`). The file is always `<DIR_TEMPS>/io-traces/io-trace-<YYYYmmdd-HHMMSS>[-n].jsonl` (`helab/utils/io_service.py:189-202`). `trace` (with `file`) is set at each attempt's start (`:400-403`) and sent in the payload (`:692-693`). The helper takes the file from its request (`io_helper._start_trace`, `:77-93`) and leaves `file` off each line.
+- The terminal gets exactly the two INFO lines (`io_service.py:201,206`; main.py's coloredlogs is at DEBUG, so INFO prints). Helpers' stderr goes to DEVNULL, and a failed trace write is silent, so nothing else prints.
+- Earlier traces: the question appears only when `earlier_io_traces` finds `io-trace-*.jsonl` (`HelabMainWindow.py:535-541`). Keep is the default and the reject role, so Esc or closing the box keeps them. Delete removes only the listed earlier files, before the new name is chosen, so never the new file. Nothing is deleted otherwise. All of this is covered by tests (`tests/test_helabMainWindow.py:359-449`).
+- `HELAB_TEST_IO_TRACE` is the only environment switch, read by helpers only. The old `HELAB_IO_TRACE` does nothing (`tests/test_io_trace.py:87-99`), and `io_service` no longer imports `io_helper`.
+- Temp-folder refusal: confirmed that only the cache folder is checked at startup (`constants.py:360-401`). The switch checks `DIR_TEMPS` with `cache_location_problem` (`io_service.py:75-82`), unticks, and warns. The handoff's proposal to refuse it at startup in `constants.py` is reasonable.
+- Thread safety: `io_helper` starts no threads, so each helper process has one writer. Each line is one `os.write` on an `O_APPEND` descriptor. On local APFS, ext4 or NTFS under POSIX semantics, that append is atomic in practice. On Windows, see finding C.
+
+## 3. Ownership: pass
+
+Round 3's `data_roots.py` change is the one docstring line. In `HelabMainWindow.py` the changes are the imports, the status-bar label, the `ask_delete_old_traces` hook, the two Help items and `_toggle_io_trace`, `_ask_delete_old_traces` and `_show_io_trace_folder`. No plot-dock, settings-panel or script code is touched. The other code changes are in owned files (`io_helper.py`, `io_service.py`) and tests.
+
+## Findings (most severe first; none blocking)
+
+A. **Docs still describe the removed whole-row check.** `AGENTS.md:141` (Live) says a new file is read only when "… ending with a whole row (`_txy_complete`); a writer paused exactly at a row's end can still look finished". `roadmaps/live-monitoring.md:108-110` says the same. The handoff's proposed doc changes don't cover either. Add both: settle age plus `seen` only, by Tony's decision, with the converter's temp-name rename as the real fix. Live L3 may also edit AGENTS.md:141, so whoever lands second merges the wording.
+
+B. **Quitting with the trace on prints no "I/O trace off" line.** `stop_io_trace` is called only from the menu toggle (`HelabMainWindow.py:526`). Neither `IOService.shutdown` nor the window's close path calls it. The handoff recipe (§7) says "untick it (or quit HeLab): the terminal prints `I/O trace off: <path>`". Fix: call `stop_io_trace()` from `IOService.shutdown` (an owned file), or correct the recipe.
+
+C. **Windows: concurrent helpers can lose trace lines, not just garble them.** The MSVC CRT emulates `O_APPEND` with a seek to the end followed by `WriteFile`, so two helpers can write at the same offset and one line overwrites the other. The handoff ("the summary skips a garbled one") understates this: counts from a Windows trace can be silently low. Fix options: a per-helper file in a per-recording folder (`io-trace-<stamp>/<pid>.jsonl`, merged by `trace_summary.py`), or a `msvcrt.locking` byte lock around each write. At minimum, state it in the recipe for the Windows lab PCs. A related Windows nit: Delete old traces can't remove a file a still-running helper holds open (the CRT opens without `FILE_SHARE_DELETE`). The `OSError` is suppressed, so the file is silently kept.
+
+D. **"Off" isn't immediate, and the new name isn't reserved.** A helper started while the trace was on keeps appending until it exits, which can be a long load or a save, after "I/O trace off" has printed. Also, `start_io_trace` checks only `os.path.exists`, and helpers create the file lazily. Suppose the trace goes on, then off, then on again within one second while a helper from the first recording hasn't written yet. The second recording can then get the same name and share the file. This is rare. Fix: create the file with `O_CREAT|O_EXCL` in `start_io_trace`, and note the lag in the tooltip or the recipe.
+
+E. **Live after a stall longer than the settle age (information for Tony; documented in the handoff, not pinned by a test).** The partial shot is held as problematic. When the writer finishes, the next listing's sample (which usually includes the newest shot) or the next `save_held` (which checks every held file, `io_helper.py:1862,1897`) sees the shot as changed. `shots_missing` (`changed`) then stops Live and lists the folder as mismatched. That counts toward the 2/4/8 mismatch hold. So a slow converter shows up as a mismatch prompt rather than corrected data. It is accepted by design, but the Live test's docstring could say what follows, or a test could pin it.
+
+F. **GUI-thread nit.** Switching the trace on calls `realpath` and `psutil.disk_partitions(all=True)` on the GUI thread (`io_trace_problem`). On Windows with a disconnected mapped drive, this can stall briefly. The same check already runs at startup (`constants.py`), so this is no new class of risk, and it happens on a deliberate menu action.
+
+## Whole-branch sanity pass (486cf56..HEAD)
+
+Lanes: `save_held` stays a background `load`, Live checks stay foreground, and `volumes_verify` and `roots_verify` stay in local and background lanes as before. `_before_start` changes only `roots_verify`'s payload. Pausing: `Pause.checkpoint` is unchanged in loads and `save_held`. Slots: `IORequest.arrays` are written in `_run` on the daemon thread. An early `return` on cancel still goes through `finally`, which confirms exit before `release`. Retries and requeues carry `arrays` and get a fresh `trace` at each attempt. Mismatch: `shots_missing` is unchanged in loads and is added for `save_held`. Cache first: the RAM quick check (`memory_check`) is skipped for `full_check`. The verify loop only re-asks for a new listing observation. I found no regression. Codex's Part 2 conclusions stand.
+
+## Live L3 (agent/live-l3, incl. 672a96b)
+
+`git merge-tree` of HEAD with `agent/live-l3` (and with 672a96b alone) shows **no textual conflicts**. Merged, `live_check` has L3's `if memory is None:` guard, and no content check remains to interact with an empty start. I ran the full suite on that merged tree, unpacked with `git archive` into a scratch folder: 1170 passed, 2 skipped, 2 xfailed, 3 failed. The 3 failures are git-provenance tests (`test_versioning.py` ×2, `test_release_recovery.py` ×1) that need a `.git`, which a `git archive` copy lacks. All Live, I/O-trace and folder tests passed, including L3's empty-start and Live-off-save tests. One expected doc merge is AGENTS.md:141 (A).
+
+## Checks rerun (floor root, venv and floor-env)
+
+- `pytest -n 6 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`: **1014 passed, 2 skipped, 2 xfailed, 1 rerun**. The `-q` output didn't name the rerun test. Two more identical runs with `-rR` were **clean (1014 passed, no RERUN)**.
+- `mypy helab/ --strict` (77 files), `mypy tests --strict` (58), both also with `--platform win32`: **no issues**.
+- `pyright helab tests` and with `--pythonplatform Windows`: **0 errors, 0 warnings**.
+- `git diff --check 486cf56..HEAD`: **clean**.
+- Not run: native Windows. The Windows points (C, F) come from reading the code and CRT behaviour.
