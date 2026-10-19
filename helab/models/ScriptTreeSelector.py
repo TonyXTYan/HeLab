@@ -654,8 +654,11 @@ class PlotSettingsPanel(QWidget):
 
     It follows Qt's own signals, which fire only when something changes: the app's focus
     (a click anywhere in a plot focuses it, as its dock takes click focus), the active window
-    (a floating plot) and the plot area's tab activations. No Python runs per event (no event
-    filter), and the connections end with the panel or ``detach()``."""
+    (a floating plot), the plot area's tab activations and the plots' visibility (the shown
+    plot hidden: the most recently shown plot still visible shows, as when it closes). No
+    Python runs per event (no event filter), and the connections end with the panel or
+    ``detach()``. Whenever a plot shows, focus left in another plot moves to it, so focus is
+    never in a plot other than the shown one, and a click in any other plot changes focus."""
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
@@ -686,6 +689,10 @@ class PlotSettingsPanel(QWidget):
         self._order: List[QDockWidget] = []  # the chooser's order: as opened
         self._recent: List[QDockWidget] = []  # most recently shown last
         self._followed: List[QMainWindow] = []
+        self._check_shown = QTimer(self)
+        self._check_shown.setSingleShot(True)
+        self._check_shown.setInterval(0)
+        self._check_shown.timeout.connect(self._shown_still_visible)
         self._update_chooser()
         app = QApplication.instance()
         self._app = app if isinstance(app, QApplication) else None
@@ -713,6 +720,7 @@ class PlotSettingsPanel(QWidget):
         self.chooser.addItem(title)
         dock.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         dock.destroyed.connect(self._forget_deleted)
+        dock.visibilityChanged.connect(self._visibility_changed)
         self.show_plot(dock)
 
     def remove_plot(self, dock: QDockWidget) -> None:
@@ -727,8 +735,9 @@ class PlotSettingsPanel(QWidget):
             self._recent.remove(dock)
         if not sip.isdeleted(page):
             self.stack.removeWidget(page)
-        if self._recent:
-            self.show_plot(self._recent[-1])
+        fallback = self._fallback()
+        if fallback is not None:
+            self.show_plot(fallback)
         else:
             self.stack.setCurrentWidget(self.hint)
         self._update_chooser()
@@ -784,6 +793,12 @@ class PlotSettingsPanel(QWidget):
             widget = widget.parentWidget()
         return None
 
+    def _fallback(self, leaving: Optional[QDockWidget] = None) -> Optional[QDockWidget]:
+        """The plot to show when the shown one goes: the most recently shown one still
+        visible, else the most recently shown one."""
+        others = [dock for dock in reversed(self._recent) if dock is not leaving and not sip.isdeleted(dock)]
+        return next((dock for dock in others if dock.isVisible()), others[0] if others else None)
+
     def _activate(self, dock: Optional[QDockWidget]) -> None:
         if dock is not None and dock is not self.current_plot():
             self.show_plot(dock)
@@ -810,6 +825,23 @@ class PlotSettingsPanel(QWidget):
             if dock.isFloating() and dock.windowHandle() is window:
                 self._activate(dock)
                 return
+
+    @pyqtSlot(bool)
+    def _visibility_changed(self, visible: bool) -> None:
+        if not visible and self.sender() is self.current_plot():
+            self._check_shown.start()
+
+    def _shown_still_visible(self) -> None:
+        """The shown plot was hidden (unticked in the plot area's menu, its window minimised,
+        behind another tab on screen): a visible plot shows instead, as when it closes; if
+        none is visible, it stays. Checked a pass of the event loop later: floating or docking
+        a plot hides it for a moment, and a tab click shows the plot it brings forward."""
+        shown = self.current_plot()
+        if shown is None or sip.isdeleted(shown) or shown.isVisible():
+            return
+        fallback = self._fallback(shown)
+        if fallback is not None and fallback.isVisible():
+            self.show_plot(fallback)
 
     @pyqtSlot()
     def _forget_deleted(self) -> None:

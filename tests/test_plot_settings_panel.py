@@ -127,21 +127,62 @@ def test_a_dock_deleted_unclosed_drops_its_page(plots: Plots, qtbot: QtBot) -> N
     qtbot.waitUntil(edit.hasFocus)
 
 
-def test_focus_moved_by_hiding_shows_nothing(plots: Plots, qtbot: QtBot) -> None:
-    """When the focused widget's dock is hidden (behind another tab on screen, or closed), Qt
-    moves focus on to the next widget, maybe in another plot: that isn't the user's choice."""
-    first_edit, second_edit = QLineEdit(), QLineEdit()
-    first, second = plots.add(first_edit), plots.add(second_edit)
+def test_hiding_the_shown_plot_then_clicking_another(plots: Plots, qtbot: QtBot) -> None:
+    """Hiding the shown plot shows the most recently shown plot still visible, as closing
+    does; focus Qt moved into another plot meanwhile goes there too, so a click in any other
+    plot (even where Qt had put focus) changes focus and shows that plot."""
+    edits = [QLineEdit() for _ in range(3)]
+    a, b, c = (plots.add(line_edit) for line_edit in edits)
     plots.show(qtbot)
-    first_edit.setFocus(Qt.FocusReason.MouseFocusReason)
-    qtbot.waitUntil(lambda: plots.panel.current_plot() is first)
-    first.hide()
-    qtbot.waitUntil(second_edit.hasFocus)
-    assert plots.panel.current_plot() is first
-    # The user's own focus change still counts.
+    panel = plots.panel
+    edits[2].setFocus(Qt.FocusReason.MouseFocusReason)
+    edits[0].setFocus(Qt.FocusReason.MouseFocusReason)
+    assert panel.current_plot() is a
+    a.hide()
+    qtbot.waitUntil(lambda: panel.current_plot() is c)  # Shown before a; b only had focus moved to it.
+    focused = QApplication.focusWidget()
+    assert focused is not None and panel._plot_of(focused) is c
+    qtbot.mouseClick(edits[1], Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
+    assert panel.current_plot() is b
+    # With two plots: the focus Qt moves and the fallback agree; a click there keeps it.
+    c.hide()
+    a.show()
+    edits[0].setFocus(Qt.FocusReason.MouseFocusReason)
+    assert panel.current_plot() is a
+    a.hide()
+    qtbot.waitUntil(lambda: panel.current_plot() is b)
+    qtbot.mouseClick(edits[1], Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
+    assert panel.current_plot() is b and edits[1].hasFocus()
+
+
+def test_floating_the_shown_plot_keeps_it(plots: Plots, qtbot: QtBot) -> None:
+    """Floating or docking a plot hides it for a moment: its settings stay."""
+    first, second = plots.add(), plots.add()
+    plots.show(qtbot)
+    plots.panel.show_plot(first)
+    first.setFloating(True)
     first.show()
-    first_edit.setFocus(Qt.FocusReason.MouseFocusReason)
-    second_edit.setFocus(Qt.FocusReason.TabFocusReason)
+    qtbot.wait(50)
+    assert plots.panel.current_plot() is first and first.isVisible()
+    first.setFloating(False)
+    qtbot.wait(50)
+    assert plots.panel.current_plot() is first
+
+
+def test_nothing_visible_keeps_the_shown_plot(plots: Plots, qtbot: QtBot) -> None:
+    first, second = plots.add(), plots.add()
+    plots.show(qtbot)
+    second.hide()
+    plots.panel.show_plot(first)
+    first.hide()
+    qtbot.wait(50)
+    assert plots.panel.current_plot() is first
+    # Closing falls back the same way: a hidden plot only when none is visible.
+    third = plots.add()
+    second.show()
+    for dock in (second, first, third):  # first, hidden, is more recent than second.
+        plots.panel.show_plot(dock)
+    plots.panel.remove_plot(third)
     assert plots.panel.current_plot() is second
 
 
