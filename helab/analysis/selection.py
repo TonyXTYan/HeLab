@@ -59,10 +59,10 @@ RANGE_MODE = ParameterSpec("range_mode", "Range", "choice", AUTO, choices=(AUTO,
                                "and Y bounds below.")
 BOUNDS: tuple[tuple[ParameterSpec, ParameterSpec], ...] = tuple(
     (ParameterSpec(f"{axis.lower()}_min", f"{axis} min", "float", 0.0, None, f" {UNITS[i]}", group=RANGE_GROUP,
-                   when=(RANGE_MODE.name, MANUAL),
+                   when=(RANGE_MODE.name, MANUAL), si=True,
                    tip=f"Lower bound of {axis}. Leave min and max equal for {axis}'s full extent."),
      ParameterSpec(f"{axis.lower()}_max", f"{axis} max", "float", 0.0, None, f" {UNITS[i]}", group=RANGE_GROUP,
-                   when=(RANGE_MODE.name, MANUAL), tip=f"Upper bound of {axis}."))
+                   when=(RANGE_MODE.name, MANUAL), si=True, tip=f"Upper bound of {axis}."))
     for i, axis in enumerate(AXES))
 
 

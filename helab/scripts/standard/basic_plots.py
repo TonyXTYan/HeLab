@@ -2,6 +2,7 @@
 fast to redraw when Live adds shots, and painted on lab PCs that can't paint QtWebEngine)."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, List, Optional, cast
 
@@ -28,6 +29,22 @@ BINS = ParameterSpec(
 LOG_Y = ParameterSpec("log_y", "Log Y", "bool", False, group=BINS_GROUP,
                       tip="Logarithmic event axis; empty bins are left out.")
 COLOUR = (40, 90, 170)
+
+
+class DecadeLogAxis(pg.AxisItem):  # type: ignore[misc]
+    """A log axis that labels whole decades only, with unlabelled 2…9 ticks between them.
+    pyqtgraph labels the 2…9 ticks too when the axis spans under about two decades, and
+    those labels overlap. With no whole decade in view it keeps pyqtgraph's own ticks."""
+
+    def logTickValues(self, minVal: float, maxVal: float, size: float,
+                      stdTicks: list[tuple[float, list[float]]]) -> list[tuple[float | None, list[float]]]:
+        decades = [float(v) for v in range(math.ceil(minVal), math.floor(maxVal) + 1)]
+        if not decades:
+            return cast(list[tuple[float | None, list[float]]],
+                        super().logTickValues(minVal, maxVal, size, stdTicks))
+        minor = [v + math.log10(k) for v in range(math.floor(minVal), math.ceil(maxVal)) for k in range(2, 10)]
+        self.setStyle(maxTextLevel=0)
+        return [(1.0, decades), (None, [v for v in minor if minVal < v < maxVal])]
 
 
 @dataclass(frozen=True)
@@ -145,7 +162,8 @@ class TxyHistograms(DatasetAnalysis):
         events = f"{items[0].total:,} events" if items else ""
         widget.addLabel(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}"), row=0, col=0)
         for row, item in enumerate(items, start=1):
-            plot = widget.addPlot(row=row, col=0, title=histogram_title(item))
+            axes = {"left": DecadeLogAxis("left")} if log_y else None
+            plot = widget.addPlot(row=row, col=0, title=histogram_title(item), axisItems=axes)
             plot.setLabel("bottom", f"{item.axis} ({UNITS[AXES.index(item.axis)]})")
             plot.setLabel("left", "Events")
             if log_y:

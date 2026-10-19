@@ -254,7 +254,9 @@ def test_parameters_are_validated_and_described() -> None:
     assert effective(specs, {"keep": "120", "bins": 3.7, "other": 1}) == {"keep": 100.0, "bins": 3}
     assert effective(specs) == {"keep": 99.0, "bins": 0}
     assert describe(specs, {"keep": 99.0, "bins": 0}) == "Keep 99 %, Bins 0"
-    assert specs[0].tree_item()["limits"] == (50.0, 100.0)
+    assert specs[0].tree_item()["limits"] == (50.0, 100.0) and specs[0].tree_item()["suffix"] == "%"
+    bound = ParameterSpec("t_min", "T min", "float", 0.0, None, " s", si=True).tree_item()
+    assert (bound["suffix"], bound["siPrefix"], bound["dec"], bound["step"]) == ("s", True, True, 0.1)
 
 
 def test_choice_parameters_gate_what_applies() -> None:
@@ -361,6 +363,14 @@ def test_histogram_log_y_renders_without_empty_bins(qtbot: QtBot) -> None:
     qtbot.addWidget(widget)
     plot = widget.getItem(1, 0)
     assert plot.ctrl.logYCheck.isChecked()
+    axis = plot.getAxis("left")
+    assert isinstance(axis, basic_plots.DecadeLogAxis)
+    # Decades labelled, the 2…9 ticks between them not; no decade in view: pyqtgraph's ticks.
+    levels = axis.logTickValues(1.7, 3.1, 300, [])
+    assert levels[0] == (1.0, [2.0, 3.0]) and levels[1][0] is None
+    assert len(levels[1][1]) == 4 + 8  # 6…9 · 10¹ and 2…9 · 10² (2 · 10³ is out of view)
+    assert getattr(axis, "style")["maxTextLevel"] == 0  # pyqtgraph's style dict, not QWidget.style()
+    assert axis.logTickValues(1.2, 1.8, 300, [])[0][1]
     (item,) = plot.listDataItems()
     _, ys = item.getOriginalDataset()
     assert np.isnan(ys).sum() == 8 and np.nansum(ys) == 3

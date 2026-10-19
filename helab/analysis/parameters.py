@@ -25,6 +25,7 @@ class ParameterSpec:
     choices: tuple[str, ...] = ()  # kind "choice": the allowed values, a drop-down in the tree
     group: str = ""  # the parameter tree section this belongs to ("" = top level)
     when: tuple[str, str] | None = None  # (choice parameter, value) this applies under; None = always
+    si: bool = False  # a float in a base unit (s, m): shown with SI prefixes (4 mm), stepped by decade
 
     def coerce(self, value: Any) -> Value:
         """``value`` as this parameter's type, clamped to its limits (a choice outside
@@ -55,7 +56,10 @@ class ParameterSpec:
         elif self.limits is not None:
             item["limits"] = self.limits
         if self.suffix:
-            item["suffix"] = self.suffix
+            item["suffix"] = self.suffix.strip()  # the spin box adds its own space
+        if self.si:
+            # Steps of a tenth of the value's decade: 4 mm → 5 mm, 3.85 s → 3.95 s.
+            item.update(siPrefix=True, dec=True, step=0.1, decimals=6)
         if self.tip:
             item["tip"] = self.tip
         return item
