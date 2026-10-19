@@ -1,15 +1,17 @@
 # Live L3 — handoff: plots following Live
 
-Branch `agent/live-l3` (floor "Live L3"), base `d0b8fbe`. Three commits:
+Branch `agent/live-l3` (floor "Live L3"), base `d0b8fbe`. Commits:
 
 | Commit | What |
 |---|---|
 | `672a96b` | **Let Live start on an empty folder** (item 6, separate as Maestro asked): `io_helper.live_check`, `FolderCache.empty_dataset`, `FolderExplorer`, with helper, helper-process and tab tests |
 | `d15792a` | **Plots follow Live (L3)**: items 1–5, 7, 8 |
 | `d1eb244` | Settings name the revision on screen; the delay in plain seconds (found in the renders) |
+| `959bcf5` | This session folder |
+| `2089da4`, `9d9c54e`, `f80091f` | Review fixes (below), with Codex's [review-codex.md](review-codex.md) |
 
-How it works, the test-isolation trap and renders: [notes.md](notes.md). Not pushed (push when
-Maestro says).
+How it works, the test-isolation trap and renders: [notes.md](notes.md). Pushed to
+`TonyXTYan/HeLab` after the review fixes.
 
 ## What changed
 
@@ -27,11 +29,32 @@ Maestro says).
 | `helab/io_helper.py`, `helab/utils/folder_cache.py`, `helab/views/FolderExplorer.py` | Item 6 only (commit `672a96b`) |
 | Tests | New `tests/test_live_plots.py` (33); item 6 in `test_live.py`, `test_live_check.py`, `test_live_io.py`; `test_analysis_gui.py`'s fixture closes its plots |
 
+## Review fixes
+
+Codex reviewed `959bcf5` ([review-codex.md](review-codex.md)): changes requested, its checks
+matching mine (1115 passed, no reruns, typing clean). Maestro asked for the three findings, one
+commit each:
+
+| Commit | Finding | Fix |
+|---|---|---|
+| `2089da4` | **P1**: Follow Live turned off while a Live rerun ran still drew that newer revision into the pinned plot, and Rerun then used it | `Follow.pin(at)` pins at the data the plot shows (`AnalysisInstance._shown_view`; each job's view is kept while it runs). A run that ends while pinned on other data is dropped, not drawn ("Pinned at rev N: the run on rev M isn't shown"); Rerun stays on the pinned revision; Follow Live on again catches up. Test: `test_pinning_during_a_live_rerun_keeps_the_pinned_revision` (fails without the fix) |
+| `9d9c54e` | **P2**: a plot made before Live never caught up when Live's data had the same shot numbers with a changed fingerprint (waiting counted shot numbers only) | `follow.changes()` compares by number and fingerprint (added; changed or gone). Live's revisions of one input still wait for "every N" new or changed shots; another input of the folder (loaded again before Live) with any difference runs once whatever N; identical data runs nothing. Source line: "K new or changed shots" when not all are additions. Tests: `test_follow_counts_changed_fingerprints_and_runs_another_input_once`, `test_a_plot_made_before_live_catches_up_with_changed_data` (both fail without the fix) |
+| `f80091f` | **P2**: Counts per shot drew a flat line for chosen shots with no events | Its empty pane shows whenever the chosen shots hold no events ("No events in the chosen shots"). Test: a "no events" case (shots of shape (0, 3)) for all four bundled plots; Counts per shot's fails without the fix |
+
+Not changed, as Maestro decided: with Live off, a delay timer already armed may still finish one
+rerun on a revision that came while Live was on (judgement call 2; Maestro tells Tony).
+
+Checks after the fixes: full suite **1122 passed, 2 skipped, 2 xfailed, no RERUN** (`-n 4`);
+`mypy helab/ --strict`, `mypy tests --strict`, `mypy helab/ tests --strict --platform win32`:
+clean; `pyright helab tests` and `--pythonplatform Windows`: 0 errors; `git diff --check d0b8fbe
+HEAD`: clean.
+
 ## The decisions as built
 
 1. **Follow Live** is on by default for every plot and acts while Live watches the plot's folder
-   (same source path). Plots of other folders stay put. Off pins the plot: what waits is dropped,
-   no revision is taken; on again, it catches up (as its policy allows).
+   (same source path). Plots of other folders stay put. Off pins the plot at the revision it
+   shows: what waits is dropped, no revision is taken, and a run already on newer data is
+   dropped when it ends; on again, it catches up (as its policy allows).
 2. **Cadence**: every new shot by default; `DatasetAnalysis.live_policy` declares N and/or a
    delay; the plot's settings show a **Live** group (Follow Live, Rerun every N new shots, Wait
    after a run) with the script's values as defaults (pyqtgraph's reset-to-default arrow).
