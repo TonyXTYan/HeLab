@@ -168,7 +168,8 @@ branch with an open PR to `main` runs only the detection job, since the PR's own
 run tests the same commit (if the PR lookup fails, everything runs). Separate
 Python 3.11, 3.12 and 3.14 compatibility matrices run only on PRs to `main`,
 with soft failures. Shared steps live in `ci-test.yml` and `ci-build.yml`, with
-Codecov uploads. Compatibility matrices expand on pushes, but pass `enabled: false`
+Codecov uploads. Runs keep no artifacts: builds are uploaded (`upload`) only in a
+run that releases, for the release job; test results go to Codecov only. Compatibility matrices expand on pushes, but pass `enabled: false`
 to the called jobs, recording individual skips without starting runners. All
 matrices disable fail-fast; required failures do not cancel
 other OS tests/builds. All four matrices depend on branch/version selection;

@@ -97,13 +97,6 @@ jobs:
           fi
           pytest -n 4 --verbose --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
 
-      - name: Upload Test Results
-        if: ${{ !cancelled() && hashFiles('junit.xml') != '' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-results-${{ inputs.os }}-py3${{ inputs.python-minor }}
-          path: junit.xml
-
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v7
