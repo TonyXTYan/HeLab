@@ -24,3 +24,17 @@ Branch `agent/settings-panel-hardening`, base `486cf56`, head `6514ee9` (8 commi
 - `mypy helab/ --strict` — 77 files clean. `mypy tests --strict` and `mypy tests --strict --platform win32` — 59 files clean each. Mypy initially failed because the sandbox could not open its cache database; all three passed with separate cache directories under `/private/tmp`.
 - `pyright helab tests` and `pyright tests --pythonplatform Windows` — 0 errors each.
 - `git diff --check 486cf56..HEAD` — clean.
+
+## Recheck at c05ae95
+
+Reviewed `git diff 6514ee9..c05ae95` (the two fix commits plus updated handoff). **The two original production findings are resolved.** Visibility loss now schedules a next-event-loop check and selects a visible fallback; tests cover the hidden plot followed by a click in another plot, and transient hide during float/redock. Accepted main-window close now calls `close_plots()`, taking each dock through `AnalysisInstance.close`; a test verifies cancellation, runner disconnection and result unpinning with one completed and one running plot.
+
+**New minor test finding (fix before landing):** `tests/test_analysis_gui.py:583` connects an anonymous lambda to the app-wide `AnalysisRunner.finished`, and never disconnects it. Line 589 explicitly expects that extra receiver after the window closes. This test therefore leaves a global connection and its captured `cancelled` results alive for later tests. Keep a named callback and disconnect it in a `finally` block (after the cancellation assertion), then assert the runner's receiver count returns to its starting value. This is test contamination, not a remaining production leak. Verdict: **production fixes accepted; test cleanup requested**.
+
+Validation at `c05ae95`:
+- Full suite outside sandbox, `venv/bin` on `PATH`: `pytest -n 6 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review-recheck` — 1075 passed, 2 skipped, 2 xfailed, no RERUN (33.73 s).
+- `mypy helab/ --strict`: 77 files clean; `mypy tests --strict` and `mypy tests --strict --platform win32`: 59 files clean each (separate writable caches under `/private/tmp`).
+- `pyright helab tests` and `pyright tests --pythonplatform Windows`: 0 errors each.
+- `git diff --check 6514ee9..c05ae95`: clean.
+
+This recheck section is uncommitted. The earlier review file was added to the branch by the worker/coordinator between the two heads.
