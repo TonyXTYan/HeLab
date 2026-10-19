@@ -145,6 +145,7 @@ def window(qtbot: QtBot, browser: FolderExplorer) -> Iterator[Window]:
     made = Window(browser)
     qtbot.addWidget(made)
     yield made
+    made.close_plots()  # As the main window's close does: each plot ends now, not when collected.
     if not sip.isdeleted(made.middle_mainwindow):  # A window of its own here: deleted with its docks.
         made.middle_mainwindow.close()
         made.middle_mainwindow.deleteLater()
@@ -374,7 +375,7 @@ def test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab(
     instance.rerun_button.click()
     qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
     label = source_label(instance.dock_widget)
-    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v2\n"
+    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v3\n"
                             "manual range: full extent · bins auto · ⚠ X: min > max, using full extent")
     assert "Warning: X: min > max, using full extent" in label.toolTip()
     assert instance.status_label.text() == "⚠ X: min > max, using full extent"
@@ -403,13 +404,13 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     assert instance is not None and instance.dock_widget is not None
     qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
     pane = instance.dock_widget.findChild(PlotlyPane)
-    assert pane is not None and pane.plot_id in dash_server.plots
+    assert pane is not None and dash_server.snapshot(pane.plot_id) is not None
     assert pane.open_button.text() == "Open in browser"
     assert pane.note.text().startswith("All 70 events in range shown · crop keeps")
     assert pane.note.toolTip().startswith("Showing all 70 events in the range")
     label = source_label(instance.dock_widget)
     # Two lines: source (folder, revision, shots, analysis), then the settings in short form.
-    assert label.text() == ("Data source: run_D · rev 1 · 2 shots · helab.scatter_3d v2\n"
+    assert label.text() == ("Data source: run_D · rev 1 · 2 shots · helab.scatter_3d v3\n"
                             "auto-crop 99 % · points 1.5 px, opacity 0.5")
     assert not label.wordWrap() and label.contentsMargins().top() == 0
     assert metadata.file_hash[:12] in label.toolTip()
@@ -418,7 +419,7 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
            "Auto-crop: keep 99 %, T min 0 s, T max 0 s," in label.toolTip()
     plot_id = pane.plot_id
     instance.dock_widget.close()
-    qtbot.waitUntil(lambda: plot_id not in dash_server.plots)
+    qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None)
     QApplication.processEvents()
 
 

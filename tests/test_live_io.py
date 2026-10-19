@@ -169,3 +169,43 @@ def test_a_stuck_read_is_retried_only_after_the_previous_helper_has_exited(
     assert error["timeout"] and error["message"] == "File timed out after 3 attempts: d_txy_forc3.txt — Retry"
     assert all(request.lane == FOREGROUND for request, _ in started)
     qtbot.waitUntil(lambda: not service.active and not service.retired, timeout=5000)
+
+
+def test_live_on_an_empty_folder_through_the_helper_processes(
+    qtbot: QtBot, service: IOService, tmp_path: Path, gate: ReadGate,
+) -> None:
+    """Live started before the first shot: the check holds no shots (``memory=[]``, sent as is to
+    the helper process), lists the folder, and reads the first shot once it is seen unchanged a
+    check later; the gate shows the read happens in that second check, and only there."""
+    watched = tmp_path / "run"
+    watched.mkdir()
+    old = time.time() - 60
+    os.utime(watched, (old, old))
+    events = events_of(service)
+
+    def finished(owner: str) -> list[dict[str, Any]]:
+        qtbot.waitUntil(lambda: any(r.owner == owner and e["kind"] in ("done", "error") for r, e, _ in events),
+                        timeout=10000)
+        return [e for r, e, _ in events if r.owner == owner]
+
+    def check(owner: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        assert service.submit(owner, 0, str(watched), "load", {"live": True, "memory": [], **payload})
+        return finished(owner)
+
+    nothing = check("live 1", {})
+    assert [e["kind"] for e in nothing][-2:] == ["live_unchanged", "done"]
+    unchanged = next(e for e in nothing if e["kind"] == "live_unchanged")
+    assert unchanged["live_listed"] and unchanged["total_files"] == 0
+    write_files(watched, range(1, 2), rows=3)
+    first = check("live 2", {})  # Seen, not read: no read waits at the gate.
+    seen = next(e for e in first if e["kind"] == "live_unchanged")["live_seen"]
+    assert [entry[0] for entry in seen] == [1] and not any(e["kind"] == "file_started" for e in first)
+    assert service.submit("live 3", 0, str(watched), "load", {"live": True, "memory": [], "seen": seen})
+    qtbot.waitUntil(lambda: any(r.owner == "live 3" and e["kind"] == "file_started" for r, e, _ in events),
+                    timeout=10000)
+    assert not any(r.owner == "live 3" and e["kind"] == "loaded" for r, e, _ in events)
+    gate.open(watched / "d_txy_forc1.txt")
+    read = finished("live 3")
+    loaded = next(e for e in read if e["kind"] == "loaded")
+    assert [e["shot"] for e in read if e["kind"] == "shot"] == [1]
+    assert loaded["memory_shots"] == [] and loaded["source"] == "updated" and loaded["files"] == 1

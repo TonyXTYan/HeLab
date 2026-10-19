@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import QWidget
 from scipy.signal import find_peaks, peak_widths
 
 from helab.analysis.dataset_view import DatasetView
+from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import SHOT_SPECS, select_shots, selection_text, shots_brief, shots_text
@@ -100,6 +101,8 @@ class Fractions:
     notes: tuple[str, ...] = ()
     histogram: tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]] = field(
         default=(np.empty(0), np.empty(0)))  # (edges, counts) of T around the orders
+    detected: bool = False  # Auto found order 0 in this run's events (it had some to search)
+    minimum: int = 0  # Shots with no more counts than this in the XY box were left out
 
     @property
     def fractions(self) -> npt.NDArray[np.float64]:
@@ -204,7 +207,7 @@ class TransferFractions(DatasetAnalysis):
 
     def detected_parameters(self, action_name: str, result: AnalysisResult) -> dict[str, Any]:
         data = result.data
-        if not isinstance(data, Fractions) or not data.auto:
+        if not isinstance(data, Fractions) or not data.auto or not data.detected:
             return {}
         return {CENTRE.name: data.orders.centre, SPACING.name: data.orders.spacing}
 
@@ -227,13 +230,14 @@ class TransferFractions(DatasetAnalysis):
         times = np.concatenate(list(boxed.values())) if boxed else np.empty(0)
         auto = values[MODE.name] == AUTO
         centre, spacing = float(values[CENTRE.name]), float(values[SPACING.name])
+        detected = False
         if auto and len(times):
             low, high = float(values[SEARCH_MIN.name]), float(values[SEARCH_MAX.name])
             searched = times[(times >= low) & (times <= high)] if high > low else times
             if len(searched):
                 low, high = (low, high) if high > low else (float(searched.min()), float(searched.max()))
                 found = detect(searched, low, high if high > low else low + 1e-6, each_side)
-                centre = found.centre
+                centre, detected = found.centre, True
                 if found.spacing is None:
                     notes.append("no side peak found: spacing as set")
                 else:
@@ -249,11 +253,16 @@ class TransferFractions(DatasetAnalysis):
         return Fractions(orders, np.fromiter(boxed, dtype=np.int64, count=len(boxed)),
                          counts.reshape(len(boxed), len(orders.numbers)), len(chosen), len(view.shots), auto,
                          tuple(notes),
-                         (histogram[1], histogram[0].astype(np.float64)) if histogram else (np.empty(0), np.empty(0)))
+                         (histogram[1], histogram[0].astype(np.float64)) if histogram else (np.empty(0), np.empty(0)),
+                         detected, minimum)
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Fractions = result.data
         orders = data.orders
+        if not len(data.shots):
+            text = empty_text(data.total_shots, data.chosen) or (
+                f"No shot has more than {data.minimum:,} counts in the XY box (Counting settings)")
+            return empty_pane(text, parent)
         widget: Any = pg.GraphicsLayoutWidget(parent)
         widget.setBackground("w")
         found = "found" if data.auto else "set"
