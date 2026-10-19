@@ -21,7 +21,7 @@ from typing import Any, List, Optional
 import psutil
 from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
     QDir, QDateTime, QSettings, QStorageInfo, QRect
-from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QPainter, QPixmap, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QGuiApplication, QPainter, QPixmap, QKeySequence
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget, QHBoxLayout, \
     QPushButton, QTreeWidget, QTreeWidgetItem, QInputDialog, QProgressBar, QToolButton, QMessageBox
@@ -53,7 +53,6 @@ from helab.views.RootDuplicatesWindow import RootDuplicatesWindow
 from helab.views.SettingsDialog import SettingsDialog
 from helab.views.DebugIconsWindow import DebugIconsWindow
 
-from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 # sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 # from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density
@@ -877,10 +876,27 @@ class HelabMainWindow(QMainWindow):
         window by destroying and recreating it, so the whole window closed and reopened when
         the first such plot opened. A hidden QQuickWidget child, made before the window is
         shown, makes it start that way. macOS only until checked on the lab PCs, whose GPUs
-        can't paint QtWebEngine."""
-        if sys.platform == "darwin":
+        can't paint QtWebEngine (``needs_rhi_surface``)."""
+        if HelabMainWindow.needs_rhi_surface():
+            from PyQt6.QtQuickWidgets import QQuickWidget  # Loaded only where it is used.
             self._rhi_surface = QQuickWidget(self)
             self._rhi_surface.hide()
+
+    @staticmethod
+    def needs_rhi_surface(system: str = sys.platform, qpa: str | None = None) -> bool:
+        """Whether the window starts with the hidden RHI surface: on macOS's own windows
+        (Qt's cocoa platform) only. Nothing is made on Windows or Linux, nor offscreen (tests),
+        where no window is recreated on screen."""
+        if qpa is None:
+            qpa = QGuiApplication.platformName()
+        return system == "darwin" and qpa == "cocoa"
+
+    def close_plots(self) -> None:
+        """Close every plot dock as its close button does: each run's job is cancelled, it
+        leaves the analysis runner and its result is unpinned (the window is closing; its
+        widgets may outlive it, as in tests)."""
+        for dock in list(self.dock_widgets):
+            dock.close()
 
     def update_placeholder_visibility(self) -> None:
         """The plot area's hint shows while no plot dock is open, and hides while any is.
@@ -1427,6 +1443,8 @@ class HelabMainWindow(QMainWindow):
                 a0.ignore()
             return
         self._closing = True
+        self.close_plots()
+        self.panel_right_top_plot_settings.detach()
         if not self._cache_dialogs_detached:
             self.cache_dialogs.detach()
         self.watchdog.stop()

@@ -322,7 +322,7 @@ def test_numbers_can_be_typed_without_their_unit(qtbot: QtBot) -> None:
     parameter_of(root, selection.RANGE_MODE).setValue(selection.AUTO)
     assert type_into(scatter_3d.KEEP, "95") == "95 %"
     assert type_into(scatter_3d.CAP, "5000") == "5000"
-    assert type_into(scatter_3d.POINT_SIZE, "20") == "1.5 px"  # Out of range: kept as it was.
+    assert type_into(scatter_3d.POINT_SIZE, "20") == "10 px"  # Above the limit: set to 10 px.
     values = tree_values(root, specs)
     assert values["t_min"] == pytest.approx(0.005) and values["keep_percent"] == 95.0
     assert values["display_cap"] == 5000 and isinstance(values["display_cap"], int)
