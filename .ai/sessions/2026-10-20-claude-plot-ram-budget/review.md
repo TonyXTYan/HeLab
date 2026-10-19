@@ -177,3 +177,84 @@ design points that need a decision or a small change.
   - Unpinned `RamResults`: disagree. They are not small for the scatter (#5).
   - The Live feed: agree. Its views are the pinned Live dataset's arrays, already counted.
 - **Add to the list: released plots' pictures (#3).**
+
+## Recheck at e261905
+
+Reviewed `git diff ebf674d..e261905` (10 fix commits), plus new probes in
+`.ai/temp/review-probe/test_review_probe.py`.
+
+**Verdict: one blocker, a regression from the #3 fix.** Every other item is fixed as described.
+
+### Blocker: a plot whose data is a loaded folder no tab shows is never released, so the folder is never dropped either
+
+`budget.py` `RamBudget.frees` (used at `check()`: `if frees <= plot.picture_cost(): continue`).
+`frees` leaves out every buffer that a held dataset or *any* other plot has. Both of these cases
+are common, and in each the plot's own bytes are just its small result:
+- **One plot, folder held but unshown** (histograms of a folder you've moved on from). `frees`
+  is a few bytes, below the PNG's cost (about 10 kB offscreen, more on screen), so the plot is
+  skipped. `_evict` keeps the folder because a plot holds its arrays. Nothing ever goes.
+  Probe `test_one_small_plot_of_a_held_unshown_folder`: usage stays at 42 units against a limit
+  of 10, with the plot and the folder both kept.
+- **Two plots, folder no longer held** (T and X histograms of one folder). Each plot's `frees`
+  leaves out the shared shots because the other plot holds them, so both are skipped and the
+  shots stay. Probe `test_two_small_plots_of_one_unloaded_folder`: neither is released, and usage
+  stays at 42 units against a limit of 10.
+
+At ebf674d the first case at least released the plot. Now nothing is freed, while the status
+bar and the 75 % window keep warning. `test_a_release_must_free_more_than_its_picture_costs`
+covers only a folder shown in a tab, where skipping is right.
+
+Suggested fix: count as freed what the release makes freeable. That is the plot's buffers held
+by neither a dataset shown in a tab (`pins`) nor a plot that won't be released (the shown,
+running or Live plot, or one that isn't a candidate). Unshown datasets are then dropped by the
+`evict_to` that follows each release, and fellow candidates are released next by the same loop.
+Alternatively, judge a group of candidates that share buffers together. Add both probes as tests.
+
+### The items asked about
+
+- **#1 Datasets first:** fixed. `evict_to` runs and `held_buffers` is recomputed after each
+  release (`test_datasets_go_first_again_after_each_release`; my probe passes).
+- **#2 A failed or cancelled reload:** fixed. `_still_released` hollows `follow.ran` on cancel,
+  a pinned Live rerun and failure. My probe now finds only the picture's PNG (5 kB) in
+  `ram_buffers`, which is by design.
+- **#3 PNG pictures:**
+  - Pictures are kept as PNG bytes (`Picture`) and counted in `ram_buffers` and so in
+    `plot_bytes` (tested).
+  - A release is skipped when it frees no more than the picture costs (`release(frees)`), and
+    the cost is remembered, so later checks don't grab again.
+  - But see the blocker for how `frees` is computed.
+  - Low: `PlotPicture.paintEvent` decodes the PNG on every paint. That is CPU, not RAM, and is
+    noticeable only while a window is resized.
+- **#4 Exact shots:** fixed. Reload and auto reload restore only `coverage.shots`. Rerun with
+  new settings uses the view's shots. `Restored.asked` counts the shots asked for in the amber
+  line (`test_a_reload_takes_exactly_the_shots_the_plot_drew`).
+- **#5 Results each plot keeps:** fixed. `_runs` follows each run's job id. `ram_buffers`
+  counts every completed result still in `RamResults`, and uses `peek` so the result isn't
+  touched as recently used. `_forget_runs` discards them on release and on close, keeping the
+  job in flight (`test_older_results_count_and_go_with_a_release_or_close`).
+- **#6 A disk reload ending during a run:** fixed. The reload is dropped and the run draws
+  (`test_a_disk_reload_ending_during_a_live_run_leaves_that_run`).
+- **#7 Auto reload:**
+  - `plotShown` now fires only when the shown plot changes.
+  - After a failed reload, `_nowhere` stops auto reload until `datasetChanged` or
+    `diskCacheChanged` fires for the folder (both `pyqtSignal(str)`, compared with
+    `FolderCache.key`). Reload always tries, and close disconnects the signals.
+  - The grace period: a plot drawn by a reload in the last 10 s is ordered after the others
+    (`recently_reloaded`), which stops two plots from releasing and reloading each other.
+  - Tested (`test_auto_reload_tries_once_until_the_folder_changes`,
+    `test_a_plot_just_reloaded_goes_after_the_others`).
+- **#8 Hysteresis:** fixed. The window opens again only after usage drops below 70 %.
+- **#9 / #10 Structure:**
+  - `helab/utils/` no longer imports `helab.analysis` (only comments name it). The buffer
+    counting is in `helab/utils/ram_buffers.py`.
+  - `fingerprints_of` is shared from `dataset_view`. The setting and its reader are in
+    `constants.py`.
+  - Nit: a dead duplicate `PLOT_AUTO_RELOAD_SETTING` is still at `budget.py:47`.
+
+### Checks at e261905
+
+- `pytest -n 6 --reruns 5 --reruns-delay 1 -rR --basetemp=.ai/temp/pytest-review`: 1281
+  passed, 2 skipped, 2 xfailed, **no RERUN** (62 s).
+- `mypy --strict` on helab/ and tests, each native and with `--platform win32`: no issues.
+- `pyright helab tests`, native and `--pythonplatform Windows`: 0 errors.
+- `git diff --check 531ec41..HEAD`: clean.
