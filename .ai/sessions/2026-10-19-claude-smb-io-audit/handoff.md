@@ -84,11 +84,21 @@ with trace tests, following Codex's constraints and Maestro's notes:
   stats except the changed shot's own until it's read.
 - **`save_held`:** the save gets the same `recent` list. A recent shot that changed is read again before
   the save (once settled, unchanged while read; else saved as held and counted as unsettled) and saved
-  as it is now, not reported as a mismatch; older changed shots still stop the save.
+  as it is now, not reported as a mismatch; older changed shots still stop the save. Fixed after the
+  recheck at 660ba9c: such a save now sends the folder's summary with its new fingerprint before
+  `loaded` (`scan_summary`, adopted as a Live check's: `_adopt_load_summary(live=True)` for
+  `save_memory` jobs). Without it FolderCache saw the new signature differ from the snapshot's and
+  cancelled the save before its disk write (the tab got "cancelled", RAM kept the partial shot). This
+  was chosen over exempting saves from the signature check because it keeps the folder's status (tree
+  row, counts, signature) matching the data the save writes, as Live checks do; an exemption would
+  have left the snapshot with the partial shot's signature. Tests of the tab now run saves through the
+  real `save_held` (`tests/test_live.py`'s `replay`).
 - **Telling the user.** The tab's Live line and Folder details' state row say "Shot 1009 changed after
   it was read (writer paused > 5 s?): read again" (several: "Shots …") for **one minute** after the
   re-read (`LIVE_REREAD_NOTE_SECONDS`; new shots don't clear it, so it stays long enough to be seen at a
-  shot every few seconds); the Live line's tooltip adds when and the rule. One WARNING per shot: `Live:
+  shot every few seconds); the Live line's tooltip adds when and the rule. The note is kept per folder
+  (`FolderExplorer._reread_notes`), so after Live off, once its save ends, it stays in Folder details
+  and on the summary's third line for the rest of the minute. One WARNING per shot: `Live:
   shot N changed S s after Live read it, read again: <path> (size A → B bytes, mtime X → Y). The converter
   writing to a temporary name and renaming it avoids this.` The re-read shot counts as not yet cached, so
   the next save writes its new data.

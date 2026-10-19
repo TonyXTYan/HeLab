@@ -117,9 +117,6 @@ class LiveSession:
     # When Live itself read each shot (wall time; read again: when that was). A shot it read
     # recently that changes is read again, not a mismatch (``FolderExplorer.LIVE_REREAD_SECONDS``).
     read_at: dict[int, float] = field(default_factory=dict)
-    # Shown for a minute after shots were read again (``FolderExplorer.live_reread_note``).
-    reread_note: str = ""
-    reread_at: float = -math.inf  # Monotonic.
 
 
 def large_text(estimate: int, refused: bool) -> str:
@@ -348,6 +345,9 @@ class FolderExplorer(QWidget):
         # The folder watched while Live is on, and every folder whose Live work isn't finished.
         self.live: LiveSession | None = None
         self._live_sessions: dict[str, LiveSession] = {}
+        # Shots Live read again, by folder: the note and when (monotonic), shown for a minute
+        # (``live_reread_note``), also after Live stops and its session ends.
+        self._reread_notes: dict[str, tuple[str, float]] = {}
         self._live_timer = QTimer(self)
         self._live_timer.setSingleShot(True)
         self._live_timer.timeout.connect(self._live_tick)
@@ -1608,18 +1608,18 @@ class FolderExplorer(QWidget):
                 when(new_mtime))
             session.read_at[shot] = now
         shots = sorted(int(entry["shot"]) for entry in entries)
-        session.reread_note = (f"Shot {shots[0]} changed after it was read (writer paused > 5 s?): read again"
-                               if len(shots) == 1 else
-                               f"Shots {', '.join(map(str, shots[:5]))}{' …' if len(shots) > 5 else ''} changed "
-                               "after they were read (writer paused > 5 s?): read again")
-        session.reread_at = time.monotonic()
+        note = (f"Shot {shots[0]} changed after it was read (writer paused > 5 s?): read again" if len(shots) == 1
+                else f"Shots {', '.join(map(str, shots[:5]))}{' …' if len(shots) > 5 else ''} changed after they "
+                     "were read (writer paused > 5 s?): read again")
+        self._reread_notes[session.path] = (note, time.monotonic())
 
     def live_reread_note(self, path: str) -> str:
         """Shots of ``path`` that Live read again in the last ``LIVE_REREAD_NOTE_SECONDS`` ("" if none)."""
-        session = self._live_sessions.get(path)
-        if session is None or time.monotonic() - session.reread_at >= self.LIVE_REREAD_NOTE_SECONDS:
+        note, at = self._reread_notes.get(path, ("", -math.inf))
+        if time.monotonic() - at >= self.LIVE_REREAD_NOTE_SECONDS:
+            self._reread_notes.pop(path, None)
             return ""
-        return session.reread_note
+        return note
 
     def _live_forget(self, session: LiveSession) -> None:
         """A session that is off with no save left to run or finish is done."""
@@ -1821,8 +1821,8 @@ class FolderExplorer(QWidget):
         if session.saved_at is not None:
             lines.append(f"Last saved: {datetime.fromtimestamp(session.saved_at).astimezone():%H:%M:%S}")
         if reread:
-            lines.append(f"{reread} {relative_age(time.monotonic() - session.reread_at)} (the log names its "
-                         "old and new size and mtime). A shot Live read in the last "
+            ago = relative_age(time.monotonic() - self._reread_notes[session.path][1])
+            lines.append(f"{reread} {ago} (the log names its old and new size and mtime). A shot Live read in the last "
                          f"{self.LIVE_REREAD_SECONDS / 60:g} minutes that changes is read again; an older one "
                          "that changes stops Live. The converter writing to a temporary name and renaming it "
                          "would avoid this.")
@@ -2256,6 +2256,9 @@ class FolderExplorer(QWidget):
             text, tooltip, stopped = self.live_line(live)
             self.folder_freshness_label.setText(text)
             self.folder_freshness_label.setToolTip(tooltip)
+        elif reread := self.live_reread_note(path):
+            # Live has stopped, and its last save read shots again: said for a minute here too.
+            self.folder_freshness_label.setText(f"{self.folder_freshness_label.text()} · {reread}")
         style = f"color: {AMBER};" if stopped else ""
         if self.folder_freshness_label.styleSheet() != style:
             self.folder_freshness_label.setStyleSheet(style)

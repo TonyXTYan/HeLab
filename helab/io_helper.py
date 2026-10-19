@@ -1898,15 +1898,21 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         known = {shot for shot, _, _ in fingerprint}
         listed: dict[int, tuple[int, int]] = {}
         file_names: dict[int, str] = {}
+        found: dict[str, set[int]] = {}  # (For the summary of a save that reads shots again.)
+        has_dirs = False
         listed_at = time.time()
         beat = Heartbeat(send, "listing")
         with _scandir(path, "save: listing") as directory:
             for entry in directory:
                 beat()
-                if (matched := file_kinds.match(entry.name)) and matched[0].loaded:
-                    info = _entry_stat(entry, "save: checking")
-                    listed[matched[1]] = (info.st_size, info.st_mtime_ns)
-                    file_names[matched[1]] = entry.name
+                if matched := file_kinds.match(entry.name):
+                    found.setdefault(matched[0].name, set()).add(matched[1])
+                    if matched[0].loaded:
+                        info = _entry_stat(entry, "save: checking")
+                        listed[matched[1]] = (info.st_size, info.st_mtime_ns)
+                        file_names[matched[1]] = entry.name
+                elif not has_dirs and _is_dir(entry):
+                    has_dirs = True
 
         def mismatch(reason: str, shots: list[int]) -> None:
             send({"kind": "shots_missing", "reason": reason, "missing": shots[:20], "missing_count": len(shots),
@@ -1983,6 +1989,13 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         counts = {"reused_memory": len(kept), "reused_disk": 0, "new": 0, "modified": len(replaced), "removed": 0,
                   "read": len(replaced), "new_loaded": 0, "modified_loaded": len(again)}
         signature = _fingerprint_signature([list(entry) for entry in fingerprint])
+        if replaced:
+            # A new fingerprint: the folder's summary as of this listing, before ``loaded``, as a Live
+            # check sends it (the app adopts it as Live's, so the folder's status matches the data).
+            summary = _summary(path, found, {file_kinds.TXY.name: sum(entry[1] for entry in fingerprint)}, has_dirs,
+                               False, fingerprint, listed_at)
+            summary["unsettled"] = unsettled
+            send({"kind": "scan_summary", "status": summary})
         send({"kind": "load_source", "source": "updated", "cache_reason": ""})
         send({"kind": "loaded", "rows": sum(len(data[entry["shot"]]) for entry in again),
               "bytes": sum(data[entry["shot"]].nbytes for entry in again), "files": len(data),

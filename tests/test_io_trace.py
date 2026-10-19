@@ -686,6 +686,7 @@ def test_a_live_save_checks_every_held_file_once_and_reads_none(tmp_path: Path, 
                         identity=identity, identity_root=root)
     kinds = [event["kind"] for event in events]
     assert "cache_saved" in kinds and "disk_cached" in kinds and "shots_missing" not in kinds
+    assert "scan_summary" not in kinds  # (The fingerprint is the data's: nothing new to say.)
     loaded = next(event for event in events if event["kind"] == "loaded")
     assert loaded["memory_shots"] == list(range(1, 10)) and loaded["disk_cache_pending"]
     assert loaded["unsettled_files"] == 1 and loaded["problematic"] == [3]
@@ -760,6 +761,11 @@ def test_a_live_save_reads_a_shot_live_read_recently_that_changed_again(tmp_path
     assert loaded["memory_shots"] == [1, 2] and now in loaded["fingerprint"] and loaded["files"] == 3
     assert loaded["live_reread"] == [{"shot": 3, "path": str(file), "old": held[2][1:], "new": now[1:], "read": True}]
     assert loaded["load_counts"]["modified_loaded"] == 1 and loaded["unsettled_files"] == 0
+    # A new fingerprint: the folder's summary comes first, so the app keeps the save (its signature).
+    kinds = [event["kind"] for event in events]
+    assert kinds.index("scan_summary") < kinds.index("loaded") < kinds.index("cache_saved")
+    summary = next(event for event in events if event["kind"] == "scan_summary")["status"]
+    assert summary["signature"] == loaded["signature"] and summary["txy"] == [1, 2, 3] and summary["unsettled"] == 0
     assert counts(lines(trace))[("read", "save: read again")] == 1
     with io_helper._cache_store(cache["directory"], [str(run)]) as store:
         value = store.read_dataset(str(run)).value
