@@ -43,3 +43,17 @@ Lifetime fixes found on the way:
 Unexplained: once, the first run of `tests/test_analysis_gui.py tests/test_script_system.py
 -x` after a failing assertion ended in a Fatal Python error at teardown (stack showed only
 threads). Not reproduced in 6 loops nor with deliberate failures with open/floating plots.
+
+## 2. Many plots
+
+`test_twenty_plots_tabbed_and_floating`: 20 plots opened at once (no waiting for docks to
+show), five floating. The chooser lists them in opening order with unique titles
+("Blocking (n) · run · rev 1"; the id is a per-panel counter, never reused). Each plot's
+page keeps its own values and its own current settings tab across chooser switches.
+Closing falls back to the most recently shown plot still open (floating or not), then to
+the newest never shown; closing a plot that isn't shown leaves the shown one. Once all are
+closed: no docks, pages or plot widgets survive (`sip.isdeleted`), the panel is back to
+the hint with an empty chooser, `dock_widgets` and `_analysis_instances` are empty, every
+`AnalysisInstance` is garbage-collected (weakrefs dead after `gc.collect()`) and none of
+their results stays pinned. Results stay in the RAM results store (R1) until its budget
+drops them, by design. No code change was needed beyond item 1's.

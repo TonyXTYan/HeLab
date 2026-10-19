@@ -2,7 +2,9 @@
 the view it started with, and the plot dock shows its source, revision and record."""
 from __future__ import annotations
 
+import gc
 import threading
+import weakref
 from pathlib import Path
 from typing import Any, Iterator, List, Optional, cast
 
@@ -442,4 +444,83 @@ def test_plots_deleted_with_their_window_end_their_runs(
     assert runner.receivers(runner.finished) == connected - 3
     assert not panel._analysis_instances and not window.dock_widgets
     assert window.panel_right_top_plot_settings.plots() == []
+    assert not any(job in runner.results._pinned for job in jobs)
+
+
+class TwoPages(Blocking):
+    """Settings on two pages (tabs)."""
+
+    def parameters(self, action_name: str) -> List[ParameterSpec]:
+        return [ParameterSpec("scale", "Scale", "int", 1, (1, 10)),
+                ParameterSpec("label", "Label", "bool", False, page="Display")]
+
+
+def test_twenty_plots_tabbed_and_floating(
+        window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path) -> None:
+    """Twenty plots, some floating: the chooser lists them in order; each keeps its own pages
+    and edits; closing falls back by recency, floating or not; once all are closed nothing of
+    them is left (docks, pages, plots, instances)."""
+    run = folder(tmp_path, "run_M", 1)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3})
+    window.middle_mainwindow.show()
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = TwoPages()
+    script.release.set()
+    instances = [cast(AnalysisInstance, panel.run_analysis(script.get_metadata(), script, "Plot"))
+                 for _ in range(20)]  # At once: no waiting for each dock to show.
+    qtbot.waitUntil(lambda: all(instance.result is not None for instance in instances), timeout=20_000)
+    docks = [cast(QDockWidget, instance.dock_widget) for instance in instances]
+    settings = window.panel_right_top_plot_settings
+    assert settings.plots() == docks and settings.current_plot() is docks[-1]
+    assert [settings.chooser.itemText(i) for i in range(20)] == [
+        f"Blocking ({n}) · run_M · rev 1" for n in range(1, 21)]
+    assert len({dock.windowTitle() for dock in docks}) == 20
+    for dock in docks[::4]:  # Five float.
+        dock.setFloating(True)
+    # Each plot's page is its own: edits and the page (tab) shown stay with it.
+    def tabs_of(instance: AnalysisInstance) -> QTabWidget:
+        tabs = cast(QWidget, instance.param_tab).findChild(QTabWidget)
+        assert tabs is not None and tabs.count() == 2
+        return tabs
+
+    for n in range(20):
+        root = instances[n].parameter_root
+        assert root is not None
+        root.child("scale").setValue(n % 10 + 1)
+        tabs_of(instances[n]).setCurrentIndex(n % 2)
+    for n in (3, 8, 4, 0, 19):
+        settings.chooser.activated.emit(n)
+        assert settings.current_plot() is docks[n] and settings.stack.currentWidget() is instances[n].param_tab
+    assert [instance.values() for instance in instances] == [
+        {"scale": n % 10 + 1, "label": False} for n in range(20)]
+    assert [tabs_of(instance).currentIndex() for instance in instances] == [n % 2 for n in range(20)]
+    # Closing falls back to the most recently shown plot still open, floating or not.
+    docks[19].close()
+    assert settings.current_plot() is docks[0]  # Floating.
+    docks[0].close()
+    assert settings.current_plot() is docks[4]
+    docks[8].close()  # Not the shown one: the shown one stays.
+    assert settings.current_plot() is docks[4]
+    docks[4].close()
+    assert settings.current_plot() is docks[3]
+    docks[3].close()
+    assert settings.current_plot() is docks[18]  # Then the newest of those never shown.
+    assert settings.chooser.count() == 15
+    # Memory: once all are closed, nothing of them is left.
+    pages = [cast(QWidget, instance.param_tab) for instance in instances]
+    contents = [cast(QWidget, dock.widget()) for dock in docks]
+    for dock in list(settings.plots()):
+        dock.close()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    assert settings.plots() == [] and settings.stack.count() == 1 and settings.chooser.count() == 0
+    assert not window.dock_widgets and not panel._analysis_instances
+    assert all(sip.isdeleted(widget) for widget in [*docks, *pages, *contents])
+    refs = [weakref.ref(instance) for instance in instances]
+    runner = instances[0].runner
+    jobs = [cast(AnalysisResult, instance.result).job_id for instance in instances]
+    del instances, script
+    gc.collect()
+    assert [ref for ref in refs if ref() is not None] == []
     assert not any(job in runner.results._pinned for job in jobs)
