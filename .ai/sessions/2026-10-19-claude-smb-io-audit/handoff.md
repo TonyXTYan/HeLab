@@ -271,6 +271,13 @@ Sources:
 - Scenario reruns after round 3: two sessions, no GUI-process call on the share (`compare-session{1,2}.md`,
   `trace-session{1,2}-after.md`; `compare_traces.py` now matches a renamed phase by its name before " (",
   marked †).
+- After the review fixes (B, C, D, F), the dev/v0.0.6 merge and E: full suite **1181 passed, 2 skipped,
+  2 xfailed, no RERUN** (one earlier run had 5 RERUNs of `test_typing.py::test_mypy_helab_tests_strict`, a
+  real strict-mypy error in my new test, fixed before the commit); typing clean in both modes. Both
+  scenario sessions rerun with recording folders (one file per helper, read whole by the summaries): no
+  GUI-process call on the share, every phase's counts as in the round 3 tables except one Live check
+  fewer in the 60 s writer phase (29 helpers, 16 listings, 195 stats, 20 marker opens; timing), so E
+  adds no I/O. The committed tables are round 3's.
 
 ### Not done (outside the six; for Tony)
 
