@@ -107,5 +107,5 @@ def test_load_scripts_adds_a_working_group(qtbot: QtBot, script_folder: Path,
 def test_settings_panel_starts_with_a_hint(qtbot: QtBot) -> None:
     panel = PlotSettingsPanel()
     qtbot.addWidget(panel)
-    assert panel.stack.currentWidget() is panel.hint and panel.chooser.isHidden()
+    assert panel.stack.currentWidget() is panel.hint and panel.chooser_row.isHidden()
     assert panel.current_plot() is None

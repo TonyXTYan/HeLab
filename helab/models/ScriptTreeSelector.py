@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal
 
-from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QCloseEvent
 # from uuid import uuid4
 
@@ -11,7 +11,7 @@ from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QLabel, QPushButton, QTreeWidget, QVBoxLayout,
     QTreeWidgetItem, QHeaderView, QDockWidget, QFileDialog,
-    QComboBox, QMainWindow, QApplication, QStackedWidget
+    QComboBox, QMainWindow, QApplication, QStackedWidget, QTabBar, QToolButton
 )
 from pyqtgraph.parametertree import Parameter
 
@@ -40,6 +40,35 @@ class AnalysisDock(QDockWidget):
     def closeEvent(self, event: QCloseEvent | None) -> None:
         super().closeEvent(event)
         self.closed.emit()
+
+
+class DockTabCloser(QObject):
+    """Gives the tabs of docks tabbed together in ``area`` a close button that closes that dock.
+    Qt makes those tab bars itself, as docks are tabbed, so each new one is fitted once."""
+
+    def __init__(self, area: QMainWindow) -> None:
+        super().__init__(area)
+        self.area = area
+        area.installEventFilter(self)
+
+    def eventFilter(self, a0: Optional[QObject], a1: Optional[QEvent]) -> bool:
+        if a1 is not None and a1.type() in (QEvent.Type.ChildAdded, QEvent.Type.LayoutRequest):
+            QTimer.singleShot(0, self.fit)
+        return False
+
+    def fit(self) -> None:
+        for bar in self.area.findChildren(QTabBar, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            if not bar.property("helabClosable"):
+                bar.setProperty("helabClosable", True)
+                bar.setTabsClosable(True)
+                bar.tabCloseRequested.connect(lambda index, bar=bar: self.close_tab(bar, index))
+
+    def close_tab(self, bar: QTabBar, index: int) -> None:
+        title = bar.tabText(index)
+        for dock in self.area.findChildren(QDockWidget):
+            if dock.windowTitle() == title and not dock.isFloating():
+                dock.close()
+                return
 
 
 class LinkedAnalysisInstance:
@@ -523,6 +552,9 @@ class TreePanelWidget(QWidget):
             return
         dock.closed.connect(lambda: self._analysis_instances.pop(instance.instance_id, None))
         window.panel_right_top_plot_settings.follow(window.middle_mainwindow)
+        area = window.middle_mainwindow
+        if area.findChild(DockTabCloser) is None:
+            DockTabCloser(area)
         shown = [other for other in window.dock_widgets if other.isVisible()]
         window.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         if shown:
@@ -569,7 +601,17 @@ class PlotSettingsPanel(QWidget):
         self.chooser = QComboBox()
         self.chooser.setToolTip("The plot these settings are for; click a plot to show its settings")
         self.chooser.activated.connect(lambda index: self.show_plot(self._order[index], raise_dock=True))
-        layout.addWidget(self.chooser)
+        self.close_button = QToolButton()
+        self.close_button.setText("✕")
+        self.close_button.setToolTip("Close this plot")
+        self.close_button.clicked.connect(self.close_current)
+        self.chooser_row = QWidget()
+        row = QHBoxLayout(self.chooser_row)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(2)
+        row.addWidget(self.chooser, 1)
+        row.addWidget(self.close_button)
+        layout.addWidget(self.chooser_row)
         self.stack = QStackedWidget()
         self.hint = QLabel("Run a plot from Scripts below; its settings appear here.")
         self.hint.setWordWrap(True)
@@ -638,8 +680,13 @@ class PlotSettingsPanel(QWidget):
             self._followed.append(area)
             area.tabifiedDockWidgetActivated.connect(self.show_plot)
 
+    def close_current(self) -> None:
+        dock = self.current_plot()
+        if dock is not None:
+            dock.close()
+
     def _update_chooser(self) -> None:
-        self.chooser.setVisible(bool(self._order))
+        self.chooser_row.setVisible(bool(self._order))
 
     def _plot_of(self, widget: Optional[QWidget]) -> Optional[QDockWidget]:
         while widget is not None:

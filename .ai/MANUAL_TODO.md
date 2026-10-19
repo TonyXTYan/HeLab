@@ -94,6 +94,10 @@ real experiment data without deciding where its top should be.
   two-line source follow. Manual bounds' spin boxes step sensibly when scrolled.
   The centre hint disappears when the first plot opens and returns when all
   close. Scatter point size and opacity in the dock and via Open in browser.
+- [ ] Opening the first 3D scatter no longer closes and reopens the main window on
+  the Mac (hidden QQuickWidget, `HelabMainWindow._start_with_rhi_surface`). On the
+  lab PCs (Windows), check whether it happens there and whether the same fix is
+  safe on GPUs that can't paint QtWebEngine before enabling it.
 - [ ] Transfer fractions on real data: order 0 and the spacing match the T
   histogram's peaks (the windows shaded below); manual mode starts from them and
   edits apply on Rerun; the XY box keeps the hot spot out; compare with

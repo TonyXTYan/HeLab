@@ -287,7 +287,7 @@ def test_settings_panel_follows_the_active_plot(
     assert settings.current_plot() is three and settings.stack.currentWidget() is third.param_tab
     assert [settings.chooser.itemText(i) for i in range(3)] == [
         "Blocking (1) · run_S · rev 1", "Blocking (2) · run_S · rev 1", "Blocking (3) · run_S · rev 1"]
-    assert settings.chooser.currentIndex() == 2 and not settings.chooser.isHidden()
+    assert settings.chooser.currentIndex() == 2 and not settings.chooser_row.isHidden()
     qtbot.waitUntil(lambda: all(instance.result is not None for instance in (first, second, third)), timeout=10_000)
     # Clicking a tabbed dock's tab brings it to the front and shows its settings.
     qtbot.waitUntil(lambda: any(bar.count() == 3 for bar in window.middle_mainwindow.findChildren(QTabBar)))
@@ -317,7 +317,35 @@ def test_settings_panel_follows_the_active_plot(
     assert settings.current_plot() is three
     three.close()
     assert settings.current_plot() is None and settings.stack.currentWidget() is settings.hint
-    assert settings.chooser.isHidden() and settings.stack.count() == 1
+    assert settings.chooser_row.isHidden() and settings.stack.count() == 1
+
+
+def test_plots_close_from_their_tab_and_the_settings_panel(
+        window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path) -> None:
+    run = folder(tmp_path, "run_X", 1)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3})
+    window.middle_mainwindow.show()
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = Blocking()
+    script.release.set()
+    runs: list[Optional[AnalysisInstance]] = []
+    for _ in range(3):
+        runs.append(panel.run_analysis(script.get_metadata(), script, "Plot"))
+        qtbot.waitUntil(window.dock_widgets[-1].isVisible)
+    first, second, third = runs
+    assert first is not None and second is not None and third is not None
+    qtbot.waitUntil(lambda: any(bar.count() == 3 and bar.tabsClosable()
+                                for bar in window.middle_mainwindow.findChildren(QTabBar)))
+    bar = next(bar for bar in window.middle_mainwindow.findChildren(QTabBar) if bar.count() == 3)
+    assert first.dock_widget is not None
+    bar.tabCloseRequested.emit(next(i for i in range(3) if bar.tabText(i) == first.dock_widget.windowTitle()))
+    assert first.is_closed and not second.is_closed and not third.is_closed
+    settings = window.panel_right_top_plot_settings
+    assert settings.current_plot() is third.dock_widget
+    settings.close_button.click()
+    assert third.is_closed and settings.current_plot() is second.dock_widget
 
 
 def test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab(

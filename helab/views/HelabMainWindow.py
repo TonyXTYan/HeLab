@@ -53,6 +53,7 @@ from helab.views.RootDuplicatesWindow import RootDuplicatesWindow
 from helab.views.SettingsDialog import SettingsDialog
 from helab.views.DebugIconsWindow import DebugIconsWindow
 
+from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 # sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 # from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density
@@ -112,6 +113,7 @@ class HelabMainWindow(QMainWindow):
 
         # Create Central Widget Area with Dock Widgets
         self._setup_central_widgets()
+        self._start_with_rhi_surface()
 
         self.status_bar = QStatusBar()
         self._create_status_bar()
@@ -869,6 +871,16 @@ class HelabMainWindow(QMainWindow):
         self.splitter.addWidget(self.middle_mainwindow)
 
         self.update_placeholder_visibility()
+
+    def _start_with_rhi_surface(self) -> None:
+        """The 3D scatter's web view needs the window drawn through Qt's RHI; Qt switches a shown
+        window by destroying and recreating it, so the whole window closed and reopened when
+        the first such plot opened. A hidden QQuickWidget child, made before the window is
+        shown, makes it start that way. macOS only until checked on the lab PCs, whose GPUs
+        can't paint QtWebEngine."""
+        if sys.platform == "darwin":
+            self._rhi_surface = QQuickWidget(self)
+            self._rhi_surface.hide()
 
     def update_placeholder_visibility(self) -> None:
         """The plot area's hint shows while no plot dock is open, and hides while any is.
