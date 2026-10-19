@@ -560,3 +560,96 @@ def test_folder_cache_sends_the_ram_quick_check_only_for_checked_data(
         assert "memory_check" not in service.pending[-1].payload
     finally:
         service.shutdown()
+
+
+class LiveState:
+    """What FolderExplorer keeps between Live checks (``LiveSession``) and sends with the next."""
+
+    def __init__(self, memory: list[list[int]]) -> None:
+        self.memory = memory
+        self.since: int | None = None
+        self.listed_mtime: int | None = None
+        self.identity = ""
+        self.identity_root: str | None = None
+        self.seen: list[list[int]] = []
+        self.seen_names: list[str] = []
+
+    def check(self, run: Path, output: Path) -> dict[str, Any]:
+        events: list[dict[str, Any]] = []
+        live_check(str(run), str(output), events.append, self.memory, since=self.since, identity=self.identity,
+                   seen=self.seen, listed_mtime=self.listed_mtime, seen_names=self.seen_names,
+                   identity_root=self.identity_root)
+        result: dict[str, Any] = next(event for event in reversed(events)
+                                      if event["kind"] in ("live_unchanged", "loaded", "shots_missing"))
+        if result["kind"] == "shots_missing":
+            return result
+        self.since, self.listed_mtime = result["live_since"], result["live_listed_mtime"]
+        self.seen, self.seen_names = result["live_seen"], result["live_seen_names"]
+        if not self.identity and result["live_identity"]:
+            self.identity, self.identity_root = result["live_identity"], result["live_identity_root"]
+        if result["kind"] == "loaded":
+            self.memory = [list(entry) for entry in result["fingerprint"]]
+        return result
+
+
+def test_live_watches_a_file_being_written_without_listing_the_folder(tmp_path: Path, trace: Path) -> None:
+    """While a new file grows and the folder's mtime stays, a check stats only that file: no listing,
+    no marker read, no sample. Once it stops changing, the check lists the folder and reads it."""
+    run = tmp_path / "run"
+    write_shots(run, range(1, 4))
+    memory = [[shot, (info := (run / f"d_txy_forc{shot}.txt").stat()).st_size, info.st_mtime_ns] for shot in (1, 2, 3)]
+    growing = run / "d_txy_forc4.txt"
+    growing.write_text("4,1,1\n")
+    old = time.time() - 30
+    os.utime(run, (old, old))  # (Not racy: the folder's mtime is safe to compare.)
+    live = LiveState(memory)
+    output = tmp_path / "out"
+    output.mkdir()
+    first = live.check(run, output)
+    assert first["kind"] == "live_unchanged" and live.seen_names == ["d_txy_forc4.txt"]
+    for row in range(2, 5):  # The writer appends: the file's mtime changes, the folder's doesn't.
+        with open(growing, "a") as stream:
+            stream.write(f"4,{row},{row}\n")
+        os.utime(run, (old, old))
+        before = len(lines(trace))
+        result = live.check(run, output)
+        assert result["kind"] == "live_unchanged" and not result["live_listed"]
+        assert counts(lines(trace)[before:]) == {("stat", "live: folder"): 1, ("stat", "live: pending file"): 1}
+    before = len(lines(trace))
+    result = live.check(run, output)  # Unchanged since the last look: read.
+    assert result["kind"] == "loaded" and result["memory_shots"] == [1, 2, 3] and result["files"] == 4
+    found = counts(lines(trace)[before:])
+    assert found[("scandir", "live: listing")] == 1 and found[("read", "live: read")] == 1
+
+
+def test_live_reads_only_the_known_root_marker_and_still_sees_another_root(tmp_path: Path, trace: Path) -> None:
+    from helab.utils import data_roots
+    run = tmp_path / "share" / "2026" / "run"
+    write_shots(run, range(1, 3))
+    memory = [[shot, (info := (run / f"d_txy_forc{shot}.txt").stat()).st_size, info.st_mtime_ns] for shot in (1, 2)]
+    live = LiveState(memory)
+    output = tmp_path / "out"
+    output.mkdir()
+
+    def marker_lines() -> list[tuple[str, str]]:
+        return [(record["op"], record["path"]) for record in lines(trace)
+                if record["op"].startswith("marker_") and record["pid"] == os.getpid()]
+    live.check(run, output)
+    # The first listing walks up to the nearest marker (the test folder's): one open per level.
+    assert live.identity_root == str(tmp_path)
+    opened = [path for op, path in marker_lines() if op == "marker_open"]
+    assert len(opened) == 4 and opened[-1] == str(tmp_path / data_roots.MARKER_NAME)
+    for shot in (3, 4):  # New files: the folder's mtime changes, so each check lists it.
+        write_shots(run, range(shot, shot + 1))
+        os.utime(run)
+        before = len(marker_lines())
+        live.check(run, output)
+        assert [op for op, _ in marker_lines()[before:]] == ["marker_open", "marker_fstat", "marker_read"]
+    # Another data root at that folder now (another drive at the path): Live stops.
+    marker = tmp_path / data_roots.MARKER_NAME
+    marker.write_text(json.dumps({"helab": "root", "version": 1, "uuid": str(uuid.uuid4()), "label": "other",
+                                  "created_at": "2026-10-19T00:00:00Z"}))
+    write_shots(run, range(5, 6))
+    os.utime(run)
+    stopped = live.check(run, output)
+    assert stopped["kind"] == "shots_missing" and stopped["reason"] == "root"

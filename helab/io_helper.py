@@ -1815,25 +1815,39 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
 RACY_SECONDS = 2.0
 
 
-def _folder_identity(path: str) -> str:
+def _folder_identity(path: str, root: str | None = None) -> tuple[str, str]:
     """Which folder ``path`` is, beyond its spelling: the nearest data root's UUID, else its
-    location (an SMB share's server and share, or a local mount's device) and relative path.
-    "" if a marker is there but unreadable."""
+    location (an SMB share's server and share, or a local mount's device) and relative path; and
+    the folder whose .helab-root names it ("" for a location). "" if a marker is there but unreadable.
+
+    ``root``: what an earlier call found. Then only that folder's marker is read (one open instead
+    of one per level up to it), or none for "" (the location, from the mount table): another drive
+    or share at this path has another marker there, or none, or another location. A marker gone or
+    invalid is looked for again from ``path``."""
+    if root:
+        try:
+            return "root:" + _read_marker(root, "live: identity").uuid, root
+        except (FileNotFoundError, ValueError):
+            pass
+        except OSError:
+            return "", root
+    elif root == "":
+        return _location_identity(path, "live: identity"), ""
     folder = path
     while True:
         try:
-            return "root:" + _read_marker(folder, "live: identity").uuid
+            return "root:" + _read_marker(folder, "live: identity").uuid, folder
         except FileNotFoundError:
             pass
         except ValueError:
             pass  # An invalid marker is no data root.
         except OSError:
-            return ""
+            return "", ""
         parent = os.path.dirname(folder)
         if parent == folder:
             break
         folder = parent
-    return _location_identity(path, "live: identity")
+    return _location_identity(path, "live: identity"), ""
 
 
 def _location_identity(path: str, reason: str) -> str:
@@ -1863,7 +1877,8 @@ def _whole_last_row(tail: bytes) -> bool:
 def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]] | None = None,
                known: list[list[int]] | None = None, since: int | None = None, *,
                identity: str = "", seen: list[list[int]] | None = None,
-               check_level: str = DEFAULT_CHECK_LEVEL) -> None:
+               check_level: str = DEFAULT_CHECK_LEVEL, listed_mtime: int | None = None,
+               seen_names: list[str] | None = None, identity_root: str | None = None) -> None:
     """One check of a folder watched live: new settled TXY files are read and sent like a load's.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for the shots the caller holds; TXY files are
@@ -1884,6 +1899,13 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     ``live_unchanged``; else ``loaded`` with ``memory_shots`` (source ``updated``). The disk cache
     is neither read nor written: the app saves with an ordinary load, every N new shots and when
     Live stops.
+
+    While files are still being written the folder isn't listed every check: when its mtime is
+    still the one the last listing saw (``listed_mtime``, sent back as ``live_listed_mtime``),
+    nothing was added or removed, and only the files that listing saw being written
+    (``seen_names``, sent back as ``live_seen_names``) are stat'ed. Once one of them is ready to
+    read, the check lists the folder as above. The identity check reads only the marker the first
+    listing found (``identity_root``, sent back as ``live_identity_root``; "": none, the location).
     """
     started = time.monotonic()
     if not memory:
@@ -1896,17 +1918,46 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     held = {int(shot): (int(size), int(modified)) for shot, size, modified in memory}
 
     current_identity = ""
+    current_root: str | None = identity_root
     waiting: list[list[int]] = []  # New files not read yet, as stat'ed now (the next ``seen``).
+    file_names: dict[int, str] = {}  # Their names.
 
     def state(listed: bool, unsettled: int, safe: bool) -> dict[str, Any]:
         # ``live_since``: what the next check may compare the folder's mtime with (None: list it).
         return {"live_since": folder.st_mtime_ns if safe and not racy and not unsettled else None,
                 "live_listed": listed, "live_seconds": time.monotonic() - started,
-                "unsettled_files": unsettled, "live_identity": current_identity, "live_seen": waiting}
+                "unsettled_files": unsettled, "live_identity": current_identity, "live_seen": waiting,
+                "live_seen_names": [file_names[int(entry[0])] for entry in waiting],
+                # The folder's mtime as of this check's listing (or the last one's), unless racy.
+                "live_listed_mtime": None if racy else folder.st_mtime_ns,
+                "live_identity_root": current_root}
 
     if since is not None and since == folder.st_mtime_ns:
         send({"kind": "live_unchanged", **state(False, 0, True), "total_files": len(held)})
         return
+    previous = {int(shot): (int(size), int(modified)) for shot, size, modified in seen or ()}
+    if (listed_mtime is not None and listed_mtime == folder.st_mtime_ns and not racy and seen
+            and seen_names is not None and len(seen_names) == len(seen)):
+        # Nothing added or removed since the last listing: the files it saw being written are looked at.
+        pending: list[tuple[int, int, int]] | None = []
+        for (shot, _, _), name in zip(seen, seen_names):
+            try:
+                info = _stat(os.path.join(path, name), "live: pending file")
+            except FileNotFoundError:
+                pending = None  # (Gone: the listing says what's there now.)
+                break
+            assert pending is not None
+            pending.append((int(shot), info.st_size, info.st_mtime_ns))
+            file_names[int(shot)] = name
+        if pending is not None:
+            aged = {item[0] for item in _settled(pending)}
+            if not any(item[0] in aged and previous.get(item[0]) == item[1:] for item in pending):
+                waiting[:] = [list(item) for item in pending]
+                send({"kind": "live_unchanged", **state(False, len(pending), False),
+                      "total_files": len(set(held) | {int(entry[0]) for entry in known or ()}
+                                         | {item[0] for item in pending})})
+                return
+        file_names.clear()
     found: dict[str, set[int]] = {}
     names: dict[int, str] = {}
     has_dirs = False
@@ -1920,6 +1971,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                 found.setdefault(kind.name, set()).add(shot)
                 if kind.loaded:
                     names[shot] = entry.path
+                    file_names[shot] = entry.name
             elif not has_dirs and _is_dir(entry):
                 has_dirs = True
 
@@ -1931,7 +1983,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     if missing:
         mismatch("missing", missing)
         return
-    current_identity = _folder_identity(path)
+    current_identity, current_root = _folder_identity(path, identity_root)
     if identity and current_identity and current_identity != identity:
         # Another folder at this path (a remount, another drive): nothing held is its.
         mismatch("root", sorted(held))
@@ -1954,7 +2006,6 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
         mismatch("changed", changed)
         return
     failed = {int(shot): (int(size), int(modified)) for shot, size, modified in known or ()}
-    previous = {int(shot): (int(size), int(modified)) for shot, size, modified in seen or ()}
     beat = Heartbeat(send, "checking")
     candidates: list[tuple[int, int, int]] = []
     for shot in sorted(set(names) - set(held)):
@@ -2621,7 +2672,9 @@ def main() -> None:
             live_check(request["path"], request["output"], memory=request.get("memory"),
                        known=request.get("known"), since=request.get("live_since"),
                        identity=str(request.get("identity") or ""), seen=request.get("seen"),
-                       check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL))
+                       check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL),
+                       listed_mtime=request.get("listed_mtime"), seen_names=request.get("seen_names"),
+                       identity_root=request.get("identity_root"))
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),
