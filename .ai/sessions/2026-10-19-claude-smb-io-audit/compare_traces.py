@@ -4,8 +4,9 @@
 
 BEFORE and AFTER are recordings' folders or single trace files (earlier builds).
 
-Counts per phase (``op`` "phase" lines; phases match by name, else by the name before " (" when that
-is unique, marked † with the earlier name below the table): helpers started, listings, stats
+Counts per phase (``op`` "phase" lines, as scenarios.py writes them; a trace without them, such as one
+recorded with Help › Record I/O trace, is one "whole trace" row; phases match by name, else by the name
+before " (" when that is unique, marked † with the earlier name below the table): helpers started, listings, stats
 (stat, lstat, a listed entry's stat), .helab-root opens (Part 1 traced a marker read as one
 ``marker_read`` line, later traces as ``marker_open`` + ``marker_fstat`` + ``marker_read``: opens are
 counted in both), whole-file reads, tail reads and icon lookups. Standalone (no HeLab import).
@@ -42,6 +43,8 @@ def per_phase(path: str, under: str) -> dict[str, Counter[str]]:
     items = records(path)
     split = "marker_open" in {record.get("op") for record in items}
     marks = [record for record in items if record.get("op") == "phase"]
+    if not marks and items:
+        marks = [{"name": "whole trace", "t": items[0].get("t", 0)}]
     result: dict[str, Counter[str]] = {}
     for index, mark in enumerate(marks):
         stop = marks[index + 1]["t"] if index + 1 < len(marks) else float("inf")
@@ -66,7 +69,7 @@ def per_phase(path: str, under: str) -> dict[str, Counter[str]]:
                 counts["tail reads"] += 1
             elif op == "icon":
                 counts["icons"] += 1
-        counts["seconds"] = round(stop - mark["t"]) if stop != float("inf") else 0
+        counts["seconds"] = round((stop if stop != float("inf") else items[-1].get("t", 0)) - mark["t"])
         result[mark["name"]] = counts
     return result
 

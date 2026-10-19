@@ -102,6 +102,12 @@ with trace tests, following Codex's constraints and Maestro's notes:
   shot N changed S s after Live read it, read again: <path> (size A → B bytes, mtime X → Y). The converter
   writing to a temporary name and renaming it avoids this.` The re-read shot counts as not yet cached, so
   the next save writes its new data.
+- **For Tony (recheck finding 3, by design):** within the 5-minute window a recent held shot is guarded
+  only by the missing-file and identity checks, which run first, not by the sample: a held shot that is
+  recent and changed is read again, not flagged. A Live session started on an empty folder (L3) has
+  every held shot recent for its first 5 minutes. So a copy of the same data root (same `.helab-root`
+  UUID) swapped in at the same path within that window would be read again rather than stop Live;
+  older shots in the sample still catch a remount or copy, and another data root stops Live at once.
 - **Ownership:** Folder details' state row is in `helab/views/FolderDetailsPanel.py`, outside my owned
   paths: one small append there (`explorer.live_reread_note(path)`), as Maestro's brief asked for the
   note in Folder details. Everything else is in owned files.
@@ -121,7 +127,24 @@ with trace tests, following Codex's constraints and Maestro's notes:
   the seconds since Live read it. Saves (`io_helper.save_held`, from RAM: one listing, every held file
   checked by its stats, no TXY read) read such a shot again first. A new file is read only when settled
   by age and unchanged since the previous check (`seen`): metadata only, by Tony's decision; its content
-  isn't checked. The converter writing to a temporary name and renaming it remains the real fix."
+  isn't checked. The converter writing to a temporary name and renaming it remains the real fix." Worth
+  adding there: "Within that window such a shot is guarded by the missing-file and identity checks only
+  (a copy of the same data root swapped in then is read again, not flagged)."
+- **Proposed `roadmaps/live-monitoring.md` wording** (lines 108-110, "A new file is read only when
+  settled by age, unchanged since the previous check, and ending with a whole row. Remaining limit: a
+  writer paused exactly at a row's end; the converter's temp-name rename closes it (planned)."): "A new
+  file is read only when settled by age and unchanged since the previous check (metadata only, by Tony's
+  decision: its content isn't checked). A writer paused longer than the settle age is read unfinished; a
+  shot Live read in the last 5 minutes that then changes is read again (by checks and by saves), with a
+  note for a minute and a WARNING. The converter's temp-name rename remains the real fix (planned)."
+- **Proposed AGENTS.md local-lane wording** (Responsive I/O, the "third, **local** lane" rule): after
+  "`volumes_verify` (mounted volumes' IDs only, for data-root hints)" add "and `trace_check` (before
+  Help › Record I/O trace starts: HeLab's temp folder's network/synced check and its earlier recordings;
+  10 s no-progress timeout)".
+- **`compare_traces.py` without phase lines** (recheck finding 4): it printed an empty table for a trace
+  without `phase` lines, such as one recorded with the menu; that predates this round. It now counts such
+  a trace as one "whole trace" row (as `trace_summary.py` already did), so Tony's real-share recording can
+  be compared whole with another recording; split it by phases only with scenarios.py's marks.
 
 ### Before and after (the same scenarios, rerun)
 ### Before and after (the same scenarios, rerun)
