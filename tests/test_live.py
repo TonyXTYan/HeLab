@@ -25,7 +25,7 @@ from helab.utils.constants import (
 )
 from helab.utils.folder_cache import FolderCache, store_options
 from helab.utils.io_service import FOREGROUND, IORequest, IOService
-from helab.views.FolderExplorer import FolderExplorer
+from helab.views.FolderExplorer import FolderExplorer, LiveSession
 from helab.views.HelabMainWindow import HelabMainWindow
 from helab.views.QuitSaveDialog import QuitSaveDialog
 
@@ -472,6 +472,29 @@ def test_closing_the_window_waits_in_the_quit_window(
     del cache._deferred_saves[path]
     qtbot.waitUntil(lambda: window._closing, timeout=3000)
     assert get_io_service() is not cache.service  # The old service was shut down.
+
+
+def test_the_live_action_follows_the_current_tab_and_locks_navigation(qtbot: QtBot, tmp_path: Path) -> None:
+    window = HelabMainWindow()
+    qtbot.addWidget(window)
+    qtbot.waitUntil(lambda: isinstance(window.tab_widget.currentWidget(), FolderExplorer))
+    explorer = window.tab_widget.currentWidget()
+    assert isinstance(explorer, FolderExplorer)
+    window._update_live_action()
+    assert not window.action_tab_live.isEnabled() and "Select a folder with loaded data" in window.action_tab_live.toolTip()
+    window.on_live_button_clicked()  # Says why instead.
+    assert window._status_notice is not None and "Select a folder" in window._status_notice[0]
+    from helab.utils.folder_cache import Dataset
+    explorer.live = LiveSession(explorer.selected_path_globally, time.time(), set(),
+                                Dataset(explorer.selected_path_globally, "s", {}, {}, 0))
+    window._update_live_action()
+    assert window.action_tab_live.isEnabled() and window.action_tab_live.isChecked()
+    assert not window.action_tab_refresh.isEnabled() and not window.action_tab_rescan.isEnabled()
+    assert not window.action_tab_folder_up.isEnabled() and window.action_tab_new.isEnabled()
+    explorer.live = None
+    window._update_live_action()
+    assert not window.action_tab_live.isChecked() and window.action_tab_refresh.isEnabled()
+    window._quit_now = True
 
 
 def test_quit_now_closes_at_once(qtbot: QtBot, tmp_path: Path) -> None:

@@ -1570,8 +1570,8 @@ class FolderExplorer(QWidget):
             session.saving |= new
         elif what == "save":
             if not event.get("cached"):
-                # Nothing could be saved (e.g. RAM only, or the cache unreadable): not tried again.
-                session.blocked = str(event.get("cache_reason") or "the disk cache can't be written")
+                # Nothing could be saved (e.g. the cache couldn't be opened): not tried again.
+                session.blocked = "the disk cache couldn't be written for this folder"
                 session.unsaved |= session.saving | new
             session.saving = set()
         else:

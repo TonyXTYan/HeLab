@@ -1106,7 +1106,7 @@ class HelabMainWindow(QMainWindow):
         """The tabs a running load is for (in tab order), and its progress note."""
         owners, note = get_folder_cache(get_io_service()).load_note(producer)
         tabs = [(index, explorer) for index, explorer in self._explorers()
-                if explorer.model.owner in owners or explorer.bg_owner in owners]
+                if {explorer.model.owner, explorer.bg_owner, explorer.live_owner, explorer.live_save_owner} & set(owners)]
         return tabs, note
 
     def _request_note(self, request: IORequest) -> str:
@@ -1153,6 +1153,10 @@ class HelabMainWindow(QMainWindow):
                     f"{'Check' if explorer.load_is_check else 'Loading'} paused: {name}…" if explorer.load_paused else
                     f"Checking {name} for changes…" if explorer.load_is_check else f"Loading {name}…")
             return text, explorer.loading_tooltip
+        if explorer.live is not None:
+            live = explorer.live
+            return ((f"Live stopped: {name} — Retry in the folder summary", live.error) if live.error else
+                    (f"Live: watching {name} · {live.new:,} new shot{'' if live.new == 1 else 's'}", ""))
         if explorer.load_error:
             verb = "check" if explorer.shows_unchecked(path) else "load"
             return f"Could not {verb} {name} — see Folder details", explorer.load_error
@@ -1394,7 +1398,7 @@ class HelabMainWindow(QMainWindow):
         for _, explorer in self._explorers():
             explorer.stop_live()
         cache = get_folder_cache(get_io_service())
-        if get_io_service().closed or not cache.quit_saves():
+        if not cache.quit_saves():
             return False
         # Nothing else will be shown: the saves get the I/O. The cache's questions (Make room,
         # Save update) wait for the next session.

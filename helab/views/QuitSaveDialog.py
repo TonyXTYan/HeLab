@@ -35,7 +35,8 @@ class QuitSaveDialog(QDialog):
         layout.addWidget(self.label)
         self.folders = QListWidget()
         layout.addWidget(self.folders)
-        note = QLabel("HeLab quits when they are saved. A save with no progress for a minute stops by itself.")
+        note = QLabel("HeLab quits when they are saved. A save that makes no progress for a minute or two "
+                      "stops by itself.")
         note.setWordWrap(True)
         layout.addWidget(note)
         buttons = QDialogButtonBox()
