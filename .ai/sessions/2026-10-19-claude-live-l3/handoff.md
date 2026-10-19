@@ -11,6 +11,7 @@ Branch `agent/live-l3` (floor "Live L3"), base `d0b8fbe`. Commits:
 | `2089da4`, `9d9c54e`, `f80091f` | Review fixes (below), with Codex's [review-codex.md](review-codex.md) |
 | `7c63bdf`, `fbe13f0`, `7ec0032`, `b5dc449`, `768855f` | Round 2: Tony's answers (below) |
 | `d33bb61`, `eab80a3` | Round 2 review fixes (below) |
+| `80af689` | The histograms' newest shot on its own right axis (below) |
 
 How it works, the test-isolation trap and renders: [notes.md](notes.md). Pushed to
 `TonyXTYan/HeLab` after the review fixes and after round 2.
@@ -78,6 +79,22 @@ changes requested for two Dash page lifecycle issues; the rest checked out. One 
 Not changed (Codex's other points): every open page polls once a second, a 204 when nothing is
 new; no multi-page load measurement on a lab PC yet (on Tony's checklist, item 8).
 
+### The newest shot's own axis (Tony, after the review fixes)
+
+`80af689`: the histograms' newest-shot line stays drawn to each histogram's scale, and now reads
+its **real counts on a y axis of its own on the right**, in the overlay's colour (axis line,
+ticks, label "shot N events"); the left axis keeps all the counts ("Events (all)") in the
+plot's colour. Built as pyqtgraph's second-axis pattern: a second ViewBox (`OverlayView`,
+which leaves the mouse to the plot: zoom, pan and the menu work as before) linked on x, with
+the right `AxisItem` attached; its y range follows the plot's divided by the histogram's total
+over the shot's (log Y: shifted by log10 of it, both axes `DecadeLogAxis`), so zooming moves
+both. It sits on the plot's exact geometry (its scene bounding rect is half a pixel larger and
+shifted the pixel-mapped x link by a pixel) and is re-linked after each resize. Test: linear and
+log Y. Renders: [histograms-newest-shot.png](histograms-newest-shot.png),
+[histograms-newest-shot-log.png](histograms-newest-shot-log.png). This answers the open
+question on the histograms' scaling. Full suite 1139 passed, 2 skipped, 2 xfailed, no RERUN;
+typing clean (also Windows).
+
 Checks after these fixes: full suite **1137 passed, 2 skipped, 2 xfailed, no RERUN** (`-n 4`);
 `mypy helab/ --strict`, `mypy tests --strict`, `mypy helab/ tests --strict --platform win32`:
 clean; `pyright helab tests`, also `--pythonplatform Windows`: 0 errors; `git diff --check d0b8fbe
@@ -141,8 +158,7 @@ Questions 1–3 of the first round are answered and built (round 2 above). Still
 
 1. Unchanged from L1: Live's RAM keeps growing during long runs (open question 2 there); open
    plots now also pin the views they show, newest revision included (the plot RAM budget floor).
-2. The histograms' newest-shot line is scaled to each histogram's total: or should it be drawn
-   to scale (often flat), or on its own axis?
+2. (Answered: the histograms' newest shot reads on its own right axis, `80af689`.)
 
 ## Notes for the SMB I/O audit merge
 
@@ -201,7 +217,9 @@ On the Mac, then a lab PC (Windows). Replaces nothing in MANUAL_TODO; add under 
    once-a-second polls cost nothing noticeable.
 9. **Newest shot**: tick Highlight the newest shot in the scatter (Points) and the histograms
    (Histogram): the newest shot is red (other colours in the list); during Live it moves to each
-   new shot. In the histograms its line is scaled to the histogram's total.
+   new shot. In the histograms its line is drawn to the histogram's scale and reads on its own
+   red axis on the right (real counts); with Log Y both axes show decades; zooming and panning
+   the plot move both.
 10. **Any folder**: Live can start on a folder with subfolders and no TXY files of its own (e.g.
     the day's folder): it adds only TXY files written into that folder, never into its
     subfolders.
