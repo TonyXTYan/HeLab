@@ -65,7 +65,7 @@ def live_specs(policy: LivePolicy, page: str = "") -> tuple[ParameterSpec, ...]:
                       group=LIVE_GROUP, page=page, when=(FOLLOW, "True"),
                       tip=f"Run again once this many new shots have come since the last run's data. {script}"),
         ParameterSpec(DELAY, "Wait after a run", "float", policy.min_delay, (0.0, MAX_DELAY), " s",
-                      group=LIVE_GROUP, page=page, when=(FOLLOW, "True"), si=True,
+                      group=LIVE_GROUP, page=page, when=(FOLLOW, "True"),
                       tip=f"Run again no sooner than this after the last run ended. {script}"))
 
 

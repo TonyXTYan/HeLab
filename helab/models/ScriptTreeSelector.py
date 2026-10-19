@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 from pyqtgraph.parametertree import Parameter
 
-from helab.analysis.dataset_view import DatasetView
+from helab.analysis.dataset_view import DatasetView, ViewKey
 from helab.analysis.follow import FOLLOW, Follow, LiveFeed, live_specs, new_shots, policy_of
 from helab.analysis.parameter_tree import build_tree, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import describe
@@ -420,7 +420,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def _show_follow(self) -> None:
         """The source line's Live state and error, the settings' input line and title."""
         following = self.follow.on and self.live() is not None
-        self.input_label.setText(f"Input: {self.view.key.short()}"
+        self.input_label.setText(f"Input: {self._shown_key().short()}"
                                  + (" · following Live" if following else " (stays with this plot)"))
         dock, window = self.dock_widget, self.main_window
         if dock is None or window is None or sip.isdeleted(dock):
@@ -434,8 +434,12 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if self.param_tab is not None:
             window.panel_right_top_plot_settings.set_title(dock, self._title())
 
+    def _shown_key(self) -> ViewKey:
+        """The data the plot shows (before its first result: what it runs on)."""
+        return self.shown.input if self.shown is not None else self.view.key
+
     def _title(self) -> str:
-        return f"{self.name} ({self.instance_id}) · {self.view.key.short()}"
+        return f"{self.name} ({self.instance_id}) · {self._shown_key().short()}"
 
     @staticmethod
     def _message(text: str) -> QLabel:

@@ -464,6 +464,9 @@ def test_a_failed_rerun_keeps_the_last_plot_and_following_goes_on(
     assert plotted is not None and plotted.text() == "rev 1 · 1 shots"  # The last good plot stays.
     assert shown_revision(instance) == 1 and error_line(instance).isVisibleTo(dock)
     assert error_line(instance).text() == "⚠ rev 2 failed: bad rev 2 · showing rev 1"
+    # The settings name what the plot shows, not the failed run's data.
+    assert instance.input_label.text() == "Input: run_L · rev 1 · following Live"
+    assert window.panel_right_top_plot_settings.chooser.itemText(0) == "Gated (1) · run_L · rev 1"
     assert "#b26a00" in error_line(instance).styleSheet()
     assert source(instance).text().startswith("Data source: run_L · rev 1 · following Live")
     window.live_feed.publish(revision([1, 2, 3]))
