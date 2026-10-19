@@ -322,6 +322,36 @@ def test_manual_box_uses_set_bounds_and_the_data_extent() -> None:
     assert empty.total == 0 and empty.lower[0] == 0.5 and math.isnan(empty.lower[1])
 
 
+def test_reversed_manual_bounds_use_the_full_extent_and_say_so() -> None:
+    """min = max is the full extent, silently; min > max is the full extent too, but reported."""
+    events = np.array([[0.0, 0.0, 0.0], [1.0, 10.0, -1.0], [2.0, 20.0, 5.0], [3.0, 30.0, 2.0]])
+    values = {"range_mode": "manual", "t_min": 0.5, "t_max": 2.5, "x_min": 25.0, "x_max": 5.0}
+    assert selection.manual_bounds(values) == ((0.5, 2.5), None, None)
+    assert selection.reversed_axes(values) == ("X",)
+    assert selection.range_warnings(values) == ("X: min > max, using full extent",)
+    assert selection.range_warnings({**values, "range_mode": "auto-crop"}) == ()
+    assert selection.range_warnings({"range_mode": "manual", "y_min": 1.0, "y_max": 1.0}) == ()
+    box = selection.manual_box(events, values)
+    assert (box.lower[1], box.upper[1]) == (0.0, 30.0)
+    view = build_view(dataset(shots={1: events}))
+    scatter = scatter_3d.Scatter3D()
+    data = scatter.compute("Plot", context(view, scatter, values))
+    assert data.warnings == ("X: min > max, using full extent",)
+    assert scatter.parameter_warnings("Plot", effective(scatter.parameters("Plot"), values)) == list(data.warnings)
+    assert scatter_3d.crop_text(data.crop, data.warnings).endswith("· ⚠ X: min > max, using full extent")
+    assert scatter_3d.note_text(data).endswith("· ⚠ X: min > max, using full extent")
+    result = AnalysisResult.of(context(view, scatter, values), "completed", data)
+    drawn_figure: Any = scatter_3d.figure(result, data)  # plotly's layout attributes are untyped
+    assert "⚠ X: min > max, using full extent" in drawn_figure.layout.title.text
+    histograms = basic_plots.TxyHistograms()
+    drawn = histograms.compute("Plot", context(view, histograms, {**values, "bins": 3}))
+    assert drawn.reversed == ("X",) and (drawn.items[1].edges[0], drawn.items[1].edges[-1]) == (0.0, 30.0)
+    assert basic_plots.histogram_title(drawn.items[1], True).endswith("· ⚠ min > max, using full extent")
+    assert not basic_plots.histogram_title(drawn.items[0], False).endswith("full extent")
+    assert histograms.parameter_warnings("Plot", values) == ["X: min > max, using full extent"]
+    assert basic_plots.CountsPerShot().parameter_warnings("Plot", values) == []
+
+
 def test_scatter_and_histograms_take_shots_and_manual_ranges() -> None:
     rng = np.random.default_rng(3)
     view = build_view(dataset(shots={shot: rng.normal(size=(1000, 3)) for shot in range(1, 11)}))
@@ -336,7 +366,7 @@ def test_scatter_and_histograms_take_shots_and_manual_ranges() -> None:
     assert scatter_3d.crop_text(data.crop).startswith(f"Manual range keeps {data.crop.fraction:.1%}")
     assert scatter_3d.note_text(data).endswith("· shots 9–10 (2 of 10)")
     result = AnalysisResult.of(context(view, scatter, values), "completed", data)
-    fig = scatter_3d.figure(result, data)
+    fig: Any = scatter_3d.figure(result, data)
     trace: Any = fig.data[0]
     assert (trace.marker.size, trace.marker.opacity) == (3.0, 0.2) and len(trace.x) == 1000
     assert tuple(fig.layout.scene.zaxis.range) == (-1.0, 1.0)
@@ -415,7 +445,7 @@ def test_scatter_samples_for_display_only() -> None:
     assert f"100,000 of {data.analysed:,}" in text and "analysis uses all" in text
     assert scatter_3d.note_text(data).startswith(f"Display sample: 100,000 of {data.analysed:,} events in range")
     result = AnalysisResult.of(context(view, script), "completed", data)
-    fig = scatter_3d.figure(result, data)
+    fig: Any = scatter_3d.figure(result, data)
     trace: Any = fig.data[0]
     assert len(trace.x) == 100_000
     assert "run_1 · rev 1" in fig.layout.title.text and text in fig.layout.title.text

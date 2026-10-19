@@ -13,12 +13,13 @@ from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QTabWidget, QWidget
 
 from helab.analysis.panes import PlotlyPane
+from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.io_helper import list_folder, scan
 from helab.models.ScriptTreeSelector import AnalysisInstance, ParamTreeTabWidget, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import group
+from helab.scripts.standard import basic_plots, group
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import FolderCache
 from helab.utils.io_service import IORequest, IOService
@@ -256,6 +257,31 @@ def test_centre_hint_hides_while_a_plot_dock_is_open(
     assert hint.isHidden() and window.dock_widgets == [second.dock_widget]
     second.dock_widget.close()
     assert not hint.isHidden() and not window.dock_widgets
+
+
+def test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab(
+        window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path) -> None:
+    run = folder(tmp_path, "run_R", 2)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3, 2: 4})
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = basic_plots.TxyHistograms()
+    instance = panel.run_analysis(script.get_metadata(), script, "Plot")
+    assert instance is not None and instance.dock_widget is not None and instance.parameter_root is not None
+    qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
+    assert "⚠" not in source_label(instance.dock_widget).text() and instance.status_label.text() == ""
+    specs = script.parameters("Plot")
+    for name, value in (("range_mode", "manual"), ("x_min", 5.0), ("x_max", 2.0)):
+        parameter_of(instance.parameter_root, next(spec for spec in specs if spec.name == name)).setValue(value)
+    first = instance.result
+    instance.rerun_button.click()
+    qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
+    label = source_label(instance.dock_widget)
+    assert label.text().endswith("Range manual, T min 0 s, T max 0 s, X min 5 m, X max 2 m, Y min 0 m, Y max 0 m, "
+                                 "Bins 0, Log Y off · ⚠ X: min > max, using full extent")
+    assert "Warning: X: min > max, using full extent" in label.toolTip()
+    assert instance.status_label.text() == "⚠ X: min > max, using full extent"
 
 
 def test_run_without_data_says_so(window: Window, qtbot: QtBot) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, List, Optional, cast
+from typing import Any, List, Mapping, Optional, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -13,8 +13,8 @@ from PyQt6.QtWidgets import QWidget
 
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_bounds, range_specs, select_shots,
-                                      shots_text)
+from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_bounds, range_specs, range_warnings,
+                                      reversed_axes, select_shots, shots_text)
 from helab.analysis.stats import AXES, MAX_BINS, UNITS, Histogram, counts_per_shot, histogram
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
@@ -64,6 +64,7 @@ class Histograms:
     items: tuple[Histogram, ...]
     shots: tuple[int, ...]
     total_shots: int
+    reversed: tuple[str, ...] = ()  # axes whose manual min > max: shown over their full extent
 
 
 def counts_title(data: ShotCounts) -> str:
@@ -73,11 +74,12 @@ def counts_title(data: ShotCounts) -> str:
     return title
 
 
-def histogram_title(item: Histogram) -> str:
+def histogram_title(item: Histogram, reversed_range: bool = False) -> str:
     bins = len(item.counts)
     how = "automatic, Freedman–Diaconis" if item.automatic_bins else "set"
     title = f"{item.axis} · {bins:,} bins ({how}) · {item.total - item.outside:,} of {item.total:,} events"
-    return title + (f" · {item.outside:,} outside the range" if item.outside else "")
+    title += f" · {item.outside:,} outside the range" if item.outside else ""
+    return title + (" · ⚠ min > max, using full extent" if reversed_range else "")
 
 
 def source_title(result: AnalysisResult, text: str) -> str:
@@ -136,6 +138,9 @@ class TxyHistograms(DatasetAnalysis):
     def parameters(self, action_name: str) -> List[ParameterSpec]:
         return [*SHOT_SPECS, *RANGE, BINS, LOG_Y]
 
+    def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
+        return list(range_warnings(values))
+
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         values = context.parameters
         shots = select_shots(context.view, values)
@@ -151,7 +156,7 @@ class TxyHistograms(DatasetAnalysis):
             if manual(values) and given is None and len(column):
                 given = (float(column.min()), float(column.max()))
             items.append(histogram(column, axis, keep, bins, given))
-        return Histograms(tuple(items), shots, len(context.view.shots))
+        return Histograms(tuple(items), shots, len(context.view.shots), reversed_axes(values))
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Histograms = result.data
@@ -163,7 +168,8 @@ class TxyHistograms(DatasetAnalysis):
         widget.addLabel(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}"), row=0, col=0)
         for row, item in enumerate(items, start=1):
             axes = {"left": DecadeLogAxis("left")} if log_y else None
-            plot = widget.addPlot(row=row, col=0, title=histogram_title(item), axisItems=axes)
+            plot = widget.addPlot(row=row, col=0, title=histogram_title(item, item.axis in data.reversed),
+                                  axisItems=axes)
             plot.setLabel("bottom", f"{item.axis} ({UNITS[AXES.index(item.axis)]})")
             plot.setLabel("left", "Events")
             if log_y:

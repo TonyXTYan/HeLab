@@ -185,6 +185,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.runner.results.unpin(self.result.job_id)
         self.result = result
         specs = self.script.parameters(self.action)
+        warnings = "; ".join(self.script.parameter_warnings(self.action, result.parameters))
         if result.state == "completed":
             self.runner.results.pin(result.job_id)
             try:
@@ -192,7 +193,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             except Exception as error:
                 logging.exception("Could not draw %s", self.name)
                 content = self._message(f"Could not draw {self.name}: {error}")
-            self.status_label.setText("")
+            self.status_label.setText(f"⚠ {warnings}" if warnings else "")
         else:
             content = self._message(f"{self.name} failed: {result.error}")
             self.status_label.setText(f"Failed: {result.error}")
@@ -200,8 +201,10 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         show = getattr(self.main_window, "set_plot_result", None)
         if callable(show):
-            show(self.dock_widget, content, result, describe(specs, result.parameters),
-                 describe(specs, result.parameters, every=True))
+            line, record = describe(specs, result.parameters), describe(specs, result.parameters, every=True)
+            if warnings:
+                line, record = f"{line} · ⚠ {warnings}", f"{record}\nWarning: {warnings}"
+            show(self.dock_widget, content, result, line, record)
         else:
             old = self.dock_widget.widget()
             self.dock_widget.setWidget(content)

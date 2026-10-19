@@ -60,7 +60,8 @@ RANGE_MODE = ParameterSpec("range_mode", "Range", "choice", AUTO, choices=(AUTO,
 BOUNDS: tuple[tuple[ParameterSpec, ParameterSpec], ...] = tuple(
     (ParameterSpec(f"{axis.lower()}_min", f"{axis} min", "float", 0.0, None, f" {UNITS[i]}", group=RANGE_GROUP,
                    when=(RANGE_MODE.name, MANUAL), si=True,
-                   tip=f"Lower bound of {axis}. Leave min and max equal for {axis}'s full extent."),
+                   tip=f"Lower bound of {axis}. Leave min and max equal for {axis}'s full extent; a min "
+                       f"above the max also uses the full extent, and the plot says so."),
      ParameterSpec(f"{axis.lower()}_max", f"{axis} max", "float", 0.0, None, f" {UNITS[i]}", group=RANGE_GROUP,
                    when=(RANGE_MODE.name, MANUAL), si=True, tip=f"Upper bound of {axis}."))
     for i, axis in enumerate(AXES))
@@ -85,12 +86,27 @@ def keep_fraction(values: Mapping[str, Any]) -> float:
 
 
 def manual_bounds(values: Mapping[str, Any]) -> tuple[tuple[float, float] | None, ...]:
-    """Per axis, the (min, max) the user set, or None when min ≥ max (that axis's full extent)."""
+    """Per axis, the (min, max) the user set, or None for that axis's full extent: when min = max
+    (unset), and when min > max (reversed), which ``range_warnings`` then reports."""
     bounds: list[tuple[float, float] | None] = []
     for low_spec, high_spec in BOUNDS:
         low, high = float(values.get(low_spec.name, 0.0)), float(values.get(high_spec.name, 0.0))
         bounds.append((low, high) if high > low else None)
     return tuple(bounds)
+
+
+def reversed_axes(values: Mapping[str, Any]) -> tuple[str, ...]:
+    """The axes whose manual min is above their max, when the range is manual."""
+    if not manual(values):
+        return ()
+    return tuple(axis for axis, (low_spec, high_spec) in zip(AXES, BOUNDS)
+                 if float(values.get(low_spec.name, 0.0)) > float(values.get(high_spec.name, 0.0)))
+
+
+def range_warnings(values: Mapping[str, Any]) -> tuple[str, ...]:
+    """What the plot did differently from the settings: a reversed manual axis uses its full
+    extent. Shown on the figure, in the dock's source line and record, and in the settings tab."""
+    return tuple(f"{axis}: min > max, using full extent" for axis in reversed_axes(values))
 
 
 def manual_box(events: Events, values: Mapping[str, Any]) -> CropBox:

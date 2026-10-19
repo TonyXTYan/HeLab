@@ -1,7 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Any, Optional
+from typing import TYPE_CHECKING, List, Any, Mapping, Optional
 
 from helab.analysis.identity import AnalysisIdentity, file_name
 from helab.analysis.parameters import ParameterSpec
@@ -82,6 +82,11 @@ class DatasetAnalysis(HelabAnalysisScript):
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
         """The action's parameters (defaults, limits, units)."""
+        return []
+
+    def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
+        """Settings the run could not follow as given, and what it did instead (e.g. "X: min >
+        max, using full extent"), for the dock's source line, its record and the settings tab."""
         return []
 
     @abstractmethod

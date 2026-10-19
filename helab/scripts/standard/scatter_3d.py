@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, List, Mapping, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -12,8 +12,8 @@ from PyQt6.QtWidgets import QWidget
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_specs, select_shots,
-                                      shots_text)
+from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_specs, range_warnings,
+                                      select_shots, shots_text)
 from helab.analysis.stats import AXES, DISPLAY_CAP, UNITS, CropBox, axis_text, crop_box, display_sample
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
@@ -40,6 +40,7 @@ class ScatterData:
     shots: tuple[int, ...]  # the shot numbers used
     total_shots: int  # the shots loaded
     cap: int = DISPLAY_CAP
+    warnings: tuple[str, ...] = ()  # settings not followed as given (``range_warnings``)
 
     @property
     def analysed(self) -> int:
@@ -54,12 +55,13 @@ def sample_text(data: ScatterData) -> str:
             f"(display cap {data.cap:,}; the analysis uses all of them)")
 
 
-def crop_text(crop: CropBox) -> str:
+def crop_text(crop: CropBox, warnings: tuple[str, ...] = ()) -> str:
+    warning = "".join(f" · ⚠ {text}" for text in warnings)
     if crop.total == 0:
-        return "No events"
+        return "No events" + warning
     bounds = " · ".join(axis_text(i, crop.lower[i], crop.upper[i]) for i in range(len(AXES)))
     how = "Manual range" if crop.manual else "Auto-crop (heuristic box)"
-    return f"{how} keeps {crop.fraction:.1%} ({crop.kept:,} of {crop.total:,} events): {bounds}"
+    return f"{how} keeps {crop.fraction:.1%} ({crop.kept:,} of {crop.total:,} events): {bounds}{warning}"
 
 
 def note_text(data: ScatterData) -> str:
@@ -67,7 +69,8 @@ def note_text(data: ScatterData) -> str:
     shown = (f"All {data.analysed:,} events in range shown" if len(data.points) == data.analysed else
              f"Display sample: {len(data.points):,} of {data.analysed:,} events in range")
     how = "manual range" if data.crop.manual else "crop"
-    return f"{shown} · {how} keeps {data.crop.fraction:.1%} of {data.crop.total:,} · {shots_text(data.shots, data.total_shots)}"
+    text = f"{shown} · {how} keeps {data.crop.fraction:.1%} of {data.crop.total:,} · {shots_text(data.shots, data.total_shots)}"
+    return text + "".join(f" · ⚠ {warning}" for warning in data.warnings)
 
 
 class Scatter3D(DatasetAnalysis):
@@ -87,6 +90,9 @@ class Scatter3D(DatasetAnalysis):
     def parameters(self, action_name: str) -> List[ParameterSpec]:
         return [*SHOT_SPECS, *RANGE, POINT_SIZE, OPACITY, CAP]
 
+    def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
+        return list(range_warnings(values))
+
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         values = context.parameters
         shots = select_shots(context.view, values)
@@ -100,12 +106,12 @@ class Scatter3D(DatasetAnalysis):
         inside = events[crop.contains(events)] if len(events) else events
         cap = int(values[CAP.name])
         points = inside[display_sample(len(inside), cap)]
-        return ScatterData(crop, points, shots, len(context.view.shots), cap)
+        return ScatterData(crop, points, shots, len(context.view.shots), cap, range_warnings(values))
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: ScatterData = result.data
         pane = PlotlyPane(figure(result, data), note_text(data), parent)
-        pane.note.setToolTip(f"{sample_text(data)}\n{crop_text(data.crop)}")
+        pane.note.setToolTip(f"{sample_text(data)}\n{crop_text(data.crop, data.warnings)}")
         return pane
 
 
@@ -124,7 +130,7 @@ def figure(result: AnalysisResult, data: ScatterData) -> go.Figure:
 
     layout = go.Layout(
         title=dict(text=f"{result.input.short()} · {result.analysis.short()} · {shots_text(data.shots, data.total_shots)}"
-                        f"<br><sup>{sample_text(data)}<br>{crop_text(crop)}</sup>", x=0.01),
+                        f"<br><sup>{sample_text(data)}<br>{crop_text(crop, data.warnings)}</sup>", x=0.01),
         scene=dict(xaxis=axis(1), yaxis=axis(2), zaxis=axis(0)),
         margin=dict(l=0, r=0, b=0, t=90))
     return go.Figure(data=[scatter], layout=layout)
