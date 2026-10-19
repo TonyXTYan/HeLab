@@ -53,6 +53,14 @@ No GUI store access: the GUI only sends `cache_admin` jobs; existing store-acces
    "another folder's change isn't heard" checked on its own (a spy on the slot's check), a
    reload keeps the drawn layers, a nested root moves the boundary.
 
+Re-review fixes (third code commit): a failed automatic save keeps the RAM values (still
+"RAM only", logged, retried at the next root change); no automatic save while quitting;
+root changes drop only "no .helab-root" answers. Tests for each. Targeted tests (folder
+constants, lab parameters, constant layers, settings dialog, cache tab and store, data
+roots, folder flags, root discovery and duplicates, two-step browse) `-n 2 --reruns 5`:
+231 passed, 2 skipped, 2 xfailed, no reruns; mypy and pyright clean. The full suite was not
+rerun (io_helper unchanged since fe7c550's full run).
+
 ## For Tony
 
 - The local-lane write of folder constants trusts the store's volume hints even for a

@@ -244,6 +244,9 @@ class FolderCache(QObject):
         # Folders whose values this session holds in RAM only (no disk cache when they were set):
         # sent to a helper once the folder has one (a root found or decided, volumes verified).
         self._session_constants: set[str] = set()
+        # Those whose automatic save (``_constants_roots_moved``) failed: why; tried again at the
+        # next root change, and still RAM only meanwhile.
+        self._constants_save_failed: dict[str, str] = {}
         self.service = service
         self.snapshots: OrderedDict[str, FolderSnapshot] = OrderedDict()
         self.datasets: OrderedDict[tuple[str, str, int], Dataset] = OrderedDict()
@@ -945,6 +948,8 @@ class FolderCache(QObject):
             return "no .helab-root found here or above"
         if self.pending_root(path) is not None:
             return "this .helab-root is also at another location: answer Review… first"
+        if path in self._constants_save_failed:
+            return f"couldn't be saved ({self._constants_save_failed[path]})"
         return self.constants_unsaved.get(path, "")
 
     def remember_constants(self, path: str, record: object, *, known: bool = True,
@@ -991,6 +996,7 @@ class FolderCache(QObject):
         cache (``constants_session_only``)."""
         set_at = time.time()
         self.remember_constants(path, {"values": clean_layer(values), "set_at": set_at}, confirmed=False)
+        self._constants_save_failed.pop(path, None)  # The user's choice is tried now.
         if self.constants_session_only(path):
             self._session_constants.add(path)
             return True
@@ -1013,21 +1019,36 @@ class FolderCache(QObject):
         are saved now where the folder has a disk cache (proposed: the choice was the user's)."""
         def below(folder: str) -> bool:
             return not path or folder == path or folder.startswith(path.rstrip("/\\") + os.sep)
-        for folder in [folder for folder in self.constants_unsaved if below(folder)]:
+        # Only "no data root" answers: an unsupported mount stays one whatever roots are found.
+        for folder in [folder for folder, reason in self.constants_unsaved.items()
+                       if below(folder) and reason == NO_ROOT_CONSTANTS]:
             del self.constants_unsaved[folder]
         if path:
             self.constantsChanged.emit(path)
+        if self.quitting or self.service.closed:
+            return  # No new folder work while quitting.
         for folder in sorted(self._session_constants):
-            if self.constants_session_only(folder) or self.service.closed:
+            failed = self._constants_save_failed.pop(folder, None)  # Tried again now.
+            if self.constants_session_only(folder):
+                if failed is not None:
+                    self._constants_save_failed[folder] = failed
                 continue
             self._session_constants.discard(folder)
             record = self.folder_constant_records.get(folder) or {}
             set_at = float(record.get("set_at") or time.time())
             job = self.cache_admin("constants", path=folder, values=self.folder_constants(folder), set_at=set_at)
             if job:
-                self._constant_writes[job] = (folder, set_at, "")
+                self._constant_writes[job] = (folder, set_at, AUTOMATIC_SAVE)
             else:
-                self._session_constants.add(folder)  # Queue full: next time.
+                self._automatic_save_failed(folder, "HeLab's work queue is full")
+
+    def _automatic_save_failed(self, folder: str, message: str) -> None:
+        """An automatic save of session-only values failed: they stay in RAM (still "RAM only",
+        saying why) and are tried again at the next root change; no tab asked, so it is logged."""
+        logging.warning("Folder constants of %s not saved: %s; kept for this session", folder, message)
+        self._session_constants.add(folder)
+        self._constants_save_failed[folder] = message
+        self.constantsChanged.emit(folder)
 
     def _constants_not_saved(self, path: str, set_at: float, message: str, owner: str) -> None:
         current = self.folder_constant_records.get(path)
@@ -2095,8 +2116,11 @@ class FolderCache(QObject):
                                       write[2])
             constants_write = self._constant_writes.pop(producer.owner, None)
             if constants_write is not None and kind != "done":
-                self._constants_not_saved(*constants_write[:2], str(event.get("message") or "the save was cancelled"),
-                                          constants_write[2])
+                message = str(event.get("message") or "the save was cancelled")
+                if constants_write[2] == AUTOMATIC_SAVE:
+                    self._automatic_save_failed(constants_write[0], message)
+                else:
+                    self._constants_not_saved(*constants_write[:2], message, constants_write[2])
             if producer.owner == self._budget_owner:
                 self._budget_owner = ""
                 if kind != "done":
@@ -2623,6 +2647,10 @@ RAM_ONLY = "RAM only · no .helab-root found here or above"
 RAM_ONLY_TOOLTIP = ("No .helab-root at or above this folder, so its statuses, settings and loaded data stay in "
                     "RAM for this session.\nTo use the disk cache: right-click the top folder of this drive "
                     "or share › " + PLACE_ROOT_ACTION)
+# A helper's answer when saving a folder's constants finds no data root (``io_helper.cache_admin``).
+NO_ROOT_CONSTANTS = "no .helab-root found here or above"
+# The "owner" of a save of session-only constants made when the folder gained a disk cache.
+AUTOMATIC_SAVE = "automatic"
 NEEDS_ROOT_TOOLTIP = "No .helab-root found here or above: " + PLACE_ROOT_ACTION + " first"
 # A location whose .helab-root is also elsewhere, until Same folder or Copy (D4).
 PENDING_ROOT = "RAM only · this .helab-root is also at another location · Review…"

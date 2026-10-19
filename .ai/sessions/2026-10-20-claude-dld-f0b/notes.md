@@ -73,6 +73,11 @@ the values set this session are sent to a helper then (they were the user's choi
 A root found or changed also emits `constantsChanged` for its folder, since inheritance
 stops there.
 
+Only "no .helab-root" answers are dropped on a root change (an unsupported mount stays
+one). No automatic save starts while quitting. A failed automatic save keeps the values
+in RAM: the folder stays "RAM only" ("couldn't be saved (<why>)"), a WARNING is logged
+(no tab asked for it) and the next root change (or the user's next Save) tries again.
+
 ## Plot overrides and resolution (compatible with agent/dld-d1)
 
 - `AnalysisContext.constants` has **D1's name and shape**: `{"lab": {…}, "folder": {…}}`

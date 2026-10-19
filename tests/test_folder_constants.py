@@ -314,6 +314,59 @@ def test_values_set_while_a_folder_had_no_root_are_saved_when_it_gets_one(monkey
         service.shutdown()
 
 
+def test_a_failed_automatic_save_keeps_the_values_in_ram_and_tries_again(
+        monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    service, cache = frozen(monkeypatch)
+    try:
+        cache._remember_unrooted(RUN, "no .helab-root found here or above")
+        cache.set_folder_constants(RUN, {"trap_axial": 40.0})
+        failures: list[tuple[str, str, str]] = []
+        cache.folderConstantsFailed.connect(lambda *args: failures.append(args))
+        cache._root_seen(RUN, A, "run")
+        answer(service, admin(service, "constants"), {"kind": "error", "message": "database is locked"})
+        assert cache.folder_constants(RUN) == {"trap_axial": 40.0} and failures == []  # No tab asked.
+        assert cache.constants_session_only(RUN) == "couldn't be saved (database is locked)"
+        assert "Folder constants of" in caplog.text and "database is locked" in caplog.text
+        cache.volumesVerified.emit()  # The next root change tries again.
+        retry = admin(service, "constants")
+        assert retry.payload["params"]["values"] == {"trap_axial": 40.0}
+        assert cache.constants_session_only(RUN) == ""
+    finally:
+        service.shutdown()
+
+
+def test_no_automatic_save_starts_while_quitting(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, cache = frozen(monkeypatch)
+    try:
+        cache._remember_unrooted(RUN, "no .helab-root found here or above")
+        cache.set_folder_constants(RUN, {"trap_axial": 40.0})
+        cache.quitting = True
+        cache._root_seen(RUN, A, "run")
+        assert not any(r.operation == "cache_admin" for r in service.pending)
+        assert cache.folder_constants(RUN) == {"trap_axial": 40.0}
+    finally:
+        service.shutdown()
+
+
+def test_an_unsupported_mount_answer_stays_through_root_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, cache = frozen(monkeypatch)
+    try:
+        cache.set_folder_constants(RUN, {"trap_axial": 40.0})
+        request = admin(service, "constants")
+        answer(service, request, {"kind": "folder_constants", "folders": {},
+                                  "session_only": {RUN: "NFS mounts aren't supported"}}, {"kind": "done"})
+        changed: list[str] = []
+        cache.constantsChanged.connect(changed.append)
+        for _ in range(2):
+            cache.volumesVerified.emit()
+            cache.rootDuplicatesChanged.emit()
+        cache._root_seen(ROOT, A, "root")
+        assert cache.constants_session_only(RUN) == "NFS mounts aren't supported"
+        assert not any(r.operation == "cache_admin" for r in service.pending) and RUN not in changed
+    finally:
+        service.shutdown()
+
+
 def test_a_nested_root_moves_the_inheritance_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     service, cache = frozen(monkeypatch)
     try:
