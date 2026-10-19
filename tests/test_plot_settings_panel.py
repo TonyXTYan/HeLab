@@ -3,15 +3,15 @@ window, tab activation): no Python runs per event, the connections end with the 
 plots deleted without closing leave nothing behind."""
 from __future__ import annotations
 
-from typing import Iterator, List, Optional
+from typing import Iterator, List, Optional, cast
 
 import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6 import sip
 from PyQt6.QtCore import QEvent, Qt
-from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QLineEdit, QMainWindow, QWidget
+from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QLineEdit, QMainWindow, QTabBar, QWidget
 
-from helab.models.ScriptTreeSelector import AnalysisDock, PlotSettingsPanel, TreePanelWidget
+from helab.models.ScriptTreeSelector import AnalysisDock, DockTabCloser, PlotSettingsPanel, TreePanelWidget
 
 
 def app() -> QApplication:
@@ -192,3 +192,55 @@ def test_tab_target_rule(plots: Plots, qtbot: QtBot) -> None:
     three.show()
     three.setFloating(True)
     assert target(area, [two, three], three) is None
+
+
+def closable_bars(area: QMainWindow, tabs: int) -> List[QTabBar]:
+    return [bar for bar in area.findChildren(QTabBar) if bar.count() == tabs and bar.tabsClosable()]
+
+
+def test_tab_close_buttons_match_docks_by_identity(plots: Plots, qtbot: QtBot) -> None:
+    """A tab's × closes that tab's own dock, even when titles collide or change."""
+    assert "eventFilter" not in vars(DockTabCloser)
+    closer = DockTabCloser(plots.area)
+    one, two, three = plots.add(), plots.add(), plots.add()
+    closed: List[QDockWidget] = []
+    for dock in (one, two, three):
+        dock.setWindowTitle("Counts per shot (1)")  # The same title on every tab.
+        cast(AnalysisDock, dock).closed.connect(lambda dock=dock: closed.append(dock))
+        closer.watch(dock)
+    plots.show(qtbot)
+    plots.area.tabifyDockWidget(one, two)
+    plots.area.tabifyDockWidget(one, three)
+    qtbot.waitUntil(lambda: bool(closable_bars(plots.area, 3)))
+    bar = closable_bars(plots.area, 3)[0]
+    # Qt keeps each tab's dock as its tab data: the identity the closer relies on.
+    assert [closer.dock_at(bar, i) for i in range(3)] == [one, two, three]
+    bar.tabCloseRequested.emit(1)
+    assert closed == [two]
+    qtbot.waitUntil(lambda: bool(closable_bars(plots.area, 2)))
+    bar = closable_bars(plots.area, 2)[0]
+    three.setWindowTitle("Renamed")
+    bar.tabCloseRequested.emit(next(i for i in range(2) if bar.tabText(i) == "Counts per shot (1)"))
+    assert closed == [two, one]
+
+
+def test_tab_bars_made_later_get_close_buttons(plots: Plots, qtbot: QtBot) -> None:
+    """Tab bars Qt makes after the docks were added (a plot floated and docked again, a
+    hidden one shown) are fitted too."""
+    closer = DockTabCloser(plots.area)
+    docks = [plots.add() for _ in range(4)]
+    for dock in docks:
+        closer.watch(dock)
+    plots.show(qtbot)
+    one, two, three, four = docks
+    plots.area.tabifyDockWidget(one, two)
+    qtbot.waitUntil(lambda: bool(closable_bars(plots.area, 2)))
+    three.setFloating(True)
+    three.setFloating(False)
+    plots.area.tabifyDockWidget(three, four)
+    qtbot.waitUntil(lambda: len(closable_bars(plots.area, 2)) == 2)
+    four.hide()
+    plots.area.tabifyDockWidget(one, four)
+    four.show()
+    qtbot.waitUntil(lambda: bool(closable_bars(plots.area, 3)))
+    assert all(bar.tabsClosable() for bar in plots.area.findChildren(QTabBar) if bar.count() > 1)

@@ -4,7 +4,7 @@ import os
 from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal
 
 from PyQt6 import sip
-from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QCloseEvent, QWindow
 # from uuid import uuid4
 
@@ -32,6 +32,9 @@ if TYPE_CHECKING:
 import numpy.typing as npt
 import numpy as np
 
+# A wrapped object's C++ address (PyQt6's stub types it as returning None).
+address_of = cast(Callable[[QObject], int], sip.unwrapinstance)
+
 
 class AnalysisDock(QDockWidget):
     """A plot dock that says when the user closes it (hiding, e.g. behind another tabbed
@@ -45,19 +48,32 @@ class AnalysisDock(QDockWidget):
 
 class DockTabCloser(QObject):
     """Gives the tabs of docks tabbed together in ``area`` a close button that closes that dock.
-    Qt makes those tab bars itself, as docks are tabbed, so each new one is fitted once."""
+    Qt makes those tab bars itself as docks are tabbed; they are fitted on the next pass of the
+    event loop after a watched dock is added, moved, floated, docked, shown or hidden (dock
+    signals, no event filter). A tab is matched to its dock by identity: Qt's dock tab bars
+    keep each tab's dock widget as its tab data (its address). Titles needn't be unique."""
 
     def __init__(self, area: QMainWindow) -> None:
         super().__init__(area)
         self.area = area
-        area.installEventFilter(self)
+        self._fit_soon = QTimer(self)
+        self._fit_soon.setSingleShot(True)
+        self._fit_soon.setInterval(0)
+        self._fit_soon.timeout.connect(self.fit)
 
-    def eventFilter(self, a0: Optional[QObject], a1: Optional[QEvent]) -> bool:
-        if a1 is not None and a1.type() in (QEvent.Type.ChildAdded, QEvent.Type.LayoutRequest):
-            QTimer.singleShot(0, self.fit)
-        return False
+    def watch(self, dock: QDockWidget) -> None:
+        for signal in (dock.dockLocationChanged, dock.topLevelChanged, dock.visibilityChanged):
+            signal.connect(self.schedule_fit)
+        self.schedule_fit()
+
+    @pyqtSlot()
+    def schedule_fit(self) -> None:
+        self._fit_soon.start()
 
     def fit(self) -> None:
+        layout = self.area.layout()
+        if layout is not None:
+            layout.activate()  # Qt makes or reuses the tab bars as it lays the docks out.
         for bar in self.area.findChildren(QTabBar, options=Qt.FindChildOption.FindDirectChildrenOnly):
             if not bar.property("helabClosable"):
                 bar.setProperty("helabClosable", True)
@@ -65,11 +81,17 @@ class DockTabCloser(QObject):
                 bar.tabCloseRequested.connect(lambda index, bar=bar: self.close_tab(bar, index))
 
     def close_tab(self, bar: QTabBar, index: int) -> None:
-        title = bar.tabText(index)
+        dock = self.dock_at(bar, index)
+        if dock is not None:
+            dock.close()
+
+    def dock_at(self, bar: QTabBar, index: int) -> Optional[QDockWidget]:
+        """The dock of tab ``index`` (None if Qt ever stops keeping it as the tab data)."""
+        address = bar.tabData(index)
         for dock in self.area.findChildren(QDockWidget):
-            if dock.windowTitle() == title and not dock.isFloating():
-                dock.close()
-                return
+            if address_of(dock) == address:
+                return dock
+        return None
 
 
 class LinkedAnalysisInstance(QObject):
@@ -565,8 +587,7 @@ class TreePanelWidget(QWidget):
         settings = window.panel_right_top_plot_settings
         area = window.middle_mainwindow
         settings.follow(area)
-        if area.findChild(DockTabCloser) is None:
-            DockTabCloser(area)
+        closer = area.findChild(DockTabCloser) or DockTabCloser(area)
         target = self.tab_target(area, window.dock_widgets, settings.current_plot())
         area.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         # In a shown area Qt hides the new dock and shows it later, and it won't tab a plot
@@ -576,6 +597,7 @@ class TreePanelWidget(QWidget):
             # Plots share the area as tabs; the new one comes to the front.
             area.tabifyDockWidget(target, dock)
             dock.raise_()
+        closer.watch(dock)
         window.dock_widgets.append(dock)
         update = getattr(window, "update_placeholder_visibility", None)
         if callable(update):

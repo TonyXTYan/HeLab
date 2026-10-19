@@ -82,3 +82,24 @@ are skipped. Tests: `test_tab_target_rule` (each case), 20 plots at once form on
 
 Also fixed: `receivers()` in the panel tests now flushes deferred deletes first (a panel
 from an earlier test awaiting deletion skewed the baseline when run after test_analysis_gui).
+
+## 4. DockTabCloser
+
+Titles were unique only by convention ("Name (id)", the id a per-panel counter); two
+TreePanelWidgets, a future rename or a dock title set elsewhere could collide, and the old
+lookup also skipped floating docks by title. Now `dock_at(bar, index)` matches the tab's
+data: Qt's dock tab bars (`QDockAreaLayoutInfo::updateTabBar`) store each tab's dock widget
+address as tab data (Qt 5 and 6; checked on 6.11). `test_tab_close_buttons_match_docks_by_identity`
+guards that behaviour (if Qt stops storing it, the test fails rather than closing a wrong
+plot; `dock_at` returns None then and nothing closes). Three docks with the same title close
+the right one; a renamed plot still closes by its tab.
+
+Its event filter on the plot area went too: it called Python for every event of the
+`middle_mainwindow` (QMainWindow tracks hover for its separators, so mouse moves over the
+plot area too). Fitting now follows each plot dock's `dockLocationChanged`,
+`topLevelChanged` and `visibilityChanged` (one coalescing 0 ms timer), and `fit()`
+activates the area's layout first so Qt has made its tab bars.
+`test_tab_bars_made_later_get_close_buttons`: bars Qt makes after re-docking a floated plot
+or showing a hidden one get close buttons.
+
+`sip.unwrapinstance` is typed `-> None` in PyQt6's stub: `address_of` casts it.
