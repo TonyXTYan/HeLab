@@ -11,7 +11,7 @@ from PyQt6 import sip
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QLineEdit, QMainWindow, QWidget
 
-from helab.models.ScriptTreeSelector import AnalysisDock, PlotSettingsPanel
+from helab.models.ScriptTreeSelector import AnalysisDock, PlotSettingsPanel, TreePanelWidget
 
 
 def app() -> QApplication:
@@ -21,6 +21,7 @@ def app() -> QApplication:
 
 
 def receivers(panel_app: QApplication) -> tuple[int, int]:
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)  # Earlier tests' panels go.
     return panel_app.receivers(panel_app.focusChanged), panel_app.receivers(panel_app.focusWindowChanged)
 
 
@@ -149,3 +150,45 @@ def test_closing_the_main_window_detaches_the_panel(qtbot: QtBot) -> None:
     assert receivers(app()) == (before[0] + 1, before[1] + 1)
     window.close()
     assert receivers(app()) == before
+
+
+def test_tab_target_rule(plots: Plots, qtbot: QtBot) -> None:
+    """Which open plot a new plot is tabbed with (``TreePanelWidget.tab_target``)."""
+    target = TreePanelWidget.tab_target
+    area, panel = plots.area, plots.panel
+    assert target(area, [], None) is None  # Nothing open: it docks on its own.
+    one, two, three = plots.add(), plots.add(), plots.add()
+    # Docks just added, in an area not shown yet: none is visible, all count.
+    assert not any(dock.isVisible() for dock in plots.docks)
+    assert target(area, plots.docks, None) is three
+    plots.show(qtbot)
+    area.tabifyDockWidget(one, two)
+    area.tabifyDockWidget(one, three)
+    # The plot whose settings show, if docked, else the newest docked.
+    assert target(area, plots.docks, one) is one
+    two.setFloating(True)
+    assert target(area, plots.docks, two) is three
+    # A plot behind another tab is docked, not hidden.
+    area.tabifiedDockWidgetActivated.emit(one)
+    one.raise_()
+    assert target(area, plots.docks, one) is one
+    # A hidden plot (unticked in the area's menu) on its own is never a target; in a tab
+    # group it stands for the group.
+    four = plots.add()
+    four.hide()
+    assert not area.tabifiedDockWidgets(four)
+    assert target(area, plots.docks, four) is three
+    three.hide()
+    assert target(area, plots.docks, three) is three and area.tabifiedDockWidgets(three) == [one]
+    plots.docks.remove(four)
+    # Nor a closed one (not open, no longer in the area) or a deleted one.
+    one.close()
+    area.removeDockWidget(one)
+    assert target(area, [two, three], None) is None
+    assert target(area, plots.docks, None) is None
+    delete_now(one)
+    assert target(area, plots.docks, None) is None
+    # All floating: the new plot docks on its own.
+    three.show()
+    three.setFloating(True)
+    assert target(area, [two, three], three) is None

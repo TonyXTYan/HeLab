@@ -562,21 +562,43 @@ class TreePanelWidget(QWidget):
         if window is None or not isinstance(dock, AnalysisDock):
             return
         instance.ended.connect(self._forget_instance)
-        window.panel_right_top_plot_settings.follow(window.middle_mainwindow)
+        settings = window.panel_right_top_plot_settings
         area = window.middle_mainwindow
+        settings.follow(area)
         if area.findChild(DockTabCloser) is None:
             DockTabCloser(area)
-        shown = [other for other in window.dock_widgets if other.isVisible()]
-        window.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
-        if shown:
+        target = self.tab_target(area, window.dock_widgets, settings.current_plot())
+        area.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        # In a shown area Qt hides the new dock and shows it later, and it won't tab a plot
+        # opened meanwhile with a hidden one: show it now.
+        dock.show()
+        if target is not None:
             # Plots share the area as tabs; the new one comes to the front.
-            window.middle_mainwindow.tabifyDockWidget(shown[-1], dock)
-            dock.show()
+            area.tabifyDockWidget(target, dock)
             dock.raise_()
         window.dock_widgets.append(dock)
         update = getattr(window, "update_placeholder_visibility", None)
         if callable(update):
             update()
+
+    @staticmethod
+    def tab_target(area: QMainWindow, open_docks: List[QDockWidget],
+                   shown: Optional[QDockWidget]) -> Optional[QDockWidget]:
+        """The open plot a new plot is tabbed with in ``area``: the plot whose settings show
+        (``shown``) if it is docked there, else the newest docked one. Docked means in the
+        area and not floating; a plot behind another tab counts, and whether docks are
+        visible yet doesn't matter (``addDockWidget`` shows a dock later, and the area may not
+        be shown). Never a floating plot (Qt would put the new one in its old place, beside
+        some other plot), nor a hidden plot on its own (unticked in the area's menu: the new
+        one would sit alone in its place); a hidden plot in a tab group still stands for that
+        group. Closed plots aren't open. None: the new plot docks on its own (no plot open,
+        or all floating or hidden)."""
+        docked = [dock for dock in open_docks if not sip.isdeleted(dock) and not dock.isFloating()
+                  and area.dockWidgetArea(dock) != Qt.DockWidgetArea.NoDockWidgetArea
+                  and (not dock.isHidden() or area.tabifiedDockWidgets(dock))]
+        if shown in docked:
+            return shown
+        return docked[-1] if docked else None
 
     @pyqtSlot(str)
     def _forget_instance(self, instance_id: str) -> None:

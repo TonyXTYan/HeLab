@@ -477,6 +477,8 @@ def test_twenty_plots_tabbed_and_floating(
     assert [settings.chooser.itemText(i) for i in range(20)] == [
         f"Blocking ({n}) · run_M · rev 1" for n in range(1, 21)]
     assert len({dock.windowTitle() for dock in docks}) == 20
+    # Opened at once, before any dock showed: still one tab group.
+    assert set(window.middle_mainwindow.tabifiedDockWidgets(docks[0])) == set(docks[1:])
     for dock in docks[::4]:  # Five float.
         dock.setFloating(True)
     # Each plot's page is its own: edits and the page (tab) shown stay with it.
@@ -524,3 +526,28 @@ def test_twenty_plots_tabbed_and_floating(
     gc.collect()
     assert [ref for ref in refs if ref() is not None] == []
     assert not any(job in runner.results._pinned for job in jobs)
+
+
+def test_a_new_plot_docks_alone_when_all_others_float(
+        window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path) -> None:
+    run = folder(tmp_path, "run_F", 1)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3})
+    window.middle_mainwindow.show()
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = Blocking()
+    script.release.set()
+    first, second = (cast(AnalysisInstance, panel.run_analysis(script.get_metadata(), script, "Plot"))
+                     for _ in range(2))
+    for instance in (first, second):
+        cast(QDockWidget, instance.dock_widget).setFloating(True)
+    third = cast(AnalysisInstance, panel.run_analysis(script.get_metadata(), script, "Plot"))
+    dock = cast(QDockWidget, third.dock_widget)
+    area = window.middle_mainwindow
+    assert not dock.isFloating() and area.dockWidgetArea(dock) == Qt.DockWidgetArea.LeftDockWidgetArea
+    assert area.tabifiedDockWidgets(dock) == []
+    # The next one joins it, not a floating one.
+    fourth = cast(AnalysisInstance, panel.run_analysis(script.get_metadata(), script, "Plot"))
+    assert area.tabifiedDockWidgets(dock) == [fourth.dock_widget]
+    assert all(cast(QDockWidget, instance.dock_widget).isFloating() for instance in (first, second))

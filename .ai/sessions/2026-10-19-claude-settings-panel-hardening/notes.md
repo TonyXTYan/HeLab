@@ -57,3 +57,28 @@ the hint with an empty chooser, `dock_widgets` and `_analysis_instances` are emp
 `AnalysisInstance` is garbage-collected (weakrefs dead after `gc.collect()`) and none of
 their results stays pinned. Results stay in the RAM results store (R1) until its budget
 drops them, by design. No code change was needed beyond item 1's.
+
+## 3. Where a new plot goes (`_add_dock`)
+
+Old rule: tab with the newest *visible* open dock. Problems found:
+- In a shown area `addDockWidget` hides the new dock and shows it through a queued call
+  (`QLayout::addChildWidget`), and `tabifyDockWidget` never groups with a hidden dock. So
+  plots opened before the event loop ran (two quick clicks, or a script opening several)
+  sat side by side; offscreen, even with the tab target fixed, 20 plots opened at once
+  formed no group at all. Now the new dock is shown right after `addDockWidget`.
+- A visible *floating* dock could be the target; Qt then puts the new plot in that dock's
+  old docked place, i.e. tabbed beside some unrelated plot (probe: E landed with D1).
+- Offscreen, docks behind a tab report `isVisible()` True; on macOS (per the old
+  docstring) False. The rule shouldn't depend on it.
+
+New rule (`TreePanelWidget.tab_target`): tab with the plot whose settings show, if it is
+docked in the area, else the newest docked plot. Docked = in the area, not floating, and
+not hidden on its own (a dock unticked in the area's context menu is hidden; one hidden in
+a tab group still stands for the group, and Qt adds the new plot to that group). Visibility
+is ignored. None → the new plot docks on its own (no plot open, all floating, or all
+hidden). Closed plots are not open (removed from `dock_widgets` and the area); deleted ones
+are skipped. Tests: `test_tab_target_rule` (each case), 20 plots at once form one group,
+`test_a_new_plot_docks_alone_when_all_others_float`.
+
+Also fixed: `receivers()` in the panel tests now flushes deferred deletes first (a panel
+from an earlier test awaiting deletion skewed the baseline when run after test_analysis_gui).
