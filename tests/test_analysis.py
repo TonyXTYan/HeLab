@@ -26,7 +26,7 @@ from helab.analysis.stats import (
 from helab.scripts import standard
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.scripts_manager import ScriptsManager
-from helab.scripts.standard import basic_plots, group, scatter_3d
+from helab.scripts.standard import basic_plots, group, scatter_3d, transfer_fractions
 from helab.utils.folder_cache import Dataset
 
 
@@ -368,6 +368,7 @@ def test_select_shots() -> None:
     assert selection.shots_text((1, 2, 5, 8, 9), 5) == "5 shots"
     assert selection.shots_text((8, 9), 5) == "shots 8–9 (2 of 5)"
     assert selection.shots_text((), 5) == "none of 5 shots"
+    assert selection.shots_text((8,), 5) == "shot 8 (1 of 5)"
 
 
 def test_short_settings_for_the_dock() -> None:
@@ -398,6 +399,65 @@ def test_short_settings_for_the_dock() -> None:
     assert run_text(counts, {}) == ("60 shots", "")
     assert run_text(counts, {"shots": "range", "first_shot": 20, "last_shot": 45}) == (
         "shots 20–45 (26 of 60)", "shots 20–45")
+
+
+def test_from_shot_past_the_end_with_gaps_and_with_each_mode() -> None:
+    # Shot numbers with gaps: From shot, last N and To shot go by shot number, not position.
+    view = build_view(dataset(shots={shot: np.ones((1, 3)) for shot in (3, 4, 10, 11, 12, 30)}))
+
+    def chosen(**values: Any) -> tuple[int, ...]:
+        return selection.select_shots(view, values)
+    assert chosen(first_shot=5) == (10, 11, 12, 30) and chosen(first_shot=10) == (10, 11, 12, 30)
+    assert chosen(shots="last N", last_shots=2, first_shot=5) == (12, 30)
+    assert chosen(shots="last N", last_shots=9, first_shot=11) == (11, 12, 30)
+    assert chosen(shots="range", first_shot=5, last_shot=20) == (10, 11, 12)
+    assert chosen(shots="range", first_shot=5, last_shot=9) == ()  # in a gap
+    assert chosen(shots="range", first_shot=12, last_shot=12) == (12,)
+    assert chosen(shots="range", first_shot=20, last_shot=10) == ()
+    # Past the last shot: none, whichever mode, and the dock's first line says why.
+    for mode in ("all", "last N", "range"):
+        assert chosen(shots=mode, first_shot=31) == ()
+    assert selection.selection_text(view, {"first_shot": 31}) == "none of 6 shots (From shot 31 is past the last, 30)"
+    assert selection.selection_text(view, {"shots": "range", "first_shot": 5, "last_shot": 9}) == "none of 6 shots"
+    assert selection.selection_text(view, {"first_shot": 5}) == "shots 10–30 (4 of 6)"
+    assert selection.selection_text(build_view(dataset(shots={})), {"first_shot": 5}) == "0 shots"
+
+
+def test_from_shot_while_live_adds_shots() -> None:
+    first = build_view(dataset(shots={shot: np.ones((1, 3)) for shot in range(1, 6)}))
+    later = first.with_shots({shot: np.ones((1, 3)) for shot in (6, 7, 9)})
+    settings: list[tuple[dict[str, Any], tuple[int, ...], tuple[int, ...]]] = [
+        ({"first_shot": 3}, (3, 4, 5), (3, 4, 5, 6, 7, 9)),  # all from shot 3 grows
+        ({"shots": "last N", "last_shots": 2, "first_shot": 3}, (4, 5), (7, 9)),  # last N slides
+        ({"shots": "range", "first_shot": 3, "last_shot": 6}, (3, 4, 5), (3, 4, 5, 6)),  # up to 6, then fixed
+        ({"first_shot": 8}, (), (9,))]  # none until a shot from 8 arrives
+    for values, before, after in settings:
+        assert selection.select_shots(first, values) == before and selection.select_shots(later, values) == after
+    assert selection.selection_text(first, {"first_shot": 8}) == "none of 5 shots (From shot 8 is past the last, 5)"
+    assert selection.selection_text(later, {"first_shot": 8}) == "shot 9 (1 of 8)"
+
+
+@pytest.mark.parametrize(("values", "brief"), [
+    ({}, ""),
+    ({"first_shot": 20}, "shots 20–last"),
+    ({"shots": "last N", "last_shots": 10}, "last 10 shots"),
+    ({"shots": "last N", "last_shots": 1, "first_shot": 20}, "last 1 shot from shot 20"),
+    ({"shots": "range"}, ""),
+    ({"shots": "range", "first_shot": 20}, "shots 20–last"),
+    ({"shots": "range", "last_shot": 45}, "shots up to 45"),
+    ({"shots": "range", "first_shot": 20, "last_shot": 45}, "shots 20–45"),
+    ({"shots": "range", "first_shot": 20, "last_shot": 20}, "shot 20"),
+    ({"shots": "range", "first_shot": 20, "last_shot": 10}, "no shots: To shot 10 is below From shot 20"),
+    ({"last_shot": 45}, ""),  # To shot applies only to a range
+    ({"shots": "last N", "last_shots": 10, "last_shot": 45}, "last 10 shots"),
+])
+def test_shots_brief_for_every_combination(values: dict[str, Any], brief: str) -> None:
+    assert selection.shots_brief(values) == brief
+    # Every plot's settings line starts with it (Transfer fractions' too).
+    view = build_view(dataset(shots={shot: np.ones((1, 3)) for shot in range(1, 61)}))
+    for script in (basic_plots.CountsPerShot(), transfer_fractions.TransferFractions()):
+        _, settings = script.describe_run("Plot", effective(script.parameters("Plot"), values), view)
+        assert settings.startswith(brief)
 
 
 def test_manual_box_uses_set_bounds_and_the_data_extent() -> None:

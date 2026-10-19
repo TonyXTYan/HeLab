@@ -393,3 +393,13 @@ def test_live_reruns_refill_the_detection_and_keep_what_was_typed(qtbot: QtBot) 
     instance._show_detected(AnalysisResult.of(in_flight, "completed", script.compute("Plot", in_flight)))
     assert instance.values()["centre"] == 2.14
     instance.close()
+
+
+def test_detection_uses_only_the_shots_chosen() -> None:
+    rng = np.random.default_rng(11)
+    moved = CENTRE + 0.003  # order 0 arrives later from shot 4 on
+    data = view({shot: orders_events(rng, SIDES, centre=CENTRE if shot < 4 else moved) for shot in range(1, 7)})
+    assert fractions(data, {"first_shot": 4}).orders.centre == pytest.approx(moved, abs=2e-4)
+    assert fractions(data, {"shots": "range", "last_shot": 3}).orders.centre == pytest.approx(CENTRE, abs=2e-4)
+    past = fractions(data, {"first_shot": 7})
+    assert not past.detected and past.chosen == 0 and past.total_shots == 6

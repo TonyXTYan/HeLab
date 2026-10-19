@@ -44,7 +44,9 @@ def select_shots(view: DatasetView, values: Mapping[str, Any]) -> tuple[int, ...
 
 
 def shots_brief(values: Mapping[str, Any]) -> str:
-    """The Shots setting in a few words for the dock's settings line; "" for all shots."""
+    """The Shots setting in a few words for the dock's settings line; "" for all shots:
+    ``shots 20–last``, ``last 10 shots``, ``last 10 shots from shot 20``, ``shots up to 45``,
+    ``shots 20–45``, ``shot 20``, or ``no shots: To shot 10 is below From shot 20``."""
     mode = values.get(SHOTS.name, ALL)
     first = int(values.get(FIRST_SHOT.name, FIRST_SHOT.default))
     start = f" from shot {first}" if first else ""
@@ -52,22 +54,32 @@ def shots_brief(values: Mapping[str, Any]) -> str:
         count = int(values.get(LAST_SHOTS.name, LAST_SHOTS.default))
         return f"last {count:,} shot{'' if count == 1 else 's'}{start}"
     last = int(values.get(LAST_SHOT.name, LAST_SHOT.default)) if mode == RANGE else 0
+    if last and last < first:
+        return f"no shots: To shot {last} is below From shot {first}"
     if last:
-        return f"shots {first}–{last}" if first else f"shots up to {last}"
+        return (f"shot {first}" if first == last else f"shots {first}–{last}") if first else f"shots up to {last}"
     return f"shots {first}–last" if first else ""
 
 
 def selection_text(view: DatasetView, values: Mapping[str, Any]) -> str:
-    """Which shots a run used, for the dock's first line: ``shots 51–60 (10 of 60)``."""
-    return shots_text(select_shots(view, values), len(view.shots))
+    """Which shots a run used, for the dock's first line: ``shots 51–60 (10 of 60)``; when none,
+    and From shot is past the last shot loaded, it says so."""
+    chosen = select_shots(view, values)
+    text = shots_text(chosen, len(view.shots))
+    first = int(values.get(FIRST_SHOT.name, FIRST_SHOT.default))
+    if not chosen and view.shot_numbers and first > view.shot_numbers[-1]:
+        text += f" (From shot {first} is past the last, {view.shot_numbers[-1]})"
+    return text
 
 
 def shots_text(selected: Sequence[int], total: int) -> str:
-    """``60 shots``, or which of them when not all: ``last 10 of 60 shots``, ``shots 5–20 (16 of 60)``."""
+    """``60 shots``, or which of them when not all: ``shots 5–20 (16 of 60)``, ``shot 9 (1 of 60)``."""
     if len(selected) == total:
         return f"{total:,} shot{'' if total == 1 else 's'}"
     if not selected:
         return f"none of {total:,} shots"
+    if len(selected) == 1:
+        return f"shot {selected[0]} (1 of {total:,})"
     return f"shots {selected[0]}–{selected[-1]} ({len(selected):,} of {total:,})"
 
 
