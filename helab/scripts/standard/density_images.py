@@ -52,7 +52,8 @@ BINS = ParameterSpec(
     tip=f"Bins along each axis of the image. 0 = automatic, per axis (Freedman–Diaconis: width "
         f"2·IQR·n^-1/3, at most {AUTO_BINS_CAP}).")
 BLUR = ParameterSpec("blur", "Blur σ", "float", 0.0, (0.0, 50.0), " bins", group=IMAGE_GROUP,
-                     tip="Gaussian blur of the image, its σ in bins; 0 = off. The total is kept (edges reflect).")
+                     tip="Gaussian blur of the image, its σ in bins; 0 = off. The total is kept (edges reflect). "
+                         "At most a quarter of the image's longer side is used (the plot says so).")
 COUNTS, PER_SHOT = "counts per bin", "rate per shot"
 QUANTITY = ParameterSpec("quantity", "Show", "choice", COUNTS, choices=(COUNTS, PER_SHOT), group=IMAGE_GROUP,
                          tip="Counts per bin, or a rate per shot: counts / number of shots chosen / bin area "
@@ -102,12 +103,26 @@ def compress(position: npt.NDArray[np.float64], scale: str, gamma: float = 0.5, 
 
 
 def colour_map(scale: str, gamma: float = 0.5, decades: int = 3) -> pg.ColorMap:
-    """Viridis, resampled so that a linear value shows the colour of its compressed position:
-    the image's data and the colour bar's axis stay linear (real values)."""
+    """Viridis, resampled so that a linear value shows the colour of its compressed position: the
+    colour bar's gradient over its linear axis in real values. (Only the bar's: pyqtgraph applies
+    a bar's map in 256 steps, which loses the compression below 1/256 of the maximum, so the image
+    is drawn from ``display_image`` instead.)"""
     base: Any = pg.colormap.get(COLOUR_MAP)
     positions = np.linspace(0.0, 1.0, LUT_SIZE)
     colours = base.map(compress(positions, scale, gamma, decades), mode="byte")
     return pg.ColorMap(positions, colours, name=f"{COLOUR_MAP} ({scale})")
+
+
+def display_image(image: npt.NDArray[np.float64], peak: float, scale: str, gamma: float = 0.5, decades: int = 3
+                  ) -> npt.NDArray[np.float64]:
+    """What the image item draws: each value's compressed position (0…1) in the colour map, over
+    plain viridis with levels 0…1. The result's image stays linear; this copy is only drawn."""
+    return compress(image / peak if peak > 0 else np.zeros_like(image), scale, gamma, decades)
+
+
+def viridis_lut() -> npt.NDArray[np.uint8]:
+    base: Any = pg.colormap.get(COLOUR_MAP)
+    return cast(npt.NDArray[np.uint8], base.getLookupTable(nPts=LUT_SIZE, alpha=False))
 
 
 @dataclass(frozen=True)
@@ -182,6 +197,26 @@ def span(box: CropBox, axis: int) -> tuple[float, float]:
     return lower, upper
 
 
+def automatic_bins(along_h: npt.NDArray[np.float64], along_v: npt.NDArray[np.float64], span_h: tuple[float, float],
+                   span_v: tuple[float, float], square: bool) -> tuple[int, int]:
+    """Bins per axis, each from Freedman–Diaconis, at most ``AUTO_BINS_CAP``. ``square`` (XY, both
+    in mm, aspect locked): one bin width for both axes, the smaller of the two, so pixels are
+    square (to within one bin's rounding), and widened when an axis would pass the cap."""
+    count_h = min(freedman_diaconis_bins(along_h, *span_h), AUTO_BINS_CAP)
+    count_v = min(freedman_diaconis_bins(along_v, *span_v), AUTO_BINS_CAP)
+    if not square:
+        return count_h, count_v
+    width_h, width_v = span_h[1] - span_h[0], span_v[1] - span_v[0]
+    width = max(min(width_h / count_h, width_v / count_v), width_h / AUTO_BINS_CAP, width_v / AUTO_BINS_CAP)
+    return (min(max(round(width_h / width), 1), AUTO_BINS_CAP), min(max(round(width_v / width), 1), AUTO_BINS_CAP))
+
+
+def blur_limit(shape: tuple[int, ...]) -> float:
+    """The largest blur σ used, in bins: a quarter of the image's longer side (at least 1). Beyond
+    it the image is nearly flat, and the cost (σ per pixel) keeps a Live rerun bounded."""
+    return max(1.0, max(shape) / 4)
+
+
 def blurred(counts: npt.NDArray[np.float64], sigma: float) -> npt.NDArray[np.float64]:
     """``counts`` with a Gaussian blur of ``sigma`` bins (0: as they are). Edges reflect, so the
     total is kept."""
@@ -236,6 +271,7 @@ class DensityPlot(QWidget):
         self.title: Any = self.graphics.addLabel("", row=0, col=0, colspan=2)
         self.plot: Any = self.graphics.addPlot(row=1, col=0)
         self.image: Any = pg.ImageItem(axisOrder="col-major")
+        self.image.setLookupTable(viridis_lut())
         self.plot.addItem(self.image)
         # The newest shot's contour, in the image's pixel coordinates (empty: none).
         self.contour: Any = pg.IsocurveItem(axisOrder="col-major")
@@ -254,24 +290,24 @@ class DensityPlot(QWidget):
         self.plot.setLabel("bottom", f"{AXES[h]} ({data.unit(h)})")
         self.plot.setLabel("left", f"{AXES[v]} ({data.unit(v)})")
         self.plot.setAspectLocked(data.projection == "XY")  # X and Y both in mm: their true shape
-        self.image.setImage(data.image, autoLevels=False)
-        self.image.setRect(data.rect())
         peak = float(data.image.max()) if data.image.size else 0.0
         levels = (0.0, peak if peak > 0 else 1.0)
         key = (str(values.get(SCALE.name, LINEAR)), float(values.get(GAMMA.name, GAMMA.default)),
                int(values.get(DECADES.name, DECADES.default)))
-        if self.bar is None or key != self.scale_key:
-            if self.bar is not None:
-                self.graphics.removeItem(self.bar)
+        # The colours come from the compressed copy (exact at any depth); the bar is a legend only:
+        # its gradient and its linear axis in real values, never attached to the image.
+        self.image.setImage(display_image(data.image, peak, *key), levels=(0.0, 1.0))
+        self.image.setRect(data.rect())
+        if self.bar is None:
             self.bar = pg.ColorBarItem(values=levels, colorMap=colour_map(*key), interactive=False,
                                        label=data.quantity_text())
-            self.bar.setImageItem(self.image)
             self.graphics.addItem(self.bar, row=1, col=1)
-            self.scale_key = key
         else:
+            if key != self.scale_key:
+                self.bar.setColorMap(colour_map(*key))
             self.bar.setLevels(levels)
             self.bar.getAxis("left").setLabel(data.quantity_text())  # ColorBarItem labels its left axis.
-        self.image.setLevels(levels)
+        self.scale_key = key
         if data.newest_shot is not None and data.newest.size and data.newest.max() > 0:
             self.contour.setPen(pg.mkPen(data.colour, width=2))
             self.contour.setData(data.newest, contour_level(data.newest))
@@ -338,18 +374,23 @@ class DensityImages(DatasetAnalysis):
         h, v = PROJECTIONS[projection]
         (low_h, high_h), (low_v, high_v) = span(box, h), span(box, v)
         bins = int(values.get(BINS.name, 0))
-        counts_h = bins or min(freedman_diaconis_bins(inside[:, h], low_h, high_h), AUTO_BINS_CAP)
-        counts_v = bins or min(freedman_diaconis_bins(inside[:, v], low_v, high_v), AUTO_BINS_CAP)
+        counts_h, counts_v = (bins, bins) if bins else automatic_bins(inside[:, h], inside[:, v], (low_h, high_h),
+                                                                      (low_v, high_v), projection == "XY")
         context.check()
         counts, edges_h, edges_v = np.histogram2d(inside[:, h], inside[:, v], bins=(counts_h, counts_v),
                                                   range=((low_h, high_h), (low_v, high_v)))
         context.check()
-        sigma = float(values.get(BLUR.name, 0.0))
+        asked = float(values.get(BLUR.name, 0.0))
+        sigma = min(asked, blur_limit(counts.shape))
+        warnings = range_warnings(values)
+        if sigma < asked:
+            warnings += (f"blur σ {asked:g} bins is over a quarter of the image's {max(counts.shape):,} bins: "
+                         f"using {sigma:g}",)
         image = blurred(counts, sigma)
         unit = time_unit(box.lower[0], box.upper[0])[0]
         per_shot = values.get(QUANTITY.name) == PER_SHOT
         data = DensityImage(projection, box, edges_h, edges_v, image, shots, len(view.shots), per_shot, sigma,
-                            bins == 0, unit, range_warnings(values))
+                            bins == 0, unit, warnings)
         if per_shot:
             # The bin area in display units (mm², or mm · ms or s), from the real bin count.
             area = float(edges_h[1] - edges_h[0]) * data.scale(h) * float(edges_v[1] - edges_v[0]) * data.scale(v)
@@ -377,10 +418,11 @@ class DensityImages(DatasetAnalysis):
 
     def update(self, widget: QWidget, result: AnalysisResult) -> bool:
         """A rerun (e.g. Live's next shots) draws in place, keeping the zoom and pan, while the
-        projection and T's unit stay; otherwise (or to or from an empty plot) it is drawn anew."""
+        projection and (when it shows T) T's unit stay; otherwise (or to or from an empty plot) it is drawn anew."""
         data: DensityImage = result.data
-        if (not isinstance(widget, DensityPlot) or empty_reason(data) or widget.projection != data.projection
-                or widget.time_unit != data.time_unit):
+        if not isinstance(widget, DensityPlot) or empty_reason(data) or widget.projection != data.projection:
+            return False
+        if 0 in data.axes and widget.time_unit != data.time_unit:  # Only a plot showing T relabels it.
             return False
         widget.show_data(result, data)
         return True

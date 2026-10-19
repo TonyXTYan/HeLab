@@ -27,17 +27,30 @@ Code: `helab/scripts/standard/density_images.py` (`DensityImages`, "Density imag
    (Freedman–Diaconis over the box, at most 400). Set: up to 1000 (8 MB per image). The old
    GUI's default of 201 and its forced-odd count are not kept. The bin area uses the real bin
    count (the old GUI divided by `bins` where there are `bins − 1`).
+   **XY with automatic bins (after review):** one bin width for both axes, the smaller of the
+   two Freedman–Diaconis widths (widened if an axis would pass 400), so pixels are square under
+   the locked aspect, to within one bin's rounding (`automatic_bins`). XT/YT keep a width per
+   axis; set bins stay as set. *Proposed.*
 5. **Blur:** `scipy.ndimage.gaussian_filter`, σ in bins (0 = off), `mode="reflect"`, which
    keeps the image's total (tested); `constant` would lose events at the edges.
+   **Capped (after review):** σ is at most a quarter of the image's longer side (at least 1 bin;
+   `blur_limit`), and the figure's title warns when it was lowered ("blur σ 30 bins is over a
+   quarter of the image's 25 bins: using 6.25"). Beyond that the image is nearly flat, and the
+   cap with the 1000-bin and 50-bin limits bounds a Live rerun's blur cost. *Proposed.*
 6. **Show: counts per bin, or rate per shot** = counts / shots chosen / bin area in display
    units: events / mm² / shot (XY) and events / (mm·ms) / shot (XT, YT; per s when T is in s).
    The rate is computed after the blur (the blur keeps the total, so the order doesn't matter).
    The colour bar is labelled accordingly, with "(blurred)" when blurred.
 7. **Colour compression in the colour map only:** linear (default), sqrt (the old GUI's
    "LogScale", `counts.^0.5`), log (spanning N decades below the maximum, default 3), power γ
-   (default 0.5). Viridis is resampled (1024 samples) so a linear value shows the colour of its
-   compressed position; the image and the colour bar's axis stay linear, so the bar reads real
-   values. Levels are 0…max of the image (not interactive: a rerun would reset them).
+   (default 0.5). The result's image stays linear. **Fixed after review:** the first version
+   attached the image to a `ColorBarItem` with a resampled viridis map, but pyqtgraph applies a
+   bar's map in 256 steps (`getLookupTable(nPts=256)`), so every value below 1/256 of the
+   maximum was drawn in the darkest colour (log 3+ decades, small γ). Now the image item draws a
+   display copy, `compress(image / max)`, over plain viridis (a 1024-entry LUT) with levels 0…1,
+   which is exact at any depth (tested on the rendered QImage's pixels at 1e-3 and 1e-2 of the
+   max); the bar is only a legend, not attached to the image: the resampled gradient over a
+   linear axis in real values, 0…max (not interactive: a rerun would reset it).
    *Proposed:* an interactive colour bar (drag the levels) is a later option.
 8. **Units:** X and Y in mm; T in ms while both ends of its range are under 10 s, else s
    (`density_images.time_unit`), per the roadmap. **Inconsistency to note:** the existing plots
@@ -50,8 +63,9 @@ Code: `helab/scripts/standard/density_images.py` (`DensityImages`, "Density imag
    "highlighted as a contour"). *Proposed:* contour level and blur fixed for now.
 10. **Live:** `LivePolicy(min_delay=2.0)`: the auto-crop of ~1.1 M events took about 1.5 s here
     (4 shared cores), as the scatter's does. Reruns draw in place (`update`): the same
-    `DensityPlot`, image and colour bar, keeping zoom and pan, unless the projection or T's
-    unit changes or the plot was or becomes empty; a new colour scale replaces only the bar.
+    `DensityPlot`, image and colour bar, keeping zoom and pan, unless the projection changes,
+    T's unit changes on a plot showing T (XT, YT; never XY), or the plot was or becomes empty; a
+    new colour scale changes the bar's gradient, and counts ↔ rate per shot its label.
 11. **Empty:** no shots, none chosen, no events (the shared `empty_text`), and a manual range
     with no events inside ("None of the N events in the chosen shots is inside the view range
     (View range settings)", plus any range warning). The old GUI crashed on an empty window.

@@ -20,9 +20,36 @@ Branch `agent/dld-d3` from `1231025` (`agent/dld-front-panel-port`), not pushed 
   newest shot contoured): `render-XY.png`, `render-XT.png`, `render-YT.png`, made by
   `render_density.py` (run with `PYTHONPATH=<checkout> QT_QPA_PLATFORM=offscreen`).
 
+## Review fixes (second commit)
+
+The Coordinator's review of `9eeec6b`, all fixed:
+
+1. **Colour compression below 1/256 of the max (should-fix).** The image was attached to the
+   colour bar, whose 256-step lookup table drew everything under max/256 in the darkest colour.
+   The image item now draws `compress(image / max)` over plain viridis with levels 0…1; the bar
+   is a legend only (gradient and linear axis in real values). The result's data stays linear.
+2. **Rendered-pixel test:** `test_rendered_colours_keep_the_compression_far_below_the_maximum`
+   reads the ImageItem's QImage at 1e-3 and 1e-2 of the max (and the max and 0) under log 3 and
+   8 decades, power γ 0.05 and 0.5, and linear, against viridis at the intended positions
+   (within 2 per channel).
+3. **XY automatic bins are square:** one width for both axes, the smaller FD width (widened at
+   the 400 cap). Set bins unchanged. Proposed for Tony (notes.md § 4).
+4. **Blur capped** at a quarter of the image's longer side, with a title warning when lowered
+   (notes.md § 5).
+5. **Counts → rate per shot in place:** tested (same bar, relabelled, new levels).
+6. **`update()`** compares T's unit only when the projection shows T: XY doesn't redraw.
+
+The XY render was redone (square bins: 198 × 196).
+
 ## Checks
 
-- `tests/test_density_images.py`: 22 tests (counts vs `np.histogram2d` for each projection,
+- After the review fixes: `tests/test_density_images.py` 30 passed;
+  `test_density_images`, `test_live_plots`, `test_analysis`, `test_script_system` and
+  `test_plot_ram_budget` together (`-n 2 --reruns 5`): 176 passed, no rerun;
+  `mypy helab/ --strict`, `mypy tests --strict`, `pyright helab tests`: clean;
+  `tests/test_typing.py` with the venv's bin first on PATH: 6 passed. No shared code changed,
+  so the full suite was not rerun; the figures below are from the first commit.
+- `tests/test_density_images.py` (first commit): 22 tests (counts vs `np.histogram2d` for each projection,
   rate per shot, time unit, blur keeps the total for σ 0.5/2/30, colour compression leaves the
   data alone and resamples viridis, auto-crop and bins, Shots and coverage, empty notes,
   reversed range, one-value events, offscreen render shape/rect/labels/levels/aspect, newest
@@ -48,7 +75,8 @@ link in the checkout for pyright; with them its 6 tests pass.)
    its pulses as columns.
 3. Blur σ 1–2 bins: smoother, same total. Show › rate per shot: the bar reads
    events / mm² / shot (XY) or events / (mm·ms) / shot.
-4. Colour scale sqrt / log / power γ: faint regions brighten, the bar's numbers stay real
+4. Colour scale sqrt / log (try 6–8 decades) / power γ: faint regions brighten, down to the
+   faintest bins, and the bar's numbers stay real
    counts (its colours change, not its scale).
 5. View range › manual with only T set (e.g. one pulse) on XY: the image shows only those
    events. A T min above max: full extent, "⚠ T: min > max, using full extent" in the title.
