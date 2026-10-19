@@ -171,7 +171,7 @@ def test_selection_change_mid_run_keeps_the_input(
     assert result.data == 7  # run_A's events, not run_B's
     label = source_label(instance.dock_widget)
     window._update_plot_source_label(instance.dock_widget, browser)
-    assert label.text() == "Showing previously loaded data: run_A · rev 1 · tests.blocking v3 · Scale 1"
+    assert label.text() == "Showing previously loaded data: run_A · rev 1 · tests.blocking v3\nScale 1"
     assert "Input: " + str(first) in label.toolTip() and "kept in RAM only" in label.toolTip()
     # A new run takes the data shown now.
     view = window.current_dataset_view()
@@ -194,7 +194,7 @@ def test_rerun_uses_the_same_input_and_close_cleans_up(
     assert first is not None and first.data == 2
     assert window.panel_right_top_params_tab_widget.indexOf(instance.param_tab) >= 0
     label = source_label(instance.dock_widget)
-    assert label.text() == "Data source: run_C · rev 1 · tests.blocking v3 · Scale 1"
+    assert label.text() == "Data source: run_C · rev 1 · tests.blocking v3\nScale 1"
     instance.parameter_root.child("scale").setValue(4)
     instance.rerun_button.click()
     qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
@@ -278,8 +278,8 @@ def test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab(
     instance.rerun_button.click()
     qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
     label = source_label(instance.dock_widget)
-    assert label.text().endswith("Range manual, T min 0 s, T max 0 s, X min 5 m, X max 2 m, Y min 0 m, Y max 0 m, "
-                                 "Bins 0, Log Y off · ⚠ X: min > max, using full extent")
+    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v2\n"
+                            "manual range: full extent · bins auto · ⚠ X: min > max, using full extent")
     assert "Warning: X: min > max, using full extent" in label.toolTip()
     assert instance.status_label.text() == "⚠ X: min > max, using full extent"
 
@@ -312,8 +312,10 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     assert pane.note.text().startswith("All 70 events in range shown · crop keeps")
     assert pane.note.toolTip().startswith("Showing all 70 events in the range")
     label = source_label(instance.dock_widget)
-    assert label.text() == ("Data source: run_D · rev 1 · helab.scatter_3d v2 · Shots all, Range auto-crop, "
-                            "Auto-crop: keep 99 %, Point size 1.5 px, Opacity 0.5, Display cap 100,000")
+    # Two lines: source (folder, revision, shots, analysis), then the settings in short form.
+    assert label.text() == ("Data source: run_D · rev 1 · 2 shots · helab.scatter_3d v2\n"
+                            "auto-crop 99 % · points 1.5 px, opacity 0.5")
+    assert not label.wordWrap() and label.contentsMargins().top() == 0
     assert metadata.file_hash[:12] in label.toolTip()
     # The record lists every parameter, those not in use included.
     assert "Parameters: Shots all, Last N 50, From shot 1, To shot (0 = last) 0, Range auto-crop, " \

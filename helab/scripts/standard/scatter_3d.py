@@ -12,8 +12,9 @@ from PyQt6.QtWidgets import QWidget
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_specs, range_warnings,
-                                      select_shots, shots_text)
+from helab.analysis.dataset_view import DatasetView
+from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
+                                      range_warnings, select_shots, selection_text, shots_brief, shots_text)
 from helab.analysis.stats import AXES, DISPLAY_CAP, UNITS, CropBox, axis_text, crop_box, display_sample
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
@@ -89,6 +90,13 @@ class Scatter3D(DatasetAnalysis):
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
         return [*SHOT_SPECS, *RANGE, POINT_SIZE, OPACITY, CAP]
+
+    def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
+        points = f"points {float(values[POINT_SIZE.name]):g} px, opacity {float(values[OPACITY.name]):g}"
+        if int(values[CAP.name]) != CAP.default:
+            points += f", cap {int(values[CAP.name]):,}"
+        settings = (shots_brief(values), range_brief(values), points)
+        return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
         return list(range_warnings(values))

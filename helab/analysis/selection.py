@@ -41,6 +41,23 @@ def select_shots(view: DatasetView, values: Mapping[str, Any]) -> tuple[int, ...
     return numbers
 
 
+def shots_brief(values: Mapping[str, Any]) -> str:
+    """The Shots setting in a few words for the dock's settings line; "" for all shots."""
+    mode = values.get(SHOTS.name, ALL)
+    if mode == LAST_N:
+        count = int(values.get(LAST_SHOTS.name, LAST_SHOTS.default))
+        return f"last {count:,} shot{'' if count == 1 else 's'}"
+    if mode == RANGE:
+        last = int(values.get(LAST_SHOT.name, LAST_SHOT.default))
+        return f"shots {int(values.get(FIRST_SHOT.name, FIRST_SHOT.default))}–{last if last else 'last'}"
+    return ""
+
+
+def selection_text(view: DatasetView, values: Mapping[str, Any]) -> str:
+    """Which shots a run used, for the dock's first line: ``shots 51–60 (10 of 60)``."""
+    return shots_text(select_shots(view, values), len(view.shots))
+
+
 def shots_text(selected: Sequence[int], total: int) -> str:
     """``60 shots``, or which of them when not all: ``last 10 of 60 shots``, ``shots 5–20 (16 of 60)``."""
     if len(selected) == total:
@@ -93,6 +110,30 @@ def manual_bounds(values: Mapping[str, Any]) -> tuple[tuple[float, float] | None
         low, high = float(values.get(low_spec.name, 0.0)), float(values.get(high_spec.name, 0.0))
         bounds.append((low, high) if high > low else None)
     return tuple(bounds)
+
+
+SI_PREFIXES = ((1.0, ""), (1e-3, "m"), (1e-6, "µ"), (1e-9, "n"))
+
+
+def range_text(axis: int, low: float, high: float) -> str:
+    """``T 3.84–3.87 s``, ``X −2–3.5 mm``: one prefix for both ends, from the larger magnitude."""
+    largest = max(abs(low), abs(high))
+    factor, prefix = next(((f, p) for f, p in SI_PREFIXES if largest >= f), SI_PREFIXES[-1])
+    if largest == 0:
+        factor, prefix = SI_PREFIXES[0]
+
+    def number(value: float) -> str:
+        return f"{value / factor:.4g}".replace("-", "−")
+    return f"{AXES[axis]} {number(low)}–{number(high)} {prefix}{UNITS[axis]}"
+
+
+def range_brief(values: Mapping[str, Any]) -> str:
+    """The view range in a few words: ``auto-crop 99 %``, or the manual axes actually set
+    (``T 3.84–3.87 s``); unset and full-extent axes are left out."""
+    if not manual(values):
+        return f"auto-crop {keep_fraction(values) * 100:g} %"
+    parts = [range_text(axis, *bounds) for axis, bounds in enumerate(manual_bounds(values)) if bounds is not None]
+    return ", ".join(parts) if parts else "manual range: full extent"
 
 
 def reversed_axes(values: Mapping[str, Any]) -> tuple[str, ...]:

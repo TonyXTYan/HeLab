@@ -310,6 +310,33 @@ def test_select_shots() -> None:
     assert selection.shots_text((), 5) == "none of 5 shots"
 
 
+def test_short_settings_for_the_dock() -> None:
+    assert selection.shots_brief({}) == ""
+    assert selection.shots_brief({"shots": "last N", "last_shots": 1}) == "last 1 shot"
+    assert selection.shots_brief({"shots": "range", "first_shot": 20, "last_shot": 45}) == "shots 20–45"
+    assert selection.shots_brief({"shots": "range", "first_shot": 20, "last_shot": 0}) == "shots 20–last"
+    assert selection.range_brief({"range_mode": "auto-crop", "keep_percent": 99.5}) == "auto-crop 99.5 %"
+    manual = {"range_mode": "manual", "t_min": 3.84, "t_max": 3.87, "x_min": -0.002, "x_max": 0.0035,
+              "y_min": 1.0, "y_max": 1.0}
+    # Only the axes actually set: Y (min = max) is its full extent and left out.
+    assert selection.range_brief(manual) == "T 3.84–3.87 s, X −2–3.5 mm"
+    assert selection.range_brief({**manual, "x_min": 0.01, "x_max": 0.0, "t_max": 0.0}) == "manual range: full extent"
+    assert selection.range_text(1, -4e-6, 2e-6) == "X −4–2 µm" and selection.range_text(0, 0.0, 0.0) == "T 0–0 s"
+    view = build_view(dataset(shots={shot: np.ones((1, 3)) for shot in range(1, 61)}))
+    scatter, histograms, counts = scatter_3d.Scatter3D(), basic_plots.TxyHistograms(), basic_plots.CountsPerShot()
+
+    def run_text(script: DatasetAnalysis, values: dict[str, Any]) -> tuple[str, str]:
+        return script.describe_run("Plot", effective(script.parameters("Plot"), values), view)
+    assert run_text(histograms, {"shots": "last N", "last_shots": 10, "log_y": True}) == (
+        "shots 51–60 (10 of 60)", "last 10 shots · auto-crop 99 % · bins auto · log Y")
+    assert run_text(histograms, {**manual, "bins": 80}) == ("60 shots", "T 3.84–3.87 s, X −2–3.5 mm · bins 80")
+    assert run_text(scatter, {"display_cap": 20_000, "point_size": 2}) == (
+        "60 shots", "auto-crop 99 % · points 2 px, opacity 0.5, cap 20,000")
+    assert run_text(counts, {}) == ("60 shots", "")
+    assert run_text(counts, {"shots": "range", "first_shot": 20, "last_shot": 45}) == (
+        "shots 20–45 (26 of 60)", "shots 20–45")
+
+
 def test_manual_box_uses_set_bounds_and_the_data_extent() -> None:
     events = np.array([[0.0, 0.0, 0.0], [1.0, 10.0, -1.0], [2.0, 20.0, 5.0], [3.0, 30.0, 2.0]])
     values = {"range_mode": "manual", "t_min": 0.5, "t_max": 2.5, "x_min": 1.0, "x_max": 1.0}

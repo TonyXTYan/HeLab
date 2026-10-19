@@ -201,10 +201,12 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         show = getattr(self.main_window, "set_plot_result", None)
         if callable(show):
-            line, record = describe(specs, result.parameters), describe(specs, result.parameters, every=True)
+            chosen, settings = self.script.describe_run(self.action, result.parameters, self.view)
+            record = describe(specs, result.parameters, every=True)
             if warnings:
-                line, record = f"{line} · ⚠ {warnings}", f"{record}\nWarning: {warnings}"
-            show(self.dock_widget, content, result, line, record)
+                settings = " · ".join(filter(None, (settings, f"⚠ {warnings}")))
+                record = f"{record}\nWarning: {warnings}"
+            show(self.dock_widget, content, result, settings, record, chosen)
         else:
             old = self.dock_widget.widget()
             self.dock_widget.setWidget(content)

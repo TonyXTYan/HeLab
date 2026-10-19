@@ -13,8 +13,10 @@ from PyQt6.QtWidgets import QWidget
 
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_bounds, range_specs, range_warnings,
-                                      reversed_axes, select_shots, shots_text)
+from helab.analysis.dataset_view import DatasetView
+from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_bounds, range_brief, range_specs,
+                                      range_warnings, reversed_axes, select_shots, selection_text, shots_brief,
+                                      shots_text)
 from helab.analysis.stats import AXES, MAX_BINS, UNITS, Histogram, counts_per_shot, histogram
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
@@ -103,6 +105,9 @@ class CountsPerShot(DatasetAnalysis):
     def parameters(self, action_name: str) -> List[ParameterSpec]:
         return [*SHOT_SPECS]
 
+    def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
+        return selection_text(view, values), shots_brief(values)
+
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         chosen = select_shots(context.view, context.parameters)
         shots, counts = counts_per_shot(context.view, chosen)
@@ -137,6 +142,12 @@ class TxyHistograms(DatasetAnalysis):
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
         return [*SHOT_SPECS, *RANGE, BINS, LOG_Y]
+
+    def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
+        bins = int(values[BINS.name])
+        settings = (shots_brief(values), range_brief(values), f"bins {bins:,}" if bins else "bins auto",
+                    "log Y" if values[LOG_Y.name] else "")
+        return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
         return list(range_warnings(values))
