@@ -436,21 +436,34 @@ def test_a_folder_with_shots_not_yet_loaded_cant_be_watched(
     explorer.close_cleanup()
 
 
-def test_a_folder_of_runs_isnt_watched_as_an_empty_run(
+def test_a_folder_with_subfolders_is_watched_alone(
     qtbot: QtBot, service: IOService, run: Path, tmp_path: Path,
 ) -> None:
     """A folder with subfolders and no TXY files of its own (a drive's top, a day's folder of runs)
-    isn't a run before its first shot: Live doesn't offer to watch it."""
+    can be watched from no data too; Live reads only the folder's own TXY files, never those in
+    its subfolders (here ``run``, with shots 1 and 2, and a new shot 9 written into it)."""
     path = str(tmp_path)
     explorer = FolderExplorer(path, path, path, [0, 4, 5])
     qtbot.addWidget(explorer)
     cache = explorer.model.cache
+    cache.live_interval = 0.02
     qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
     replay(cache, path, tmp_path, "list")
     qtbot.waitUntil(lambda: explorer.model.nodes[path].report is not None)
     node = explorer.model.nodes[path]
     assert node.txy_count == 0 and node.children and explorer.displayed_dataset is None
-    assert not explorer.live_state()[0] and not explorer.start_live()
+    assert explorer.live_state()[0] and explorer.start_live()
+    age_folder(tmp_path, 60)
+    checks(qtbot, explorer, path, tmp_path)
+    write_shot(run, 9)  # In the subfolder: never read.
+    write_shot(tmp_path, 5)  # The folder's own first shot.
+    age_folder(run, 60)
+    age_folder(tmp_path, 60)
+    checks(qtbot, explorer, path, tmp_path)
+    assert sorted(explorer.folder_opened_data or {}) == [5]
+    session = explorer.live
+    assert session is not None and session.shots == {5} and session.new == 1
+    explorer.stop_live(save=False)
     explorer.close_cleanup()
 
 
@@ -664,12 +677,24 @@ def test_closing_the_window_waits_in_the_quit_window(
     assert get_io_service() is not cache.service  # The old service was shut down.
 
 
-def test_the_live_action_follows_the_current_tab_and_locks_navigation(qtbot: QtBot, tmp_path: Path) -> None:
+def test_the_live_action_follows_the_current_tab_and_locks_navigation(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The default tab opens a folder with a shot that isn't loaded (auto-load off), so Live can't
+    # start there, whatever folders this computer has (any listed folder without TXY files can).
+    folder = tmp_path / "run"
+    folder.mkdir()
+    write_shot(folder, 1)
+    monkeypatch.setattr("helab.views.FolderTabWidget.DEFAULT_DATA_PATH", str(folder))
+    monkeypatch.setattr("helab.views.FolderTabWidget.DEV_POTENTIAL_DATA_PATHS", [str(folder)])
     window = HelabMainWindow()
     qtbot.addWidget(window)
+    window.view_toggle_auto_load_ram.setChecked(False)
+    window.toggle_auto_load_ram()
     qtbot.waitUntil(lambda: isinstance(window.tab_widget.currentWidget(), FolderExplorer))
     explorer = window.tab_widget.currentWidget()
     assert isinstance(explorer, FolderExplorer)
+    qtbot.waitUntil(lambda: explorer.selected_path_globally == str(folder))
     window._update_live_action()
     assert not window.action_tab_live.isEnabled() and "Select a folder with loaded data" in window.action_tab_live.toolTip()
     window.on_live_button_clicked()  # Says why instead.

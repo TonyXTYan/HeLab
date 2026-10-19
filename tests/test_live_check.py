@@ -311,3 +311,18 @@ def test_a_check_without_held_shots_given_is_refused(folder: Path, tmp_path: Pat
     output.mkdir()
     with pytest.raises(ValueError, match="loaded data"):
         live_check(str(folder), str(output), lambda event: None, None)
+
+
+def test_live_reads_only_the_folders_own_files_never_its_subfolders(folder: Path, tmp_path: Path) -> None:
+    """Live watches the folder itself: TXY files in its subfolders are neither counted nor read."""
+    parent = tmp_path
+    age_folder(parent)
+    first = check(parent, tmp_path, [])
+    assert last(first, "live_unchanged")["total_files"] == 0  # ``run`` (shots 1, 2) is a subfolder.
+    write_shot(folder, 3)
+    write_shot(parent, 7)
+    age_folder(parent)
+    events = check_twice(parent, tmp_path, [])
+    assert [event["shot"] for event in events if event["kind"] == "shot"] == [7]
+    loaded = last(events, "loaded")
+    assert [entry[0] for entry in loaded["fingerprint"]] == [7] and loaded["total_files"] == 1

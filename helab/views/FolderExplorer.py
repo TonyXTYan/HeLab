@@ -1367,14 +1367,14 @@ class FolderExplorer(QWidget):
         return ""
 
     def _no_shots_yet(self, path: str) -> bool:
-        """Whether Live can watch ``path`` before its first shot: a run folder, as this session's
-        listing found it, with no TXY files and no subfolders (not a drive's top or a parent of
-        runs), and none of its data shown, held or cached."""
+        """Whether Live can watch ``path`` from no data, before its first shot: this session's
+        listing found no TXY files in it (subfolders or not: Live reads only the folder's own
+        files, never its subfolders'), and none of its data is shown, held or cached. Live is
+        a deliberate click, so any folder may be watched."""
         node = self.model.nodes.get(path)
         cache = self.model.cache
         return (node is not None and node.report is not None and not node.cached_report and not node.error
-                and node.loaded and not node.children and node.txy_count == 0
-                and cache.latest_dataset(path) is None and not cache.disk_cached(path))
+                and node.txy_count == 0 and cache.latest_dataset(path) is None and not cache.disk_cached(path))
 
     def live_state(self) -> tuple[bool, str]:
         """Whether the toolbar's Live can be used now (to turn Live on or off), and its tooltip."""
