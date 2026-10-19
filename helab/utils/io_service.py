@@ -75,55 +75,28 @@ def io_trace_folder(temps: str) -> str:
     return os.path.join(temps, IO_TRACE_FOLDER)
 
 
-def io_trace_problem(temps: str) -> str:
-    """Why the trace can't go into the temp folder ``temps`` (on a network or synced folder: it would
-    add traffic there), or ""."""
-    from helab.utils.cache_location import cache_location_problem
-    problem = cache_location_problem(temps)
-    if not problem:
-        return ""
+def io_trace_refused(temps: str, problem: str) -> str:
+    """Why the trace isn't recorded: the temp folder ``temps`` is ``problem`` (on a network or synced
+    folder, where it would add traffic; ``io_helper.trace_check`` finds out)."""
     return f"HeLab's temp folder {temps} is {problem}: choose a local one in Settings → General and restart HeLab."
 
 
-def earlier_io_traces(folder: str) -> list[str]:
-    """The recordings already in ``folder``, sorted by name: each one's folder (``io-trace-*``), and
-    single-file traces of earlier builds (``io-trace-*.jsonl``)."""
-    try:
-        with os.scandir(folder) as entries:
-            return sorted(entry.path for entry in entries if entry.name.startswith("io-trace-") and (
-                entry.is_dir(follow_symlinks=False)
-                or (entry.name.endswith(".jsonl") and entry.is_file(follow_symlinks=False))))
-    except OSError:
-        return []
-
-
-def io_trace_files(recording: str) -> list[str]:
-    """A recording's trace files: the ``.jsonl`` files in its folder, or the file itself."""
-    if not os.path.isdir(recording):
-        return [recording] if os.path.isfile(recording) else []
-    try:
-        with os.scandir(recording) as entries:
-            return sorted(entry.path for entry in entries
-                          if entry.name.endswith(".jsonl") and entry.is_file(follow_symlinks=False))
-    except OSError:
-        return []
-
-
-def delete_io_traces(recordings: list[str]) -> list[str]:
-    """Delete these recordings (their trace files, then each emptied folder); the files that couldn't
-    be deleted and were kept (Windows refuses one a running helper still has open)."""
+def delete_io_traces(recordings: list[dict[str, Any]]) -> list[str]:
+    """Delete these earlier recordings (``io_helper.trace_check``'s ``earlier``: their trace files, then
+    each emptied folder); the files that couldn't be deleted and were kept (Windows refuses one a
+    running helper still has open). Only in the temp folder, once the check found it local."""
     kept = []
     for recording in recordings:
-        for file in io_trace_files(recording):
+        for file in recording["files"]:
             try:
                 os.remove(file)
             except FileNotFoundError:
                 pass
             except OSError:
                 kept.append(file)
-        if os.path.isdir(recording):
+        if os.path.isdir(recording["path"]):
             try:
-                os.rmdir(recording)
+                os.rmdir(recording["path"])
             except OSError:
                 pass  # (Kept files, or something that isn't a trace: left as it is.)
     return kept
@@ -175,7 +148,8 @@ class IOService(QObject):
     LISTINGS = ("list", "resolve")
     # Operations in the local lane: they never wait for or pause with source-folder I/O.
     # (``volumes_verify`` reads mounted volumes' IDs, never source folders.)
-    LOCAL_OPERATIONS = ("cached", "subtree_save", "cache_admin", "cache_move", "volumes_verify")
+    # (``trace_check`` reads HeLab's temp folder and the mount table, before the I/O trace starts.)
+    LOCAL_OPERATIONS = ("cached", "subtree_save", "cache_admin", "cache_move", "volumes_verify", "trace_check")
     # Operations that open the disk cache whatever their payload says.
     CACHE_OPERATIONS = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify",
                         "volumes_verify")
@@ -192,14 +166,16 @@ class IOService(QObject):
               "subtree_save": "Save subfolder status", "cache_admin": "Clean up disk cache",
               "cache_move": "Move disk cache", "roots_verify": "Verify data roots",
               "volumes_verify": "Verify volumes", "root_create": "Enable disk cache",
-              "root_reassign": "Make a copy's data root", "root_remove": "Remove .helab-root"}
+              "root_reassign": "Make a copy's data root", "root_remove": "Remove .helab-root",
+              "trace_check": "Check I/O trace folder"}
     NOUNS = {"load": "load", "cached": "cached data read", "list": "folder listing", "details": "folder details scan",
              "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup",
              "subtree_save": "subfolder-status save", "cache_admin": "disk cache cleanup",
              "cache_move": "disk cache move", "roots_verify": "data-root verification",
              "volumes_verify": "volume verification", "root_create": "disk cache enabling",
-             "root_reassign": "data-root reassignment", "root_remove": ".helab-root removal"}
+             "root_reassign": "data-root reassignment", "root_remove": ".helab-root removal",
+             "trace_check": "I/O trace folder check"}
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -238,10 +214,9 @@ class IOService(QObject):
 
     def start_io_trace(self, temps: str) -> str:
         """Record every helper's operations on source folders from now on, in a new recording folder
-        in the temp folder ``temps`` (``io_trace_folder``), one file per helper; its path. Raises
-        ``ValueError`` if ``temps`` is on a network or synced folder."""
-        if problem := io_trace_problem(temps):
-            raise ValueError(problem)
+        in the temp folder ``temps`` (``io_trace_folder``), one file per helper; its path. The caller
+        checks ``temps`` first, off the GUI thread (``io_helper.trace_check``): it must not be on a
+        network or synced folder."""
         folder = io_trace_folder(temps)
         os.makedirs(folder, exist_ok=True)
         recording = _new_recording(folder, time.strftime("%Y%m%d-%H%M%S"))
@@ -620,7 +595,8 @@ class IOService(QObject):
                   "subtree_save": "Saving subfolder status", "cache_admin": "Cleaning up disk cache",
                   "drives": "Listing drives", "roots_verify": "Verifying data roots",
                   "volumes_verify": "Verifying volumes", "root_create": "Enabling disk cache",
-                  "root_reassign": "Giving a copy its own data root", "root_remove": "Removing .helab-root"}
+                  "root_reassign": "Giving a copy its own data root", "root_remove": "Removing .helab-root",
+                  "trace_check": "Checking the I/O trace folder"}
 
     def activity_summary(self) -> str:
         """App-wide status-bar phrase from memory; zero counts are left out."""

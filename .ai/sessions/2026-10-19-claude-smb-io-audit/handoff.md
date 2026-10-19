@@ -29,7 +29,7 @@ with trace tests, following Codex's constraints and Maestro's notes:
 
 - **The temp folder is not refused at startup.** Only the cache folder is (`refuse_unsafe_cache_dir`);
   `constants.py` takes `DIR_TEMPS` from the setting or the default without the network/synced check. So
-  the switch checks it itself (`io_trace_problem`, the cache folder's `cache_location_problem`): on a
+  the switch checks it itself (the cache folder's `cache_location_problem`, in a helper since F): on a
   network or synced temp folder it is refused, unticked, with a warning naming the folder and pointing to
   Settings → General (a changed temp folder applies after a restart). Refusing the temp folder at startup,
   as the cache folder is, would be a change in `constants.py` (not mine).
@@ -49,8 +49,19 @@ with trace tests, following Codex's constraints and Maestro's notes:
   trace was on keeps tracing into that recording's folder until it exits (a long load or a save can go
   on after `I/O trace off` has printed); only helpers started later aren't traced. A recording's last
   lines can therefore come after its off line; the next recording never gets them.
+- **Review fix (F), off the GUI thread:** there is no startup result for the temp folder to reuse (only
+  the cache folder is checked at startup), so turning the trace on submits a local-lane helper,
+  `trace_check` (`io_helper.trace_check`): it runs the network/synced check (`realpath`, the mount table
+  via psutil, which a disconnected mapped drive can stall) and lists the earlier recordings with their
+  files and sizes. The window waits for its answer (`_on_trace_check`) and only then asks Keep/Delete and
+  starts the recording; a 10 s no-progress timeout bounds it (then "HeLab couldn't check its temp folder…"
+  and the item is unticked); unticking meanwhile cancels the check and ignores its answer. The GUI thread
+  then only deletes the listed files (if asked) and makes the recording folder, in a temp folder the
+  check found local. (Show I/O trace folder still makes the io-traces folder on the GUI thread, as the
+  user's own request to open it.)
 - `HelabMainWindow`: only the Help menu items, the status-bar note and the Keep/Delete question
-  (`_toggle_io_trace`, `_ask_delete_old_traces`, `_show_io_trace_folder`); no plot-dock code touched.
+  (`_toggle_io_trace`, `_on_trace_check`, `_refuse_io_trace`, `_ask_delete_old_traces`,
+  `_show_io_trace_folder`); no plot-dock code touched.
 - Tests: `tests/test_io_trace.py` (the seam, a helper tracing to the file its request names, the folder,
   the name, the two INFO lines, the refusal), `tests/test_helabMainWindow.py` (off at start; none, Keep and
   Delete; refusal; Keep as the dialog's default).

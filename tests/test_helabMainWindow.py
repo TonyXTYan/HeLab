@@ -357,38 +357,48 @@ def test_review_from_settings_is_modal_only_while_settings_is_open(
 def test_help_menu_records_the_io_trace_for_this_session(
     main_window: HelabMainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
 ) -> None:
-    """Off at every start; turned on, a new recording folder in the temp folder's io-traces folder (one
-    file per helper) and a status-bar note. Earlier recordings ask once (Keep, the default, or Delete
-    old traces); none, no question. Files that can't be deleted are kept, and the user is told."""
+    """Off at every start; turned on, a local-lane helper checks the temp folder (never the GUI thread),
+    then a new recording folder in its io-traces folder (one file per helper) and a status-bar note.
+    Earlier recordings ask once (Keep, the default, or Delete old traces); none, no question. Files that
+    can't be deleted are kept, and the user is told."""
     import os
     from helab.utils import cache_location
-    from helab.utils.io_service import get_io_service, io_trace_folder
+    from helab.utils.io_service import IORequest, get_io_service, io_trace_folder
     service = get_io_service()
     action = main_window.action_io_trace
     help_menu = next(item.menu() for item in main_window.menu_bar.actions() if item.text() == "Help")
     assert isinstance(help_menu, QMenu)
     assert {"Record I/O trace (this session)", "Show I/O trace folder"} <= {a.text() for a in help_menu.actions()}
     assert action.isCheckable() and not action.isChecked() and service.trace_dir is None
-    assert main_window.io_trace_label.isHidden()
+    assert main_window.io_trace_label.isHidden() and "trace_check" in service.LOCAL_OPERATIONS
+
+    def on_the_gui_thread(path: str) -> str:
+        raise AssertionError("the temp folder's check ran on the GUI thread")
+    monkeypatch.setattr(cache_location, "cache_location_problem", on_the_gui_thread)
     monkeypatch.setattr("helab.views.HelabMainWindow.DIR_TEMPS", str(tmp_path))
     folder = io_trace_folder(str(tmp_path))
-    asked: list[tuple[list[str], str]] = []
+    asked: list[tuple[int, int, str]] = []
     answer = [False]
 
-    def ask(earlier: list[str], where: str) -> bool:
-        asked.append((earlier, where))
+    def ask(count: int, size: int, where: str) -> bool:
+        asked.append((count, size, where))
         return answer[0]
 
     def record(recording: str, *pids: int) -> None:
-        for pid in pids:  # (As helpers write them.)
+        for pid in pids:  # (As helpers write them: 3 bytes each.)
             with open(os.path.join(recording, f"{pid}.jsonl"), "w", encoding="utf-8") as stream:
                 stream.write("{}\n")
+
+    def turn_on() -> str:
+        action.setChecked(True)
+        assert service.trace_dir is None  # (Not before the helper's answer.)
+        qtbot.waitUntil(lambda: service.trace_dir is not None, timeout=20000)
+        return str(service.trace_dir)
     main_window.ask_delete_old_traces = ask
     try:
         # No earlier recordings: no question.
-        action.setChecked(True)
-        first = service.trace_dir
-        assert first is not None and os.path.dirname(first) == folder and os.path.isdir(first) and not asked
+        first = turn_on()
+        assert os.path.dirname(first) == folder and os.path.isdir(first) and not asked
         assert main_window.io_trace_label.isVisible() and first in main_window.io_trace_label.toolTip()
         record(first, 101, 102)
         action.setChecked(False)
@@ -397,9 +407,8 @@ def test_help_menu_records_the_io_trace_for_this_session(
         with open(other, "w", encoding="utf-8") as stream:
             stream.write("kept")
         # Keep (the default): the earlier recording stays.
-        action.setChecked(True)
-        second = service.trace_dir
-        assert asked == [([first], folder)] and second is not None and second != first
+        second = turn_on()
+        assert asked == [(1, 6, folder)] and second != first
         assert sorted(os.listdir(first)) == ["101.jsonl", "102.jsonl"] and os.path.exists(other)
         record(second, 103)
         action.setChecked(False)
@@ -415,20 +424,40 @@ def test_help_menu_records_the_io_trace_for_this_session(
             remove(path)
         monkeypatch.setattr("helab.utils.io_service.os.remove", held_open)
         with patch.object(QMessageBox, "information") as told:
-            action.setChecked(True)
+            third = turn_on()
         monkeypatch.setattr("helab.utils.io_service.os.remove", remove)
-        third = service.trace_dir
-        assert asked == [([first, second], folder)] and third is not None
+        assert asked == [(2, 9, folder)]
         assert sorted(os.listdir(folder)) == sorted([os.path.basename(first), os.path.basename(third), "notes.txt"])
         assert os.listdir(first) == ["102.jsonl"] and os.listdir(third) == []
         assert told.call_count == 1 and "1 trace file couldn't be deleted" in told.call_args.args[2]
         action.setChecked(False)
-        # A temp folder on a share: refused, unticked, nothing recorded.
-        monkeypatch.setattr(cache_location, "cache_location_problem", lambda path: "on a network drive (smbfs)")
-        with patch.object(QMessageBox, "warning") as warned:
-            action.setChecked(True)
-        assert not action.isChecked() and service.trace_dir is None and main_window.io_trace_label.isHidden()
-        assert "network drive" in warned.call_args.args[2]
+        # The helper's other answers, as events: refused on a share, a failed check, unticked meanwhile.
+        submitted: list[tuple[str, str, dict[str, Any], Any]] = []
+
+        def submit(owner: str, generation: int, path: str, operation: str, payload: dict[str, Any],
+                   **kwargs: Any) -> bool:
+            submitted.append((path, operation, payload, kwargs.get("timeout")))
+            return True
+        monkeypatch.setattr(service, "submit", submit)
+
+        def answered(event: dict[str, Any]) -> None:
+            request = IORequest(main_window._trace_owner, main_window._trace_generation, str(tmp_path),
+                                "trace_check", {}, 10.0)
+            service.resultReady.emit(request, event)
+        for event, says in (({"kind": "trace_folder", "problem": "on a network drive (smbfs)", "earlier": []},
+                             "is on a network drive (smbfs)"),
+                            ({"kind": "error", "message": "Timed out after 10 s without progress — Retry"},
+                             "couldn't check its temp folder")):
+            with patch.object(QMessageBox, "warning") as warned:
+                action.setChecked(True)
+                answered(event)
+            assert not action.isChecked() and service.trace_dir is None and main_window.io_trace_label.isHidden()
+            assert says in warned.call_args.args[2]
+        assert submitted[-1] == (str(tmp_path), "trace_check", {"temps": str(tmp_path), "folder": folder}, 10.0)
+        action.setChecked(True)
+        action.setChecked(False)
+        answered({"kind": "trace_folder", "problem": "", "earlier": []})  # (After unticking: ignored.)
+        assert service.trace_dir is None and main_window.io_trace_label.isHidden()
     finally:
         main_window.ask_delete_old_traces = None
         action.setChecked(False)
@@ -439,13 +468,7 @@ def test_help_menu_records_the_io_trace_for_this_session(
 def test_earlier_io_traces_ask_with_keep_as_the_default(
     main_window: HelabMainWindow, monkeypatch: pytest.MonkeyPatch, tmp_path: Any, choice: str | None,
 ) -> None:
-    import os
     from helab.utils.number_format import byte_size
-    earlier = [str(tmp_path / "io-trace-1"), str(tmp_path / "io-trace-2.jsonl")]  # (A recording; an older file.)
-    os.mkdir(earlier[0])
-    for file in (os.path.join(earlier[0], "1.jsonl"), os.path.join(earlier[0], "2.jsonl"), earlier[1]):
-        with open(file, "wb") as stream:
-            stream.write(b"x" * 1000)
     seen: list[tuple[str, str, list[str]]] = []
 
     def run(box: QMessageBox) -> int:
@@ -456,7 +479,7 @@ def test_earlier_io_traces_ask_with_keep_as_the_default(
             next(button for button in box.buttons() if button.text() == choice).click()
         return 0
     monkeypatch.setattr(QMessageBox, "exec", run)
-    assert main_window._ask_delete_old_traces(earlier, str(tmp_path)) is (choice == "Delete old traces")
+    assert main_window._ask_delete_old_traces(2, 3000, str(tmp_path)) is (choice == "Delete old traces")
     text, default, buttons = seen[0]
     assert text == f"2 earlier I/O traces ({byte_size(3000)}) in {tmp_path}."
     assert default == "Keep" and sorted(buttons) == ["Delete old traces", "Keep"]

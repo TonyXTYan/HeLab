@@ -834,10 +834,9 @@ def test_the_trace_goes_to_the_temp_folder_and_says_so_once_each_way(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Help › Record I/O trace: a new recording folder in the temp folder's io-traces folder, one INFO
-    line when it starts and one when it stops; refused (no folder, no line) when the temp folder is on a
-    share."""
+    line when it starts and one when it stops. (The temp folder is checked first, by a helper:
+    ``trace_check``.)"""
     import logging
-    from helab.utils import cache_location
     from helab.utils.io_service import IO_TRACE_FOLDER
     service = IOService()
     try:
@@ -855,10 +854,6 @@ def test_the_trace_goes_to_the_temp_folder_and_says_so_once_each_way(
         with caplog.at_level(logging.INFO):
             service.stop_io_trace()  # (Already off: nothing more said.)
         assert not caplog.records
-        monkeypatch.setattr(cache_location, "cache_location_problem", lambda folder: "on a network drive (smbfs)")
-        with caplog.at_level(logging.INFO), pytest.raises(ValueError, match="network drive"):
-            service.start_io_trace(str(tmp_path / "share"))
-        assert service.trace_dir is None and not caplog.records
         assert os.listdir(tmp_path / IO_TRACE_FOLDER) == [os.path.basename(path)]
     finally:
         service.shutdown()
@@ -906,12 +901,42 @@ def test_on_off_on_never_shares_a_recording_and_running_helpers_finish_in_theirs
         service.shutdown()
 
 
+def test_the_temp_folder_check_refuses_a_share_and_lists_earlier_recordings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``trace_check`` (a local-lane helper, before the trace starts): the temp folder's network/synced
+    check, and the recordings already there with their files and size; on a share, no listing."""
+    from helab.utils import cache_location
+    folder = tmp_path / "io-traces"
+    recording = folder / "io-trace-20261019-120000"
+    recording.mkdir(parents=True)
+    (recording / "11.jsonl").write_text("{}\n")
+    (recording / "12.jsonl").write_text("{}\n{}\n")
+    (recording / "notes.txt").write_text("not a trace")
+    (folder / "io-trace-20261018-090000.jsonl").write_text("{}\n")
+    (folder / "io-trace-x.txt").write_text("not a trace")
+    (folder / "other.jsonl").write_text("{}\n")
+    found: list[dict[str, Any]] = []
+    io_helper.trace_check(str(tmp_path), str(folder), found.append)
+    assert found == [{"kind": "trace_folder", "problem": "", "earlier": [
+        {"path": str(folder / "io-trace-20261018-090000.jsonl"), "files": [str(folder / "io-trace-20261018-090000.jsonl")],
+         "size": 3},
+        {"path": str(recording), "files": [str(recording / "11.jsonl"), str(recording / "12.jsonl")], "size": 9}]}]
+    found.clear()
+    io_helper.trace_check(str(tmp_path), str(tmp_path / "none yet"), found.append)
+    assert found == [{"kind": "trace_folder", "problem": "", "earlier": []}]
+    monkeypatch.setattr(cache_location, "cache_location_problem", lambda path: "on a network drive (smbfs)")
+    found.clear()
+    io_helper.trace_check(str(tmp_path), str(folder), found.append)
+    assert found == [{"kind": "trace_folder", "problem": "on a network drive (smbfs)", "earlier": []}]
+
+
 def test_deleting_earlier_recordings_keeps_what_windows_wont_delete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Delete old traces: each recording's trace files, then its emptied folder, and single-file traces
     of earlier builds; a file a running helper still has open (Windows refuses) is kept and named."""
-    from helab.utils.io_service import delete_io_traces, earlier_io_traces, io_trace_files
+    from helab.utils.io_service import delete_io_traces
     folder = tmp_path / "io-traces"
     one, two = folder / "io-trace-20261019-120000", folder / "io-trace-20261019-120000-2"
     for recording, names in ((one, ("1.jsonl", "2.jsonl")), (two, ("3.jsonl",))):
@@ -922,9 +947,10 @@ def test_deleting_earlier_recordings_keeps_what_windows_wont_delete(
     old = folder / "io-trace-20261018-090000.jsonl"
     old.write_text("{}\n")
     (folder / "other.jsonl").write_text("{}\n")
-    earlier = earlier_io_traces(str(folder))
-    assert earlier == [str(old), str(one), str(two)]
-    assert io_trace_files(str(one)) == [str(one / "1.jsonl"), str(one / "2.jsonl")] and io_trace_files(str(old)) == [str(old)]
+    found: list[dict[str, Any]] = []
+    io_helper.trace_check(str(tmp_path), str(folder), found.append)
+    earlier = found[0]["earlier"]
+    assert [recording["path"] for recording in earlier] == [str(old), str(one), str(two)]
     remove = os.remove
 
     def held_open(path: str) -> None:
