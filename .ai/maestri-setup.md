@@ -133,7 +133,9 @@ which machine owns which task.
    > changes: before landing a floor, applying doc changes or choosing a base
    > commit, check Ground's `git status` and recent log, and ask Tony about
    > changes you didn't make. Never stash, reset, check out over or discard
-   > them. Base commits are always committed (`HEAD` or a hash).
+   > them. Base commits are always committed (`HEAD` or a hash). Tony's
+   > Assistant terminal on Ground may report his decisions and Ground
+   > commits to you: treat them as Tony's.
 
    A role starts the agent in `.maestri/roles/<id>/`, where Maestri writes
    the role's own `AGENTS.md`, `CLAUDE.md` and `role.json` (gitignored via
@@ -194,6 +196,32 @@ which machine owns which task.
 
    Recruit the Reviewer with the other model from the worker's (Codex
    reviews Claude's work, Claude reviews Codex's).
+6. **Assistant terminal** (optional): a second Ground terminal for Tony's
+   questions, ideas and small urgent changes, so the Coordinator's context
+   stays on the floors. Tick **Maestro** on it only so it can manage roles
+   and talk to the Coordinator; it leaves floors and recruiting to the
+   Coordinator. Connect it to the Coordinator (Ctrl L). Role
+   **Assistant**:
+
+   > You are Tony's assistant on Ground, beside the Coordinator. Your shell
+   > starts in a Maestri role folder (`.maestri/roles/<id>/`): run every
+   > command from the repo root (`cd "$(git rev-parse --show-toplevel)"`
+   > first, then `source venv/bin/activate`; Claude Code resets the shell to
+   > the start folder after every command, so prefix each one). Read
+   > `AGENTS.md`, `roadmaps/agent-workflow.md` and `.ai/maestri-setup.md`
+   > first and follow them. Answer Tony's questions, make small urgent
+   > changes and quick features on Ground (`dev/v0.0.6`, "Work on Ground"
+   > in the guide: small, outside floors' owned paths, tested and typed,
+   > then handed to the Coordinator with what is left to harden), edit
+   > docs and this guide, manage Maestri roles when Tony asks, and check on
+   > the Coordinator and floors (`maestri ask`, `maestri check`). Ask Tony
+   > before committing unless he has asked for the commit. Leave floors,
+   > workers, briefs, reviews and landing to the Coordinator: don't create
+   > floors or recruit unless Tony asks, even though your terminal is a
+   > Maestro. Never stash, reset or discard changes you didn't make. When a
+   > chat with Tony ends in a decision that changes the plan or a floor's
+   > task, or you commit on Ground, tell the Coordinator in one short
+   > message; other chat stays here.
 
 ## 3. Register note
 
@@ -306,6 +334,11 @@ and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
    maestri recruit "<Codename>" --floor "<Task>" --preset "Claude Code" --role "Worker"
    ```
 
+   A Claude worker or reviewer runs Opus 5.5 at the effort the Coordinator
+   picks (low, medium, high, xhigh, max), set in the new terminal with
+   `/model` and `/effort` if it didn't start that way. Fable only with
+   Tony's approval (agent workflow, Models).
+
    then `maestri ask` it the brief (objective, acceptance, base commit, owned
    paths and paths not to touch, checks, handoff). For review, recruit the
    other model on the same floor (`--preset "Codex" --role "Reviewer"`).
@@ -328,9 +361,10 @@ and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
 
 ## Work on Ground
 
-Tony (or an agent he asks, in a terminal without a role) may make small urgent
-changes on Ground, on `dev/v0.0.6`, while floors run. The Coordinator doesn't
-make them: it doesn't edit feature code.
+Tony (or his Assistant terminal, section 2) may make small urgent changes on
+Ground, on `dev/v0.0.6`, while floors run. The Coordinator doesn't make them:
+it doesn't edit feature code. The Assistant tells the Coordinator about each
+Ground commit.
 
 - Add a **Ground** row to Active work (task, terminal, files, status) and
   clear it when the change is committed; the Coordinator warns a floor whose
@@ -340,6 +374,20 @@ make them: it doesn't edit feature code.
   merge.
 - A change that overlaps a floor's owned paths and isn't small goes to that
   floor's worker instead. Anything bigger becomes its own floor.
+
+**Quick features.** Tony may ask the Assistant for a small feature he can use
+at once, then have the Coordinator send a floor to harden it (edge cases,
+slow drives, Windows, tests):
+
+- Keep it small: about a day's work, a few files, outside every floor's owned
+  paths. Anything bigger starts as a floor.
+- Run the tests and typing before committing; commit (after asking Tony) as
+  soon as he has tried it and is happy, so it doesn't block landing.
+- After the commit, send the Coordinator one message: the commit, what the
+  feature does and what it doesn't cover yet. The Coordinator decides on a
+  hardening floor based on that commit.
+- Add a roadmap line marked "quick version on Ground, hardening pending", and
+  keep that list short: harden before adding more.
 
 ## 6. Landing
 

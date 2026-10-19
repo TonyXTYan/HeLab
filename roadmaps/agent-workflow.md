@@ -17,6 +17,11 @@ his settings and cache, the packaged release, or each other.
   reviews the roadmap and active work, proposes tasks and writes briefs, creates
   floors and recruits workers on them, reviews and integrates. It doesn't edit
   feature code. It asks Tony before starting a worker.
+- **Assistant** (added 2026-10-19): a second Ground terminal for Tony's
+  questions, small urgent Ground changes and quick features (hardened later
+  on a floor), so the Coordinator's context stays on the floors. It doesn't
+  create floors or recruit, and it tells the Coordinator about decisions that
+  change the plan and about Ground commits.
 - **Workers**: one task each. A worker starts a **new branch from the commit
   Tony or the coordinator chose** (`agent/<task>`), in its own worktree (a
   Maestri floor), clone or cloud environment, may **commit there freely**, and
@@ -31,6 +36,12 @@ his settings and cache, the packaged release, or each other.
 - **Review**: by a different model from the author where possible; the
   reviewer reads the actual diff and reruns critical checks. Branches are
   integrated one at a time, with the full suite after each.
+- **Models** (decided 2026-10-19): Claude agents (coordinator, assistant,
+  workers, reviewers) run **Opus 5.5** by default, at the effort the
+  coordinator judges the task needs. **Fable** (any Fable model) runs only
+  with Tony's approval: no Fable recruit or Fable subagent without asking
+  him first (a forked subagent inherits its parent's model). A Codex
+  reviewer for Claude's work is unaffected.
 - **Brief**: objective and acceptance criteria, base commit, owned paths and
   paths not to touch, contracts used or changed, checks to run, handoff.
 - **Register**: the coordinator keeps live state (task, agent, floor, branch,
