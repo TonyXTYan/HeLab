@@ -114,6 +114,38 @@ Codex review); the architecture summary is in AGENTS.md.
   Errors keep Live on with the data and a Retry; nothing retries by itself.
 - Quit waits for every save a subscriber asked for, with Quit now.
 
+## Plots following Live: L3 (decided by Tony 2026-10-19)
+
+- **Cadence:** a following plot reruns on every new shot by default. A script
+  may declare its own Live policy (rerun every N shots, and/or a minimum delay
+  after its previous run finishes) for long, heavy analyses; the plot's settings
+  show it with the script's values as defaults.
+- **Follow Live is on by default** for plots run on the Live folder; plots of
+  other folders stay put. Turning it off keeps the plot's revision (the pin).
+- **Hold and coalesce:** a running analysis is never cancelled for new data. New
+  shots accumulate; when the run finishes, one rerun takes the newest revision
+  with everything that arrived. No backlog of obsolete reruns. A failed rerun
+  keeps the last good plot with an amber error and keeps following.
+- **Coverage:** every result records the TXY shot numbers (with fingerprints) it
+  ran on, so HeLab can diff against the dataset and decide which shots to send
+  ([result caching](result-caching.md) rule 8). Full reruns on the newest
+  revision are the default; scripts that can update with only the missing
+  shots declare it later (R3).
+- **Scripts never do I/O:** they only get the in-memory dataset view; HeLab's
+  helpers do every read. Live itself is HeLab's, never a plot's.
+- **Live is toggled by hand each session** (it never survives a restart) and may
+  start on an empty folder, before the first shot: needed for L3's "start Live,
+  then run the experiment" and for bringing the converter
+  (`legacy/tdc_autoconverter`) into HeLab (L4).
+- **Ready for later stages, not built now:** plot parameter presets and the
+  disk result cache (R2) come later. L3 keeps results keyed by what reuse needs
+  (analysis ID, version and file hash, input root key and signature, effective
+  parameters, covered shots and fingerprints), with JSON-serializable
+  parameters, and adds no storage.
+- The plot's source line shows the state, e.g. "rev N · following Live · 3 new
+  shots waiting". Auto-detected settings (Transfer fractions' orders) are found
+  again on each rerun; manual mode fixes them.
+
 ## Dependencies and acceptance
 
 Depends on the [analysis workflow](analysis-workflow.md) for managed reruns and
@@ -131,16 +163,13 @@ has a defined recovery path.
 
 ## Open decisions
 
-- Watch a folder before its first shot (needs an empty dataset; proposed for L3).
+- Watch a folder before its first shot: decided yes (L3 above); needs an empty dataset.
 - Live's data grows in RAM without the large-folder limits: warn, and stop Live
   at 30 % of RAM? (with plots counting toward the RAM budget)
 - Add Cancel to the quit window (back to HeLab, saves carry on)?
 - Should an error turn Live off (tree unlocked) instead of keeping it on?
 
-- Analysis update cadence, manual versus automatic reruns and handling busy
-  analyses (L3).
-- How a Live-following unpinned view presents revisions while a pinned view
-  keeps its chosen fixed result.
+- Analysis cadence, automatic reruns and busy analyses: decided (L3 above).
 
 Use real-volume/manual checks from [.ai/MANUAL_TODO.md](../.ai/MANUAL_TODO.md);
 record execution evidence in sessions rather than in this feature plan.
