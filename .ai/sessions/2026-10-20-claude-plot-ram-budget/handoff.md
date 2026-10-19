@@ -41,6 +41,9 @@ checkbox, on by default) or on Reload; Rerun on it reloads with the settings sho
 
 ## Checks
 
+- After the recheck (at 2ce2e77): full suite 1283 passed, 2 skipped, 2 xfailed, no RERUN
+  (77.4 s); mypy --strict helab and tests (also win32), pyright (also Windows) and
+  `git diff --check 531ec41`: clean. tests/test_plot_ram_budget.py: 27 tests.
 - After review (at 498e1df): full suite `pytest -n 4 --reruns 5 --reruns-delay 1
   --basetemp=.ai/temp/pytest -rR`: 1281 passed, 2 skipped, 2 xfailed, no RERUN (67.7 s);
   `mypy --strict` helab and tests, also `--platform win32`: clean; `pyright helab tests`
@@ -117,6 +120,17 @@ Set Settings → Cache → RAM budget low (e.g. the minimum) to reach the thresh
    imports analysis); `PLOT_AUTO_RELOAD_SETTING` / `read_plot_auto_reload` in
    `constants.py`; one `fingerprints_of` (`dataset_view`).
 10. Checklist item 4 keeps the scatter-never-on-screen check.
+
+After the recheck at e261905 (blocker from #3):
+
+- `1f3f340` `RamBudget.frees` counts what a release makes freeable: the plot's buffers
+  that neither a dataset shown in a tab nor a plot that stays (not a candidate, or a
+  candidate skipped or not released earlier in the check) holds. A folder no tab shows
+  then goes by the `evict_to` after the release, and plots sharing its shots are
+  released next (chosen over judging sharing candidates as a group: the ordered loop
+  does it one at a time). Tests: the recheck's two probes; a folder shown in a tab is
+  still skipped. Also dropped the dead `PLOT_AUTO_RELOAD_SETTING` in budget.py.
+- `PlotPicture` decodes the PNG once while it shows and drops the pixmap when hidden.
 
 ## Proposed doc changes (for the coordinator)
 
