@@ -206,7 +206,9 @@ still to choose (Tony, with the coordinator's proposal).
   for the cache instead of holding a second copy of every shot (2026-10-10).
 
 - [ ] Plot-area hints when no plot is open: usage tips, or a daily motivational
-  quote. `CentralHint` already has a second line and `add_widget` for this (2026-10-09).
+  quote. Usage tips done on Ground (`CentralHint.TIPS`, a new one every 30 s
+  while shown, click for the next; keep them current as features change); the
+  quote stays unchosen (2026-10-09; tips 2026-10-19).
 
 - [ ] Lock the tree view during a recursive status check? (from the old README
   list; may no longer be needed).
