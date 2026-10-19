@@ -397,6 +397,27 @@ def test_two_small_plots_of_one_unloaded_folder(window: Window, cache: FolderCac
     assert window.ram_budget.usage.total <= 10 * SHOT_BYTES
 
 
+def test_no_needless_release_on_a_shared_buffer(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
+    """The recheck's probe: P1 and P2 share a folder no longer held, P3 has its own data, in the
+    order P1, P3, P2. Releasing P3 alone is enough; P1's release would pay off only if P2 went
+    too, so P1 stays."""
+    shared = dataset("shared2", range(1, 41))
+    first = open_plot(window, qtbot, shared, Tiny())
+    second = open_plot(window, qtbot, shared, Tiny())
+    del shared
+    own = open_plot(window, qtbot, dataset("own", range(1, 3)))
+    shown = open_plot(window, qtbot, dataset("c", range(1, 2)))
+    panel = window.panel_right_top_plot_settings
+    for instance in (first, own, second, shown):
+        panel.show_plot(dock_of(instance))
+    window.ram_budget.check()
+    total = window.ram_budget.usage.total
+    cache.max_data_bytes = int((total - 3 * SHOT_BYTES) / 0.8)
+    window.ram_budget.check()
+    assert own.released is not None and first.released is None and second.released is None
+    assert window.ram_budget.usage.total <= 0.8 * cache.max_data_bytes
+
+
 def test_older_results_count_and_go_with_a_release_or_close(
         window: Window, cache: FolderCache, runner: AnalysisRunner, qtbot: QtBot) -> None:
     """RamResults keeps a plot's older (unpinned) results: they count as the plot's RAM, and

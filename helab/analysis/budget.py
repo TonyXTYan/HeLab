@@ -237,21 +237,24 @@ class RamBudget(QObject):
         if usage.budget > 0 and usage.total > limit and (candidates := self.order()):
             self.cache.evict_to(limit)
             usage = self.measure()
-            staying = [plot for plot in self.plots if plot not in candidates]
-            for plot in candidates:
-                if usage.total <= limit:
-                    break
-                frees = self.frees(plot, staying)
-                if frees <= plot.picture_cost():
-                    staying.append(plot)
-                    continue  # Its data is mostly a shown folder's: its picture would cost more.
-                if plot.release(frees):
-                    released += 1
-                    # A dataset only this plot's arrays kept may go now: datasets first, again.
-                    self.cache.evict_to(limit)
-                    usage = self.measure()
-                else:
-                    staying.append(plot)
+            # First, only plots that free more than their picture with every other plot staying;
+            # then, if still over, plots sharing buffers with candidates later in the order.
+            for alone in (True, False):
+                staying = [plot for plot in self.plots if plot not in candidates]
+                for plot in candidates:
+                    if usage.total <= limit:
+                        break
+                    if plot.is_released:
+                        continue
+                    others = [other for other in self.plots if other is not plot] if alone else staying
+                    frees = self.frees(plot, others)
+                    if frees > plot.picture_cost() and plot.release(frees):
+                        released += 1
+                        # A dataset only this plot's arrays kept may go now: datasets first, again.
+                        self.cache.evict_to(limit)
+                        usage = self.measure()
+                    else:
+                        staying.append(plot)  # Its picture would cost more than it frees.
             if released:
                 logging.info("RAM budget: released %d plot%s, now %.0f%% of %d bytes", released,
                              "" if released == 1 else "s", usage.share * 100, usage.budget)
@@ -269,9 +272,10 @@ class RamBudget(QObject):
 
     def frees(self, plot: Plot, staying: Sequence[Plot]) -> int:
         """What releasing ``plot`` makes freeable: its buffers that neither a dataset shown in a
-        tab nor a plot that stays (``staying``: shown, running, following Live, or not released
-        this time) holds. A dataset no tab shows goes once no plot holds it (``evict_to`` after
-        each release), and plots sharing buffers with it are released next, as candidates."""
+        tab nor a plot that stays (``staying``) holds. A dataset no tab shows goes once no plot
+        holds it (``evict_to`` after each release). ``check`` first counts every other plot as
+        staying, so a plot isn't released for shots another plot keeps anyway; then only the
+        shown, running, Live and skipped ones, so plots sharing shots go one after another."""
         kept = set(self.cache.shown_buffers())
         for other in staying:
             kept.update(other.ram_buffers())
