@@ -378,8 +378,6 @@ def test_bundled_plots_say_why_they_are_empty(qtbot: QtBot, script: DatasetAnaly
     assert isinstance(widget, QLabel) and widget.objectName() == "plot_empty"
     expected = {"no shots yet": "No shots yet", "none chosen": "None of the 2 shots is chosen (Shots settings)",
                 "no events": "No events in the chosen shots"}[case]
-    if case == "no events" and isinstance(script, transfer_fractions.TransferFractions):
-        expected = "No shot has more than 50 counts in the XY box (Counting settings)"
     assert widget.text() == expected
     assert script.detected_parameters("Plot", result) == {}
 
