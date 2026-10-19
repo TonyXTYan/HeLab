@@ -241,3 +241,4 @@ folder and found it confusing. Now:
   would spam the log; if ever needed, make it opt-in or one summary line per
   slow scan.
 - Live checks (2026-10-19) are foreground loads that pause background work only while reading a file (measured: 15 % of a background load paused otherwise).
+- SMB audit (2026-10-20, `.ai/sessions/2026-10-19-claude-smb-io-audit/`): roots_verify loop fixed (803 helpers → 2 after a mount change); Live saves from RAM (`save_held`); files still being written judged by settle age only (Tony); a recently read Live shot that changes is read again with a note and WARNING (Tony); Help › Record I/O trace (session only, temp folder, Keep/Delete earlier recordings, two INFO lines).

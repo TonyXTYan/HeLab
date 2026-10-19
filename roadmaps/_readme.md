@@ -67,11 +67,13 @@ still to choose (Tony, with the coordinator's proposal).
 - [x] Quitting cancels cache writes still running in the background (a finished
   load's `disk_cache_pending` save), so the next check redoes them. Fixed by the
   quit window (`QuitSaveDialog`, with Quit now) in Live L1 (2026-10-19).
-- [ ] Ordinary loads read a file once its mtime is 5 s old (`SETTLE_SECONDS`); on
-  SMB with stale or coarse metadata a file still being written can pass. Live
-  reads a new file only once it is unchanged a check later and ends with a whole
-  row; use the same rules for loads. The real fix is the converter writing to a
-  temp name and renaming (below) (2026-10-19, Live review).
+- [x] Files still being written: settle age only, by Tony's decision (2026-10-20);
+  Live re-reads a recently read shot that changes. The converter's temp-name
+  rename remains the real fix.
+- [ ] SMB audit leftovers (2026-10-20): a Windows-suited "seen twice" interval
+  (Windows caches attributes 10 s); details scans for visible rows only; icons kept
+  across Refresh; the startup "database is locked" on a fresh store; refuse a
+  network or synced temp folder at startup, as the cache folder is.
 - [ ] Main-window tests resolve the default data path, which is
   `/Volumes/dld_output` when it is mounted: tests should never touch the real
   volume (2026-10-19).

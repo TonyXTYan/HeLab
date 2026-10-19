@@ -106,6 +106,12 @@ real experiment data without deciding where its top should be.
   8. Highlight the newest shot (scatter, histograms): red, moves with each new shot;
      histograms read its real counts on the red right axis, also with Log Y.
   9. Live on a folder with subfolders: only its own new TXY files are added.
+- [ ] Trace the real share: Help › Record I/O trace (this session), use HeLab as when
+  the SMB traffic was seen (tree open, browse, load, Live during acquisition), quit,
+  then summarise the recording with
+  `.ai/sessions/2026-10-19-claude-smb-io-audit/trace_summary.py <recording folder>
+  --under /Volumes/dld_output --minutes`; expect no roots_verify bursts, ~0 ops/min
+  idle. On a lab PC too.
 - [ ] Plot settings (Plots v1 polish): change Shots, View range and Points in a
   plot's settings and press Rerun with these settings; the plot and its
   two-line source follow. Manual bounds' spin boxes step sensibly when scrolled.

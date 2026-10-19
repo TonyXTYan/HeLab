@@ -105,9 +105,12 @@ Codex review); the architecture summary is in AGENTS.md.
   check level's sample of held fingerprints match; otherwise Live stops and the
   folder is listed as mismatched. A single shot rewritten in place outside the
   sample stays under the write-once assumption, as for ordinary loads.
-- A new file is read only when settled by age, unchanged since the previous
-  check, and ending with a whole row. Remaining limit: a writer paused exactly at
-  a row's end; the converter's temp-name rename closes it (planned).
+- A new file is read only when settled by age and unchanged since the previous
+  check (metadata only, by Tony's decision: its content isn't checked). A writer
+  paused longer than the settle age is read unfinished; a shot Live read in the
+  last 5 minutes that then changes is read again (by checks and by saves), with a
+  note for a minute and a WARNING. The converter's temp-name rename remains the
+  real fix (planned).
 - A Live check pauses background work only while it reads a file (measured: 15 %
   of a background load paused otherwise).
 - Live greys out the tab's explorer; switching tabs turns Live off and saves.
