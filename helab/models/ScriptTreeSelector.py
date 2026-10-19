@@ -580,6 +580,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._reload_owner = ""  # The disk-cache read of a reload in flight (its request's owner).
         self._reload_found: Optional[Restored] = None  # Meanwhile, the best match RAM had.
         self._reload_values: Optional[Dict[str, Any]] = None  # The settings it runs with.
+        self._reload_shots: Optional[Tuple[int, ...]] = None  # The shots it takes (None: the view's).
         self._reload_note = ""  # What the last reload left out (changed or missing shots).
         self._picture_cost = 0  # Bytes its picture took when last taken (0: not yet).
 
@@ -970,17 +971,19 @@ class AnalysisInstance(LinkedAnalysisInstance):
         return self.budget.cache if self.budget is not None else get_folder_cache(get_io_service())
 
     def reload(self, values: Optional[Dict[str, Any]] = None) -> None:
-        """Draw a released plot again with ``values`` (default: the settings it was drawn with),
-        on exactly its shots, by their fingerprints: from the folder's dataset in RAM, else from
-        the local disk cache, never from the folder. If neither has them, it says so and keeps
-        its picture; shots changed or missing are left out and named."""
+        """Draw a released plot again: by default with the settings it was drawn with, on exactly
+        the shots it drew (``coverage``), by their fingerprints, never a shot it didn't draw; with
+        ``values`` (Rerun's new settings), on its view's shots. From the folder's dataset in RAM,
+        else from the local disk cache, never from the folder. If neither has them, it says so
+        and keeps its picture; shots changed or missing are left out and named."""
         if self.is_closed or self.released is None or self.shown is None or self.job_id:
             return
         self._reload_values = dict(self.shown.parameters) if values is None else values
+        self._reload_shots = tuple(self.shown.coverage.shots) if values is None else None
         if self._reload_owner:
             return  # Reading the disk cache already.
         cache, view = self._cache(), self._shown_view or self.follow.ran
-        found = self._in_ram(cache, view)
+        found = self._in_ram(cache, view, self._reload_shots)
         if found is not None and not found.changed and not found.missing:
             self._reload_from(found, "RAM")
             return
@@ -996,11 +999,11 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self._reload_failed("its data isn't in RAM or in the disk cache")
 
     @staticmethod
-    def _in_ram(cache: FolderCache, view: DatasetView) -> Optional[Restored]:
-        """The folder's dataset held in RAM (shown in a tab or not) with most of the view's shots."""
+    def _in_ram(cache: FolderCache, view: DatasetView, shots: Optional[Tuple[int, ...]]) -> Optional[Restored]:
+        """The folder's dataset held in RAM (shown in a tab or not) with most of the shots wanted."""
         path = cache.key(view.identity.source_path)
         held = {id(entry): entry for entry in (*cache.pins.values(), *cache.datasets.values()) if entry.path == path}
-        found = [restore(view, entry) for entry in held.values()]
+        found = [restore(view, entry, shots) for entry in held.values()]
         return max(found, key=lambda item: (len(item.kept), -len(item.changed)), default=None)
 
     def _read_disk_cache(self, cache: FolderCache, path: str) -> bool:
@@ -1042,7 +1045,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if self.released is None or self.shown is None:
             return
         view = self._shown_view or self.follow.ran
-        read = restore(view, dataset) if kind == "loaded" and isinstance(dataset, Dataset) else None
+        read = restore(view, dataset, self._reload_shots) if kind == "loaded" and isinstance(dataset, Dataset) else None
         if read is not None and (found is None or len(read.kept) >= len(found.kept)):
             self._reload_from(read, "the disk cache")
         elif found is not None:
@@ -1056,10 +1059,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def _reload_from(self, found: Restored, where: str) -> None:
         """Run on the restored view; name the plot's shots it lacks."""
         assert self.released is not None and self.shown is not None
-        drew = self.shown.coverage.shots
-        changed, missing = found.lost(drew)
-        if drew and not set(drew) & set(found.kept):
-            self._reload_failed(f"none of its {len(drew):,} shots are in RAM or the disk cache as they were")
+        changed, missing, asked = found.changed, found.missing, found.asked
+        if asked and not found.kept:
+            self._reload_failed(f"none of its {asked:,} shots are in RAM or the disk cache as they were")
             return
         lost = []
         if changed:
@@ -1067,7 +1069,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if missing:
             lost.append(f"shot{'' if len(missing) == 1 else 's'} {shots_list(missing)} missing")
         self._reload_note = (f"Reloaded from {where} without {len(changed) + len(missing):,} of its "
-                             f"{len(drew):,} shots: {'; '.join(lost)}") if lost else ""
+                             f"{asked:,} shots: {'; '.join(lost)}") if lost else ""
         values, self._reload_values = self._reload_values, None
         self.released.set_state(f"reloading from {where}…", busy=True)
         self._submit(found.view, values, reloading=True)

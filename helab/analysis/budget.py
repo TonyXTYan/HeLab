@@ -132,11 +132,9 @@ class Restored:
     changed: tuple[int, ...]  # shots the dataset has with other fingerprints (left out)
     missing: tuple[int, ...]  # shots the dataset lacks
 
-    def lost(self, shots: Iterable[int]) -> tuple[tuple[int, ...], tuple[int, ...]]:
-        """Of ``shots`` (those the plot drew), the changed and the missing ones."""
-        chosen = set(shots)
-        return (tuple(shot for shot in self.changed if shot in chosen),
-                tuple(shot for shot in self.missing if shot in chosen))
+    @property
+    def asked(self) -> int:
+        return len(self.kept) + len(self.changed) + len(self.missing)
 
 
 def fingerprints_of(dataset: Dataset) -> dict[int, tuple[int, int, int]]:
@@ -147,15 +145,16 @@ def fingerprints_of(dataset: Dataset) -> dict[int, tuple[int, int, int]]:
     return prints
 
 
-def restore(view: DatasetView, dataset: Dataset) -> Restored:
-    """``view`` (a released plot's hollow view) with each of its shots that ``dataset`` holds
-    with the same fingerprint: exactly the plot's shots. Shots with another fingerprint
-    (rewritten since) and shots ``dataset`` lacks are left out and named."""
+def restore(view: DatasetView, dataset: Dataset, shots: Optional[Iterable[int]] = None) -> Restored:
+    """``view`` (a released plot's hollow view) with each of its ``shots`` (default: all of
+    them) that ``dataset`` holds with the same fingerprint, and no other shot. Shots with another
+    fingerprint (rewritten since) and shots ``dataset`` lacks are left out and named."""
     prints = fingerprints_of(dataset)
+    wanted = view.shots if shots is None else sorted(set(shots) & set(view.shots))
     kept: dict[int, Events] = {}
     changed: list[int] = []
     missing: list[int] = []
-    for shot in view.shots:
+    for shot in wanted:
         array = dataset.data.get(shot)
         if array is None:
             missing.append(shot)

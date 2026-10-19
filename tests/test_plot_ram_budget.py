@@ -584,6 +584,40 @@ def test_a_reload_that_draws_nothing_keeps_no_data(window: Window, cache: Folder
         assert "boom" in error_line(instance)
 
 
+class LastTwo(Copy):
+    """Draws only the view's last two shots (its coverage), as a "last N shots" selection does."""
+
+    def covered_shots(self, action_name: str, values: Any, view: DatasetView) -> List[int]:
+        return sorted(view.shots)[-2:]
+
+    def compute(self, action_name: str, context: AnalysisContext) -> Any:
+        shots = sorted(context.view.shots)[-2:]
+        return Copied(context.view.events(shots).copy(), tuple(shots))
+
+
+def test_a_reload_takes_exactly_the_shots_the_plot_drew(
+        window: Window, cache: FolderCache, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Shot 5 of the two drawn (4, 5) is gone: Reload draws shot 4 alone, never shot 3, which the
+    plot never drew, and names shot 5. Rerun with the settings shown takes the view's shots."""
+    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {})
+    entry = hold(cache, dataset("exact", range(1, 6)))
+    reloaded = open_plot(window, qtbot, entry, LastTwo())
+    rerun = open_plot(window, qtbot, entry, LastTwo())
+    assert cast(AnalysisResult, reloaded.shown).coverage.shots == (4, 5)
+    open_plot(window, qtbot, dataset("other", range(1, 2)))
+    assert reloaded.release() and rerun.release()
+    del cache.datasets[(entry.path, entry.signature, 0)]
+    hold(cache, dataset("exact", range(1, 5)))
+    cast(ReleasedPlot, reloaded.released).reload_button.click()
+    qtbot.waitUntil(lambda: drawn(reloaded), timeout=10_000)
+    assert cast(AnalysisResult, reloaded.shown).coverage.shots == (4,) and reloaded.view.shot_numbers == (4,)
+    assert error_line(reloaded) == "⚠ Reloaded from RAM without 1 of its 2 shots: shot 5 missing"
+    rerun.run()
+    qtbot.waitUntil(lambda: drawn(rerun), timeout=10_000)
+    assert rerun.view.shot_numbers == (1, 2, 3, 4) and cast(AnalysisResult, rerun.shown).coverage.shots == (3, 4)
+    assert error_line(rerun) == "⚠ Reloaded from RAM without 1 of its 5 shots: shot 5 missing"
+
+
 def test_rerun_on_a_released_plot_reloads_with_the_settings_shown(
         window: Window, cache: FolderCache, qtbot: QtBot) -> None:
     hold(cache, dataset("rerun", range(1, 3)))
@@ -610,7 +644,9 @@ def test_hollow_and_restore_keep_exactly_the_shots_by_fingerprint() -> None:
     restored = restore(empty, newer)
     assert restored.kept == (1, 2) and restored.changed == (4,) and restored.missing == (3,)
     assert restored.view.shot_numbers == (1, 2) and 5 not in restored.view.shots
-    assert restored.lost([2, 3, 4]) == ((4,), (3,)) and restored.lost([1]) == ((), ())
+    assert restored.asked == 4
+    only = restore(empty, newer, [2, 3, 9])  # Exactly these (9 isn't the view's): never 1 or 4.
+    assert only.kept == (2,) and only.missing == (3,) and only.changed == () and only.view.shot_numbers == (2,)
     assert shots_list([3]) == "3" and shots_list([3, 7]) == "3 and 7"
     assert shots_list(list(range(1, 10))) == "1, 2, 3, 4, 5, 6 and 3 more"
 
