@@ -47,16 +47,20 @@ def _read_gate(filename: str) -> None:
 def _trace_file(value: str | None) -> str | None:
     """Where the I/O trace goes: ``value`` (HELAB_IO_TRACE), unless it is on a network drive or
     share, which the trace would then add traffic to (and sharing writes from several helpers there
-    can garble it): refused with a warning. Only the mount table is read, never the folder."""
+    can garble it): refused with a warning. The path is resolved first (``realpath``), so a local
+    link to a share is refused too; then only the mount table is read."""
     if not value:
         return None
-    path = os.path.abspath(os.path.expanduser(value))
+    given = os.path.abspath(os.path.expanduser(value))
+    path = os.path.realpath(given)
     from helab.utils.cache_location import NETWORK_FILESYSTEMS, _filesystem
     try:
         fstype, remote = _filesystem(path)
     except (OSError, RuntimeError):
         fstype, remote = "", False
-    if path.startswith(("\\\\", "//")) or remote or fstype in NETWORK_FILESYSTEMS:
+    # (A UNC path, given or resolved: POSIX's realpath folds a leading "//" away.)
+    unc = any(candidate.startswith(("\\\\", "//")) for candidate in (given, path))
+    if unc or remote or fstype in NETWORK_FILESYSTEMS:
         import logging
         logging.warning("HELAB_IO_TRACE ignored: %s is on a network drive (%s); use a local file",
                         path, fstype or "remote")

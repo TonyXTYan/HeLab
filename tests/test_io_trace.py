@@ -328,6 +328,25 @@ def test_a_trace_file_on_a_network_drive_is_refused(tmp_path: Path, monkeypatch:
     assert "HELAB_IO_TRACE ignored" in caplog.text
 
 
+def test_a_trace_file_through_a_local_link_to_a_share_is_refused(tmp_path: Path,
+                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    """The destination is resolved before it's checked: a local folder linking to a share is the share."""
+    from helab.utils import cache_location
+    share = tmp_path / "share"  # (Stands in for a mounted share: the mount table below says so.)
+    share.mkdir()
+    local = tmp_path / "local"
+    local.mkdir()
+    try:
+        (local / "traces").symlink_to(share, target_is_directory=True)
+    except OSError as exc:  # (Windows without the symlink privilege.)
+        pytest.skip(f"Can't create a symlink here: {exc}")
+    real_share = os.path.realpath(share)
+    monkeypatch.setattr(cache_location, "_filesystem", lambda path: (
+        ("smbfs", False) if path.startswith(real_share) else ("apfs", False)))
+    assert io_helper._trace_file(str(local / "trace.jsonl")) == os.path.realpath(local / "trace.jsonl")
+    assert io_helper._trace_file(str(local / "traces" / "trace.jsonl")) is None
+
+
 def test_hiding_a_marker_is_traced(tmp_path: Path, trace: Path) -> None:
     marker = tmp_path / ".helab-root"
     marker.write_text("{}")
