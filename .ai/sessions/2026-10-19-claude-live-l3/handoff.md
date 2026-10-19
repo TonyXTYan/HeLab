@@ -10,6 +10,7 @@ Branch `agent/live-l3` (floor "Live L3"), base `d0b8fbe`. Commits:
 | `959bcf5` | This session folder |
 | `2089da4`, `9d9c54e`, `f80091f` | Review fixes (below), with Codex's [review-codex.md](review-codex.md) |
 | `7c63bdf`, `fbe13f0`, `7ec0032`, `b5dc449`, `768855f` | Round 2: Tony's answers (below) |
+| `d33bb61`, `eab80a3` | Round 2 review fixes (below) |
 
 How it works, the test-isolation trap and renders: [notes.md](notes.md). Pushed to
 `TonyXTYan/HeLab` after the review fixes and after round 2.
@@ -63,6 +64,24 @@ Maestro passed on Tony's answers (2026-10-19). One commit each:
 | `768855f` | **2c. Newest shot** | "Highlight the newest shot" (off) and "Newest shot colour" (red; orange, magenta, green, black) in the **3D scatter** (Points) and, as it was cheap, the **T/X/Y histograms** (Histogram); shared in `selection.newest_specs`. Scatter: the newest shot's events are a second trace in the colour, with a legend, and the display cap keeps all of them before sampling the rest. Histograms: the newest shot's counts in the same bins, drawn over each histogram as a coloured line **scaled to that histogram's total** (unscaled, one shot of 30 lies flat on the axis; scaled, a drift or a changed shape shows); the label says so. Versions: `helab.scatter_3d` v3, `helab.txy_histograms` v3. Renders: [histograms-newest-shot.png](histograms-newest-shot.png), [scatter-newest-shot.png](scatter-newest-shot.png) (the figure in headless Chrome; the dock shows the same page) |
 
 Item 4 (a RAM budget for open plots) is not here: it is a floor of its own after the SMB audit.
+
+### Round 2 review fixes
+
+Codex reviewed `4492385` ("Round 2 review at 4492385" in [review-codex.md](review-codex.md)):
+changes requested for two Dash page lifecycle issues; the rest checked out. One commit each:
+
+| Commit | Finding | Fix |
+|---|---|---|
+| `d33bb61` | **P1**: the figure and the revision were read apart; an update landing between the reads sent the old figure tagged with the new revision, and the page stayed one figure behind for good | One `PlotSnapshot(revision, figure)` per plot, replaced whole under a lock; the page load (`page`) and each poll (`newer_snapshot` / `poll`) read one snapshot. Test: an update landing right after a poll's or a page load's read (a store whose `get` lets it land): each gets the old figure with its own revision, the next poll brings the new one; the old code, under the same interleaving, paired the old figure with revision 2 and never caught up |
+| `eab80a3` | **P2**: a browser page still open after its plot closed kept the last graph and polled every second (204) | The poll of a plot no longer there empties and hides the graph, shows "Plot not found. It is removed when its plot is closed in HeLab." and disables the page's interval. Test: the poll as a browser posts it after `remove_plot` |
+
+Not changed (Codex's other points): every open page polls once a second, a 204 when nothing is
+new; no multi-page load measurement on a lab PC yet (on Tony's checklist, item 8).
+
+Checks after these fixes: full suite **1137 passed, 2 skipped, 2 xfailed, no RERUN** (`-n 4`);
+`mypy helab/ --strict`, `mypy tests --strict`, `mypy helab/ tests --strict --platform win32`:
+clean; `pyright helab tests`, also `--pythonplatform Windows`: 0 errors; `git diff --check d0b8fbe
+HEAD`: clean.
 
 Checks after round 2: full suite **1135 passed, 2 skipped, 2 xfailed, no RERUN** (`-n 4`);
 `mypy helab/ tests --strict`, also `--platform win32`: clean; `pyright helab tests`, also
@@ -177,7 +196,9 @@ On the Mac, then a lab PC (Windows). Replaces nothing in MANUAL_TODO; add under 
    line).
 8. **3D scatter camera**: rotate and zoom the scatter during Live; new shots arrive and the view
    stays where you left it, in the dock and in **Open in browser** (both update within a second
-   of a rerun). The modebar's Reset camera still resets it.
+   of a rerun). The modebar's Reset camera still resets it. Close the plot with its browser tab
+   open: the tab says the plot was closed. On a lab PC, with several plot pages open, check the
+   once-a-second polls cost nothing noticeable.
 9. **Newest shot**: tick Highlight the newest shot in the scatter (Points) and the histograms
    (Histogram): the newest shot is red (other colours in the list); during Live it moves to each
    new shot. In the histograms its line is scaled to the histogram's total.
