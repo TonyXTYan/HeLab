@@ -27,6 +27,21 @@ Emit = Callable[[dict[str, Any]], None]
 # Another computer may still be writing a file modified this recently; it is
 # left for the next load rather than read half-written. Tests set it to 0.
 SETTLE_SECONDS = float(os.environ.get("HELAB_SETTLE_SECONDS", "5"))
+# Test seam: with HELAB_TEST_READ_GATE=<dir>, reading a TXY file <name> first waits until
+# <dir>/<name>.go exists (``_read_gate``). Unset in production: nothing is checked.
+READ_GATE = os.environ.get("HELAB_TEST_READ_GATE") or None
+READ_GATE_POLL = 0.02
+
+
+def _read_gate(filename: str) -> None:
+    """Tests only (``READ_GATE``): hold this TXY read until its ``<name>.go`` file appears. It
+    sends nothing meanwhile, like a read still in progress, so a gate never opened stands in
+    for a stuck read (the parent's per-file timeout stops it)."""
+    if READ_GATE is None:
+        return
+    go = os.path.join(READ_GATE, os.path.basename(filename) + ".go")
+    while not os.path.exists(go):
+        time.sleep(READ_GATE_POLL)
 # One helper handles one request. Reusing a volume ID within that request avoids
 # repeated diskutil calls during discovery and listing without persisting stale IDs.
 _volume_id_cache: dict[tuple[str, str], str | None] = {}
@@ -1341,6 +1356,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         return (info.st_size, info.st_mtime_ns) == fingerprint[index][1:]
 
     def read_txy(shot: int, filename: str) -> Any:
+        _read_gate(filename)
         frame = pd.read_csv(filename, sep=",", names=["t", "x", "y"], dtype=np.float64)
         if frame.isna().any().any():
             problematic.append(shot)
@@ -1685,6 +1701,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
         try:
             array = None
             if unchanged(filename, item):
+                _read_gate(filename)
                 frame = pd.read_csv(filename, sep=",", names=["t", "x", "y"], dtype=np.float64)
                 if frame.isna().any().any():
                     problematic.append(shot)
