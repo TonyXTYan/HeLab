@@ -221,11 +221,12 @@ class AnalysisDock(QDockWidget):
 
     def setWidget(self, widget: Optional[QWidget]) -> None:
         """Show ``widget`` as the plot. As in Qt's own, the plot before it stays a (hidden)
-        child of the dock until its owner deletes it."""
+        child of the dock until its owner deletes it, unless ``widget`` took it in (a wrapper
+        around it): then it stays as it is, inside ``widget``."""
         old = self.widget()
         if old is widget:
             return
-        if old is not None:
+        if old is not None and old.parentWidget() is self._body_holder:
             self._body_layout.removeWidget(old)
             old.hide()
         self._body = widget

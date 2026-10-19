@@ -677,3 +677,21 @@ def test_a_release_the_dock_never_saw_ends_the_drag_at_its_next_mouse_event(
     qtbot.waitUntil(lambda: moves == ["in"])
     assert not plots.panel._drag_end.waiting(dock)
     qtbot.mouseRelease(dock, Qt.MouseButton.LeftButton, pos=QPoint(30, 30))  # type: ignore[no-untyped-call]
+
+
+def test_a_plot_wrapped_in_place_stays_shown(qtbot: QtBot) -> None:
+    """``setWidget`` with a wrapper around the plot shown (as ``_set_plot_source`` does) keeps
+    the plot shown inside it; a plot replaced outright is hidden, a child of the dock still."""
+    dock = AnalysisDock("Plot")
+    qtbot.addWidget(dock)
+    plot = QLabel("plot")
+    dock.setWidget(plot)
+    dock.show()
+    wrapper = QWidget(dock)
+    QVBoxLayout(wrapper).addWidget(plot)
+    dock.setWidget(wrapper)
+    assert dock.widget() is wrapper and plot.parentWidget() is wrapper and plot.isVisible()
+    other = QLabel("another plot")
+    dock.setWidget(other)
+    assert dock.widget() is other and other.isVisible() and wrapper.isHidden()
+    assert wrapper.parentWidget() is not None and dock.isAncestorOf(wrapper)

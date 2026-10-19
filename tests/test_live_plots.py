@@ -784,7 +784,6 @@ def test_a_failed_rerun_keeps_the_last_plot_and_following_goes_on(
     assert not error_line(instance).isVisibleTo(dock) and instance.error == ""
 
 
-
 def test_a_floating_plot_runs_and_follows_with_its_settings_in_its_window(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
     """Float, dock again and close a plot while it runs and follows Live: its page (Follow
