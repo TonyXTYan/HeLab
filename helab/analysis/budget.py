@@ -308,7 +308,10 @@ class RamBudget(QObject):
                     continue  # Its data is a loaded folder's: releasing it frees nothing.
                 if plot.release():
                     released += 1
+                    # A dataset only this plot's arrays kept may go now: datasets first, again.
+                    self.cache.evict_to(limit)
                     usage = self.measure()
+                    datasets = self.cache.held_buffers()
             if released:
                 logging.info("RAM budget: released %d plot%s, now %.0f%% of %d bytes", released,
                              "" if released == 1 else "s", usage.share * 100, usage.budget)

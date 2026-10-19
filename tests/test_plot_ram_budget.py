@@ -318,6 +318,24 @@ def test_release_order_and_exemptions(window: Window, cache: FolderCache, runner
     assert plots["a"].released is None
 
 
+def test_datasets_go_first_again_after_each_release(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
+    """The reviewer's probe: dataset A (no tab shows it) is kept while plot P_A holds its arrays;
+    once P_A is released, A goes before the next plot, P_B, does."""
+    held = hold(cache, dataset("a", range(1, 5)))  # 4 shots
+    plot_a = open_plot(window, qtbot, held)  # Its own result: 4 shots
+    plot_b = open_plot(window, qtbot, dataset("b", range(1, 3)))  # 2 shots and their copy
+    plot_c = open_plot(window, qtbot, dataset("c", range(1, 2)))  # Shown
+    panel = window.panel_right_top_plot_settings
+    for instance in (plot_a, plot_b, plot_c):
+        panel.show_plot(dock_of(instance))
+    window.ram_budget.check()
+    assert window.ram_budget.usage.total == 14 * SHOT_BYTES
+    cache.max_data_bytes = int(9 * SHOT_BYTES / 0.8)
+    window.ram_budget.check()
+    assert plot_a.released is not None and not cache.holds(held) and plot_b.released is None
+    assert window.ram_budget.usage.total <= 9 * SHOT_BYTES
+
+
 def test_the_least_recently_viewed_plot_goes_first(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
     first, second, third = (open_plot(window, qtbot, dataset(name, range(1, 3))) for name in ("p1", "p2", "p3"))
     panel = window.panel_right_top_plot_settings
