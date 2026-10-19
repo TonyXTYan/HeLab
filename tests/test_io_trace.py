@@ -763,3 +763,60 @@ def test_folder_cache_hands_live_s_data_to_its_save(qtbot: QtBot, tmp_path: Path
         assert not any(record["op"] == "read" for record in records)
     finally:
         service.shutdown()
+
+
+@pytest.mark.no_auto_data_root
+def test_reselecting_a_ram_only_folder_checks_it_without_listing_it(
+    qtbot: QtBot, tmp_path: Path, trace: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A folder without subfolders whose checked data is in RAM: selecting it again doesn't list it
+    (nor scan its details); its load's quick check is the check. A change found by that load updates
+    the row from the load's own listing."""
+    from helab.utils.folder_cache import FolderCache
+    share = tmp_path / "share"
+    run = share / "run"
+    write_shots(run, range(1, 21))
+    service = IOService()
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    monkeypatch.setattr(FolderCache, "FRESH_SECONDS", 0.2)
+    explorer = FolderExplorer(str(share), str(share), str(share), [0, 4, 5])
+    qtbot.addWidget(explorer)
+    # As the main window does: each selection (and status update of it) asks for its data.
+    explorer.selectionPathChanged.connect(lambda path: explorer.load_to_ram_cache(path))
+    model = explorer.model
+
+    def select(path: Path) -> None:
+        qtbot.waitUntil(lambda: str(path) in model.nodes, timeout=20000)
+        explorer.tree.setCurrentIndex(model.path_index(str(path)))
+
+    def shown(count: int) -> bool:
+        return explorer.folder_opened_path == str(run) and len(explorer.folder_opened_data or {}) == count
+    select(run)
+    qtbot.waitUntil(lambda: shown(20), timeout=20000)
+    wait_idle(qtbot, service)
+    assert model.cache.no_root(str(run)) is not None  # RAM only.
+    qtbot.wait(300)  # Older than FRESH_SECONDS: the next selection checks it.
+    explorer.clear_selection()
+    wait_idle(qtbot, service)
+    before = len(lines(trace))
+    select(run)
+    qtbot.waitUntil(lambda: shown(20) and not explorer.shows_unchecked(str(run)), timeout=20000)
+    wait_idle(qtbot, service)
+    on_run = [record for record in lines(trace)[before:]
+              if record["path"].startswith(str(run)) and record["op"] not in BOOKKEEPING]
+    assert not any(record["op"] == "scandir" for record in on_run)
+    assert {record["reason"] for record in on_run} == {"memory check: folder", "memory check: sample"}
+    write_shots(run, range(21, 22))
+    os.utime(run)
+    qtbot.wait(300)
+    explorer.clear_selection()
+    wait_idle(qtbot, service)
+    before = len(lines(trace))
+    select(run)
+    qtbot.waitUntil(lambda: shown(21), timeout=20000)
+    wait_idle(qtbot, service)
+    listings = [record["request"] for record in lines(trace)[before:]
+                if record["op"] == "scandir" and record["path"] == str(run)]
+    assert listings == ["load"] and model.nodes[str(run)].txy_count == 21
+    explorer.close_cleanup()
+    service.shutdown()

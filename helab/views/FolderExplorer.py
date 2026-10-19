@@ -283,6 +283,9 @@ class FolderExplorer(QWidget):
         # Folders whose next load compares every file with the cache (Retry / Refresh), not
         # just the folder's mtime: a file rewritten in place doesn't change the folder's mtime.
         self._full_check_paths: set[str] = set()
+        # Folders whose selection wasn't listed (``_check_replaces_listing``): their load's result
+        # updates the row.
+        self._listing_replaced: set[str] = set()
         # The disk cache is read at most once per selection of a folder, or once more after its
         # volume is verified if the first read waited for that (``_volumes_verified``).
         self._cache_read_path: str | None = None
@@ -527,6 +530,7 @@ class FolderExplorer(QWidget):
         self.stop_live()
         self._deep.clear()
         self._deep_depth.clear()
+        self._listing_replaced.clear()
         self._basic_active = False
         self._basic_result = ""
         self._visible_seen.clear()
@@ -599,7 +603,9 @@ class FolderExplorer(QWidget):
                         and not self.model.cache.counts_as_checked(dataset, node.signature if node else "")):
                     # Back at the folder still shown: its data is checked again, as from memory.
                     self._unchecked_path = path
-            if not self._check_replaces_listing(path):
+            if self._check_replaces_listing(path):
+                self._listing_replaced.add(path)
+            else:
                 self.model.request_scan(path, priority=True)
             self.selectionPathChanged.emit(path)
 
@@ -621,10 +627,20 @@ class FolderExplorer(QWidget):
     def _check_replaces_listing(self, path: str) -> bool:
         """Selecting a folder with saved counts and a disk cache does not list it:
         the cached data is shown, and loading checks the folder (one stat when
-        unmodified). Expanding a folder still lists it."""
+        unmodified). Nor does selecting a folder without subfolders whose checked
+        data is in RAM: its load's quick check covers it (``memory_check``). If the
+        check finds changes, the load's own listing updates the row. Expanding a
+        folder still lists it."""
         node = self.model.nodes.get(path)
-        return (self.auto_load_ram and node is not None and node.report is not None
-                and self.model.cache.disk_cached(path))
+        cache = self.model.cache
+        if not (self.auto_load_ram and node is not None and node.report is not None):
+            return False
+        if cache.disk_cached(path):
+            return True
+        dataset = cache.latest_dataset(path)
+        return (node.has_dirs is False and dataset is not None and cache.verified(dataset)
+                and bool(dataset.metadata.get("listed_at")) and path not in cache.mismatched
+                and not cache.folder_prefs(path)["no_auto_load"])
 
     def _status_ready(self, path: str) -> None:
         if path == self.selected_path_globally and not (
@@ -1330,9 +1346,12 @@ class FolderExplorer(QWidget):
             self._set_large(request.path, None)
             self._display(request.path, dataset, event)
             node = self.model.nodes.get(request.path)
-            if node and node.cached_report and not event.get("unchanged"):
-                # The folder changed since its saved counts. This load's own listing and fingerprint
-                # are its status (unless it has subfolders, whose names a listing brings).
+            replaced = request.path in self._listing_replaced
+            self._listing_replaced.discard(request.path)
+            if node and (node.cached_report or replaced) and not event.get("unchanged"):
+                # The folder changed since its saved counts, or since the row's status when its
+                # selection didn't list it. This load's own listing and fingerprint are its status
+                # (unless it has subfolders, whose names a listing brings).
                 summary = self.model.cache.scan_summaries.get(request.path)
                 if not (summary and summary.get("signature") == event.get("signature")
                         and self.model.adopt_load_status(request.path, summary)):
@@ -1342,6 +1361,10 @@ class FolderExplorer(QWidget):
             self._loading_data.clear()
             self.load_error = event.get("message", "Cancelled — Retry")
             self.model.set_load_state(request.path, "")
+            if request.path in self._listing_replaced:
+                self._listing_replaced.discard(request.path)
+                if kind == "error":
+                    self.model.request_scan(request.path, priority=True)  # The row shows what's there.
         elif kind == "too_large":
             # Stopped before reading anything (S8).
             self.loading = self.load_paused = False
