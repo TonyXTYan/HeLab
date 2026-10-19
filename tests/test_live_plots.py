@@ -33,7 +33,7 @@ from helab.analysis.runner import AnalysisRunner
 from helab.io_helper import list_folder, live_check, load
 from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import basic_plots, scatter_3d, transfer_fractions
+from helab.scripts.standard import basic_plots, mean_position, scatter_3d, t_spectrum, transfer_fractions
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest, IOService
@@ -316,7 +316,8 @@ def test_coverage_records_the_shots_used_and_diffs_a_later_revision() -> None:
 
 
 @pytest.mark.parametrize("script", [basic_plots.CountsPerShot(), basic_plots.TxyHistograms(),
-                                    scatter_3d.Scatter3D(), transfer_fractions.TransferFractions()],
+                                    scatter_3d.Scatter3D(), mean_position.MeanPositionVsT(),
+                                    t_spectrum.TProfileSpectrum(), transfer_fractions.TransferFractions()],
                          ids=lambda script: type(script).__name__)
 def test_every_result_records_coverage_and_a_json_reuse_key(qtbot: QtBot, script: DatasetAnalysis) -> None:
     """Completed, failed and cancelled runs alike; the Shots settings decide the coverage."""
@@ -358,7 +359,8 @@ def test_failed_and_cancelled_results_record_coverage_too(qtbot: QtBot) -> None:
 
 
 @pytest.mark.parametrize("script", [basic_plots.CountsPerShot(), basic_plots.TxyHistograms(),
-                                    scatter_3d.Scatter3D(), transfer_fractions.TransferFractions()],
+                                    scatter_3d.Scatter3D(), mean_position.MeanPositionVsT(),
+                                    t_spectrum.TProfileSpectrum(), transfer_fractions.TransferFractions()],
                          ids=lambda script: type(script).__name__)
 @pytest.mark.parametrize("case", ["no shots yet", "none chosen", "no events"])
 def test_bundled_plots_say_why_they_are_empty(qtbot: QtBot, script: DatasetAnalysis, case: str) -> None:
@@ -407,6 +409,37 @@ def test_a_following_scatter_updates_its_page_in_place(
     plot_id = pane.plot_id
     window.close_plots()
     qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None, timeout=10_000)  # Freed with the pane.
+
+
+def spread(shots: list[int], per_shot: int = 400) -> Dataset:
+    """A Live tab's data with ``per_shot`` events in each shot, spread in T, X and Y."""
+    rng = np.random.default_rng(len(shots))
+    data = {shot: np.column_stack([0.4 + rng.uniform(0, 0.05, per_shot), rng.normal(0, 1e-3, (per_shot, 2))])
+            for shot in shots}
+    return Dataset(PATH, f"sig-spread-{shots[-1]}", data, {
+        "fingerprint": [[shot, 100 + shot, 1_000 + shot] for shot in shots], "source": "updated",
+        "loaded_at": time.time()}, 0)
+
+
+@pytest.mark.parametrize("script", [mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum()],
+                         ids=lambda script: type(script).__name__)
+def test_following_position_and_spectrum_plots_draw_in_place(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot, script: DatasetAnalysis) -> None:
+    """Live's next revision redraws them in the same widget (zoom stays); the dock's settings
+    line ends with what the run found (the automatic bin width, the spectrum's Δf and Nyquist)."""
+    kind = mean_position.PositionPlot if isinstance(script, mean_position.MeanPositionVsT) else t_spectrum.SpectrumPlot
+    window.view = window.live_feed.publish(spread([1, 2]))
+    instance = plot(window, qtbot, script)
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    set_live(instance, DELAY, 0.0)
+    dock = cast(QDockWidget, instance.dock_widget)
+    drawn = dock.findChild(kind)
+    assert drawn is not None
+    settings = dock.property("plotSourceSettings")
+    assert "(auto" in settings and ("Nyquist" in settings) == (kind is t_spectrum.SpectrumPlot)
+    window.live_feed.publish(spread([1, 2, 3]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
+    assert dock.findChild(kind) is drawn and "3 shots" in cast(Any, drawn).title.text
 
 
 def run_now(script: DatasetAnalysis, view: DatasetView, values: dict[str, Any]) -> AnalysisResult:
@@ -604,6 +637,8 @@ def test_a_following_plot_highlights_lives_newest_shot(
 
 def test_scatter_declares_a_live_policy_others_rerun_on_every_shot() -> None:
     assert scatter_3d.Scatter3D().live_policy("Plot") == LivePolicy(min_delay=5.0)
+    for slower in (mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum()):
+        assert slower.live_policy("Plot") == LivePolicy(min_delay=2.0)
     for script in (basic_plots.CountsPerShot(), basic_plots.TxyHistograms(), transfer_fractions.TransferFractions()):
         assert script.live_policy("Plot") == LivePolicy()
 

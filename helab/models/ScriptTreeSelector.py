@@ -766,6 +766,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         show = getattr(self.main_window, "set_plot_result", None)
         if callable(show):
             chosen, settings = self.script.describe_run(self.action, result.parameters, self.view)
+            settings = " · ".join(filter(None, (settings, self.script.describe_result(self.action, result))))
             record = describe(specs, result.parameters, every=True)
             if warnings:
                 settings = " · ".join(filter(None, (settings, f"⚠ {warnings}")))

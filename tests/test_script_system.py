@@ -73,7 +73,7 @@ def test_tree_panel_lists_only_working_scripts(qtbot: QtBot) -> None:
     qtbot.addWidget(widget)
     assert [widget.group_selector.itemText(i) for i in range(widget.group_selector.count())] == ["Basic plots v1"]
     assert group_items(widget) == {"Basic plots v1": ["3D scatter", "Counts per shot", "T, X, Y histograms",
-                                                     "Transfer fractions"]}
+                                                     "Mean X, Y against T", "T spectrum", "Transfer fractions"]}
     plots = widget.tree_widget.topLevelItem(0)
     assert plots is not None
     for i in range(plots.childCount()):
