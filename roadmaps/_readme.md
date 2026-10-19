@@ -95,7 +95,12 @@ still to choose (Tony, with the coordinator's proposal).
 
 - [ ] TXY converter (`HeBECANU/tdc_autoconverter`, `lib/dld_raw_to_txy_counts.m`):
   write each TXY to a temporary name and `movefile` it to the final name, so
-  HeLab never sees a partly written file (Tony, 2026-10-19).
+  HeLab never sees a partly written file (Tony, 2026-10-19). Porting it into HeLab
+  (Live L4) is the one raw → TXY converter. The legacy reconstruction has two
+  variants: 2019, and the 2023 lab edit with an x1 dead time of 0.5 µs and
+  separate tsums. Check that existing `_txy_forc` files are reproduced: the same
+  event counts and values to 8 significant figures, for the variant that wrote
+  them ([notes](../.ai/sessions/2026-10-20-claude-dld-front-panel-review/core-update.md#import-and-reconstruction)) (2026-10-20).
 - [ ] Decouple browser/cache, dataset, analysis and UI responsibilities so
   agents can develop separate features in supervised, isolated worktrees
   without changing current behaviour. Feature-driven: the dataset view first,
@@ -155,6 +160,15 @@ still to choose (Tony, with the coordinator's proposal).
 - [ ] Standard analyses: per-shot counts, T/X/Y distributions (v1 done
   2026-10-19, in s and m; units to confirm) and shot selection
   ([plan](analysis-workflow.md#standard-analyses)) (2026-10-08).
+- [ ] Features from the old MATLAB DLD front panel (planning; nothing built yet).
+  First: constants at three levels (Settings → Lab parameters, folder settings,
+  plot overrides), then all the old fits and models on the T/X/Y histograms
+  (counts or per-shot rates), XY/XT/YT density images and shot times. Later: shot trends with an opt-in low-count
+  notification in Live, hot-spot masks with a placeholder finder, position
+  and spectrum plots, BEC properties, velocity axes (z up), bootstrap error bars,
+  then g² correlations; raw-pulse diagnostics after the TXY converter port. Defaults
+  borrowed from the legacy repos until confirmed; five open decisions
+  ([plan](dld-front-panel-port.md)) (2026-10-20).
 - [ ] Export results and figures with their data source and analysis settings
   ([plan](analysis-workflow.md#export)) (2026-10-08).
 - [ ] Headless analysis runner sharing GUI jobs/results; add its CLI afterward

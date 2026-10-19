@@ -9,4 +9,4 @@
 [submodule "legacy/DLD_front_panel"]
 	path = legacy/DLD_front_panel
 	url = https://github.com/HeBECANU/DLD_front_panel
-	branch = main
+	branch = LaserMac-BECMachine-cloudstor
