@@ -573,22 +573,31 @@ def test_closing_the_main_window_ends_its_plots(qtbot: QtBot, monkeypatch: pytes
     selector = window.panel_right_bottom_script_selector
     done, running = Blocking(), Blocking()
     done.release.set()
+    cancelled: list[AnalysisResult] = []
+    job = ""
+
+    def on_finished(result: AnalysisResult) -> None:
+        if result.job_id == job:
+            cancelled.append(result)
+
+    runner.finished.connect(on_finished)
     try:
         finished = cast(AnalysisInstance, selector.run_analysis(done.get_metadata(), done, "Plot"))
         qtbot.waitUntil(lambda: finished.result is not None, timeout=10_000)
         busy = cast(AnalysisInstance, selector.run_analysis(running.get_metadata(), running, "Plot"))
         assert running.entered.wait(5)
         job = busy.job_id
-        cancelled: list[AnalysisResult] = []
-        runner.finished.connect(lambda result: cancelled.append(result) if result.job_id == job else None)
         result_job = cast(AnalysisResult, finished.result).job_id
         assert result_job in runner.results._pinned
         assert runner.receivers(runner.finished) == connected + 3
         window.close()
         assert finished.is_closed and busy.is_closed and not window.dock_widgets
-        assert runner.receivers(runner.finished) == connected + 1  # This test's own lambda.
+        assert runner.receivers(runner.finished) == connected + 1  # on_finished only.
         assert result_job not in runner.results._pinned and set(runner.results._pinned) <= pinned
+        running.release.set()
+        qtbot.waitUntil(lambda: bool(cancelled), timeout=10_000)
+        assert cancelled[0].state == "cancelled" and running.renders == 0
     finally:
         running.release.set()
-    qtbot.waitUntil(lambda: bool(cancelled), timeout=10_000)
-    assert cancelled[0].state == "cancelled" and running.renders == 0
+        runner.finished.disconnect(on_finished)
+    assert runner.receivers(runner.finished) == connected
