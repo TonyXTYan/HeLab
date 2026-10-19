@@ -394,6 +394,15 @@ def test_help_menu_records_the_io_trace_for_this_session(
         assert service.trace_dir is None  # (Not before the helper's answer.)
         qtbot.waitUntil(lambda: service.trace_dir is not None, timeout=20000)
         return str(service.trace_dir)
+
+    def turn_off() -> None:
+        """Off, and the window's own helpers traced into the recording done: it's complete now."""
+        action.setChecked(False)
+        qtbot.waitUntil(lambda: not service.pending and not service.active and not service.retired, timeout=30000)
+
+    def size(*recordings: str) -> int:
+        return sum(os.path.getsize(os.path.join(recording, name)) for recording in recordings
+                   for name in os.listdir(recording) if name.endswith(".jsonl"))
     main_window.ask_delete_old_traces = ask
     try:
         # No earlier recordings: no question.
@@ -401,17 +410,18 @@ def test_help_menu_records_the_io_trace_for_this_session(
         assert os.path.dirname(first) == folder and os.path.isdir(first) and not asked
         assert main_window.io_trace_label.isVisible() and first in main_window.io_trace_label.toolTip()
         record(first, 101, 102)
-        action.setChecked(False)
+        turn_off()
         assert service.trace_dir is None and main_window.io_trace_label.isHidden()
         other = os.path.join(folder, "notes.txt")  # Not a trace: never removed.
         with open(other, "w", encoding="utf-8") as stream:
             stream.write("kept")
         # Keep (the default): the earlier recording stays.
+        held = size(first)  # (Ours, 6 bytes, and the window's own helpers' lines, if any ran.)
         second = turn_on()
-        assert asked == [(1, 6, folder)] and second != first
-        assert sorted(os.listdir(first)) == ["101.jsonl", "102.jsonl"] and os.path.exists(other)
+        assert asked == [(1, held, folder)] and held >= 6 and second != first
+        assert {"101.jsonl", "102.jsonl"} <= set(os.listdir(first)) and os.path.exists(other)
         record(second, 103)
-        action.setChecked(False)
+        turn_off()
         # Delete old traces: only earlier recordings go, never the one about to start. A file Windows
         # won't delete (a helper still has it open) is kept, and the user is told.
         asked.clear()
@@ -423,14 +433,15 @@ def test_help_menu_records_the_io_trace_for_this_session(
                 raise PermissionError(13, "in use", path)
             remove(path)
         monkeypatch.setattr("helab.utils.io_service.os.remove", held_open)
+        held = size(first, second)
         with patch.object(QMessageBox, "information") as told:
             third = turn_on()
         monkeypatch.setattr("helab.utils.io_service.os.remove", remove)
-        assert asked == [(2, 9, folder)]
+        assert asked == [(2, held, folder)]
         assert sorted(os.listdir(folder)) == sorted([os.path.basename(first), os.path.basename(third), "notes.txt"])
-        assert os.listdir(first) == ["102.jsonl"] and os.listdir(third) == []
+        assert os.listdir(first) == ["102.jsonl"]  # (The new recording may have helpers' lines already.)
         assert told.call_count == 1 and "1 trace file couldn't be deleted" in told.call_args.args[2]
-        action.setChecked(False)
+        turn_off()
         # The helper's other answers, as events: refused on a share, a failed check, unticked meanwhile.
         submitted: list[tuple[str, str, dict[str, Any], Any]] = []
 
