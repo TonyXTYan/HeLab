@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import dataclass, field
 from datetime import datetime
 import logging
 import math
@@ -51,6 +52,46 @@ MISMATCH_RETRY_TOOLTIP = ("Check this folder again. If the wrong drive was mount
 MISMATCH_REVIEW_TOOLTIP = ("Cached data doesn't match this folder: shots it had are missing now. Show it in the "
                            "list of mismatched folders, where you can load it as it is now.")
 AMBER = "#b26a00"
+LIVE_RETRY_TOOLTIP = "Check the folder again and go on watching it"
+
+
+def plural(count: int, noun: str) -> str:
+    return f"{count:,} {noun}{'' if count == 1 else 's'}"
+
+
+@dataclass(eq=False)
+class LiveSession:
+    """Live for one folder of a tab (roadmaps/live-monitoring.md): its checks, and its new shots
+    until they are saved to the disk cache. Kept after Live stops while a save of them runs."""
+    path: str
+    started_at: float  # Wall time.
+    # The newest data's shots, and the data (its fingerprint names unreadable shots: ``known``).
+    shots: set[int]
+    dataset: Dataset
+    # On (checking, or stopped by an error until Retry or Live off) or off (a save may still run).
+    on: bool = True
+    error: str = ""
+    # The folder's mtime the next check may compare (None: the check lists the folder).
+    since: int | None = None
+    # "check" or "save" in flight (a save until its data arrives; its write runs after that).
+    request: str = ""
+    reading: bool = False
+    checks: int = 0
+    checked_at: float | None = None  # Wall time.
+    seconds: float | None = None  # How long the last check took (the helper's measure).
+    listed: bool = False  # Whether the last check listed the folder (else one stat).
+    next_at: float = 0.0  # Monotonic.
+    new: int = 0  # New shots since Live started.
+    unsettled: int = 0  # Files still being written at the last check.
+    # New shots not yet in a save, and those in the save that runs (until it ends).
+    unsaved: set[int] = field(default_factory=set)
+    saving: set[int] = field(default_factory=set)
+    # Unsaved shots that start a save (0: the setting); raised after a failed save.
+    threshold: int = 0
+    # Why this folder can't be saved (e.g. RAM only), found by a save; the last save's problem.
+    blocked: str = ""
+    note: str = ""
+    saved_at: float | None = None  # Wall time.
 
 
 def large_text(estimate: int, refused: bool) -> str:
@@ -164,6 +205,8 @@ class FolderExplorer(QWidget):
     # Review… for a folder whose cached data doesn't match it: the main window shows its row in the list.
     reviewMismatchRequested = pyqtSignal(str)
     reviewRootRequested = pyqtSignal(str)  # A pending location: Same folder or a copy?
+    # Live turned on or off, or stopped by an error (the toolbar's Live action follows).
+    liveChanged = pyqtSignal()
     DWELL_MS = 3000
     # Finish and Cancel modes: while loads are busy (running, queued or stopping, or one started
     # moments ago), an automatic load waits until the selection has stayed this long, plus
@@ -258,6 +301,15 @@ class FolderExplorer(QWidget):
         self._auto_load_at = -math.inf
         self.model = SnapshotFileSystemModel(self)
         self.bg_owner = f"{self.model.owner}:bg"
+        # Live: checks run in the foreground lane (this tab's), saves in the background.
+        self.live_owner = f"{self.model.owner}:live"
+        self.live_save_owner = f"{self.model.owner}:live-save"
+        # The folder watched while Live is on, and every folder whose Live work isn't finished.
+        self.live: LiveSession | None = None
+        self._live_sessions: dict[str, LiveSession] = {}
+        self._live_timer = QTimer(self)
+        self._live_timer.setSingleShot(True)
+        self._live_timer.timeout.connect(self._live_tick)
         if not self.model.cache.foreground_owners:
             # The first tab; FolderTabWidget hands the foreground to the current tab.
             self.claim_foreground()
@@ -382,6 +434,7 @@ class FolderExplorer(QWidget):
         self.model.cache.volumesVerified.connect(self._volumes_verified)
         self.model.cache.rootDecided.connect(self._root_decided)
         self.model.cache.rootDuplicatesChanged.connect(self._update_activity)
+        self.model.cache.saveEnded.connect(self._live_save_ended)
         self.model.activityChanged.connect(self._update_activity)
         self.animation = QTimer(self)
         self.animation.timeout.connect(self._animate)
@@ -421,8 +474,9 @@ class FolderExplorer(QWidget):
             self.claim_foreground()
 
     def foreground_owners(self) -> set[str]:
-        """In queue mode this tab's queued loads run one by one in the foreground lane."""
-        return {self.model.owner} | ({self.bg_owner} if self.load_mode == "queue" else set())
+        """In queue mode this tab's queued loads run one by one in the foreground lane. Live
+        checks run there too; Live's saves are background work."""
+        return {self.model.owner, self.live_owner} | ({self.bg_owner} if self.load_mode == "queue" else set())
 
     @property
     def is_foreground(self) -> bool:
@@ -445,6 +499,7 @@ class FolderExplorer(QWidget):
     def open_to_path(self, path: str) -> None:
         if self.closed or not path.strip():
             return
+        self.stop_live()
         self._deep.clear()
         self._deep_depth.clear()
         self._basic_active = False
@@ -477,6 +532,9 @@ class FolderExplorer(QWidget):
                 self._unchecked_path = unchecked  # Nothing will check it (e.g. auto-load is off).
 
     def _retry(self) -> None:
+        if self.live is not None:
+            self.resume_live()
+            return
         # A load retry keeps its per-file timeouts; a hung read is genuinely stuck.
         if (self.load_error or self.auto_load_paused_path == self.selected_path_globally
                 or self.large_state(self.selected_path_globally) or self.auto_load_off(self.selected_path_globally)):
@@ -503,6 +561,8 @@ class FolderExplorer(QWidget):
         indexes = selected.indexes()
         if indexes:
             path = self.model.filePath(indexes[0])
+            if self.live is not None and path != self.live.path:
+                self.stop_live()  # Another folder selected (the tree is locked: e.g. Show in tab).
             if path != self.selected_path_globally:
                 self._release_load()
                 self._cancelled_load_path = self._cache_read_path = None
@@ -546,7 +606,7 @@ class FolderExplorer(QWidget):
                 self._basic_active and path in self._basic_seen | self._basic_roots):
             node = self.model.nodes.get(path)
             dataset = self.displayed_dataset
-            if (node and self.folder_opened_path == path and dataset is not None and dataset.path == path
+            if (node and self.folder_opened_path == path and not self.watching(path) and dataset is not None and dataset.path == path
                     and self._changed_since_load(node, dataset)):
                 # Keep the displayed data while a fresh load replaces it.
                 self.folder_opened_path = None
@@ -723,6 +783,8 @@ class FolderExplorer(QWidget):
             self._allowing = None  # A yes covers only what this call submitted.
 
     def _load_to_ram_cache(self, path: str, dwell: bool, explicit: bool) -> bool:
+        if self.watching(path):
+            return False  # Live keeps its data current.
         # A scan finishing after Cancel must not restart automatic loading.
         if dwell and path == self._cancelled_load_path:
             return False
@@ -1125,6 +1187,9 @@ class FolderExplorer(QWidget):
         self.loadStateChanged.emit()
 
     def _io_event(self, request: IORequest, event: dict[str, Any]) -> None:
+        if not self.closed and request.owner in (self.live_owner, self.live_save_owner):
+            self._live_event(request, event)
+            return
         if not self.closed and request.owner == self.bg_owner:
             self._background_event(request, event)
             return
@@ -1259,6 +1324,344 @@ class FolderExplorer(QWidget):
         self._update_activity()
         self.loadStateChanged.emit()
 
+    # Live (roadmaps/live-monitoring.md): the selected folder's data, checked for new shots a
+    # cooldown after each check. New shots stay in RAM until N of them wait (or Live stops):
+    # then an ordinary load saves the folder in the background.
+
+    def watching(self, path: str | None) -> bool:
+        """Live is on for ``path`` (checking, or stopped by an error until Retry)."""
+        return self.live is not None and self.live.path == path
+
+    def live_unavailable(self, path: str) -> str:
+        """Why Live can't watch ``path`` now ("" if it can)."""
+        name = os.path.basename(path.rstrip(os.sep)) or path
+        dataset = self.displayed_dataset
+        if self.closed:
+            return "This tab is closing"
+        if path in self.model.cache.mismatched:
+            return f"{name}'s cached data doesn't match the folder: Review… it first"
+        if (self.loading and self._load_path == path) or (self.load_waiting and self._dwell_path == path):
+            return f"Wait for {name} to finish loading"
+        if (self.folder_opened_path != path or self.folder_opened_data is None or dataset is None
+                or dataset.path != path or "fingerprint" not in dataset.metadata):
+            return "Select a folder with loaded data to watch it for new shots"
+        return ""
+
+    def live_state(self) -> tuple[bool, str]:
+        """Whether the toolbar's Live can be used now (to turn Live on or off), and its tooltip."""
+        if self.live is not None:
+            name = os.path.basename(self.live.path.rstrip(os.sep)) or self.live.path
+            return True, (f"Live: watching {name} for new shots\nClick to stop. New shots not yet in the "
+                          "disk cache are saved in the background.")
+        reason = self.live_unavailable(self.selected_path_globally)
+        if reason:
+            return False, f"Live\n{reason}."
+        name = os.path.basename(self.selected_path_globally.rstrip(os.sep)) or self.selected_path_globally
+        return True, (f"Live: watch {name} for new shots\nChecks the folder {self.model.cache.live_interval:g} s "
+                      "after each check and adds new TXY files once written. The folder tree is locked "
+                      "while Live is on; switching tabs turns it off.")
+
+    def start_live(self) -> bool:
+        """Turn Live on for the selected folder, whose data is shown. Whether it started."""
+        path = self.selected_path_globally
+        if self.live is not None or self.live_unavailable(path):
+            return False
+        dataset = self.displayed_dataset
+        assert dataset is not None
+        session = self._live_sessions.get(path)
+        if session is None:
+            session = self._live_sessions[path] = LiveSession(path, time.time(), set(dataset.data), dataset)
+        elif session.dataset is not dataset and dataset.metadata.get("loaded_at", 0) >= session.dataset.metadata.get(
+                "loaded_at", 0):
+            session.dataset, session.shots = dataset, set(dataset.data)
+        session.on, session.error = True, ""
+        self.live = session
+        self._set_browsing_enabled(False)
+        if not session.request:
+            self._live_next(0.0)
+        logging.info("Live on: %s", path)
+        self._live_changed()
+        return True
+
+    def stop_live(self, save: bool = True) -> None:
+        """Turn Live off: no more checks. Its new shots not yet in the disk cache are saved in the
+        background (unless not ``save``), after a save that is still running."""
+        session = self.live
+        if session is None:
+            return
+        self.live = None
+        session.on = False
+        self._live_timer.stop()
+        if session.request == "check":
+            session.request = ""  # Its cancellation below isn't an error.
+            self.model.cache.cancel(self.live_owner, "load", session.path)
+        if not self.closed:
+            self._set_browsing_enabled(True)
+        if save:
+            self._live_save(session)
+        self._live_forget(session)
+        logging.info("Live off: %s", session.path)
+        self._live_changed()
+
+    def resume_live(self) -> None:
+        """Retry after an error: check the folder again (listing it) and go on."""
+        session = self.live
+        if session is None or not session.error:
+            return
+        session.error, session.since = "", None
+        if not session.request:
+            self._live_next(0.0)
+        self._live_changed()
+
+    def _live_changed(self) -> None:
+        if self.closed:
+            return
+        self._update_activity()
+        self.liveChanged.emit()
+        self.loadStateChanged.emit()
+
+    def _set_browsing_enabled(self, enabled: bool) -> None:
+        """Live locks the tree, path bar and Deselect: the window is about the plots then."""
+        for widget in (self.tree, self.path_edit, self.deselect_button):
+            widget.setEnabled(enabled)
+
+    def _live_next(self, delay: float | None = None) -> None:
+        """The next check, ``delay`` seconds from now (the setting: from the end of this one)."""
+        session = self.live
+        if session is None or self.closed:
+            return
+        delay = self.model.cache.live_interval if delay is None else delay
+        session.next_at = time.monotonic() + delay
+        self._live_timer.start(round(delay * 1000))
+
+    def _live_tick(self) -> None:
+        """Check the folder, or save it first when N new shots wait (Settings → Cache)."""
+        session = self.live
+        if self.closed or session is None or session.error or session.request:
+            return
+        cache = self.model.cache
+        threshold = session.threshold or cache.live_autosave_shots
+        if (len(session.unsaved) >= threshold and not session.saving and not self._live_save_blocked(session)
+                and session.path not in cache.pending_saves and not cache.disk_cache_saving(session.path)
+                and self._live_save(session)):
+            self._update_activity()
+            return
+        dataset = session.dataset
+        # Shots it couldn't read: read again only if they change.
+        known = [list(entry) for entry in dataset.metadata.get("fingerprint", ()) if int(entry[0]) not in dataset.data]
+        payload = {"live": True, "live_since": session.since, "known": known, "prefer_base": dataset.signature}
+        if not cache.submit(self.live_owner, 0, session.path, "load", payload, priority=True):
+            self._live_halt(session, "Live check couldn't be queued — Retry")
+            return
+        session.request, session.reading = "check", False
+        self._update_activity()
+
+    def _live_save_blocked(self, session: LiveSession) -> str:
+        """Why the folder's new shots can't be saved to the disk cache ("" if they can)."""
+        cache = self.model.cache
+        path = session.path
+        if not store_options():
+            return "the disk cache is off"
+        if cache.folder_prefs(path)["no_cache"]:
+            return "Don't cache is on for this folder"
+        if cache.no_root(path) is not None:
+            return "RAM only: no .helab-root found here or above"
+        if cache.pending_root(path) is not None:
+            return "RAM only until its .helab-root is confirmed"
+        if path in cache.mismatched:
+            return "its cached data doesn't match the folder"
+        return session.blocked
+
+    def _live_save(self, session: LiveSession) -> bool:
+        """Save the folder's new shots in the background (an ordinary load that re-reads them):
+        now, or after its running save. Whether a save was started."""
+        if not session.unsaved or session.request or self._live_save_blocked(session):
+            return False
+        cache = self.model.cache
+        payload = {"cache": store_options(), "signature": "", "no_cache": False, "check_level": cache.check_level,
+                   "limits": cache.large_limits(), "deliberate": False, "allow_large": False,
+                   "prefer_base": session.dataset.signature}
+        if not cache.save(self.live_save_owner, session.path, payload):
+            session.note = "Save queue full"
+            return False
+        session.saving |= session.unsaved
+        session.unsaved = set()
+        session.request, session.reading = "save", False
+        return True
+
+    def _live_forget(self, session: LiveSession) -> None:
+        """A session that is off with no save left to run or finish is done."""
+        if not session.on and not session.request and not session.saving:
+            self._live_sessions.pop(session.path, None)
+
+    def _live_halt(self, session: LiveSession, message: str) -> None:
+        """Stop checking (Live stays on, data kept): Retry checks again, Live off saves."""
+        logging.warning("Live stopped for %s: %s", session.path, message)
+        session.error = message
+        self._live_timer.stop()
+        self._live_changed()
+
+    def _live_event(self, request: IORequest, event: dict[str, Any]) -> None:
+        session = self._live_sessions.get(request.path)
+        kind = event["kind"]
+        if session is None:
+            # A save of a folder this tab no longer watches: its data shows if this tab shows the folder.
+            if (kind == "loaded" and request.path == self.selected_path_globally
+                    and self.folder_opened_path == request.path):
+                self._live_display(request.path, event)
+            return
+        if kind == "file_started":
+            session.reading = True
+        elif kind == "loaded":
+            self._live_loaded(session, event)
+        elif kind == "live_unchanged":
+            self._live_unchanged(session, event)
+        elif kind in ("error", "cancelled", "shots_missing", "too_large"):
+            if not session.request:
+                return  # Cancelled by this tab (Live off).
+            what, session.request = session.request, ""
+            if kind == "shots_missing":
+                count = int(event.get("missing_count", 0))
+                message = f"{plural(count, 'shot')} missing from the folder"
+            elif kind == "too_large":
+                message = large_text(int(event.get("estimate", 0)), bool(event.get("refused")))
+            else:
+                message = str(event.get("message") or "Cancelled — Retry").removesuffix(" — Retry")
+            if what == "save":
+                session.unsaved |= session.saving
+                session.saving = set()
+                session.note = f"Save failed: {message}"
+            if session.on:
+                self._live_halt(session, message)
+            else:
+                self._live_forget(session)
+        else:
+            return
+        self._update_activity()
+
+    def _live_display(self, path: str, event: dict[str, Any]) -> None:
+        """Show a Live result as a load's: the shown dataset is replaced (plots keep theirs)."""
+        self.load_source = event.get("source", "")
+        self.load_counts = dict(event.get("load_counts", {}))
+        self.load_cache_reason = event.get("cache_reason", "")
+        self._load_cache_pending = bool(event.get("disk_cache_pending"))
+        if "modified" in event:
+            self.model.observe_modified(path, event["modified"], event.get("modified_observed_at", time.time()))
+        dataset = event["dataset"]
+        assert isinstance(dataset, Dataset)
+        self._display(path, dataset, event)
+
+    def _live_loaded(self, session: LiveSession, event: dict[str, Any]) -> None:
+        """A check (or save) brought new shots: shown at once, and saved later."""
+        dataset = event["dataset"]
+        assert isinstance(dataset, Dataset)
+        what, session.request = session.request, ""
+        new = set(dataset.data) - session.shots
+        session.dataset, session.shots = dataset, set(dataset.data)
+        session.new += len(new)
+        session.checks += 1
+        session.checked_at, session.reading = time.time(), False
+        session.seconds = event.get("live_seconds")
+        session.since = event.get("live_since")  # (A save's listing doesn't say: the next check lists.)
+        session.unsettled = int(event.get("unsettled_files", 0))
+        session.listed = True
+        if event.get("disk_cache_pending"):
+            # Saved with this result (a save, or another tab's load the check joined).
+            session.saving |= new
+        elif what == "save":
+            if not event.get("cached"):
+                # Nothing could be saved (e.g. RAM only, or the cache unreadable): not tried again.
+                session.blocked = str(event.get("cache_reason") or "the disk cache can't be written")
+                session.unsaved |= session.saving | new
+            session.saving = set()
+        else:
+            session.unsaved |= new
+        if self.selected_path_globally == session.path and (session.on or self.folder_opened_path == session.path):
+            self._live_display(session.path, event)
+        if session.on and not session.error:
+            self._live_next()
+        else:
+            self._live_forget(session)
+
+    def _live_unchanged(self, session: LiveSession, event: dict[str, Any]) -> None:
+        session.request, session.reading = "", False
+        session.checks += 1
+        session.checked_at = time.time()
+        session.seconds = event.get("live_seconds")
+        session.since = event.get("live_since")
+        session.unsettled = int(event.get("unsettled_files", 0))
+        session.listed = bool(event.get("live_listed"))
+        if session.listed and self._unchecked_path == session.path:
+            # Listed: no shot is missing and none is new, so the shown data is the folder's.
+            self._unchecked_path = None
+        if session.on and not session.error:
+            self._live_next()
+
+    def _live_save_ended(self, path: str, outcome: str) -> None:
+        """A save of the folder ended (``FolderCache.saveEnded``)."""
+        session = self._live_sessions.get(path)
+        if (self.closed or session is None or not session.saving or session.request == "save"
+                or self.model.cache.disk_cache_saving(path)):
+            return
+        if outcome == "failed":
+            session.unsaved |= session.saving
+            session.note = self.model.cache.cache_status(path).error or "Cache save failed"
+            # Tried again once N more new shots have come.
+            session.threshold = len(session.unsaved) + self.model.cache.live_autosave_shots
+        else:
+            session.note = "Cache update waiting for your answer" if outcome == "pending" else ""
+            session.threshold = 0
+            if outcome in ("saved", "superseded"):
+                session.saved_at = time.time()
+        session.saving = set()
+        self._live_forget(session)
+        self._update_activity()
+
+    def live_line(self, session: LiveSession) -> tuple[str, str, bool]:
+        """The summary's third line for a folder Live watches or saves: text, tooltip, amber."""
+        now = time.time()
+        if session.on and session.error:
+            parts = [f"Live stopped: {session.error}"]
+        elif session.on:
+            parts = ["Live · " + ("reading new shots…" if session.request == "check" and session.reading else
+                                  "checking…" if session.request == "check" else
+                                  "saving…" if session.request == "save" else
+                                  f"checked {relative_age(now - session.checked_at)}" if session.checked_at
+                                  else "starting…"),
+                     plural(session.new, "new shot")]
+            if session.unsettled:
+                parts.append(f"{session.unsettled:,} still being written")
+            if not session.request:
+                parts.append(f"next check in {max(0, math.ceil(session.next_at - time.monotonic()))} s")
+        else:
+            parts = ["Live updates off"]
+        blocked = self._live_save_blocked(session)
+        if session.saving:
+            parts.append(f"saving {plural(len(session.saving), 'shot')}")
+        elif session.unsaved:
+            parts.append(f"{len(session.unsaved):,} not cached" + (f" ({blocked})" if blocked else " yet"))
+        started = datetime.fromtimestamp(session.started_at).astimezone()
+        cache = self.model.cache
+        lines = [f"Live {'on' if session.on else 'off'}: {session.path}",
+                 f"Watching since {started:%Y-%m-%d %H:%M:%S}",
+                 f"Checks: {session.checks:,}, {cache.live_interval:g} s after each one ends (Settings → General)"]
+        if session.seconds is not None:
+            lines.append(f"The last check took {session.seconds * 1000:,.0f} ms"
+                         + (" (listed the folder)" if session.listed else " (one folder stat: nothing changed)"))
+        lines.append(f"New shots: {session.new:,}" + (f"; {session.unsettled:,} still being written, read once "
+                                                       "written" if session.unsettled else ""))
+        lines.append(f"Not yet in the disk cache: {len(session.unsaved) + len(session.saving):,}; saved every "
+                     f"{cache.live_autosave_shots:,} new shots (Settings → Cache) and when Live stops")
+        if blocked:
+            lines.append(f"Not saved: {blocked}")
+        if session.saved_at is not None:
+            lines.append(f"Last saved: {datetime.fromtimestamp(session.saved_at).astimezone():%H:%M:%S}")
+        if session.note:
+            lines.append(session.note)
+        if session.error:
+            lines.append(f"Stopped: {session.error}. Retry checks again; turning Live off saves the new shots.")
+        return " · ".join(parts), "\n".join(lines), bool(session.on and session.error)
+
     def _shared_dataset_changed(self, path: str) -> None:
         if path == self.selected_path_globally:
             node = self.model.nodes.get(path)
@@ -1267,7 +1670,8 @@ class FolderExplorer(QWidget):
                 # Only when the shown data was dropped (cache cleared, folder changed);
                 # cached data shown before its check is not the folder's current dataset.
                 shown = self.displayed_dataset
-                if self.folder_opened_path == path and (shown is None or not self.model.cache.holds(shown)):
+                if (self.folder_opened_path == path and not self.watching(path)
+                        and (shown is None or not self.model.cache.holds(shown))):
                     self.folder_opened_path = None
                 # Keep the previous arrays/plots until a successful replacement.
             elif (node and dataset.signature == node.signature and self.auto_load_ram
@@ -1384,6 +1788,9 @@ class FolderExplorer(QWidget):
     @property
     def activity_brief(self) -> str:
         """This tab's most important activity in a few words, for the main status bar."""
+        if self.live is not None:
+            name = os.path.basename(self.live.path.rstrip(os.sep)) or self.live.path
+            return f"Live stopped: {name}" if self.live.error else f"Live {name} · {plural(self.live.new, 'new shot')}"
         if self.loading and self._load_path:
             name = os.path.basename(self._load_path.rstrip(os.sep)) or self._load_path
             if self.load_queued:
@@ -1530,18 +1937,20 @@ class FolderExplorer(QWidget):
         large = self.large_state(path) if path == self.selected_path_globally else None
         offer_large = large is not None and not large[1] and not self.load_error
         idle = not (self.loading or self.load_waiting or retrying)
-        self.retry_button.setVisible(bool(self.load_error or scan_error or root_error or paused or offer_large or off)
-                                     and idle)
+        live_error = bool(self.live is not None and self.live.error)
+        self.retry_button.setVisible(bool(self.load_error or scan_error or root_error or paused or offer_large or off
+                                          or live_error) and idle)
         retry_path = self.listing_retry_path
-        self.retry_button.setText("Load anyway…" if offer_large else
+        self.retry_button.setText("Retry" if live_error else "Load anyway…" if offer_large else
                                   "Load" if (paused or off) and not self.load_error else "Retry")
-        self.retry_button.setEnabled(bool(self.load_error) or paused or offer_large or off
+        self.retry_button.setEnabled(bool(self.load_error) or paused or offer_large or off or live_error
                                      or not self.model.refresh_pending(retry_path))
         self.no_auto_load_button.setVisible(large is not None and not off and idle and bool(store_options()))
         mismatched = path in self.model.cache.mismatched
         self.review_button.setVisible(mismatched and idle)
         self.root_review_button.setVisible(self.model.cache.pending_root(path) is not None and not mismatched)
-        self.retry_button.setToolTip(MISMATCH_RETRY_TOOLTIP if mismatched and self.load_error else
+        self.retry_button.setToolTip(LIVE_RETRY_TOOLTIP if live_error else
+                                     MISMATCH_RETRY_TOOLTIP if mismatched and self.load_error else
                                      "Load this folder again" if self.load_error else
                                      LARGE_TOOLTIP if offer_large else
                                      AUTO_LOAD_PAUSED_TOOLTIP if paused else
@@ -1668,6 +2077,16 @@ class FolderExplorer(QWidget):
             freshness_tooltip(
             "Last successful status scan", node.scanned_at if node else None, node.modified if node else None,
             status_freshness, "Use Check folder status to recheck counts and status.")))))
+        live = self._live_sessions.get(path)
+        stopped = False
+        if live is not None:
+            # Live replaces the line: what it checked, found and saved.
+            text, tooltip, stopped = self.live_line(live)
+            self.folder_freshness_label.setText(text)
+            self.folder_freshness_label.setToolTip(tooltip)
+        style = f"color: {AMBER};" if stopped else ""
+        if self.folder_freshness_label.styleSheet() != style:
+            self.folder_freshness_label.setStyleSheet(style)
 
     def _fit_selected_label(self) -> None:
         """Share line 1: the selected path gets its full width or at least 2/5 of the free space."""
@@ -2149,6 +2568,7 @@ class FolderExplorer(QWidget):
         """Return to the displayed path without resetting the tree or its expansion."""
         if self.closed:
             return
+        self.stop_live()
         self._release_load()
         self._cancelled_load_path = self._cache_read_path = None
         self.get_selection_model().clear()
@@ -2216,6 +2636,9 @@ class FolderExplorer(QWidget):
     def close_cleanup(self) -> None:
         if self.closed:
             return
+        # Closing a tab stops Live; its new shots are saved in the background all the same.
+        self.stop_live()
+        self._live_timer.stop()
         if self.is_foreground:
             self.model.cache.set_foreground(set())
         self._cancel_background()
@@ -2235,6 +2658,7 @@ class FolderExplorer(QWidget):
         self.model.cache.volumesVerified.disconnect(self._volumes_verified)
         self.model.cache.rootDecided.disconnect(self._root_decided)
         self.model.cache.rootDuplicatesChanged.disconnect(self._update_activity)
+        self.model.cache.saveEnded.disconnect(self._live_save_ended)
         self.model.cache.release(self.model.owner)
         self.folder_opened_data = None
         self.displayed_dataset = None

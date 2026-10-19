@@ -180,6 +180,34 @@ def read_load_mode(settings: QSettings) -> str:
     return mode if mode in LOAD_MODE_LABELS else DEFAULT_LOAD_MODE
 
 
+# Live (roadmaps/live-monitoring.md): seconds from the end of one check of the watched folder to
+# the start of the next (Settings → General), and how many new shots wait in RAM before the
+# folder is saved to the disk cache (Settings → Cache).
+LIVE_INTERVAL_SETTING = "live_check_interval_seconds"
+DEFAULT_LIVE_INTERVAL = 3.0
+MIN_LIVE_INTERVAL, MAX_LIVE_INTERVAL = 0.5, 600.0
+LIVE_AUTOSAVE_SETTING = "live_autosave_shots"
+DEFAULT_LIVE_AUTOSAVE = 10
+MAX_LIVE_AUTOSAVE = 100_000
+
+
+def read_live_interval(settings: QSettings) -> float:
+    import math
+    try:
+        value = float(settings.value(LIVE_INTERVAL_SETTING, DEFAULT_LIVE_INTERVAL))
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_LIVE_INTERVAL
+    return max(MIN_LIVE_INTERVAL, min(MAX_LIVE_INTERVAL, value)) if math.isfinite(value) else DEFAULT_LIVE_INTERVAL
+
+
+def read_live_autosave(settings: QSettings) -> int:
+    try:
+        value = int(settings.value(LIVE_AUTOSAVE_SETTING, DEFAULT_LIVE_AUTOSAVE))
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_LIVE_AUTOSAVE
+    return max(1, min(MAX_LIVE_AUTOSAVE, value))
+
+
 
 OS_WORKING_DIRECTORY: str = os.getcwd()
 QDir_WORKING_DIRECTORY = QDir.current()

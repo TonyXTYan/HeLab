@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 
 from PyQt6.QtGui import QCloseEvent, QDesktopServices
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QLineEdit, QLabel, QTabWidget, \
-    QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem
+    QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem, QDoubleSpinBox
 from PyQt6.QtCore import QSettings, QUrl
 
 from helab.utils.folder_cache import FolderCache, store_options
@@ -81,6 +81,15 @@ class SettingsDialog(QDialog):
             "file. Full always does that (slower on network folders). Right-click › Retry / Refresh always "
             "checks every file.")
         folder_io_form.addRow("Check of cached data:", self.check_level_combo)
+        self.live_interval_spin = QDoubleSpinBox()
+        self.live_interval_spin.setRange(MIN_LIVE_INTERVAL, MAX_LIVE_INTERVAL)
+        self.live_interval_spin.setDecimals(1)
+        self.live_interval_spin.setSingleStep(0.5)
+        self.live_interval_spin.setSuffix(" s")
+        self.live_interval_spin.setToolTip(
+            "While Live watches a folder, its next check starts this long after the previous one ended, so "
+            "checks never overlap or queue up on a slow drive. A check of an unchanged folder is one folder stat.")
+        folder_io_form.addRow("Live: check again after", self.live_interval_spin)
         self.general_layout.addLayout(folder_io_form)
         self.auto_scan_visible_checkbox = QCheckBox("Automatically check folder status in view")
         self.auto_scan_visible_checkbox.setToolTip(
@@ -267,6 +276,7 @@ class SettingsDialog(QDialog):
         self.load_mode_combo.setCurrentIndex(self.load_mode_combo.findData(read_load_mode(settings)))
         self.simultaneous_io_spin.setValue(read_io_concurrency(settings))
         self.check_level_combo.setCurrentIndex(self.check_level_combo.findData(read_check_level(settings)))
+        self.live_interval_spin.setValue(read_live_interval(settings))
         self.auto_scan_visible_checkbox.setChecked(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
         logging.debug("Settings loaded")
 
@@ -298,6 +308,7 @@ class SettingsDialog(QDialog):
         settings.setValue(LOAD_MODE_SETTING, self.load_mode_combo.currentData())
         settings.setValue(SIMULTANEOUS_IO_SETTING, self.simultaneous_io_spin.value())
         settings.setValue(CHECK_LEVEL_SETTING, self.check_level_combo.currentData())
+        settings.setValue(LIVE_INTERVAL_SETTING, self.live_interval_spin.value())
         settings.remove("simultaneous_folder_scans")
         settings.remove("simultaneous_folder_loads")
         settings.setValue(AUTO_SCAN_VISIBLE_SETTING, self.auto_scan_visible_checkbox.isChecked())
@@ -329,4 +340,5 @@ class SettingsDialog(QDialog):
         self.load_settings()
         self.cache_tab.disk_budget.setValue(read_disk_budget(settings) / (1 << 30))
         self.cache_tab.ram_budget.setValue(read_ram_budget_steps(settings, self.cache_tab.ram_budget.total))
+        self.cache_tab.live_autosave.setValue(read_live_autosave(settings))
         logging.debug("Settings reset to default")
