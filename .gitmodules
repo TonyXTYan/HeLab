@@ -6,3 +6,7 @@
 	path = legacy/Momentum_Bells_test
 	url = https://github.com/HeBECANU/Momentum_Bells_test
 	branch = OneDrive-Yogesh
+[submodule "legacy/DLD_front_panel"]
+	path = legacy/DLD_front_panel
+	url = https://github.com/HeBECANU/DLD_front_panel
+	branch = main
