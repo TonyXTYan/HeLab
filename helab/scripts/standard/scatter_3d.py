@@ -36,6 +36,9 @@ CAP = ParameterSpec("display_cap", "Display cap", "int", DISPLAY_CAP, (1_000, 2_
                         "range); the crop and the counts use all of them.")
 
 
+UI_REVISION = "helab.scatter_3d"
+
+
 @dataclass(frozen=True)
 class ScatterData:
     crop: CropBox
@@ -131,6 +134,15 @@ class Scatter3D(DatasetAnalysis):
         pane.note.setToolTip(f"{sample_text(data)}\n{crop_text(data.crop, data.warnings)}")
         return pane
 
+    def update(self, widget: QWidget, result: AnalysisResult) -> bool:
+        """A rerun (e.g. Live's next shots) updates the page in place: the camera stays."""
+        data: ScatterData = result.data
+        if not isinstance(widget, PlotlyPane) or not data.crop.total:
+            return False
+        widget.update_figure(figure(result, data), note_text(data))
+        widget.note.setToolTip(f"{sample_text(data)}\n{crop_text(data.crop, data.warnings)}")
+        return True
+
 
 def figure(result: AnalysisResult, data: ScatterData) -> go.Figure:
     points, crop = data.points, data.crop
@@ -149,5 +161,7 @@ def figure(result: AnalysisResult, data: ScatterData) -> go.Figure:
         title=dict(text=f"{result.input.short()} · {result.analysis.short()} · {shots_text(data.shots, data.total_shots)}"
                         f"<br><sup>{sample_text(data)}<br>{crop_text(crop, data.warnings)}</sup>", x=0.01),
         scene=dict(xaxis=axis(1), yaxis=axis(2), zaxis=axis(0)),
-        margin=dict(l=0, r=0, b=0, t=90))
+        margin=dict(l=0, r=0, b=0, t=90),
+        # Constant: a newer figure on the same page keeps the user's rotation, zoom and pan.
+        uirevision=UI_REVISION)
     return go.Figure(data=[scatter], layout=layout)

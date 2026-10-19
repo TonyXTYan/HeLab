@@ -22,6 +22,7 @@ from helab.analysis.dataset_view import DatasetView, build_view, revise, view_of
 from helab.analysis.follow import (DELAY, EVERY, FOLLOW, Follow, LiveFeed, LivePolicy, live_specs, newer,
                                    policy_of)
 from helab.analysis.parameter_tree import parameter_of
+from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec, effective
 from helab.analysis.results import AnalysisContext, AnalysisResult, Coverage
 from helab.analysis.runner import AnalysisRunner
@@ -29,6 +30,7 @@ from helab.io_helper import list_folder, live_check, load
 from helab.models.ScriptTreeSelector import AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import basic_plots, scatter_3d, transfer_fractions
+from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest, IOService
 from helab.views.CentralHint import CentralHint
@@ -376,6 +378,33 @@ def test_bundled_plots_say_why_they_are_empty(qtbot: QtBot, script: DatasetAnaly
         expected = "No shot has more than 50 counts in the XY box (Counting settings)"
     assert widget.text() == expected
     assert script.detected_parameters("Plot", result) == {}
+
+
+def test_a_following_scatter_updates_its_page_in_place(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """Live's next revision updates the scatter's Plotly page in place (same pane and page, the
+    figure swapped by the page's poll), so the camera stays; its figure keeps uirevision."""
+    window.view = window.live_feed.publish(revision([1, 2]))
+    instance = plot(window, qtbot, scatter_3d.Scatter3D())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    set_live(instance, DELAY, 0.0)
+    dock = cast(QDockWidget, instance.dock_widget)
+    pane = dock.findChild(PlotlyPane)
+    assert pane is not None
+    first = dash_server.plots[pane.plot_id]
+    revision_before = dash_server.revisions[pane.plot_id]
+    assert first.to_dict()["layout"]["uirevision"] == scatter_3d.UI_REVISION
+    window.live_feed.publish(revision([1, 2, 3]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
+    assert dock.findChild(PlotlyPane) is pane  # Not drawn anew: no page reload.
+    updated = cast(Any, dash_server.plots[pane.plot_id])  # Plotly's attributes are untyped.
+    figure = updated.to_dict()
+    assert dash_server.revisions[pane.plot_id] == revision_before + 1
+    assert figure["layout"]["uirevision"] == scatter_3d.UI_REVISION and len(updated.data[0].x) == 6
+    assert "rev 2" in figure["layout"]["title"]["text"] and pane.note.text().endswith("3 shots")
+    plot_id = pane.plot_id
+    window.close_plots()
+    qtbot.waitUntil(lambda: plot_id not in dash_server.plots, timeout=10_000)  # Freed with the pane.
 
 
 def test_scatter_declares_a_live_policy_others_rerun_on_every_shot() -> None:

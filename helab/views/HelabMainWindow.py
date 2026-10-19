@@ -962,10 +962,11 @@ class HelabMainWindow(QMainWindow):
         dock.setProperty("plotSourceSettings", parameters_text)
         dock.setProperty("plotSourceRecord", result.describe(record_text or parameters_text))
         old = dock.widget()
-        HelabMainWindow._wrap_plot(dock, content)
-        if old is not None:
-            old.setParent(None)  # out of the dock now, so findChild sees only the new label
-            old.deleteLater()
+        if old is None or content.parentWidget() is not old:  # Else updated in place: kept as it is.
+            HelabMainWindow._wrap_plot(dock, content)
+            if old is not None:
+                old.setParent(None)  # out of the dock now, so findChild sees only the new label
+                old.deleteLater()
         self.update_plot_source(dock)
 
     def update_plot_source(self, dock: QDockWidget) -> None:

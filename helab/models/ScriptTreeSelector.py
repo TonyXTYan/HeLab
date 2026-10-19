@@ -196,6 +196,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         # The data of the run in flight, and of the result shown (what Follow Live off pins).
         self._job_view: Optional[DatasetView] = None
         self._shown_view: Optional[DatasetView] = None
+        self._content: Optional[QWidget] = None  # The plot drawn (``render``), updated in place if it can
         self.error = ""  # The last run's failure, while the plot before it stays
         self.policy = script.live_policy(action)
         self.follow = Follow(view, self.policy)
@@ -300,7 +301,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if result.state == "completed":
             self._show_detected(result)
             try:
-                content = self.script.render(result)
+                content = self._updated(result)
+                if content is None:
+                    content = self.script.render(result)
             except Exception as exc:
                 logging.exception("Could not draw %s", self.name)
                 error = f"could not draw it: {exc}"
@@ -326,7 +329,15 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._show_content(content, result, specs, warnings)
         self._follow_next()
 
+    def _updated(self, result: AnalysisResult) -> Optional[QWidget]:
+        """The plot drawn, showing ``result`` in place (the script's ``update``), or None."""
+        drawn = self._content
+        if self.shown is None or drawn is None or sip.isdeleted(drawn):
+            return None
+        return drawn if self.script.update(drawn, result) else None
+
     def _show_content(self, content: QWidget, result: AnalysisResult, specs: List[Any], warnings: str) -> None:
+        self._content = content
         if self.dock_widget is None:
             content.deleteLater()
             return
@@ -338,7 +349,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 settings = " · ".join(filter(None, (settings, f"⚠ {warnings}")))
                 record = f"{record}\nWarning: {warnings}"
             show(self.dock_widget, content, result, settings, record, chosen)
-        else:
+        elif self.dock_widget.widget() is not content:
             old = self.dock_widget.widget()
             self.dock_widget.setWidget(content)
             if old is not None:

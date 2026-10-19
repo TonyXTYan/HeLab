@@ -129,6 +129,12 @@ class DatasetAnalysis(HelabAnalysisScript):
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         """The plot for a completed result (GUI thread)."""
 
+    def update(self, widget: QWidget, result: AnalysisResult) -> bool:
+        """Show a newer result in the plot already drawn (``widget``, from ``render``), in place,
+        keeping what the user did to the view (e.g. a 3D scatter's camera); GUI thread. Whether
+        it did: if not, ``render`` draws the plot anew. Default: not."""
+        return False
+
     def execute_action(self, action_name: str, **kwargs: Any) -> None:
         context = kwargs.get("context")
         if not isinstance(context, AnalysisContext):
