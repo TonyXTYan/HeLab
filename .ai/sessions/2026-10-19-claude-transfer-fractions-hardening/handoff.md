@@ -1,19 +1,22 @@
 # Handoff: Transfer fractions hardening
 
-Branch `agent/transfer-fractions-hardening`, from `9f6ee5a`, 7 commits. Brief:
-[brief.md](brief.md); probe results, MATLAB reading and choices: [notes.md](notes.md).
+Branch `agent/transfer-fractions-hardening`, from `9f6ee5a`. Brief: [brief.md](brief.md);
+probe results, MATLAB reading and choices: [notes.md](notes.md); review of `eea6576` and its
+fixes: [review.md](review.md) and [After review](#after-review).
 
 ## Summary
 
-Transfer fractions no longer crashes on NaN/inf in T or on malformed shots. It no
-longer picks a wrong order 0 without saying so: when another order holds at least half
-as many events, the plot says "⚠ order 0 unsure" and names that order, adding
-"outside Search T" when that applies. Detection now also works with wide peaks and
+Transfer fractions no longer crashes on NaN/inf in T or on malformed shots. Its order 0
+checks catch comparable peaks and jumps between runs. When another order holds at least half
+as many events, the plot says "⚠ order 0 unsure" and names that order, adding "outside
+Search T" when that applies. When order 0 lands a whole number of orders from the last
+detection (Live, a scan), it says "⚠ order 0 moved". A first run with a transfer over about
+2/3 can still take +1 for order 0 without a note (tested, a known limit). Detection now also works with wide peaks and
 with stray events far out. Every other awkward case gets a note on an amber line under
 the title. Manual windows wider than half the spacing are clipped, and the plot says so.
 A run in flight no longer overwrites a centre typed meanwhile. From shot says why it
 chose nothing. A Python reference of `fraction_calc.m` matches HeLab's counts per shot
-exactly; the intended differences are tested. Analysis version: 1 → 3.
+exactly; the intended differences are tested. Analysis version: 1 → 4.
 
 ## Commits
 
@@ -42,7 +45,11 @@ exactly; the intended differences are tested. Analysis version: 1 → 3.
   used to be ignored). Labels: "Search T from (0 = first)" / "Search T to (0 = last)".
 - **Detected values and L3:** auto reruns already refilled the hidden centre and spacing
   on every completed run, and switching to manual already kept them. The only gap was a
-  run still in flight overwriting a typed value (fixed in `6377bf0`).
+  run still in flight overwriting a typed value (fixed in `6377bf0`). The rule applies to
+  each setting separately. Switching to manual mid-run and typing only the centre keeps
+  that centre, but the run in flight still fills in its spacing beside it, giving a mixed
+  pair. This is consistent with the agreed rule and harmless: the user sees both values
+  before rerunning.
 - **Intended differences from `fraction_calc.m`**, all tested:
   - Fractions are over the sum of the orders, not a wide window. They are equal when the
     windows touch.
@@ -58,20 +65,24 @@ exactly; the intended differences are tested. Analysis version: 1 → 3.
 
 1. Bragg run, auto: order 0 and the spacing match the shaded windows. There is no ⚠
    unless +1 really holds ≥ half of order 0's events.
-2. A strong-transfer run (+1 ≥ 0): the plot says "order 0 unsure". Set Search T around
+2. Amplitude scan with Live (or Rerun as the transfer grows): when +1 becomes the tallest,
+   "⚠ order 0 moved by +1 order" shows on every rerun and manual starts from the earlier
+   order 0. A folder whose first run is already over ~2/3 transfer shows +1 as order 0 with
+   no note: the known limit.
+3. A run with +1 about as tall as 0 (transfer ~40–65 %): the plot says "order 0 unsure". Set Search T around
    the real order 0: the note goes and the orders are right.
-3. Search T with only To set (From 0), then only From: each searches from the first or
+4. Search T with only To set (From 0), then only From: each searches from the first or
    to the last event. From > To: the warning shows in the dock line and the settings tab.
-4. Manual, Window ± 10 ms with a 12.5 ms spacing: the windows touch (6.25 ms), and the
+5. Manual, Window ± 10 ms with a 12.5 ms spacing: the windows touch (6.25 ms), and the
    note and the warning say so. Centre at 5 s: the message says where the events are.
-5. Magnetic run (mj states): same checks; "unsure" will be common when the populations
+6. Magnetic run (mj states): same checks; "unsure" will be common when the populations
    are similar. Manual orders fix it.
-6. Live, auto: centre and spacing follow each rerun (switch to manual to see them). With
+7. Live, auto: centre and spacing follow each rerun (switch to manual to see them). With
    a rerun running, switch to manual and type a centre: it stays after the rerun ends.
-7. Shots: From shot past the last shot → "none of N shots (From shot … is past the last,
+8. Shots: From shot past the last shot → "none of N shots (From shot … is past the last,
    …)". As Live adds shots it starts plotting. A range with To below From → "no shots:
    To shot … is below From shot …".
-8. Compare with `monitor_momentum.m` on the same shots, keeping the XY rotation
+9. Compare with `monitor_momentum.m` on the same shots, keeping the XY rotation
    difference in mind.
 
 ## Checks
@@ -105,9 +116,11 @@ shot N, then all / last N / up to a shot) and View range …"):
 > `monitor_momentum.m`/`fraction_calc.m` in `legacy/Momentum_Bells_test`) finds order 0
 > (the tallest peak in Search T, each end 0 = open) and the spacing in the T histogram,
 > and plots each order's share per shot (over the orders' sum; half-open windows, a
-> Window ± over half the spacing clipped to it). Never a silent wrong order 0: another
-> order with ≥ half its events gives "⚠ order 0 unsure", and the plot's notes say what
-> else it left out or couldn't find. `tests/test_transfer_fractions_matlab.py` checks the
+> Window ± over half the spacing clipped to it). Its order 0 checks catch comparable peaks
+> (another order with ≥ half its events: "⚠ order 0 unsure") and jumps between runs (a
+> whole number of orders from the last detection, which the hidden centre then keeps:
+> "⚠ order 0 moved"). A first run with a transfer over about 2/3 can still take +1 for
+> order 0. The plot's notes say what else it left out or couldn't find. `tests/test_transfer_fractions_matlab.py` checks the
 > counts against a Python `fraction_calc` and lists the intended differences, among them
 > no X/Y rotation. A script's `detected_parameters` fills its settings from a run (here
 > the manual centre and spacing), except a setting changed since the run started.
@@ -116,11 +129,35 @@ shot N, then all / last N / up to a shot) and View range …"):
 hardening pending: check detection on real Bragg/magnetic data, …" with:
 
 > Quick version on Ground; hardened 2026-10-19 (detection edge cases with "order 0
-> unsure", clipped manual windows, typed values kept across reruns, From-shot wording,
+> unsure" and "moved", clipped manual windows, typed values kept across reruns, From-shot wording,
 > counts checked against a Python `fraction_calc`). Left: detection on real
-> Bragg/magnetic data (MANUAL_TODO), the DLD XY rotation (`dld_xy_rot`), draggable
+> Bragg/magnetic data (MANUAL_TODO), an "Order 0 near" setting for a first run at high
+> transfer, the DLD XY rotation (`dld_xy_rot`), draggable
 > windows on the T histogram, the averaged-vs-detuning view (Tony, 2026-10-19).
 
 **.ai/MANUAL_TODO.md**, the "Transfer fractions on real data" item: add "steps in
 `.ai/sessions/2026-10-19-claude-transfer-fractions-hardening/handoff.md` (unsure note,
 Search T ends, clipped windows, typed centre kept during a Live rerun)".
+
+## After review
+
+[review.md](review.md) (fresh Claude reviewer, head `eea6576`): no crash, all checks clean,
+one gap (F1). Fixes, each in its own commit:
+
+| Commit | Finding | What |
+|---|---|---|
+| `966ecfa` | F1 | "⚠ order 0 moved by ±n orders from the last detection": the found order 0 is a whole number n of spacings (1 ≤ \|n\| ≤ orders each side + 1, ±0.3) from the hidden centre. The default centre is no detection. While it stands moved, runs fill in only the spacing, so the warning repeats on every rerun and manual starts from the last order 0. A first run over ~2/3 transfer is pinned as a known limit. Claims reworded in the module docstring, the Orders tip, this handoff and the proposed AGENTS.md line. Version 4. |
+| `20e76a9` | F3 | The MATLAB test's header also lists the open vs closed XY box, MATLAB's T 0–4 s import limit and the `dld_aquire` last-event check. |
+| this commit | F3 | The handoff line on the per-setting `_show_detected` rule (above, Decisions), with the review. |
+
+- **F1 choice beyond the brief:** keeping the hidden centre while order 0 stands moved.
+  Without it, the next Live rerun compares with the jumped centre and the warning vanishes
+  after one run. The cost: if the *earlier* detection was the wrong one (a first run over
+  2/3 transfer, then the transfer falls), the warning stays until order 0 is set by hand
+  (manual, type it, Rerun; back to auto then compares with it).
+- **Option (a), "Order 0 near":** not built; Tony decides.
+- **F2, XY rotation:** unchanged, Tony's decision (numbers in review.md).
+- Checks after the fixes: full suite `pytest -n 6 --reruns 5 --reruns-delay 1
+  --basetemp=.ai/temp/pytest`: **1201 passed, 2 skipped, 2 xfailed, no RERUN**; `mypy --strict`
+  on helab and tests, also `--platform win32`: clean; `pyright helab tests`, also
+  `--pythonplatform Windows`: 0 errors; `git diff --check`: clean.
