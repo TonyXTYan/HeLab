@@ -9,15 +9,16 @@ Branch `agent/live-l3` (floor "Live L3"), base `d0b8fbe`. Commits:
 | `d1eb244` | Settings name the revision on screen; the delay in plain seconds (found in the renders) |
 | `959bcf5` | This session folder |
 | `2089da4`, `9d9c54e`, `f80091f` | Review fixes (below), with Codex's [review-codex.md](review-codex.md) |
+| `7c63bdf`, `fbe13f0`, `7ec0032`, `b5dc449`, `768855f` | Round 2: Tony's answers (below) |
 
 How it works, the test-isolation trap and renders: [notes.md](notes.md). Pushed to
-`TonyXTYan/HeLab` after the review fixes.
+`TonyXTYan/HeLab` after the review fixes and after round 2.
 
 ## What changed
 
 | File | Change |
 |---|---|
-| `helab/analysis/follow.py` (new) | `LivePolicy` (every N new shots, delay after a run), `Follow` (one plot's hold-and-coalesce state), `LiveFeed` (newest revision per watched folder: `revised`, `ended`), `live_specs` (the plot's Live settings), `policy_of`, `newer`, `new_shots` |
+| `helab/analysis/follow.py` (new) | `LivePolicy` (every N new shots, delay after a run), `Follow` (one plot's hold-and-coalesce state), `LiveFeed` (newest revision per watched folder: `revised`, `ended`), `live_specs` (the plot's Live settings), `policy_of`, `newer`, `changes`, `shots_text` |
 | `helab/analysis/dataset_view.py` | `revise(view, dataset)`: Live's next dataset as the next revision (registered as `view_of(dataset)`); `DatasetView.signature` / `dataset_signature` (each revision's own); `with_shots(…, provenance=, signature=)` |
 | `helab/analysis/results.py` | `Coverage` (shots used + fingerprints; `diff`, `to_json`), `CoverageDiff`; `AnalysisContext.coverage`; `AnalysisResult.coverage`, `input_signature`, `reuse_key()`; the record names the coverage |
 | `helab/analysis/runner.py` | `submit` records coverage from `script.covered_shots` (all shots if that fails) |
@@ -27,7 +28,7 @@ How it works, the test-isolation trap and renders: [notes.md](notes.md). Pushed 
 | `helab/models/ScriptTreeSelector.py` | `AnalysisInstance` follows Live (feed → `Follow` → reruns), the Live settings group, keeps the last plot on a failed run (`shown` vs `result`, amber error), the follow state on the source line, the input line and chooser title; `PlotSettingsPanel.set_title` |
 | `helab/views/HelabMainWindow.py` | `live_feed`, `follow_live(explorer)` (wired to each tab's `liveChanged` and `dataLoaded`), `update_plot_source(dock)`; source line = rev · follow state · selection · analysis; the amber `plot_error` line under it; a following plot counts as the folder's current data |
 | `helab/io_helper.py`, `helab/utils/folder_cache.py`, `helab/views/FolderExplorer.py` | Item 6 only (commit `672a96b`) |
-| Tests | New `tests/test_live_plots.py` (33); item 6 in `test_live.py`, `test_live_check.py`, `test_live_io.py`; `test_analysis_gui.py`'s fixture closes its plots |
+| Tests | New `tests/test_live_plots.py` (50 after round 2); item 6 in `test_live.py`, `test_live_check.py`, `test_live_io.py`; `test_analysis_gui.py`'s fixture closes its plots |
 
 ## Review fixes
 
@@ -48,6 +49,24 @@ Checks after the fixes: full suite **1122 passed, 2 skipped, 2 xfailed, no RERUN
 `mypy helab/ --strict`, `mypy tests --strict`, `mypy helab/ tests --strict --platform win32`:
 clean; `pyright helab tests` and `--pythonplatform Windows`: 0 errors; `git diff --check d0b8fbe
 HEAD`: clean.
+
+## Round 2: Tony's answers to the open questions
+
+Maestro passed on Tony's answers (2026-10-19). One commit each:
+
+| Commit | Item | What was built |
+|---|---|---|
+| `7c63bdf` | **1. Live off catches up** | When Live stops for a folder (Live off, another tab, or an error stopping its checks), every plot following it that holds shots back (by "every N" or the delay) runs one final rerun on the last revision, at once, then stays there. `Follow.live_ended()` / `final` (no N, no delay; after a run in flight, which is never cancelled); `live_on()` brings the policy back when revisions come again. Pinned plots don't catch up. `follow_live` ends the feed while an error stops Live's checks and publishes again on Retry. Tests: held by N and by a 60 s delay, Live off during a run, a pinned plot, Follow alone, and a real tab whose checks an error stops. This replaces judgement call 2's "not plotted: Rerun includes them" and Maestro's note on the delay timer |
+| `fbe13f0` | (found on the way) | `AnalysisInstance._finished` is a `pyqtSlot`: closing a plot disconnects it from the runner at once. A plain method went through a PyQt proxy deleted later, so `test_closing_the_main_window_ends_its_plots` miscounted the runner's receivers about once in seven runs of three files under `-n 4` (0 in 14 after) |
+| `7ec0032` | **3. Live on any folder** | The "no subfolders" rule is gone: any folder this session listed without TXY files (no error, none of its data shown, held or cached) can be watched from no data. Live reads only the folder's own files: `live_check` scans the folder's entries only (a directory just sets `has_dirs`); tested in the tab (a shot written into a subfolder is never read) and in the helper. The real-window test that caught the rule now opens a temp folder with a shot not loaded (auto-load off) |
+| `b5dc449` | **2a, 2b. Scatter camera** | The 5 s wait stays. The camera no longer resets: the Dash server keeps a revision per plot (`update_plot`), and each `/plot/<id>` page polls it every second (`dcc.Interval`) and swaps a newer figure in through a Dash callback without reloading the page; figures keep a constant `layout.uirevision` (`scatter_3d.UI_REVISION`), so rotation, zoom and pan stay. `DatasetAnalysis.update(widget, result)` (default no) lets a script update the plot drawn in place; the scatter passes its `PlotlyPane` the new figure. **Open in browser** tabs update in place too (same page). This touches `helab/utils/dash_server.py`, outside the brief's paths (Maestro told). Tests: the page's poll posted as a browser does (stale revision gets the figure with its uirevision, current gets 204), and a following scatter keeping its pane and page across a Live revision |
+| `768855f` | **2c. Newest shot** | "Highlight the newest shot" (off) and "Newest shot colour" (red; orange, magenta, green, black) in the **3D scatter** (Points) and, as it was cheap, the **T/X/Y histograms** (Histogram); shared in `selection.newest_specs`. Scatter: the newest shot's events are a second trace in the colour, with a legend, and the display cap keeps all of them before sampling the rest. Histograms: the newest shot's counts in the same bins, drawn over each histogram as a coloured line **scaled to that histogram's total** (unscaled, one shot of 30 lies flat on the axis; scaled, a drift or a changed shape shows); the label says so. Versions: `helab.scatter_3d` v3, `helab.txy_histograms` v3. Renders: [histograms-newest-shot.png](histograms-newest-shot.png), [scatter-newest-shot.png](scatter-newest-shot.png) (the figure in headless Chrome; the dock shows the same page) |
+
+Item 4 (a RAM budget for open plots) is not here: it is a floor of its own after the SMB audit.
+
+Checks after round 2: full suite **1135 passed, 2 skipped, 2 xfailed, no RERUN** (`-n 4`);
+`mypy helab/ tests --strict`, also `--platform win32`: clean; `pyright helab tests`, also
+`--pythonplatform Windows`: 0 errors; `git diff --check d0b8fbe HEAD`: clean.
 
 ## The decisions as built
 
@@ -77,20 +96,18 @@ HEAD`: clean.
 
 ## Judgement calls (for review)
 
-1. **Empty start = a run folder**: this session's listing found no TXY files **and no
-   subfolders**, no error, and none of its data is shown, held or cached. A folder with shots
-   not yet loaded is loaded first (Live checks apply no large-folder limits); a folder of runs or
-   a drive's top is never watched from no data. Its line says "waiting for the first shot".
-2. **Live off doesn't drop what came during Live**: revisions already offered still run as the
-   policy allows (a run in flight at Live off isn't left one revision short). Those held back by
-   N say `Live off · K new shots not plotted: Rerun includes them`; **Rerun** runs on the newest
-   data the plot received (a pinned plot: its own revision).
+1. **Empty start** (round 2: any folder): this session's listing found no TXY files, no error,
+   and none of its data is shown, held or cached; subfolders or not (Live reads only the
+   folder's own files). A folder with shots not yet loaded is loaded first (Live checks apply no
+   large-folder limits). Its line says "waiting for the first shot".
+2. **Live off catches up** (round 2, Tony's answer): what waits runs once at once, then the plot
+   stays; **Rerun** runs on the newest data the plot received (a pinned plot: its own revision).
 3. **Rerun with these settings** still cancels a run in flight (the settings changed); only
    Live's new data never cancels.
 4. A failed **render** counts as a failed run (the last plot stays). A first run that fails
    shows the message in the dock, as before.
-5. The **3D scatter** declares a 5 s delay: each rerun reloads its Plotly page (and resets the
-   camera) and a large folder's crop takes seconds. The other plots rerun on every shot.
+5. The **3D scatter** declares a 5 s delay (kept, round 2): a large folder's crop takes seconds.
+   Its page is now updated in place, keeping the camera. The other plots rerun on every shot.
 6. A plot made from data loaded **before** Live started on its folder follows too, and catches up
    if the shown data is newer.
 7. The settings' input line and the plot chooser name the revision **on screen** (the last
@@ -101,14 +118,12 @@ HEAD`: clean.
 
 ## Open questions for Tony
 
-1. Live off with shots held back by "every N": run one last catch-up rerun automatically
-   (now: the line says so and Rerun includes them)?
-2. The 3D scatter's 5 s default, and its camera resetting on every rerun (keeping the camera
-   needs client-side state in the Dash page: later work)?
-3. Only folders without subfolders can be watched before their first shot: right for the lab's
-   run folders?
-4. Unchanged from L1: Live's RAM keeps growing during long runs (open question 2 there); open
-   plots now also pin the views they show, newest revision included.
+Questions 1–3 of the first round are answered and built (round 2 above). Still open:
+
+1. Unchanged from L1: Live's RAM keeps growing during long runs (open question 2 there); open
+   plots now also pin the views they show, newest revision included (the plot RAM budget floor).
+2. The histograms' newest-shot line is scaled to each histogram's total: or should it be drawn
+   to scale (often flat), or on its own axis?
 
 ## Notes for the SMB I/O audit merge
 
@@ -119,7 +134,8 @@ and `::test_a_check_without_held_shots_given_is_refused`,
 `test_live_io.py::test_live_on_an_empty_folder_through_the_helper_processes`, and
 `test_live.py::test_live_starts_on_a_folder_with_no_shots_yet`,
 `::test_a_folder_with_shots_not_yet_loaded_cant_be_watched`,
-`::test_a_folder_of_runs_isnt_watched_as_an_empty_run`; plus
+`::test_a_folder_with_subfolders_is_watched_alone`, and
+`test_live_check.py::test_live_reads_only_the_folders_own_files_never_its_subfolders`; plus
 `test_live_plots.py::test_a_plot_follows_live_from_an_empty_folder_to_its_first_shots`, which
 drives a real tab's Live checks (in-process helpers) into a following plot.
 
@@ -154,22 +170,34 @@ On the Mac, then a lab PC (Windows). Replaces nothing in MANUAL_TODO; add under 
    the plot appears with the first shot and follows.
 5. **Transfer fractions**: in auto, the orders (title) are found again as shots come; switch to
    manual: centre and spacing stay as set.
-6. **Live off**: switch tabs (or Live off): plots keep their last revision and their lines drop
-   `following Live`.
+6. **Live off catches up**: set Counts per shot to rerun every 5 shots, let 2 shots come, then
+   switch tabs (or Live off): it reruns once at once with those 2 shots, then stays; its line
+   drops `following Live`. Same with Wait after a run = 60 s.
 7. **Failed rerun**: not easy to provoke by hand; covered by tests (the last plot stays, amber
    line).
+8. **3D scatter camera**: rotate and zoom the scatter during Live; new shots arrive and the view
+   stays where you left it, in the dock and in **Open in browser** (both update within a second
+   of a rerun). The modebar's Reset camera still resets it.
+9. **Newest shot**: tick Highlight the newest shot in the scatter (Points) and the histograms
+   (Histogram): the newest shot is red (other colours in the list); during Live it moves to each
+   new shot. In the histograms its line is scaled to the histogram's total.
+10. **Any folder**: Live can start on a folder with subfolders and no TXY files of its own (e.g.
+    the day's folder): it adds only TXY files written into that folder, never into its
+    subfolders.
 
 ## For the coordinator: proposed doc changes
 
 ### AGENTS.md
 
-- Live paragraph, after "Live never survives a restart.": "Live may start on a run folder this
-  session listed with no TXY files and no subfolders: the tab shows data with no shots
+- Live paragraph, after "Live never survives a restart.": "Live may start on any folder this
+  session listed with no TXY files (it reads only the folder's own files, never its
+  subfolders'): the tab shows data with no shots
   (`FolderCache.empty_dataset`, pinned), the first check lists the folder (`memory=[]`) and the
   line says "waiting for the first shot". Plots follow Live (L3): the main window publishes each
   dataset a Live tab shows to `HelabMainWindow.live_feed` (`LiveFeed`), `revise` makes it the next
   revision of the folder's view, and each plot of that folder reruns on the newest revision as
-  its Live settings allow (`helab/analysis/follow.py`: `Follow`, `LivePolicy`)."
+  its Live settings allow (`helab/analysis/follow.py`: `Follow`, `LivePolicy`); when Live stops
+  (Live off, another tab, an error), plots holding shots back catch up once, at once."
 - Script system paragraph, after "Results stay in RAM (`RamResults`, R1).": "A plot follows Live
   by default (its settings' Live group: Follow Live, Rerun every N new shots, Wait after a run,
   from the script's `live_policy`; not parameters): a run is never cancelled for new data, one
@@ -178,13 +206,18 @@ On the Mac, then a lab PC (Windows). Replaces nothing in MANUAL_TODO; add under 
   `reuse_key()` (JSON). Plots with nothing to draw say why (`helab/analysis/empty.py`)."
 - Script system, the dock's source line example: add `following Live · 3 new shots waiting`
   after the revision.
+- Visualization: "The 3D scatter's page updates in place (`DashServer.update_plot`, a 1 s poll per
+  page, constant `layout.uirevision`), keeping the camera across reruns, in the dock and in
+  browser tabs; `DatasetAnalysis.update` lets a plot update in place. The scatter and the
+  histograms can highlight the newest shot (`selection.newest_specs`)."
 
 ### roadmaps/live-monitoring.md
 
 - Stages: L3 done (2026-10-19, branch `agent/live-l3`), pending the on-screen check.
 - "Plots following Live: L3": add "Built 2026-10-19" with judgement calls 1–8 above in short.
-- Open decisions: remove "Watch a folder before its first shot" (built: run folders without
-  subfolders); add open questions 1–3 above.
+- Open decisions: remove "Watch a folder before its first shot" (built: any folder, its own
+  files only); record round 2's answers (Live off catches up; the scatter's 5 s wait and camera
+  kept; the newest-shot highlight); add the histogram-scaling question above.
 
 ### roadmaps/result-caching.md
 
