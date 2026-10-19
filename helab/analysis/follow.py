@@ -85,9 +85,19 @@ def newer(view: DatasetView, than: DatasetView) -> bool:
     return view is not than
 
 
-def new_shots(view: DatasetView, since: DatasetView) -> int:
-    """Shots ``view`` has that ``since`` hasn't (Live only adds shots)."""
-    return len(set(view.shots) - set(since.shots))
+def changes(view: DatasetView, since: DatasetView) -> tuple[int, int]:
+    """How ``view``'s shots differ from ``since``'s, by number and fingerprint: (shots it adds,
+    shots it changes or lacks). Live only adds; data loaded again may change shots in place."""
+    added = set(view.shots) - set(since.shots)
+    other = {shot for shot in since.shots
+             if shot not in view.shots or view.fingerprints.get(shot) != since.fingerprints.get(shot)}
+    return len(added), len(other)
+
+
+def shots_text(added: int, other: int, new: str = "new") -> str:
+    """``3 new shots``, or ``3 new or changed shots`` when not all are additions."""
+    count = added + other
+    return f"{count:,} {new}{' or changed' if other else ''} shot{'' if count == 1 else 's'}"
 
 
 class Follow:
@@ -118,16 +128,23 @@ class Follow:
         self.pending = view
         return True
 
+    def changes(self) -> tuple[int, int]:
+        """How the data waiting differs from what ran: (shots added, shots changed or gone)."""
+        return changes(self.pending, self.ran) if self.pending is not None else (0, 0)
+
     def waiting(self) -> int:
-        """New shots waiting for the next run (0 when nothing waits)."""
-        return new_shots(self.pending, self.ran) if self.pending is not None else 0
+        """New (or changed) shots waiting for the next run (0 when nothing waits)."""
+        return sum(self.changes())
 
     def due(self, now: float) -> tuple[Optional[DatasetView], float]:
         """The revision to run now (None: none), and the seconds until the policy's delay lets
-        the waiting one run (0 when it isn't the delay that holds it)."""
+        the waiting one run (0 when it isn't the delay that holds it). Live's next revisions run
+        once ``every_shots`` new shots wait; another input of the folder (data loaded again
+        before Live, with any shot added, changed or gone) runs once whatever their number."""
         if self.running or self.pending is None or not self.on:
             return None, 0.0
-        if self.waiting() < self.policy.every_shots:
+        waiting = self.waiting()
+        if not waiting or (self.pending.identity == self.ran.identity and waiting < self.policy.every_shots):
             return None, 0.0
         left = self.finished_at + self.policy.min_delay - now
         if left > 0:

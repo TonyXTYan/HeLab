@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 from pyqtgraph.parametertree import Parameter
 
 from helab.analysis.dataset_view import DatasetView, ViewKey
-from helab.analysis.follow import FOLLOW, Follow, LiveFeed, live_specs, new_shots, policy_of
+from helab.analysis.follow import FOLLOW, Follow, LiveFeed, changes, live_specs, policy_of, shots_text
 from helab.analysis.parameter_tree import build_tree, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import describe
 from helab.analysis.results import AnalysisResult
@@ -405,15 +405,16 @@ class AnalysisInstance(LinkedAnalysisInstance):
         live = self.live()
         follow = self.follow
         if not follow.on:
-            newer = new_shots(live, follow.ran) if live is not None else 0
-            return ("pinned (Follow Live off)" + (f" · {newer:,} newer shot{'' if newer == 1 else 's'}"
-                                                   if newer else "")) if live is not None else ""
+            if live is None:
+                return ""
+            added, other = changes(live, follow.ran)
+            return "pinned (Follow Live off)" + (f" · {shots_text(added, other, 'newer')}" if added + other else "")
         parts = ["following Live"] if live is not None else []
         shown = self.shown.input if self.shown is not None else None
         if follow.running and shown is not None and follow.ran.key != shown:
             parts.append(f"updating to rev {follow.ran.revision}")
-        waiting = follow.waiting()
-        shots = f"{waiting:,} new shot{'' if waiting == 1 else 's'}"
+        added, other = follow.changes()
+        waiting, shots = added + other, shots_text(added, other)
         if not waiting:
             pass
         elif self._follow_timer.isActive():

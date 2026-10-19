@@ -251,6 +251,32 @@ def test_follow_policy_every_n_shots_and_a_delay() -> None:
     assert follow.offer(revise(four, revision(range(1, 9))))
 
 
+def changed(dataset: Dataset, shot: int, signature: str) -> Dataset:
+    """``dataset`` loaded again with ``shot``'s file changed in place (same shot numbers)."""
+    prints = [[entry[0], entry[1] + (7 if entry[0] == shot else 0), entry[2]] for entry in dataset.metadata["fingerprint"]]
+    return Dataset(dataset.path, signature, dict(dataset.data), {**dataset.metadata, "fingerprint": prints}, 0)
+
+
+def test_follow_counts_changed_fingerprints_and_runs_another_input_once() -> None:
+    """Data loaded again before Live, with the same shot numbers but a shot changed, is another
+    input: the plot runs on it once, whatever "every N" says; the same data again isn't."""
+    before = revision([1, 2])
+    old = view_of(before)
+    follow = Follow(old, LivePolicy(every_shots=3))
+    follow.start(old)
+    follow.end(0.0)
+    same = view_of(Dataset(PATH, "sig-again", dict(before.data), dict(before.metadata), 0))
+    assert follow.offer(same) and follow.changes() == (0, 0) and follow.due(1.0) == (None, 0.0)
+    loaded_again = view_of(changed(before, 2, "sig-changed"))
+    assert follow.offer(loaded_again) and follow.changes() == (0, 1)
+    assert follow.due(1.0) == (loaded_again, 0.0)
+    # Live's next revisions of one input still wait for N new or changed shots.
+    follow.start(loaded_again)
+    follow.end(2.0)
+    follow.offer(revise(loaded_again, changed(revision([1, 2, 3]), 2, "sig-3")))
+    assert follow.changes() == (1, 0) and follow.due(3.0) == (None, 0.0)
+
+
 def test_newer_compares_revisions_of_one_input_and_any_other_input() -> None:
     first = view_of(revision([1]))
     second = revise(first, revision([1, 2]))
@@ -378,6 +404,25 @@ def test_shots_arriving_faster_than_a_run_give_one_rerun_on_the_newest(
     assert instance.input_label.text() == "Input: run_L · rev 5 · following Live"
     assert window.panel_right_top_plot_settings.chooser.itemText(0) == "Gated (1) · run_L · rev 5"
     assert cast(AnalysisResult, instance.shown).coverage.shots == (1, 2, 3, 4, 5)
+
+
+def test_a_plot_made_before_live_catches_up_with_changed_data(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """A plot of data loaded before Live; when Live starts, the folder's data has the same shot
+    numbers but one shot changed (another signature): the plot runs once on it."""
+    before = revision([1, 2])
+    window.view = view_of(before)
+    script = Gated(LivePolicy(every_shots=3))
+    instance = plot(window, qtbot, script)
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    old = instance.view
+    live = window.live_feed.publish(changed(before, 2, "sig-changed"))  # Live starts on it.
+    assert live.identity != old.identity and live.shot_numbers == old.shot_numbers == (1, 2)
+    qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.input == live.key, timeout=10_000)
+    assert script.started == [1, 1] and instance.follow.pending is None
+    shown = cast(AnalysisResult, instance.shown)
+    assert shown.input_signature == "sig-changed" and shown.coverage.fingerprints[2] == (2, 109, 1002)
+    assert instance.follow_text() == "following Live"
 
 
 def test_a_plot_reruns_every_n_shots_as_its_script_declares(
