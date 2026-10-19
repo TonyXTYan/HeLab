@@ -160,6 +160,11 @@ def test_live_adds_new_shots_saves_every_n_and_when_it_stops(
     assert check.payload["live_since"] == session.since
     events = replay(cache, path, tmp_path)
     assert events[0]["kind"] == "live_unchanged" and not events[0]["live_listed"]
+    # At least once a minute it lists the folder anyway (a network drive may report its mtime late).
+    session.listed_at -= explorer.LIVE_LIST_SECONDS
+    check = next_request(qtbot, explorer, path)
+    assert check.payload["live_since"] is None
+    assert replay(cache, path, tmp_path)[0]["live_listed"]
 
     # A new shot arrives: read and shown at once, kept in RAM (not yet saved).
     write_shot(run, 3)
@@ -243,7 +248,10 @@ def test_an_error_stops_checking_keeps_the_data_and_retry_resumes(
     explorer = open_loaded(qtbot, service, run, tmp_path)
     cache = explorer.model.cache
     data = explorer.folder_opened_data
+    explorer.load_error = "Timed out after 60 s without progress"  # An earlier check's.
     assert explorer.start_live()
+    explorer._update_activity()
+    assert explorer.retry_button.isHidden()  # Live's own Retry shows when Live needs it.
     hidden = tmp_path / "unmounted"
     run.rename(hidden)
     next_request(qtbot, explorer, path)

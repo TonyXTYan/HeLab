@@ -89,6 +89,7 @@ class LiveSession:
     checked_at: float | None = None  # Wall time.
     seconds: float | None = None  # How long the last check took (the helper's measure).
     listed: bool = False  # Whether the last check listed the folder (else one stat).
+    listed_at: float = -math.inf  # Monotonic: when a check last listed it.
     next_at: float = 0.0  # Monotonic.
     new: int = 0  # New shots since Live started.
     unsettled: int = 0  # Files still being written at the last check.
@@ -216,6 +217,9 @@ class FolderExplorer(QWidget):
     reviewRootRequested = pyqtSignal(str)  # A pending location: Same folder or a copy?
     # Live turned on or off, or stopped by an error (the toolbar's Live action follows).
     liveChanged = pyqtSignal()
+    # A Live check lists the folder at least this often, even if its mtime is unchanged: a network
+    # drive may report a folder's mtime late (SMB clients cache it for seconds).
+    LIVE_LIST_SECONDS = 60.0
     DWELL_MS = 3000
     # Finish and Cancel modes: while loads are busy (running, queued or stopping, or one started
     # moments ago), an automatic load waits until the selection has stayed this long, plus
@@ -1385,6 +1389,8 @@ class FolderExplorer(QWidget):
             session.dataset, session.shots = dataset, set(dataset.data)
         session.on, session.error = True, ""
         self.live = session
+        # Live's first check is the folder's check now: an earlier failure's Retry is replaced by Live's.
+        self.load_error = ""
         self._set_browsing_enabled(False)
         if not session.request:
             self._live_next(0.0)
@@ -1458,7 +1464,8 @@ class FolderExplorer(QWidget):
         dataset = session.dataset
         # Shots it couldn't read: read again only if they change.
         known = [list(entry) for entry in dataset.metadata.get("fingerprint", ()) if int(entry[0]) not in dataset.data]
-        payload = {"live": True, "live_since": session.since, "known": known, "prefer_base": dataset.signature}
+        since = session.since if time.monotonic() - session.listed_at < self.LIVE_LIST_SECONDS else None
+        payload = {"live": True, "live_since": since, "known": known, "prefer_base": dataset.signature}
         if not cache.submit(self.live_owner, 0, session.path, "load", payload, priority=True):
             self._live_halt(session, "Live check couldn't be queued — Retry")
             return
@@ -1574,7 +1581,7 @@ class FolderExplorer(QWidget):
         session.seconds = event.get("live_seconds")
         session.since = event.get("live_since")  # (A save's listing doesn't say: the next check lists.)
         session.unsettled = int(event.get("unsettled_files", 0))
-        session.listed = True
+        session.listed, session.listed_at = True, time.monotonic()
         if event.get("disk_cache_pending"):
             # Saved with this result (a save, or another tab's load the check joined).
             session.saving |= new
@@ -1601,6 +1608,8 @@ class FolderExplorer(QWidget):
         session.since = event.get("live_since")
         session.unsettled = int(event.get("unsettled_files", 0))
         session.listed = bool(event.get("live_listed"))
+        if session.listed:
+            session.listed_at = time.monotonic()
         if session.listed and self._unchecked_path == session.path:
             # Listed: no shot is missing and none is new, so the shown data is the folder's.
             self._unchecked_path = None
