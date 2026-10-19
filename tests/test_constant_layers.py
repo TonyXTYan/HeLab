@@ -18,7 +18,7 @@ from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QTabWidget, QWidget
 
 from helab.analysis import constant_layers as layers
-from helab.analysis.dataset_view import DatasetView, build_view
+from helab.analysis.dataset_view import DatasetView, build_view, view_of
 from helab.analysis.follow import LiveFeed
 from helab.analysis.parameter_tree import build_tree, parameter_of, tree_values
 from helab.analysis.parameters import ParameterSpec, effective
@@ -158,13 +158,12 @@ def test_the_result_records_the_constants_it_ran_with(qtbot: QtBot) -> None:
         assert key["constants"]["origins"]["g"] == "lab" and key["constants"]["layers"] == given
         assert ResolvedConstants.from_record(key["constants"]) == resolved
         assert "Constants: ħ = " in result.describe() and "g = 9.8 m/s² (lab)" in result.describe()
-        # An analysis without constants resolves none, but records the layers it was given.
+        # An analysis that declares no constants records none: a lab or folder change never makes
+        # its results look different (it keeps the layers it was given, unrecorded).
         plain = AnalysisResult.of(AnalysisContext("a9", "Plot", view, {}, script.get_metadata().identity(),
                                                   constants=given), "completed")
-        assert plain.resolved_constants is None and plain.reuse_key()["constants"] == {"layers": given}
-        empty = AnalysisResult.of(AnalysisContext("a9", "Plot", view, {}, script.get_metadata().identity()),
-                                  "completed")
-        assert "constants" not in empty.reuse_key()
+        assert plain.resolved_constants is None and plain.constant_layers == given
+        assert plain.constants_record is None and "constants" not in plain.reuse_key()
     finally:
         runner.stop()
 
@@ -252,9 +251,21 @@ def test_a_plot_resolves_when_it_runs_and_marks_changes_until_rerun(
     assert title(instance, "g") == "Gravitational acceleration g: 9.79 m/s² (lab)"
     assert shown(instance).g == 9.8
     # Another folder's change says nothing to this plot.
-    cache.remember_constants(os.path.join(ROOT, "other"), {"values": {"fall_distance": 0.5}, "set_at": 2.0})
     cache.set_lab_constants({"g": 9.8})
     assert label(instance, "plot_error") == ""  # Back as drawn.
+    # Another folder's change (a sibling, one whose name starts with the plot's) isn't heard.
+    checks: list[str] = []
+    check = instance._check_constants
+    def counted() -> None:
+        checks.append("checked")
+        check()
+    instance._check_constants = counted  # type: ignore[method-assign]
+    for other in (os.path.join(ROOT, "other"), PATH + "_2"):
+        cache.remember_constants(other, {"values": {"fall_distance": 0.5}, "set_at": 2.0})
+    assert checks == [] and label(instance, "plot_error") == ""
+    cache.remember_constants(ROOT, {"values": {"fall_distance": 0.9, "trap_axial": 40.0}, "set_at": 2.0})
+    assert checks == ["checked"] and label(instance, "plot_error") == ""  # Heard; no key it uses changed.
+    instance._check_constants = check  # type: ignore[method-assign]
     cache.set_lab_constants({"g": 9.79})
     instance.run()  # Rerun.
     qtbot.waitUntil(lambda: shown(instance).g == 9.79, timeout=10_000)
@@ -343,4 +354,26 @@ def test_an_analysis_with_its_own_overrides_gets_the_layers(window: Window, cach
     assert shown(instance).origins["fall_distance"] == "folder"
     cache.set_lab_constants({"g": 9.7})
     assert label(instance, "plot_error").startswith("⚠ constants changed (Gravitational acceleration g")
+    instance.close()
+
+
+def test_a_released_plot_reloads_with_the_layers_it_was_drawn_with(
+        window: Window, cache: FolderCache, qtbot: QtBot) -> None:
+    cache.remember_constants(ROOT, {"values": {"fall_distance": 0.9}, "set_at": 1.0})
+    drawn = revision([1])
+    window.view = view_of(drawn)  # Loaded, not Live: a plot that follows Live is never released.
+    instance = plot(window, qtbot)
+    first = cast(AnalysisResult, instance.shown)
+    assert instance.release()
+    cache.remember_constants(ROOT, {"values": {"fall_distance": 0.95}, "set_at": 2.0})
+    instance.reload()  # As it was drawn: from the disk cache (nothing in RAM here).
+    request = next(r for r in cache.requests(instance._reload_owner) if r.operation == "cached")
+    cache.resultReady.emit(request, {"kind": "loaded", "dataset": drawn})  # As FolderCache passes it on.
+    qtbot.waitUntil(lambda: instance.released is None and instance.shown is not first, timeout=10_000)
+    again = cast(AnalysisResult, instance.shown)
+    assert again.constant_layers == first.constant_layers and shown(instance).fall_distance == 0.9
+    # It is drawn with the old value: marked, and Rerun uses the new one.
+    assert label(instance, "plot_error").startswith("⚠ constants changed (Fall distance h")
+    instance.run()
+    qtbot.waitUntil(lambda: shown(instance).fall_distance == 0.95, timeout=10_000)
     instance.close()

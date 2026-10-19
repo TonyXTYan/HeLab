@@ -846,8 +846,14 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if not self.constant_keys or shown is None or shown.resolved_constants is None:
             self._constants_note = ""
             return
-        now = self.resolve_constants(dict(shown.parameters))
-        assert now is not None
+        try:
+            now = self.resolve_constants(dict(shown.parameters))
+        except Exception:
+            logging.exception("Constants of %s: not compared", self.name)
+            now = None
+        if now is None:
+            self._constants_note = ""
+            return
         changed = changed_keys(shown.resolved_constants, now, self.constant_keys)
         self._constants_note = (f"constants changed ({', '.join(TABLE[key].title for key in changed)}): "
                                 "Rerun to use them") if changed else ""

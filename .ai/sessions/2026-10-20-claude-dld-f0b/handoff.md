@@ -39,16 +39,40 @@ No GUI store access: the GUI only sends `cache_admin` jobs; existing store-acces
   like Place .helab-root… would do).
 - A Cache-tab row to forget all folders' constants (proposed, if wanted).
 
+## Review fixes (second code commit)
+
+1. Session-only values: a helper's "no root" answer is dropped when a root is found,
+   decided or verified at or above the folder, and values held in RAM only are sent to a
+   helper once the folder has a disk cache (proposed). Tests for both paths (a
+   `session_only` answer, and values set while `no_root`).
+2. `_check_constants` (a Qt slot) guards the script's `run_constants`: an error is logged
+   and clears the note; no assert.
+3. `reuse_key` records constants only for analyses that declare `constant_keys`.
+4. Listings key each path once for all their reads (`_saved_folders`).
+5. A nested root found emits `constantsChanged` (inheritance boundary). Tests restructured:
+   "another folder's change isn't heard" checked on its own (a spy on the slot's check), a
+   reload keeps the drawn layers, a nested root moves the boundary.
+
+## For Tony
+
+- The local-lane write of folder constants trusts the store's volume hints even for a
+  volume not verified this session (the same as the folder flags' writes).
+- Newest `set_at` wins (as for flags): after the clock steps back, a new choice can lose
+  to an older saved one silently.
+- **Open question:** "It's a copy…" gives one side a new UUID; that side starts with no
+  folder constants (its rows stay with the old UUID, like its cached data). Copy them over?
+
 ## Checks
 
 - `mypy helab --strict`, `mypy tests --strict`, `pyright helab tests` and
   `pyright --pythonplatform Windows helab tests`: clean. `git diff --check`: clean.
-- Full suite `-n 2 --reruns 5 --reruns-delay 1`: **2 failed, 1458 passed, 7 skipped,
-  2 xfailed, 11 rerun**. Failed: the two known root-only tests. RERUN: those two (5 each)
-  and `test_window_resize.py::test_label_keeps_painting_after_resize[repeated]` (once).
-  In an earlier targeted run, `test_cache_tab.py::test_saves_restored_from_the_store_ask_with_its_numbers`
-  failed 5 reruns once under `-n 2` (it uses the worker's shared store, so it depends on
-  what ran before in that worker); it passed alone, in its file pair and in the full suite.
+- Full suite `-n 2 --reruns 5 --reruns-delay 1` after the review fixes: **2 failed, 1462
+  passed, 7 skipped, 2 xfailed, 10 rerun**. Failed and rerun (5 each): only the two known
+  root-only tests. (First commit: 1458 passed, 11 rerun, the extra one
+  `test_window_resize.py::test_label_keeps_painting_after_resize[repeated]`.)
+- `test_cache_tab.py::test_saves_restored_from_the_store_ask_with_its_numbers` failed 5
+  reruns once in a targeted `-n 2` run: pre-existing (the Coordinator found
+  `test_io_trace` leaves a pending save in the worker's shared store); not fixed here.
 
 ## On-screen checklist for Tony
 
@@ -67,8 +91,9 @@ No GUI store access: the GUI only sends `cache_admin` jobs; existing store-acces
 
 D1 (agent/dld-d1, `05e5401`) already reads `context.constants` (`{"lab", "folder"}`)
 and resolves itself (`plot_constants`). After the merge it gets the real lab and folder
-values with **no change**. To also get the settings titles, the source-line text, the
-recorded `resolved_constants` and the "constants changed" marking, either:
+values with no change, but **it must declare `constant_keys` at the merge**: without it
+its results record no constants in `reuse_key` (only analyses that declare constants do)
+and its plots aren't marked when a value changes. Either:
 
 - **Minimal**: in `TxyHistograms` override
   `constant_keys(action) -> ("g", "mass", "k_B", "fall_distance", "fall_time")` and

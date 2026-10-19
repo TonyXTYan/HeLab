@@ -241,6 +241,9 @@ class FolderCache(QObject):
         self._constant_writes: dict[str, tuple[str, float, str]] = {}
         # Folders a helper found no disk cache for when saving their constants: session only, why.
         self.constants_unsaved: dict[str, str] = {}
+        # Folders whose values this session holds in RAM only (no disk cache when they were set):
+        # sent to a helper once the folder has one (a root found or decided, volumes verified).
+        self._session_constants: set[str] = set()
         self.service = service
         self.snapshots: OrderedDict[str, FolderSnapshot] = OrderedDict()
         self.datasets: OrderedDict[tuple[str, str, int], Dataset] = OrderedDict()
@@ -323,6 +326,12 @@ class FolderCache(QObject):
         self._cleanup = ""
         self._root_verify_owner = ""
         self._volume_verify_owner = ""
+        # Roots found, decided or verified: session-only constants may be saved now, and the
+        # folders whose inheritance stops at a root (``constants_root``) changed.
+        self.dataRootsChanged.connect(self._constants_roots_moved)
+        self.rootDecided.connect(self._constants_roots_decided)
+        self.rootDuplicatesChanged.connect(lambda: self._constants_roots_moved(""))
+        self.volumesVerified.connect(lambda: self._constants_roots_moved(""))
         # The local mounts (path, device) whose volume IDs this session's last verification
         # checked: the only hints a cached read trusts, besides the system volume's.
         self._verified_volumes: tuple[tuple[str, str], ...] = ()
@@ -983,13 +992,42 @@ class FolderCache(QObject):
         set_at = time.time()
         self.remember_constants(path, {"values": clean_layer(values), "set_at": set_at}, confirmed=False)
         if self.constants_session_only(path):
+            self._session_constants.add(path)
             return True
+        self._session_constants.discard(path)
         job = self.cache_admin("constants", path=path, values=self.folder_constants(path), set_at=set_at)
         if not job:
             self._constants_not_saved(path, set_at, "HeLab's work queue is full", owner)
             return False
         self._constant_writes[job] = (path, set_at, owner)
         return True
+
+    def _constants_roots_decided(self, paths: list[str]) -> None:
+        for path in paths:
+            self._constants_roots_moved(str(path))
+
+    def _constants_roots_moved(self, path: str) -> None:
+        """A data root at ``path`` was found, changed or decided ("": any, e.g. volumes verified):
+        a helper's earlier "no data root" answer at or below it is stale, plots below it may
+        inherit differently (``constantsChanged``), and values this session held in RAM only
+        are saved now where the folder has a disk cache (proposed: the choice was the user's)."""
+        def below(folder: str) -> bool:
+            return not path or folder == path or folder.startswith(path.rstrip("/\\") + os.sep)
+        for folder in [folder for folder in self.constants_unsaved if below(folder)]:
+            del self.constants_unsaved[folder]
+        if path:
+            self.constantsChanged.emit(path)
+        for folder in sorted(self._session_constants):
+            if self.constants_session_only(folder) or self.service.closed:
+                continue
+            self._session_constants.discard(folder)
+            record = self.folder_constant_records.get(folder) or {}
+            set_at = float(record.get("set_at") or time.time())
+            job = self.cache_admin("constants", path=folder, values=self.folder_constants(folder), set_at=set_at)
+            if job:
+                self._constant_writes[job] = (folder, set_at, "")
+            else:
+                self._session_constants.add(folder)  # Queue full: next time.
 
     def _constants_not_saved(self, path: str, set_at: float, message: str, owner: str) -> None:
         current = self.folder_constant_records.get(path)
@@ -1970,8 +2008,9 @@ class FolderCache(QObject):
         if kind == "folder_constants":
             write = self._constant_writes.get(producer.owner)
             for folder, reason in dict(event.get("session_only") or {}).items():
-                # No data root after all: kept for this session, and said so.
+                # No data root after all: kept for this session, and said so (until it has one).
                 self.constants_unsaved[str(folder)] = str(reason)
+                self._session_constants.add(str(folder))
                 if write is not None and write[0] == folder:
                     del self._constant_writes[producer.owner]
                 self.constantsChanged.emit(str(folder))

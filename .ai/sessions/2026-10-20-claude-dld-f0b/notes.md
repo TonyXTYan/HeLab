@@ -63,8 +63,15 @@ it and to its subfolders that don't set their own, up to its data root."
 
 `FolderCache.constants_session_only(path)` gives why (disk cache off, no
 `.helab-root`, a pending duplicate root, or the helper's `session_only` answer). Such
-values are kept in memory only (never sent to a helper), the dialog shows an amber
+values are kept in memory (`_session_constants`), the dialog shows an amber
 "RAM only · kept for this session only: …", and the context-menu tooltip says so.
+
+**Proposed:** when such a folder later gets a disk cache (a root found or placed,
+`dataRootsChanged`; a duplicate answered, `rootDuplicatesChanged`; `rootDecided`;
+volumes verified), the helper's stale "no root" answers at or below it are dropped and
+the values set this session are sent to a helper then (they were the user's choice).
+A root found or changed also emits `constantsChanged` for its folder, since inheritance
+stops there.
 
 ## Plot overrides and resolution (compatible with agent/dld-d1)
 
@@ -76,9 +83,11 @@ values are kept in memory only (never sent to a helper), the dialog shows an amb
   (`DatasetAnalysis.constant_keys`, default: the keys of its `constants_specs` group),
   the runner resolves them at submit with `DatasetAnalysis.run_constants(action,
   values, layers)` (default: `resolve_for_run` over the Constants group's choices).
-- `AnalysisResult.constant_layers` and `.resolved_constants`; `constants_record`
-  (`{"layers": …, **as_record()}`) goes into `reuse_key()["constants"]`, and
-  `describe()` adds a "Constants: …" line with every value and origin.
+- `AnalysisResult.constant_layers` and `.resolved_constants`; for an analysis that
+  declares constants, `constants_record` (`{"layers": …, **as_record()}`) goes into
+  `reuse_key()["constants"]` and `describe()` adds a "Constants: …" line with every value
+  and origin. An analysis that declares none records none, so a lab or folder change never
+  makes its results look different.
 - `constants_specs(keys)`: per key a choice `const.<key>.from` ("lab/folder" or "this
   plot") titled with the constant's name, and `const.<key>` (the plot's value, SI
   prefixes for m/s/Hz, shown only when set here). After each run (and on a change) the
@@ -107,5 +116,9 @@ drawn result matches again (also when the value is changed back).
   unconfirmed row is at its default; CODATA rows show "CODATA, read-only".
 - Settings tab order: General, Lab parameters, Scripts, Cache, Data roots.
 - Local-lane keying of a folder on a volume not yet verified this session may answer
-  `session_only` ("no .helab-root") where it would be saved after verification; rare
-  (the folder was just listed), noted for later.
+  `session_only` ("no .helab-root"); the values are then saved after the next volume
+  verification (above).
+- `_saved_folders` keys each listed path once and reuses the keys for every read (the
+  history, summary, subtree, dataset, flags and constants reads each keyed it again);
+  this also speeds up listings on the base. Not re-measured (the review measured 10k
+  subfolders 2.61 s → 3.06 s before this change).

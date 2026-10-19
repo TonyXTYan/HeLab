@@ -268,6 +268,66 @@ def test_the_dialog_shows_each_values_source_and_saves_what_the_folder_sets(
         service.shutdown()
 
 
+def test_session_only_values_are_saved_once_the_folder_has_a_data_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, cache = frozen(monkeypatch)
+    try:
+        # A helper found no root when saving (proposed: the values wait in RAM, then are saved).
+        cache.set_folder_constants(RUN, {"trap_axial": 40.0})
+        request = admin(service, "constants")
+        answer(service, request, {"kind": "folder_constants", "folders": {},
+                                  "session_only": {RUN: "no .helab-root found here or above"}}, {"kind": "done"})
+        assert cache.constants_session_only(RUN) and not any(r.operation == "cache_admin" for r in service.pending)
+        changed: list[str] = []
+        cache.constantsChanged.connect(changed.append)
+        cache._root_seen(RUN, A, "run")  # Place .helab-root here: a listing reports the root.
+        assert cache.constants_session_only(RUN) == "" and changed == [RUN]
+        saved = admin(service, "constants")
+        assert saved.payload["params"]["path"] == RUN and saved.payload["params"]["values"] == {"trap_axial": 40.0}
+        answer(service, saved, {"kind": "folder_constants", "folders": {RUN: {
+            "values": {"trap_axial": 40.0}, "set_at": saved.payload["params"]["set_at"]}}}, {"kind": "done"})
+        # Later choices are saved at once.
+        cache.set_folder_constants(RUN, {"trap_axial": 41.0})
+        assert admin(service, "constants").payload["params"]["values"] == {"trap_axial": 41.0}
+    finally:
+        service.shutdown()
+
+
+def test_values_set_while_a_folder_had_no_root_are_saved_when_it_gets_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, cache = frozen(monkeypatch)
+    try:
+        cache._remember_unrooted(SHOT, "no .helab-root found here or above")
+        cache.set_folder_constants(SHOT, {"fall_distance": 0.9})
+        cache.dataRootsChanged.emit(os.path.join(os.sep, "elsewhere"))  # Another root: still none here.
+        assert cache.constants_session_only(SHOT) and not any(r.operation == "cache_admin" for r in service.pending)
+        cache._root_seen(ROOT, A, "root")  # Found above it.
+        assert cache.no_root(SHOT) is None and cache.constants_session_only(SHOT) == ""
+        assert admin(service, "constants").payload["params"] == {
+            "path": SHOT, "values": {"fall_distance": 0.9},
+            "set_at": cache.folder_constant_records[SHOT]["set_at"]}
+        # A pending duplicate root, then answered: saved then.
+        cache.root_duplicates["smb://x/y"] = {"path": RUN, "uuid": B, "answer": ""}
+        cache.set_folder_constants(RUN, {"trap_radial": 400.0})
+        assert all(r.payload["params"]["path"] != RUN for r in service.pending if r.operation == "cache_admin")
+        cache._duplicate_settled("smb://x/y")
+        assert admin(service, "constants").payload["params"]["path"] == RUN
+    finally:
+        service.shutdown()
+
+
+def test_a_nested_root_moves_the_inheritance_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, cache = frozen(monkeypatch)
+    try:
+        cache.data_roots[ROOT] = (A, "root")
+        cache.remember_constants(ROOT, {"values": {"trap_axial": 45.0}, "set_at": 1.0})
+        assert cache.effective_folder_constants(SHOT) == {"trap_axial": 45.0}
+        changed: list[str] = []
+        cache.constantsChanged.connect(changed.append)
+        cache._root_seen(RUN, B, "run")  # A nested .helab-root found at run.
+        assert changed == [RUN] and cache.effective_folder_constants(SHOT) == {}
+    finally:
+        service.shutdown()
+
+
 def test_the_dialog_says_when_values_last_only_this_session(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     service, cache = frozen(monkeypatch)
     try:

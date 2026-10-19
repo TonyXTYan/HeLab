@@ -139,11 +139,13 @@ class AnalysisResult:
 
     @property
     def constants_record(self) -> dict[str, Any] | None:
-        """The constants the run used, as JSON values: its lab and folder layers and, for an
-        analysis that uses constants, what it resolved (``ResolvedConstants.as_record``)."""
-        layers = {name: dict(values) for name, values in self.constant_layers.items()}
+        """The constants the run used, as JSON values: for an analysis that declares constants
+        (``DatasetAnalysis.constant_keys``), its lab and folder layers and what it resolved
+        (``ResolvedConstants.as_record``); None for one that doesn't, so a lab or folder change
+        never makes its results look different."""
         if self.resolved_constants is None:
-            return {"layers": layers} if layers else None
+            return None
+        layers = {name: dict(values) for name, values in self.constant_layers.items()}
         return {"layers": layers, **self.resolved_constants.as_record()}
 
     def reuse_key(self) -> dict[str, Any]:

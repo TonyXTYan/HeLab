@@ -635,13 +635,13 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit) -> dict[str,
     Saved statuses are last-known results for their paths until those folders are checked.
     """
     from helab.utils.cache_paths import UnresolvedRemotePath
-    from helab.utils.scan_history import read_histories
     usable: list[str] = []
     refused: list[str] = []
     mounts: dict[str, dict[str, str]] = {}
+    keys: dict[str, str] = {}
     for path in paths:
         try:
-            store._path_key(path)
+            keys[path] = store._path_key(path)
         except UnresolvedRemotePath as exc:
             refused.append(path)
             mounts[exc.mount_path] = {"path": exc.mount_path, "type": exc.mount_type, "detail": str(exc)}
@@ -655,6 +655,18 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit) -> dict[str,
     paths = usable
     if not paths:
         return {}
+    # Each read below keys every path: they use these keys (the resolver is pure for this call).
+    resolve = store._path_key
+    store._path_key = lambda path: keys[path] if path in keys else resolve(path)
+    try:
+        return _read_saved(store, paths, send)
+    finally:
+        store._path_key = resolve
+
+
+def _read_saved(store: CacheStore, paths: list[str], send: Emit) -> dict[str, dict[str, Any]]:
+    """``_saved_folders``' reads, for paths that have keys."""
+    from helab.utils.scan_history import read_histories
     histories = read_histories(store, paths)
     summaries = store.read_records("summaries", paths)
     subtrees = store.read_records("subtrees", paths)
