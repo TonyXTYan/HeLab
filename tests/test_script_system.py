@@ -71,8 +71,8 @@ def test_tree_panel_lists_only_working_scripts(qtbot: QtBot) -> None:
     """HeLab's bundled analyses, each with its Plot button; no placeholder groups."""
     widget = TreePanelWidget(cast(HelabMainWindow, MockHelabMainWindow()))
     qtbot.addWidget(widget)
-    assert [widget.group_selector.itemText(i) for i in range(widget.group_selector.count())] == ["Plots"]
-    assert group_items(widget) == {"Plots": ["3D scatter", "Counts per shot", "T, X, Y histograms"]}
+    assert [widget.group_selector.itemText(i) for i in range(widget.group_selector.count())] == ["Basic plots v1"]
+    assert group_items(widget) == {"Basic plots v1": ["3D scatter", "Counts per shot", "T, X, Y histograms"]}
     plots = widget.tree_widget.topLevelItem(0)
     assert plots is not None
     for i in range(plots.childCount()):
@@ -87,7 +87,7 @@ def test_load_scripts_adds_a_working_group(qtbot: QtBot, script_folder: Path,
     qtbot.addWidget(widget)
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(script_folder))
     widget.load_dir_button.click()
-    assert sorted(widget.group_selector.itemText(i) for i in range(widget.group_selector.count())) == ["Lab", "Plots"]
+    assert sorted(widget.group_selector.itemText(i) for i in range(widget.group_selector.count())) == ["Basic plots v1", "Lab"]
     widget.group_selector.setCurrentText("Lab")
     assert group_items(widget) == {"Lab": ["Logged"]}
     lab = widget.tree_widget.topLevelItem(0)

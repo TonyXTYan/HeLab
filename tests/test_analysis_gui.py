@@ -18,6 +18,7 @@ from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.io_helper import list_folder, scan
 from helab.models.ScriptTreeSelector import AnalysisInstance, ParamTreeTabWidget, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
+from helab.scripts.standard import group
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import FolderCache
 from helab.utils.io_service import IORequest, IOService
@@ -271,7 +272,7 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     load(browser, qtbot, run, {1: 30, 2: 40})
     panel = TreePanelWidget(window)
     qtbot.addWidget(panel)
-    metadata = next(m for m in panel.script_manager.get_scripts_in_group("Plots") if m.name == "3D scatter")
+    metadata = next(m for m in panel.script_manager.get_scripts_in_group(group.NAME) if m.name == "3D scatter")
     script_class = panel.script_manager.get_script(metadata.script_id)
     assert script_class is not None
     script = script_class()

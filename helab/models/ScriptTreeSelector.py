@@ -264,7 +264,7 @@ class TreePanelWidget(QWidget):
     - Action buttons for each script
     
     Key concepts:
-    - Groups: HeLab's bundled analyses ("Plots") and those of scripts loaded from a folder
+    - Groups: HeLab's bundled analyses ("Basic plots v1", `helab.scripts.standard.group`) and those of scripts loaded from a folder
     - Actions: Each script can have up to 2 executable actions
     """
     

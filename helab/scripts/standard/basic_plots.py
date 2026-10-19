@@ -16,6 +16,7 @@ from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_
                                       shots_text)
 from helab.analysis.stats import AXES, MAX_BINS, UNITS, Histogram, counts_per_shot, histogram
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
+from helab.scripts.standard import group
 
 RANGE = range_specs(
     "Each histogram covers the exact shortest range holding this share of its axis's events. "
@@ -71,7 +72,7 @@ class CountsPerShot(DatasetAnalysis):
         return self.create_metadata(
             name="Counts per shot",
             description="Number of events in each loaded shot, against shot number",
-            group="Plots",
+            group=group.NAME,
             file_path=__file__,
             analysis_id="helab.counts_per_shot",
             version="2",
@@ -106,7 +107,7 @@ class TxyHistograms(DatasetAnalysis):
         return self.create_metadata(
             name="T, X, Y histograms",
             description="Distributions of the loaded events' T, X and Y",
-            group="Plots",
+            group=group.NAME,
             file_path=__file__,
             analysis_id="helab.txy_histograms",
             version="2",

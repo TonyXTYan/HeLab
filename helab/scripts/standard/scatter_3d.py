@@ -16,6 +16,7 @@ from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_
                                       shots_text)
 from helab.analysis.stats import AXES, DISPLAY_CAP, UNITS, CropBox, axis_text, crop_box, display_sample
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
+from helab.scripts.standard import group
 
 RANGE = range_specs(
     "Crop to a box holding at least this share of the events, found by a heuristic (not the "
@@ -74,7 +75,7 @@ class Scatter3D(DatasetAnalysis):
         return self.create_metadata(
             name="3D scatter",
             description="T/X/Y events of the loaded folder, cropped to the region holding most events",
-            group="Plots",
+            group=group.NAME,
             file_path=__file__,
             analysis_id="helab.scatter_3d",
             version="2",

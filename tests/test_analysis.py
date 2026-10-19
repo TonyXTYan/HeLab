@@ -24,7 +24,7 @@ from helab.analysis.stats import (
 from helab.scripts import standard
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.scripts_manager import ScriptsManager
-from helab.scripts.standard import basic_plots, scatter_3d
+from helab.scripts.standard import basic_plots, group, scatter_3d
 from helab.utils.folder_cache import Dataset
 
 
@@ -377,7 +377,7 @@ def scripts_manager() -> ScriptsManager:
 
 def test_bundled_analyses_declare_identity_and_file_hash() -> None:
     manager = scripts_manager()
-    names = {metadata.name: metadata for metadata in manager.get_scripts_in_group("Plots")}
+    names = {metadata.name: metadata for metadata in manager.get_scripts_in_group(group.NAME)}
     assert set(names) == {"3D scatter", "Counts per shot", "T, X, Y histograms"}
     scatter = names["3D scatter"]
     expected = hashlib.sha256(open(scatter_3d.__file__, "rb").read()).hexdigest()
@@ -385,6 +385,7 @@ def test_bundled_analyses_declare_identity_and_file_hash() -> None:
     identity = scatter.identity()
     assert identity.file_name == "scatter_3d.py" and identity.text().startswith("helab.scatter_3d v2 · scatter_3d.py")
     assert all(metadata.analysis_id and metadata.version for metadata in names.values())
+    assert group.NAME == f"Basic plots v{group.VERSION}" and group.VERSION == 1
 
 
 def context(view: DatasetView, script: DatasetAnalysis, values: dict[str, Any] | None = None) -> AnalysisContext:
