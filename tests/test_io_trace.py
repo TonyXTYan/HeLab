@@ -303,8 +303,11 @@ def test_read_marker_behaves_the_same_with_a_trace_callback(tmp_path: Path) -> N
             return data_roots.read_marker(str(folder), **kwargs)
         except (OSError, ValueError) as exc:
             return (type(exc), str(exc))
+    # A .helab-root that is a folder: POSIX opens it and fstat finds no regular file; Windows can't
+    # open a folder as a file at all (PermissionError), so no step succeeds there.
+    folder_steps = [] if sys.platform == "win32" else ["open", "fstat"]
     for folder, expected in ((good, ["open", "fstat", "read"]), (bad, ["open", "fstat", "read"]),
-                             (folder_named, ["open", "fstat"]), (missing, [])):
+                             (folder_named, folder_steps), (missing, [])):
         steps: list[tuple[str, dict[str, object]]] = []
         assert outcome(folder, trace=lambda name, fields: steps.append((name, fields))) == outcome(folder)
         assert [name for name, _ in steps] == expected
