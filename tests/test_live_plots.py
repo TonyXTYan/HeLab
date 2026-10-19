@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterator, List, Optional, cast
 
 import numpy as np
+import pyqtgraph as pg
 import pytest
 from PyQt6 import sip
 from PyQt6.QtGui import QCloseEvent
@@ -453,12 +454,66 @@ def test_the_histograms_overlay_the_newest_shot(qtbot: QtBot) -> None:
     for item, counts in zip(histograms.items, histograms.newest):
         assert len(counts) == len(item.counts) and counts.sum() == 50  # Every newest event, in the same bins.
         assert (counts <= item.counts).all()
-    widget = script.render(lit)
-    qtbot.addWidget(widget)
-    names = [item.name() for item in cast(Any, widget).ci.items if hasattr(item, "listDataItems")
-             for item in item.listDataItems()]
-    assert names.count("shot 3 (newest)") == 3
     assert script.describe_run("Plot", lit.parameters, view)[1].endswith("newest shot in red")
+
+
+@pytest.mark.parametrize("log_y", [False, True], ids=["linear", "log Y"])
+def test_the_newest_shot_has_its_own_axis_on_the_right(qtbot: QtBot, log_y: bool) -> None:
+    """The newest shot's real counts, in a view of their own linked on x, read on a right axis in
+    its colour; that view's y range follows the plot's divided by the histogram's total over the
+    shot's (log Y: shifted by its log10), so the line sits at the histogram's scale. The left axis
+    keeps all the counts, in the plot's colour. The overlay leaves the mouse to the plot."""
+    rng = np.random.default_rng(2)
+    data = {1: rng.normal(size=(400, 3)), 2: rng.normal(size=(400, 3)), 3: rng.normal(size=(50, 3)) * 0.1}
+    view = view_of(Dataset(PATH, "sig-axis", data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
+    script = basic_plots.TxyHistograms()
+    lit = run_now(script, view, {"highlight_newest": True, "keep_percent": 100.0, "log_y": log_y})
+    widget = cast(Any, script.render(lit))
+    qtbot.addWidget(widget)
+    widget.resize(900, 700)
+    widget.show()
+    qtbot.wait(50)
+    histograms = lit.data
+    assert len(widget.newest_views) == 3
+    for row, (item, counts, overlay) in enumerate(zip(histograms.items, histograms.newest, widget.newest_views),
+                                                    start=1):
+        plot = widget.ci.getItem(row, 0)
+        right, left = plot.getAxis("right"), plot.getAxis("left")
+        assert right.isVisible() and right.linkedView() is overlay and right.labelText == "shot 3 events"
+        assert right.pen().color().getRgb()[:3] == histograms.colour == right.textPen().color().getRgb()[:3]
+        assert left.labelText == "Events (all)" and left.pen().color().getRgb()[:3] == basic_plots.COLOUR
+        assert isinstance(right, basic_plots.DecadeLogAxis) == log_y
+        curves = [child for child in overlay.addedItems if isinstance(child, pg.PlotDataItem)]
+        assert len(curves) == 1 and curves[0].name() == "shot 3"
+        values = curves[0].yData
+        assert values is not None and np.allclose(np.nan_to_num(values, nan=0.0), counts)  # Real counts, unscaled.
+        assert curves[0].opts["logMode"] == [False, log_y]
+        scale = item.counts.sum() / counts.sum()
+        # Linked on x (the link follows the plot's own range as the window settles).
+        qtbot.waitUntil(lambda: np.allclose(overlay.viewRange()[0], plot.vb.viewRange()[0]), timeout=5_000)
+        (low, high), (overlay_low, overlay_high) = plot.vb.viewRange()[1], overlay.viewRange()[1]
+        if log_y:
+            assert np.isclose(overlay_low, low - np.log10(scale)) and np.isclose(overlay_high, high - np.log10(scale))
+        else:
+            assert np.isclose(overlay_low, low / scale) and np.isclose(overlay_high, high / scale)
+        # Zooming the plot moves the overlay with it.
+        plot.vb.setYRange(low, low + (high - low) / 2, padding=0)
+        assert np.isclose(overlay.viewRange()[1][1], (low + (high - low) / 2 - np.log10(scale)) if log_y
+                          else (low + (high - low) / 2) / scale)
+
+    class Event:
+        ignored = False
+
+        def ignore(self) -> None:
+            self.ignored = True
+
+        def delta(self) -> int:
+            return 120
+
+    for handler in ("mouseDragEvent", "mouseClickEvent", "wheelEvent"):
+        event = Event()
+        getattr(widget.newest_views[0], handler)(event)
+        assert event.ignored, handler  # Left to the plot below (its zoom, pan and menu).
 
 
 def test_a_following_plot_highlights_lives_newest_shot(

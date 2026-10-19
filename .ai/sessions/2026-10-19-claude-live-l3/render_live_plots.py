@@ -138,10 +138,18 @@ def highlighted(app: QApplication) -> None:
     context = AnalysisContext("r1", "Plot", view, effective(histograms.parameters("Plot"), values),
                               histograms.get_metadata().identity())
     widget = histograms.render(AnalysisResult.of(context, "completed", histograms.compute("Plot", context)))
-    widget.resize(760, 620)
+    widget.resize(880, 620)
     widget.show()
     wait(app, lambda: True)
     save(widget, "histograms-newest-shot.png")
+    values_log = {**values, "log_y": True}
+    context = AnalysisContext("r3", "Plot", view, effective(histograms.parameters("Plot"), values_log),
+                              histograms.get_metadata().identity())
+    log_widget = histograms.render(AnalysisResult.of(context, "completed", histograms.compute("Plot", context)))
+    log_widget.resize(880, 620)
+    log_widget.show()
+    wait(app, lambda: True)
+    save(log_widget, "histograms-newest-shot-log.png")
     scatter = Scatter3D()
     context = AnalysisContext("r2", "Plot", view, effective(scatter.parameters("Plot"), values),
                               scatter.get_metadata().identity())
