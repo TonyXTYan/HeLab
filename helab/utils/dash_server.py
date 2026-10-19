@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Any
 
 import dash
-from dash import html, Output, Input, State, dcc
+from dash import html, no_update, Output, Input, State, dcc
 from dash.exceptions import PreventUpdate
 from plotly.graph_objs import Figure
 from werkzeug.serving import BaseWSGIServer, make_server
@@ -26,7 +26,9 @@ class DashServer:
     browser show the same page). A plot's newer figure (``update_plot``, e.g. a rerun as Live
     adds shots) replaces the shown one in place: each page asks every ``POLL_MS`` whether its
     plot has a newer revision, and Dash swaps the figure in without reloading the page, so the
-    view's rotation, zoom and pan stay (figures keep a constant ``layout.uirevision``)."""
+    view's rotation, zoom and pan stay (figures keep a constant ``layout.uirevision``). Once the
+    plot is closed (``remove_plot``), a page still open says so, drops the figure and stops
+    polling."""
 
     HOST_NAME = "127.0.0.1"
     HOST_PORT = 8050  # preferred; another free port is used when it is taken
@@ -56,13 +58,29 @@ class DashServer:
             return self.page(pathname)
 
         @self.app.callback(Output('plot-graph', 'figure'), Output('plot-revision', 'data'),
+                           Output('plot-graph', 'style'), Output('plot-closed', 'children'),
+                           Output('plot-poll', 'disabled'),
                            Input('plot-poll', 'n_intervals'), State('url', 'pathname'),
                            State('plot-revision', 'data'), prevent_initial_call=True)
         def refresh(_: Any, pathname: Optional[str], shown: Any) -> Any:
-            newer = self.newer_snapshot(pathname, shown)
-            if newer is None:
-                raise PreventUpdate  # Nothing newer (or the plot was closed): the page stays.
-            return newer.figure, newer.revision
+            outputs = self.poll(pathname, shown)
+            if outputs is None:
+                raise PreventUpdate  # Nothing newer: the page stays as it is.
+            return outputs
+
+    def poll(self, pathname: Optional[str], shown: Any) -> Optional[tuple[Any, ...]]:
+        """What a page's poll changes (figure, revision, graph style, closed text, poll disabled):
+        a newer snapshot's figure and revision; for a closed plot, an empty hidden graph, the
+        not-found text and no more polls; None when nothing changed."""
+        plot_id = self.plot_id_of(pathname)
+        if plot_id is None:
+            return None
+        snapshot = self.snapshot(plot_id)
+        if snapshot is None:
+            return {"data": [], "layout": {}}, no_update, {"display": "none"}, NOT_FOUND, True
+        if isinstance(shown, int) and snapshot.revision <= shown:
+            return None
+        return snapshot.figure, snapshot.revision, no_update, no_update, no_update
 
     def page(self, pathname: Optional[str]) -> Any:
         """A plot's page: its figure, the revision it is (from one snapshot) and the poll."""
@@ -71,6 +89,7 @@ class DashServer:
         if snapshot is None:
             return html.Div(NOT_FOUND)
         return html.Div([
+            html.Div(id='plot-closed'),
             dcc.Graph(id='plot-graph', figure=snapshot.figure, style={"height": "96vh"}),
             dcc.Store(id='plot-revision', data=snapshot.revision),
             dcc.Interval(id='plot-poll', interval=self.POLL_MS)])
