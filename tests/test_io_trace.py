@@ -178,7 +178,7 @@ def test_tracing_changes_no_event_and_no_source_call(tmp_path: Path, monkeypatch
     assert lines(tmp_path / "io.jsonl")
 
 
-def test_a_live_check_traces_its_folder_stat_samples_and_tail_reads(tmp_path: Path, trace: Path) -> None:
+def test_a_live_check_traces_its_folder_stat_samples_and_reads(tmp_path: Path, trace: Path) -> None:
     run = tmp_path / "run"
     write_shots(run, range(1, 4))
     memory = [[shot, (info := (run / f"d_txy_forc{shot}.txt").stat()).st_size, info.st_mtime_ns]
@@ -191,9 +191,8 @@ def test_a_live_check_traces_its_folder_stat_samples_and_tail_reads(tmp_path: Pa
     found = counts(lines(trace))
     assert found[("stat", "live: folder")] == 1 and found[("scandir", "live: listing")] == 1
     assert found[("stat", "live: sample")] == 2 and found[("stat", "live: new file")] == 1
-    # The new file's last row is checked before it is read: its tail is opened and read.
-    assert found[("stat", "live: last row")] == 1 and found[("read_tail", "live: last row")] == 1
-    assert found[("read", "live: read")] == 1
+    # The new file is opened once: read, then its last row checked on the bytes read.
+    assert found[("read", "live: read")] == 1 and not any(op == "read_tail" for op, _ in found)
     # The data root's marker (the test folder's) names the folder: the folder's own is missing, the
     # root's is opened, fstat'ed and read.
     assert found[("marker_open", "live: identity")] == 2 and found[("marker_fstat", "live: identity")] == 1
@@ -438,3 +437,54 @@ def test_a_changed_cached_folder_is_listed_once_by_its_load(
     assert not node.cached_report and node.txy_count == 4 and node.signature and node.loaded
     explorer.close_cleanup()
     service.shutdown()
+
+
+def test_a_load_never_shows_or_caches_a_file_whose_writer_stalled_mid_row(tmp_path: Path, trace: Path) -> None:
+    """A file settled by age (its writer paused longer than the settle age) but ending mid-row is
+    still being written: read, then dropped, neither shown nor cached, and read once it's whole."""
+    from helab.utils.cache_store import unpack_dataset
+    run = tmp_path / "run"
+    write_shots(run, range(1, 3))
+    stalled = run / "d_txy_forc3.txt"
+    stalled.write_text("3,2,3\n3,4")
+    when = time.time() - 8
+    os.utime(stalled, (when, when))
+    cache = store_options()
+    output = tmp_path / "out"
+    output.mkdir()
+    events: list[dict[str, Any]] = []
+    load(str(run), str(output), events.append, cache)
+    loaded = next(event for event in events if event["kind"] == "loaded")
+    assert [event["shot"] for event in events if event["kind"] == "shot"] == [1, 2]
+    assert loaded["files"] == 2 and loaded["unsettled_files"] == 1 and 3 not in loaded["problematic"]
+    assert any(record["op"] == "read" and record["path"] == str(stalled) for record in lines(trace))
+    with io_helper._cache_store(cache["directory"], [str(run)]) as store:
+        found = store.read_dataset(str(run))
+        assert found.value is not None
+        row, packed = found.value
+        data = unpack_dataset(packed)
+        assert data is not None and sorted(data) == [1, 2] and row["info"]["unsettled"] == 1
+    stalled.write_text("3,2,3\n3,4,5\n")  # The writer finished.
+    os.utime(stalled, (when, when))
+    events = []
+    load(str(run), str(output), events.append, cache)
+    loaded = next(event for event in events if event["kind"] == "loaded")
+    # Shots 1 and 2 come from the disk cache; only the finished file is read.
+    assert loaded["files"] == 3 and loaded["load_counts"]["read"] == 1 and loaded["unsettled_files"] == 0
+
+
+def test_an_old_file_ending_mid_row_is_read_as_far_as_it_goes(tmp_path: Path) -> None:
+    """Untouched for longer than ``RECENT_SECONDS``, a file ending mid-row is damaged, not being
+    written: it loads as problematic, without its partial row."""
+    run = tmp_path / "run"
+    run.mkdir()
+    damaged = run / "d_txy_forc1.txt"
+    damaged.write_text("1,2,3\n4,5")
+    when = time.time() - io_helper.RECENT_SECONDS - 60
+    os.utime(damaged, (when, when))
+    output = tmp_path / "out"
+    output.mkdir()
+    events: list[dict[str, Any]] = []
+    load(str(run), str(output), events.append)
+    loaded = next(event for event in events if event["kind"] == "loaded")
+    assert loaded["files"] == 1 and loaded["problematic"] == [1] and loaded["rows"] == 1
