@@ -870,8 +870,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         assert self.shown is not None and self._content is not None
         area = getattr(self.main_window, "middle_mainwindow", None)
         picture = snapshot(self._content, area.size() if isinstance(area, QWidget) else QSize())
-        shown = self.runner.results.released(self.shown)
-        self.result = shown if self.result is self.shown or self.result is None else self.runner.results.released(self.result)
+        last, shown = self.result, self.runner.results.released(self.shown)
+        self.result = shown if last is None or last is self.shown else self.runner.results.released(last)
         self.shown = shown
         drawn = self._shown_view or self.follow.ran
         view = hollow(drawn)

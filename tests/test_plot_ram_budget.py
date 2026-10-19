@@ -48,7 +48,8 @@ def folder(name: str) -> str:
     return FolderCache.key(f"/data/root/{name}")
 
 
-def dataset(name: str, shots: range | list[int], *, prints: Optional[dict[int, tuple[int, int, int]]] = None) -> Dataset:
+def dataset(name: str, shots: range | list[int], *,
+            prints: Optional[dict[int, tuple[int, int, int]]] = None) -> Dataset:
     """A loaded folder: ``ROWS`` events a shot, fixed fingerprints (or ``prints``)."""
     numbers = list(shots)
     data = {shot: np.full((ROWS, 3), float(shot)) for shot in numbers}
@@ -430,7 +431,8 @@ def test_a_reload_leaves_out_and_names_changed_and_missing_shots(
     qtbot.waitUntil(lambda: drawn(instance), timeout=10_000)
     shown = cast(AnalysisResult, instance.shown)
     assert shown.coverage.shots == (1, 3, 5)
-    assert error_line(instance) == "⚠ Reloaded from RAM without 2 of its 5 shots: shot 2 changed since; shot 4 missing"
+    assert error_line(instance) == ("⚠ Reloaded from RAM without 2 of its 5 shots: "
+                                    "shot 2 changed since; shot 4 missing")
     view = instance.view
     assert view.shot_numbers == (1, 3, 5) and view.fingerprints[5] == (5, 105, 1_005)
     assert view.shots[3].base is not None and buffer_of(view.shots[3]) == buffer_of(again.data[3])
