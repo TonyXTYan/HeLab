@@ -129,7 +129,11 @@ which machine owns which task.
    > code. Propose tasks with a brief; ask Tony before creating a floor or
    > recruiting, and before landing a floor or opening a PR. Keep the
    > "Active work" note current. Apply workers' proposed doc changes when
-   > integrating.
+   > integrating. Tony and other agents may edit Ground for small urgent
+   > changes: before landing a floor, applying doc changes or choosing a base
+   > commit, check Ground's `git status` and recent log, and ask Tony about
+   > changes you didn't make. Never stash, reset, check out over or discard
+   > them. Base commits are always committed (`HEAD` or a hash).
 
    A role starts the agent in `.maestri/roles/<id>/`, where Maestri writes
    the role's own `AGENTS.md`, `CLAUDE.md` and `role.json` (gitignored via
@@ -143,6 +147,53 @@ which machine owns which task.
    role, started in the repo root, with this text as its first prompt.
 4. In the first prompt, mention **@Maestro** so the agent loads the
    `maestri-manager` skill.
+5. Two more roles (Settings → Agents → roles), for the Coordinator to recruit
+   with `--role` (section 5). Don't tick Maestro for either. The brief adds
+   the task itself; these hold the rules every task shares.
+
+   **Worker**:
+
+   > You do one HeLab task on a Maestri floor. Your shell starts in a Maestri
+   > role folder (`.maestri/roles/<id>/`): run every command from the floor's
+   > root (`cd "$(git rev-parse --show-toplevel)"` first, then
+   > `source venv/bin/activate` and `source .ai/local/floor-env.sh`; Claude
+   > Code resets the shell to the start folder after every command, so prefix
+   > each one). Check that the root is the floor (under `.maestri/floors`),
+   > not Ground; if it is Ground, stop and tell the Coordinator. Read
+   > `AGENTS.md`, `roadmaps/agent-workflow.md` and your brief first and
+   > follow them. Work on your floor's `agent/<task>` branch, from the base
+   > commit in the brief; commit freely there, and push the branch once, to
+   > `TonyXTYan/HeLab` only, when the work is done. Change only the brief's
+   > owned paths. Write documentation only in your own
+   > `.ai/sessions/<date>-<tool>-<task>/` (brief, notes, handoff with proposed
+   > doc changes); never edit `AGENTS.md`, `roadmaps/`, `.ai/MANUAL_TODO.md`
+   > or `.ai/memory/`. Run tests with
+   > `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`
+   > plus strict mypy and pyright, and report any RERUN. Don't launch the
+   > HeLab GUI. Ask the Coordinator (`maestri ask`) when blocked or when the
+   > brief is unclear; keep `maestri floor status` current, and when done
+   > post `--state review` and send the Coordinator your handoff's summary.
+
+   **Reviewer**:
+
+   > You review one HeLab branch on a Maestri floor, read-only. Your shell
+   > starts in a Maestri role folder (`.maestri/roles/<id>/`): run every
+   > command from the floor's root (`cd "$(git rev-parse --show-toplevel)"`
+   > first, then `source venv/bin/activate` and
+   > `source .ai/local/floor-env.sh`; prefix each command). Read `AGENTS.md`,
+   > `roadmaps/agent-workflow.md`, the brief and the worker's handoff. Review
+   > the actual diff against the brief's base commit
+   > (`git diff <base>...HEAD`), not the handoff's account of it: correctness,
+   > the brief's acceptance criteria, the codebase rules in `AGENTS.md`,
+   > tests that prove the change, and doc changes the handoff should propose.
+   > Rerun the critical checks yourself (the full suite with
+   > `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`,
+   > strict mypy, pyright). Don't edit, commit or push. Send your findings to
+   > the Coordinator (`maestri ask`), most severe first, each with file and
+   > line, and say plainly when you found no blocker.
+
+   Recruit the Reviewer with the other model from the worker's (Codex
+   reviews Claude's work, Claude reviews Codex's).
 
 ## 3. Register note
 
@@ -252,12 +303,12 @@ and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
 2. **Recruit the worker** on that floor (the Coordinator asks you first):
 
    ```bash
-   maestri recruit "<Codename>" --floor "<Task>" --preset "Claude Code"
+   maestri recruit "<Codename>" --floor "<Task>" --preset "Claude Code" --role "Worker"
    ```
 
    then `maestri ask` it the brief (objective, acceptance, base commit, owned
    paths and paths not to touch, checks, handoff). For review, recruit the
-   other model (`--preset "Codex"`) on the same floor.
+   other model on the same floor (`--preset "Codex" --role "Reviewer"`).
 3. **The worker**:
    - works from the floor's root: a worker recruited with `--role` starts in
      `.maestri/roles/<id>/`, so it runs `cd "$(git rev-parse --show-toplevel)"`
@@ -274,6 +325,21 @@ and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
 4. **Don't launch the HeLab GUI from a floor yet**: QSettings is still shared
    with your real app (settings profiles are planned in the workflow plan).
    Tests are safe; they use temporary settings and folders.
+
+## Work on Ground
+
+Tony (or an agent he asks, in a terminal without a role) may make small urgent
+changes on Ground, on `dev/v0.0.6`, while floors run. The Coordinator doesn't
+make them: it doesn't edit feature code.
+
+- Add a **Ground** row to Active work (task, terminal, files, status) and
+  clear it when the change is committed; the Coordinator warns a floor whose
+  owned paths overlap.
+- **Commit before landing a floor**: Merge Locally is refused while Ground has
+  uncommitted changes. Sync then brings the change into the floor before the
+  merge.
+- A change that overlaps a floor's owned paths and isn't small goes to that
+  floor's worker instead. Anything bigger becomes its own floor.
 
 ## 6. Landing
 
