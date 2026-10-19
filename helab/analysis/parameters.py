@@ -2,7 +2,8 @@
 
 A ``choice`` parameter picks one of its ``choices``; another parameter can say it applies
 only under one of them (``when``), so the parameter tree shows it only then and the dock's
-source line leaves it out otherwise. ``group`` names the tree section it sits in.
+source line leaves it out otherwise. ``group`` names the tree section it sits in, and
+``page`` the settings tab (a plot whose parameters name more than one page gets a tab each).
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ class ParameterSpec:
     group: str = ""  # the parameter tree section this belongs to ("" = top level)
     when: tuple[str, str] | None = None  # (choice parameter, value) this applies under; None = always
     si: bool = False  # a float in a base unit (s, m): shown with SI prefixes (4 mm), stepped by decade
+    page: str = ""  # the settings tab this is on ("" = the first); a group goes on its first parameter's page
 
     def coerce(self, value: Any) -> Value:
         """``value`` as this parameter's type, clamped to its limits (a choice outside

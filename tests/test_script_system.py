@@ -3,12 +3,12 @@ from pathlib import Path
 from typing import List, cast
 
 import pytest
-from PyQt6.QtWidgets import QDockWidget, QFileDialog, QMainWindow, QPushButton, QTabBar, QTreeWidgetItem
+from PyQt6.QtWidgets import QDockWidget, QFileDialog, QMainWindow, QPushButton, QTreeWidgetItem
 from pytestqt.qtbot import QtBot
 
 from helab.scripts.scripts_manager import ScriptsManager
 from helab.models import TreePanelWidget
-from helab.models.ScriptTreeSelector import ParamTreeTabWidget
+from helab.models.ScriptTreeSelector import PlotSettingsPanel
 from helab.views.HelabMainWindow import HelabMainWindow
 
 # A user's script folder: an older-style script with plain actions.
@@ -103,10 +103,8 @@ def test_load_scripts_adds_a_working_group(qtbot: QtBot, script_folder: Path,
     assert script_class.execute_action.__globals__["CALLS"] == ["First", "Second"]
 
 
-def test_parameter_panel_starts_with_a_hint(qtbot: QtBot) -> None:
-    tabs = ParamTreeTabWidget()
-    qtbot.addWidget(tabs)
-    tabs.add_hint_tab()
-    assert tabs.count() == 1 and tabs.tabText(0) == "Settings"
-    tab_bar = tabs.tabBar()
-    assert tab_bar is not None and tab_bar.tabButton(0, QTabBar.ButtonPosition.RightSide) is None
+def test_settings_panel_starts_with_a_hint(qtbot: QtBot) -> None:
+    panel = PlotSettingsPanel()
+    qtbot.addWidget(panel)
+    assert panel.stack.currentWidget() is panel.hint and panel.chooser.isHidden()
+    assert panel.current_plot() is None

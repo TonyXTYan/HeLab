@@ -11,11 +11,13 @@ from typing import Any, List, Optional
 import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
-from PyQt6.QtWidgets import QLabel, QWidget
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QLabel, QTabWidget, QWidget
+from pyqtgraph.parametertree import ParameterTree
 
 from helab.analysis.dataset_view import DatasetView, ViewKey, build_view, root_key, view_of
 from helab.analysis import selection
-from helab.analysis.parameter_tree import build_tree, parameter_of, tree_values
+from helab.analysis.parameter_tree import UnitSpinBox, build_tree, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import ParameterSpec, describe, effective, tree_children
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
 from helab.analysis.runner import AnalysisRunner
@@ -293,6 +295,58 @@ def test_parameter_tree_shows_only_what_applies(qtbot: QtBot) -> None:
     values = tree_values(root, specs)
     assert values["shots"] == "last N" and values["range_mode"] == "manual" and values["display_cap"] == 100_000
     assert set(values) == {spec.name for spec in specs}
+
+
+def test_numbers_can_be_typed_without_their_unit(qtbot: QtBot) -> None:
+    """Select all and type a number: the unit (and an SI prefix shown) is understood."""
+    specs = scatter_3d.Scatter3D().parameters("Plot")
+    root = build_tree(specs)
+    tree = settings_widget(root, specs)
+    qtbot.addWidget(tree)
+    tree.show()
+    parameter_of(root, selection.RANGE_MODE).setValue(selection.MANUAL)
+    t_min = selection.BOUNDS[0][0]
+    parameter_of(root, t_min).setValue(0.004)
+
+    def type_into(spec: ParameterSpec, text: str) -> str:
+        box = next(iter(parameter_of(root, spec).items)).widget
+        assert isinstance(box, UnitSpinBox)
+        edit = box.lineEdit()
+        assert edit is not None
+        edit.selectAll()
+        qtbot.keyClicks(edit, text)  # type: ignore[no-untyped-call]
+        qtbot.keyClick(edit, Qt.Key.Key_Return)  # type: ignore[no-untyped-call]
+        return str(edit.text())
+    assert type_into(t_min, "5") == "5 ms"
+    parameter_of(root, selection.RANGE_MODE).setValue(selection.AUTO)
+    assert type_into(scatter_3d.KEEP, "95") == "95 %"
+    assert type_into(scatter_3d.CAP, "5000") == "5000"
+    assert type_into(scatter_3d.POINT_SIZE, "20") == "1.5 px"  # Out of range: kept as it was.
+    values = tree_values(root, specs)
+    assert values["t_min"] == pytest.approx(0.005) and values["keep_percent"] == 95.0
+    assert values["display_cap"] == 5000 and isinstance(values["display_cap"], int)
+
+
+def test_settings_pages_become_tabs(qtbot: QtBot) -> None:
+    """Parameters on more than one page get a tab each, a group on its first parameter's page;
+    one page (as every plot has today) is a plain tree."""
+    plain = settings_widget(build_tree(scatter_3d.Scatter3D().parameters("Plot")), [])
+    assert isinstance(plain, ParameterTree)
+    qtbot.addWidget(plain)
+    specs = [ParameterSpec("bins", "Bins", "int", 10, (1, 100)),
+             ParameterSpec("model", "Model", "choice", "gauss", choices=("gauss", "lorentz"), group="Fit", page="Fit"),
+             ParameterSpec("width", "Width", "float", 1.0, group="Fit"),
+             ParameterSpec("log_y", "Log Y", "bool", False, page="Display")]
+    root = build_tree(specs)
+    tabs = settings_widget(root, specs)
+    assert isinstance(tabs, QTabWidget)
+    qtbot.addWidget(tabs)
+    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Settings", "Fit", "Display"]
+    fit = tabs.widget(1)
+    assert isinstance(fit, ParameterTree)
+    assert [item.param.name() for item in fit.listAllItems()] == ["Fit", "model", "width"]
+    parameter_of(root, specs[3]).setValue(True)
+    assert tree_values(root, specs) == {"bins": 10, "model": "gauss", "width": 1.0, "log_y": True}
 
 
 # Shots and view range

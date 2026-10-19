@@ -3,21 +3,20 @@ import logging
 import os
 from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QCloseEvent
 # from uuid import uuid4
 
 # Import QWidget types first to avoid forward references
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QLabel, QPushButton, QTreeWidget, QVBoxLayout,
-    QTreeWidgetItem, QHeaderView, QTabWidget, QDockWidget, QFileDialog,
-    QComboBox, QMainWindow, QTabBar
+    QTreeWidgetItem, QHeaderView, QDockWidget, QFileDialog,
+    QComboBox, QMainWindow, QApplication, QStackedWidget
 )
 from pyqtgraph.parametertree import Parameter
-import pyqtgraph.parametertree as ptree
 
 from helab.analysis.dataset_view import DatasetView
-from helab.analysis.parameter_tree import build_tree, tree_values
+from helab.analysis.parameter_tree import build_tree, settings_widget, tree_values
 from helab.analysis.parameters import describe
 from helab.analysis.results import AnalysisResult
 from helab.analysis.runner import AnalysisRunner, get_analysis_runner
@@ -44,7 +43,7 @@ class AnalysisDock(QDockWidget):
 
 
 class LinkedAnalysisInstance:
-    """Manages a linked pair of dock widget and parameter tab.
+    """Manages a linked pair of dock widget and its page in the Settings panel.
     
     This class handles:
     - Unique instance identification
@@ -63,7 +62,6 @@ class LinkedAnalysisInstance:
         self.main_window = main_window
         self.dock_widget: Optional[QDockWidget] = None
         self.param_tab: Optional[QWidget] = None
-        self.param_tab_index: int = -1
         self.is_closed = False
         
     def setup_dock_widget(self, content: QWidget) -> None:
@@ -77,22 +75,13 @@ class LinkedAnalysisInstance:
         dock.closed.connect(self.close)
         self.dock_widget = dock
         
-    def setup_param_tab(self, param_tree: QWidget) -> None:
-        """Create and setup the parameter tab."""
-        if not self.main_window:
+    def setup_param_tab(self, param_tree: QWidget, title: str = "") -> None:
+        """Add this plot's page to the Settings panel (after its dock is made)."""
+        if not self.main_window or self.dock_widget is None:
             return
-            
         self.param_tab = param_tree
-        self.param_tab_index = self.main_window.panel_right_top_params_tab_widget.addTab(
-            param_tree,
-            f"{self.name} ({self.instance_id})"
-        )
-        tab_bar = self.main_window.panel_right_top_params_tab_widget.tabBar()
-        if tab_bar:
-            tab_bar.setTabData(
-                self.param_tab_index,
-                self.instance_id
-            )
+        self.main_window.panel_right_top_plot_settings.add_plot(
+            self.dock_widget, param_tree, title or f"{self.name} ({self.instance_id})")
         
     def close(self) -> None:
         """Close and cleanup both components."""
@@ -109,12 +98,10 @@ class LinkedAnalysisInstance:
                     self.main_window.dock_widgets.remove(self.dock_widget)
                 self.dock_widget.deleteLater()
                 
-            # Remove parameter tab (its index moves as other tabs close)
+            # Remove its page from the Settings panel
             if self.param_tab:
-                tabs = self.main_window.panel_right_top_params_tab_widget
-                index = tabs.indexOf(self.param_tab)
-                if index >= 0:
-                    tabs.removeTab(index)
+                if self.dock_widget:
+                    self.main_window.panel_right_top_plot_settings.remove_plot(self.dock_widget)
                 self.param_tab.deleteLater()
             update = getattr(self.main_window, "update_placeholder_visibility", None)
             if callable(update):
@@ -122,7 +109,7 @@ class LinkedAnalysisInstance:
 
 
 class AnalysisInstance(LinkedAnalysisInstance):
-    """One run of a dataset analysis: its plot dock and parameter tab, bound to the dataset
+    """One run of a dataset analysis: its plot dock and settings page, bound to the dataset
     view it started with. **Rerun with these settings** runs again on that same view; a new
     run on other data is a new instance (the script's button again)."""
 
@@ -139,7 +126,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.runner.finished.connect(self._finished)
 
     def start(self) -> None:
-        """Open the dock and parameter tab, then run with the defaults."""
+        """Open the dock and its settings page, then run with the defaults."""
         self.setup_dock_widget(self._message(f"Running {self.name} on {self.view.key.short()}…"))
         specs = self.script.parameters(self.action)
         self.parameter_root = build_tree(specs)
@@ -150,15 +137,13 @@ class AnalysisInstance(LinkedAnalysisInstance):
         source = QLabel(f"Input: {self.view.key.short()} (stays with this plot)")
         source.setToolTip(self.view.identity.source_path)
         layout.addWidget(source)
-        tree = ptree.ParameterTree()
-        tree.setParameters(self.parameter_root, showTop=False)
-        layout.addWidget(tree, 1)
+        layout.addWidget(settings_widget(self.parameter_root, specs), 1)
         self.rerun_button = QPushButton("Rerun with these settings")
         self.rerun_button.setEnabled(bool(specs))
         self.rerun_button.clicked.connect(self.run)
         layout.addWidget(self.rerun_button)
         layout.addWidget(self.status_label)
-        self.setup_param_tab(tab)
+        self.setup_param_tab(tab, f"{self.name} ({self.instance_id}) · {self.view.key.short()}")
         self.run()
 
     def values(self) -> Dict[str, Any]:
@@ -526,6 +511,7 @@ class TreePanelWidget(QWidget):
         if window is None or not isinstance(dock, AnalysisDock):
             return
         dock.closed.connect(lambda: self._analysis_instances.pop(instance.instance_id, None))
+        window.panel_right_top_plot_settings.follow(window.middle_mainwindow)
         shown = [other for other in window.dock_widgets if other.isVisible()]
         window.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         if shown:
@@ -558,71 +544,105 @@ class TreePanelWidget(QWidget):
         button.clicked.connect(callback)
         return button
 
-class ParamTreeTabWidget(QTabWidget):
-    """A widget that provides parameter tree functionality in a tabbed interface.
-    
-    This widget extends QTabWidget to display and manage script parameters using
-    pyqtgraph's parameter tree system. It supports:
-    - Multiple parameter tabs
-    - Hierarchical parameter organization
-    - Various parameter types (int, float, bool, str, list)
-    - Nested parameter groups
-    
-    Each plot's parameter tab is added by its ``AnalysisInstance``; a first,
-    non-closable tab says where the settings come from.
-    
-    This is primarily used for configuring and controlling script behavior
-    through a user-friendly interface.
-    """
-    
+class PlotSettingsPanel(QWidget):
+    """The settings of the active plot: one page per open plot, showing the page of the plot
+    last clicked, focused or brought to the front among tabbed docks, floating ones included.
+    The chooser on top names it and picks another plot (raising its dock). A page keeps its
+    edits while another plot's page shows. With no plot open, a hint shows instead."""
+
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
-        self.tabCloseRequested.connect(self._on_tab_close)
-        
-    def _on_tab_close(self, index: int) -> None:
-        """Handle tab close requests by finding and closing the associated instance."""
-        tab_bar = self.tabBar()
-        if not tab_bar:
-            return
-            
-        instance_id = tab_bar.tabData(index)
-        if not instance_id:
-            # If no instance ID, just remove the tab
-            self.removeTab(index)
-            return
-        
-        # Find the HelabMainWindow and access the TreePanelWidget through it
-        from helab.views.HelabMainWindow import HelabMainWindow
-        parent_window = None
-        parent = self.parent()
-        
-        # Find the parent main window
-        while parent:
-            if isinstance(parent, HelabMainWindow):
-                parent_window = parent
-                break
-            parent = parent.parent()
-        
-        if parent_window and hasattr(parent_window, 'panel_right_bottom_script_selector'):
-            tree_panel = parent_window.panel_right_bottom_script_selector
-            
-            # Now we can access the TreePanelWidget's instance dictionary
-            if instance_id in tree_panel._analysis_instances:
-                instance = tree_panel._analysis_instances[instance_id]
-                instance.close()
-                del tree_panel._analysis_instances[instance_id]
-                return
-        
-        # If we couldn't find the instance or tree panel, just remove the tab
-        self.removeTab(index)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.chooser = QComboBox()
+        self.chooser.setToolTip("The plot these settings are for; click a plot to show its settings")
+        self.chooser.activated.connect(lambda index: self.show_plot(self._order[index], raise_dock=True))
+        layout.addWidget(self.chooser)
+        self.stack = QStackedWidget()
+        self.hint = QLabel("Run a plot from Scripts below; its settings appear here.")
+        self.hint.setWordWrap(True)
+        self.hint.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.stack.addWidget(self.hint)
+        layout.addWidget(self.stack, 1)
+        self._pages: Dict[QDockWidget, QWidget] = {}
+        self._order: List[QDockWidget] = []  # the chooser's order: as opened
+        self._recent: List[QDockWidget] = []  # most recently shown last
+        self._followed: List[QMainWindow] = []
+        self._update_chooser()
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
 
-    def add_hint_tab(self) -> None:
-        """A first, non-closable tab: plots' settings appear in tabs beside it."""
-        hint = QLabel("Run a plot from Scripts below; its settings appear in a tab here.")
-        hint.setWordWrap(True)
-        hint.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        tab_index = self.addTab(hint, "Settings")
-        self.setTabsClosable(True)
-        tab_bar = self.tabBar()
-        if tab_bar is not None:
-            tab_bar.setTabButton(tab_index, QTabBar.ButtonPosition.RightSide, None)
+    def add_plot(self, dock: QDockWidget, page: QWidget, title: str) -> None:
+        """A new plot's page; it shows at once, as its dock comes to the front."""
+        self._pages[dock] = page
+        self._order.append(dock)
+        self.stack.addWidget(page)
+        self.chooser.addItem(title)
+        self.show_plot(dock)
+
+    def remove_plot(self, dock: QDockWidget) -> None:
+        """A closed plot's page goes; the most recently shown plot still open shows."""
+        page = self._pages.pop(dock, None)
+        if page is None:
+            return
+        index = self._order.index(dock)
+        self._order.pop(index)
+        self.chooser.removeItem(index)
+        if dock in self._recent:
+            self._recent.remove(dock)
+        self.stack.removeWidget(page)
+        if self._recent:
+            self.show_plot(self._recent[-1])
+        else:
+            self.stack.setCurrentWidget(self.hint)
+        self._update_chooser()
+
+    def show_plot(self, dock: QDockWidget, raise_dock: bool = False) -> None:
+        page = self._pages.get(dock)
+        if page is None:
+            return
+        if dock in self._recent:
+            self._recent.remove(dock)
+        self._recent.append(dock)
+        self.stack.setCurrentWidget(page)
+        self.chooser.setCurrentIndex(self._order.index(dock))
+        self._update_chooser()
+        if raise_dock:
+            dock.show()
+            dock.raise_()
+            if dock.isFloating():
+                dock.activateWindow()
+
+    def current_plot(self) -> Optional[QDockWidget]:
+        return self._recent[-1] if self._recent else None
+
+    def page(self, dock: QDockWidget) -> Optional[QWidget]:
+        return self._pages.get(dock)
+
+    def follow(self, area: QMainWindow) -> None:
+        """Show a plot's page when its tab is clicked among tabbed docks in ``area``."""
+        if area not in self._followed:
+            self._followed.append(area)
+            area.tabifiedDockWidgetActivated.connect(self.show_plot)
+
+    def _update_chooser(self) -> None:
+        self.chooser.setVisible(bool(self._order))
+
+    def _plot_of(self, widget: Optional[QWidget]) -> Optional[QDockWidget]:
+        while widget is not None:
+            if isinstance(widget, QDockWidget) and widget in self._pages:
+                return widget
+            widget = widget.parentWidget()
+        return None
+
+    def eventFilter(self, a0: Optional[QObject], a1: Optional[QEvent]) -> bool:
+        """A click or focus inside a plot, or activating a floating plot's window, shows its page."""
+        # The filter is app-wide: it can outlive this wrapper's attributes as Python tears it down.
+        if (getattr(self, "_pages", None) and a1 is not None and isinstance(a0, QWidget)
+                and a1.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.FocusIn, QEvent.Type.WindowActivate)):
+            dock = self._plot_of(a0)
+            if dock is not None and dock is not self.current_plot():
+                self.show_plot(dock)
+        return False

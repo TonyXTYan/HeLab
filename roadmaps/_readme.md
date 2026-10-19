@@ -122,6 +122,11 @@ still to choose (Tony, with the coordinator's proposal).
   ([plan](result-caching.md)) (2026-10-15). R1 done (2026-10-19).
 - [ ] Open plots count toward the RAM budget and release their data when it is
   exceeded, least recently used first; Rerun reloads it (Tony, 2026-10-19).
+- [ ] One Settings panel follows the active plot (click, focus, tabbed or
+  floating dock; chooser raises a plot; settings pages as tabs via
+  `ParameterSpec.page`). Quick version on Ground, hardening pending: real-app
+  focus with QtWebEngine and pyqtgraph, many plots, a pin to keep one plot's
+  settings shown (Tony, 2026-10-19).
 - [ ] Show the analysis worker beside I/O: status-bar counts and Folder
   details' activity, each job with script, input, revision, time and Cancel;
   later remote/CLI workers in the same list (Tony, 2026-10-19).

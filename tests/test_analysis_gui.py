@@ -4,20 +4,21 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Any, Iterator, List, Optional
+from typing import Any, Iterator, List, Optional, cast
 
 import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6.QtGui import QCloseEvent
-from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QTabWidget, QWidget
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QTabBar, QTabWidget, QWidget
 
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.io_helper import list_folder, scan
-from helab.models.ScriptTreeSelector import AnalysisInstance, ParamTreeTabWidget, TreePanelWidget
+from helab.models.ScriptTreeSelector import AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import basic_plots, group
 from helab.utils.dash_server import dash_server
@@ -99,7 +100,7 @@ class Window(HelabMainWindow):
         self.dock_widgets: List[QDockWidget] = []
         self.tab_widget = QTabWidget()  # type: ignore[assignment]
         self.tab_widget.addTab(explorer, "tab")
-        self.panel_right_top_params_tab_widget = ParamTreeTabWidget()
+        self.panel_right_top_plot_settings = PlotSettingsPanel()
         self.notices: list[str] = []
 
     def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
@@ -192,7 +193,7 @@ def test_rerun_uses_the_same_input_and_close_cleans_up(
     qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
     first = instance.result
     assert first is not None and first.data == 2
-    assert window.panel_right_top_params_tab_widget.indexOf(instance.param_tab) >= 0
+    assert window.panel_right_top_plot_settings.page(instance.dock_widget) is instance.param_tab
     label = source_label(instance.dock_widget)
     assert label.text() == "Data source: run_C · rev 1 · tests.blocking v3\nScale 1"
     instance.parameter_root.child("scale").setValue(4)
@@ -205,7 +206,7 @@ def test_rerun_uses_the_same_input_and_close_cleans_up(
     assert runner.results.get(instance.result.job_id) is not None
     instance.dock_widget.close()
     assert instance.is_closed and instance.instance_id not in panel._analysis_instances
-    assert window.panel_right_top_params_tab_widget.indexOf(instance.param_tab) < 0
+    assert window.panel_right_top_plot_settings.page(instance.dock_widget) is None
 
 
 def test_closing_a_dock_mid_run_delivers_nothing(
@@ -257,6 +258,66 @@ def test_centre_hint_hides_while_a_plot_dock_is_open(
     assert hint.isHidden() and window.dock_widgets == [second.dock_widget]
     second.dock_widget.close()
     assert not hint.isHidden() and not window.dock_widgets
+
+
+def test_settings_panel_follows_the_active_plot(
+        window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path) -> None:
+    """One Settings panel shows the page of the plot last brought to the front, clicked or
+    focused (a floating one too); the chooser raises a plot; closing falls back to the last
+    shown plot still open, and the hint returns when none is."""
+    run = folder(tmp_path, "run_S", 1)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3})
+    window.middle_mainwindow.show()  # The plot area; the test window doesn't hold it.
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = Blocking()
+    script.release.set()
+    metadata = script.get_metadata()
+    runs: list[Optional[AnalysisInstance]] = []
+    for _ in range(3):  # One click at a time: each new plot is tabbed with the one shown.
+        runs.append(panel.run_analysis(metadata, script, "Plot"))
+        qtbot.waitUntil(window.dock_widgets[-1].isVisible)
+    first, second, third = runs
+    assert first is not None and second is not None and third is not None
+    docks = [instance.dock_widget for instance in (first, second, third)]
+    assert all(isinstance(dock, QDockWidget) for dock in docks)
+    one, two, three = cast(List[QDockWidget], docks)
+    settings = window.panel_right_top_plot_settings
+    assert settings.current_plot() is three and settings.stack.currentWidget() is third.param_tab
+    assert [settings.chooser.itemText(i) for i in range(3)] == [
+        "Blocking (1) · run_S · rev 1", "Blocking (2) · run_S · rev 1", "Blocking (3) · run_S · rev 1"]
+    assert settings.chooser.currentIndex() == 2 and not settings.chooser.isHidden()
+    qtbot.waitUntil(lambda: all(instance.result is not None for instance in (first, second, third)), timeout=10_000)
+    # Clicking a tabbed dock's tab brings it to the front and shows its settings.
+    qtbot.waitUntil(lambda: any(bar.count() == 3 for bar in window.middle_mainwindow.findChildren(QTabBar)))
+    bars = [bar for bar in window.middle_mainwindow.findChildren(QTabBar) if bar.count() == 3]
+    bars[0].setCurrentIndex(next(i for i in range(3) if bars[0].tabText(i) == one.windowTitle()))
+    qtbot.waitUntil(lambda: settings.current_plot() is one)
+    assert settings.stack.currentWidget() is first.param_tab and settings.chooser.currentIndex() == 0
+    # A click inside a floating plot shows its settings.
+    two.setFloating(True)
+    two.show()
+    content = two.widget()
+    assert content is not None
+    qtbot.mouseClick(content, Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
+    assert settings.current_plot() is two and settings.stack.currentWidget() is second.param_tab
+    # A page keeps its edits while another plot's page shows.
+    assert first.parameter_root is not None and second.parameter_root is not None
+    first.parameter_root.child("scale").setValue(7)
+    # The chooser shows a plot's settings and raises its dock.
+    settings.chooser.activated.emit(0)
+    assert settings.current_plot() is one and first.values() == {"scale": 7} and second.values() == {"scale": 1}
+    qtbot.waitUntil(one.isVisible)
+    # Closing the shown plot falls back to the last shown plot still open.
+    one.close()
+    assert settings.current_plot() is two and settings.chooser.count() == 2
+    assert settings.chooser.currentIndex() == 0
+    two.close()
+    assert settings.current_plot() is three
+    three.close()
+    assert settings.current_plot() is None and settings.stack.currentWidget() is settings.hint
+    assert settings.chooser.isHidden() and settings.stack.count() == 1
 
 
 def test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab(

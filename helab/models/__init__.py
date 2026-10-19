@@ -1,3 +1,3 @@
-from .ScriptTreeSelector import TreePanelWidget, ParamTreeTabWidget
+from .ScriptTreeSelector import TreePanelWidget, PlotSettingsPanel
 
-__all__ = ["TreePanelWidget", "ParamTreeTabWidget"]
+__all__ = ["TreePanelWidget", "PlotSettingsPanel"]

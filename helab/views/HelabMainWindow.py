@@ -32,7 +32,7 @@ from typing_extensions import no_type_check
 
 from helab.analysis.dataset_view import DatasetView, view_of
 from helab.analysis.results import AnalysisResult
-from helab.models.ScriptTreeSelector import TreePanelWidget, ParamTreeTabWidget
+from helab.models.ScriptTreeSelector import TreePanelWidget, PlotSettingsPanel
 from helab.resources.icons import ToolIcons
 from helab.utils.constants import *
 from helab.utils.number_format import byte_size, fnum
@@ -829,8 +829,7 @@ class HelabMainWindow(QMainWindow):
 
         # right_top_widget = QLabel("Right Top Placeholder")
         # right_top_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.panel_right_top_params_tab_widget = ParamTreeTabWidget(parent=self)
-        self.panel_right_top_params_tab_widget.add_hint_tab()
+        self.panel_right_top_plot_settings = PlotSettingsPanel(parent=self)
 
         self.panel_right_bottom_script_selector = TreePanelWidget(helab_main_window=self)
 
@@ -843,7 +842,7 @@ class HelabMainWindow(QMainWindow):
         toggle_right_bottom_panel_action.triggered.connect(self.toggle_right_bottom_panel)
         self.sidebar_toolbar_right.addAction(toggle_right_bottom_panel_action)
 
-        self.right_splitter.addWidget(self.panel_right_top_params_tab_widget)
+        self.right_splitter.addWidget(self.panel_right_top_plot_settings)
         self.right_splitter.addWidget(self.panel_right_bottom_script_selector)
         self.right_splitter.setSizes([400, 300])
 

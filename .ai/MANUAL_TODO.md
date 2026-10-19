@@ -90,10 +90,15 @@ real experiment data without deciding where its top should be.
   quits at once; next launch the saved shots come from the cache.
 - [ ] Lab PCs (Windows): the same Live checks; a check's cost on the lab share.
 - [ ] Plot settings (Plots v1 polish): change Shots, View range and Points in a
-  plot's settings tab and press Rerun with these settings; the plot and its
+  plot's settings and press Rerun with these settings; the plot and its
   two-line source follow. Manual bounds' spin boxes step sensibly when scrolled.
   The centre hint disappears when the first plot opens and returns when all
   close. Scatter point size and opacity in the dock and via Open in browser.
+- [ ] Settings panel follows the active plot (quick feature on Ground): with three
+  plots open, clicking a dock's tab, clicking inside a plot (pyqtgraph and the 3D
+  scatter's web view) and activating a floating plot's window each show that
+  plot's settings; the chooser raises the plot it names; unapplied edits survive
+  switching; closing the shown plot shows the one shown before it.
 - [ ] Plots on screen: the 3D scatter in the dock (QtWebEngine) and via Open in
   browser, on the Mac and a lab PC (black pane: the browser path must work);
   counts and histograms; closing and tabbing docks; the Dash page says "Plot not
