@@ -583,6 +583,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._reload_shots: Optional[Tuple[int, ...]] = None  # The shots it takes (None: the view's).
         self._reload_note = ""  # What the last reload left out (changed or missing shots).
         self._picture_cost = 0  # Bytes its picture took when last taken (0: not yet).
+        # Its runs, whose completed results RamResults may keep (counted as the plot's RAM).
+        self._runs: List[str] = []
 
     @property
     def view(self) -> DatasetView:
@@ -656,6 +658,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.status_label.setText(str(error))
             return
         self.job_id, self._job_view = context.job_id, view
+        self._runs.append(context.job_id)
         self.follow.start(view)
         self.status_label.setText(f"Running ({context.job_id})…")
         self._show_follow()
@@ -892,14 +895,26 @@ class AnalysisInstance(LinkedAnalysisInstance):
 
     def ram_buffers(self) -> Buffers:
         """The memory this plot's data uses: the views it shows, runs on or holds waiting, and
-        its results' arrays; once released, its picture (its view keeps no events)."""
+        its results' arrays, older ones RamResults keeps included; once released, its picture
+        (its view keeps no events)."""
         merged: Buffers = dict(self.released.ram_buffers()) if self.released is not None else {}
         for view in (self.follow.ran, self.follow.pending, self._shown_view, self._job_view):
             if view is not None:
                 merged.update(view_buffers(view))
-        for result in {id(result): result for result in (self.shown, self.result) if result is not None}.values():
+        kept = [(job, self.runner.results.peek(job)) for job in self._runs]
+        self._runs = [job for job, result in kept if result is not None or job == self.job_id]
+        results = {id(result): result for result in (self.shown, self.result, *(result for _, result in kept))
+                   if result is not None}
+        for result in results.values():
             merged.update(buffers(arrays_in(result.data)))
         return merged
+
+    def _forget_runs(self) -> None:
+        """Its older results go from RamResults (released or closed: nothing reads them again)."""
+        for job in self._runs:
+            if job != self.job_id:
+                self.runner.results.discard(job)
+        self._runs = [self.job_id] if self.job_id else []
 
     def ram_label(self) -> str:
         return self._title()
@@ -933,6 +948,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         last, shown = self.result, self.runner.results.released(self.shown)
         self.result = shown if last is None or last is self.shown else self.runner.results.released(last)
         self.shown = shown
+        self._forget_runs()
         drawn = self._shown_view or self.follow.ran
         view = hollow(drawn)
         self.follow.ran = view if self.follow.ran is drawn else hollow(self.follow.ran)
@@ -1092,6 +1108,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.runner.cancel(self.job_id)
         if self.shown is not None:
             self.runner.results.unpin(self.shown.job_id)
+        self._forget_runs()
         if self._reload_owner:
             self._end_disk_read(self._cache())
         window = self.main_window

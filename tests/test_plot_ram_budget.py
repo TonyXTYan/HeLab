@@ -358,6 +358,30 @@ class Tiny(Copy):
         return Copied(np.zeros(1), tuple(context.view.shots))
 
 
+def test_older_results_count_and_go_with_a_release_or_close(
+        window: Window, cache: FolderCache, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """RamResults keeps a plot's older (unpinned) results: they count as the plot's RAM, and
+    releasing or closing the plot drops them."""
+    entry = hold(cache, dataset("results", range(1, 3)))  # The view's shots are the folder's.
+    plots = [open_plot(window, qtbot, entry) for _ in range(2)]
+    jobs: list[list[str]] = []
+    for instance in plots:
+        first = cast(AnalysisResult, instance.shown).job_id
+        instance.run()
+        qtbot.waitUntil(lambda: not instance.job_id, timeout=10_000)
+        second = cast(AnalysisResult, instance.shown).job_id
+        jobs.append([first, second])
+        older = runner.results.peek(first)
+        assert older is not None and older.data is not None  # Unpinned, still kept.
+        assert sum(instance.ram_buffers().values()) == 3 * 2 * SHOT_BYTES  # Its view and both copies.
+    open_plot(window, qtbot, dataset("other", range(1, 2)))
+    assert cache.plot_bytes() >= 2 * 2 * 2 * SHOT_BYTES
+    assert plots[0].release()
+    assert all(runner.results.peek(job) is None for job in jobs[0])
+    plots[1].close()
+    assert all(runner.results.peek(job) is None for job in jobs[1])
+
+
 def test_a_release_must_free_more_than_its_picture_costs(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
     """A plot whose data is a loaded folder's (its own result: 8 bytes) would cost more as a
     picture than releasing it frees: it stays, and its picture's cost is remembered, so later
