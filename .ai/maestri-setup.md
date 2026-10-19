@@ -10,7 +10,7 @@ step in the workflow plan.
 
 ## What you get
 
-- **Ground**: your own checkout (`HeLab/`, currently `dev/v0.0.5a`). You and
+- **Ground**: your own checkout (`HeLab/`, currently `dev/v0.0.6`). You and
   the coordinator live here. Agents never commit here without asking.
 - **Floors**: one per task. Each is a git worktree of HeLab on its own branch,
   in `.maestri/floors` next to the project, with its own canvas and terminals.
@@ -210,7 +210,7 @@ and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
 You land floors (or approve the Coordinator doing it from Ground).
 
 - Click the airplane button beside the floor, or **Land Floor** in its menu.
-- **Merge Locally**: pick the target branch (e.g. `dev/v0.0.5a`). **Sync**
+- **Merge Locally**: pick the target branch (e.g. `dev/v0.0.6`). **Sync**
   first pulls the target's latest changes into the floor. A merge is refused
   when the target's checkout has uncommitted work, or lists the conflicting
   files and stops.
@@ -220,7 +220,7 @@ You land floors (or approve the Coordinator doing it from Ground).
 - The floor is removed after landing unless **Keep this floor after landing**
   is ticked. The branch stays in the repo.
 - CLI equivalent, from a Ground terminal only:
-  `maestri floor land "<Task>" --into dev/v0.0.5a`.
+  `maestri floor land "<Task>" --into dev/v0.0.6`.
 
 After landing, the Coordinator applies the worker's proposed doc changes
 (AGENTS.md, `roadmaps/`, MANUAL_TODO, memory) on Ground and asks you before

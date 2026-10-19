@@ -15,69 +15,44 @@ How to use it:
 - Keep each item to one or two lines; link substantial features to a document
   in this folder. Keep priority/completion here rather than duplicating task lists.
 
-## Now: v0.0.5a folder browser
+## Now: v0.0.6
 
-- [x] Cache rebuild: SQLite records + compressed dataset files (old cache dropped),
-  remove the old folder browser, editable disk and RAM budgets, large-folder warning,
-  per-folder don't-cache/don't-auto-load flags, cache-folder move, rebuilt Settings →
-  Cache tab. Eleven sessions S1–S11
-  ([plan](cache-storage-and-settings.md#sessions)) (2026-10-10; done 2026-10-11,
-  `fe5a5b7`…`eafcf4b`; native checks in [MANUAL_TODO](../.ai/MANUAL_TODO.md)).
+v0.0.5a1 merged to `main` as `5a8ae6f` (2026-10-19); its items are under
+**Done**. Work for v0.0.6 branches from `dev/v0.0.6` (agents: `agent/<task>`,
+[workflow](agent-workflow.md)) and lands back there; `dev/v0.0.6` goes to
+`main` by PR, with the version bump on that branch. Priorities for v0.0.6 are
+still to choose (Tony, with the coordinator's proposal).
 
-- [x] App version and build info: package version `0.0.5a1`, embedded build provenance,
-  Help → About, and explicit CI tagging plus draft releases on new versions merged
-  to `main` ([implementation](app-versioning.md#implemented-workflow-authoritative))
-  (2026-10-12; release/native checks in [MANUAL_TODO](../.ai/MANUAL_TODO.md)).
+- [ ] Parallel agent workflow on Maestri floors (cloud agents kept open): pilot
+  the first floor with the setup hook ([setup](../.ai/maestri-setup.md)), then
+  the pytest `pythonpath` guard, a hard-coded settings-defaults table (also for
+  Restore default and tooltips in the release) and per-checkout share/isolated
+  profiles, with `HELAB_SETTINGS_OVERRIDE` ([plan](agent-workflow.md)) (2026-10-15).
+
+- [ ] Native checks for v0.0.5a1 on macOS and a Windows lab PC: data roots,
+  cache first and remounts on `/Volumes/dld_output`, the packaged app and the
+  release flow ([manual to-do](../.ai/MANUAL_TODO.md)) (2026-10-19). Then
+  publish the `v0.0.5a1` draft release.
 
 - [ ] Release repos: develop and release on `TonyXTYan/HeLab`; fast-forward
   `HeBECANU/HeLab` `main` only for lab-ready versions, which drafts the same
   release there; stop pushing dev branches to `HeBECANU`. Proposed, Tony to
   confirm ([plan](app-updates.md#release-repos-proposed-2026-10-13-tony-to-confirm)) (2026-10-13).
 
-- [ ] Build size: ship one copy of the app per asset with symlinks kept (macOS
-  artifact 2152 MiB, `HeLab.app` alone zips to 276 MB), then exclude unused
-  packages (pyarrow, mypy), replace pytablericons/pygame, and decide on
-  QtWebEngine ([plan](build-size.md)) (2026-10-13). Step 1 (macOS zip of
-  `HeLab.app` only, symlinks kept) done 2026-10-13; CI result to check.
-
-- [ ] Data roots: disk caching only below a hidden `.helab-root` marker (UUID,
-  created on request, on every kind of disk; nearest wins, so equivalent
-  folders share one cache); RAM only otherwise; each new equivalent location
-  asks same folder or copy, remembered per PC. Next after the SMB key change,
-  with one more cache clear; the root UUID becomes the network plan's logical
-  root ID ([plan](data-roots.md), [stages](../.ai/sessions/2026-10-16-claude-data-roots/plan.md))
-  (2026-10-16; decided 2026-10-18). D1–D4 implemented on `dev/data-roots`
-  (2026-10-18); native checks pending ([manual to-do](../.ai/MANUAL_TODO.md#data-roots-dev-data-roots-added-2026-10-18)).
+- [ ] Build size: exclude unused packages (pyarrow, mypy), replace
+  pytablericons/pygame, and decide on QtWebEngine ([plan](build-size.md))
+  (2026-10-13). Step 1 done: the macOS zip holds only `HeLab.app` with its
+  symlinks (275 MiB instead of 2152 MiB, checked on the PR #5 build).
 
 - [ ] Finish the status-message audit: verify load-phase labels for `merged`/
   `updated` sources ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#status-messages)) (2026-10-08).
 
-- [x] Folder details panel (replaces the left-bottom placeholder and the plot
-  area's loading text), shorter status bar with its running helpers listed in
-  the tooltip, load elapsed time and time left (2026-10-10, `3af4fea`).
+- [ ] Data roots follow-ups: smaller items (Remove .helab-root… in the tree,
+  every location in the duplicates window, NFS/AFP caching, label rename)
+  ([list](../.ai/sessions/2026-10-16-claude-data-roots/follow-ups.md)) (2026-10-18).
 
 ## Known issues
 
-- [x] Resize repaint freeze: removed main-window repaint suppression; pytest covers
-  painting and scan cancellation ([fix](../.ai/sessions/2026-10-11-codex-resize-during-scan/notes.md#implementation)) (2026-10-11; native check in [MANUAL_TODO](../.ai/MANUAL_TODO.md)).
-
-- [x] Disk-cache eviction can drop scan-failure history and other records to make room
-  for data, until the cache rebuild (S5/S6). Fixed: records are never removed to make room
-  (`fd4e020`, `ef4c0ca`). The contention part (reads silently
-  returning "nothing saved", so an automatic scan could run on a blocked folder) was
-  fixed in S1 ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#storage-findings-ranked)) (2026-10-10).
-- [x] Settings → Cache: parameter edits never apply, Clear blocks the GUI and
-  leaves badges stale ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#settings--cache-tab-helabviewssettingsdialogpy)) (2026-10-10).
-  Fixed by the rebuilt Cache tab (`52201ca`).
-
-- [ ] Finish and verify the folder-status remount fix in the native GUI on `/Volumes/dld_output`.
-  Saved icons disappeared because SMB remounts changed `st_dev`, which the status
-  cache treated as a different folder. The fix keeps last-known
-  statuses and failure history across device changes and keys the disk store by
-  SMB source plus relative folder path, avoiding macOS's mount-order suffixes.
-  No migration: the old cache is cleared by hand before first launch. Automated
-  tests pass; the native remount check remains in [MANUAL_TODO](../.ai/MANUAL_TODO.md); see the
-  [investigation](../.ai/sessions/2026-10-15-codex-status-remount/notes.md).
 - [ ] Folders with over 100,000 entries record a scan failure.
 - [ ] The temp folder (`DIR_TEMPS`, Settings → General) is created and can be
   changed, but nothing uses it: helpers' private folders go to the system temp
@@ -94,6 +69,9 @@ How to use it:
   the folder mismatched, or its cache is cleared), the tab keeps its arrays and later
   plots on screen; a load finding missing shots clears them. Clear the analysis view
   or mark it stale, once plotting exists (Tony, 2026-10-14).
+- [ ] `test_two_step_browse::test_refresh_cancels_only_automatic_subscriptions_and_suppresses_new_checks`
+  needed one rerun on macOS CI in 2 of 4 runs (2026-10-18); it doesn't reproduce
+  locally. Investigate if it fails outright.
 
 ## Near term: useful analysis from loaded data
 
@@ -102,11 +80,6 @@ How to use it:
   without changing current behaviour. Feature-driven: the dataset view first,
   then splits where work collides ([plan](refactoring.md)) (2026-10-13;
   revised 2026-10-15).
-- [ ] Parallel agent workflow on Maestri floors (cloud agents kept open): floor
-  setup script, then a hard-coded settings-defaults table (also for Restore
-  default and tooltips in the release) and per-checkout share/isolated
-  profiles, with `HELAB_SETTINGS_OVERRIDE`
-  ([plan](agent-workflow.md)) (2026-10-15).
 
 - [ ] Apply other tabs' finished status checks during Refresh without source
   I/O ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#cross-tab-status-results)) (2026-10-08).
@@ -201,6 +174,33 @@ How to use it:
   list; may no longer be needed).
 
 ## Done
+
+v0.0.5a1 (`main` `5a8ae6f`, 2026-10-19; native checks in [MANUAL_TODO](../.ai/MANUAL_TODO.md)):
+
+- [x] Cache rebuild: SQLite records + compressed dataset files, editable disk and
+  RAM budgets, large-folder warning, per-folder flags, cache-folder move, rebuilt
+  Settings → Cache tab; sessions S1–S11 ([plan](cache-storage-and-settings.md#sessions))
+  (2026-10-10; `fe5a5b7`…`eafcf4b`).
+- [x] App version and build info, Help → About, explicit CI tagging and draft
+  releases ([implementation](app-versioning.md#implemented-workflow-authoritative)) (2026-10-12).
+- [x] Folder details panel, shorter status bar, load elapsed time and time left
+  (2026-10-10, `3af4fea`).
+- [x] Data roots: disk caching keyed by a hidden `.helab-root` marker (UUID),
+  RAM only without one; SMB share and local-volume locations; Same folder / Copy
+  for duplicates with warnings; Place .helab-root (right-click and File menu,
+  Windows `C:\` allowed); Settings → Data roots with Show, Copy path, Clear
+  cached data, Forget, Delete and Review; store `store-v3`
+  ([plan](data-roots.md), [stages](../.ai/sessions/2026-10-16-claude-data-roots/plan.md)) (2026-10-16…18).
+  It replaces the SMB-key remount fix ([investigation](../.ai/sessions/2026-10-15-codex-status-remount/notes.md)).
+- [x] Folders without a disk cache get their status from browsing (session
+  failure history only) (2026-10-18).
+- [x] Resize repaint freeze: no main-window repaint suppression; pytest covers
+  painting and scan cancellation ([fix](../.ai/sessions/2026-10-11-codex-resize-during-scan/notes.md#implementation)) (2026-10-11).
+- [x] Disk-cache eviction no longer drops records to make room (`fd4e020`,
+  `ef4c0ca`); reads never mean "nothing saved" on contention (S1)
+  ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#storage-findings-ranked)) (2026-10-10).
+- [x] Settings → Cache edits apply, Clear doesn't block the GUI (rebuilt Cache
+  tab, `52201ca`) (2026-10-10).
 
 Ticked items from the old README TODO list, kept for reference:
 

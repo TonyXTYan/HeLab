@@ -10,7 +10,7 @@ New confirmed product issues go in `roadmaps/_readme.md` with a link to the evid
 
 The v0.0.5a checks below were added on 2026-10-08 and remain pending.
 
-## Data roots (`dev/data-roots`, added 2026-10-18)
+## Data roots (v0.0.5a1, added 2026-10-18)
 
 Native checks of the data-roots stages D1–D4 ([plan](sessions/2026-10-16-claude-data-roots/plan.md)).
 Use disposable folders or shares where possible; never place a `.helab-root` on
