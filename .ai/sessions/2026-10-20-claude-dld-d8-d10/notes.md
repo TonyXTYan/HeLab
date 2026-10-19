@@ -16,7 +16,9 @@ Sign checks (all in `tests/test_velocity.py`, on exact trajectories):
 - thrown up (v_z > 0) it arrives later than t_f, thrown down earlier: dv_z/dτ = ½ g + h/τ²
   > 0, so v_z is a monotonic relabelling of T for t > t_r;
 - near t_f: v_z ≈ g (τ − t_f) (dv_z/dτ at t_f = ½ g + h/t_f² = g), physics.py's σ_v = g σ_t;
-- the inverse, for a velocity window's T bounds: τ = (v_z + √(v_z² + 2gh))/g (`arrival_time`).
+- the inverse, for a velocity window's T bounds: τ = (v_z + √(v_z² + 2gh))/g (`arrival_time`),
+  written 2h/(√(v_z² + 2gh) − v_z) for v_z < 0 so a fast atom thrown down doesn't lose its
+  digits to cancellation (review nit 8).
 
 This is the surviving top-level Core `txy_to_vel.m` sign, −h/t_f + ½|g|t_f, as the review's
 Decided section says. The Core folder copy's opposite sign is z down; not ported.
@@ -26,7 +28,17 @@ detector's own axes and origin, no rotation). If the trap isn't over the detecto
 v_x and v_y get an offset x₀/τ: a later choice (a "trap position on the detector" folder
 setting), not needed for D8's axes.
 
-τ ≤ 0 (an event before the release) or a non-finite T: nan, counted in `invalid`.
+τ ≤ 0 (an event before the release) or a non-finite T, X or Y: nan, counted in `invalid`
+(= rows that aren't `valid`). `Velocities` copies the array it's given before freezing it.
+
+**A fall time set by hand** (review 2). The detection sets t_r = t_arrival − t_f. If t_f was
+set by hand and disagrees with √(2h/g), converting with h would give the reference cloud a
+v_z = ½ g t_f − h/t_f ≠ 0 (h 0.848 m, t_f 0.417 s: +8.9 mm/s, 0.1 ħk). So when
+`origins["fall_time"]` isn't "derived", the velocities use h_eff = ½ g t_f²
+(`effective_fall_distance`), and the reference cloud is at rest by construction;
+`Velocities.fall_distance` records the h used and `fall_distance_from_time` says it came from
+t_f. The constants' own note ("fall time and distance disagree") still shows. Tested on a
+cloud that really fell 0.848 m with t_f set to 0.417 s: mean v_z −5 µm/s.
 
 Columns keep the TXY order, (v_z, v_x, v_y), so axis index 0 is T or v_z in either view
 (**proposed, for Tony**; the alternative is (v_x, v_y, v_z)).
@@ -38,8 +50,9 @@ v_rec = ħk/m = h/(λ m) with λ the He* 2³S₁ → 2³P₂ vacuum wavelength, 
 `velocity.py` for now, flagged unconfirmed. **Proposed, for Tony:** add it to
 `physics.CONSTANTS` as a lab-level row ("Recoil wavelength", m, unconfirmed: which beams set
 the unit), so it's recorded with the run like the rest. A Bragg order is 2ħk for
-counter-propagating beams, so first-order Bragg peaks are at ±2 v_rec in these units; the plot
-could offer "ħk" and "2ħk" as unit choices.
+counter-propagating beams, so first-order Bragg peaks are at ±2 v_rec in these units. The
+units are named, `VelocityUnit` "m/s", "ħk", "2ħk" (`unit_velocity`, `Velocities.in_unit`), so
+an axis label always says which recoil it means (review nit 7).
 
 ## Release time (`helab/analysis/release.py`, `helab/analysis/peaks.py`)
 
@@ -52,9 +65,22 @@ narrowing to the densest 99 % past the cap, Gaussian smoothing σ 1.5 bins,
 position refined to the mean of events within one FWHM). Written as its own module, **not**
 extracted from `transfer_fractions.py`: that plot's `detect` interleaves the binning with
 its order/spacing logic, so extracting only the shared part would change its code on a
-branch that doesn't own plots. Two differences: peaks in the first/last bin count (the
-smoothed histogram is zero-padded before `find_peaks`), and each peak records its events
-within ±FWHM/2. **Proposed, for Tony:** Transfer fractions switches to `peaks.py` later (a
+branch that doesn't own plots. Where it differs (each with a test):
+- few events (review 1): Transfer fractions' bins (a tenth of the events, at least 50 bins)
+  leave a 50–100-event cloud's top bin with ~2 events, under the prominence floor of 4, so
+  detection failed at n = 50–100 as "no peak". Here the bins are half the shortest interval
+  holding max(10 %, 40) events, and the 50-bin minimum gives way to 8 events per bin on
+  average. Probe: 20/20 found at n = 50, 80, 100, 150 (was 0, 10, 19, 20), pulls of about
+  1 SE. Below `MIN_EVENTS` it's "too few events", and a histogram whose tallest bin is under
+  the floor says "too few events", not "no peak";
+- times on a coarse grid (review nit 9): bins are whole grid steps (the smallest gap between
+  distinct times), centred on the grid, when the wanted width is under 20 steps, so rounded
+  times give a few dozen bins, not 20 000 combed ones;
+- peaks in the first/last bin count (zero padding before `find_peaks`); peaks that refine to
+  within half a FWHM of a taller one are merged (bumps on a broad peak all refined to one
+  place, and then the fit window had zero width); the smoothing keeps the histogram's length
+  when the kernel is longer than it (`np.convolve`'s "same" doesn't);
+- each peak records its events within ±FWHM/2. **Proposed, for Tony:** Transfer fractions switches to `peaks.py` later (a
 refactor with its MATLAB-comparison tests as the check) — the only part they may share.
 
 **Centre:** a Gaussian + offset fit (`fit_histogram`, Poisson likelihood) to the events
@@ -64,15 +90,27 @@ those events ± s/√n is used, noted. The arrival-time ("Yavin") model doesn't 
 base; when D1 registers it, it can replace the Gaussian here for thermal clouds.
 
 **Notes and failures** (never exceptions):
-- failure: no fall time, no events, fewer than `MIN_EVENTS` = 50 (proposed), no peak (e.g.
-  all times equal);
+- failure: no fall time, no events, fewer than `MIN_EVENTS` = 50 (proposed), too sparse a
+  histogram ("too few events"), no peak (all times equal), no arrival (with the reason);
 - "unsure": another peak at least 50 % of the tallest's smoothed height (proposed; Transfer
   fractions uses 50 % of order 0's events). The tallest is still used; a Search T
   (`lower`/`upper`) chooses another cloud;
+- "unsure" too when the tallest peak is under 3× the histogram's median bin: no cloud stands
+  out (background alone; a cloud filling a tight Search T can trip it, hence a note, not a
+  failure);
 - the Gaussian fit's own notes, prefixed "fit:";
 - the skew note, below.
 
-**SE:** the arrival's only. The fall time is taken as exact; its error is systematic and
+**SE** (review 3): `detect_release_time`'s is the fit's, `error` "within run": the summed
+events' centre as if every event were independent. It leaves out the shot-to-shot jitter of
+the release, usually larger: the reviewer's probe (20 shots × 1000 events, 50 µs jitter) gave
+2.1 µs from the fit and 9.8 µs from the shot bootstrap. `bootstrap_release_time(shots, …)`
+reruns the detection on resampled shots (n_boot 200, seed 0) and gives that SE, `error`
+"shot bootstrap", keeping the fit's as `within_run_se`; with < 2 shots it keeps the fit's and
+notes it. **Proposed, for Tony:** D8 uses `bootstrap_release_time` whenever the release time's
+error is shown. Over 40 seeds the fit's SE itself covers a single cloud's centre with pulls
+of SD ≈ 1.2 (the Gaussian + offset on a ±1.5 FWHM window), another reason to prefer the
+bootstrap. The fall time is taken as exact; its error is systematic and
 the same for every shot: δt_r = −δt_f = −δh/(g t_f) = −0.245 s/m · δh (−1.2 ms between the
 0.848 and 0.8529 m candidates). The result records `fall_time`, and with the run's
 `ResolvedConstants` record the origin of h. Since velocities depend on t_r only through
@@ -93,7 +131,11 @@ notes when σ_t²/t_f exceeds the SE. **Proposed, for Tony:** either keep the no
 replacement n_boot times; SE = std(replicates, ddof 1), interval = the (1 ∓ c)/2 percentiles.
 The statistic takes a list of per-shot items (arrays, or anything) and returns a number or a
 1D array (transfer fractions per order); nan for undefined resamples, which are counted per
-element, left out and noted above 5 %.
+element, left out and noted above 5 %. An array statistic may return a plain `math.nan` for
+"undefined" (it fills every element). No error is a failure (review 4): fewer than 2 shots,
+the statistic undefined on all shots, or defined on fewer than 2 resamples. Per element,
+`failures` gives the reason ("" where usable) and `usable` the mask; `failure` is set only
+when no element is usable, else a note names the elements without an error.
 
 Choices, **proposed for Tony**:
 - `n_boot` 1000 (the SE's own error ≈ 1/√(2·1000) ≈ 2 %; 200 is enough for the SE alone,

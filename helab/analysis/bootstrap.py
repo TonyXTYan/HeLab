@@ -17,7 +17,9 @@ Tibshirani 1993, ch. 6 and 13).
   raises ``results.Cancelled``, as ``stats.auto_crop`` does.
 - Fewer than ``MIN_SHOTS`` shots: the resamples can't show the spread well (with n shots
   there are only C(2n−1, n) distinct draws, and the bootstrap SE is √((n−1)/n) of the usual
-  one); noted. Fewer than 2: no error at all, a failure.
+  one); noted. Fewer than 2: no error at all, a failure. A statistic undefined on all shots,
+  or on all but one resample, has no error either: a failure (per element for an array,
+  ``BootstrapResult.failures``).
 
 For a weighted mean over shots, ``estimates.sewm`` gives the SE directly, with no resampling.
 Pure NumPy, no Qt.
@@ -50,7 +52,10 @@ FAILED_SHARE_NOTE = 0.05  # replicates that were undefined, as a share, before a
 class BootstrapResult:
     """The statistic on all shots and its bootstrap spread. Arrays have the statistic's shape
     (0-d for a number), read-only; ``replicates`` is (done, *shape), undefined ones nan.
-    ``failure`` is "" when the SE can be used."""
+    ``failure`` is "" when the SE can be used: it is set when there are fewer than 2 shots,
+    or no element has both a value on all shots and an SE. ``failures`` says the same per
+    element (flattened; "" where usable), for an array statistic some of whose elements have
+    no error (an order with no events)."""
     value: Array
     se: Array
     low: Array
@@ -63,6 +68,7 @@ class BootstrapResult:
     undefined: npt.NDArray[np.int64] = field(repr=False)  # per element: replicates that were nan or infinite
     failure: str = ""
     notes: tuple[str, ...] = ()
+    failures: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for array in (self.value, self.se, self.low, self.high, self.replicates, self.undefined):
@@ -71,6 +77,11 @@ class BootstrapResult:
     @property
     def ok(self) -> bool:
         return not self.failure
+
+    @property
+    def usable(self) -> npt.NDArray[np.bool_]:
+        """Per element (the statistic's shape): a value on all shots with an SE."""
+        return np.asarray(np.isfinite(self.value) & np.isfinite(self.se))
 
     def estimate(self, index: int | None = None) -> Estimate:
         """One element as an ``Estimate`` (the value on all shots ± the bootstrap SE): the
@@ -94,7 +105,8 @@ class BootstrapResult:
         return {"value": listed(self.value), "se": listed(self.se), "low": listed(self.low), "high": listed(self.high),
                 "shots": self.shots, "n_boot": self.n_boot, "seed": self.seed, "confidence": self.confidence,
                 "undefined": [int(x) for x in self.undefined.ravel()], "failure": self.failure,
-                "notes": list(self.notes), "method": "shot bootstrap, percentile interval"}
+                "failures": list(self.failures), "notes": list(self.notes),
+                "method": "shot bootstrap, percentile interval"}
 
 
 def _as_values(result: npt.ArrayLike) -> Array:
@@ -104,13 +116,26 @@ def _as_values(result: npt.ArrayLike) -> Array:
     return values
 
 
+def _fit_shape(values: Array, shape: tuple[int, ...], where: str) -> Array:
+    """``values`` in ``shape``: a single undefined number (a statistic's ``math.nan`` for "no
+    answer") fills an array statistic's every element; any other mismatch is the statistic's
+    bug (``ValueError``)."""
+    if values.shape == shape:
+        return values
+    if values.ndim == 0 and not math.isfinite(float(values)):
+        return np.full(shape, float(values))
+    raise ValueError(f"the statistic returned shape {values.shape} on {where}, {shape} elsewhere")
+
+
 def bootstrap_shots(shots: Sequence[Any], statistic: Statistic, n_boot: int = DEFAULT_N_BOOT,
                     seed: int | None = DEFAULT_SEED, confidence: float = DEFAULT_CONFIDENCE,
                     cancelled: Callable[[], bool] | None = None) -> BootstrapResult:
     """The shot bootstrap of ``statistic`` over ``shots`` (see the module docstring). The
     SE is the replicates' standard deviation (ddof 1) and the interval their
     (1 ∓ confidence)/2 percentiles, both over the defined replicates; nan when fewer than 2
-    are defined. ``seed`` None draws fresh entropy (recorded as None: not reproducible)."""
+    are defined (a failure for that element). ``seed`` None draws fresh entropy (recorded as
+    None: not reproducible). The statistic may return a plain nan for "undefined" even when
+    it otherwise returns an array."""
     if not 0 < confidence < 1:
         raise ValueError("confidence must be between 0 and 1")
     if n_boot < 2:
@@ -120,42 +145,50 @@ def bootstrap_shots(shots: Sequence[Any], statistic: Statistic, n_boot: int = DE
     if cancelled is not None and cancelled():
         raise Cancelled()
     value = _as_values(statistic(pool)) if count else np.asarray(math.nan)
+    outputs: list[Array] = []
+    if count >= 2:
+        rng = np.random.default_rng(seed)
+        for _ in range(n_boot):
+            if cancelled is not None and cancelled():
+                raise Cancelled()
+            draw = rng.integers(0, count, count)
+            outputs.append(_as_values(statistic([pool[i] for i in draw])))
+    # The shape: the statistic's on all shots, unless that was a plain nan and a resample says.
     shape = value.shape
-    nan = np.full(shape, math.nan)
-
-    def result(replicates: Array, failure: str = "", notes: tuple[str, ...] = ()) -> BootstrapResult:
-        defined = np.isfinite(replicates)
-        undefined = np.asarray((~defined).sum(axis=0), dtype=np.int64) if len(replicates) else np.zeros(shape, np.int64)
-        if len(replicates) and not failure:
-            se, low, high = (np.full(shape, math.nan) for _ in range(3))
-            for index in np.ndindex(shape):
-                column = replicates[(slice(None), *index)]
-                column = column[np.isfinite(column)]
-                if len(column) >= 2:
-                    se[index] = float(np.std(column, ddof=1))
-                    low[index], high[index] = np.quantile(column, [(1 - confidence) / 2, (1 + confidence) / 2])
+    if value.ndim == 0 and not math.isfinite(float(value)):
+        shape = next((output.shape for output in outputs if output.ndim), shape)
+    value = _fit_shape(value, shape, "all shots")
+    replicates = np.array([_fit_shape(output, shape, "a resample") for output in outputs]).reshape(-1, *shape)
+    se, low, high = (np.full(shape, math.nan) for _ in range(3))
+    defined = np.isfinite(replicates)
+    undefined = np.asarray((~defined).sum(axis=0), dtype=np.int64)
+    element_failures: list[str] = []
+    for index in np.ndindex(shape):
+        column = replicates[(slice(None), *index)]
+        column = column[np.isfinite(column)]
+        if count < 2:
+            element_failures.append(f"needs at least 2 shots for an error, has {count}")
+        elif not math.isfinite(float(value[index])):
+            element_failures.append("the statistic is undefined on all shots")
+        elif len(column) < 2:
+            element_failures.append(f"the statistic was defined on {len(column)} of {n_boot:,} resamples: no error")
         else:
-            se, low, high = nan.copy(), nan.copy(), nan.copy()
-        return BootstrapResult(value.copy(), se, low, high, replicates, count, int(n_boot), seed, float(confidence),
-                               undefined, failure, notes)
-
-    if count < 2:
-        return result(np.empty((0, *shape)), f"needs at least 2 shots for an error, has {count}")
-    rng = np.random.default_rng(seed)
-    replicates = np.empty((n_boot, *shape))
-    for round_index in range(n_boot):
-        if cancelled is not None and cancelled():
-            raise Cancelled()
-        draw = rng.integers(0, count, count)
-        replicate = _as_values(statistic([pool[i] for i in draw]))
-        if replicate.shape != shape:
-            raise ValueError(f"the statistic returned shape {replicate.shape} on a resample, {shape} on all shots")
-        replicates[round_index] = replicate
+            se[index] = float(np.std(column, ddof=1))
+            low[index], high[index] = np.quantile(column, [(1 - confidence) / 2, (1 + confidence) / 2])
+            element_failures.append("")
     notes: list[str] = []
-    if count < MIN_SHOTS:
+    failure = ""
+    if element_failures and all(element_failures):
+        failure = element_failures[0] if len(set(element_failures)) == 1 else "; ".join(dict.fromkeys(element_failures))
+    elif any(element_failures):
+        missing = [str(i) for i, text in enumerate(element_failures) if text]
+        notes.append(f"no error for element{'s' if len(missing) > 1 else ''} {', '.join(missing)}: "
+                     "the statistic was undefined there")
+    if 2 <= count < MIN_SHOTS:
         notes.append(f"only {count} shots: the bootstrap error is rough below {MIN_SHOTS}")
-    undefined = int((~np.isfinite(replicates)).any(axis=tuple(range(1, replicates.ndim))).sum()) \
-        if replicates.ndim > 1 else int((~np.isfinite(replicates)).sum())
-    if undefined > FAILED_SHARE_NOTE * n_boot:
-        notes.append(f"the statistic was undefined on {undefined:,} of {n_boot:,} resamples, left out")
-    return result(replicates, notes=tuple(notes))
+    if len(replicates):
+        rows = int((~defined.reshape(len(replicates), -1)).any(axis=1).sum())
+        if rows > FAILED_SHARE_NOTE * n_boot:
+            notes.append(f"the statistic was undefined on {rows:,} of {n_boot:,} resamples, left out")
+    return BootstrapResult(value.copy(), se, low, high, replicates, count, int(n_boot), seed, float(confidence),
+                           undefined, failure, tuple(notes), tuple(element_failures))

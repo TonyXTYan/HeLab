@@ -12,9 +12,9 @@ import scipy.constants as codata
 
 from helab.analysis.peaks import find_time_peaks
 from helab.analysis.physics import DEFAULTS, ResolvedConstants, resolve
-from helab.analysis.release import detect_release_time, manual_release_time
-from helab.analysis.velocity import (RECOIL_WAVELENGTH, arrival_time, recoil_velocity, txy_to_velocity,
-                                     vertical_velocity)
+from helab.analysis.release import bootstrap_release_time, detect_release_time, manual_release_time
+from helab.analysis.velocity import (RECOIL_WAVELENGTH, arrival_time, effective_fall_distance, recoil_velocity,
+                                     txy_to_velocity, unit_velocity, vertical_velocity)
 
 Array = npt.NDArray[np.float64]
 RELEASE = 1.7  # s after the DLD trigger, about the lab's now (lab-parameters.md)
@@ -66,12 +66,12 @@ def test_velocities_follow_the_run_s_constants() -> None:
 
 def test_events_before_the_release_have_no_velocity() -> None:
     events = np.array([[RELEASE - 0.1, 0.0, 0.0], [RELEASE, 0.0, 0.0], [math.nan, 0.0, 0.0],
-                       [RELEASE + 0.4, 0.001, 0.0]])
+                       [RELEASE + 0.4, 0.001, 0.0], [RELEASE + 0.4, math.nan, 0.0]])
     events.flags.writeable = False  # a DatasetView's arrays are read-only
     result = txy_to_velocity(events, RELEASE, DEFAULTS)
-    assert result.invalid == 3
+    assert result.invalid == 4 == int((~result.valid).sum())  # a nan X counts too
     assert np.all(np.isnan(result.values[:3])) and np.all(np.isfinite(result.values[3]))
-    assert result.valid.tolist() == [False, False, False, True]
+    assert result.valid.tolist() == [False, False, False, True, False]
     assert not result.values.flags.writeable
     assert np.all(np.isnan(vertical_velocity([RELEASE - 1, RELEASE], RELEASE, DEFAULTS)))
     assert len(txy_to_velocity(np.empty((0, 3)), RELEASE, DEFAULTS)) == 0
@@ -88,6 +88,43 @@ def test_recoil_units() -> None:
     result = txy_to_velocity(trajectories(known, RELEASE, DEFAULTS), RELEASE, DEFAULTS)
     np.testing.assert_allclose(result.in_recoils(recoil), [[2, -1, 0]], atol=1e-9)
     assert math.isnan(recoil_velocity(DEFAULTS, 0.0)) and np.all(np.isnan(result.in_recoils(0.0)))
+    # Named units: ħk is one photon's recoil, 2ħk one Bragg order.
+    assert unit_velocity("m/s", DEFAULTS) == 1.0
+    assert unit_velocity("ħk", DEFAULTS) == recoil and unit_velocity("2ħk", DEFAULTS) == 2 * recoil
+    np.testing.assert_allclose(result.in_unit("2ħk", DEFAULTS), [[1, -0.5, 0]], atol=1e-9)
+
+
+def test_velocities_copy_what_they_are_given() -> None:
+    from helab.analysis.velocity import Velocities
+    mine = np.zeros((2, 3))
+    velocities = Velocities(mine, 0, RELEASE, 0.848, 9.8)
+    assert mine.flags.writeable and not velocities.values.flags.writeable
+    mine[0, 0] = 1.0
+    assert velocities.values[0, 0] == 0.0
+
+
+def test_arrival_time_is_stable_for_fast_atoms() -> None:
+    fast = np.array([-1e4, -50.0, -1e-6, 0.0, 1e-6, 50.0, 1e4])
+    times = arrival_time(fast, RELEASE, DEFAULTS)
+    assert np.all(np.diff(times) > 0)
+    np.testing.assert_allclose(vertical_velocity(times, RELEASE, DEFAULTS), fast, rtol=1e-9, atol=1e-12)
+    # Thrown down very fast it arrives after about h/|v| (the form without cancellation).
+    assert float(times[0]) - RELEASE == pytest.approx(DEFAULTS.fall_distance / 1e4, rel=1e-3)
+
+
+def test_a_fall_time_set_by_hand_keeps_the_reference_cloud_at_rest() -> None:
+    by_hand = resolve(folder={"fall_distance": 0.848, "fall_time": 0.417})
+    assert by_hand.notes  # they disagree: √(2h/g) is 0.4161 s
+    assert effective_fall_distance(by_hand) == pytest.approx(0.5 * by_hand.g * 0.417 ** 2)
+    assert effective_fall_distance(DEFAULTS) == DEFAULTS.fall_distance
+    # The atoms really fall 0.848 m; the detection subtracts the hand-set 0.417 s.
+    events = cloud(np.random.default_rng(2), 20_000, 0.003)
+    release = detect_release_time(events[:, 0], by_hand)
+    velocities = txy_to_velocity(events, release.value.value, by_hand)
+    assert velocities.fall_distance_from_time and velocities.fall_distance == effective_fall_distance(by_hand)
+    assert abs(float(np.mean(velocities.values[:, 0]))) < 1e-4  # with h itself: +8.9 mm/s
+    assert float(vertical_velocity(release.arrival.value, release.value.value, by_hand)) == pytest.approx(0, abs=1e-12)
+    assert not txy_to_velocity(events, release.value.value, DEFAULTS).fall_distance_from_time
 
 
 def test_peaks_of_two_clouds_tallest_first() -> None:
@@ -165,6 +202,60 @@ def test_failures_are_results() -> None:
     json.dumps(few.as_record(), allow_nan=False)
 
 
+@pytest.mark.parametrize("count", [50, 80, 150])
+def test_small_clouds_near_the_limit_are_found(count: int) -> None:
+    for seed in range(10):
+        found = detect_release_time(cloud(np.random.default_rng(seed), count, 0.003)[:, 0], DEFAULTS)
+        assert found.ok, (seed, found.failure)
+        assert abs(found.value.value - RELEASE) < 4 * found.value.se
+
+
+def test_sparse_events_are_too_few_not_no_peak() -> None:
+    below = detect_release_time(cloud(np.random.default_rng(0), 40, 0.003)[:, 0], DEFAULTS)
+    assert "too few" in below.failure
+    # With the event floor lowered, a few stray events are no cloud.
+    sparse = detect_release_time(np.random.default_rng(1).uniform(1.9, 2.4, 20), DEFAULTS, min_events=10)
+    assert not sparse.ok or sparse.unsure
+
+
+def test_background_alone_is_unsure() -> None:
+    found = detect_release_time(np.random.default_rng(0).uniform(1.9, 2.4, 3000), DEFAULTS)
+    assert found.unsure and any("stands out" in note for note in found.notes)
+    clear = detect_release_time(np.concatenate([cloud(np.random.default_rng(1), 300, 0.003)[:, 0],
+                                                np.random.default_rng(2).uniform(1.9, 2.4, 3000)]), DEFAULTS)
+    assert clear.ok and not clear.unsure and abs(clear.value.value - RELEASE) < 4 * clear.value.se
+
+
+def test_times_on_a_coarse_grid_get_whole_grid_bins() -> None:
+    times = np.round(cloud(np.random.default_rng(4), 5000, 0.003)[:, 0], 4)  # 0.1 ms steps
+    search = find_time_peaks(times)
+    assert len(search.counts) < 100
+    np.testing.assert_allclose(np.diff(search.edges), 1e-4, rtol=1e-6)
+    assert len(search.peaks) == 1
+    found = detect_release_time(times, DEFAULTS)
+    assert found.ok and abs(found.value.value - RELEASE) < 4 * found.value.se + 5e-5
+    # One stray grid point far away doesn't explode the bins either.
+    assert len(find_time_peaks(np.concatenate([times, [3.0]])).counts) <= 20_000
+
+
+def test_shot_jitter_needs_the_shot_bootstrap() -> None:
+    rng = np.random.default_rng(0)
+    shots = [cloud(rng, 1000, 0.003, release=RELEASE + rng.normal(0, 50e-6))[:, 0] for _ in range(20)]
+    within = detect_release_time(np.concatenate(shots), DEFAULTS)
+    over_shots = bootstrap_release_time(shots, DEFAULTS, n_boot=100)
+    assert within.error == "within run" and over_shots.error == "shot bootstrap"
+    assert over_shots.value.value == within.value.value
+    assert over_shots.within_run_se == within.value.se
+    assert over_shots.value.se > 2 * within.value.se
+    assert over_shots.value.se == pytest.approx(50e-6 / math.sqrt(20), rel=0.5)
+    record = over_shots.as_record()
+    assert record["error"] == "shot bootstrap" and record["bootstrap"]["n_boot"] == 100
+    json.dumps(record, allow_nan=False)
+    # One shot: no bootstrap error, the fit's kept and noted.
+    single = bootstrap_release_time(shots[:1], DEFAULTS, n_boot=10)
+    assert single.ok and single.error == "within run" and any("no shot bootstrap" in n for n in single.notes)
+
+
 def test_identical_times_have_no_peak() -> None:
     found = detect_release_time(np.full(500, 2.1), DEFAULTS)
     assert not found.ok and "no peak" in found.failure
@@ -173,5 +264,6 @@ def test_identical_times_have_no_peak() -> None:
 def test_manual_release_time_passes_through() -> None:
     manual = manual_release_time(1.69, DEFAULTS)
     assert manual.ok and manual.source == "manual" and manual.value.value == 1.69 and math.isnan(manual.value.se)
+    assert manual.error == "none"
     assert not manual_release_time(math.nan, DEFAULTS).ok
     json.dumps(manual.as_record(), allow_nan=False)

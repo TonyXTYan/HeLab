@@ -113,6 +113,36 @@ def test_small_samples_and_undefined_replicates() -> None:
     assert any("undefined" in note for note in partial.notes)
 
 
+def test_no_error_is_a_failure() -> None:
+    shots = list(range(6))
+    undefined = bootstrap_shots(shots, lambda chosen: math.nan, n_boot=50)
+    assert not undefined.ok and "undefined on all shots" in undefined.failure
+    # Defined on all shots but on at most one resample (here: only with every shot drawn).
+    rare = bootstrap_shots(shots, lambda chosen: 1.0 if len(set(chosen)) == 6 else math.nan, n_boot=50)
+    assert not rare.ok and "resamples: no error" in rare.failure and math.isnan(float(rare.se))
+    assert rare.failures == (rare.failure,)
+    json.dumps(rare.as_record(), allow_nan=False)
+
+
+def test_an_array_statistic_may_answer_a_plain_nan() -> None:
+    def fractions(chosen: list[Any]) -> Any:
+        if 0 not in chosen:
+            return math.nan  # no answer, without knowing the shape
+        return np.array([len(chosen), math.nan, 1.0])  # element 1 is never defined
+
+    result = bootstrap_shots(list(range(8)), fractions, n_boot=100)
+    assert result.value.shape == result.se.shape == (3,) and result.replicates.shape == (100, 3)
+    assert result.ok and result.usable.tolist() == [True, False, True]
+    assert result.failures[0] == "" and "undefined on all shots" in result.failures[1]
+    assert any("no error for element 1" in note for note in result.notes)
+    # A plain nan on all shots takes its shape from the resamples, and fails.
+    unknown = bootstrap_shots(list(range(8)), lambda chosen: math.nan if len(set(chosen)) == 8 else np.ones(2),
+                              n_boot=20)
+    assert unknown.value.shape == (2,) and not unknown.ok
+    with pytest.raises(ValueError):
+        bootstrap_shots(list(range(8)), lambda chosen: np.ones(len(set(chosen)) % 2 + 2), n_boot=20)
+
+
 def test_bad_arguments_raise() -> None:
     with pytest.raises(ValueError):
         bootstrap_shots([1, 2, 3], lambda chosen: 0.0, confidence=1.5)
