@@ -457,9 +457,10 @@ def test_the_section_opens_wider_and_remembers_for_the_session(plots: Plots, qtb
     side, frame = dock.settings, dock.frame
     strip = side.toggle.strip_width()
     plot_width = frame.sizes()[0]
-    assert not frame.handle(1).isEnabled()  # Closed: the strip can't be dragged wider.
+    handle = frame.handle(1)
+    assert handle is not None and not handle.isEnabled()  # Closed: the strip can't be dragged wider.
     side.toggle.click()
-    assert side.is_open and page.isVisible() and frame.handle(1).isEnabled()
+    assert side.is_open and page.isVisible() and handle.isEnabled()
     assert side.width() == FloatingSettings.DEFAULT_WIDTH == side.open_width
     assert frame.sizes()[0] == plot_width and dock.width() == 400 + FloatingSettings.DEFAULT_WIDTH - strip
     frame.moveSplitter(frame.sizes()[0] - 60, 1)  # As a drag of the handle does.
@@ -508,7 +509,7 @@ def test_the_header_names_the_plot_and_its_settings(plots: Plots, qtbot: QtBot) 
     dock.activateWindow()
     toggle.setFocus()
     qtbot.waitUntil(toggle.hasFocus)
-    qtbot.keyClick(toggle, Qt.Key.Key_Space)
+    qtbot.keyClick(toggle, Qt.Key.Key_Space)  # type: ignore[no-untyped-call]
     assert dock.settings.is_open
 
 

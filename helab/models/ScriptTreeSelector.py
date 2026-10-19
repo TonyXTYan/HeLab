@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHEC
 
 from PyQt6 import sip
 from PyQt6.QtCore import QObject, QRect, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QCloseEvent, QPainter, QPaintEvent, QWindow
+from PyQt6.QtGui import QCloseEvent, QFocusEvent, QPainter, QPaintEvent, QWindow
 # from uuid import uuid4
 
 # Import QWidget types first to avoid forward references
@@ -58,6 +58,7 @@ class SettingsToggle(QAbstractButton):
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)  # Repainted as the pointer enters and leaves.
         self.name = ""
         self.summary = ""
+        self._keyboard_focus = False  # Its focus frame shows only then, not as its window activates.
         self.toggled.connect(self._fit)
         self._fit()
 
@@ -95,13 +96,18 @@ class SettingsToggle(QAbstractButton):
         self.updateGeometry()
         self.update()
 
+    def focusInEvent(self, e: Optional[QFocusEvent]) -> None:
+        reasons = (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason, Qt.FocusReason.ShortcutFocusReason)
+        self._keyboard_focus = e is not None and e.reason() in reasons
+        super().focusInEvent(e)
+
     def paintEvent(self, e: Optional[QPaintEvent]) -> None:
         painter = QPainter(self)
         palette = self.palette()
         hovered = self.underMouse() or self.isDown()
         painter.fillRect(self.rect(), palette.midlight() if hovered else palette.button())
         painter.setPen(palette.buttonText().color())
-        if self.hasFocus():
+        if self.hasFocus() and self._keyboard_focus:
             painter.save()
             painter.setPen(palette.highlight().color())
             painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
@@ -133,11 +139,11 @@ class FloatingSettings(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(0)
         self.toggle = SettingsToggle(self)
-        layout.addWidget(self.toggle)
+        self._layout.addWidget(self.toggle)
         self.page: Optional[QWidget] = None
         self.open_width = self.DEFAULT_WIDTH
         self._fit()
@@ -149,21 +155,19 @@ class FloatingSettings(QWidget):
     def hold(self, page: QWidget) -> None:
         """Show ``page`` here (the plot floats); it keeps its edits."""
         self.page = page
-        layout = self.layout()
-        assert layout is not None
-        layout.addWidget(page)
-        cast(QVBoxLayout, layout).setStretchFactor(page, 1)
+        self._layout.addWidget(page, 1)
         self._fit()
         self.show()
 
     def release(self) -> Optional[QWidget]:
         """The page goes back to the Settings panel (the plot docks again, or closes)."""
         page, self.page = self.page, None
-        layout = self.layout()
-        if page is not None and not sip.isdeleted(page) and layout is not None:
-            layout.removeWidget(page)
+        if page is not None and sip.isdeleted(page):
+            page = None
+        if page is not None:
+            self._layout.removeWidget(page)
         self.hide()
-        return page if page is not None and not sip.isdeleted(page) else None
+        return page
 
     def set_open(self, open_: bool) -> None:
         self.toggle.setChecked(open_)
@@ -196,9 +200,9 @@ class AnalysisDock(QDockWidget):
         self.frame = QSplitter(Qt.Orientation.Horizontal)
         self.frame.setChildrenCollapsible(False)
         self._body_holder = QWidget()
-        body_layout = QVBoxLayout(self._body_holder)
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(0)
+        self._body_layout = QVBoxLayout(self._body_holder)
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_layout.setSpacing(0)
         self._body: Optional[QWidget] = None
         self.settings = FloatingSettings()
         self.settings.hide()
@@ -218,17 +222,15 @@ class AnalysisDock(QDockWidget):
     def setWidget(self, widget: Optional[QWidget]) -> None:
         """Show ``widget`` as the plot. As in Qt's own, the plot before it stays a (hidden)
         child of the dock until its owner deletes it."""
-        layout = self._body_holder.layout()
-        assert layout is not None
         old = self.widget()
         if old is widget:
             return
         if old is not None:
-            layout.removeWidget(old)
+            self._body_layout.removeWidget(old)
             old.hide()
         self._body = widget
         if widget is not None:
-            layout.addWidget(widget)
+            self._body_layout.addWidget(widget)
             widget.show()
 
     def hold_settings(self, page: QWidget) -> None:
