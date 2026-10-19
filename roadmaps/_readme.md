@@ -124,9 +124,10 @@ still to choose (Tony, with the coordinator's proposal).
   exceeded, least recently used first; Rerun reloads it (Tony, 2026-10-19).
 - [ ] One Settings panel follows the active plot (click, focus, tabbed or
   floating dock; chooser raises a plot; settings pages as tabs via
-  `ParameterSpec.page`). Quick version on Ground, hardening pending: real-app
-  focus with QtWebEngine and pyqtgraph, many plots, a pin to keep one plot's
-  settings shown (Tony, 2026-10-19).
+  `ParameterSpec.page`). Quick version on Ground (Tony, 2026-10-19); hardened
+  2026-10-19 (signals instead of an event filter, many plots, tab rule, tab
+  close by identity, activation sources, typed numbers). Left: the on-screen
+  checks (MANUAL_TODO) and a pin to keep one plot's settings shown.
 - [ ] Transfer fractions plot (port of Momentum_Bells_test's `monitor_momentum.m`):
   orders auto-found in T, manual centre/spacing filled from the detection. Quick
   version on Ground, hardening pending: check detection on real Bragg/magnetic
