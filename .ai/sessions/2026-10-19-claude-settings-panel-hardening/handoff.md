@@ -1,7 +1,9 @@
 # Handoff: Settings panel hardening
 
-Branch `agent/settings-panel-hardening`, base 486cf56, seven commits (one per brief item),
-not pushed. Details, measurements and probes: [notes.md](notes.md).
+Branch `agent/settings-panel-hardening`, base 486cf56: seven commits (one per brief item)
+and this handoff, then two review fixes after Codex's review ([review-codex.md](review-codex.md),
+[Review fixes](#review-fixes)). Pushed to origin. Details, measurements and probes:
+[notes.md](notes.md).
 
 ## What changed
 
@@ -16,6 +18,23 @@ not pushed. Details, measurements and probes: [notes.md](notes.md).
 | 7 | a345e56 | `UnitSpinBox` parses strictly (fixes "5 m" → 5 s, "5 abc" → 5 as, "95,5" → 9 %, "4.5" → 4 in whole-number boxes) and clamps to the limits (below). |
 
 No visual change, so no screenshots.
+
+## Review fixes
+
+Codex reviewed 6514ee9 (changes requested, [review-codex.md](review-codex.md)); Maestro
+asked for both fixes.
+
+| Commit | Fix |
+|---|---|
+| 485488c | **Settings stale after a hide.** Hiding the focused shown plot A moved focus into plot B, but the panel ignored focus moved by hiding and stayed on hidden A; a click in B's already-focused editor emitted nothing. The panel now follows each plot's `visibilityChanged`: when the shown plot is hidden (unticked in the plot area's menu, its window minimised, behind a tab on screen), the most recently shown plot still visible shows, as on closing; with none visible it stays. Checked one event-loop pass later, because floating or docking a plot hides it for a moment (floating the shown plot keeps its settings) and a tab click shows the plot it brings forward. Closing uses the same fallback (visible plots first). Showing a plot moves focus left in another plot to it, so focus is never in a plot other than the shown one, and a click in any other plot changes focus: that covers a click on a plot that already had focus. Tests: hide A then click B (fallback a third plot, and fallback B), floating and re-docking keeps the plot, nothing visible keeps it, closing skips a more recent hidden plot; the hide-then-click test fails without the fix. |
+| 408de1a | **Plots end with the main window.** An accepted close now calls `HelabMainWindow.close_plots()` before detaching the panel: every plot dock closes as its close button does (job cancelled, instance leaves the runner, result unpinned). A close the quit window holds back touches nothing. Test: a real main window with a finished and a running plot closes; both instances are closed, none of their runner connections is left, nothing of theirs is pinned, and the running job ends cancelled without rendering; it fails without the call. |
+
+"Floated away" from Maestro's note: floating a plot keeps it visible (in its own window),
+so its settings stay; only hidden, closed or deleted plots hand over.
+
+Checks after the fixes: full suite 1075 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
+on helab and tests, also `--platform win32` on tests; pyright on helab and tests, also
+`--pythonplatform Windows` on tests; `git diff --check 486cf56 HEAD` clean.
 
 ## Decisions
 
@@ -66,7 +85,9 @@ lab PC (Windows):
    to the main window: the settings follow (back in the main window: the plot clicked last
    there).
 4. Plots side by side (drag one out of the tab group and dock it beside): click A, click
-   B's tab, then click A again: A's settings come back.
+   B's tab, then click A again: A's settings come back. Untick the shown plot in the plot
+   area's right-click menu: the settings switch to a visible plot; click another plot: its
+   settings show. Float the shown plot: its settings stay.
 5. The chooser raises the plot it names (a floating one comes to the front); unapplied
    edits survive switching; ✕ and a tab's × close the right plot; closing the shown plot
    shows the one shown before it.
@@ -85,8 +106,10 @@ lab PC (Windows):
 - **AGENTS.md, Script system** (the Settings panel sentence): "One Settings panel (top right,
   `PlotSettingsPanel`) shows the active plot's settings: the plot last clicked, focused or
   brought to the front among tabbed docks, floating ones included. It follows Qt's focus,
-  active-window and tab signals (no event filter; plot docks take click focus); showing a
-  plot moves focus left in another plot to it. Its chooser names the plot and raises
+  active-window, tab and plot-visibility signals (no event filter; plot docks take click
+  focus); showing a plot moves focus left in another plot to it, and when the shown plot is
+  hidden or closed, the most recently shown visible plot shows. Closing the main window
+  closes its plots (`HelabMainWindow.close_plots`). Its chooser names the plot and raises
   another, each plot's page keeps its edits, and closing a plot shows the last one shown
   before it. A new plot is tabbed with the shown plot if docked, else the newest docked one
   (never a floating or lone hidden one; none: it docks alone; `TreePanelWidget.tab_target`).
