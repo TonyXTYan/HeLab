@@ -11,7 +11,11 @@ Orders to manual starts from the last detection, which can then be edited. Like
 the minimum counts there; each fraction is the order's count over the sum of all the orders'.
 Where this differs from ``fraction_calc`` on purpose (fractions over the orders' sum, not a
 wide window; shots left out by their counts in the counting box, not the import box;
-half-open windows; no X/Y rotation): ``tests/test_transfer_fractions_matlab.py``.
+half-open windows; no X/Y rotation): ``tests/test_transfer_fractions_matlab.py``. On rotation:
+``monitor_momentum.m`` rotates X/Y by ``dld_xy_rot`` = 0.61 rad before its ±35 mm import box
+and ±30 mm counting box; HeLab boxes X/Y as loaded, unrotated (Tony, 2026-10-20: no rotation
+is expected to change the counts; a hot spot near the box's edge is to be looked at later,
+the lab's detector having changed since that MATLAB was written).
 
 The T histogram alone can't say which peak is order 0, and auto takes the tallest. The plot
 says order 0 is unsure when another order holds at least half as many events (comparable

@@ -57,8 +57,11 @@ where order 0 is. Analysis version: 1 → 5.
   - Shots are left out by their counts in the counting box, not MATLAB's ±35 mm import box.
   - Half-open windows.
   - **No X/Y rotation.** `monitor_momentum.m` rotates by `dld_xy_rot` = 0.61 rad before
-    both boxes, so the square ±30 mm box covers a different area. This changes counts near
-    the box's corners on real data. Possible follow-up: an "XY rotation" setting (default 0).
+    its ±35 mm import box and ±30 mm counting box, so the square ±30 mm box covers a
+    different area. **Decided (Tony, 2026-10-20): no rotation in HeLab's code**, documented
+    here, in the module docstring and in the MATLAB test. He doesn't expect it to change the
+    counts. The near-edge hot-spot case (review F2) is to be looked at later; the lab has
+    changed detector since that MATLAB was written.
 - Wide peaks (σ ≳ spacing/4): side peaks are only shoulders, and the spacing found from
   them can be ~10 % off. The "orders overlap" note then shows (FWHM > spacing/2).
 
@@ -138,8 +141,9 @@ hardening pending: check detection on real Bragg/magnetic data, …" with:
 > Quick version on Ground; hardened 2026-10-19 (detection edge cases with "order 0
 > unsure" and "moved", clipped manual windows, typed values kept across reruns, From-shot wording,
 > counts checked against a Python `fraction_calc`). Left: detection on real
-> Bragg/magnetic data (MANUAL_TODO), an "Order 0 near" setting for a first run at high
-> transfer, the DLD XY rotation (`dld_xy_rot`), draggable
+> Bragg/magnetic data (MANUAL_TODO), how auto should find orders 0, ±1, ±2 (Tony to
+> describe; it covers a first run at high transfer), a hot spot near the XY box's edge
+> without MATLAB's `dld_xy_rot` (to investigate; new detector since), draggable
 > windows on the T histogram, the averaged-vs-detuning view (Tony, 2026-10-19).
 
 **.ai/MANUAL_TODO.md**, the "Transfer fractions on real data" item: add "steps in
@@ -164,8 +168,12 @@ one gap (F1). Fixes, each in its own commit:
   2/3 transfer, then the transfer falls), the warning stays until order 0 is set by hand
   (manual, type it, Rerun, then back to Auto, which then compares with it), or a Search T
   with both ends set around the real order 0 (after the recheck, below).
-- **Option (a), "Order 0 near":** not built; Tony decides.
-- **F2, XY rotation:** unchanged, Tony's decision (numbers in review.md).
+- **Option (a), "Order 0 near":** decided (Tony, 2026-10-20): not built. Tony will say later
+  how auto detection of orders 0, ±1, ±2 should work (an open roadmap item, from the
+  Coordinator).
+- **F2, XY rotation:** decided (Tony, 2026-10-20): no rotation in HeLab's code; the
+  difference is documented (Decisions above; numbers in review.md). The near-edge hot spot
+  is to be investigated later.
 - Checks after the fixes: full suite `pytest -n 6 --reruns 5 --reruns-delay 1
   --basetemp=.ai/temp/pytest`: **1201 passed, 2 skipped, 2 xfailed, no RERUN**; `mypy --strict`
   on helab and tests, also `--platform win32`: clean; `pyright helab tests`, also
