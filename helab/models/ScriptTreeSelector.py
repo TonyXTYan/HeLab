@@ -363,14 +363,18 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def _revised(self, view: DatasetView) -> None:
         if self.is_closed or view.identity.source_path != self.path:
             return  # Plots of other folders stay put.
+        self.follow.live_on()
         if self.follow.offer(view):
             self._follow_next()
         self._show_follow()
 
     @pyqtSlot(str)
     def _live_ended(self, path: str) -> None:
+        """Live stopped for the plot's folder: shots held back run once more, at once."""
         if not self.is_closed and path == self.path:
-            self._show_follow()
+            self.follow.live_ended()
+            self._follow_timer.stop()
+            self._follow_next()
 
     @pyqtSlot()
     def _follow_next(self) -> None:
@@ -417,15 +421,14 @@ class AnalysisInstance(LinkedAnalysisInstance):
         waiting, shots = added + other, shots_text(added, other)
         if not waiting:
             pass
+        elif live is None:
+            parts.append(f"Live off · {shots} waiting")  # The catch-up, after the run in flight.
         elif self._follow_timer.isActive():
             parts.append(f"{shots} waiting (runs {follow.policy.min_delay:g} s after the last run)")
         elif follow.running:
             parts.append(f"{shots} waiting")
-        elif live is not None:
-            parts.append(f"{shots} waiting (runs every {follow.policy.every_shots:,})")
         else:
-            # Live is off: no more shots come to make up the N.
-            parts.append(f"Live off · {shots} not plotted: Rerun includes them")
+            parts.append(f"{shots} waiting (runs every {follow.policy.every_shots:,})")
         return " · ".join(parts)
 
     def _show_follow(self) -> None:

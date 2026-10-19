@@ -924,13 +924,17 @@ class HelabMainWindow(QMainWindow):
 
     def follow_live(self, explorer: FolderExplorer) -> None:
         """Plots follow Live: the data a Live tab shows is published as the newest revision of
-        its folder, and a folder no tab watches any more ends (memory only)."""
+        its folder, and a folder no tab checks any more ends (Live off, another tab, or checks
+        stopped by an error until Retry): its plots catch up (memory only)."""
+        def checking(tab: FolderExplorer) -> bool:
+            return tab.live is not None and not tab.live.error and not tab.closed
+
         session = explorer.live
         dataset = explorer.displayed_dataset
-        if session is not None and not explorer.closed and dataset is not None and dataset.path == session.path:
+        if session is not None and checking(explorer) and dataset is not None and dataset.path == session.path:
             self.live_feed.publish(dataset, explorer.model.cache.root_of(dataset.path))
-        watched = {other.live.path for _, other in self._explorers() if other.live is not None and not other.closed}
-        if explorer.live is not None and not explorer.closed:
+        watched = {other.live.path for _, other in self._explorers() if other.live is not None and checking(other)}
+        if explorer.live is not None and checking(explorer):
             watched.add(explorer.live.path)
         for path in self.live_feed.paths() - watched:
             self.live_feed.stop(path)

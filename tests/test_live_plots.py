@@ -25,7 +25,7 @@ from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec, effective
 from helab.analysis.results import AnalysisContext, AnalysisResult, Coverage
 from helab.analysis.runner import AnalysisRunner
-from helab.io_helper import list_folder, live_check
+from helab.io_helper import list_folder, live_check, load
 from helab.models.ScriptTreeSelector import AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import basic_plots, scatter_3d, transfer_fractions
@@ -571,21 +571,71 @@ def test_a_first_run_that_fails_shows_why(window: Window, runner: AnalysisRunner
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
 
 
-def test_live_off_stops_new_revisions_and_plots_keep_theirs(
-        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+@pytest.mark.parametrize("held_by", ["every N shots", "the delay"])
+def test_live_off_catches_up_at_once_then_stays(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot, held_by: str) -> None:
+    """Shots the policy held back run once more as soon as Live stops, whatever the policy;
+    then the plot stays at that revision."""
     window.view = window.live_feed.publish(revision([1]))
-    script = Gated(LivePolicy(every_shots=2))
+    policy = LivePolicy(every_shots=5) if held_by == "every N shots" else LivePolicy(min_delay=60.0)
+    script = Gated(policy)
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
-    window.live_feed.publish(revision([1, 2]))  # One new shot: waits for a second.
+    window.live_feed.publish(revision([1, 2]))
+    window.live_feed.publish(revision([1, 2, 3]))
+    assert script.started == [1] and instance.follow.waiting() == 2  # Held back.
+    window.live_feed.stop(PATH)  # Live off (or another tab, or an error).
+    qtbot.waitUntil(lambda: shown_revision(instance) == 3, timeout=10_000)
+    assert script.started == [1, 3]  # One catch-up, on the last revision, at once.
+    assert not instance._follow_timer.isActive() and instance.follow.pending is None
+    assert instance.follow_text() == "" and "following Live" not in source(instance).text()
+    assert instance.input_label.text() == "Input: run_L · rev 3 (stays with this plot)"
+    qtbot.wait(50)
+    assert script.started == [1, 3]  # Then it stays.
+
+
+def test_live_off_during_a_run_catches_up_after_it(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    window.view = window.live_feed.publish(revision([1]))
+    script = Gated(LivePolicy(every_shots=5))
+    instance = plot(window, qtbot, script)
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    script.go.clear()
+    instance.run()  # A run in flight (Rerun with these settings).
+    qtbot.waitUntil(lambda: script.started == [1, 1], timeout=10_000)
+    window.live_feed.publish(revision([1, 2]))
     window.live_feed.stop(PATH)
-    assert instance.follow_text() == "Live off · 1 new shot not plotted: Rerun includes them"
-    assert "following Live" not in source(instance).text() and shown_revision(instance) == 1
-    assert instance.input_label.text() == "Input: run_L · rev 1 (stays with this plot)"
-    # Rerun includes what came while Live was on.
-    instance.run()
+    assert instance.follow_text() == "Live off · 1 new shot waiting"  # Never cancels the run.
+    script.go.set()
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
-    assert instance.follow_text() == ""
+    assert script.started == [1, 1, 2]
+
+
+def test_a_pinned_plot_doesnt_catch_up_when_live_stops(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    window.view = window.live_feed.publish(revision([1]))
+    script = Gated(LivePolicy(every_shots=5))
+    instance = plot(window, qtbot, script)
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    window.live_feed.publish(revision([1, 2]))
+    set_live(instance, FOLLOW, False)
+    window.live_feed.stop(PATH)
+    qtbot.wait(50)
+    assert script.started == [1] and shown_revision(instance) == 1
+
+
+def test_live_on_again_brings_the_policy_back() -> None:
+    first = view_of(revision([1]))
+    follow = Follow(first, LivePolicy(every_shots=3, min_delay=10.0))
+    follow.start(first)
+    follow.end(0.0)
+    second = revise(first, revision([1, 2]))
+    follow.offer(second)
+    assert follow.due(1.0) == (None, 0.0)
+    follow.live_ended()
+    assert follow.due(1.0) == (second, 0.0)  # The catch-up: no N, no delay.
+    follow.live_on()
+    assert follow.due(1.0) == (None, 0.0)
 
 
 # A real tab: Live from an empty folder to its first shots
@@ -677,6 +727,13 @@ def test_a_plot_follows_live_from_an_empty_folder_to_its_first_shots(
     age(folder, 50)
     live_checks(qtbot, explorer, path, tmp_path, 2)
     qtbot.waitUntil(lambda: shown_revision(instance) == 3, timeout=10_000)
+    # Checks stopped by an error: the plot stops following (it caught up already); Retry resumes.
+    session = explorer.live
+    assert session is not None
+    explorer._live_halt(session, "Folder not found — is its drive connected?")
+    assert window.live_feed.latest(path) is None and "following Live" not in source(instance).text()
+    explorer.resume_live()
+    assert window.live_feed.latest(path) is not None and instance.follow_text() == "following Live"
     # Live off (as switching tabs does): the plot keeps its revision and stops following.
     explorer.stop_live(save=False)
     assert window.live_feed.latest(path) is None and shown_revision(instance) == 3
@@ -751,3 +808,52 @@ def test_the_main_window_feeds_its_live_tab_to_the_plots(qtbot: QtBot, runner: A
     assert window.live_feed.latest(path) is None and ended == [path]
     explorer.displayed_dataset = None
     window._quit_now = True
+
+
+def test_an_error_stopping_live_checks_catches_plots_up(
+        qtbot: QtBot, service: IOService, runner: AnalysisRunner, tmp_path: Path) -> None:
+    """A real tab: shots held back by "every N" run once when an error stops Live's checks."""
+    folder = tmp_path / "run_H"
+    folder.mkdir()
+    write_shot(folder, 1)
+    age(folder, 120)
+    path = str(folder)
+    explorer = FolderExplorer(path, path, path, [0, 4, 5])
+    qtbot.addWidget(explorer)
+    cache = explorer.model.cache
+    cache.live_interval = 0.02
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    replay(cache, path, tmp_path, "list")
+    explorer.load_to_ram_cache(path, dwell=False, explicit=True)
+    qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
+    job = cache.jobs[("load", path)]
+    request = next(r for r in service.pending if r.owner == job.owner)
+    output = tmp_path / "load"
+    output.mkdir()
+    events: list[dict[str, Any]] = []
+    load(path, str(output), events.append, None)
+    service.pending.remove(request)
+    for event in [*events, {"kind": "done"}]:
+        if event["kind"] == "shot":
+            event = {**event, "array": np.load(event.pop("artifact"))}
+        service.resultReady.emit(request, event)
+    qtbot.waitUntil(lambda: explorer.folder_opened_path == path)
+    window = Window(explorer)
+    qtbot.addWidget(window)
+    assert explorer.start_live()
+    script = Gated(LivePolicy(every_shots=5))
+    instance = plot(window, qtbot, script)
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    write_shot(folder, 2)
+    age(folder, 60)
+    live_checks(qtbot, explorer, path, tmp_path, 2)
+    qtbot.waitUntil(lambda: instance.follow.waiting() == 1, timeout=10_000)
+    assert script.started == [1]  # Held back: 1 of 5.
+    session = explorer.live
+    assert session is not None
+    explorer._live_halt(session, "Folder not found — is its drive connected?")
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
+    assert script.started == [1, 2] and cast(AnalysisResult, instance.shown).coverage.shots == (1, 2)
+    explorer.stop_live(save=False)
+    window.close_plots()
+    explorer.close_cleanup()

@@ -7,7 +7,9 @@ folder that follows Live (``Follow``) reruns on the newest revision when its pol
 Hold and coalesce: a running analysis is never cancelled for new data. Revisions that arrive
 meanwhile wait in one slot per plot (the newest replaces the one before: no backlog), and when
 the run ends the next one takes the newest. A script's ``LivePolicy`` may space reruns out: at
-least N new shots since the last run's input, and/or a delay after that run ended.
+least N new shots since the last run's input, and/or a delay after that run ended. When Live
+stops (Live off, another tab, an error), a plot still holding shots back runs once more at
+once on the last revision, then stays there.
 """
 from __future__ import annotations
 
@@ -104,8 +106,9 @@ class Follow:
     """One plot's following state. ``ran`` is the input of its run in flight or of its last
     run; ``pending`` the newest revision not run yet (one slot). Turning Follow Live off pins
     the plot at its revision: what waits is dropped and no revision is taken until it is on
-    again. Live going off for the folder stops new revisions, but those already waiting still
-    run as the policy allows: they came while Live was on."""
+    again. When Live stops for the folder (``live_ended``) what waits runs once, at once,
+    whatever the policy (after a run in flight): the catch-up. New revisions (Live on again)
+    bring the policy back."""
 
     def __init__(self, view: DatasetView, policy: LivePolicy = LivePolicy(), on: bool = True) -> None:
         self.policy = policy
@@ -114,6 +117,7 @@ class Follow:
         self.pending: Optional[DatasetView] = None
         self.running = False
         self.finished_at = -math.inf  # Monotonic: when the last run ended.
+        self.final = False  # Live stopped: what waits runs at once (the catch-up)
 
     @property
     def latest(self) -> DatasetView:
@@ -127,6 +131,14 @@ class Follow:
             return False
         self.pending = view
         return True
+
+    def live_ended(self) -> None:
+        """Live stopped for the folder: no more revisions come, so what waits runs at once."""
+        self.final = True
+
+    def live_on(self) -> None:
+        """Revisions come again (Live on): the policy spaces the reruns again."""
+        self.final = False
 
     def changes(self) -> tuple[int, int]:
         """How the data waiting differs from what ran: (shots added, shots changed or gone)."""
@@ -144,7 +156,11 @@ class Follow:
         if self.running or self.pending is None or not self.on:
             return None, 0.0
         waiting = self.waiting()
-        if not waiting or (self.pending.identity == self.ran.identity and waiting < self.policy.every_shots):
+        if not waiting:
+            return None, 0.0
+        if self.final:
+            return self.pending, 0.0
+        if self.pending.identity == self.ran.identity and waiting < self.policy.every_shots:
             return None, 0.0
         left = self.finished_at + self.policy.min_delay - now
         if left > 0:
