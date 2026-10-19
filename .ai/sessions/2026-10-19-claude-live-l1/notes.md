@@ -24,18 +24,24 @@ not yet cached, how often it saves, last save, why it can't save). The status ba
 Renders: [live-on.png](live-on.png), [live-stopped.png](live-stopped.png).
 
 **A check** is a `load` with `live: True` in its payload, in the foreground lane, owner
-`<tab>:live`. `FolderCache.submit` adds the shots held in RAM (`memory`, from the shown dataset:
+`<tab>:live`, keyed `("live", path)` in `FolderCache.jobs`. `FolderCache.submit` adds the shots
+held in RAM (`memory`, from the shown dataset:
 `prefer_base`). `io_helper.live_check`:
 
 1. `stat` the folder. If its mtime equals what the previous check called safe (`live_since`),
    nothing was added or removed: `live_unchanged`, done.
 2. Else list by name (`scandir`, no stats). Held shots the folder no longer lists:
-   `shots_missing`. Held shots are trusted without a stat (TXY is written once).
-3. Stat only the files not held; leave out those modified within `SETTLE_SECONDS` (counted as
-   still being written); skip known-unreadable files that haven't changed (`known`).
-4. Nothing to read: `live_unchanged`. Else read them (pandas, as a load does; a file that changes
-   while read is left for later), send `scan_summary` and `loaded` with `memory_shots` and source
-   `updated`, as an incremental load does. FolderCache merges as for any load.
+   `shots_missing`. The folder must still be the session's (`_folder_identity`: nearest
+   `.helab-root` UUID, else its location) and the check level's sample of held shots must keep
+   its (size, mtime); else `shots_missing` with `reason` root or changed. The rest of the held
+   shots are trusted (TXY is written once).
+3. Stat only the files not held. A file is read only when settled by age (`SETTLE_SECONDS`)
+   and unchanged since the previous check saw it (`seen` → `live_seen`); the others count as
+   still being written. Known-unreadable files that haven't changed are skipped (`known`).
+4. Nothing to read: `live_unchanged`. Else read them (pandas, as a load does; stat'ed again
+   just before and after; a file that changes while read is left for later), send
+   `scan_summary` and `loaded` with `memory_shots` and source `updated`, as an incremental load
+   does. FolderCache merges as for any load.
 
 `live_since` is the folder's mtime_ns, or None (list next time) when it is within 2 s of now
 (`RACY_SECONDS`: another change could share its timestamp tick, or the server's clock is ahead)
@@ -75,6 +81,15 @@ session from the store) and opens `QuitSaveDialog`: folder names with their stat
 itself when the saves end; **Quit now** skips them; Esc and the close button keep waiting.
 Each save stops itself after the usual no-progress timeouts (60 s listing, 15/20/30 s per file,
 120 s while writing). Live never survives a restart (no setting saves it).
+
+## After the Codex review
+
+See handoff.md › Review fixes. In short: a save never joins another load of its folder and save
+intent is tracked per subscriber (quit sees it); Live checks have their own job key; on a
+listing, held shots are reused only from the same folder (identity + sampled fingerprints); a
+new file is read only once unchanged a check later; quitting starts no other folder work. The
+check now also stats the held sample on listings (Medium: 2 + max(3, 1%) files): for 10,000
+held shots that is 102 stats per listing, once a minute or when the folder changes.
 
 ## Foreground lane: measured, and the rule chosen
 

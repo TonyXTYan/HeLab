@@ -19,8 +19,8 @@ Branch `agent/live-l1` (floor "Live L1"), base `376c7dd`. How it works, measurem
 | `tests/test_load_queue.py`, `tests/test_folder_cache.py` | Foreground owners now include the tab's Live owner; the status-bar stub has `_update_live_action` |
 
 Commits: `8b1b266` (L1+L2), `e9c62ae` (tooltip, hint, action test), `c0dd988` (line tidy-ups,
-measurement, renders), and the last commit (stale Retry, listing at least once a minute, notes,
-this handoff).
+measurement, renders), `f410e05` (stale Retry, listing at least once a minute, notes, this
+handoff), then the review fixes (below).
 
 ## Decisions taken (small judgement calls)
 
@@ -40,10 +40,11 @@ this handoff).
 6. **mtime test:** one stat when the folder's mtime equals the last safe one; listed when that
    mtime was within 2 s of the check (`RACY_SECONDS`), while files are still being written, and
    at least once a minute (`LIVE_LIST_SECONDS`).
-7. **Held shots aren't stat'ed** by Live checks (TXY is written once): a file rewritten in place
-   isn't noticed during Live (Retry / Refresh after Live, or the auto-save's full check, which
-   stats every file, will). Unreadable new files are remembered and read again only if they
-   change.
+7. **Held shots are trusted once the folder is shown to be the same** (TXY is written once): on a
+   listing, the folder's identity and a sample of held shots are checked (review fix 2); a
+   single shot rewritten in place outside the sample isn't noticed during Live, as for ordinary
+   loads (the auto-save's ordinary load, which stats every file, or Retry / Refresh after Live
+   will). Unreadable new files are remembered and read again only if they change.
 8. **Auto-saves** are ordinary background loads; they wait while the folder's previous save
    writes or while a save of it waits for Make room / Save update. A failed save waits for N more
    new shots before trying again. Folders that can't be saved (cache off, Don't cache, RAM only,
@@ -55,6 +56,63 @@ this handoff).
 10. **Superseded datasets:** any load that reuses another dataset's arrays drops the folder's
     older datasets no tab shows (`_drop_superseded`), for ordinary incremental loads too. Without
     it every Live revision counted its shared arrays again against the RAM budget.
+
+## Review fixes (Codex review, `review-codex.md`)
+
+1. **Blocker — a joined save was invisible to Quit.** Fixed in `FolderCache`:
+   - Save intent belongs to the subscriber, not the producer payload: `SharedJob.saves()` is true
+     if any subscriber's request asked for a save, and `quit_saves()` / `cancel_for_quit()` use it.
+   - `FolderCache.save` never joins another load of the folder that isn't a save (it may not
+     save, or save with other cache, limit or Don't cache choices): it waits in
+     `_deferred_saves` until that load and any write it starts have ended (`_save_waits`,
+     started from `_forget_job` and from the writer's end), then runs with its own payload.
+   - Live checks have their own job key (`("live", path)`, `SharedJob.live`), so an ordinary
+     load and a Live check never join each other either (an ordinary load joining a Live check
+     would have waited for a `loaded` that a `live_unchanged` check never sends).
+   - Quitting now also refuses new folder work other than saves (`FolderCache.quitting`) and
+     stops data-root verification: the end-to-end test showed a running `roots_verify` holding
+     the only background slot, and a tab's default-folder load starting after the cancel.
+   - Tests: `test_a_save_never_joins_another_load_and_quit_waits_for_it`,
+     `test_every_save_subscriber_counts_for_quit`, and
+     `test_quitting_straight_after_a_save_waits_for_another_tabs_load_waits_for_the_save`
+     (real main window and real helpers: quit straight after the join; the save runs and lands
+     in the store before the window closes).
+2. **Major — held shots trusted across a changed folder.** On every listing (not on the
+   one-stat path), before held arrays are reused, `live_check` checks (a) the folder's identity
+   (`_folder_identity`: the nearest `.helab-root` UUID, else the mount's SMB share or device and
+   the relative path) against the session's, which Live's first listing records, and (b) a
+   sample of held shots against their recorded (size, mtime): the check level's sample
+   (`_sample_indices`, Medium by default: first, last and max(3, 1%) random; Full checks every
+   held shot). A mismatch sends `shots_missing` with `reason` root or changed: the folder is
+   listed as mismatched as for a load, Live stops ("another folder is at this path now (drive or
+   data root changed)" / "N shots changed in the folder"), the data shown stays and nothing is
+   merged or saved. **Limit:** a single shot rewritten in place and not in the sample stays
+   covered by the write-once assumption, as for ordinary loads. Tests: a replacement folder with
+   the same shot numbers, and a copy under another data root (same names, sizes and mtimes), in
+   the helper and through the tab.
+3. **Major — a file could be read while still being written.** For Live, a new file is read
+   only when it is settled by age **and** showed the same (size, mtime) on the previous check, a
+   cooldown earlier (`seen`, sent back as `live_seen`); it is stat'ed again just before and after
+   the read. That costs at most one check interval and doesn't rely on clocks. Files waiting for
+   that count as still being written. Test: a file whose mtime looks old and stable while it is
+   still growing is read only once complete. **Remaining limit:** a writer that pauses for longer
+   than a check interval with unchanged metadata can still look finished; a writer-side atomic
+   rename or completion marker would close it. **Ordinary loads still rely on settle age alone**
+   (`_settled`, 5 s). Proposed follow-up (not in this branch): the same two-observation rule for
+   ordinary loads, e.g. a file is read only if a load or scan saw the same (size, mtime) at least
+   one interval earlier (kept in the session's memory per folder), or a converter-side rename.
+4. **Minor — tests.** `tests/test_live_io.py` drives the real `IOService` and helper processes:
+   a Live check that finds nothing never pauses another tab's background load, and one that
+   reads new files pauses it only from its first read and resumes it after; and a read that never
+   returns (a FIFO) times out three times, each retry starting only after the stopped helper's
+   exit is confirmed, ending in the "File timed out after 3 attempts" error (POSIX only).
+
+Checks after the fixes: full suite 923 passed, 2 skipped, 2 xfailed, no reruns; the Live tests
+35/35 three times in a row under `-n 6`; `mypy --strict` (helab, tests) and `pyright helab tests`
+clean.
+
+Note: tests that build the real main window (existing ones and four new ones) resolve the
+default data path, which is `/Volumes/dld_output` when mounted on this Mac, as before.
 
 ## Open questions for Tony
 
@@ -78,17 +136,23 @@ this handoff).
 > third line shows Live's state. A check is a `load` with `live` in its payload
 > (`io_helper.live_check`, owner `<tab>:live`, foreground lane): one folder stat while the
 > folder's mtime equals the last safe one (not within `RACY_SECONDS` = 2 s, no files still being
-> written, listed at least once a minute), else a names-only listing; held shots are trusted
-> (TXY is written once), only new settled files are stat'ed and read; `live_unchanged`, or
-> `loaded` with `memory_shots` (source `updated`). It holds background work only while it reads
-> a file. The next check starts `live_interval` after one ends (Settings → General, 3 s). New
+> written, listed at least once a minute), else a names-only listing. On a listing, held shots
+> are reused only if the folder's identity (nearest `.helab-root`, else its location) is the one
+> Live's first listing found and the check level's sample of held shots keeps its (size,
+> mtime); otherwise `shots_missing` (`reason` root or changed) stops Live and lists the folder
+> as mismatched. A new file is read only when settled by age and unchanged since the previous
+> check (`seen`); `live_unchanged`, or `loaded` with `memory_shots` (source `updated`). Checks
+> have their own job key (`("live", path)`) and hold background work only while they read a
+> file. The next check starts `live_interval` after one ends (Settings → General, 3 s). New
 > shots stay in RAM; every `live_autosave_shots` (Settings → Cache, 10) and when Live stops
 > (Live off, another folder, tab switch or close, quit) an ordinary background load saves the
-> folder (`FolderCache.save`, payload `save`); saves of one folder never overlap
-> (`_deferred_saves`) and obey the budget, Don't cache and pending-save rules. Errors stop the
+> folder (`FolderCache.save`, payload `save`); a save never joins another load of the folder
+> that isn't one, and saves of one folder never overlap (`_deferred_saves`); they obey the
+> budget, Don't cache and pending-save rules. Errors stop the
 > checks but keep Live and the data (amber line, Retry); nothing retries by itself. Quitting
-> turns Live off and waits for `FolderCache.quit_saves()` (Live's saves and finished loads'
-> `disk_cache_pending` writes) in `QuitSaveDialog`, with Quit now. Live never survives a restart.
+> turns Live off and waits for `FolderCache.quit_saves()` (any job a subscriber asked to save,
+> waiting saves, and finished loads' `disk_cache_pending` writes) in `QuitSaveDialog`, with
+> Quit now; meanwhile no other folder work starts (`FolderCache.quitting`). Live never survives a restart.
 > A load that reuses another dataset's arrays drops the folder's older datasets no tab shows
 > (`_drop_superseded`).
 
@@ -126,6 +190,11 @@ they read a file."
   Retry, quit window with Quit now".
 - `results/folder-io-queue.md`: add "Live checks are foreground loads that pause background work
   only while reading a file (measured 2026-10-19: 15% paused otherwise)".
+
+Known issues (`roadmaps/_readme.md`): add "Ordinary loads read a file once its mtime is 5 s old
+(`SETTLE_SECONDS`); on SMB with stale or coarse metadata a file still being written can pass.
+Live reads a new file only once it is unchanged a check later; use the same rule for loads, or
+a converter-side rename/marker (2026-10-19, Live review)."
 
 ### .ai/MANUAL_TODO.md
 

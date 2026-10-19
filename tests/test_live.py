@@ -4,9 +4,11 @@ Helpers run in-process: each queued request gets the real helper's events (``rep
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import shutil
+import uuid
 import time
 from types import SimpleNamespace
 from typing import Any, Iterator
@@ -23,7 +25,7 @@ from helab.utils.constants import (
     DEFAULT_LIVE_AUTOSAVE, DEFAULT_LIVE_INTERVAL, LIVE_AUTOSAVE_SETTING, LIVE_INTERVAL_SETTING, read_live_autosave,
     read_live_interval,
 )
-from helab.utils.folder_cache import FolderCache, store_options
+from helab.utils.folder_cache import FolderCache, SharedJob, store_options
 from helab.utils.io_service import FOREGROUND, IORequest, IOService
 from helab.views.FolderExplorer import FolderExplorer, LiveSession
 from helab.views.HelabMainWindow import HelabMainWindow
@@ -43,8 +45,15 @@ def age_folder(folder: Path, seconds: float) -> None:
     os.utime(folder, (when, when))
 
 
+def job_of(cache: FolderCache, path: str, operation: str = "load") -> SharedJob | None:
+    """The folder's queued job: for "load", a Live check (keyed "live") or an ordinary load."""
+    keys = [("live", path), ("load", path)] if operation == "load" else [(operation, path)]
+    return next((cache.jobs[key] for key in keys if key in cache.jobs), None)
+
+
 def producer(cache: FolderCache, path: str, operation: str = "load") -> IORequest:
-    job = cache.jobs[(operation, path)]
+    job = job_of(cache, path, operation)
+    assert job is not None
     return next(request for request in cache.service.pending if request.owner == job.owner)
 
 
@@ -61,7 +70,8 @@ def replay(cache: FolderCache, path: str, tmp_path: Path, operation: str = "load
             list_folder(path, events.append, payload.get("cache"))
         elif payload.get("live"):
             live_check(path, str(output), events.append, payload.get("memory"), payload.get("known"),
-                       payload.get("live_since"))
+                       payload.get("live_since"), identity=payload.get("identity", ""), seen=payload.get("seen"),
+                       check_level=payload.get("check_level", "medium"))
         else:
             load(path, str(output), events.append, payload.get("cache"), payload.get("memory"),
                  payload.get("base_signature", ""), payload.get("signature", ""), limits=payload.get("limits"),
@@ -118,8 +128,15 @@ def open_loaded(qtbot: QtBot, service: IOService, run: Path, tmp_path: Path) -> 
 
 def next_request(qtbot: QtBot, explorer: FolderExplorer, path: str) -> IORequest:
     cache = explorer.model.cache
-    qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
+    qtbot.waitUntil(lambda: job_of(cache, path) is not None)
     return producer(cache, path)
+
+
+def checks(qtbot: QtBot, explorer: FolderExplorer, path: str, tmp_path: Path, count: int = 2) -> None:
+    """Run Live's next checks: a new file is seen by one and read by the next (same size and mtime)."""
+    for _ in range(count):
+        next_request(qtbot, explorer, path)
+        replay(explorer.model.cache, path, tmp_path)
 
 
 def cached_shots(path: str, tmp_path: Path) -> list[int]:
@@ -144,7 +161,8 @@ def test_live_adds_new_shots_saves_every_n_and_when_it_stops(
 
     # First check: lists the folder, nothing new; it is a foreground load with the shots held.
     check = next_request(qtbot, explorer, path)
-    assert check.owner == cache.jobs[("load", path)].owner and check.payload["live"]
+    job = job_of(cache, path)
+    assert job is not None and job.live and check.owner == job.owner and check.payload["live"]
     assert sorted(entry[0] for entry in check.payload["memory"]) == [1, 2] and check.payload["live_since"] is None
     assert service.is_foreground(check)
     events = replay(cache, path, tmp_path)
@@ -169,8 +187,7 @@ def test_live_adds_new_shots_saves_every_n_and_when_it_stops(
     # A new shot arrives: read and shown at once, kept in RAM (not yet saved).
     write_shot(run, 3)
     age_folder(run, 60)
-    next_request(qtbot, explorer, path)
-    replay(cache, path, tmp_path)
+    checks(qtbot, explorer, path, tmp_path)
     assert sorted(explorer.folder_opened_data or {}) == [1, 2, 3]
     assert session.new == 1 and session.unsaved == {3}
     assert explorer.displayed_dataset is not None and explorer.displayed_dataset.metadata["source"] == "updated"
@@ -184,8 +201,7 @@ def test_live_adds_new_shots_saves_every_n_and_when_it_stops(
     # The second unsaved shot: the next step saves the folder (N = 2) with an ordinary load, in the background.
     write_shot(run, 4)
     age_folder(run, 50)
-    next_request(qtbot, explorer, path)
-    replay(cache, path, tmp_path)
+    checks(qtbot, explorer, path, tmp_path)
     assert session.unsaved == {3, 4}
     save = next_request(qtbot, explorer, path)
     assert save.payload.get("save") and not save.payload.get("live") and not service.is_foreground(save)
@@ -199,13 +215,13 @@ def test_live_adds_new_shots_saves_every_n_and_when_it_stops(
     # Live off with one unsaved shot: saved in the background, then the session is done.
     write_shot(run, 5)
     age_folder(run, 40)
-    next_request(qtbot, explorer, path)
-    replay(cache, path, tmp_path)
+    checks(qtbot, explorer, path, tmp_path)
     assert session.unsaved == {5}
     explorer.stop_live()
     assert explorer.live is None and explorer.tree.isEnabled() and explorer.path_edit.isEnabled()
     save = next_request(qtbot, explorer, path)
-    assert save.payload.get("save") and save.owner == cache.jobs[("load", path)].owner
+    job = job_of(cache, path)
+    assert save.payload.get("save") and job is not None and not job.live and save.owner == job.owner
     explorer._update_activity()
     assert explorer.folder_freshness_label.text() == "Live updates off · saving 1 shot"
     replay(cache, path, tmp_path)
@@ -227,15 +243,13 @@ def test_files_still_being_written_wait_and_are_counted(
     monkeypatch.setattr(io_helper, "SETTLE_SECONDS", 5.0)
     write_shot(run, 3, age=0)
     age_folder(run, 60)
-    next_request(qtbot, explorer, path)
-    replay(cache, path, tmp_path)
+    checks(qtbot, explorer, path, tmp_path)
     session = explorer.live
     assert session is not None and session.unsettled == 1 and session.new == 0 and session.since is None
     explorer._update_activity()
     assert "1 still being written" in explorer.folder_freshness_label.text()
     write_shot(run, 3, age=60)  # Written now; the folder itself didn't change.
-    next_request(qtbot, explorer, path)
-    replay(cache, path, tmp_path)
+    checks(qtbot, explorer, path, tmp_path)  # Seen settled, then read unchanged a check later.
     assert session.unsettled == 0 and session.new == 1 and sorted(explorer.folder_opened_data or {}) == [1, 2, 3]
     explorer.stop_live(save=False)
     explorer.close_cleanup()
@@ -266,7 +280,7 @@ def test_an_error_stops_checking_keeps_the_data_and_retry_resumes(
     assert explorer.activity_brief == "Live stopped: run"
     # No retries by itself: nothing more is queued.
     qtbot.wait(100)
-    assert ("load", path) not in cache.jobs
+    assert job_of(cache, path) is None
     hidden.rename(run)
     explorer.retry_button.click()
     next_request(qtbot, explorer, path)
@@ -287,7 +301,44 @@ def test_shots_gone_from_the_folder_stop_live(qtbot: QtBot, service: IOService, 
     assert explorer.live is not None and explorer.live.error == "1 shot missing from the folder"
     assert path in cache.mismatched
     explorer.stop_live()  # Nothing to save, and its cached data may not be this folder's.
-    assert ("load", path) not in cache.jobs and not explorer._live_sessions
+    assert job_of(cache, path) is None and not explorer._live_sessions
+    explorer.close_cleanup()
+
+
+@pytest.mark.parametrize("change", ["replaced", "remounted"])
+def test_another_folder_at_the_same_path_stops_live_and_is_never_merged(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path, change: str,
+) -> None:
+    """Same shot numbers at the watched path: a replaced folder (its sampled shots differ) or a
+    copy under another data root (same files; its .helab-root differs)."""
+    path = str(run)
+    explorer = open_loaded(qtbot, service, run, tmp_path)
+    cache = explorer.model.cache
+    data = explorer.folder_opened_data
+    assert explorer.start_live()
+    checks(qtbot, explorer, path, tmp_path, 1)
+    session = explorer.live
+    assert session is not None and session.identity.startswith("root:")
+    if change == "replaced":
+        run.rename(tmp_path / "old run")
+        run.mkdir()
+        for shot in (1, 2, 3):
+            (run / f"d_txy_forc{shot}.txt").write_text(f"{shot},9,9\n")
+    else:
+        copy = tmp_path / "copy"
+        shutil.copytree(run, copy, copy_function=shutil.copy2)
+        (copy / ".helab-root").write_text(json.dumps({"helab": "root", "version": 1, "uuid": str(uuid.uuid4()),
+                                                      "label": "copy", "created_at": "2026-10-19T00:00:00Z"}))
+        run.rename(tmp_path / "unmounted")
+        copy.rename(run)
+    age_folder(run, 30)
+    checks(qtbot, explorer, path, tmp_path, 1)
+    expected = ("2 shots changed in the folder" if change == "replaced"
+                else "another folder is at this path now (drive or data root changed)")
+    assert session.error == expected and path in cache.mismatched
+    assert explorer.folder_opened_data is data and sorted(data or {}) == [1, 2]  # Kept, never merged.
+    explorer.stop_live()  # Its cached data may not be this folder's: nothing is saved.
+    assert job_of(cache, path) is None and not explorer._live_sessions
     explorer.close_cleanup()
 
 
@@ -305,7 +356,7 @@ def test_live_needs_shown_data_and_locks_navigation(
     assert explorer.start_live() and not explorer.start_live()
     # Selecting another folder, opening one, or Deselect turn Live off (the tree is locked: by code only).
     explorer.load_to_ram_cache(path, dwell=False, explicit=True)
-    assert ("load", path) not in cache.jobs or cache.jobs[("load", path)].payload.get("live")
+    assert ("load", path) not in cache.jobs  # No ordinary load of the watched folder.
     explorer.open_to_path(str(tmp_path))
     assert explorer.live is None and explorer.tree.isEnabled()
     explorer.close_cleanup()
@@ -322,15 +373,14 @@ def test_rules_that_stop_saving_show_on_the_line(
     for shot in (3, 4, 5):
         write_shot(run, shot)
         age_folder(run, 100 - shot)
-        next_request(qtbot, explorer, path)
-        replay(cache, path, tmp_path)
+        checks(qtbot, explorer, path, tmp_path)
     session = explorer.live
     assert session is not None and session.unsaved == {3, 4, 5} and not session.saving
     explorer._update_activity()
     assert "3 not cached (Don't cache)" in explorer.folder_freshness_label.text()
     assert "Not saved: you chose Don't cache for this folder" in explorer.folder_freshness_label.toolTip()
     explorer.stop_live()
-    assert not explorer._live_sessions and ("load", path) not in cache.jobs
+    assert not explorer._live_sessions and job_of(cache, path) is None
     explorer.close_cleanup()
 
 
@@ -341,8 +391,7 @@ def test_closing_the_tab_saves_its_new_shots(qtbot: QtBot, service: IOService, r
     assert explorer.start_live()
     write_shot(run, 3)
     age_folder(run, 60)
-    next_request(qtbot, explorer, path)
-    replay(cache, path, tmp_path)
+    checks(qtbot, explorer, path, tmp_path)
     explorer.on_stop_button_clicked()  # As closing a tab does first.
     explorer.close_cleanup()
     assert explorer.closed and cache.quit_saves() == [path]
@@ -382,8 +431,7 @@ def test_a_save_waits_for_the_folders_running_save(
     for shot in (3, 4):
         write_shot(run, shot)
         age_folder(run, 100 - shot)
-        next_request(qtbot, explorer, path)
-        replay(cache, path, tmp_path)
+        checks(qtbot, explorer, path, tmp_path)
     save = next_request(qtbot, explorer, path)
     assert save.payload.get("save")
     # Deliver its data, but not its write yet.
@@ -394,10 +442,9 @@ def test_a_save_waits_for_the_folders_running_save(
     assert cache.disk_cache_saving(path)
     write_shot(run, 5)
     age_folder(run, 60)
-    next_request(qtbot, explorer, path)
-    replay(cache, path, tmp_path)
+    checks(qtbot, explorer, path, tmp_path)
     explorer.stop_live()
-    assert ("load", path) not in cache.jobs and cache.quit_saves() == [path]  # Waiting.
+    assert job_of(cache, path) is None and cache.quit_saves() == [path]  # Waiting.
     for event in events[loaded_at + 1:]:
         cache.service.resultReady.emit(save, event)
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
@@ -420,6 +467,48 @@ def run_helper_events(cache: FolderCache, path: str, tmp_path: Path) -> list[dic
     cache.service.pending.remove(request)
     return [{**event, "array": np.load(event.pop("artifact"))} if event["kind"] == "shot" else event
             for event in events]
+
+
+def test_a_save_never_joins_another_load_and_quit_waits_for_it(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path,
+) -> None:
+    """Another tab's ordinary load of the folder is queued: Live's save waits for it (its own
+    choices, its own write) and Quit counts it; quitting cancels the load, so the save starts."""
+    path = str(run)
+    explorer = open_loaded(qtbot, service, run, tmp_path)
+    cache = explorer.model.cache
+    assert explorer.start_live()
+    write_shot(run, 3)
+    age_folder(run, 60)
+    checks(qtbot, explorer, path, tmp_path)
+    assert cache.submit("other tab", 0, path, "load", {"cache": store_options(), "no_cache": True})
+    explorer.stop_live()
+    session = explorer._live_sessions[path]
+    ordinary = cache.jobs[("load", path)]
+    assert session.request == "save" and not ordinary.saves() and not ordinary.payload.get("save")
+    assert cache.quit_saves() == [path]  # Waiting for the ordinary load, still a save to quit for.
+    cache.cancel_for_quit()
+    qtbot.waitUntil(lambda: (job := job_of(cache, path)) is not None and job is not ordinary)
+    save = job_of(cache, path)
+    assert save is not None and save.payload.get("save") and not save.payload.get("no_cache")
+    assert cache.quit_saves() == [path]
+    replay(cache, path, tmp_path)
+    qtbot.waitUntil(lambda: not cache.quit_saves())
+    assert cached_shots(path, tmp_path) == [1, 2, 3]
+    explorer.close_cleanup()
+
+
+def test_every_save_subscriber_counts_for_quit(service: IOService, tmp_path: Path) -> None:
+    """Save intent is the subscriber's, not the producer payload's: a save that joined a job
+    (or a job another save joined) is waited for, and quitting doesn't cancel it."""
+    cache = FolderCache(service)
+    path = str(tmp_path)
+    assert cache.submit("tab", 0, path, "load", {})
+    assert cache.submit("tab:live-save", 0, path, "load", {"save": True})
+    job = cache.jobs[("load", path)]
+    assert not job.payload.get("save") and job.saves() and cache.quit_saves() == [path]
+    cache.cancel_for_quit()
+    assert cache.jobs.get(("load", path)) is job
 
 
 def test_quit_window_waits_for_saves_and_quit_now_skips_them(
@@ -504,6 +593,35 @@ def test_the_live_action_follows_the_current_tab_and_locks_navigation(qtbot: QtB
     window._update_live_action()
     assert not window.action_tab_live.isChecked() and window.action_tab_refresh.isEnabled()
     window._quit_now = True
+
+
+def test_quitting_straight_after_a_save_waits_for_another_tabs_load_waits_for_the_save(
+    qtbot: QtBot, tmp_path: Path,
+) -> None:
+    """Real helpers: another tab's ordinary load of the folder is queued, a Live save of it waits
+    for that load; quitting at once cancels the load, starts the save and waits for it."""
+    window = HelabMainWindow()
+    qtbot.addWidget(window)
+    from helab.utils.folder_cache import get_folder_cache
+    from helab.utils.io_service import get_io_service
+    cache = get_folder_cache(get_io_service())
+    folder = tmp_path / "run"
+    folder.mkdir()
+    for shot in (1, 2):
+        write_shot(folder, shot)
+    path = str(folder)
+    cache.service.configure_concurrency(1)
+    # Keep the ordinary load queued: the background lane is busy with another tab's load.
+    blocker = tmp_path / "blocker"
+    blocker.mkdir()
+    assert cache.submit("busy tab", 0, str(blocker), "list", {})
+    assert cache.submit("other tab", 0, path, "load", {"cache": store_options()})
+    assert cache.save("live tab:live-save", path, {"cache": store_options()})
+    assert ("load", path) in cache.jobs and cache.quit_saves() == [path]
+    window.close()
+    assert not window._closing and window._quit_dialog is not None
+    qtbot.waitUntil(lambda: window._closing, timeout=20000)
+    assert cached_shots(path, tmp_path) == [1, 2]
 
 
 def test_quit_now_closes_at_once(qtbot: QtBot, tmp_path: Path) -> None:

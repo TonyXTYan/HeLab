@@ -96,6 +96,17 @@ class SharedJob:
     clock: LoadClock = field(default_factory=LoadClock)
     # The TXY file a load is reading now ("" between files), for the I/O tooltip.
     current_file: str = ""
+    # A Live check (``io_helper.live_check``): keyed apart from ordinary loads of the folder, so
+    # neither joins the other (their results differ).
+    live: bool = False
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return ("live" if self.live else self.operation), self.path
+
+    def saves(self) -> bool:
+        """Whether a subscriber asked for a save (``FolderCache.save``), whatever the job's own payload."""
+        return bool(self.payload.get("save")) or any(r.payload.get("save") for r in self.subscribers.values())
 
 
 # Set from the saved setting at startup (``set_disk_budget``); sent with every request, with
@@ -199,6 +210,8 @@ class FolderCache(QObject):
         # Saves (loads with ``save`` in their payload) waiting for the folder's running save to
         # end, so saves of one folder never overlap: folder → (owner, payload).
         self._deferred_saves: dict[str, tuple[str, dict[str, Any]]] = {}
+        # Quitting waits for saves (``cancel_for_quit``): no other folder work starts meanwhile.
+        self.quitting = False
         # Each folder's flags, as the store or this session last said: {"no_cache", "no_auto_load", "set_at"}.
         self.prefs: OrderedDict[str, dict[str, Any]] = OrderedDict()
         # What the store last confirmed for each folder (listings, saves): shown again if a choice fails.
@@ -914,6 +927,8 @@ class FolderCache(QObject):
             return False
         path = self.key(path)
         payload = payload or {}
+        if self.quitting and not (operation == "load" and payload.get("save")):
+            return False
         if self.has_request(owner, operation, path):
             return True
         request = IORequest(owner, generation, path, operation, payload,
@@ -979,7 +994,8 @@ class FolderCache(QObject):
             if candidates in self._defaults:
                 self._deliver(request, {"kind": "resolved", "path": self._defaults[candidates]})
                 return True
-        job_key = (operation, path)
+        live = operation == "load" and bool(payload.get("live"))
+        job_key = ("live" if live else operation, path)
         job = self.jobs.get(job_key)
         if job:
             if priority and operation != "load":
@@ -1010,7 +1026,7 @@ class FolderCache(QObject):
             payload = {**payload, "memory": [list(entry) for entry in base.metadata["fingerprint"]
                                              if entry[0] in base.data],
                        "base_signature": base.signature}
-        job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload, base=base)
+        job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload, base=base, live=live)
         if operation in SCANS:
             job.payload = payload = {**payload, "scan_operation_id": job.owner,
                                      "scan_revision": time.time_ns(), "scan_manual": manual}
@@ -1066,7 +1082,11 @@ class FolderCache(QObject):
         QTimer.singleShot(0, batch)
 
     def _forget_job(self, job: SharedJob) -> None:
-        self.jobs.pop((job.operation, job.path), None)
+        if self.jobs.get(job.key) is job:
+            del self.jobs[job.key]
+        if job.operation == "load" and not job.live and job.path in self._deferred_saves:
+            # A save waiting for this load: it starts once the load (and any write it does) ends.
+            QTimer.singleShot(0, lambda: self._start_deferred(job.path))
         self._producers.pop(job.owner, None)
         self._awaiting_cached.pop(job.owner, None)
         if job.operation == "cached" and job.path in self._awaiting_producers:
@@ -1230,7 +1250,7 @@ class FolderCache(QObject):
 
     def _invalidate_data(self, path: str) -> None:
         self._epochs[path] = self._epochs.get(path, 0) + 1
-        for operation in ("load", "cached"):
+        for operation in ("load", "live", "cached"):
             job = self.jobs.get((operation, path))
             if job:
                 self._cancel_job(job)
@@ -1258,10 +1278,12 @@ class FolderCache(QObject):
         """Save a folder's data shown in RAM to the disk cache with an ordinary load (Live's saves:
         its new shots are re-read from the folder, the rest come from the cache). Saves of one
         folder never overlap: while its previous save runs, this one waits (one per folder, the
-        newest). False if it couldn't be queued."""
+        newest). It never joins another load of the folder that isn't a save either (that one may
+        not save, or save with other choices): it waits for it to end. False if it couldn't be
+        queued."""
         path = self.key(path)
         payload = {**payload, "save": True}
-        if self.disk_cache_saving(path):
+        if self._save_waits(path):
             self._deferred_saves[path] = (owner, payload)
             self.quitSavesChanged.emit()
             return True
@@ -1269,8 +1291,14 @@ class FolderCache(QObject):
         self.quitSavesChanged.emit()
         return submitted
 
+    def _save_waits(self, path: str) -> bool:
+        """A save of ``path`` waits: the folder's data is being written, or another load of it
+        that isn't a save is running or queued."""
+        job = self.jobs.get(("load", path))
+        return self.disk_cache_saving(path) or (job is not None and not job.saves())
+
     def _start_deferred(self, path: str) -> None:
-        if path not in self._deferred_saves or self.disk_cache_saving(path) or self.service.closed:
+        if path not in self._deferred_saves or self._save_waits(path) or self.service.closed:
             return
         owner, payload = self._deferred_saves.pop(path)
         if not self.submit(owner, 0, path, "load", payload, priority=True):
@@ -1284,14 +1312,19 @@ class FolderCache(QObject):
         """Folders whose data is being saved to the disk cache, or will be: what quitting waits
         for. A finished load's background save, and a save not yet started or still reading."""
         writing = [self._finishing[owner] for owner in self._disk_cache_writers if owner in self._finishing]
-        loading = [job.path for job in self.jobs.values() if job.operation == "load" and job.payload.get("save")]
+        loading = [job.path for job in self.jobs.values() if job.operation == "load" and job.saves()]
         return list(dict.fromkeys((*writing, *loading, *self._deferred_saves)))
 
     def cancel_for_quit(self) -> None:
-        """Quitting: stop the reads, listings and loads nothing will show, so saves get the I/O."""
+        """Quitting: stop the reads, listings and loads nothing will show, and data-root
+        verification, so saves get the I/O (a save waiting for a load it doesn't join then
+        starts); none of those start again (``quitting``)."""
+        self.quitting = True
+        if self._root_verify_owner:
+            self.service.cancel(self._root_verify_owner)
         for job in list(self.jobs.values()):
             if job.operation in ("load", "cached", "list", "details", "scan", "icons", "resolve") and not (
-                    job.operation == "load" and job.payload.get("save")):
+                    job.operation == "load" and job.saves()):
                 self._cancel_job(job)
 
     def cancel(self, owner: str, operation: str | None = None, path: str | None = None) -> None:
@@ -1401,7 +1434,7 @@ class FolderCache(QObject):
         """Check the saved volume IDs at once on the local lane (cached reads of external volumes
         wait for that), and queue one background source helper for remembered marker locations."""
         options = store_options()
-        if not options or self.service.closed:
+        if not options or self.service.closed or self.quitting:
             return
         self._verify_asked = self._mounts_observed
         if not self._volume_verify_owner:

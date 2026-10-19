@@ -90,6 +90,12 @@ class LiveSession:
     seconds: float | None = None  # How long the last check took (the helper's measure).
     listed: bool = False  # Whether the last check listed the folder (else one stat).
     listed_at: float = -math.inf  # Monotonic: when a check last listed it.
+    # The folder's identity (data root, else location) as Live's first listing found it: a later
+    # listing finding another folder at this path stops Live.
+    identity: str = ""
+    # New files the last check saw but didn't read ([shot, size, mtime_ns]): read once they show
+    # the same size and mtime again, a check later.
+    seen: list[list[int]] = field(default_factory=list)
     next_at: float = 0.0  # Monotonic.
     new: int = 0  # New shots since Live started.
     unsettled: int = 0  # Files still being written at the last check.
@@ -1465,7 +1471,8 @@ class FolderExplorer(QWidget):
         # Shots it couldn't read: read again only if they change.
         known = [list(entry) for entry in dataset.metadata.get("fingerprint", ()) if int(entry[0]) not in dataset.data]
         since = session.since if time.monotonic() - session.listed_at < self.LIVE_LIST_SECONDS else None
-        payload = {"live": True, "live_since": since, "known": known, "prefer_base": dataset.signature}
+        payload = {"live": True, "live_since": since, "known": known, "prefer_base": dataset.signature,
+                   "identity": session.identity, "seen": session.seen, "check_level": cache.check_level}
         if not cache.submit(self.live_owner, 0, session.path, "load", payload, priority=True):
             self._live_halt(session, "Live check couldn't be queued — Retry")
             return
@@ -1539,7 +1546,10 @@ class FolderExplorer(QWidget):
             what, session.request = session.request, ""
             if kind == "shots_missing":
                 count = int(event.get("missing_count", 0))
-                message = f"{plural(count, 'shot')} missing from the folder"
+                reason = event.get("reason")
+                message = ("another folder is at this path now (drive or data root changed)" if reason == "root"
+                           else f"{plural(count, 'shot')} changed in the folder" if reason == "changed"
+                           else f"{plural(count, 'shot')} missing from the folder")
             elif kind == "too_large":
                 message = large_text(int(event.get("estimate", 0)), bool(event.get("refused")))
             else:
@@ -1582,6 +1592,7 @@ class FolderExplorer(QWidget):
         session.since = event.get("live_since")  # (A save's listing doesn't say: the next check lists.)
         session.unsettled = int(event.get("unsettled_files", 0))
         session.listed, session.listed_at = True, time.monotonic()
+        self._live_observed(session, event)
         if event.get("disk_cache_pending"):
             # Saved with this result (a save, or another tab's load the check joined).
             session.saving |= new
@@ -1610,11 +1621,21 @@ class FolderExplorer(QWidget):
         session.listed = bool(event.get("live_listed"))
         if session.listed:
             session.listed_at = time.monotonic()
+            self._live_observed(session, event)
         if session.listed and self._unchecked_path == session.path:
             # Listed: no shot is missing and none is new, so the shown data is the folder's.
             self._unchecked_path = None
         if session.on and not session.error:
             self._live_next()
+
+    @staticmethod
+    def _live_observed(session: LiveSession, event: dict[str, Any]) -> None:
+        """What a listing check found besides shots: the folder's identity (the first one is the
+        session's), and the new files it saw but didn't read. (A save's load reports neither.)"""
+        if "live_seen" in event:
+            session.seen = [list(entry) for entry in event["live_seen"]]
+        if not session.identity and event.get("live_identity"):
+            session.identity = str(event["live_identity"])
 
     def _live_save_ended(self, path: str, outcome: str) -> None:
         """A save of the folder ended (``FolderCache.saveEnded``)."""

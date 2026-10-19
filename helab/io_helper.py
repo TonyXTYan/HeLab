@@ -1481,20 +1481,58 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
 RACY_SECONDS = 2.0
 
 
+def _folder_identity(path: str) -> str:
+    """Which folder ``path`` is, beyond its spelling: the nearest data root's UUID, else its
+    location (an SMB share's server and share, or a local mount's device) and relative path.
+    "" if a marker is there but unreadable."""
+    from helab.utils.cache_paths import _inside, _normal, _smb_source, current_mounts
+    from helab.utils.data_roots import read_marker
+    folder = path
+    while True:
+        try:
+            return "root:" + read_marker(folder).uuid
+        except FileNotFoundError:
+            pass
+        except ValueError:
+            pass  # An invalid marker is no data root.
+        except OSError:
+            return ""
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            break
+        folder = parent
+    mounts = [mount for mount in current_mounts() if _inside(_normal(path), _normal(mount.path))]
+    if not mounts:
+        return "location:" + path
+    mount = max(mounts, key=lambda item: len(_normal(item.path)))
+    source = _smb_source(mount.source, mount.fstype) or f"{mount.fstype}:{mount.source}"
+    return f"location:{source}|{path[len(mount.path):]}"
+
+
 def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]] | None = None,
-               known: list[list[int]] | None = None, since: int | None = None) -> None:
+               known: list[list[int]] | None = None, since: int | None = None, *,
+               identity: str = "", seen: list[list[int]] | None = None,
+               check_level: str = DEFAULT_CHECK_LEVEL) -> None:
     """One check of a folder watched live: new settled TXY files are read and sent like a load's.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for the shots the caller holds; TXY files are
-    written once, so they are trusted without a stat. ``known`` lists shots the caller knows
-    but couldn't read: read again only if they changed. ``since`` is the folder's mtime (ns)
-    the previous check said is safe to compare: while the folder still has it, nothing was
-    added or removed, and one stat is the whole check. Otherwise the folder is listed by name
-    and only the files the caller doesn't hold are stat'ed; those still being written are
-    counted and left for a later check. Nothing new: ``live_unchanged``; else ``loaded`` with
-    ``memory_shots`` (source ``updated``). Held shots the folder no longer lists stop the check
-    with ``shots_missing``. The disk cache is neither read nor written: the app saves with an
-    ordinary load, every N new shots and when Live stops.
+    written once, so they are trusted once the folder is shown to be the same one. ``known``
+    lists shots the caller knows but couldn't read: read again only if they changed. ``since``
+    is the folder's mtime (ns) the previous check said is safe to compare: while the folder
+    still has it, nothing was added or removed, and one stat is the whole check.
+
+    Otherwise the folder is listed by name. Before held shots are reused, the folder must still
+    be the session's (``identity``: its data root, else its location) and a sample of held shots
+    (as the check level samples cached data) must keep their sizes and mtimes; held shots it no
+    longer lists, a sample that changed or another folder stop the check with ``shots_missing``
+    (``reason``: missing, changed or root). Only files the caller doesn't hold are stat'ed. A new
+    file is read only once it is settled by age and has shown the same size and mtime on the
+    previous check too (``seen``): stale or coarse metadata can't make a file being written look
+    finished twice a check apart. It is stat'ed again just before and after it is read. Files
+    not read yet are counted as still being written and sent back (``live_seen``). Nothing new:
+    ``live_unchanged``; else ``loaded`` with ``memory_shots`` (source ``updated``). The disk cache
+    is neither read nor written: the app saves with an ordinary load, every N new shots and when
+    Live stops.
     """
     started = time.monotonic()
     if not memory:
@@ -1506,11 +1544,14 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     racy = abs(time.time() - folder.st_mtime) < RACY_SECONDS
     held = {int(shot): (int(size), int(modified)) for shot, size, modified in memory}
 
+    current_identity = ""
+    waiting: list[list[int]] = []  # New files not read yet, as stat'ed now (the next ``seen``).
+
     def state(listed: bool, unsettled: int, safe: bool) -> dict[str, Any]:
         # ``live_since``: what the next check may compare the folder's mtime with (None: list it).
         return {"live_since": folder.st_mtime_ns if safe and not racy and not unsettled else None,
                 "live_listed": listed, "live_seconds": time.monotonic() - started,
-                "unsettled_files": unsettled}
+                "unsettled_files": unsettled, "live_identity": current_identity, "live_seen": waiting}
 
     if since is not None and since == folder.st_mtime_ns:
         send({"kind": "live_unchanged", **state(False, 0, True), "total_files": len(held)})
@@ -1530,12 +1571,39 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                     names[shot] = entry.path
             elif not has_dirs and entry.is_dir(follow_symlinks=False):
                 has_dirs = True
+
+    def mismatch(reason: str, shots: list[int]) -> None:
+        send({"kind": "shots_missing", "reason": reason, "missing": shots[:20], "missing_count": len(shots),
+              "known_count": len(held), "listed_count": len(names)})
+
     missing = sorted(set(held) - set(names))
     if missing:
-        send({"kind": "shots_missing", "missing": missing[:20], "missing_count": len(missing),
-              "known_count": len(held), "listed_count": len(names)})
+        mismatch("missing", missing)
+        return
+    current_identity = _folder_identity(path)
+    if identity and current_identity and current_identity != identity:
+        # Another folder at this path (a remount, another drive): nothing held is its.
+        mismatch("root", sorted(held))
+        return
+    beat = Heartbeat(send, "verifying")
+    ordered = sorted(held)
+    indices = _sample_indices(len(ordered), check_level)
+    changed: list[int] = []
+    for index in range(len(ordered)) if indices is None else indices:
+        shot = ordered[index]
+        try:
+            info = os.stat(names[shot])
+        except FileNotFoundError:
+            changed.append(shot)
+            continue
+        if (info.st_size, info.st_mtime_ns) != held[shot]:
+            changed.append(shot)
+        beat()
+    if changed:
+        mismatch("changed", changed)
         return
     failed = {int(shot): (int(size), int(modified)) for shot, size, modified in known or ()}
+    previous = {int(shot): (int(size), int(modified)) for shot, size, modified in seen or ()}
     beat = Heartbeat(send, "checking")
     candidates: list[tuple[int, int, int]] = []
     for shot in sorted(set(names) - set(held)):
@@ -1545,11 +1613,15 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
             continue  # Gone since the listing (e.g. renamed by its writer).
         candidates.append((shot, info.st_size, info.st_mtime_ns))
         beat()
-    settled = _settled(candidates)
-    young = len(candidates) - len(settled)
+    aged = {item[0] for item in _settled(candidates)}
     # Known unreadable and unchanged since: still unreadable, not read again.
-    still_failed = [item for item in settled if failed.get(item[0]) == item[1:]]
-    to_read = [item for item in settled if failed.get(item[0]) != item[1:]]
+    still_failed = [item for item in candidates if failed.get(item[0]) == item[1:]]
+    # Settled by age, and the same size and mtime as the previous check saw.
+    to_read = [item for item in candidates if failed.get(item[0]) != item[1:]
+               and item[0] in aged and previous.get(item[0]) == item[1:]]
+    waiting[:] = [list(item) for item in candidates
+                  if failed.get(item[0]) != item[1:] and item not in to_read]
+    young = len(waiting)
     if not to_read:
         send({"kind": "live_unchanged", **state(True, young, True), "total_files": len(names)})
         return
@@ -1596,6 +1668,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
             if array is None:
                 # Changed while read: still being written; the next check reads it again.
                 late.add(shot)
+                waiting.append(list(item))
                 problematic[:] = [value for value in problematic if value != shot]
             else:
                 artifact = os.path.join(output, f"{shot}.npy")
@@ -2177,7 +2250,9 @@ def main() -> None:
                           verified_volumes=request.get("verified_volumes"))
         elif operation == "load" and request.get("live"):
             live_check(request["path"], request["output"], memory=request.get("memory"),
-                       known=request.get("known"), since=request.get("live_since"))
+                       known=request.get("known"), since=request.get("live_since"),
+                       identity=str(request.get("identity") or ""), seen=request.get("seen"),
+                       check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL))
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),
