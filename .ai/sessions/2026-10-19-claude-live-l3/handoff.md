@@ -12,6 +12,7 @@ Branch `agent/live-l3` (floor "Live L3"), base `d0b8fbe`. Commits:
 | `7c63bdf`, `fbe13f0`, `7ec0032`, `b5dc449`, `768855f` | Round 2: Tony's answers (below) |
 | `d33bb61`, `eab80a3` | Round 2 review fixes (below) |
 | `80af689` | The histograms' newest shot on its own right axis (below) |
+| `003b230` | Recheck fix: a highlighted histogram is freed with its widget (below) |
 
 How it works, the test-isolation trap and renders: [notes.md](notes.md). Pushed to
 `TonyXTYan/HeLab` after the review fixes and after round 2.
@@ -94,6 +95,15 @@ log Y. Renders: [histograms-newest-shot.png](histograms-newest-shot.png),
 [histograms-newest-shot-log.png](histograms-newest-shot-log.png). This answers the open
 question on the histograms' scaling. Full suite 1139 passed, 2 skipped, 2 xfailed, no RERUN;
 typing clean (also Windows).
+
+`003b230` (Codex's "Recheck at 69c2ced", P2): the overlay's follow callback was a closure on the
+plot's signals, which PyQt held strongly, so every highlighted drawing's plot, overlay, curve
+and counts outlived its widget (Live redraws on each revision). `follow` is now a `pyqtSlot` on
+`OverlayView` (a Qt connection Qt ends with either side); its attributes are private, since a
+`scale` attribute would have shadowed `QGraphicsItem.scale()`. Tests: weak references freed
+after one deferred-delete pass and gc, linear and log Y, and after a Live redraw (all three fail
+without the fix). Full suite 1142 passed, 2 skipped, 2 xfailed, no RERUN; typing clean (also
+Windows).
 
 Checks after these fixes: full suite **1137 passed, 2 skipped, 2 xfailed, no RERUN** (`-n 4`);
 `mypy helab/ --strict`, `mypy tests --strict`, `mypy helab/ tests --strict --platform win32`:
