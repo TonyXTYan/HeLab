@@ -1427,6 +1427,7 @@ class HelabMainWindow(QMainWindow):
                 a0.ignore()
             return
         self._closing = True
+        self.panel_right_top_plot_settings.detach()
         if not self._cache_dialogs_detached:
             self.cache_dialogs.detach()
         self.watchdog.stop()

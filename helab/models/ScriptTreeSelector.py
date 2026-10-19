@@ -3,8 +3,9 @@ import logging
 import os
 from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal
 
-from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QCloseEvent
+from PyQt6 import sip
+from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QCloseEvent, QWindow
 # from uuid import uuid4
 
 # Import QWidget types first to avoid forward references
@@ -71,13 +72,15 @@ class DockTabCloser(QObject):
                 return
 
 
-class LinkedAnalysisInstance:
+class LinkedAnalysisInstance(QObject):
     """Manages a linked pair of dock widget and its page in the Settings panel.
     
     This class handles:
     - Unique instance identification
     - Synchronized closing of linked UI components
-    - Cleanup of resources when either component is closed
+    - Cleanup of resources when either component is closed, or the dock is deleted unclosed
+      (its window went). That runs through Qt slots: PyQt can drop a plain Python callable
+      connected to ``destroyed`` before it runs.
     
     Args:
         name: Base name of the analysis (used for display)
@@ -85,7 +88,10 @@ class LinkedAnalysisInstance:
         main_window: Reference to main window for cleanup
     """
     
+    ended = pyqtSignal(str)  # instance_id, once closed
+
     def __init__(self, name: str, instance_id: str, main_window: Optional['HelabMainWindow']):
+        super().__init__()
         self.name = name
         self.instance_id = instance_id
         self.main_window = main_window
@@ -102,6 +108,8 @@ class LinkedAnalysisInstance:
         dock.setStyleSheet(QDOCKWIDGET_STYLESHEET)
         dock.setWidget(content)
         dock.closed.connect(self.close)
+        # A dock deleted unclosed (its window went) still ends the run and its connections.
+        dock.destroyed.connect(self.close)
         self.dock_widget = dock
         
     def setup_param_tab(self, param_tree: QWidget, title: str = "") -> None:
@@ -112,29 +120,31 @@ class LinkedAnalysisInstance:
         self.main_window.panel_right_top_plot_settings.add_plot(
             self.dock_widget, param_tree, title or f"{self.name} ({self.instance_id})")
         
+    @pyqtSlot()
     def close(self) -> None:
-        """Close and cleanup both components."""
+        """Close and cleanup both components (only what is still there: after the main window
+        went, its widgets are deleted already)."""
         if self.is_closed:
             return
             
         self.is_closed = True
-        
-        if self.main_window:
-            # Remove dock widget
-            if self.dock_widget:
-                self.main_window.middle_mainwindow.removeDockWidget(self.dock_widget)
-                if self.dock_widget in self.main_window.dock_widgets:
-                    self.main_window.dock_widgets.remove(self.dock_widget)
-                self.dock_widget.deleteLater()
-                
-            # Remove its page from the Settings panel
-            if self.param_tab:
-                if self.dock_widget:
-                    self.main_window.panel_right_top_plot_settings.remove_plot(self.dock_widget)
-                self.param_tab.deleteLater()
-            update = getattr(self.main_window, "update_placeholder_visibility", None)
-            if callable(update):
-                update()
+        self.ended.emit(self.instance_id)
+        window, dock = self.main_window, self.dock_widget
+        if window is None or sip.isdeleted(window):
+            return
+        if dock is not None and dock in window.dock_widgets:
+            window.dock_widgets.remove(dock)
+        if self.param_tab is not None and not sip.isdeleted(self.param_tab):
+            self.param_tab.deleteLater()
+        if dock is None or sip.isdeleted(dock):
+            return  # Deleted with the plot area: the Settings panel drops the page itself.
+        window.middle_mainwindow.removeDockWidget(dock)
+        dock.deleteLater()
+        if self.param_tab is not None:
+            window.panel_right_top_plot_settings.remove_plot(dock)
+        update = getattr(window, "update_placeholder_visibility", None)
+        if callable(update):
+            update()
 
 
 class AnalysisInstance(LinkedAnalysisInstance):
@@ -245,6 +255,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         label.setWordWrap(True)
         return label
 
+    @pyqtSlot()
     def close(self) -> None:
         if self.is_closed:
             return
@@ -550,7 +561,7 @@ class TreePanelWidget(QWidget):
         window, dock = self.helab_main_window, instance.dock_widget
         if window is None or not isinstance(dock, AnalysisDock):
             return
-        dock.closed.connect(lambda: self._analysis_instances.pop(instance.instance_id, None))
+        instance.ended.connect(self._forget_instance)
         window.panel_right_top_plot_settings.follow(window.middle_mainwindow)
         area = window.middle_mainwindow
         if area.findChild(DockTabCloser) is None:
@@ -566,6 +577,10 @@ class TreePanelWidget(QWidget):
         update = getattr(window, "update_placeholder_visibility", None)
         if callable(update):
             update()
+
+    @pyqtSlot(str)
+    def _forget_instance(self, instance_id: str) -> None:
+        self._analysis_instances.pop(instance_id, None)
 
     def create_button(self, label: str, callback: Callable[..., Any]) -> QPushButton:
         """Create a standardized action button for script items.
@@ -591,7 +606,12 @@ class PlotSettingsPanel(QWidget):
     """The settings of the active plot: one page per open plot, showing the page of the plot
     last clicked, focused or brought to the front among tabbed docks, floating ones included.
     The chooser on top names it and picks another plot (raising its dock). A page keeps its
-    edits while another plot's page shows. With no plot open, a hint shows instead."""
+    edits while another plot's page shows. With no plot open, a hint shows instead.
+
+    It follows Qt's own signals, which fire only when something changes: the app's focus
+    (a click anywhere in a plot focuses it, as its dock takes click focus), the active window
+    (a floating plot) and the plot area's tab activations. No Python runs per event (no event
+    filter), and the connections end with the panel or ``detach()``."""
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
@@ -624,15 +644,31 @@ class PlotSettingsPanel(QWidget):
         self._followed: List[QMainWindow] = []
         self._update_chooser()
         app = QApplication.instance()
-        if app is not None:
-            app.installEventFilter(self)
+        self._app = app if isinstance(app, QApplication) else None
+        if self._app is not None:
+            self._app.focusChanged.connect(self._focus_changed)
+            self._app.focusWindowChanged.connect(self._window_activated)
+
+    def detach(self) -> None:
+        """Stop following the app's focus and tab activations (the window is closing)."""
+        if self._app is not None:
+            self._app.focusChanged.disconnect(self._focus_changed)
+            self._app.focusWindowChanged.disconnect(self._window_activated)
+            self._app = None
+        for area in self._followed:
+            if not sip.isdeleted(area):
+                area.tabifiedDockWidgetActivated.disconnect(self._tab_activated)
+        self._followed.clear()
 
     def add_plot(self, dock: QDockWidget, page: QWidget, title: str) -> None:
-        """A new plot's page; it shows at once, as its dock comes to the front."""
+        """A new plot's page; it shows at once, as its dock comes to the front. The dock takes
+        click focus, so a click anywhere in it (title, plot, label) focuses it and shows its page."""
         self._pages[dock] = page
         self._order.append(dock)
         self.stack.addWidget(page)
         self.chooser.addItem(title)
+        dock.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        dock.destroyed.connect(self._forget_deleted)
         self.show_plot(dock)
 
     def remove_plot(self, dock: QDockWidget) -> None:
@@ -645,7 +681,8 @@ class PlotSettingsPanel(QWidget):
         self.chooser.removeItem(index)
         if dock in self._recent:
             self._recent.remove(dock)
-        self.stack.removeWidget(page)
+        if not sip.isdeleted(page):
+            self.stack.removeWidget(page)
         if self._recent:
             self.show_plot(self._recent[-1])
         else:
@@ -671,6 +708,10 @@ class PlotSettingsPanel(QWidget):
     def current_plot(self) -> Optional[QDockWidget]:
         return self._recent[-1] if self._recent else None
 
+    def plots(self) -> List[QDockWidget]:
+        """The open plots, in the chooser's order."""
+        return list(self._order)
+
     def page(self, dock: QDockWidget) -> Optional[QWidget]:
         return self._pages.get(dock)
 
@@ -678,7 +719,7 @@ class PlotSettingsPanel(QWidget):
         """Show a plot's page when its tab is clicked among tabbed docks in ``area``."""
         if area not in self._followed:
             self._followed.append(area)
-            area.tabifiedDockWidgetActivated.connect(self.show_plot)
+            area.tabifiedDockWidgetActivated.connect(self._tab_activated)
 
     def close_current(self) -> None:
         dock = self.current_plot()
@@ -695,12 +736,35 @@ class PlotSettingsPanel(QWidget):
             widget = widget.parentWidget()
         return None
 
-    def eventFilter(self, a0: Optional[QObject], a1: Optional[QEvent]) -> bool:
-        """A click or focus inside a plot, or activating a floating plot's window, shows its page."""
-        # The filter is app-wide: it can outlive this wrapper's attributes as Python tears it down.
-        if (getattr(self, "_pages", None) and a1 is not None and isinstance(a0, QWidget)
-                and a1.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.FocusIn, QEvent.Type.WindowActivate)):
-            dock = self._plot_of(a0)
-            if dock is not None and dock is not self.current_plot():
-                self.show_plot(dock)
-        return False
+    def _activate(self, dock: Optional[QDockWidget]) -> None:
+        if dock is not None and dock is not self.current_plot():
+            self.show_plot(dock)
+
+    @pyqtSlot(QDockWidget)
+    def _tab_activated(self, dock: QDockWidget) -> None:
+        self._activate(dock)
+
+    @pyqtSlot(QWidget, QWidget)
+    def _focus_changed(self, old: Optional[QWidget], now: Optional[QWidget]) -> None:
+        """Focus moved into a plot: the user clicked or tabbed into it. Focus that moves only
+        because the focused widget was hidden (its dock went behind another tab, or closed)
+        is Qt's choice, not the user's, and shows nothing."""
+        if old is not None and not old.isVisible():
+            return
+        self._activate(self._plot_of(now))
+
+    @pyqtSlot(QWindow)
+    def _window_activated(self, window: Optional[QWindow]) -> None:
+        """A floating plot's window became active (clicked, even where nothing takes focus)."""
+        if window is None:
+            return
+        for dock in self._order:
+            if dock.isFloating() and dock.windowHandle() is window:
+                self._activate(dock)
+                return
+
+    @pyqtSlot()
+    def _forget_deleted(self) -> None:
+        """A plot's dock was deleted without being closed (its window went): drop its page."""
+        for dock in [dock for dock in self._order if sip.isdeleted(dock)]:
+            self.remove_plot(dock)
