@@ -14,6 +14,9 @@ Identity: the source folder, its data-root key when one is known, and the loaded
 dataset's signature (the helper's hash of the TXY fingerprints). ``revision`` starts at 1
 for a loaded dataset and goes up by one each time shots are added to it
 (``with_shots``, for Live); results are bound to identity *and* revision (``ViewKey``).
+``revise`` makes Live's next dataset of the folder the next revision of its view.
+
+A view may have no shots: Live started before the folder's first shot.
 """
 from __future__ import annotations
 
@@ -88,10 +91,17 @@ class DatasetView:
     data_root: DataRootRef | None = None
     added_shots: tuple[int, ...] = ()  # the shots this revision added to the previous one
     created_at: float = field(default_factory=time.time)
+    # The signature of the loaded dataset this revision is ("": the identity's, revision 1's).
+    dataset_signature: str = ""
 
     @property
     def key(self) -> ViewKey:
         return ViewKey(self.identity, self.revision)
+
+    @property
+    def signature(self) -> str:
+        """The loaded dataset's signature at this revision (Live's revisions have their own)."""
+        return self.dataset_signature or self.identity.signature
 
     @property
     def shot_numbers(self) -> tuple[int, ...]:
@@ -107,14 +117,16 @@ class DatasetView:
         return np.concatenate(chosen) if chosen else np.empty((0, 3))
 
     def with_shots(self, added: Mapping[int, Events],
-                   fingerprints: Mapping[int, Fingerprint] | None = None) -> DatasetView:
+                   fingerprints: Mapping[int, Fingerprint] | None = None, *,
+                   provenance: Provenance | None = None, signature: str = "") -> DatasetView:
         """The next revision: this view plus ``added`` (new or replaced shots), same identity.
-        The added arrays become shared, read-only data, as ``build_view``'s are."""
+        The added arrays become shared, read-only data, as ``build_view``'s are. ``provenance``
+        and ``signature``: the newer load's (default: this view's provenance, no signature)."""
         shots = {**self.shots, **{int(shot): read_only(array) for shot, array in added.items()}}
         prints = {**self.fingerprints, **(fingerprints or {})}
         return DatasetView(self.identity, self.revision + 1, _frozen(dict(sorted(shots.items()))),
-                           MappingProxyType(dict(prints)), self.provenance, self.data_root,
-                           tuple(sorted(int(shot) for shot in added)))
+                           MappingProxyType(dict(prints)), provenance or self.provenance, self.data_root,
+                           tuple(sorted(int(shot) for shot in added)), dataset_signature=signature)
 
 
 def read_only(array: Events) -> Events:
@@ -164,6 +176,19 @@ def _fingerprints(metadata: Mapping[str, Any]) -> dict[int, Fingerprint]:
     return prints
 
 
+def _provenance(metadata: Mapping[str, Any]) -> Provenance:
+    loaded = metadata.get("loaded_at")
+    return Provenance(
+        source=str(metadata.get("source", "")),
+        loaded_at=float(loaded) if isinstance(loaded, (int, float)) else None,
+        checked_at=_wall_time(metadata.get("checked_at")),
+        verified=bool(metadata.get("verified", True)),
+        unsettled_files=int(metadata.get("unsettled_files", 0) or 0),
+        failed_files=int(metadata.get("failed_files", 0) or 0),
+        problematic=tuple(sorted(int(shot) for shot in metadata.get("problematic", ()) or ())),
+        cache_reason=str(metadata.get("cache_reason", "") or ""))
+
+
 def build_view(dataset: Dataset, root: tuple[str, str, str] | None = None) -> DatasetView:
     """A new view of ``dataset`` at revision 1. ``root`` is ``FolderCache.root_of``'s
     (folder, uuid, label), used when the load itself didn't report a data root."""
@@ -176,20 +201,10 @@ def build_view(dataset: Dataset, root: tuple[str, str, str] | None = None) -> Da
     elif root is not None:
         folder, identifier, label = root
         data_root = DataRootRef(identifier, label, folder, root_key(folder, identifier, dataset.path))
-    loaded = metadata.get("loaded_at")
-    provenance = Provenance(
-        source=str(metadata.get("source", "")),
-        loaded_at=float(loaded) if isinstance(loaded, (int, float)) else None,
-        checked_at=_wall_time(metadata.get("checked_at")),
-        verified=bool(metadata.get("verified", True)),
-        unsettled_files=int(metadata.get("unsettled_files", 0) or 0),
-        failed_files=int(metadata.get("failed_files", 0) or 0),
-        problematic=tuple(sorted(int(shot) for shot in metadata.get("problematic", ()) or ())),
-        cache_reason=str(metadata.get("cache_reason", "") or ""))
     shots = {int(shot): read_only(array) for shot, array in sorted(dataset.data.items())}
     identity = ViewIdentity(dataset.path, data_root.key if data_root else "", dataset.signature)
     return DatasetView(identity, 1, _frozen(shots), MappingProxyType(_fingerprints(metadata)),
-                       provenance, data_root)
+                       _provenance(metadata), data_root)
 
 
 # One view per Dataset object, so repeated runs on the same shown data share one input.
@@ -202,3 +217,25 @@ def view_of(dataset: Dataset, root: tuple[str, str, str] | None = None) -> Datas
     if view is None:
         view = _views[dataset] = build_view(dataset, root)
     return view
+
+
+def revise(view: DatasetView, dataset: Dataset, root: tuple[str, str, str] | None = None) -> DatasetView:
+    """``dataset``, a newer load of ``view``'s folder (Live's next), as a view: the next revision
+    of ``view`` with the shots it adds or replaces (by fingerprint), or ``view`` itself when it
+    adds none. A dataset of another folder, or one without some of ``view``'s shots, is no
+    revision of it: its own view (``view_of``). From then on ``view_of(dataset)`` is this view,
+    so a new run on the data shown starts from the same revision as the plots following it."""
+    known = _views.get(dataset)
+    if known is not None:
+        return known
+    data = {int(shot): array for shot, array in dataset.data.items()}
+    if dataset.path != view.identity.source_path or not set(view.shots) <= set(data):
+        return view_of(dataset, root)
+    prints = _fingerprints(dataset.metadata)
+    added = {shot: array for shot, array in data.items()
+             if shot not in view.shots or prints.get(shot, view.fingerprints.get(shot)) != view.fingerprints.get(shot)}
+    revised = view if not added else view.with_shots(
+        added, {shot: prints[shot] for shot in added if shot in prints},
+        provenance=_provenance(dict(dataset.metadata)), signature=dataset.signature)
+    _views[dataset] = revised
+    return revised

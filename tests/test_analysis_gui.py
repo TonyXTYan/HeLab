@@ -145,6 +145,7 @@ def window(qtbot: QtBot, browser: FolderExplorer) -> Iterator[Window]:
     made = Window(browser)
     qtbot.addWidget(made)
     yield made
+    made.close_plots()  # As the main window's close does: each plot ends now, not when collected.
     if not sip.isdeleted(made.middle_mainwindow):  # A window of its own here: deleted with its docks.
         made.middle_mainwindow.close()
         made.middle_mainwindow.deleteLater()

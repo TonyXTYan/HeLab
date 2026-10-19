@@ -1,6 +1,8 @@
 from __future__ import annotations
 import logging
+import math
 import os
+import time
 from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal
 
 from PyQt6 import sip
@@ -17,6 +19,7 @@ from PyQt6.QtWidgets import (
 from pyqtgraph.parametertree import Parameter
 
 from helab.analysis.dataset_view import DatasetView
+from helab.analysis.follow import FOLLOW, Follow, LiveFeed, live_specs, new_shots, policy_of
 from helab.analysis.parameter_tree import build_tree, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import describe
 from helab.analysis.results import AnalysisResult
@@ -170,81 +173,150 @@ class LinkedAnalysisInstance(QObject):
 
 
 class AnalysisInstance(LinkedAnalysisInstance):
-    """One run of a dataset analysis: its plot dock and settings page, bound to the dataset
-    view it started with. **Rerun with these settings** runs again on that same view; a new
-    run on other data is a new instance (the script's button again)."""
+    """One plot of a dataset analysis: its dock and settings page, bound to the dataset view it
+    started with. **Rerun with these settings** runs again on that data (cancelling a run in
+    flight: the settings changed); a run on other data is a new plot (the script's button).
+
+    A plot of the folder Live watches follows it (roadmaps/live-monitoring.md, L3): each newer
+    revision of the folder's view (``LiveFeed``) is offered to it, and it reruns on the newest
+    one as its Live settings allow (``Follow``: hold and coalesce, never cancelled for new data).
+    Turning Follow Live off pins it at its revision. A failed run keeps the last plot drawn,
+    with the error in amber, and following goes on."""
 
     def __init__(self, metadata: ScriptMetadata, script: DatasetAnalysis, action: str, view: DatasetView,
                  instance_id: str, main_window: Optional['HelabMainWindow'],
                  runner: Optional[AnalysisRunner] = None) -> None:
         super().__init__(metadata.name, instance_id, main_window)
-        self.metadata, self.script, self.action, self.view = metadata, script, action, view
+        self.metadata, self.script, self.action = metadata, script, action
         self.runner = runner or get_analysis_runner()
         self.job_id = ""
+        # The last result (whatever its state), and the completed one whose plot shows.
         self.result: Optional[AnalysisResult] = None
+        self.shown: Optional[AnalysisResult] = None
+        self.error = ""  # The last run's failure, while the plot before it stays
+        self.policy = script.live_policy(action)
+        self.follow = Follow(view, self.policy)
         self.parameter_root: Optional[Parameter] = None
         self.status_label = QLabel()
+        self.input_label = QLabel()
+        feed = getattr(main_window, "live_feed", None)
+        self.feed: Optional[LiveFeed] = feed if isinstance(feed, LiveFeed) else None
+        self._follow_timer = QTimer(self)
+        self._follow_timer.setSingleShot(True)
+        self._follow_timer.timeout.connect(self._follow_next)
         self.runner.finished.connect(self._finished)
+        if self.feed is not None:
+            self.feed.revised.connect(self._revised)
+            self.feed.ended.connect(self._live_ended)
+
+    @property
+    def view(self) -> DatasetView:
+        """The plot's data: the input of its run in flight, or of its last run."""
+        return self.follow.ran
+
+    @property
+    def path(self) -> str:
+        return self.follow.ran.identity.source_path
 
     def start(self) -> None:
         """Open the dock and its settings page, then run with the defaults."""
         self.setup_dock_widget(self._message(f"Running {self.name} on {self.view.key.short()}…"))
         specs = self.script.parameters(self.action)
-        self.parameter_root = build_tree(specs)
+        live = live_specs(self.policy, specs[0].page if specs else "")
+        self.parameter_root = build_tree([*specs, *live])
+        for spec in live:
+            parameter_of(self.parameter_root, spec).sigValueChanged.connect(self._live_settings_changed)
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        source = QLabel(f"Input: {self.view.key.short()} (stays with this plot)")
-        source.setToolTip(self.view.identity.source_path)
-        layout.addWidget(source)
-        layout.addWidget(settings_widget(self.parameter_root, specs), 1)
+        self.input_label.setToolTip(self.path)
+        layout.addWidget(self.input_label)
+        layout.addWidget(settings_widget(self.parameter_root, [*specs, *live]), 1)
         self.rerun_button = QPushButton("Rerun with these settings")
         self.rerun_button.setEnabled(bool(specs))
         self.rerun_button.clicked.connect(self.run)
         layout.addWidget(self.rerun_button)
         layout.addWidget(self.status_label)
-        self.setup_param_tab(tab, f"{self.name} ({self.instance_id}) · {self.view.key.short()}")
+        self.setup_param_tab(tab, self._title())
         self.run()
 
     def values(self) -> Dict[str, Any]:
+        """The analysis's parameters as set (not the plot's Live settings)."""
         root = self.parameter_root
         return tree_values(root, self.script.parameters(self.action)) if root is not None else {}
 
+    def live_values(self) -> Dict[str, Any]:
+        root = self.parameter_root
+        return tree_values(root, live_specs(self.policy)) if root is not None else {}
+
     def run(self) -> None:
+        """Run with the settings shown, on the newest data the plot has (what waits for it while
+        it follows Live, else its own); a run in flight is cancelled, its settings are old."""
         if self.is_closed:
             return
         if self.job_id:
             self.runner.cancel(self.job_id)
-        context = self.runner.submit(self.script, self.metadata, self.action, self.view, self.values())
+        self._submit(self.follow.latest)
+
+    def _submit(self, view: DatasetView) -> None:
+        self._follow_timer.stop()
+        try:
+            context = self.runner.submit(self.script, self.metadata, self.action, view, self.values())
+        except RuntimeError as error:  # The runner is stopping: HeLab is closing.
+            self.status_label.setText(str(error))
+            return
         self.job_id = context.job_id
+        self.follow.start(view)
         self.status_label.setText(f"Running ({context.job_id})…")
+        self._show_follow()
 
     def _finished(self, result: AnalysisResult) -> None:
         if self.is_closed or result.job_id != self.job_id:
             return
         self.job_id = ""
+        self.follow.end(time.monotonic())
         if result.state == "cancelled":
             self.status_label.setText("Cancelled")
+            self._show_follow()
             return
-        if self.result is not None:
-            self.runner.results.unpin(self.result.job_id)
         self.result = result
         specs = self.script.parameters(self.action)
         warnings = "; ".join(self.script.parameter_warnings(self.action, result.parameters))
+        content: Optional[QWidget] = None
+        error = result.error if result.state == "failed" else ""
         if result.state == "completed":
-            self.runner.results.pin(result.job_id)
             self._show_detected(result)
             try:
                 content = self.script.render(result)
-            except Exception as error:
+            except Exception as exc:
                 logging.exception("Could not draw %s", self.name)
-                content = self._message(f"Could not draw {self.name}: {error}")
-            self.status_label.setText(f"⚠ {warnings}" if warnings else "")
+                error = f"could not draw it: {exc}"
+        if error:
+            self.status_label.setText(f"Failed: {error}")
+            if self.shown is not None:
+                # The last plot stays; the error shows above it until a run succeeds.
+                self.error = f"rev {result.input.revision} failed: {error} · showing rev {self.shown.input.revision}"
+                self._show_follow()
+                self._follow_next()
+                return
+            content = self._message(f"{self.name} failed: {error}")
         else:
-            content = self._message(f"{self.name} failed: {result.error}")
-            self.status_label.setText(f"Failed: {result.error}")
+            self.status_label.setText(f"⚠ {warnings}" if warnings else "")
+        assert content is not None
+        self.error = ""
+        if self.shown is not None:
+            self.runner.results.unpin(self.shown.job_id)
+            self.shown = None
+        if result.state == "completed" and not error:
+            self.shown = result
+            self.runner.results.pin(result.job_id)
+        self._show_content(content, result, specs, warnings)
+        self._follow_next()
+
+    def _show_content(self, content: QWidget, result: AnalysisResult, specs: List[Any], warnings: str) -> None:
         if self.dock_widget is None:
+            content.deleteLater()
             return
         show = getattr(self.main_window, "set_plot_result", None)
         if callable(show):
@@ -259,6 +331,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.dock_widget.setWidget(content)
             if old is not None:
                 old.deleteLater()
+        self._show_follow()
 
     def _show_detected(self, result: AnalysisResult) -> None:
         """Put what the run found into the settings (they don't rerun it)."""
@@ -269,6 +342,100 @@ class AnalysisInstance(LinkedAnalysisInstance):
         for name, value in self.script.detected_parameters(self.action, result).items():
             if name in specs:
                 parameter_of(root, specs[name]).setValue(specs[name].coerce(value))
+
+    # Following Live
+
+    def live(self) -> Optional[DatasetView]:
+        """The newest revision of the plot's folder while Live watches it (None: it doesn't)."""
+        return self.feed.latest(self.path) if self.feed is not None else None
+
+    @pyqtSlot(object)
+    def _revised(self, view: DatasetView) -> None:
+        if self.is_closed or view.identity.source_path != self.path:
+            return  # Plots of other folders stay put.
+        if self.follow.offer(view):
+            self._follow_next()
+        self._show_follow()
+
+    @pyqtSlot(str)
+    def _live_ended(self, path: str) -> None:
+        if not self.is_closed and path == self.path:
+            self._show_follow()
+
+    @pyqtSlot()
+    def _follow_next(self) -> None:
+        """Run on the newest revision waiting if the run in flight has ended and the policy
+        allows; else wait for the policy's delay, or for more shots."""
+        if self.is_closed:
+            return
+        view, wait = self.follow.due(time.monotonic())
+        if view is not None:
+            self._submit(view)
+            return
+        if wait > 0:
+            self._follow_timer.start(max(1, math.ceil(wait * 1000)))
+        self._show_follow()
+
+    @pyqtSlot()
+    def _live_settings_changed(self) -> None:
+        values = self.live_values()
+        self.follow.policy = policy_of(values, self.policy)
+        if not values.get(FOLLOW, True):
+            self.follow.pin()
+            self._follow_timer.stop()
+        elif not self.follow.on:
+            self.follow.unpin()
+            if (latest := self.live()) is not None:
+                self.follow.offer(latest)  # Catch up with what came while pinned.
+        self._follow_next()
+
+    def follow_text(self) -> str:
+        """The plot's Live state for its source line: ``following Live · 3 new shots waiting``
+        ("" when Live doesn't watch its folder and nothing waits)."""
+        live = self.live()
+        follow = self.follow
+        if not follow.on:
+            newer = new_shots(live, follow.ran) if live is not None else 0
+            return ("pinned (Follow Live off)" + (f" · {newer:,} newer shot{'' if newer == 1 else 's'}"
+                                                   if newer else "")) if live is not None else ""
+        parts = ["following Live"] if live is not None else []
+        shown = self.shown.input if self.shown is not None else None
+        if follow.running and shown is not None and follow.ran.key != shown:
+            parts.append(f"updating to rev {follow.ran.revision}")
+        waiting = follow.waiting()
+        shots = f"{waiting:,} new shot{'' if waiting == 1 else 's'}"
+        if not waiting:
+            pass
+        elif self._follow_timer.isActive():
+            parts.append(f"{shots} waiting (runs {follow.policy.min_delay:g} s after the last run)")
+        elif follow.running:
+            parts.append(f"{shots} waiting")
+        elif live is not None:
+            parts.append(f"{shots} waiting (runs every {follow.policy.every_shots:,})")
+        else:
+            # Live is off: no more shots come to make up the N.
+            parts.append(f"Live off · {shots} not plotted: Rerun includes them")
+        return " · ".join(parts)
+
+    def _show_follow(self) -> None:
+        """The source line's Live state and error, the settings' input line and title."""
+        following = self.follow.on and self.live() is not None
+        self.input_label.setText(f"Input: {self.view.key.short()}"
+                                 + (" · following Live" if following else " (stays with this plot)"))
+        dock, window = self.dock_widget, self.main_window
+        if dock is None or window is None or sip.isdeleted(dock):
+            return
+        dock.setProperty("plotFollow", self.follow_text())
+        dock.setProperty("plotFollowing", following)
+        dock.setProperty("plotError", self.error)
+        update = getattr(window, "update_plot_source", None)
+        if callable(update):
+            update(dock)
+        if self.param_tab is not None:
+            window.panel_right_top_plot_settings.set_title(dock, self._title())
+
+    def _title(self) -> str:
+        return f"{self.name} ({self.instance_id}) · {self.view.key.short()}"
 
     @staticmethod
     def _message(text: str) -> QLabel:
@@ -281,14 +448,18 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def close(self) -> None:
         if self.is_closed:
             return
+        self._follow_timer.stop()
         if self.job_id:
             self.runner.cancel(self.job_id)
-        if self.result is not None:
-            self.runner.results.unpin(self.result.job_id)
-        try:
-            self.runner.finished.disconnect(self._finished)
-        except TypeError:
-            pass
+        if self.shown is not None:
+            self.runner.results.unpin(self.shown.job_id)
+        for signal, slot in ((self.runner.finished, self._finished),
+                             *(((self.feed.revised, self._revised), (self.feed.ended, self._live_ended))
+                               if self.feed is not None else ())):
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                pass
         super().close()
 
 
@@ -771,6 +942,11 @@ class PlotSettingsPanel(QWidget):
 
     def page(self, dock: QDockWidget) -> Optional[QWidget]:
         return self._pages.get(dock)
+
+    def set_title(self, dock: QDockWidget, title: str) -> None:
+        """A plot's name in the chooser (it changes as the plot follows Live to newer data)."""
+        if dock in self._pages:
+            self.chooser.setItemText(self._order.index(dock), title)
 
     def follow(self, area: QMainWindow) -> None:
         """Show a plot's page when its tab is clicked among tabbed docks in ``area``."""

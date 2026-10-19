@@ -31,6 +31,7 @@ from pyqtgraph.parametertree import ParameterTree, Parameter
 from typing_extensions import no_type_check
 
 from helab.analysis.dataset_view import DatasetView, view_of
+from helab.analysis.follow import LiveFeed
 from helab.analysis.results import AnalysisResult
 from helab.models.ScriptTreeSelector import TreePanelWidget, PlotSettingsPanel
 from helab.resources.icons import ToolIcons
@@ -42,8 +43,8 @@ from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HoverMenuToolButton import HoverMenuToolButton
 from helab.views.FolderExplorer import (
-    AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP, IO_SPINNER, FolderExplorer, large_text,
-    paint_spinner,
+    AMBER, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP, IO_SPINNER, FolderExplorer,
+    large_text, paint_spinner,
 )
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
@@ -859,6 +860,8 @@ class HelabMainWindow(QMainWindow):
         self.central_placeholder = CentralHint("Select a data folder to begin")
         self.middle_mainwindow.setCentralWidget(self.central_placeholder)
         self.dock_widgets: List[QDockWidget] = []
+        # The newest data of the folder Live watches, for the plots following it.
+        self.live_feed = LiveFeed(self)
 
 
         self.central_placeholder_timer = QTimer(self)
@@ -919,8 +922,22 @@ class HelabMainWindow(QMainWindow):
         HelabMainWindow._wrap_plot(dock, content)
         HelabMainWindow._update_plot_source_label(dock, explorer)
 
+    def follow_live(self, explorer: FolderExplorer) -> None:
+        """Plots follow Live: the data a Live tab shows is published as the newest revision of
+        its folder, and a folder no tab watches any more ends (memory only)."""
+        session = explorer.live
+        dataset = explorer.displayed_dataset
+        if session is not None and not explorer.closed and dataset is not None and dataset.path == session.path:
+            self.live_feed.publish(dataset, explorer.model.cache.root_of(dataset.path))
+        watched = {other.live.path for _, other in self._explorers() if other.live is not None and not other.closed}
+        if explorer.live is not None and not explorer.closed:
+            watched.add(explorer.live.path)
+        for path in self.live_feed.paths() - watched:
+            self.live_feed.stop(path)
+
     def current_dataset_view(self) -> DatasetView | None:
-        """An immutable view of the data the current tab shows (memory only), for a new run."""
+        """An immutable view of the data the current tab shows (memory only), for a new run.
+        While Live watches it, that is the revision the plots following it have."""
         current = self.tab_widget.currentWidget()
         if not isinstance(current, FolderExplorer) or current.displayed_dataset is None:
             return None
@@ -935,9 +952,9 @@ class HelabMainWindow(QMainWindow):
         ``record_text``) is in the tooltip."""
         identity = result.input.identity
         dock.setProperty("dataSourcePath", identity.source_path)
-        dock.setProperty("dataSourceSignature", identity.signature)
-        dock.setProperty("plotSourceDetail", " · ".join(filter(None, (
-            f"rev {result.input.revision}", selection_text, result.analysis.short()))))
+        dock.setProperty("dataSourceSignature", result.input_signature or identity.signature)
+        dock.setProperty("plotSourceRevision", f"rev {result.input.revision}")
+        dock.setProperty("plotSourceDetail", " · ".join(filter(None, (selection_text, result.analysis.short()))))
         dock.setProperty("plotSourceSettings", parameters_text)
         dock.setProperty("plotSourceRecord", result.describe(record_text or parameters_text))
         old = dock.widget()
@@ -945,15 +962,19 @@ class HelabMainWindow(QMainWindow):
         if old is not None:
             old.setParent(None)  # out of the dock now, so findChild sees only the new label
             old.deleteLater()
+        self.update_plot_source(dock)
+
+    def update_plot_source(self, dock: QDockWidget) -> None:
+        """A plot's source lines changed (its result, or its Live state): show them now."""
         current = self.tab_widget.currentWidget()
-        if isinstance(current, FolderExplorer):
-            HelabMainWindow._update_plot_source_label(dock, current)
+        HelabMainWindow._update_plot_source_label(dock, current if isinstance(current, FolderExplorer) else None)
 
     @staticmethod
     def _wrap_plot(dock: QDockWidget, content: QWidget) -> None:
         """The dock shows its source above the plot: one or two lines (source, then settings),
         never wrapped (a long line is cut at the dock's edge; the tooltip has it all), with no
-        vertical padding."""
+        vertical padding. Below them, only after a failed run, the error in amber (the plot
+        shown is the last one drawn)."""
         wrapper = QWidget(dock)
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(4, 0, 4, 0)
@@ -964,30 +985,46 @@ class HelabMainWindow(QMainWindow):
         label.setWordWrap(False)
         label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         layout.addWidget(label)
+        error = QLabel(wrapper)
+        error.setObjectName("plot_error")
+        error.setTextFormat(Qt.TextFormat.PlainText)
+        error.setStyleSheet(f"color: {AMBER};")
+        error.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        error.hide()
+        layout.addWidget(error)
         layout.addWidget(content, 1)
         dock.setWidget(wrapper)
 
     @staticmethod
-    def _update_plot_source_label(dock: QDockWidget, explorer: FolderExplorer) -> None:
+    def _update_plot_source_label(dock: QDockWidget, explorer: FolderExplorer | None) -> None:
         path = dock.property("dataSourcePath")
         if not isinstance(path, str):
             return
         label = dock.findChild(QLabel, "plot_data_source")
         if label is None:
             return
-        node = explorer.model.nodes.get(explorer.selected_path_globally)
-        # A names-only listing has no signature; the explorer compares shot lists then.
-        current = (path == explorer.selected_path_globally and node is not None
-                   and (not node.signature or dock.property("dataSourceSignature") == node.signature)
-                   and explorer.folder_opened_path == path)
+        node = explorer.model.nodes.get(explorer.selected_path_globally) if explorer is not None else None
+        # A names-only listing has no signature; the explorer compares shot lists then. A plot
+        # following Live is the folder's data, catching up as its line says.
+        current = bool(dock.property("plotFollowing")) or (
+            explorer is not None and path == explorer.selected_path_globally and node is not None
+            and (not node.signature or dock.property("dataSourceSignature") == node.signature)
+            and explorer.folder_opened_path == path)
         prefix = "Data source" if current else "Showing previously loaded data"
-        detail = dock.property("plotSourceDetail")
+        parts = [dock.property(name) for name in ("plotSourceRevision", "plotFollow", "plotSourceDetail")]
         settings = dock.property("plotSourceSettings")
         record = dock.property("plotSourceRecord")
         name = os.path.basename(path.rstrip(os.sep)) or path
-        label.setText(f"{prefix}: {name}" + (f" · {detail}" if isinstance(detail, str) and detail else "")
+        label.setText(" · ".join([f"{prefix}: {name}", *(part for part in parts if isinstance(part, str) and part)])
                       + (f"\n{settings}" if isinstance(settings, str) and settings else ""))
         label.setToolTip(record if isinstance(record, str) and record else path)
+        error_label = dock.findChild(QLabel, "plot_error")
+        error = dock.property("plotError")
+        if error_label is not None:
+            text = f"⚠ {error}" if isinstance(error, str) and error else ""
+            error_label.setText(text)
+            error_label.setToolTip(text)
+            error_label.setVisible(bool(text))
 
     def toggle_left_panel(self, checked: bool) -> None:
         if checked: # Expand the left panel
@@ -1287,6 +1324,8 @@ class HelabMainWindow(QMainWindow):
             current_folder_explorer.loadStateChanged.connect(self._update_folder_details)
             current_folder_explorer.loadStateChanged.connect(self._update_cancel_loading_action)
             current_folder_explorer.liveChanged.connect(self._update_live_action)
+            current_folder_explorer.liveChanged.connect(lambda fe=current_folder_explorer: self.follow_live(fe))
+            current_folder_explorer.dataLoaded.connect(lambda _, fe=current_folder_explorer: self.follow_live(fe))
             current_folder_explorer.dataLoaded.connect(
                 lambda p, fe=current_folder_explorer: self._snapshot_data_loaded(fe, p))
         else:

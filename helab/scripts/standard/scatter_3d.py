@@ -9,6 +9,8 @@ import numpy.typing as npt
 import plotly.graph_objs as go
 from PyQt6.QtWidgets import QWidget
 
+from helab.analysis.empty import empty_pane, empty_text
+from helab.analysis.follow import LivePolicy
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
@@ -91,6 +93,11 @@ class Scatter3D(DatasetAnalysis):
     def parameters(self, action_name: str) -> List[ParameterSpec]:
         return [*SHOT_SPECS, *RANGE, POINT_SIZE, OPACITY, CAP]
 
+    def live_policy(self, action_name: str) -> LivePolicy:
+        # Each rerun reloads the figure's page (up to the display cap's points) and the crop of a
+        # large folder takes seconds: at most one rerun every 5 s while Live adds shots.
+        return LivePolicy(min_delay=5.0)
+
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
         points = f"points {float(values[POINT_SIZE.name]):g} px, opacity {float(values[OPACITY.name]):g}"
         if int(values[CAP.name]) != CAP.default:
@@ -118,6 +125,8 @@ class Scatter3D(DatasetAnalysis):
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: ScatterData = result.data
+        if not data.crop.total:
+            return empty_pane(empty_text(data.total_shots, len(data.shots), 0), parent)
         pane = PlotlyPane(figure(result, data), note_text(data), parent)
         pane.note.setToolTip(f"{sample_text(data)}\n{crop_text(data.crop, data.warnings)}")
         return pane

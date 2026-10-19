@@ -11,6 +11,7 @@ import numpy.typing as npt
 import pyqtgraph as pg
 from PyQt6.QtWidgets import QWidget
 
+from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.dataset_view import DatasetView
@@ -115,6 +116,8 @@ class CountsPerShot(DatasetAnalysis):
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: ShotCounts = result.data
+        if not len(data.shots):
+            return empty_pane(empty_text(data.total_shots, 0), parent)
         plot: Any = pg.PlotWidget(parent)
         plot.setBackground("w")
         plot.setTitle(source_title(result, counts_title(data)))
@@ -172,6 +175,8 @@ class TxyHistograms(DatasetAnalysis):
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Histograms = result.data
         items = data.items
+        if not items or not items[0].total:
+            return empty_pane(empty_text(data.total_shots, len(data.shots), 0), parent)
         log_y = bool(result.parameters.get(LOG_Y.name, False))
         widget: Any = pg.GraphicsLayoutWidget(parent)
         widget.setBackground("w")

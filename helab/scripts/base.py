@@ -1,12 +1,14 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Any, Mapping, Optional
+from typing import TYPE_CHECKING, List, Any, Mapping, Optional, Sequence
 
+from helab.analysis.follow import LivePolicy
 from helab.analysis.identity import AnalysisIdentity, file_name
 from helab.analysis.dataset_view import DatasetView
 from helab.analysis.parameters import ParameterSpec, describe
 from helab.analysis.results import AnalysisContext, AnalysisResult
+from helab.analysis.selection import SHOTS, select_shots
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QWidget
@@ -78,7 +80,13 @@ class DatasetAnalysis(HelabAnalysisScript):
     builds the plot dock's content from the result on the GUI thread. Arrays in the view
     are shared and read-only: copy one before changing it.
 
-    Metadata must give ``analysis_id`` and ``version``.
+    A plot of the folder Live watches follows it: HeLab reruns it on each newer revision of the
+    view, as the script's ``live_policy`` allows. A script never reads files or watches folders
+    itself, and a view may have no shots yet (Live started before the first one): its plot then
+    shows that it is empty, not an error.
+
+    Metadata must give ``analysis_id`` and ``version``. Parameter values are plain JSON values
+    (numbers, booleans, strings).
     """
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
@@ -97,6 +105,16 @@ class DatasetAnalysis(HelabAnalysisScript):
         """Settings the run could not follow as given, and what it did instead (e.g. "X: min >
         max, using full extent"), for the dock's source line, its record and the settings tab."""
         return []
+
+    def live_policy(self, action_name: str) -> LivePolicy:
+        """When a plot following Live reruns by default (the plot's settings can change it):
+        on every new shot unless a long analysis declares fewer reruns."""
+        return LivePolicy()
+
+    def covered_shots(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> Sequence[int]:
+        """The view's shots a run with ``values`` uses, recorded as its coverage: those the shared
+        Shots parameters choose (``selection.SHOT_SPECS``) when it has them, else all."""
+        return select_shots(view, values) if SHOTS.name in values else view.shot_numbers
 
     def detected_parameters(self, action_name: str, result: AnalysisResult) -> dict[str, Any]:
         """Parameter values a completed run found in the data (e.g. where peaks are), which the
