@@ -12,6 +12,10 @@ Handoff: [handoff.md](handoff.md).
 | 2 | Centre hint hides while a plot dock is open (Tony, round 1) | done | `29cca7e` |
 | 3 | Rename group "Plots" → "Basic plots v1", version from a constant (Tony, round 1) | done | `08a9927` |
 | 4 | Make `test_a_live_check_pauses_background_work_only_while_it_reads` deterministic (Maestro, round 1) | done | `fe13ba9` |
+| R1 | Review: reversed manual bounds reported, not silent (Codex) | done | `acecb0a` |
+| R2 | Review: FIFO writer non-blocking with a deadline (Codex) | done | `b1383c1`, superseded by `2f61ed6` |
+| 5 | Source line on two compact lines, per-analysis describe hook (Tony, round 2) | done | `8f9060f` |
+| 6 | Live I/O tests on Windows: helper read gate replaces FIFOs (Tony, round 2) | done | `2f61ed6` |
 
 ## Findings
 
@@ -51,3 +55,16 @@ The script is in the session's scratchpad, not committed. Files in
 - `scatter_3d_last_5.html`: the scatter figure (5 shots, point size 2, opacity
   0.3, cap 20,000). QtWebEngine can't paint offscreen; open the file in a
   browser.
+
+## Round 2 findings
+
+- **Repeating a test under xdist.** pytest-repeat isn't installed and repeated
+  node IDs are deduplicated. To run each Live I/O test 12 times in parallel, I
+  used a temporary `tests/test_zz_live_io_repeat_tmp.py` that imports the tests
+  and fixtures from `test_live_io` and parametrizes over a copy number. It is
+  deleted and not committed.
+- **Read gate keys.** Gates go by file name, not path, as Maestro specified
+  (`<dir>/<name>.go`). A test with two folders must use different shot numbers.
+- **pyright and plotly.** A new test line changed pyright's inference for the
+  untyped `Figure.layout`, and older lines started failing too. The figures in
+  `tests/test_analysis.py` are now annotated `Any`.

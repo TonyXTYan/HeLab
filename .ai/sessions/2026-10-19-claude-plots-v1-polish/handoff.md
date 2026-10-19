@@ -167,3 +167,97 @@ Checks after both fixes:
 | `mypy --strict` helab and tests, also `--platform win32` | clean |
 | `pyright helab tests`, also tests on Windows | clean |
 | `git diff --check c8e3a2c` | clean |
+
+## Round 2
+
+| Commit | Change |
+|---|---|
+| `8f9060f` | The plot dock's source is two compact lines, through a per-analysis describe hook. |
+| `2f61ed6` | Both Live I/O tests run on every platform, using a helper read gate instead of FIFOs. |
+
+### 5. Two-line source
+
+The dock now shows:
+
+```
+Data source: run_042 · rev 1 · shots 51–60 (10 of 60) · helab.txy_histograms v2
+last 10 shots · auto-crop 99 % · bins auto · log Y
+```
+
+- **Line 1** keeps the existing "Data source" or "Showing previously loaded
+  data" prefix, which flags a stale plot. It adds which shots the run used.
+  - Keeping the prefix also leaves `tests/test_folder_summary.py`, which I
+    don't own, unchanged.
+  - Say if Tony wants the prefix dropped for current data, as in his example.
+- **Line 2** gives the settings in short form.
+  - A manual range lists only the axes actually set, each with one SI prefix,
+    for example "T 3.84–3.87 s, X −2–3.5 mm".
+  - Unset and reversed axes are left out. A reversed axis keeps its ⚠ warning
+    on this line.
+  - "All shots" and "Log Y off" are left out. The scatter shows its display
+    cap only when it differs from the default.
+  - Counts per shot with all shots is a single line.
+- **Tooltip**: the full record, with every parameter.
+- **Hook**: `DatasetAnalysis.describe_run(action, values, view)` returns
+  `(selection, settings)`. The default keeps the generic "title value" form
+  for lab scripts loaded with Load Scripts…. The short forms live in
+  `selection.py`.
+- **Vertical space**: the label never wraps, and a long line is cut at the
+  dock's edge. Its layout has zero vertical margins and spacing, so the label
+  is at most two lines. Renders: `screenshots/source_lines_*.png`.
+
+### 6. Live I/O tests on Windows
+
+- **Seam** (`helab/io_helper.py`; nothing else there changed):
+  - With `HELAB_TEST_READ_GATE=<dir>`, a TXY read of `<name>` first waits until
+    `<dir>/<name>.go` exists, polling every 20 ms. This covers both a load's
+    read and a Live check's read.
+  - While waiting, the helper sends nothing, like a read still in progress.
+    So a gate that is never opened stands in for a stuck read, and the
+    parent's per-file timeout stops it.
+  - Unset, as in production, each read costs one `is None` check.
+- **Tests**: both use a `ReadGate` fixture. The skips, `os.mkfifo`, the FIFO
+  writer and its POSIX guards are gone, and every wait is a bounded
+  `qtbot.waitUntil`.
+  - The pause test holds the background load on one file until the check
+    reads, then holds the check on its last file until the load's `paused`
+    event arrives.
+  - The stuck-read test uses a real file whose gate is never opened.
+  - Gates go by file name, so the pause test's folders use different shot
+    numbers.
+- **Evidence**:
+
+  | Run | Result |
+  |---|---|
+  | Seam disabled | both tests fail |
+  | Beside the Live and GUI tests under `-n 6`, 10 times | 43 passed each time |
+  | 3 rounds of 12 copies of each test under `-n 6` | 72 runs, all passed, reruns off |
+
+- **Not yet run on Windows itself.** Maestro will run them on a real Windows
+  PC.
+
+### Proposed AGENTS.md wording (Testing)
+
+In the Testing section, replace "Production code reads two test seams:
+`HELAB_TEST_LOCAL_MOUNT` (Windows: one local mount) and `HELAB_TEST_VOLUME_ID`
+(a fixed volume ID)." with:
+
+> Production code reads three test seams: `HELAB_TEST_LOCAL_MOUNT` (Windows:
+> one local mount), `HELAB_TEST_VOLUME_ID` (a fixed volume ID) and
+> `HELAB_TEST_READ_GATE=<dir>` (`helab/io_helper.py` only: a TXY read of
+> `<name>` waits until `<dir>/<name>.go` exists, sending nothing meanwhile, so
+> tests order reads on every platform and a gate never opened is a stuck read;
+> `tests/test_live_io.py`).
+
+Also update **AGENTS.md › Script system**, after the round-1 wording: "Each
+plot dock's source is two lines, the input and the settings in short form
+(`DatasetAnalysis.describe_run`), with the full record in the tooltip."
+
+### Checks after round 2
+
+| Check | Result |
+|---|---|
+| `pytest -n 6 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest` | 968 passed, 2 skipped, 2 xfailed, no RERUNs |
+| `mypy --strict` helab and tests, host and `--platform win32` | clean |
+| `pyright helab tests`, host and `--pythonplatform Windows` | clean |
+| `git diff --check` | clean |
