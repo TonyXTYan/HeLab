@@ -16,6 +16,13 @@ order. The intended differences are tested at the end:
   HeLab's are half-open [low, high), so it counts in the later order's window.
 - monitor_momentum.m rotates X/Y by ``dld_xy_rot`` (0.61 rad) before both boxes; HeLab
   boxes the X/Y as loaded.
+- The XY box: MATLAB's is open (|X|, |Y| < 30 mm, ``masktxy_square``), HeLab's closed
+  (≤ ``XY box ±``), so an event exactly on its edge counts only here.
+- MATLAB's import keeps only T within 0–4 s (``txylim``); HeLab has no T limit before the
+  windows, so only Search T and the windows bound T.
+- monitor_momentum.m waits until a shot's last event is past ``dld_aquire`` (2 s), its check
+  that the file is written; HeLab reads only settled files (Live: a whole last row, unchanged
+  since the previous check) and has no last-event check.
 """
 from __future__ import annotations
 
