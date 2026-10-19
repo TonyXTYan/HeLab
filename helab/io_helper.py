@@ -1509,6 +1509,22 @@ def _folder_identity(path: str) -> str:
     return f"location:{source}|{path[len(mount.path):]}"
 
 
+def _txy_complete(filename: str) -> bool:
+    """Whether a TXY file ends with a whole row: its last byte is a newline and its last row has
+    three fields (the converter's dlmwrite ends every row with one). A file still being written
+    usually ends mid-row; one paused exactly at a row's end can't be told apart."""
+    with open(filename, "rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        size = stream.tell()
+        stream.seek(max(0, size - 4096))
+        tail = stream.read()
+    if not tail.endswith(b"\n"):
+        return False
+    # Three non-empty fields (a malformed but whole row is the read's to report as unreadable).
+    parts = tail[:-1].rsplit(b"\n", 1)[-1].rstrip(b"\r").split(b",")
+    return len(parts) == 3 and all(part.strip() for part in parts)
+
+
 def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]] | None = None,
                known: list[list[int]] | None = None, since: int | None = None, *,
                identity: str = "", seen: list[list[int]] | None = None,
@@ -1543,6 +1559,14 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
         raise OSError("Folder not found — is its drive connected?") from None
     racy = abs(time.time() - folder.st_mtime) < RACY_SECONDS
     held = {int(shot): (int(size), int(modified)) for shot, size, modified in memory}
+
+    def _complete(filename: str) -> bool:
+        import stat as stat_mode
+        try:
+            # (Not a regular file, or unreadable: the read itself reports it.)
+            return not stat_mode.S_ISREG(os.stat(filename).st_mode) or _txy_complete(filename)
+        except OSError:
+            return True
 
     current_identity = ""
     waiting: list[list[int]] = []  # New files not read yet, as stat'ed now (the next ``seen``).
@@ -1619,6 +1643,8 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     # Settled by age, and the same size and mtime as the previous check saw.
     to_read = [item for item in candidates if failed.get(item[0]) != item[1:]
                and item[0] in aged and previous.get(item[0]) == item[1:]]
+    # Ending mid-row (or with an empty row): still being written, whatever its metadata says.
+    to_read = [item for item in to_read if _complete(names[item[0]])]
     waiting[:] = [list(item) for item in candidates
                   if failed.get(item[0]) != item[1:] and item not in to_read]
     young = len(waiting)

@@ -229,3 +229,22 @@ Replace the end of "Observe new shots during writing" ("Live updates remain defe
 
 The real-volume checks above (not run: the floor has no `/Volumes/dld_output`). Offscreen
 renders of the Live line are in this folder.
+
+## Recheck follow-up (after `19bbbe0`)
+
+- **A, done — content guard for Live reads.** The converter's `dlmwrite` writes straight to the
+  final name and ends every row with a newline. Live now also treats a new TXY whose last byte
+  isn't a newline, or whose last row is empty or has fewer than three fields, as still being
+  written: counted, not read, checked again next time (`io_helper._txy_complete`, Live only;
+  non-regular files are left to the read). Test:
+  `test_a_file_ending_mid_row_with_an_old_stable_mtime_waits`. **Remaining limit:** a writer
+  paused exactly at a row's end, with unchanged metadata for longer than a check interval, still
+  looks finished. The real fix is the converter writing to a temp name and renaming (Tony's
+  call). **Proposed for ordinary loads** (follow-up): the same tail check before reading.
+- **B, not done (usage limit):** gate the background helper in
+  `tests/test_live_io.py::test_a_live_check_pauses_background_work_only_while_it_reads` so it
+  is provably running before the Live read (e.g. wait for its first progress event, or block it
+  on a FIFO, with a bounded timeout). The FIFO retry test stays POSIX-only (reason in its skip).
+
+Checks: full suite 924 passed, 2 skipped, 2 xfailed, no reruns; mypy --strict helab and tests,
+pyright helab tests clean.
