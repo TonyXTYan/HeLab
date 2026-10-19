@@ -237,7 +237,7 @@ def test_eviction_keeps_a_dataset_whose_arrays_plots_hold(window: Window, cache:
 # Thresholds
 
 
-def test_thresholds_status_bar_window_once_per_crossing(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
+def test_thresholds_status_bar_window_once_per_crossing_with_hysteresis(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
     budget = window.ram_budget
     warnings: list[None] = []
     budget.warning.connect(lambda: warnings.append(None))
@@ -261,11 +261,16 @@ def test_thresholds_status_bar_window_once_per_crossing(window: Window, cache: F
     cache.max_data_bytes = int(40 * SHOT_BYTES / 0.79)
     budget.check()
     assert len(warnings) == 1  # Still over 75 %: once per crossing.
-    cache.max_data_bytes = int(40 * SHOT_BYTES / 0.6)
+    cache.max_data_bytes = int(40 * SHOT_BYTES / 0.72)
     budget.check()
     cache.max_data_bytes = int(40 * SHOT_BYTES / 0.77)
     budget.check()
-    assert len(warnings) == 2  # Crossed again.
+    assert len(warnings) == 1  # Hovering: it dropped to 72 %, not below 70 %.
+    cache.max_data_bytes = int(40 * SHOT_BYTES / 0.69)
+    budget.check()
+    cache.max_data_bytes = int(40 * SHOT_BYTES / 0.77)
+    budget.check()
+    assert len(warnings) == 2  # Crossed again after dropping below 70 %.
     # Over 80 % with nothing to release (a dataset shown in a tab): nothing happens.
     cache.max_data_bytes = 40 * SHOT_BYTES
     budget.check()

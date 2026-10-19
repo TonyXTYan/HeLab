@@ -7,10 +7,11 @@ dataset still held adds only what it holds beyond it, and two plots of one folde
 their shared shots once.
 
 Shares of the budget (Tony, 2026-10-19/20): from 50 % the status bar says so; at 75 % a
-window lists the biggest plots and folders, once per crossing; above 80 % plots are
-released, least recently viewed first, until usage is back under 80 %. The datasets no tab
-shows go first (``FolderCache.evict_to``); plots only if that isn't enough. The shown plot,
-a running plot and one following Live are never released, and no plot is closed.
+window lists the biggest plots and folders, once per crossing (again only after RAM in use
+drops below 70 %); above 80 % plots are released, least recently viewed first, until usage
+is back under 80 %. The datasets no tab shows go first (``FolderCache.evict_to``); plots
+only if that isn't enough. The shown plot, a running plot and one following Live are never
+released, and no plot is closed.
 
 A released plot keeps a picture of itself (no longer interactive) with a Reload button, and
 frees its view and result. It reloads from RAM (the folder's dataset still held) or the
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
 
 WARN_SHARE = 0.50  # the status bar says so
 DIALOG_SHARE = 0.75  # a window lists the biggest plots and folders, once per crossing
+REARM_SHARE = 0.70  # ...and again only after usage has dropped below this
 RELEASE_SHARE = 0.80  # plots are released, least recently viewed first, until under it
 # A plot a reload drew in the last this many seconds goes after the others (no ping-pong).
 RELOAD_GRACE = 10.0
@@ -330,8 +332,8 @@ class RamBudget(QObject):
             if not self._warned:
                 self._warned = True
                 self.warning.emit()
-        else:
-            self._warned = False
+        elif usage.share < REARM_SHARE:
+            self._warned = False  # Hovering between 70 and 75 % doesn't open it again.
         if usage != before or released:
             self.changed.emit()
 
