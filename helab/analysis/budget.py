@@ -188,7 +188,9 @@ class Plot(Protocol):
 
     def releasable(self) -> bool: ...
 
-    def release(self) -> bool: ...
+    def release(self, frees: Optional[int] = None) -> bool: ...
+
+    def picture_cost(self) -> int: ...
 
     def ram_label(self) -> str: ...
 
@@ -304,9 +306,10 @@ class RamBudget(QObject):
             for plot in candidates:
                 if usage.total <= limit:
                     break
-                if not any(key not in datasets for key in plot.ram_buffers()):
-                    continue  # Its data is a loaded folder's: releasing it frees nothing.
-                if plot.release():
+                frees = self.frees(plot, datasets)
+                if frees <= plot.picture_cost():
+                    continue  # Its data is mostly a loaded folder's: its picture would cost more.
+                if plot.release(frees):
                     released += 1
                     # A dataset only this plot's arrays kept may go now: datasets first, again.
                     self.cache.evict_to(limit)
@@ -326,6 +329,14 @@ class RamBudget(QObject):
             self._warned = False
         if usage != before or released:
             self.changed.emit()
+
+    def frees(self, plot: Plot, datasets: Buffers) -> int:
+        """What releasing ``plot`` frees: its buffers no held dataset and no other plot has."""
+        others: set[int] = set()
+        for other in self.plots:
+            if other is not plot:
+                others.update(other.ram_buffers())
+        return sum(size for key, size in plot.ram_buffers().items() if key not in datasets and key not in others)
 
     def biggest(self, count: int = 5) -> tuple[list[tuple[str, int]], list[tuple[str, int, bool]]]:
         """For the 75 % window: the biggest plots (label, bytes of their data) and folders

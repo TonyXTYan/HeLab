@@ -3,12 +3,14 @@ import logging
 import math
 import os
 import time
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal
 from uuid import uuid4
 
 from PyQt6 import sip
-from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QCloseEvent, QFocusEvent, QGuiApplication, QPainter, QPaintEvent, QPixmap, QWindow
+from PyQt6.QtCore import (QBuffer, QByteArray, QEvent, QIODevice, QObject, QRect, QSize, Qt, QTimer, pyqtSignal,
+                          pyqtSlot)
+from PyQt6.QtGui import QCloseEvent, QFocusEvent, QGuiApplication, QImage, QPainter, QPaintEvent, QPixmap, QWindow
 # from uuid import uuid4
 
 # Import QWidget types first to avoid forward references
@@ -344,34 +346,65 @@ class DockTabCloser(QObject):
         return None
 
 
-def snapshot(content: QWidget, area: QSize) -> QPixmap:
+@dataclass(frozen=True)
+class Picture:
+    """A plot as drawn, kept as PNG bytes (decoded only to paint): a fraction of a pixmap's RAM."""
+    png: bytes
+    ratio: float = 1.0  # The device pixel ratio it was grabbed at
+
+    @property
+    def size(self) -> QSize:
+        """In device-independent pixels (invalid if there is none)."""
+        image = QImage.fromData(self.png, "PNG") if self.png else QImage()
+        if image.isNull():
+            return QSize()
+        return QSize(round(image.width() / self.ratio), round(image.height() / self.ratio))
+
+    def pixmap(self) -> QPixmap:
+        pixmap = QPixmap()
+        if self.png and pixmap.loadFromData(self.png, "PNG"):
+            pixmap.setDevicePixelRatio(self.ratio)
+        return pixmap
+
+
+def snapshot(content: QWidget, area: QSize) -> Picture:
     """A picture of a plot as drawn. A plot never laid out (always behind another tab) is
     first given the plot area's size, ``area``."""
     if (not content.isVisible() and area.isValid()
             and (content.width() < area.width() // 2 or content.height() < area.height() // 2)):
         content.resize(area)
-    return content.grab()
+    grabbed = content.grab()
+    if grabbed.isNull():
+        return Picture(b"")
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    grabbed.save(buffer, "PNG")
+    buffer.close()
+    return Picture(bytes(data.data()), grabbed.devicePixelRatio())
 
 
 class PlotPicture(QWidget):
     """A released plot's picture, scaled to fit and centred (not interactive)."""
 
-    def __init__(self, picture: QPixmap, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, picture: Picture, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.picture = picture
+        self._size = picture.size
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
 
     def sizeHint(self) -> QSize:
-        return self.picture.deviceIndependentSize().toSize() if not self.picture.isNull() else QSize(200, 150)
+        return self._size if self._size.isValid() else QSize(200, 150)
 
     def paintEvent(self, a0: Optional[QPaintEvent]) -> None:
-        if self.picture.isNull():
+        pixmap = self.picture.pixmap()
+        if pixmap.isNull():
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        size = self.picture.deviceIndependentSize().toSize().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
+        size = pixmap.deviceIndependentSize().toSize().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
         left, top = (self.width() - size.width()) // 2, (self.height() - size.height()) // 2
-        painter.drawPixmap(QRect(left, top, size.width(), size.height()), self.picture)
+        painter.drawPixmap(QRect(left, top, size.width(), size.height()), pixmap)
 
 
 class ReleasedPlot(QWidget):
@@ -380,7 +413,7 @@ class ReleasedPlot(QWidget):
 
     RELEASED = "Released to free RAM: a picture, not interactive"
 
-    def __init__(self, picture: QPixmap, reload: Callable[[], None], parent: Optional[QWidget] = None) -> None:
+    def __init__(self, picture: Picture, reload: Callable[[], None], parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -399,7 +432,7 @@ class ReleasedPlot(QWidget):
         row.addWidget(self.reload_button)
         layout.addLayout(row)
         self.picture = PlotPicture(picture, self)
-        if picture.isNull():
+        if not picture.png:
             self.picture.hide()
             layout.addWidget(QLabel("(no picture: the plot couldn't be captured)", self), 1)
         else:
@@ -414,6 +447,11 @@ class ReleasedPlot(QWidget):
             f"{line}\nHeLab released this plot when RAM in use passed 80 % of the RAM budget "
             "(Settings → Cache). Reload draws it again from RAM or the disk cache, never from its folder.")
         self.reload_button.setEnabled(not busy)
+
+    def ram_buffers(self) -> Buffers:
+        """What the picture keeps in RAM (counted in the budget)."""
+        png = self.picture.picture.png
+        return {id(png): len(png)} if png else {}
 
 
 class LinkedAnalysisInstance(QObject):
@@ -543,6 +581,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._reload_found: Optional[Restored] = None  # Meanwhile, the best match RAM had.
         self._reload_values: Optional[Dict[str, Any]] = None  # The settings it runs with.
         self._reload_note = ""  # What the last reload left out (changed or missing shots).
+        self._picture_cost = 0  # Bytes its picture took when last taken (0: not yet).
 
     @property
     def view(self) -> DatasetView:
@@ -852,8 +891,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
 
     def ram_buffers(self) -> Buffers:
         """The memory this plot's data uses: the views it shows, runs on or holds waiting, and
-        its results' arrays. Nothing once released (its view keeps no events)."""
-        merged: Buffers = {}
+        its results' arrays; once released, its picture (its view keeps no events)."""
+        merged: Buffers = dict(self.released.ram_buffers()) if self.released is not None else {}
         for view in (self.follow.ran, self.follow.pending, self._shown_view, self._job_view):
             if view is not None:
                 merged.update(view_buffers(view))
@@ -873,15 +912,23 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 and self.shown is not None and content is not None and not sip.isdeleted(content)
                 and self.dock_widget is not None and self.follow.pending is None and not self.following())
 
-    def release(self) -> bool:
+    def picture_cost(self) -> int:
+        """What its picture took last time it was released or tried (0: not known yet)."""
+        return self._picture_cost
+
+    def release(self, frees: Optional[int] = None) -> bool:
         """Free the plot's data to keep RAM within the budget: its views and results go, and a
         picture of the plot stays in its place (no longer interactive), with Reload. It keeps
-        its shot numbers and fingerprints, to reload exactly those (``reload``). Whether it did."""
+        its shot numbers and fingerprints, to reload exactly those (``reload``). With ``frees``
+        (the bytes releasing it frees), not if its picture would take as much. Whether it did."""
         if not self.releasable():
             return False
         assert self.shown is not None and self._content is not None
         area = getattr(self.main_window, "middle_mainwindow", None)
         picture = snapshot(self._content, area.size() if isinstance(area, QWidget) else QSize())
+        self._picture_cost = len(picture.png)
+        if frees is not None and self._picture_cost >= frees:
+            return False  # It would cost more than it frees.
         last, shown = self.result, self.runner.results.released(self.shown)
         self.result = shown if last is None or last is self.shown else self.runner.results.released(last)
         self.shown = shown

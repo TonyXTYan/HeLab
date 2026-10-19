@@ -297,8 +297,8 @@ def test_release_order_and_exemptions(window: Window, cache: FolderCache, runner
     plot_bytes = 4 * SHOT_BYTES  # Each plot: its 2 shots and their copy.
     total = 2 * SHOT_BYTES + 5 * plot_bytes
     assert budget.usage.total == total
-    # 80 % of the budget: under it once x, d and e go (not before).
-    cache.max_data_bytes = int((total - 2 * SHOT_BYTES - 2 * plot_bytes + 100) / 0.8)
+    # 80 % of the budget: under it once x, d and e go (not before), with room for their pictures.
+    cache.max_data_bytes = int((total - 2 * SHOT_BYTES - 2 * plot_bytes + 30_000) / 0.8)
     budget.check()
     assert not cache.holds(unshown)
     released = {name for name, instance in plots.items() if instance.released is not None}
@@ -351,6 +351,37 @@ def test_the_least_recently_viewed_plot_goes_first(window: Window, cache: Folder
 # The released plot
 
 
+class Tiny(Copy):
+    """A result of a few bytes: a plot of a loaded folder holds almost nothing of its own."""
+
+    def compute(self, action_name: str, context: AnalysisContext) -> Any:
+        return Copied(np.zeros(1), tuple(context.view.shots))
+
+
+def test_a_release_must_free_more_than_its_picture_costs(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
+    """A plot whose data is a loaded folder's (its own result: 8 bytes) would cost more as a
+    picture than releasing it frees: it stays, and its picture's cost is remembered, so later
+    checks don't take its picture again. Released pictures count in the budget."""
+    shown = hold(cache, dataset("loaded", range(1, 5)))
+    cache.retain("tab", shown)
+    tiny = open_plot(window, qtbot, shown, Tiny())
+    big = open_plot(window, qtbot, dataset("big", range(1, 5)))
+    open_plot(window, qtbot, dataset("other", range(1, 2)))  # Shown
+    panel = window.panel_right_top_plot_settings
+    panel.show_plot(dock_of(big))
+    panel.show_plot(dock_of(tiny))
+    panel.show_plot(window.dock_widgets[-1])
+    budget = window.ram_budget
+    cache.max_data_bytes = 1
+    budget.check()
+    assert tiny.released is None and tiny.picture_cost() > 8
+    assert big.released is not None
+    picture = big.released.ram_buffers()
+    assert picture and set(picture) <= set(budget.ram_buffers())
+    assert cache.plot_bytes() >= sum(picture.values())
+    assert not tiny.release(8) and tiny.released is None
+
+
 def test_a_released_plot_keeps_a_picture_and_frees_its_data(window: Window, cache: FolderCache,
                                                             runner: AnalysisRunner, qtbot: QtBot) -> None:
     entry = dataset("freed", range(1, 4))
@@ -363,11 +394,14 @@ def test_a_released_plot_keeps_a_picture_and_frees_its_data(window: Window, cach
     assert instance.release()
     released = instance.released
     assert isinstance(released, ReleasedPlot)
-    assert not released.picture.picture.isNull() and released.picture.picture.width() > 50
+    picture = released.picture.picture
+    assert picture.png.startswith(b"\x89PNG") and picture.size.width() > 50 and not picture.pixmap().isNull()
+    assert instance.ram_buffers() == released.ram_buffers() == {id(picture.png): len(picture.png)}
+    assert instance.picture_cost() == len(picture.png)
     assert released.reload_button.isEnabled() and "Released to free RAM" in released.state.text()
     assert dock_of(instance).findChild(QLabel, "copied_plot") is None or sip.isdeleted(
         dock_of(instance).findChild(QLabel, "copied_plot"))
-    assert instance.ram_buffers() == {} and runner.results.get(job) is None
+    assert runner.results.get(job) is None
     shown = cast(AnalysisResult, instance.shown)
     assert shown.data is None and shown.coverage.shots == (1, 2, 3) and shown.parameters["scale"] == 1
     assert instance.view.shot_numbers == (1, 2, 3) and instance.view.event_count == 0
@@ -387,7 +421,7 @@ def test_the_scatter_keeps_a_snapshot_of_its_last_frame(window: Window, qtbot: Q
     assert pane is not None
     plot_id = pane.plot_id
     assert instance.release()
-    assert isinstance(instance.released, ReleasedPlot) and not instance.released.picture.picture.isNull()
+    assert isinstance(instance.released, ReleasedPlot) and instance.released.picture.picture.png
     qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None, timeout=10_000)  # Its page's data freed.
 
 
@@ -544,7 +578,7 @@ def test_a_reload_that_draws_nothing_keeps_no_data(window: Window, cache: Folder
     qtbot.waitUntil(lambda: not instance.job_id, timeout=10_000)
     del cache.datasets[(entry.path, entry.signature, 0)]
     assert instance.released is released and instance.view.event_count == 0
-    assert instance.ram_buffers() == {}
+    assert instance.ram_buffers() == released.ram_buffers()  # Its picture only.
     assert released.reload_button.isEnabled()
     if ending == "failed":
         assert "boom" in error_line(instance)
