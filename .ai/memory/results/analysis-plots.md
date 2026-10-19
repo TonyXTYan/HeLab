@@ -22,7 +22,9 @@ First plots (2026-10-19, `.ai/sessions/2026-10-19-claude-dataset-view-plots/`). 
 - Display sample: fixed seed, labelled on the figure, never the analysed data.
 - PyQtGraph for 2D plots (fast redraws for Live, paints on lab PCs); Plotly only for the 3D scatter, with Open in browser.
 - Axes in s and m as stored (Tony to confirm the units).
-- Dock source line: `Data source: <run> · rev N · <id> vX · <params>`; the tooltip holds the full record.
+- Plots v1 polish (2026-10-19, `.ai/sessions/2026-10-19-claude-plots-v1-polish/`): every plot has Shots (all / last N, default 50 / range, To 0 = last); scatter and histograms have View range (auto-crop keep % or manual T/X/Y, min = max = full extent, a reversed axis uses its full extent with a ⚠ note); scatter point size, opacity and display cap; histogram bins (0 = auto) and Log Y. All three analyses are v2; the group is "Basic plots v1" (Tony's name, version from `group.py`).
+- Dock source, two lines (Tony: "you can use multiple lines"): `Data source: run_042 · rev 1 · shots 51–60 (10 of 60) · helab.txy_histograms v2` / `last 10 shots · auto-crop 99 % · bins auto · log Y`; a manual range lists only the axes set; the tooltip holds the full record. The "Data source" / "Showing previously loaded data" prefix stays as the stale-plot signal.
+- Tests that must hold on Windows run there too (Tony: all lab and office machines are Windows), hence `HELAB_TEST_READ_GATE` instead of named pipes.
 
 ## Open
 

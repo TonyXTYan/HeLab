@@ -53,6 +53,9 @@ still to choose (Tony, with the coordinator's proposal).
 
 ## Known issues
 
+- [ ] `test_folder_cache.py::test_two_tabs_share_snapshot_arrays_and_default_resolution`
+  needed one rerun in each of three full runs on the RSPE Windows PC
+  (2026-10-19); investigate if it fails outright.
 - [ ] Folders with over 100,000 entries record a scan failure.
 - [ ] The temp folder (`DIR_TEMPS`, Settings → General) is created and can be
   changed, but nothing uses it: helpers' private folders go to the system temp
@@ -69,9 +72,9 @@ still to choose (Tony, with the coordinator's proposal).
 - [ ] Main-window tests resolve the default data path, which is
   `/Volumes/dld_output` when it is mounted: tests should never touch the real
   volume (2026-10-19).
-- [ ] `tests/test_live_io.py`'s pause test assumes a 3000-file background load
-  is still running after setup; gate it so it can't race on a fast runner
-  (2026-10-19, Live review).
+- [x] `tests/test_live_io.py`'s pause test assumed a 3000-file background load
+  was still running after setup. Fixed with `HELAB_TEST_READ_GATE`; both Live
+  I/O tests now run on Windows too (Plots v1 polish, 2026-10-19).
 - [ ] With the default of one background lane, folder details and status checks
   (including manual ones) wait for the selected load. As planned; revisit if
   it feels slow.

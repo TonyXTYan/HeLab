@@ -89,6 +89,11 @@ real experiment data without deciding where its top should be.
   background save: the window names the folders and closes by itself; Quit now
   quits at once; next launch the saved shots come from the cache.
 - [ ] Lab PCs (Windows): the same Live checks; a check's cost on the lab share.
+- [ ] Plot settings (Plots v1 polish): change Shots, View range and Points in a
+  plot's settings tab and press Rerun with these settings; the plot and its
+  two-line source follow. Manual bounds' spin boxes step sensibly when scrolled.
+  The centre hint disappears when the first plot opens and returns when all
+  close. Scatter point size and opacity in the dock and via Open in browser.
 - [ ] Plots on screen: the 3D scatter in the dock (QtWebEngine) and via Open in
   browser, on the Mac and a lab PC (black pane: the browser path must work);
   counts and histograms; closing and tabbing docks; the Dash page says "Plot not
