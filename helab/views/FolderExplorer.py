@@ -114,6 +114,12 @@ class LiveSession:
     blocked: str = ""
     note: str = ""
     saved_at: float | None = None  # Wall time.
+    # When Live itself read each shot (wall time; read again: when that was). A shot it read
+    # recently that changes is read again, not a mismatch (``FolderExplorer.LIVE_REREAD_SECONDS``).
+    read_at: dict[int, float] = field(default_factory=dict)
+    # Shown for a minute after shots were read again (``FolderExplorer.live_reread_note``).
+    reread_note: str = ""
+    reread_at: float = -math.inf  # Monotonic.
 
 
 def large_text(estimate: int, refused: bool) -> str:
@@ -232,6 +238,13 @@ class FolderExplorer(QWidget):
     # A Live check lists the folder at least this often, even if its mtime is unchanged: a network
     # drive may report a folder's mtime late (SMB clients cache it for seconds).
     LIVE_LIST_SECONDS = 60.0
+    # A held shot Live itself read less than this long ago that changes (its writer paused longer
+    # than the settle age, so it was read unfinished) is read again and replaces the held one, by
+    # Tony's decision; an older one that changes still stops Live as mismatched (a remount or a copy).
+    # Five minutes covers the next listing (the next new shot, or once a minute) and the next save.
+    LIVE_REREAD_SECONDS = 300.0
+    # How long the tab's Live line and Folder details say that shots were read again.
+    LIVE_REREAD_NOTE_SECONDS = 60.0
     DWELL_MS = 3000
     # Finish and Cancel modes: while loads are busy (running, queued or stopping, or one started
     # moments ago), an automatic load waits until the selection has stayed this long, plus
@@ -1523,7 +1536,8 @@ class FolderExplorer(QWidget):
         payload = {"live": True, "live_since": session.since if recent else None, "known": known,
                    "prefer_base": dataset.signature, "identity": session.identity,
                    "identity_root": session.identity_root, "seen": session.seen, "seen_names": session.seen_names,
-                   "listed_mtime": session.listed_mtime if recent else None, "check_level": cache.check_level}
+                   "listed_mtime": session.listed_mtime if recent else None, "check_level": cache.check_level,
+                   "recent": self._live_recent(session)}
         if not cache.submit(self.live_owner, 0, session.path, "load", payload, priority=True):
             self._live_halt(session, "Live check couldn't be queued — Retry")
             return
@@ -1557,7 +1571,8 @@ class FolderExplorer(QWidget):
         payload = {"cache": store_options(), "signature": "", "no_cache": False, "check_level": cache.check_level,
                    "limits": cache.large_limits(), "deliberate": False, "allow_large": False,
                    "prefer_base": session.dataset.signature, "save_memory": True,
-                   "identity": session.identity, "identity_root": session.identity_root}
+                   "identity": session.identity, "identity_root": session.identity_root,
+                   "recent": self._live_recent(session)}
         if not cache.save(self.live_save_owner, session.path, payload):
             session.note = "Save queue full"
             return False
@@ -1565,6 +1580,46 @@ class FolderExplorer(QWidget):
         session.unsaved = set()
         session.request, session.reading = "save", False
         return True
+
+    def _live_recent(self, session: LiveSession) -> list[int]:
+        """The shots Live itself read within ``LIVE_REREAD_SECONDS``: read again if they change."""
+        oldest = time.time() - self.LIVE_REREAD_SECONDS
+        for shot in [shot for shot, at in session.read_at.items() if at < oldest]:
+            del session.read_at[shot]
+        return sorted(session.read_at)
+
+    def _live_reread(self, session: LiveSession, entries: list[dict[str, Any]]) -> None:
+        """Shots Live read recently that changed since and were read again: one WARNING each (for
+        Tony to report: the converter writing to a temporary name and renaming it avoids this), and
+        a note on the Live line and in Folder details for ``LIVE_REREAD_NOTE_SECONDS``."""
+        now = time.time()
+
+        def when(nanoseconds: int) -> str:
+            return datetime.fromtimestamp(nanoseconds / 1e9).astimezone().isoformat(timespec="milliseconds")
+        for entry in entries:
+            shot = int(entry["shot"])
+            (old_size, old_mtime), (new_size, new_mtime) = entry["old"], entry["new"]
+            read_at = session.read_at.get(shot)
+            logging.warning(
+                "Live: shot %s changed %s after Live read it, read again%s: %s (size %s → %s bytes, mtime %s → %s). "
+                "The converter writing to a temporary name and renaming it avoids this.", shot,
+                f"{now - read_at:.0f} s" if read_at is not None else "some time", "" if entry.get("read") else
+                " (now unreadable)", entry.get("path", ""), f"{old_size:,}", f"{new_size:,}", when(old_mtime),
+                when(new_mtime))
+            session.read_at[shot] = now
+        shots = sorted(int(entry["shot"]) for entry in entries)
+        session.reread_note = (f"Shot {shots[0]} changed after it was read (writer paused > 5 s?): read again"
+                               if len(shots) == 1 else
+                               f"Shots {', '.join(map(str, shots[:5]))}{' …' if len(shots) > 5 else ''} changed "
+                               "after they were read (writer paused > 5 s?): read again")
+        session.reread_at = time.monotonic()
+
+    def live_reread_note(self, path: str) -> str:
+        """Shots of ``path`` that Live read again in the last ``LIVE_REREAD_NOTE_SECONDS`` ("" if none)."""
+        session = self._live_sessions.get(path)
+        if session is None or time.monotonic() - session.reread_at >= self.LIVE_REREAD_NOTE_SECONDS:
+            return ""
+        return session.reread_note
 
     def _live_forget(self, session: LiveSession) -> None:
         """A session that is off with no save left to run or finish is done."""
@@ -1637,6 +1692,14 @@ class FolderExplorer(QWidget):
         assert isinstance(dataset, Dataset)
         what, session.request = session.request, ""
         new = set(dataset.data) - session.shots
+        if what == "check":
+            now = time.time()
+            session.read_at.update(dict.fromkeys(new, now))
+        reread = [entry for entry in event.get("live_reread") or () if isinstance(entry, dict)]
+        if reread:
+            self._live_reread(session, reread)
+        # Read again: their new data is saved too (a save's own result saves it with this one).
+        changed = {int(entry["shot"]) for entry in reread}
         session.dataset, session.shots = dataset, set(dataset.data)
         session.new += len(new)
         session.checks += 1
@@ -1656,7 +1719,7 @@ class FolderExplorer(QWidget):
                 session.unsaved |= session.saving | new
             session.saving = set()
         else:
-            session.unsaved |= new
+            session.unsaved |= new | changed
         if self.selected_path_globally == session.path and (session.on or self.folder_opened_path == session.path):
             self._live_display(session.path, event)
         if session.on and not session.error:
@@ -1734,6 +1797,8 @@ class FolderExplorer(QWidget):
                 parts.append(f"next check in {max(0, math.ceil(session.next_at - time.monotonic()))} s")
         else:
             parts = ["Live updates off"]
+        if reread := self.live_reread_note(session.path):
+            parts.append(reread)
         blocked = self._live_save_blocked(session)
         if session.saving:
             parts.append(f"saving {plural(len(session.saving), 'shot')}")
@@ -1755,6 +1820,12 @@ class FolderExplorer(QWidget):
             lines.append(f"Not saved: {LIVE_BLOCKED.get(blocked, blocked)}")
         if session.saved_at is not None:
             lines.append(f"Last saved: {datetime.fromtimestamp(session.saved_at).astimezone():%H:%M:%S}")
+        if reread:
+            lines.append(f"{reread} {relative_age(time.monotonic() - session.reread_at)} (the log names its "
+                         "old and new size and mtime). A shot Live read in the last "
+                         f"{self.LIVE_REREAD_SECONDS / 60:g} minutes that changes is read again; an older one "
+                         "that changes stops Live. The converter writing to a temporary name and renaming it "
+                         "would avoid this.")
         if session.note:
             lines.append(session.note)
         if session.error:

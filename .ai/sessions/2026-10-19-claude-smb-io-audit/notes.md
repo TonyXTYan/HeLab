@@ -88,3 +88,11 @@ paths (`../../../HeLab/tests/...`) for unchanged test files; the code run is the
 - A request's `trace` is set at each attempt, so a retry after the trace was turned off isn't traced.
 - Scenario session 2 ran in a copy of session 1's folder (`cp -R`), so its trace starts with session 1's
   lines; its summary uses only the lines after them.
+
+## Round 3 review fixes and E (2026-10-20)
+
+- B e66003a, C 97e2f02, D 118e0f0, F 14005be (amended once before pushing: the check's state moved to
+  the menu setup for windows that build only the menus); the dev/v0.0.6 merge (Live L3) 02c88dc.
+- E: Live re-reads a shot it read in the last 5 minutes when it changes; no extra stats for detection
+  (the newest held shot is always sampled; saves check every held file). FolderDetailsPanel.py got one
+  append for the note (outside owned paths, at Maestro's request).

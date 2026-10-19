@@ -71,7 +71,7 @@ def replay(cache: FolderCache, path: str, tmp_path: Path, operation: str = "load
         elif payload.get("live"):
             live_check(path, str(output), events.append, payload.get("memory"), payload.get("known"),
                        payload.get("live_since"), identity=payload.get("identity", ""), seen=payload.get("seen"),
-                       check_level=payload.get("check_level", "medium"))
+                       check_level=payload.get("check_level", "medium"), recent=payload.get("recent"))
         else:
             load(path, str(output), events.append, payload.get("cache"), payload.get("memory"),
                  payload.get("base_signature", ""), payload.get("signature", ""), limits=payload.get("limits"),
@@ -286,6 +286,71 @@ def test_an_error_stops_checking_keeps_the_data_and_retry_resumes(
     next_request(qtbot, explorer, path)
     assert replay(cache, path, tmp_path)[0]["kind"] == "live_unchanged"
     assert not session.error and explorer.retry_button.isHidden()
+    explorer.stop_live(save=False)
+    explorer.close_cleanup()
+
+
+def test_a_shot_live_read_recently_that_changes_is_read_again_and_said(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """By Tony's decision: a shot Live itself read in the last LIVE_REREAD_SECONDS that changes (its
+    writer paused longer than the settle age) is read again, Live goes on, the Live line and Folder
+    details say so for a minute, and one WARNING names the file, its old and new size and mtime and
+    how long after Live read it. An older one that changes still stops Live as mismatched."""
+    import logging
+    from helab.views.FolderDetailsPanel import FolderDetailsPanel
+    path = str(run)
+    explorer = open_loaded(qtbot, service, run, tmp_path)
+    cache = explorer.model.cache
+    cache.live_autosave_shots = 100  # (Checks only, no save between them.)
+    assert explorer.start_live()
+    session = explorer.live
+    assert session is not None
+    # The writer pauses mid-row longer than the settle age: Live reads shot 3 unfinished.
+    partial = run / "d_txy_forc3.txt"
+    partial.write_text("3,2,3\n3,4")
+    old = time.time() - 60
+    os.utime(partial, (old, old))
+    age_folder(run, 50)
+    checks(qtbot, explorer, path, tmp_path)
+    assert 3 in session.shots and 3 in session.read_at and 1 not in session.read_at  # (Shot 1: the load's.)
+    request = next_request(qtbot, explorer, path)
+    assert request.payload["recent"] == [3]
+    # It finishes, and the next shot comes (the folder changes: the check lists it).
+    partial.write_text("3,2,3\n3,4,5\n")
+    os.utime(partial, (old + 5, old + 5))
+    write_shot(run, 4)
+    age_folder(run, 40)
+    replay(cache, path, tmp_path)  # Both seen: shot 3 changed, shot 4 new.
+    assert not session.error and path not in cache.mismatched
+    with caplog.at_level(logging.WARNING):
+        checks(qtbot, explorer, path, tmp_path, count=1)
+    assert not session.error and path not in cache.mismatched and session.shots == {1, 2, 3, 4}
+    np.testing.assert_array_equal((explorer.folder_opened_data or {})[3], [[3, 2, 3], [3, 4, 5]])
+    note = "Shot 3 changed after it was read (writer paused > 5 s?): read again"
+    text, tooltip, stopped = explorer.live_line(session)
+    assert note in text and not stopped and "old and new size and mtime" in tooltip
+    panel = FolderDetailsPanel(explorer)
+    panel.show_explorer(explorer, service)
+    assert note in panel.text("state")
+    [warning] = [record for record in caplog.records if record.levelname == "WARNING" and "Live: shot" in record.getMessage()]
+    message = warning.getMessage()
+    assert f"shot 3 changed" in message and str(partial) in message and "read again" in message
+    assert f"size {len('3,2,3' + chr(10) + '3,4'):,} → {partial.stat().st_size:,} bytes" in message
+    assert {3, 4} <= session.unsaved  # (Its new data is saved with the next save.)
+    # The note lasts a minute.
+    session.reread_at -= explorer.LIVE_REREAD_NOTE_SECONDS
+    assert explorer.live_reread_note(path) == "" and note not in explorer.live_line(session)[0]
+    # Shot 4, read by Live but longer ago than the window, changes: Live stops as mismatched.
+    session.read_at[4] = time.time() - explorer.LIVE_REREAD_SECONDS - 1
+    (run / "d_txy_forc4.txt").write_text("4,9,9\n")
+    os.utime(run / "d_txy_forc4.txt", (old, old))
+    write_shot(run, 5)
+    age_folder(run, 30)
+    next_request(qtbot, explorer, path)
+    replay(cache, path, tmp_path)
+    halted = explorer.live  # (Read again: the asserts above narrowed ``session.error``.)
+    assert halted is not None and halted.error == "1 shot changed in the folder" and path in cache.mismatched
     explorer.stop_live(save=False)
     explorer.close_cleanup()
 

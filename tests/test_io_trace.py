@@ -733,6 +733,50 @@ def test_a_live_save_saves_nothing_for_a_missing_changed_or_other_folder(tmp_pat
         assert store.read_dataset_row(str(run)).value is None
 
 
+def test_a_live_save_reads_a_shot_live_read_recently_that_changed_again(tmp_path: Path, trace: Path) -> None:
+    """By Tony's decision: a held shot Live itself read recently (``recent``) that changed since is read
+    again before the save (once settled) and saved as it is now, not a mismatch; an older held shot
+    that changed still stops the save."""
+    from helab.utils.cache_store import unpack_dataset
+    run = tmp_path / "run"
+    write_shots(run, range(1, 4))
+    held = held_arrays(run, tmp_path / "held", range(1, 4))
+    file = run / "d_txy_forc3.txt"
+    file.write_text("3,2,3\n3,4,5\n3,6,7\n")  # Finished after Live read it.
+    when = time.time() - 30
+    os.utime(file, (when, when))
+    now = [3, file.stat().st_size, file.stat().st_mtime_ns]
+    cache = store_options()
+    output = tmp_path / "out"
+    output.mkdir()
+    events: list[dict[str, Any]] = []
+    io_helper.save_held(str(run), events.append, cache, held, [], str(tmp_path / "held"), recent=[2, 3],
+                        output=str(output))
+    assert not any(event["kind"] == "shots_missing" for event in events)
+    shots = [event for event in events if event["kind"] == "shot"]
+    assert [event["shot"] for event in shots] == [3]
+    np.testing.assert_array_equal(np.load(shots[0]["artifact"]), [[3, 2, 3], [3, 4, 5], [3, 6, 7]])
+    loaded = next(event for event in events if event["kind"] == "loaded")
+    assert loaded["memory_shots"] == [1, 2] and now in loaded["fingerprint"] and loaded["files"] == 3
+    assert loaded["live_reread"] == [{"shot": 3, "path": str(file), "old": held[2][1:], "new": now[1:], "read": True}]
+    assert loaded["load_counts"]["modified_loaded"] == 1 and loaded["unsettled_files"] == 0
+    assert counts(lines(trace))[("read", "save: read again")] == 1
+    with io_helper._cache_store(cache["directory"], [str(run)]) as store:
+        value = store.read_dataset(str(run)).value
+        assert value is not None
+        row, packed = value
+        data = unpack_dataset(packed)
+        assert data is not None and sorted(data) == [1, 2, 3]
+        np.testing.assert_array_equal(data[3], [[3, 2, 3], [3, 4, 5], [3, 6, 7]])
+    # Not read by Live recently: a mismatch, nothing saved over it.
+    events = []
+    io_helper.save_held(str(run), events.append, cache, held, [], str(tmp_path / "held"), recent=[2],
+                        output=str(output))
+    stopped = next(event for event in events if event["kind"] == "shots_missing")
+    assert stopped["reason"] == "changed" and stopped["missing"] == [3]
+    assert not any(event["kind"] in ("shot", "loaded", "cache_saved") for event in events)
+
+
 def test_a_live_save_keeps_dont_cache_and_the_budget(tmp_path: Path) -> None:
     run = tmp_path / "run"
     write_shots(run, range(1, 4))

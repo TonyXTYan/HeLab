@@ -1862,7 +1862,7 @@ def _location_identity(path: str, reason: str) -> str:
 
 def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held: list[list[int]],
               problematic: list[int], held_dir: str, *, identity: str = "", identity_root: str | None = None,
-              no_cache: bool = False) -> None:
+              no_cache: bool = False, recent: list[int] | None = None, output: str | None = None) -> None:
     """Live's save: the folder's data the app holds in RAM written to the disk cache, without reading
     TXY files again. ``held`` is that data's fingerprint (unreadable shots included), its arrays
     are in ``held_dir`` (local files the app wrote), ``problematic`` its problematic shots.
@@ -1872,8 +1872,14 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
     the folder must be the session's (``identity``, checked as Live does: reason root), before
     ``loaded`` names the held shots and the dataset is saved under a load's guard, budget and
     pending-save rules. Files the folder has and the data doesn't (Live hasn't read them yet) count
-    as unsettled, so the next quick check of the cache is a full one."""
+    as unsettled, so the next quick check of the cache is a full one.
+
+    Except, by Tony's decision, the shots Live itself read recently (``recent``, as for
+    ``live_check``): one of those that changed is read again before the save, if settled by age and
+    unchanged while read (its new data sent as a ``shot`` artifact in ``output``; ``live_reread``),
+    else saved as held and counted as unsettled; it isn't a mismatch."""
     import numpy as np
+    import pandas as pd
     from helab.utils.cache_store import StoreError
     store = _open_store(cache_options, send, path)
     try:
@@ -1913,30 +1919,81 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
             if current and current != identity:
                 mismatch("root", sorted(known))
                 return
-        if changed := [shot for shot, size, modified in fingerprint if listed[shot] != (size, modified)]:
-            mismatch("changed", changed)
+        changed = [shot for shot, size, modified in fingerprint if listed[shot] != (size, modified)]
+        rereadable = {int(shot) for shot in recent or ()} if output else set()
+        if stale := [shot for shot in changed if shot not in rereadable]:
+            mismatch("changed", stale)
             return
         data = {shot: np.load(os.path.join(held_dir, f"{shot}.npy"), allow_pickle=False)
                 for shot in sorted(known) if os.path.exists(os.path.join(held_dir, f"{shot}.npy"))}
         unsettled = len(set(listed) - known)
-        names = [file_names[shot] for shot, _, _ in fingerprint]
         problematic = sorted(set(problematic) & known)
+        # Recently read by Live and changed since: read again, once settled (else saved as held).
+        was = {shot: (size, modified) for shot, size, modified in fingerprint}
+        items = [(shot, *listed[shot]) for shot in changed]
+        settled = {item[0] for item in _settled(items)}
+        replaced: dict[int, tuple[int, int, int]] = {}
+        reread: list[dict[str, Any]] = []
+
+        def now(filename: str, reason: str) -> tuple[int, int]:
+            info = _stat(filename, reason)
+            return info.st_size, info.st_mtime_ns
+        for item in items:
+            shot = item[0]
+            filename = os.path.join(path, file_names[shot])
+            if shot not in settled:
+                unsettled += 1
+                continue
+            Pause.checkpoint(send)
+            try:
+                array, invalid = None, False
+                if now(filename, "save: before read again") == item[1:]:
+                    _read_gate(filename)
+                    frame = _read_txy_file(filename, "save: read again")
+                    invalid = bool(frame.isna().any().any())
+                    array = np.asarray(frame.dropna(), dtype=np.float64)
+                    if now(filename, "save: after read again") != item[1:]:
+                        array = None
+                if array is None:
+                    unsettled += 1  # Changed while read: saved as held.
+                    continue
+                assert output is not None
+                artifact = os.path.join(output, f"{shot}.npy")
+                np.save(artifact, array, allow_pickle=False)
+                data[shot] = array
+                problematic = sorted((set(problematic) - {shot}) | ({shot} if invalid else set()))
+                send({"kind": "shot", "shot": shot, "artifact": artifact, "fingerprint": list(item),
+                      "problematic": invalid})
+            except (OSError, ValueError, pd.errors.ParserError):
+                data.pop(shot, None)  # Unreadable now: known by its new fingerprint, as a load keeps it.
+                problematic = sorted(set(problematic) | {shot})
+            replaced[shot] = item
+            reread.append({"shot": shot, "path": filename, "old": list(was[shot]), "new": list(item[1:]),
+                           "read": shot in data})
+        fingerprint = sorted(replaced.get(entry[0], entry) for entry in fingerprint)
+        names = [file_names[shot] for shot, _, _ in fingerprint]
         saving = store is not None and guard is not None and not no_cache and bool(data)
         had_dataset = False
         if saving:
             assert store is not None
             row = store.read_dataset_row(path)
             had_dataset = row.value is not None
-        counts = {"reused_memory": len(data), "reused_disk": 0, "new": 0, "modified": 0, "removed": 0,
-                  "read": 0, "new_loaded": 0, "modified_loaded": 0}
+        kept = sorted(set(data) - set(replaced))
+        again = [entry for entry in reread if entry["read"]]
+        counts = {"reused_memory": len(kept), "reused_disk": 0, "new": 0, "modified": len(replaced), "removed": 0,
+                  "read": len(replaced), "new_loaded": 0, "modified_loaded": len(again)}
         signature = _fingerprint_signature([list(entry) for entry in fingerprint])
         send({"kind": "load_source", "source": "updated", "cache_reason": ""})
-        send({"kind": "loaded", "rows": 0, "bytes": 0, "files": len(data), "loaded_at": time.time(),
+        send({"kind": "loaded", "rows": sum(len(data[entry["shot"]]) for entry in again),
+              "bytes": sum(data[entry["shot"]].nbytes for entry in again), "files": len(data),
+              "loaded_at": time.time(),
               "total_files": len(listed), "failed_files": len(known) - len(data), "unsettled_files": unsettled,
               "problematic": problematic, "source": "updated", "cached": False, **_data_root(store, path),
               "disk_cache_pending": saving, "cache_info": {}, "load_counts": counts,
-              "cache_reason": f"Saved {len(data)} shots from memory; no TXY file read",
-              "fingerprint": [list(entry) for entry in fingerprint], "memory_shots": sorted(data),
+              "cache_reason": f"Saved {len(kept)} shots from memory; " + (
+                  f"read {len(replaced):,} that changed after Live read them again" if replaced else "no TXY file read"),
+              "live_reread": reread,
+              "fingerprint": [list(entry) for entry in fingerprint], "memory_shots": kept,
               "base_signature": signature, "signature": signature,
               "listed_at": listed_at, "names": names, "identity": _location_identity(path, "save: identity")})
         if not saving:
@@ -1957,7 +2014,8 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                known: list[list[int]] | None = None, since: int | None = None, *,
                identity: str = "", seen: list[list[int]] | None = None,
                check_level: str = DEFAULT_CHECK_LEVEL, listed_mtime: int | None = None,
-               seen_names: list[str] | None = None, identity_root: str | None = None) -> None:
+               seen_names: list[str] | None = None, identity_root: str | None = None,
+               recent: list[int] | None = None) -> None:
     """One check of a folder watched live: new settled TXY files are read and sent like a load's.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for the shots the caller holds; TXY files are
@@ -1986,6 +2044,14 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     (``seen_names``, sent back as ``live_seen_names``) are stat'ed. Once one of them is ready to
     read, the check lists the folder as above. The identity check reads only the marker the first
     listing found (``identity_root``, sent back as ``live_identity_root``; "": none, the location).
+
+    ``recent`` names the held shots Live itself read recently (``FolderExplorer.LIVE_REREAD_SECONDS``,
+    by Tony's decision): one of those that changed (its writer paused longer than the settle age, so
+    Live read it unfinished) is read again like a new file, once settled and unchanged a check apart,
+    and replaces the held one (``live_reread``: its old and new size and mtime) instead of stopping
+    the check. Until then it is waiting (``live_seen``), and listings look at it besides the sample.
+    Other held shots that changed still stop it (a change long after reading suggests a remount or a
+    copy).
     """
     started = time.monotonic()
     if memory is None:
@@ -1996,6 +2062,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
         raise OSError("Folder not found — is its drive connected?") from None
     racy = abs(time.time() - folder.st_mtime) < RACY_SECONDS
     held = {int(shot): (int(size), int(modified)) for shot, size, modified in memory}
+    rereadable = {int(shot) for shot in recent or ()} & set(held)
 
     current_identity = ""
     current_root: str | None = identity_root
@@ -2071,16 +2138,22 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     beat = Heartbeat(send, "verifying")
     ordered = sorted(held)
     indices = _sample_indices(len(ordered), check_level)
+    sampled = [ordered[index] for index in (range(len(ordered)) if indices is None else indices)]
+    # Held shots the previous check saw changed (to read again once unchanged): looked at again.
+    sampled += sorted((set(previous) & set(held)) - set(sampled))
     changed: list[int] = []
-    for index in range(len(ordered)) if indices is None else indices:
-        shot = ordered[index]
+    rereads: list[tuple[int, int, int]] = []  # Recently read held shots that changed, as stat'ed now.
+    for shot in sampled:
         try:
             info = _stat(names[shot], "live: sample")
         except FileNotFoundError:
             changed.append(shot)
             continue
         if (info.st_size, info.st_mtime_ns) != held[shot]:
-            changed.append(shot)
+            if shot in rereadable:
+                rereads.append((shot, info.st_size, info.st_mtime_ns))
+            else:
+                changed.append(shot)
         beat()
     if changed:
         mismatch("changed", changed)
@@ -2095,9 +2168,11 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
             continue  # Gone since the listing (e.g. renamed by its writer).
         candidates.append((shot, info.st_size, info.st_mtime_ns))
         beat()
-    aged = {item[0] for item in _settled(candidates)}
     # Known unreadable and unchanged since: still unreadable, not read again.
     still_failed = [item for item in candidates if failed.get(item[0]) == item[1:]]
+    # Changed held shots Live read recently are read again as new files are.
+    candidates += rereads
+    aged = {item[0] for item in _settled(candidates)}
     # Settled by age, and the same size and mtime as the previous check saw.
     to_read = [item for item in candidates if failed.get(item[0]) != item[1:]
                and item[0] in aged and previous.get(item[0]) == item[1:]]
@@ -2110,19 +2185,22 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     import numpy as np
     import pandas as pd
 
-    fingerprint = [(shot, *held[shot]) for shot in held] + still_failed
+    replacing = {item[0] for item in to_read} & set(held)
+    fingerprint = [(shot, *held[shot]) for shot in held if shot not in replacing] + still_failed
     # Unreadable shots stay in the fingerprint but not in the data, as a load keeps them.
     unreadable = {shot for shot, _, _ in still_failed}
     problematic = sorted(unreadable)
     late: set[int] = set()
+    replaced: set[int] = set()  # Held shots read again: their new data, or now unreadable.
+    reread: list[dict[str, Any]] = []
     rows = size = loaded = read = read_bytes = 0
     total_read_bytes = sum(item[1] for item in to_read)
     last_progress = 0.0
 
     def progress(done: int) -> dict[str, Any]:
-        checked = len(held) + len(still_failed) + young + done
+        checked = len(held) - len(replacing) + len(still_failed) + young + done
         return {"kind": "progress", "progress": checked / max(1, len(names)), "checked_files": checked,
-                "loaded_files": len(held) + loaded, "total_files": len(names),
+                "loaded_files": len(held) - len(replacing) + loaded, "total_files": len(names),
                 "failed_files": len(unreadable), "unsettled_files": young + len(late),
                 "read_bytes": read_bytes, "read_files": read, "total_read_bytes": total_read_bytes}
 
@@ -2133,6 +2211,8 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     send(progress(0))
     for i, item in enumerate(to_read):
         shot = item[0]
+        again = shot in replacing
+        what = "read again" if again else "read"
         filename = names[shot]
         Pause.checkpoint(send)
         send({"kind": "file_started", "filename": filename})
@@ -2140,25 +2220,30 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
         read_bytes += item[1]
         try:
             array = None
-            if unchanged(filename, item, "live: before read"):
+            if unchanged(filename, item, f"live: before {what}"):
                 _read_gate(filename)
-                frame = _read_txy_file(filename, "live: read")
+                frame = _read_txy_file(filename, f"live: {what}")
                 if frame.isna().any().any():
                     problematic.append(shot)
                 array = np.asarray(frame.dropna(), dtype=np.float64)
-                if not unchanged(filename, item, "live: after read"):
+                if not unchanged(filename, item, f"live: after {what}"):
                     array = None
             if array is None:
                 # Changed while read: still being written; the next check reads it again.
                 late.add(shot)
                 waiting.append(list(item))
                 problematic[:] = [value for value in problematic if value != shot]
+                if again:
+                    fingerprint.append((shot, *held[shot]))  # (Held as it was until then.)
             else:
                 artifact = os.path.join(output, f"{shot}.npy")
                 np.save(artifact, array, allow_pickle=False)
                 rows += len(array)
                 size += array.nbytes
-                loaded += 1
+                if again:
+                    replaced.add(shot)
+                else:
+                    loaded += 1
                 fingerprint.append(item)
                 send({"kind": "shot", "shot": shot, "artifact": artifact, "fingerprint": list(item),
                       "problematic": shot in problematic})
@@ -2167,13 +2252,18 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
             unreadable.add(shot)
             problematic.append(shot)
             fingerprint.append(item)
+            if again:
+                replaced.add(shot)
+        if again and shot in replaced:
+            reread.append({"shot": shot, "path": filename, "old": list(held[shot]), "new": list(item[1:]),
+                           "read": shot not in unreadable})
         send({"kind": "file_finished", "filename": filename})
         now = time.monotonic()
         if now - last_progress >= 0.1 or i + 1 == len(to_read):
             send(progress(i + 1))
             last_progress = now
     unsettled = young + len(late)
-    if not loaded and unreadable == {shot for shot, _, _ in still_failed}:
+    if not loaded and not replaced and unreadable == {shot for shot, _, _ in still_failed}:
         # Everything new was still being written.
         send({"kind": "live_unchanged", **state(True, unsettled, False), "total_files": len(names)})
         return
@@ -2182,14 +2272,20 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     summary = _summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, False, fingerprint, listed_at)
     summary["unsettled"] = unsettled
     send({"kind": "scan_summary", "status": summary})
-    send({"kind": "loaded", "rows": rows, "bytes": size, "files": len(held) + loaded, "loaded_at": time.time(),
+    kept = sorted(set(held) - replaced)
+    again_note = (f" ({len(replaced):,} changed after Live read {'it' if len(replaced) == 1 else 'them'}, read "
+                  "again)" if replaced else "")
+    send({"kind": "loaded", "rows": rows, "bytes": size,
+          "files": len(kept) + loaded + len(replaced - unreadable), "loaded_at": time.time(),
           "total_files": len(names), "failed_files": len(unreadable), "unsettled_files": unsettled,
           "problematic": sorted(set(problematic)), "source": "updated", "cached": False,
           "disk_cache_pending": False, "load_counts": {
-              "reused_memory": len(held), "reused_disk": 0, "new": len(to_read), "modified": 0, "removed": 0,
-              "read": read, "new_loaded": loaded, "modified_loaded": 0},
-          "cache_reason": f"Live: reused {len(held)} shots from memory; read {read} new TXY files",
-          "fingerprint": [list(item) for item in fingerprint], "memory_shots": sorted(held),
+              "reused_memory": len(kept), "reused_disk": 0, "new": len(to_read) - len(replacing),
+              "modified": len(replacing), "removed": 0, "read": read, "new_loaded": loaded,
+              "modified_loaded": len(replaced - unreadable)},
+          "cache_reason": f"Live: reused {len(kept)} shots from memory; read {read} TXY files{again_note}",
+          "live_reread": reread,
+          "fingerprint": [list(item) for item in fingerprint], "memory_shots": kept,
           "base_signature": "", "modified": summary["modified"], "modified_observed_at": time.time(),
           "signature": _fingerprint_signature(fingerprint), **state(True, unsettled, True)})
 
@@ -2795,12 +2891,13 @@ def main() -> None:
                        identity=str(request.get("identity") or ""), seen=request.get("seen"),
                        check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL),
                        listed_mtime=request.get("listed_mtime"), seen_names=request.get("seen_names"),
-                       identity_root=request.get("identity_root"))
+                       identity_root=request.get("identity_root"), recent=request.get("recent"))
         elif operation == "load" and request.get("save_memory") and request.get("held_dir"):
             save_held(request["path"], emit, request.get("cache"), request.get("held") or [],
                       request.get("held_problematic") or [], request["held_dir"],
                       identity=str(request.get("identity") or ""), identity_root=request.get("identity_root"),
-                      no_cache=bool(request.get("no_cache")))
+                      no_cache=bool(request.get("no_cache")), recent=request.get("recent"),
+                      output=request.get("output"))
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),

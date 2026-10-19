@@ -66,6 +66,54 @@ with trace tests, following Codex's constraints and Maestro's notes:
   the name, the two INFO lines, the refusal), `tests/test_helabMainWindow.py` (off at start; none, Keep and
   Delete; refusal; Keep as the dialog's default).
 
+### Review item E (Tony's decision, 2026-10-20): a recently read shot that changes is read again
+
+- **Rule.** A held shot that **Live itself read** less than **5 minutes** ago
+  (`FolderExplorer.LIVE_REREAD_SECONDS` = 300, measured from when Live delivered it, per shot in
+  `LiveSession.read_at`; read again: from then) that changes in size or mtime is read again, like a new
+  file (settled by age and unchanged a check apart, before/after-read stats), and replaces the held one
+  (`loaded` without it in `memory_shots`, its new array as a `shot` event, `live_reread`: shot, path, old
+  and new size and mtime). Live goes on; nothing is listed as mismatched. Until it is read, it waits as
+  a file still being written does (`live_seen`, counted as still being written), and listings stat it
+  besides the sample. Older held shots that change still stop Live (`shots_missing`, changed). The
+  initial load's shots aren't Live's: one of those changing while Live watches still stops Live.
+- **Why 5 minutes.** A partly read shot is noticed by the next listing (the next new shot changes the
+  folder; the newest held shot is in every check level's sample) or at the latest by the once-a-minute
+  listing, or by the next save (every 10 new shots, and on stop), which checks every held file. Five
+  minutes covers a writer pausing a few minutes plus that delay. Detection costs nothing extra: no new
+  stats except the changed shot's own until it's read.
+- **`save_held`:** the save gets the same `recent` list. A recent shot that changed is read again before
+  the save (once settled, unchanged while read; else saved as held and counted as unsettled) and saved
+  as it is now, not reported as a mismatch; older changed shots still stop the save.
+- **Telling the user.** The tab's Live line and Folder details' state row say "Shot 1009 changed after
+  it was read (writer paused > 5 s?): read again" (several: "Shots …") for **one minute** after the
+  re-read (`LIVE_REREAD_NOTE_SECONDS`; new shots don't clear it, so it stays long enough to be seen at a
+  shot every few seconds); the Live line's tooltip adds when and the rule. One WARNING per shot: `Live:
+  shot N changed S s after Live read it, read again: <path> (size A → B bytes, mtime X → Y). The converter
+  writing to a temporary name and renaming it avoids this.` The re-read shot counts as not yet cached, so
+  the next save writes its new data.
+- **Ownership:** Folder details' state row is in `helab/views/FolderDetailsPanel.py`, outside my owned
+  paths: one small append there (`explorer.live_reread_note(path)`), as Maestro's brief asked for the
+  note in Folder details. Everything else is in owned files.
+- **Tests:** `tests/test_live_check.py` (a recent changed shot waits once, then is read again and
+  replaces the held one; an older one, or with `recent` naming others, still stops the check),
+  `tests/test_io_trace.py` (`save_held`: a recent changed shot is read again and saved as it is now; not
+  recent: a mismatch, nothing saved), `tests/test_live.py` (the tab: read again, Live goes on, the note on
+  the Live line and in Folder details, the WARNING with path and sizes, the note gone after a minute, then
+  a shot read longer ago that changes stops Live as mismatched).
+- **Proposed AGENTS.md Live wording** (replacing "otherwise `shots_missing` … is planned)." in the Live
+  paragraph): "otherwise `shots_missing` (`reason` root or changed) stops Live and lists the folder as
+  mismatched, except for a held shot Live itself read in the last 5 minutes (`LiveSession.read_at`,
+  `FolderExplorer.LIVE_REREAD_SECONDS`, sent as `recent`): when it changes, its writer paused longer than
+  the settle age, so it is read again like a new file and replaces the held one (`live_reread`), by
+  Tony's decision. The Live line and Folder details say "Shot N changed after it was read (writer paused
+  > 5 s?): read again" for a minute, and one WARNING per shot logs its path, old and new (size, mtime) and
+  the seconds since Live read it. Saves (`io_helper.save_held`, from RAM: one listing, every held file
+  checked by its stats, no TXY read) read such a shot again first. A new file is read only when settled
+  by age and unchanged since the previous check (`seen`): metadata only, by Tony's decision; its content
+  isn't checked. The converter writing to a temporary name and renaming it remains the real fix."
+
+### Before and after (the same scenarios, rerun)
 ### Before and after (the same scenarios, rerun)
 
 Same setup as Part 1 (offscreen HeLab, local APFS test share, real defaults, read timeouts 3/4/5 s),
