@@ -61,6 +61,10 @@ action and is the real consumer for the dataset view, the job contract and
   QtWebEngine ([memory](../.ai/memory/results/lab-pc-qtwebengine-black-render.md)).
 - WebGL scatter can't draw every event of a large folder. Any display sampling
   is labelled on the figure and never becomes the analysed data (see Export).
+- Defaults (Tony, 2026-10-19): auto-crop is configurable and by default keeps
+  the region holding 99 % of the events; the display cap is 100k points;
+  histogram bins are automatic. Each analysis records a stable ID and version
+  (plus its file's hash) with every result, since these first plots will change.
 - To decide while designing: how auto-crop finds the regions of interest (for
   example density or percentile bounds on T, X and Y), whether the crop is
   shown and adjustable, and whether crop limits count as parameters saved with

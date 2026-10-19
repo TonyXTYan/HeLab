@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="pytest -n 12 -cov" type="tests" factoryName="py.test">
+  <configuration default="false" name="pytest -n 18 -cov" type="tests" factoryName="py.test">
     <module name="HeLab" />
     <option name="ENV_FILES" value="" />
     <option name="INTERPRETER_OPTIONS" value="" />
@@ -15,7 +15,7 @@
     <option name="RUN_TOOL" value="" />
     <option name="_new_keywords" value="&quot;&quot;" />
     <option name="_new_parameters" value="&quot;&quot;" />
-    <option name="_new_additionalArguments" value="&quot;-n 12 --cov\u003d. --cov-report\u003dterm --cov-report\u003dxml --reruns 5 --reruns-delay 1 --verbose&quot;" />
+    <option name="_new_additionalArguments" value="&quot;-n 18 --cov\u003d. --cov-report\u003dterm --cov-report\u003dxml --reruns 5 --reruns-delay 1 --verbose&quot;" />
     <option name="_new_target" value="&quot;pytest&quot;" />
     <option name="_new_targetType" value="&quot;CUSTOM&quot;" />
     <method v="2" />

@@ -62,6 +62,19 @@ Decided by Tony 2026-10-13; periodic saves decided 2026-10-15:
 - Auto-saves obey the disk budget, the folder's Don't cache flag and the
   pending-save questions like any load's save.
 
+## Live scope and polling (decided by Tony 2026-10-19)
+
+- **Polling**, not filesystem notifications: the next check starts a cooldown
+  after the previous one finished (default **3 s**, a setting), so checks never
+  overlap or queue up however slow the volume is.
+- Live applies to the **selected folder of the current tab**. Turning Live on
+  greys out that tab's folder explorer (tree, path bar, navigation), so the
+  window focuses on the plots in the middle and the parameters on the right;
+  turning Live off gives it back.
+- **Switching tabs turns Live off**, and so does quitting: Live is always off
+  after a restart.
+- Auto-save default: **every 10 shots** (L2).
+
 ## Acquisition machine
 
 The first local deployment can watch settled raw files, convert them to TXY,
@@ -96,9 +109,8 @@ has a defined recovery path.
 
 ## Open decisions
 
-- Polling versus filesystem notifications on the actual lab volume.
-- Monitoring scope after switching tabs and behavior on app restart.
-- Update cadence, manual versus automatic reruns and handling busy analyses.
+- Analysis update cadence, manual versus automatic reruns and handling busy
+  analyses (L3).
 - How a Live-following unpinned view presents revisions while a pinned view
   keeps its chosen fixed result.
 
