@@ -117,3 +117,41 @@ table; an offscreen `HelabMainWindow` has no `QQuickWidget` child; on macOS (for
 surface is a hidden child that stays hidden when the window shows. The window-recreation
 effect itself can't be seen offscreen: Tony's checklist keeps the Mac check and the
 lab-PC question (MANUAL_TODO).
+
+## 6. Activation sources
+
+Tested offscreen (`test_activation_sources`, `test_a_click_back_in_the_focused_plot`):
+- Click in a pyqtgraph `PlotWidget` viewport: the PlotWidget is StrongFocus and takes focus.
+- Click in content that takes no focus (a QLabel): the dock (ClickFocus) takes it.
+- Click on the dock's title strip: the dock takes it.
+- Click in a `QWebEngineView`: its render widget (the view's focus proxy, made once the page
+  renders) takes focus; offscreen it renders `setHtml` content.
+- Keyboard focus moved into a plot's widget (Tab reason).
+- Tab activation via the dock tab bar (needs the bar laid out: a bar Qt has made but not
+  yet shown ignores `setCurrentIndex`).
+- A floating plot's window activated (`focusWindowChanged`).
+- The main window activated again: Qt restores its focus widget, so the plot that had focus
+  there shows again.
+
+Gap found and fixed: with focus approach alone, if plot B was shown by its tab, its window
+or the chooser while focus stayed in plot A's widget, a click back in that widget changed
+no focus, so A's settings didn't come back (the old event filter saw the press). Now when
+a plot is shown while focus sits in another plot, focus moves to the shown plot's dock
+(not when focus is elsewhere, e.g. the chooser keeps it). The test fails without the fix.
+
+What offscreen tests can't show (Tony's on-screen checklist):
+- Real clicks through macOS (cocoa) and Windows: click-to-focus is applied only to
+  spontaneous events; QTest marks its clicks spontaneous, but the window system decides
+  activation. Check a first click into an inactive window (another app in front).
+- QtWebEngine on screen: whether a click in the 3D scatter reaches Qt's render widget as a
+  focus change on macOS and on the lab PCs (black-pane PCs: the click still lands on the
+  widget, nothing paints). If a click in the scatter doesn't switch the settings, report it:
+  the fallback is to make the scatter's container ClickFocus-only and steal focus.
+- Floating windows: activation by clicking the floating title bar, by Cmd-` / Alt-Tab and
+  by Mission Control; `focusWindowChanged` should fire for each.
+- Background tabs: which dock Qt focuses when the focused plot goes behind a tab, on
+  screen (offscreen never hides background tabs: they stay "visible" there).
+- Dragging a plot's tab out to float it and back in, and docking a floating plot onto
+  another to make a tab group: the panel and tab × buttons follow.
+- Keyboard: Tab/Shift-Tab into a plot's controls shows its settings; on macOS full keyboard
+  access setting changes which widgets take Tab focus.

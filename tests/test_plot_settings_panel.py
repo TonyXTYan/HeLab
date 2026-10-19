@@ -9,8 +9,10 @@ from typing import Iterator, List, Optional, cast
 import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6 import sip
-from PyQt6.QtCore import QEvent, Qt
-from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QLineEdit, QMainWindow, QTabBar, QWidget
+from PyQt6.QtCore import QEvent, QPoint, Qt
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QLineEdit, QMainWindow, QTabBar, QVBoxLayout, QWidget
+import pyqtgraph as pg
 
 from helab.models.ScriptTreeSelector import AnalysisDock, DockTabCloser, PlotSettingsPanel, TreePanelWidget
 
@@ -281,3 +283,69 @@ def test_rhi_surface_is_a_hidden_child(qtbot: QtBot, monkeypatch: pytest.MonkeyP
     assert len(surfaces) == 1 and surfaces[0].isHidden() and surfaces[0].parent() is window
     window.show()
     assert surfaces[0].isHidden()
+
+
+def line_edit_plot() -> tuple[QWidget, QLineEdit]:
+    content = QWidget()
+    edit = QLineEdit(content)
+    QVBoxLayout(content).addWidget(edit)
+    return content, edit
+
+
+def test_activation_sources(plots: Plots, qtbot: QtBot) -> None:
+    """Each way a plot becomes active shows its settings, as far as offscreen Qt shows it:
+    clicks (pyqtgraph, a web view, content that takes no focus, the dock's title), keyboard
+    focus, a tab, a floating window, and the main window activated again."""
+    graph, web, label = pg.PlotWidget(), QWebEngineView(), QLabel("takes no focus")
+    web.setHtml("<p>web view</p>")
+    content, edit = line_edit_plot()
+    g, w, n, k, f = (plots.add(widget) for widget in (graph, web, label, content, QLabel("floats")))
+    plots.show(qtbot)
+    panel, click = plots.panel, Qt.MouseButton.LeftButton
+    qtbot.mouseClick(label, click)  # type: ignore[no-untyped-call]
+    assert panel.current_plot() is n and n.hasFocus()  # The dock takes the click.
+    qtbot.mouseClick(graph.viewport(), click)  # type: ignore[no-untyped-call]
+    assert panel.current_plot() is g and graph.hasFocus()
+    qtbot.mouseClick(n, click, pos=QPoint(n.width() // 2, 4))  # type: ignore[no-untyped-call]  # Its title.
+    assert panel.current_plot() is n
+    qtbot.waitUntil(lambda: web.focusProxy() is not None, timeout=10_000)
+    proxy = web.focusProxy()
+    assert proxy is not None
+    qtbot.mouseClick(proxy, click)  # type: ignore[no-untyped-call]
+    assert panel.current_plot() is w
+    edit.setFocus(Qt.FocusReason.TabFocusReason)
+    assert panel.current_plot() is k
+    plots.area.tabifyDockWidget(g, n)
+    qtbot.waitUntil(lambda: any(bar.count() == 2 and bar.isVisible() for bar in plots.area.findChildren(QTabBar)))
+    bar = next(bar for bar in plots.area.findChildren(QTabBar) if bar.count() == 2)
+    bar.setCurrentIndex(next(i for i in range(2) if bar.tabText(i) == g.windowTitle()))
+    qtbot.waitUntil(lambda: panel.current_plot() is g)
+    assert g.hasFocus()  # Taken from plot k, so a click back there shows k.
+    f.setFloating(True)
+    f.show()
+    f.activateWindow()
+    qtbot.waitUntil(lambda: panel.current_plot() is f)
+    # Back to the main window: Qt gives focus back to its focus widget, in plot g.
+    plots.area.activateWindow()
+    qtbot.waitUntil(lambda: panel.current_plot() is g)
+
+
+def test_a_click_back_in_the_focused_plot(plots: Plots, qtbot: QtBot) -> None:
+    """Another plot shown by its tab, window or the chooser takes the focus left in a plot, so
+    a click back in that plot (which had focus) changes focus and shows it again."""
+    first_content, first_edit = line_edit_plot()
+    first, second = plots.add(first_content), plots.add()
+    plots.show(qtbot)
+    first_edit.setFocus(Qt.FocusReason.MouseFocusReason)
+    assert plots.panel.current_plot() is first
+    plots.area.tabifiedDockWidgetActivated.emit(second)  # Side by side: its tab in another group.
+    assert plots.panel.current_plot() is second and second.hasFocus()
+    qtbot.mouseClick(first_edit, Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
+    assert plots.panel.current_plot() is first
+    # The chooser keeps its own focus.
+    plots.panel.show()
+    plots.panel.activateWindow()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is plots.panel)
+    plots.panel.chooser.setFocus()
+    plots.panel.chooser.activated.emit(1)
+    assert plots.panel.current_plot() is second and plots.panel.chooser.hasFocus()

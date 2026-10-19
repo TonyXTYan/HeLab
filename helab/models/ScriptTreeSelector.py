@@ -748,6 +748,10 @@ class PlotSettingsPanel(QWidget):
             dock.raise_()
             if dock.isFloating():
                 dock.activateWindow()
+        # Focus left in another plot (this one came by its tab, its window or the chooser)
+        # moves here, so a click back in that plot changes focus and shows it again.
+        if self._plot_of(QApplication.focusWidget()) not in (None, dock) and dock.isVisible():
+            dock.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def current_plot(self) -> Optional[QDockWidget]:
         return self._recent[-1] if self._recent else None
