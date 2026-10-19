@@ -271,8 +271,6 @@ def _mounts(reason: str) -> list[Mount]:
 # converter stalled mid-file): not shown or cached, and read again by the next check. Older, it's a
 # damaged file, read as far as it goes (problematic).
 RECENT_SECONDS = 600.0
-# (A load's test is the newline alone: a row a stalled write cut never ends with one. A whole row with
-# an empty field is the converter's or a damaged file's, read as problematic.)
 
 
 def _recent(mtime_ns: int) -> bool:
@@ -1666,7 +1664,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         """The shot's array, or None if the file is recent and ends mid-row: still being written."""
         _read_gate(filename)
         frame, tail = _read_txy_file(filename, reason)
-        if not tail.endswith(b"\n") and _recent(mtime_ns):
+        if not _whole_last_row(tail) and _recent(mtime_ns):
             return None
         if frame.isna().any().any():
             problematic.append(shot)
@@ -1971,10 +1969,11 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
 
 
 def _whole_last_row(tail: bytes) -> bool:
-    """Live's test of a TXY file's last bytes: the last byte is a newline and the last row has three
-    non-empty fields (the converter's dlmwrite ends every row with one). A file still being written
-    usually ends mid-row; one paused exactly at a row's end can't be told apart (the converter's
-    temporary-name rename is what will settle it)."""
+    """Whether a TXY file's last bytes end with a whole row (Live's test, and a load's for a recent
+    file): the last byte is a newline and the last row has three non-empty fields (the converter's
+    dlmwrite ends every row with one). A file still being written usually ends mid-row; one paused
+    exactly at a row's end can't be told apart (the converter's temporary-name rename is what will
+    settle it)."""
     if not tail.endswith(b"\n"):
         return False
     # Three non-empty fields (a malformed but whole row is the read's to report as unreadable).

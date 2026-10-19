@@ -54,7 +54,12 @@ def test_loader_preserves_shots_and_drops_nan_rows(tmp_path: Path) -> None:
     output = tmp_path / "output"
     source.mkdir()
     output.mkdir()
-    (source / "d_txy_forc7.txt").write_text("1,2,3\n4,,6\n")
+    damaged = source / "d_txy_forc7.txt"
+    damaged.write_text("1,2,3\n4,,6\n")
+    # Untouched for long: damaged, not still being written (a recent one ending so is left for later).
+    from helab import io_helper
+    when = time.time() - io_helper.RECENT_SECONDS - 60
+    os.utime(damaged, (when, when))
     events: list[dict[str, Any]] = []
     load(str(source), str(output), events.append)
     shot = next(event for event in events if event["kind"] == "shot")

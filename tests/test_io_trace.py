@@ -823,3 +823,29 @@ def test_reselecting_a_ram_only_folder_checks_it_without_listing_it(
     assert listings == ["load"] and model.nodes[str(run)].txy_count == 21
     explorer.close_cleanup()
     service.shutdown()
+
+
+def test_a_load_takes_a_recent_last_row_with_an_empty_field_for_one_still_being_written(tmp_path: Path) -> None:
+    """Codex's repro: the last row ends with a newline but has an empty third field (``3,4,\\n``),
+    and the file is older than the settle age. As Live does, a load takes it for a file still being
+    written: not shown, not cached, unsettled."""
+    from helab.utils.cache_store import unpack_dataset
+    run = tmp_path / "run"
+    write_shots(run, range(1, 3))
+    paused = run / "d_txy_forc3.txt"
+    paused.write_text("3,2,3\n3,4,\n")
+    when = time.time() - 8
+    os.utime(paused, (when, when))
+    cache = store_options()
+    output = tmp_path / "out"
+    output.mkdir()
+    events: list[dict[str, Any]] = []
+    load(str(run), str(output), events.append, cache)
+    loaded = next(event for event in events if event["kind"] == "loaded")
+    assert [event["shot"] for event in events if event["kind"] == "shot"] == [1, 2]
+    assert loaded["files"] == 2 and loaded["unsettled_files"] == 1 and 3 not in loaded["problematic"]
+    with io_helper._cache_store(cache["directory"], [str(run)]) as store:
+        value = store.read_dataset(str(run)).value
+        assert value is not None
+        data = unpack_dataset(value[1])
+        assert data is not None and sorted(data) == [1, 2]
