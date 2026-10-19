@@ -63,3 +63,26 @@ open again (remembered width): window 739 · plot 355 · settings 380 (open True
 - `mypy --strict` on helab and tests, default and `--platform win32`: clean.
 - `pyright helab tests`, default and `--pythonplatform Windows`: clean.
 - `git diff --check`: clean.
+
+## Round 2 (2026-10-20)
+
+- **Show plot window opens the section** (`raise_current`): after `show_plot(dock,
+  raise_dock=True)`, a closed section opens through `set_settings_open(True)`, so the window
+  widens as on a click and the plot remembers it open.
+- **Drag end.** Probe first: an offscreen `QTest` drag on a docked dock's title floats it
+  mid-drag, and `topLevelChanged` fires with `QGuiApplication.mouseButtons() ==
+  LeftButton`; the release clears it. So one button check per signal tells a drag from a
+  `setFloating`. `DragEnd` (its own `QObject`, so the panel still has no `eventFilter`)
+  filters only docks it waits for. Its first version ended the wait on release only. A
+  stale button state (a release the dock never saw) would have left a docked plot's page
+  in its hidden section, so any mouse event on the dock with no button down ends the wait.
+  Without a button down, pages move on a 0 ms single-shot timer (`_place_soon`), which also
+  merges `topLevelChanged` and `dockLocationChanged` into one placement.
+- Side effect in tests: the page now follows a pass of the event loop later. The
+  twenty-plots test waits for it, and during that wait offscreen Qt activates the floating
+  windows as they come up, so the fallback after closing is floating plot 16 (the most
+  recently shown), not plot 18. In the first test, activating the main window gives focus
+  back to plot one (the hardening rule), so it shows plot two again before clicking Show
+  plot window.
+- **Review fix:** `setWidget` removes and hides the old plot only if it is still the
+  holder's child.
