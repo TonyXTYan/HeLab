@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from typing import Any, Callable, Iterator
+import uuid
 
 import pytest
 from PyQt6 import QtWebEngineWidgets  # noqa: F401  (before any QApplication: conftest loads the views)
@@ -57,11 +58,24 @@ def trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
         os.close(io_helper._trace_fd)
 
 
-def events_of(call: Callable[[Callable[[dict[str, Any]], None]], None]) -> list[str]:
-    """The kinds of event a helper call sends (times and paths differ between runs)."""
+# Event fields that differ between two runs of the same call: times, and each run's output folder.
+VOLATILE = {"scanned_at", "loaded_at", "modified_observed_at", "saved_at", "snapshot_at", "live_seconds",
+            "artifact", "scan_operation_id", "revision"}
+
+
+def stable(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: stable(item) for key, item in value.items() if key not in VOLATILE}
+    if isinstance(value, list):
+        return [stable(item) for item in value]
+    return value
+
+
+def events_of(call: Callable[[Callable[[dict[str, Any]], None]], None]) -> list[Any]:
+    """The events a helper call sends, without the fields that differ between runs."""
     events: list[dict[str, Any]] = []
     call(events.append)
-    return [event["kind"] for event in events]
+    return [stable(event) for event in events]
 
 
 def test_off_unless_the_variable_names_a_file(tmp_path: Path) -> None:
@@ -98,12 +112,17 @@ def test_a_listing_scan_and_load_trace_each_source_operation(tmp_path: Path, tra
     write_shots(run, range(1, 4))
     output = tmp_path / "out"
     output.mkdir()
+    (run / "sub").mkdir()
     list_folder(str(run), lambda _: None)
     assert counts(lines(trace)) == {("scandir", "listing"): 1}
+    # Names only; the entry that isn't a data file is asked is_dir (the listing's file type answers).
+    assert lines(trace)[0]["entries"] == 7 and lines(trace)[0]["is_dir"] == 1
     before = len(lines(trace))
     scan(str(run), lambda _: None)
     assert counts(lines(trace)[before:]) == {("scandir", "listing"): 1, ("entry_stat", "fingerprint"): 3,
-                                             ("stat", "folder mtime"): 1}
+                                             ("lstat", "subfolder date"): 1, ("stat", "folder mtime"): 1}
+    listing = next(record for record in lines(trace)[before:] if record["op"] == "scandir")
+    assert listing["is_dir"] == 7  # (Every entry, in a scan.)
     before = len(lines(trace))
     load(str(run), str(output), lambda _: None)
     records = lines(trace)[before:]
@@ -112,7 +131,7 @@ def test_a_listing_scan_and_load_trace_each_source_operation(tmp_path: Path, tra
         ("stat", "load: before read"): 3, ("read", "load: read"): 3, ("stat", "load: after read"): 3,
         ("stat", "load: verifying"): 3}
     listing = next(record for record in records if record["op"] == "scandir")
-    assert listing["path"] == str(run) and listing["entries"] == 6
+    assert listing["path"] == str(run) and listing["entries"] == 7
     reads = [record for record in records if record["op"] == "read"]
     assert [record["bytes"] for record in reads] == [(run / f"d_txy_forc{shot}.txt").stat().st_size
                                                      for shot in range(1, 4)]
@@ -122,25 +141,36 @@ def test_a_listing_scan_and_load_trace_each_source_operation(tmp_path: Path, tra
     assert all(record["pid"] == os.getpid() and record["t"] > 0 for record in records)
 
 
-def test_tracing_changes_no_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tracing_changes_no_event_and_no_source_call(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A listing, a scan, a load and a Live check, untraced and traced: the same events (times aside)
+    and the same calls on the folder, in the same order."""
     run = tmp_path / "run"
     write_shots(run, range(1, 4))
     (run / "sub").mkdir()
+    memory = [[shot, (info := (run / f"d_txy_forc{shot}.txt").stat()).st_size, info.st_mtime_ns] for shot in (1, 2)]
+    info = (run / "d_txy_forc3.txt").stat()
+    seen = [[3, info.st_size, info.st_mtime_ns]]
+    source = SourceCalls(run, monkeypatch)
 
-    def calls() -> list[list[str]]:
+    def calls() -> tuple[list[list[Any]], list[tuple[str, str]]]:
+        source.calls.clear()
         output = tmp_path / f"out-{time.monotonic_ns()}"
         output.mkdir()
-        return [events_of(lambda send: list_folder(str(run), send)), events_of(lambda send: scan(str(run), send)),
-                events_of(lambda send: load(str(run), str(output), send))]
+        events = [events_of(lambda send: list_folder(str(run), send)), events_of(lambda send: scan(str(run), send)),
+                  events_of(lambda send: load(str(run), str(output), send)),
+                  events_of(lambda send: live_check(str(run), str(output), send, memory, seen=seen))]
+        return events, list(source.calls)
     monkeypatch.setattr(io_helper, "TRACE", None)
     plain = calls()
     monkeypatch.setattr(io_helper, "TRACE", str(tmp_path / "io.jsonl"))
     monkeypatch.setattr(io_helper, "_trace_fd", None)
     try:
-        assert calls() == plain
+        traced = calls()
     finally:
         if io_helper._trace_fd is not None:
             os.close(io_helper._trace_fd)
+    assert traced[0] == plain[0]
+    assert traced[1] == plain[1] and plain[1]
     assert lines(tmp_path / "io.jsonl")
 
 
@@ -160,8 +190,12 @@ def test_a_live_check_traces_its_folder_stat_samples_and_tail_reads(tmp_path: Pa
     # The new file's last row is checked before it is read: its tail is opened and read.
     assert found[("stat", "live: last row")] == 1 and found[("read_tail", "live: last row")] == 1
     assert found[("read", "live: read")] == 1
-    # The data root's marker (the test folder's) names the folder.
-    assert found[("marker_read", "live: identity")] >= 1
+    # The data root's marker (the test folder's) names the folder: the folder's own is missing, the
+    # root's is opened, fstat'ed and read.
+    assert found[("marker_open", "live: identity")] == 2 and found[("marker_fstat", "live: identity")] == 1
+    assert found[("marker_read", "live: identity")] == 1
+    marker = next(record for record in lines(trace) if record["op"] == "marker_read")
+    assert marker["bytes"] == (tmp_path / ".helab-root").stat().st_size
     # Held shots are never read.
     assert not any(record["op"] == "read" and record["path"].endswith(("forc1.txt", "forc2.txt"))
                    for record in lines(trace))
@@ -248,3 +282,48 @@ def test_the_gui_process_never_touches_source_folders(
     assert all(record["path"].startswith(str(share)) for record in helpers if record["op"] in ("scandir", "read"))
     explorer.close_cleanup()
     service.shutdown()
+
+
+def test_read_marker_behaves_the_same_with_a_trace_callback(tmp_path: Path) -> None:
+    from helab.utils import data_roots
+    good, bad, folder_named, missing = (tmp_path / name for name in ("good", "bad", "dir", "missing"))
+    for path in (good, bad, folder_named, missing):
+        path.mkdir()
+    (good / data_roots.MARKER_NAME).write_text(json.dumps({"helab": "root", "version": 1, "uuid": str(uuid.uuid4()),
+                                                           "label": "good", "created_at": "2026-10-19T00:00:00Z"}))
+    (bad / data_roots.MARKER_NAME).write_text("not json")
+    (folder_named / data_roots.MARKER_NAME).mkdir()
+
+    def outcome(folder: Path, **kwargs: Any) -> object:
+        try:
+            return data_roots.read_marker(str(folder), **kwargs)
+        except (OSError, ValueError) as exc:
+            return (type(exc), str(exc))
+    for folder, expected in ((good, ["open", "fstat", "read"]), (bad, ["open", "fstat", "read"]),
+                             (folder_named, ["open", "fstat"]), (missing, [])):
+        steps: list[tuple[str, dict[str, object]]] = []
+        assert outcome(folder, trace=lambda name, fields: steps.append((name, fields))) == outcome(folder)
+        assert [name for name, _ in steps] == expected
+    steps = []
+    data_roots.read_marker(str(good), trace=lambda name, fields: steps.append((name, fields)))
+    size = (good / data_roots.MARKER_NAME).stat().st_size
+    assert steps[1][1]["size"] == size and steps[2][1] == {"bytes": size}
+
+
+def test_a_trace_file_on_a_network_drive_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                    caplog: pytest.LogCaptureFixture) -> None:
+    from helab.utils import cache_location
+    assert io_helper._trace_file(None) is None and io_helper._trace_file("") is None
+    assert io_helper._trace_file(str(tmp_path / "t.jsonl")) == str(tmp_path / "t.jsonl")
+    assert io_helper._trace_file("//server/share/t.jsonl") is None
+    monkeypatch.setattr(cache_location, "_filesystem", lambda path: ("smbfs", True))
+    assert io_helper._trace_file(str(tmp_path / "t.jsonl")) is None
+    assert "HELAB_IO_TRACE ignored" in caplog.text
+
+
+def test_hiding_a_marker_is_traced(tmp_path: Path, trace: Path) -> None:
+    marker = tmp_path / ".helab-root"
+    marker.write_text("{}")
+    io_helper._hide(str(marker))
+    expected = {"darwin": ["stat", "chflags"], "win32": ["get_attributes", "set_attributes"]}.get(sys.platform, [])
+    assert [record["op"] for record in lines(trace)] == expected

@@ -220,15 +220,26 @@ def marker_label(folder: str) -> str:
     return name if name and name not in (".", "..") else "data"
 
 
-def read_marker(folder: str) -> Marker:
-    """Read a marker only from a source I/O operation, never from a local lane."""
+def read_marker(folder: str, *, trace: Callable[[str, dict[str, object]], None] | None = None) -> Marker:
+    """Read a marker only from a source I/O operation, never from a local lane.
+
+    ``trace`` (the helpers' I/O trace, ``HELAB_IO_TRACE``) hears of each step that succeeded: open,
+    fstat (size, mtime_ns) and read (bytes)."""
     descriptor = os.open(os.path.join(folder, MARKER_NAME), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
     try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        if trace is not None:
+            trace("open", {})
+        info = os.fstat(descriptor)
+        if trace is not None:
+            trace("fstat", {"size": info.st_size, "mtime_ns": info.st_mtime_ns})
+        if not stat.S_ISREG(info.st_mode):
             raise ValueError("Data-root marker is not a regular file")
         with os.fdopen(descriptor, "rb") as stream:
             descriptor = -1
-            return parse_marker(stream.read(MAX_MARKER_BYTES + 1))
+            raw = stream.read(MAX_MARKER_BYTES + 1)
+            if trace is not None:
+                trace("read", {"bytes": len(raw)})
+            return parse_marker(raw)
     finally:
         if descriptor >= 0:
             os.close(descriptor)

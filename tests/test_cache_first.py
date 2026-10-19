@@ -220,19 +220,19 @@ def test_files_still_being_written_are_left_for_the_next_load(
 
 
 def test_file_growing_while_read_is_not_kept(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    import pandas as pd
+    from helab import io_helper
     source = source_folder(tmp_path)
     growing = source / "d_txy_forc2.txt"
-    read_csv = pd.read_csv
+    read_file = io_helper._read_txy_file
 
-    def append_after_read(filename: Any, *args: Any, **kwargs: Any) -> Any:
-        frame = read_csv(filename, *args, **kwargs)
+    def append_after_read(filename: str, reason: str) -> Any:
+        frame = read_file(filename, reason)
         if str(filename) == str(growing):
             with open(growing, "a") as file:
                 file.write("4,5,6\n")
         return frame
 
-    monkeypatch.setattr("pandas.read_csv", append_after_read)
+    monkeypatch.setattr(io_helper, "_read_txy_file", append_after_read)
     events = run_load(source, tmp_path)
     result = loaded(events)
     assert [event["shot"] for event in events if event["kind"] == "shot"] == [1]

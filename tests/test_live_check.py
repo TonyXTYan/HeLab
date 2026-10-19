@@ -257,14 +257,13 @@ def test_unreadable_new_files_are_kept_known_and_not_read_again(
     loaded = last(check_twice(folder, tmp_path, memory), "loaded")
     assert loaded["failed_files"] == 1 and 3 in loaded["problematic"] and loaded["memory_shots"] == [1, 2]
     known = [entry for entry in loaded["fingerprint"] if entry[0] == 3]
-    import pandas as pd
     reads: list[str] = []
-    real = pd.read_csv
+    real = io_helper._read_txy_file
 
-    def read_csv(*args: Any, **kwargs: Any) -> Any:
-        reads.append(str(args[0]))
-        return real(*args, **kwargs)
-    monkeypatch.setattr(pd, "read_csv", read_csv)
+    def read_file(filename: str, reason: str) -> Any:
+        reads.append(filename)
+        return real(filename, reason)
+    monkeypatch.setattr(io_helper, "_read_txy_file", read_file)
     again = check(folder, tmp_path, memory, known=known)
     assert last(again, "live_unchanged")["total_files"] == 3 and not reads
 

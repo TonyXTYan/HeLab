@@ -44,10 +44,30 @@ def _read_gate(filename: str) -> None:
         time.sleep(READ_GATE_POLL)
 
 
+def _trace_file(value: str | None) -> str | None:
+    """Where the I/O trace goes: ``value`` (HELAB_IO_TRACE), unless it is on a network drive or
+    share, which the trace would then add traffic to (and sharing writes from several helpers there
+    can garble it): refused with a warning. Only the mount table is read, never the folder."""
+    if not value:
+        return None
+    path = os.path.abspath(os.path.expanduser(value))
+    from helab.utils.cache_location import NETWORK_FILESYSTEMS, _filesystem
+    try:
+        fstype, remote = _filesystem(path)
+    except (OSError, RuntimeError):
+        fstype, remote = "", False
+    if path.startswith(("\\\\", "//")) or remote or fstype in NETWORK_FILESYSTEMS:
+        import logging
+        logging.warning("HELAB_IO_TRACE ignored: %s is on a network drive (%s); use a local file",
+                        path, fstype or "remote")
+        return None
+    return path
+
+
 # Debugging aid: with HELAB_IO_TRACE=<file>, every operation a helper makes on a source folder is
 # appended to <file> as one JSON line (``_trace``), with the request it serves. Unset in production:
 # nothing is written, and the wrappers below make the same calls as before.
-TRACE = os.environ.get("HELAB_IO_TRACE") or None
+TRACE = _trace_file(os.environ.get("HELAB_IO_TRACE"))
 # This helper's request, on every line (``main``): its operation, owner and tabs, lane, flags.
 _trace_request: dict[str, Any] = {}
 _trace_fd: int | None = None
@@ -138,10 +158,11 @@ def _isdir(path: str, reason: str) -> bool:
 
 def _entry_stat(entry: os.DirEntry[str], reason: str) -> os.stat_result:
     """A listed entry's ``stat()``, traced. One more call on macOS and Linux; on Windows the
-    listing already has it (``syscall`` False), unless the entry is a link."""
+    listing already has it (``syscall`` False), unless the entry is a link (not probed: asking
+    would be a call the untraced helper doesn't make)."""
     if TRACE is None:
         return entry.stat()
-    syscall = sys.platform != "win32" or entry.is_symlink()
+    syscall = sys.platform != "win32"
     try:
         info = entry.stat()
     except OSError as exc:
@@ -152,10 +173,12 @@ def _entry_stat(entry: os.DirEntry[str], reason: str) -> os.stat_result:
 
 
 class _TracedListing:
-    """``os.scandir`` of a source folder, traced: one line with its entry count when it ends."""
+    """``os.scandir`` of a source folder, traced: one line when it ends, with its entry count and
+    how many entries were asked ``is_dir`` (``_is_dir``)."""
+    current: _TracedListing | None = None
 
     def __init__(self, path: str, reason: str) -> None:
-        self.path, self.reason, self.count = path, reason, 0
+        self.path, self.reason, self.count, self.dir_checks = path, reason, 0, 0
         self.started = time.monotonic()
         try:
             self.directory = os.scandir(path)
@@ -164,6 +187,7 @@ class _TracedListing:
             raise
 
     def __enter__(self) -> Iterator[os.DirEntry[str]]:
+        _TracedListing.current = self
         return self._entries()
 
     def _entries(self) -> Iterator[os.DirEntry[str]]:
@@ -173,7 +197,8 @@ class _TracedListing:
 
     def __exit__(self, kind: type[BaseException] | None, *_: object) -> None:
         self.directory.close()
-        _trace("scandir", self.path, self.reason, entries=self.count,
+        _TracedListing.current = None
+        _trace("scandir", self.path, self.reason, entries=self.count, is_dir=self.dir_checks,
                seconds=round(time.monotonic() - self.started, 6),
                **({"error": kind.__name__} if kind is not None and issubclass(kind, OSError) else {}))
 
@@ -183,34 +208,52 @@ def _scandir(path: str, reason: str) -> contextlib.AbstractContextManager[Iterat
     return os.scandir(path) if TRACE is None else _TracedListing(path, reason)
 
 
+def _is_dir(entry: os.DirEntry[str]) -> bool:
+    """A listed entry's ``is_dir(follow_symlinks=False)``, counted on its listing's trace line. The
+    listing's file type answers it (macOS, Linux, Windows); a call only where the file system
+    doesn't report types."""
+    if TRACE is not None and _TracedListing.current is not None:
+        _TracedListing.current.dir_checks += 1
+    return entry.is_dir(follow_symlinks=False)
+
+
 def _read_marker(folder: str, reason: str) -> Marker:
-    """``data_roots.read_marker`` (open, fstat and read the folder's ``.helab-root``), traced."""
+    """``data_roots.read_marker`` of the folder's ``.helab-root``, traced step by step:
+    ``marker_open``, ``marker_fstat``, ``marker_read`` (bytes); a failure after a step is
+    ``marker_error`` (``after`` it), and a failed open is ``marker_open`` with its error."""
     from helab.utils import data_roots
     if TRACE is None:
         return data_roots.read_marker(folder)
     path = os.path.join(folder, data_roots.MARKER_NAME)
+    steps: list[str] = []
+
+    def step(name: str, fields: dict[str, object]) -> None:
+        steps.append(name)
+        _trace(f"marker_{name}", path, reason, **fields)
     try:
-        marker = data_roots.read_marker(folder)
+        return data_roots.read_marker(folder, trace=step)
     except (OSError, ValueError) as exc:
-        _traced_error("marker_read", path, reason, exc)
+        if steps:
+            _trace("marker_error", path, reason, error=type(exc).__name__, after=steps[-1])
+        else:
+            _traced_error("marker_open", path, reason, exc)
         raise
-    _trace("marker_read", path, reason)
-    return marker
 
 
-def _read_txy_file(filename: str, reason: str, size: int) -> Any:
-    """``pandas.read_csv`` of a whole TXY file, traced (``size``: its bytes, from its fingerprint)."""
+def _read_txy_file(filename: str, reason: str) -> Any:
+    """A whole TXY file, parsed: read in one go, then ``pandas.read_csv`` of its bytes. Traced with
+    the bytes actually read (``read``)."""
+    import io
     import numpy as np
     import pandas as pd
-    if TRACE is None:
-        return pd.read_csv(filename, sep=",", names=["t", "x", "y"], dtype=np.float64)
     try:
-        frame = pd.read_csv(filename, sep=",", names=["t", "x", "y"], dtype=np.float64)
-    except Exception as exc:
+        with open(filename, "rb") as stream:
+            raw = stream.read()
+    except OSError as exc:
         _traced_error("read", filename, reason, exc)
         raise
-    _trace("read", filename, reason, bytes=size)
-    return frame
+    _trace("read", filename, reason, bytes=len(raw))
+    return pd.read_csv(io.BytesIO(raw), sep=",", names=["t", "x", "y"], dtype=np.float64)
 
 
 def _mounts(reason: str) -> list[Mount]:
@@ -772,7 +815,7 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                 empty = False
                 if matched := file_kinds.match(entry.name):
                     found.setdefault(matched[0].name, set()).add(matched[1])
-                elif entry.is_dir(follow_symlinks=False):
+                elif _is_dir(entry):
                     has_dirs = True
                     batch.append({"path": entry.path, "name": entry.name})
                     if len(batch) >= 128:
@@ -1035,7 +1078,7 @@ def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | No
                     info = _entry_stat(entry, "fingerprint")
                     fingerprint.append((shot, info.st_size, info.st_mtime_ns))
                     txy_bytes += info.st_size
-            if entry.is_dir(follow_symlinks=False):
+            if _is_dir(entry):
                 has_dirs = True
                 try:
                     stat = _stat(entry.path, "subfolder date", follow_symlinks=False)
@@ -1373,7 +1416,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                 found.setdefault(kind.name, set()).add(shot)
                 if kind.loaded:
                     files.append((shot, entry.path))
-            elif not has_dirs and entry.is_dir(follow_symlinks=False):
+            elif not has_dirs and _is_dir(entry):
                 has_dirs = True
     if not files:
         raise ValueError("No converted TXY files in this folder")
@@ -1537,9 +1580,9 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         info = _stat(filename, reason)
         return (info.st_size, info.st_mtime_ns) == fingerprint[index][1:]
 
-    def read_txy(shot: int, filename: str, size: int, reason: str = "load: read") -> Any:
+    def read_txy(shot: int, filename: str, reason: str = "load: read") -> Any:
         _read_gate(filename)
-        frame = _read_txy_file(filename, reason, size)
+        frame = _read_txy_file(filename, reason)
         if frame.isna().any().any():
             problematic.append(shot)
         array = np.asarray(frame.dropna(), dtype=np.float64)
@@ -1560,7 +1603,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                 load_counts["read"] += 1
                 read_bytes += fingerprint[i][1]
                 if unchanged(i, filename, "load: before read"):
-                    array = read_txy(shot, filename, fingerprint[i][1])
+                    array = read_txy(shot, filename)
                     if not unchanged(i, filename, "load: after read"):
                         data.pop(shot, None)
                         array = None
@@ -1634,12 +1677,12 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # delays it. Shots only the caller holds are read again for completeness.
     try:
         from helab.utils.cache_store import DATASET_FORMAT, pack_dataset
-        for i, (shot, filename) in enumerate(files):
+        for shot, filename in files:
             if shot in in_memory and shot not in data:
                 Pause.checkpoint(send)
                 send({"kind": "file_started", "filename": filename})
                 try:
-                    read_txy(shot, filename, fingerprint[i][1], "cache save: read")
+                    read_txy(shot, filename, "cache save: read")
                 except (OSError, ValueError, pd.errors.ParserError):
                     raise ValueError(f"Could not cache previously loaded shot {shot}") from None
                 send({"kind": "file_finished", "filename": filename})
@@ -1797,7 +1840,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                 found.setdefault(kind.name, set()).add(shot)
                 if kind.loaded:
                     names[shot] = entry.path
-            elif not has_dirs and entry.is_dir(follow_symlinks=False):
+            elif not has_dirs and _is_dir(entry):
                 has_dirs = True
 
     def mismatch(reason: str, shots: list[int]) -> None:
@@ -1890,7 +1933,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
             array = None
             if unchanged(filename, item, "live: before read"):
                 _read_gate(filename)
-                frame = _read_txy_file(filename, "live: read", item[1])
+                frame = _read_txy_file(filename, "live: read")
                 if frame.isna().any().any():
                     problematic.append(shot)
                 array = np.asarray(frame.dropna(), dtype=np.float64)
@@ -2226,18 +2269,21 @@ def remove_root(path: str, cache_options: dict[str, Any], expected: str, locatio
 def _hide(file: str) -> None:
     """Hidden: the dot prefix, plus the Windows hidden attribute. From macOS, UF_HIDDEN, which
     smbfs maps to that attribute on a share (best effort: lab PCs browse those shares)."""
-    _trace("marker_hide", file, "hide")
     if sys.platform == "darwin":
         import stat
         with contextlib.suppress(OSError, AttributeError):
-            os.chflags(file, os.stat(file).st_flags | stat.UF_HIDDEN)
+            flags = _stat(file, "hide").st_flags
+            _trace("chflags", file, "hide")
+            os.chflags(file, flags | stat.UF_HIDDEN)
         return
     if sys.platform != "win32":
         return
     import ctypes
     kernel32 = getattr(ctypes, "windll").kernel32
+    _trace("get_attributes", file, "hide")
     attributes = kernel32.GetFileAttributesW(file)
     if attributes != -1 and attributes != 0xFFFFFFFF:
+        _trace("set_attributes", file, "hide")
         kernel32.SetFileAttributesW(file, attributes | 0x2)  # FILE_ATTRIBUTE_HIDDEN
 
 

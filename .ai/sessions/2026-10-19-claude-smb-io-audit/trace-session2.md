@@ -194,4 +194,3 @@ None.
 ## GUI-process source calls (scenarios.py's hook)
 
 None.
-

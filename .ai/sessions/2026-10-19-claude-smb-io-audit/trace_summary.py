@@ -21,8 +21,12 @@ NOT_SOURCE = {"request", "request_end", "mounts", "volume_id", "phase"}
 COST = {"scandir": "CREATE + QUERY_DIRECTORY×n + CLOSE", "stat": "CREATE/QUERY_INFO (or cached)",
         "lstat": "CREATE/QUERY_INFO (or cached)", "entry_stat": "QUERY_INFO (macOS); none (Windows)",
         "read": "CREATE + READ×n + CLOSE", "read_tail": "CREATE + READ + CLOSE",
-        "marker_read": "CREATE (+ READ + CLOSE)", "icon": "several (native lookup)",
-        "marker_write": "CREATE + WRITE + CLOSE"}
+        "marker_open": "CREATE (a missing one: CREATE fails)", "marker_fstat": "QUERY_INFO (or cached)",
+        "marker_read": "READ + CLOSE", "icon": "several (native lookup)", "marker_write": "CREATE + WRITE + CLOSE"}
+
+
+def tail_marker_icon(op: str) -> bool:
+    return op in ("read_tail", "icon") or op.startswith("marker_")
 
 
 def load(path: str) -> tuple[list[dict[str, Any]], int]:
@@ -140,7 +144,7 @@ def report(path: str, under: str, minutes: bool, young: float) -> str:
                      sum(record["op"] == "scandir" for record in ops),
                      sum(record["op"] in ("stat", "lstat", "entry_stat") for record in ops),
                      f"{len(reads)} ({sum(int(r.get('bytes', 0)) for r in reads) / 1e6:,.1f} MB)",
-                     sum(record["op"] in ("read_tail", "marker_read", "icon") for record in ops), gui])
+                     sum(tail_marker_icon(record["op"]) for record in ops), gui])
     lines += ["## Phases", "", table(rows, ["Phase", "Seconds", "Helpers", "Source ops", "Ops/min", "Listings",
                                              "Stats", "Reads", "Tail/marker/icon", "GUI-process"]), ""]
     for name, start, stop, items in phases(records):
@@ -197,7 +201,7 @@ def main() -> None:
     parser.add_argument("--minutes", action="store_true", help="per-minute counts for long phases")
     parser.add_argument("--young", type=float, default=5.0, help="seconds a file counts as maybe being written")
     args = parser.parse_args()
-    print(report(args.trace, args.under, args.minutes, args.young))
+    print(report(args.trace, args.under, args.minutes, args.young).rstrip("\n"))
 
 
 if __name__ == "__main__":
