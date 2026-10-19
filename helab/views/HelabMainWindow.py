@@ -33,7 +33,7 @@ from typing_extensions import no_type_check
 from helab.analysis.dataset_view import DatasetView, view_of
 from helab.analysis.follow import LiveFeed
 from helab.analysis.results import AnalysisResult
-from helab.models.ScriptTreeSelector import TreePanelWidget, PlotSettingsPanel
+from helab.models.ScriptTreeSelector import AnalysisDock, TreePanelWidget, PlotSettingsPanel
 from helab.resources.icons import ToolIcons
 from helab.utils.constants import *
 from helab.utils.number_format import byte_size, fnum
@@ -970,9 +970,13 @@ class HelabMainWindow(QMainWindow):
         self.update_plot_source(dock)
 
     def update_plot_source(self, dock: QDockWidget) -> None:
-        """A plot's source lines changed (its result, or its Live state): show them now."""
+        """A plot's source lines changed (its result, or its Live state): show them now, and
+        its settings in short form in its floating window's settings header."""
         current = self.tab_widget.currentWidget()
         HelabMainWindow._update_plot_source_label(dock, current if isinstance(current, FolderExplorer) else None)
+        if isinstance(dock, AnalysisDock):
+            settings = dock.property("plotSourceSettings")
+            dock.settings.toggle.set_text(summary=settings if isinstance(settings, str) else "")
 
     @staticmethod
     def _wrap_plot(dock: QDockWidget, content: QWidget) -> None:

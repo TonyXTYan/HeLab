@@ -14,7 +14,8 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QLineEdit, QMainWindow, QTabBar, QVBoxLayout, QWidget
 import pyqtgraph as pg
 
-from helab.models.ScriptTreeSelector import AnalysisDock, DockTabCloser, PlotSettingsPanel, TreePanelWidget
+from helab.models.ScriptTreeSelector import (AnalysisDock, DockTabCloser, FloatingSettings, PlotSettingsPanel,
+                                             TreePanelWidget)
 
 
 def app() -> QApplication:
@@ -45,11 +46,11 @@ class Plots:
         self.panel.follow(self.area)
         self.docks: List[QDockWidget] = []
 
-    def add(self, content: Optional[QWidget] = None) -> QDockWidget:
+    def add(self, content: Optional[QWidget] = None, page: Optional[QWidget] = None) -> QDockWidget:
         dock = AnalysisDock(f"Plot ({len(self.docks) + 1})", self.area)
         dock.setWidget(content or QLabel(f"plot {len(self.docks) + 1}"))
         self.area.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
-        self.panel.add_plot(dock, QLabel(f"settings {len(self.docks) + 1}"), dock.windowTitle())
+        self.panel.add_plot(dock, page or QLabel(f"settings {len(self.docks) + 1}"), dock.windowTitle())
         self.docks.append(dock)
         return dock
 
@@ -390,3 +391,307 @@ def test_a_click_back_in_the_focused_plot(plots: Plots, qtbot: QtBot) -> None:
     plots.panel.chooser.setFocus()
     plots.panel.chooser.activated.emit(1)
     assert plots.panel.current_plot() is second and plots.panel.chooser.hasFocus()
+
+
+# A floating plot's settings (its page moves into its window)
+
+def floated(dock: QDockWidget, qtbot: QtBot, width: int = 0) -> AnalysisDock:
+    """``dock`` floating on its own, its settings section showing; ``width``: its window's."""
+    assert isinstance(dock, AnalysisDock)
+    dock.setFloating(True)
+    if width:
+        dock.setGeometry(40, 40, width, 300)
+    dock.show()
+    qtbot.waitUntil(dock.settings.isVisible)
+    return dock
+
+
+def docked(dock: AnalysisDock, qtbot: QtBot) -> None:
+    dock.setFloating(False)
+    qtbot.waitUntil(dock.settings.isHidden)
+
+
+def test_a_floating_plot_takes_its_page_and_gives_it_back(plots: Plots, qtbot: QtBot) -> None:
+    """Floating a plot moves its page into its window: the same widgets, with their edits,
+    starting closed. The panel keeps naming the plot and says where its settings are, with a
+    button that raises the window; other plots' pages show here as before. Docked again, the
+    page comes back."""
+    page = QLineEdit("unapplied")
+    one, two = plots.add(), plots.add(page=page)
+    plots.show(qtbot)
+    panel = plots.panel
+    assert panel.stack.currentWidget() is page and cast(AnalysisDock, two).settings.isHidden()
+    dock = floated(two, qtbot)
+    side = dock.settings
+    assert side.page is page and page.parentWidget() is side and panel.page(two) is page
+    assert panel.settings_away(two) and panel.stack.currentWidget() is panel.away
+    assert panel.stack.indexOf(page) == -1 and panel.chooser.currentText() == two.windowTitle()
+    assert not side.is_open and page.isHidden() and side.width() == side.toggle.strip_width()
+    panel.show_plot(one)
+    assert panel.stack.currentWidget() is panel.page(one) and not panel.settings_away(one)
+    plots.area.activateWindow()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is plots.area)
+    panel.chooser.activated.emit(1)  # Chosen: its window comes up.
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is two)
+    assert panel.current_plot() is two and panel.stack.currentWidget() is panel.away
+    assert not side.is_open  # The chooser only raises it.
+    plots.area.activateWindow()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is plots.area)
+    panel.show_plot(two)  # The main window active, its focus back in plot one: two again.
+    width = two.width()
+    panel.away_button.click()  # Show plot window: raised, with its settings open.
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is two)
+    assert side.is_open and page.isVisible() and side.toggle.isChecked()
+    assert two.width() == width + FloatingSettings.DEFAULT_WIDTH - side.toggle.strip_width()
+    panel.away_button.click()  # Open already: stays as it is.
+    assert side.is_open and two.width() == width + FloatingSettings.DEFAULT_WIDTH - side.toggle.strip_width()
+    page.setText("edited in the plot's window")
+    docked(dock, qtbot)
+    assert side.page is None and page.parentWidget() is panel.stack and panel.stack.currentWidget() is page
+    assert page.text() == "edited in the plot's window" and not panel.settings_away(two)
+
+
+def test_the_section_opens_wider_and_remembers_for_the_session(plots: Plots, qtbot: QtBot) -> None:
+    """Opening the section widens the window by its width (the plot keeps its size); the
+    splitter sets the width open, and closing narrows the window by as much. Whether it is
+    open and its width stay with the plot, docked and floated again."""
+    page = QLineEdit()
+    plots.add(page=page)
+    plots.show(qtbot)
+    dock = floated(plots.docks[0], qtbot, width=400)
+    side, frame = dock.settings, dock.frame
+    strip = side.toggle.strip_width()
+    plot_width = frame.sizes()[0]
+    handle = frame.handle(1)
+    assert handle is not None and not handle.isEnabled()  # Closed: the strip can't be dragged wider.
+    side.toggle.click()
+    assert side.is_open and page.isVisible() and handle.isEnabled()
+    assert side.width() == FloatingSettings.DEFAULT_WIDTH == side.open_width
+    assert frame.sizes()[0] == plot_width and dock.width() == 400 + FloatingSettings.DEFAULT_WIDTH - strip
+    frame.moveSplitter(frame.sizes()[0] - 60, 1)  # As a drag of the handle does.
+    wider = FloatingSettings.DEFAULT_WIDTH + 60
+    assert side.width() == side.open_width == wider and frame.sizes()[0] == plot_width - 60
+    side.toggle.click()
+    assert not side.is_open and page.isHidden() and side.width() == strip
+    assert frame.sizes()[0] == plot_width - 60 and dock.width() == 400 - 60
+    docked(dock, qtbot)
+    floated(dock, qtbot)
+    assert not side.is_open and side.width() == strip
+    side.toggle.click()
+    assert side.is_open and side.width() == wider
+    docked(dock, qtbot)
+    floated(dock, qtbot)
+    assert side.is_open and page.isVisible() and side.width() == wider
+
+
+def test_opening_keeps_the_window_on_its_screen(plots: Plots, qtbot: QtBot) -> None:
+    plots.add()
+    plots.show(qtbot)
+    dock = floated(plots.docks[0], qtbot)
+    screen = dock.screen()
+    assert screen is not None
+    available = screen.availableGeometry()
+    dock.setGeometry(available.right() - 300, 40, available.width() - 100, 300)
+    dock.settings.toggle.click()
+    assert dock.width() == available.width() and dock.geometry().left() == available.left()
+    assert dock.settings.width() == FloatingSettings.DEFAULT_WIDTH  # The plot gives up the rest.
+
+
+def test_the_header_names_the_plot_and_its_settings(plots: Plots, qtbot: QtBot) -> None:
+    one = plots.add()
+    toggle = cast(AnalysisDock, one).settings.toggle
+    assert toggle.name == "Plot (1)" and "Show this plot's settings" in toggle.toolTip()
+    plots.panel.set_title(one, "Plot (1) · run_L · rev 2")
+    toggle.set_text(summary="last 10 shots · bins auto")
+    assert toggle.text_shown() == "Plot (1) · run_L · rev 2 · last 10 shots · bins auto"
+    assert toggle.toolTip() == "Show this plot's settings\nPlot (1) · run_L · rev 2\nlast 10 shots · bins auto"
+    toggle.setChecked(True)
+    assert toggle.toolTip().startswith("Hide this plot's settings")
+    # Space opens and closes it too (it is a button).
+    plots.show(qtbot)
+    dock = floated(one, qtbot)
+    toggle.setChecked(False)
+    dock.activateWindow()
+    toggle.setFocus()
+    qtbot.waitUntil(toggle.hasFocus)
+    qtbot.keyClick(toggle, Qt.Key.Key_Space)  # type: ignore[no-untyped-call]
+    assert dock.settings.is_open
+
+
+def test_redocking_into_its_tab_group(plots: Plots, qtbot: QtBot) -> None:
+    """A plot floated from a tab group docks back into it, its page comes back, and the
+    group's tabs keep their close buttons."""
+    closer = DockTabCloser(plots.area)
+    one, two, three = plots.add(), plots.add(), plots.add()
+    for dock in (one, two, three):
+        closer.watch(dock)
+    plots.show(qtbot)
+    plots.area.tabifyDockWidget(one, two)
+    plots.area.tabifyDockWidget(one, three)
+    qtbot.waitUntil(lambda: bool(closable_bars(plots.area, 3)))
+    plots.panel.show_plot(two)
+    dock = floated(two, qtbot)
+    qtbot.waitUntil(lambda: bool(closable_bars(plots.area, 2)))
+    assert plots.panel.stack.currentWidget() is plots.panel.away
+    docked(dock, qtbot)
+    qtbot.waitUntil(lambda: bool(closable_bars(plots.area, 3)))
+    assert set(plots.area.tabifiedDockWidgets(two)) == {one, three}
+    assert plots.panel.current_plot() is two and plots.panel.stack.currentWidget() is plots.panel.page(two)
+
+
+def test_a_hidden_floating_plot_falls_back_to_a_visible_one(plots: Plots, qtbot: QtBot) -> None:
+    """A floating plot counts as shown; hidden (its window minimised), a visible plot shows,
+    with its page in the panel."""
+    one, two = plots.add(), plots.add()
+    plots.show(qtbot)
+    plots.panel.show_plot(one)
+    dock = floated(two, qtbot)
+    dock.activateWindow()
+    qtbot.waitUntil(lambda: plots.panel.current_plot() is two)
+    plots.area.activateWindow()  # Focus back in the main window, not in a plot: two stays.
+    qtbot.wait(50)
+    assert plots.panel.current_plot() is two and plots.panel.stack.currentWidget() is plots.panel.away
+    two.hide()
+    qtbot.waitUntil(lambda: plots.panel.current_plot() is one)
+    assert plots.panel.stack.currentWidget() is plots.panel.page(one)
+
+
+def test_many_floating_plots_each_hold_their_own_page(plots: Plots, qtbot: QtBot) -> None:
+    pages = [QLineEdit(f"page {n}") for n in range(8)]
+    docks = [plots.add(page=page) for page in pages]
+    plots.show(qtbot)
+    for dock in docks:
+        floated(dock, qtbot)
+    for n, dock in enumerate(docks):
+        assert cast(AnalysisDock, dock).settings.page is pages[n]
+        plots.panel.chooser.activated.emit(n)
+        assert plots.panel.current_plot() is dock and plots.panel.stack.currentWidget() is plots.panel.away
+    # A floating plot closed (its page goes with it) or deleted unclosed leaves nothing behind.
+    plots.panel.remove_plot(docks[3])
+    assert cast(AnalysisDock, docks[3]).settings.page is None
+    delete_now(docks[5])
+    assert sip.isdeleted(pages[5]) and docks[5] not in plots.panel.plots()
+    assert plots.panel.stack.count() == 2 and plots.panel.chooser.count() == 6
+    for dock in docks[:3]:
+        docked(cast(AnalysisDock, dock), qtbot)
+    assert plots.panel.stack.count() == 5
+
+
+def counted_moves(dock: AnalysisDock, monkeypatch: pytest.MonkeyPatch) -> List[str]:
+    """Each time the page moves into ``dock``'s window ("in") or out of it ("out")."""
+    moves: List[str] = []
+    hold, release = dock.hold_settings, dock.settings.release
+
+    def holding(page: QWidget) -> None:
+        moves.append("in")
+        hold(page)
+
+    def releasing() -> Optional[QWidget]:
+        if dock.settings.page is not None:
+            moves.append("out")
+        return release()
+
+    monkeypatch.setattr(dock, "hold_settings", holding)
+    monkeypatch.setattr(dock.settings, "release", releasing)
+    return moves
+
+
+@pytest.fixture
+def let_go(plots: Plots, qtbot: QtBot) -> Iterator[None]:
+    """A drag test that fails mid-drag leaves no button down for the tests after it."""
+    yield
+    if QApplication.mouseButtons() != Qt.MouseButton.NoButton:
+        qtbot.mouseRelease(plots.area, Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
+
+
+def press_title(dock: QDockWidget, qtbot: QtBot) -> None:
+    qtbot.mousePress(dock, Qt.MouseButton.LeftButton, pos=QPoint(20, 5))  # type: ignore[no-untyped-call]
+    assert QApplication.mouseButtons() == Qt.MouseButton.LeftButton
+
+
+def test_a_dragged_plot_takes_its_page_once_let_go(
+        plots: Plots, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, let_go: None) -> None:
+    """Qt floats a plot as a drag of it starts: its page stays in the panel until the user
+    lets go, then moves once. Between drags nothing watches the dock."""
+    page = QLineEdit()
+    dock = cast(AnalysisDock, plots.add(page=page))
+    plots.show(qtbot)
+    moves = counted_moves(dock, monkeypatch)
+    panel = plots.panel
+    press_title(dock, qtbot)
+    for x in range(20, 300, 20):  # Dragged out of the plot area.
+        qtbot.mouseMove(dock, QPoint(x, 5 + x))  # type: ignore[no-untyped-call]
+    assert dock.isFloating() and panel._drag_end.waiting(dock)
+    qtbot.wait(100)
+    assert moves == [] and panel.stack.currentWidget() is page
+    qtbot.mouseRelease(dock, Qt.MouseButton.LeftButton, pos=QPoint(300, 305))  # type: ignore[no-untyped-call]
+    qtbot.waitUntil(lambda: moves == ["in"])
+    assert dock.settings.page is page and panel.stack.currentWidget() is panel.away
+    assert not panel._drag_end.waiting(dock)
+    qtbot.wait(50)
+    assert moves == ["in"]
+
+
+def test_a_plot_dragged_out_and_back_keeps_its_page(
+        plots: Plots, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, let_go: None) -> None:
+    """Out and back in one drag (Qt floats it, then docks it at the drop): nothing moves."""
+    page = QLineEdit()
+    dock = cast(AnalysisDock, plots.add(page=page))
+    plots.show(qtbot)
+    moves = counted_moves(dock, monkeypatch)
+    press_title(dock, qtbot)
+    dock.setFloating(True)  # As the drag starts.
+    qtbot.wait(50)
+    dock.setFloating(False)  # Dropped back in the plot area.
+    qtbot.wait(50)
+    qtbot.mouseRelease(dock, Qt.MouseButton.LeftButton, pos=QPoint(20, 5))  # type: ignore[no-untyped-call]
+    qtbot.wait(50)
+    assert moves == [] and not dock.isFloating() and plots.panel.stack.currentWidget() is page
+    assert not plots.panel._drag_end.waiting(dock)
+    # A floating plot dragged back in moves its page out once, at the drop.
+    dock.setFloating(True)
+    qtbot.waitUntil(lambda: moves == ["in"])
+    press_title(dock, qtbot)
+    dock.setFloating(False)
+    qtbot.wait(50)
+    assert moves == ["in"] and dock.settings.page is page
+    qtbot.mouseRelease(dock, Qt.MouseButton.LeftButton, pos=QPoint(20, 5))  # type: ignore[no-untyped-call]
+    qtbot.waitUntil(lambda: moves == ["in", "out"])
+    assert plots.panel.stack.currentWidget() is page
+
+
+def test_a_release_the_dock_never_saw_ends_the_drag_at_its_next_mouse_event(
+        plots: Plots, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, let_go: None) -> None:
+    """A drag whose release went elsewhere (a system move of the window): the next mouse event
+    the dock gets, with no button down, ends it."""
+    dock = cast(AnalysisDock, plots.add(page=QLineEdit()))
+    plots.show(qtbot)
+    moves = counted_moves(dock, monkeypatch)
+    press_title(dock, qtbot)
+    dock.setFloating(True)
+    qtbot.wait(50)  # Events of its window coming up, the button still down: still waiting.
+    assert moves == [] and plots.panel._drag_end.waiting(dock)
+    # Let go where the dock gets no event: Qt knows no button is down.
+    monkeypatch.setattr("helab.models.ScriptTreeSelector.mouse_held", lambda: False)
+    qtbot.mouseMove(dock, QPoint(30, 30))  # type: ignore[no-untyped-call]
+    qtbot.waitUntil(lambda: moves == ["in"])
+    assert not plots.panel._drag_end.waiting(dock)
+    qtbot.mouseRelease(dock, Qt.MouseButton.LeftButton, pos=QPoint(30, 30))  # type: ignore[no-untyped-call]
+
+
+def test_a_plot_wrapped_in_place_stays_shown(qtbot: QtBot) -> None:
+    """``setWidget`` with a wrapper around the plot shown (as ``_set_plot_source`` does) keeps
+    the plot shown inside it; a plot replaced outright is hidden, a child of the dock still."""
+    dock = AnalysisDock("Plot")
+    qtbot.addWidget(dock)
+    plot = QLabel("plot")
+    dock.setWidget(plot)
+    dock.show()
+    wrapper = QWidget(dock)
+    QVBoxLayout(wrapper).addWidget(plot)
+    dock.setWidget(wrapper)
+    assert dock.widget() is wrapper and plot.parentWidget() is wrapper and plot.isVisible()
+    other = QLabel("another plot")
+    dock.setWidget(other)
+    assert dock.widget() is other and other.isVisible() and wrapper.isHidden()
+    assert wrapper.parentWidget() is not None and dock.isAncestorOf(wrapper)
