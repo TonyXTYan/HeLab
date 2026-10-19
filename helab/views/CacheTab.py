@@ -21,8 +21,9 @@ from PyQt6.QtWidgets import (
 
 from helab.utils.cache_store import KINDS, purge_estimate, trim_estimate
 from helab.utils.constants import (
-    DISK_BUDGET_SETTING, MIN_DISK_BUDGET, RAM_BUDGET_SETTING, RAM_STEPS, read_disk_budget,
-    cache_dir_refused, read_ram_budget_steps, ram_step_bytes, ram_step_range, total_ram,
+    DISK_BUDGET_SETTING, LIVE_AUTOSAVE_SETTING, MAX_LIVE_AUTOSAVE, MIN_DISK_BUDGET, RAM_BUDGET_SETTING, RAM_STEPS,
+    read_disk_budget, cache_dir_refused, read_live_autosave, read_ram_budget_steps, ram_step_bytes, ram_step_range,
+    total_ram,
 )
 from helab.utils.folder_cache import FolderCache, store_options
 from helab.utils.number_format import byte_size
@@ -180,6 +181,21 @@ class CacheTab(QWidget):
         self.prefs_button.clicked.connect(self.clear_prefs)
         prefs.addWidget(self.prefs_button)
         layout.addLayout(prefs)
+
+        # Live (roadmaps/live-monitoring.md): new shots wait in RAM, then the folder is saved.
+        live = QHBoxLayout()
+        live.addWidget(QLabel("Live: save to the disk cache every"))
+        self.live_autosave = QSpinBox()
+        self.live_autosave.setRange(1, MAX_LIVE_AUTOSAVE)
+        self.live_autosave.setSuffix(" new shots")
+        self.live_autosave.setValue(read_live_autosave(settings))
+        self.live_autosave.setToolTip(
+            "While Live watches a folder, new shots stay in RAM; once this many wait, the folder's cached data "
+            "is rewritten in the background (one save at a time), and again when Live stops. A crash or Quit "
+            "now loses at most these: the next check reads them from the folder again.")
+        live.addWidget(self.live_autosave)
+        live.addStretch(1)
+        layout.addLayout(live)
 
         layout.addWidget(self._heading("Remove old entries"))
         purges = QGridLayout()
@@ -541,9 +557,10 @@ class CacheTab(QWidget):
         self._update()
 
     def save(self, settings: QSettings) -> None:
-        """Save both budgets (after :meth:`apply_budget`)."""
+        """Save both budgets (after :meth:`apply_budget`), and how often Live saves."""
         # Never a value the store hasn't recorded (e.g. edited while it was recording another).
         settings.setValue(DISK_BUDGET_SETTING,
                           self._acknowledged if self._acknowledged is not None else read_disk_budget(settings))
         settings.setValue(RAM_BUDGET_SETTING, self.ram_budget.value())
+        settings.setValue(LIVE_AUTOSAVE_SETTING, self.live_autosave.value())
 

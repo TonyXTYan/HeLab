@@ -228,9 +228,17 @@ class IOService(QObject):
     def _local_room(self) -> bool:
         return sum(r.lane == LOCAL for r in (*self.active, *self.retired)) < self.LOCAL_CAP
 
+    @staticmethod
+    def live(request: IORequest) -> bool:
+        """A Live check of the folder a tab watches (``io_helper.live_check``)."""
+        return request.operation == "load" and bool(request.payload.get("live"))
+
     def _foreground_busy(self, now: float) -> bool:
+        # A Live check runs every few seconds and is mostly one stat or a names-only listing: it
+        # holds background work only while it reads a new file.
         return any(r.lane == FOREGROUND and not r.completed
-                   and (r.operation == "load" or self._listing_progressing(r, now)) for r in self.active)
+                   and (r.operation == "load" and (not self.live(r) or r.current_file is not None)
+                        or self._listing_progressing(r, now)) for r in self.active)
 
     def hold_background(self, now: float | None = None) -> bool:
         """Background loads and scans pause, and none start, while the foreground works."""
@@ -432,11 +440,13 @@ class IOService(QObject):
 
     @classmethod
     def label(cls, request: IORequest) -> str:
-        return "Save data cache" if cls.finishing(request) else cls.LABELS.get(request.operation, request.operation)
+        return ("Save data cache" if cls.finishing(request) else "Live check" if cls.live(request)
+                else cls.LABELS.get(request.operation, request.operation))
 
     @classmethod
     def noun(cls, request: IORequest) -> str:
-        return "cache save" if cls.finishing(request) else cls.NOUNS.get(request.operation, request.operation)
+        return ("cache save" if cls.finishing(request) else "Live check" if cls.live(request)
+                else cls.NOUNS.get(request.operation, request.operation))
 
     @staticmethod
     def stopping_for(request: IORequest, now: float) -> float | None:
@@ -507,6 +517,8 @@ class IOService(QObject):
         saving = sum(self.finishing(r) and writing(r.owner) for r in self.active)
         others = dict.fromkeys(self.ACTIVITIES.get(r.operation, self.LABELS.get(r.operation, r.operation))
                                for r in running if r.operation not in ("list", "details", "scan", "load"))
+        if any(self.live(r) for r in running):
+            others["Checking for new shots"] = None
         queued = len(self.pending) - len(self.held_requests())
         return " · ".join(filter(None, (
             f"Scanning {counted(scans, 'folder')}" if scans else "",
@@ -520,8 +532,10 @@ class IOService(QObject):
             f"{counted(queued, 'operation')} queued" if queued else ""))) or "Ready"
 
     def running_loads(self) -> list[IORequest]:
-        """Loads reading now (not paused, not finished): what "Loading …" counts."""
-        return [r for r in self.active if r.operation == "load" and not r.paused and not r.completed]
+        """Loads reading now (not paused, not finished): what "Loading …" counts. Live checks
+        are named on their own."""
+        return [r for r in self.active if r.operation == "load" and not r.paused and not r.completed
+                and not self.live(r)]
 
     @staticmethod
     def _folder_name(path: str) -> str:

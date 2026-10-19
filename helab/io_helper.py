@@ -1476,6 +1476,267 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         send({"kind": "cache_warning", "message": str(exc)})
 
 
+# A folder modified this close to a check (or later: another computer's clock) may change again
+# within the same timestamp tick, which the next check's stat wouldn't see: that check lists it.
+RACY_SECONDS = 2.0
+
+
+def _folder_identity(path: str) -> str:
+    """Which folder ``path`` is, beyond its spelling: the nearest data root's UUID, else its
+    location (an SMB share's server and share, or a local mount's device) and relative path.
+    "" if a marker is there but unreadable."""
+    from helab.utils.cache_paths import _inside, _normal, _smb_source, current_mounts
+    from helab.utils.data_roots import read_marker
+    folder = path
+    while True:
+        try:
+            return "root:" + read_marker(folder).uuid
+        except FileNotFoundError:
+            pass
+        except ValueError:
+            pass  # An invalid marker is no data root.
+        except OSError:
+            return ""
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            break
+        folder = parent
+    mounts = [mount for mount in current_mounts() if _inside(_normal(path), _normal(mount.path))]
+    if not mounts:
+        return "location:" + path
+    mount = max(mounts, key=lambda item: len(_normal(item.path)))
+    source = _smb_source(mount.source, mount.fstype) or f"{mount.fstype}:{mount.source}"
+    return f"location:{source}|{path[len(mount.path):]}"
+
+
+def _txy_complete(filename: str) -> bool:
+    """Whether a TXY file ends with a whole row: its last byte is a newline and its last row has
+    three fields (the converter's dlmwrite ends every row with one). A file still being written
+    usually ends mid-row; one paused exactly at a row's end can't be told apart."""
+    with open(filename, "rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        size = stream.tell()
+        stream.seek(max(0, size - 4096))
+        tail = stream.read()
+    if not tail.endswith(b"\n"):
+        return False
+    # Three non-empty fields (a malformed but whole row is the read's to report as unreadable).
+    parts = tail[:-1].rsplit(b"\n", 1)[-1].rstrip(b"\r").split(b",")
+    return len(parts) == 3 and all(part.strip() for part in parts)
+
+
+def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]] | None = None,
+               known: list[list[int]] | None = None, since: int | None = None, *,
+               identity: str = "", seen: list[list[int]] | None = None,
+               check_level: str = DEFAULT_CHECK_LEVEL) -> None:
+    """One check of a folder watched live: new settled TXY files are read and sent like a load's.
+
+    ``memory`` lists ``[shot, size, mtime_ns]`` for the shots the caller holds; TXY files are
+    written once, so they are trusted once the folder is shown to be the same one. ``known``
+    lists shots the caller knows but couldn't read: read again only if they changed. ``since``
+    is the folder's mtime (ns) the previous check said is safe to compare: while the folder
+    still has it, nothing was added or removed, and one stat is the whole check.
+
+    Otherwise the folder is listed by name. Before held shots are reused, the folder must still
+    be the session's (``identity``: its data root, else its location) and a sample of held shots
+    (as the check level samples cached data) must keep their sizes and mtimes; held shots it no
+    longer lists, a sample that changed or another folder stop the check with ``shots_missing``
+    (``reason``: missing, changed or root). Only files the caller doesn't hold are stat'ed. A new
+    file is read only once it is settled by age and has shown the same size and mtime on the
+    previous check too (``seen``): stale or coarse metadata can't make a file being written look
+    finished twice a check apart. It is stat'ed again just before and after it is read. Files
+    not read yet are counted as still being written and sent back (``live_seen``). Nothing new:
+    ``live_unchanged``; else ``loaded`` with ``memory_shots`` (source ``updated``). The disk cache
+    is neither read nor written: the app saves with an ordinary load, every N new shots and when
+    Live stops.
+    """
+    started = time.monotonic()
+    if not memory:
+        raise ValueError("Live needs the folder's loaded data — Retry")
+    try:
+        folder = os.stat(path)
+    except FileNotFoundError:
+        raise OSError("Folder not found — is its drive connected?") from None
+    racy = abs(time.time() - folder.st_mtime) < RACY_SECONDS
+    held = {int(shot): (int(size), int(modified)) for shot, size, modified in memory}
+
+    def _complete(filename: str) -> bool:
+        import stat as stat_mode
+        try:
+            # (Not a regular file, or unreadable: the read itself reports it.)
+            return not stat_mode.S_ISREG(os.stat(filename).st_mode) or _txy_complete(filename)
+        except OSError:
+            return True
+
+    current_identity = ""
+    waiting: list[list[int]] = []  # New files not read yet, as stat'ed now (the next ``seen``).
+
+    def state(listed: bool, unsettled: int, safe: bool) -> dict[str, Any]:
+        # ``live_since``: what the next check may compare the folder's mtime with (None: list it).
+        return {"live_since": folder.st_mtime_ns if safe and not racy and not unsettled else None,
+                "live_listed": listed, "live_seconds": time.monotonic() - started,
+                "unsettled_files": unsettled, "live_identity": current_identity, "live_seen": waiting}
+
+    if since is not None and since == folder.st_mtime_ns:
+        send({"kind": "live_unchanged", **state(False, 0, True), "total_files": len(held)})
+        return
+    found: dict[str, set[int]] = {}
+    names: dict[int, str] = {}
+    has_dirs = False
+    listed_at = time.time()
+    beat = Heartbeat(send, "listing")
+    with os.scandir(path) as directory:
+        for entry in directory:
+            beat()
+            if matched := file_kinds.match(entry.name):
+                kind, shot = matched
+                found.setdefault(kind.name, set()).add(shot)
+                if kind.loaded:
+                    names[shot] = entry.path
+            elif not has_dirs and entry.is_dir(follow_symlinks=False):
+                has_dirs = True
+
+    def mismatch(reason: str, shots: list[int]) -> None:
+        send({"kind": "shots_missing", "reason": reason, "missing": shots[:20], "missing_count": len(shots),
+              "known_count": len(held), "listed_count": len(names)})
+
+    missing = sorted(set(held) - set(names))
+    if missing:
+        mismatch("missing", missing)
+        return
+    current_identity = _folder_identity(path)
+    if identity and current_identity and current_identity != identity:
+        # Another folder at this path (a remount, another drive): nothing held is its.
+        mismatch("root", sorted(held))
+        return
+    beat = Heartbeat(send, "verifying")
+    ordered = sorted(held)
+    indices = _sample_indices(len(ordered), check_level)
+    changed: list[int] = []
+    for index in range(len(ordered)) if indices is None else indices:
+        shot = ordered[index]
+        try:
+            info = os.stat(names[shot])
+        except FileNotFoundError:
+            changed.append(shot)
+            continue
+        if (info.st_size, info.st_mtime_ns) != held[shot]:
+            changed.append(shot)
+        beat()
+    if changed:
+        mismatch("changed", changed)
+        return
+    failed = {int(shot): (int(size), int(modified)) for shot, size, modified in known or ()}
+    previous = {int(shot): (int(size), int(modified)) for shot, size, modified in seen or ()}
+    beat = Heartbeat(send, "checking")
+    candidates: list[tuple[int, int, int]] = []
+    for shot in sorted(set(names) - set(held)):
+        try:
+            info = os.stat(names[shot])
+        except FileNotFoundError:
+            continue  # Gone since the listing (e.g. renamed by its writer).
+        candidates.append((shot, info.st_size, info.st_mtime_ns))
+        beat()
+    aged = {item[0] for item in _settled(candidates)}
+    # Known unreadable and unchanged since: still unreadable, not read again.
+    still_failed = [item for item in candidates if failed.get(item[0]) == item[1:]]
+    # Settled by age, and the same size and mtime as the previous check saw.
+    to_read = [item for item in candidates if failed.get(item[0]) != item[1:]
+               and item[0] in aged and previous.get(item[0]) == item[1:]]
+    # Ending mid-row (or with an empty row): still being written, whatever its metadata says.
+    to_read = [item for item in to_read if _complete(names[item[0]])]
+    waiting[:] = [list(item) for item in candidates
+                  if failed.get(item[0]) != item[1:] and item not in to_read]
+    young = len(waiting)
+    if not to_read:
+        send({"kind": "live_unchanged", **state(True, young, True), "total_files": len(names)})
+        return
+    import numpy as np
+    import pandas as pd
+
+    fingerprint = [(shot, *held[shot]) for shot in held] + still_failed
+    # Unreadable shots stay in the fingerprint but not in the data, as a load keeps them.
+    unreadable = {shot for shot, _, _ in still_failed}
+    problematic = sorted(unreadable)
+    late: set[int] = set()
+    rows = size = loaded = read = read_bytes = 0
+    total_read_bytes = sum(item[1] for item in to_read)
+    last_progress = 0.0
+
+    def progress(done: int) -> dict[str, Any]:
+        checked = len(held) + len(still_failed) + young + done
+        return {"kind": "progress", "progress": checked / max(1, len(names)), "checked_files": checked,
+                "loaded_files": len(held) + loaded, "total_files": len(names),
+                "failed_files": len(unreadable), "unsettled_files": young + len(late),
+                "read_bytes": read_bytes, "read_files": read, "total_read_bytes": total_read_bytes}
+
+    def unchanged(filename: str, item: tuple[int, int, int]) -> bool:
+        info = os.stat(filename)
+        return (info.st_size, info.st_mtime_ns) == item[1:]
+
+    send(progress(0))
+    for i, item in enumerate(to_read):
+        shot = item[0]
+        filename = names[shot]
+        Pause.checkpoint(send)
+        send({"kind": "file_started", "filename": filename})
+        read += 1
+        read_bytes += item[1]
+        try:
+            array = None
+            if unchanged(filename, item):
+                frame = pd.read_csv(filename, sep=",", names=["t", "x", "y"], dtype=np.float64)
+                if frame.isna().any().any():
+                    problematic.append(shot)
+                array = np.asarray(frame.dropna(), dtype=np.float64)
+                if not unchanged(filename, item):
+                    array = None
+            if array is None:
+                # Changed while read: still being written; the next check reads it again.
+                late.add(shot)
+                waiting.append(list(item))
+                problematic[:] = [value for value in problematic if value != shot]
+            else:
+                artifact = os.path.join(output, f"{shot}.npy")
+                np.save(artifact, array, allow_pickle=False)
+                rows += len(array)
+                size += array.nbytes
+                loaded += 1
+                fingerprint.append(item)
+                send({"kind": "shot", "shot": shot, "artifact": artifact, "fingerprint": list(item),
+                      "problematic": shot in problematic})
+        except (OSError, ValueError, pd.errors.ParserError):
+            # Sent back with ``known`` next time: not read again unless it changes.
+            unreadable.add(shot)
+            problematic.append(shot)
+            fingerprint.append(item)
+        send({"kind": "file_finished", "filename": filename})
+        now = time.monotonic()
+        if now - last_progress >= 0.1 or i + 1 == len(to_read):
+            send(progress(i + 1))
+            last_progress = now
+    unsettled = young + len(late)
+    if not loaded and unreadable == {shot for shot, _, _ in still_failed}:
+        # Everything new was still being written.
+        send({"kind": "live_unchanged", **state(True, unsettled, False), "total_files": len(names)})
+        return
+    fingerprint.sort()
+    txy_bytes = sum(item[1] for item in fingerprint)
+    summary = _summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, False, fingerprint, listed_at)
+    summary["unsettled"] = unsettled
+    send({"kind": "scan_summary", "status": summary})
+    send({"kind": "loaded", "rows": rows, "bytes": size, "files": len(held) + loaded, "loaded_at": time.time(),
+          "total_files": len(names), "failed_files": len(unreadable), "unsettled_files": unsettled,
+          "problematic": sorted(set(problematic)), "source": "updated", "cached": False,
+          "disk_cache_pending": False, "load_counts": {
+              "reused_memory": len(held), "reused_disk": 0, "new": len(to_read), "modified": 0, "removed": 0,
+              "read": read, "new_loaded": loaded, "modified_loaded": 0},
+          "cache_reason": f"Live: reused {len(held)} shots from memory; read {read} new TXY files",
+          "fingerprint": [list(item) for item in fingerprint], "memory_shots": sorted(held),
+          "base_signature": "", "modified": summary["modified"], "modified_observed_at": time.time(),
+          "signature": _fingerprint_signature(fingerprint), **state(True, unsettled, True)})
+
+
 def folder_icons(paths: list[str], send: Emit = emit) -> None:
     """Resolve OS icons only in this disposable process, never while listing.
 
@@ -2013,6 +2274,11 @@ def main() -> None:
         elif operation == "subtree_save":
             save_subtrees(request["cache"], request["records"],
                           verified_volumes=request.get("verified_volumes"))
+        elif operation == "load" and request.get("live"):
+            live_check(request["path"], request["output"], memory=request.get("memory"),
+                       known=request.get("known"), since=request.get("live_since"),
+                       identity=str(request.get("identity") or ""), seen=request.get("seen"),
+                       check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL))
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),

@@ -641,16 +641,17 @@ def test_queue_mode_keeps_queued_loads_in_the_foreground(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     service, cache, explorer, _ = make_explorer(qtbot, monkeypatch, tmp_path, "finish")
-    assert cache.foreground_owners == {explorer.model.owner}
+    # (Its Live checks too, when Live is on.)
+    assert cache.foreground_owners == {explorer.model.owner, explorer.live_owner}
     explorer.load_mode = "queue"
-    assert cache.foreground_owners == {explorer.model.owner, explorer.bg_owner}
+    assert cache.foreground_owners == {explorer.model.owner, explorer.live_owner, explorer.bg_owner}
     other = FolderExplorer(str(tmp_path), str(tmp_path), str(tmp_path), [0])
     qtbot.addWidget(other)
     assert not other.is_foreground  # The first tab keeps it until another becomes current.
     other.claim_foreground()
     assert other.is_foreground and not explorer.is_foreground
     explorer.load_mode = "finish"
-    assert cache.foreground_owners == {other.model.owner}
+    assert cache.foreground_owners == {other.model.owner, other.live_owner}
     other.close_cleanup()
     finish(explorer, service)
 

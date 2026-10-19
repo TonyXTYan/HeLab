@@ -48,6 +48,7 @@ from helab.views.FolderExplorer import (
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
 from helab.views.MissingShotsWindow import MissingShotsWindow
+from helab.views.QuitSaveDialog import QuitSaveDialog
 from helab.views.RootDuplicatesWindow import RootDuplicatesWindow
 from helab.views.SettingsDialog import SettingsDialog
 from helab.views.DebugIconsWindow import DebugIconsWindow
@@ -84,6 +85,10 @@ class HelabMainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self._closing = False
+        # Quitting waits for disk cache saves (QuitSaveDialog) unless Quit now, or none are left.
+        self._quit_dialog: QuitSaveDialog | None = None
+        self._quit_now = False
+        self._cache_dialogs_detached = False
         self.watchdog = GUIWatchdog(self)
         # logging.debug(f"Current directory is {CURRENT_WORKING_DIRECTORY}")
         if not os.path.exists(DIR_TEMPS): os.makedirs(DIR_TEMPS)
@@ -282,8 +287,7 @@ class HelabMainWindow(QMainWindow):
             self.status_bar_progress.setToolTip(explorer.loading_tooltip)
         self._update_cancel_loading_action()
         self.tab_widget.set_tab_switching_enable()
-        if not self.action_tab_live_checked:
-            self.set_tools_and_tabs_enable()
+        self._update_live_action()
         self.status_bar_message_last_update = datetime.now()
 
     def _spinner_pixmap(self) -> QPixmap:
@@ -405,6 +409,7 @@ class HelabMainWindow(QMainWindow):
             set_disk_budget(read_disk_budget(settings))
             get_folder_cache(get_io_service()).set_ram_budget(read_ram_budget(settings))
             get_folder_cache(get_io_service()).check_level = read_check_level(settings)
+            self._apply_live_settings(settings)
 
             self.view_toggle_auto_load_ram = QAction('Toggle Auto Load to RAM', self)
             self.view_toggle_auto_load_ram.setCheckable(True)
@@ -550,6 +555,7 @@ class HelabMainWindow(QMainWindow):
         get_io_service().configure_concurrency(
             read_io_concurrency(settings))
         cache.check_level = read_check_level(settings)
+        self._apply_live_settings(settings)
         if read_disk_budget(settings) != store_options().get("budget"):
             # Saved without Save (e.g. Reset, then Cancel): the store is told until it has it.
             # (After Save it already has it: Settings saves a new disk budget only then.)
@@ -564,6 +570,12 @@ class HelabMainWindow(QMainWindow):
             self.show_status_notice(f"RAM budget lowered: dropped {len(dropped)} loaded "
                                     f"folder{'' if len(dropped) == 1 else 's'} ({byte_size(size)}) not shown in tabs")
         self.apply_auto_scan_visible(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
+
+    @staticmethod
+    def _apply_live_settings(settings: QSettings) -> None:
+        cache = get_folder_cache(get_io_service())
+        cache.live_interval = read_live_interval(settings)
+        cache.live_autosave_shots = read_live_autosave(settings)
 
     def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
         self._status_notice = (text, time.monotonic() + seconds)
@@ -680,10 +692,8 @@ class HelabMainWindow(QMainWindow):
         self.addAction(self.action_tab_cancel)
         self.action_tab_live = QAction(ToolIcons.ICON_LIVE, "Live", self)
         self.action_tab_live.setCheckable(True)
-        # FolderExplorer has no live monitor yet; do not imply that polling is active.
+        # Enabled for the current tab's selected folder once its data is shown (_update_live_action).
         self.action_tab_live.setEnabled(False)
-        self.action_tab_live_checked = False
-        self.action_tab_live_was_left_panel_open_before_clicking_live = True
 
         self.action_tab_new.setToolTip("New Tab")
         self.action_tab_new.setWhatsThis(
@@ -695,7 +705,7 @@ class HelabMainWindow(QMainWindow):
         self.action_tab_folder_up.setToolTip("Navigate up one directory")
         self.action_tab_rescan.setToolTip(self.FOLDER_STATUS_TOOLTIP)
         self.action_tab_cancel.setToolTip("Cancel loading in this tab (Esc)")
-        self.action_tab_live.setToolTip("Live updates unavailable\nUse Check folder status to check for new files.")
+        self.action_tab_live.setToolTip("Live\nSelect a folder with loaded data to watch it for new shots.")
 
         # action_tab_new.triggered.connect(self.add_new_folder_explorer_tab)
         # action_tab_folder_up.triggered.connect(self.on_back_button_clicked)
@@ -1059,6 +1069,10 @@ class HelabMainWindow(QMainWindow):
         # self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
         self.update_tool_enabled_state()
         current_folder_explorer = self.tab_widget.currentWidget()
+        for _, explorer in self._explorers():
+            if explorer is not current_folder_explorer and explorer.live is not None:
+                explorer.stop_live()  # Switching tabs turns Live off; its new shots are saved.
+        self._update_live_action()
         if isinstance(current_folder_explorer, FolderExplorer):
             # selection_model = current_folder_explorer.get_selection_model()
             # Connect the selectionChanged signal to the slot
@@ -1128,7 +1142,7 @@ class HelabMainWindow(QMainWindow):
         """The tabs a running load is for (in tab order), and its progress note."""
         owners, note = get_folder_cache(get_io_service()).load_note(producer)
         tabs = [(index, explorer) for index, explorer in self._explorers()
-                if explorer.model.owner in owners or explorer.bg_owner in owners]
+                if {explorer.model.owner, explorer.bg_owner, explorer.live_owner, explorer.live_save_owner} & set(owners)]
         return tabs, note
 
     def _request_note(self, request: IORequest) -> str:
@@ -1175,6 +1189,10 @@ class HelabMainWindow(QMainWindow):
                     f"{'Check' if explorer.load_is_check else 'Loading'} paused: {name}…" if explorer.load_paused else
                     f"Checking {name} for changes…" if explorer.load_is_check else f"Loading {name}…")
             return text, explorer.loading_tooltip
+        if explorer.live is not None:
+            live = explorer.live
+            return ((f"Live stopped: {name} — Retry in the folder summary", live.error) if live.error else
+                    (f"Live: watching {name} · {live.new:,} new shot{'' if live.new == 1 else 's'}", ""))
         if explorer.load_error:
             verb = "check" if explorer.shows_unchecked(path) else "load"
             return f"Could not {verb} {name} — see Folder details", explorer.load_error
@@ -1230,6 +1248,7 @@ class HelabMainWindow(QMainWindow):
             current_folder_explorer.reviewRootRequested.connect(self.review_root)
             current_folder_explorer.loadStateChanged.connect(self._update_folder_details)
             current_folder_explorer.loadStateChanged.connect(self._update_cancel_loading_action)
+            current_folder_explorer.liveChanged.connect(self._update_live_action)
             current_folder_explorer.dataLoaded.connect(
                 lambda p, fe=current_folder_explorer: self._snapshot_data_loaded(fe, p))
         else:
@@ -1271,7 +1290,8 @@ class HelabMainWindow(QMainWindow):
 
     def _update_folder_status_action(self) -> None:
         explorer = self.tab_widget.currentWidget()
-        available = isinstance(explorer, FolderExplorer) and not explorer.closed
+        # Live locks the tab's folder tree: no status checks of it meanwhile.
+        available = isinstance(explorer, FolderExplorer) and not explorer.closed and explorer.live is None
         active = isinstance(explorer, FolderExplorer) and not explorer.closed and explorer._basic_active
         self.action_tab_rescan.setEnabled(available)
         title = "Cancel check" if active else "Check folder status"
@@ -1289,7 +1309,8 @@ class HelabMainWindow(QMainWindow):
         current_folder_explorer = self.tab_widget.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.update_back_button_state()
-            self.action_tab_folder_up.setEnabled(current_folder_explorer.back_button_enabled)
+            self.action_tab_folder_up.setEnabled(current_folder_explorer.back_button_enabled
+                                                 and current_folder_explorer.live is None)
         else:
             self.action_tab_folder_up.setEnabled(False)
 
@@ -1315,32 +1336,34 @@ class HelabMainWindow(QMainWindow):
             QTimer.singleShot(50, self.update_status_bar_left)
 
     def on_live_button_clicked(self) -> None:
-        if self.action_tab_live_checked:
-            logging.debug("on_live_button_clicked: set to unchecked (stop tracking)")
-            self.action_tab_live.setChecked(False)
-            self.action_tab_live_checked = False
-            self.tab_widget.setEnabled(True)
-            if self.splitter.sizes()[0] == 0:
-                self.toggle_left_panel( self.action_tab_live_was_left_panel_open_before_clicking_live )
-            self.set_tools_and_tabs_enable()
-            self.update_tool_enabled_state()
-        else:
-            logging.debug("on_live_button_clicked: set to checked (start tracking)")
-            # logging.fatal(f"debug: {self.splitter.sizes()[0] > 0 = }")
-            self.action_tab_live_was_left_panel_open_before_clicking_live = self.splitter.sizes()[0] > 0
-            self.action_tab_live.setChecked(True)
-            self.action_tab_live_checked = True
-            self.tab_widget.setEnabled(False)
-            self.toggle_left_panel(False)
-            self.action_tab_refresh.setEnabled(False)
-            self.action_tab_new.setEnabled(False)
-            self.action_tab_rescan.setEnabled(False)
-            self.action_tab_folder_up.setEnabled(False)
+        """Live on or off for the current tab's selected folder (roadmaps/live-monitoring.md)."""
+        explorer = self.tab_widget.currentWidget()
+        if isinstance(explorer, FolderExplorer) and not explorer.closed:
+            if explorer.live is not None:
+                explorer.stop_live()
+            elif not explorer.start_live():
+                self.show_status_notice(explorer.live_unavailable(explorer.selected_path_globally)
+                                        or "Live couldn't start")
+        self._update_live_action()
 
-        current_folder_explorer = self.tab_widget.currentWidget()
-        if isinstance(current_folder_explorer, FolderExplorer):
-            # current_folder_explorer.toggle_live_update()
-            pass
+    def _update_live_action(self) -> None:
+        """The toolbar's Live follows the current tab. While it is on, the tab's folder tree is
+        locked, and so are Up, Refresh and Check folder status; switching tabs turns it off."""
+        if self._closing:
+            return
+        current = self.tab_widget.currentWidget()
+        explorer = current if isinstance(current, FolderExplorer) and not current.closed else None
+        enabled, tooltip = explorer.live_state() if explorer is not None else (False, "Live\nOpen a folder tab first.")
+        live = explorer is not None and explorer.live is not None
+        self.action_tab_live.setEnabled(enabled)
+        self.action_tab_live.setChecked(live)
+        if self.action_tab_live.toolTip() != tooltip:
+            self.action_tab_live.setToolTip(tooltip)
+        if live:
+            self.set_tools_and_tabs_disable()
+            self.action_tab_folder_up.setEnabled(False)
+        else:
+            self.set_tools_and_tabs_enable()
 
     def set_load_mode(self, mode: str) -> None:
         QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME).setValue(LOAD_MODE_SETTING, mode)
@@ -1378,8 +1401,14 @@ class HelabMainWindow(QMainWindow):
             if a0 is not None:
                 a0.accept()
             return
+        if self._quit_dialog is not None or (not self._quit_now and self._wait_for_saves()):
+            # The quit window decides: when the saves end, or Quit now.
+            if a0 is not None:
+                a0.ignore()
+            return
         self._closing = True
-        self.cache_dialogs.detach()
+        if not self._cache_dialogs_detached:
+            self.cache_dialogs.detach()
         self.watchdog.stop()
         for timer in self.findChildren(QTimer):
             timer.stop()
@@ -1397,6 +1426,31 @@ class HelabMainWindow(QMainWindow):
         if a0 is not None:
             a0.accept()
         QApplication.quit()
+
+    def _wait_for_saves(self) -> bool:
+        """Quitting turns Live off (it never survives a restart), which saves its new shots. If
+        any folder is being saved to the disk cache (that, or a finished load's background save),
+        a window names them and quitting waits, with Quit now. Whether it waits."""
+        for _, explorer in self._explorers():
+            explorer.stop_live()
+        cache = get_folder_cache(get_io_service())
+        if not cache.quit_saves():
+            return False
+        # Nothing else will be shown: the saves get the I/O. The cache's questions (Make room,
+        # Save update) wait for the next session.
+        cache.cancel_for_quit()
+        self.cache_dialogs.detach()
+        self._cache_dialogs_detached = True
+        self._quit_dialog = QuitSaveDialog(cache, self)
+        self._quit_dialog.finished.connect(self._quit_after_saves)
+        self._quit_dialog.open()
+        return True
+
+    def _quit_after_saves(self, result: int) -> None:
+        """The saves ended (or Quit now): quit."""
+        self._quit_dialog = None
+        self._quit_now = True
+        QTimer.singleShot(0, self.close)
 
     def handle_exit(self, signum: int, frame: Optional[types.FrameType]) -> None:
         # self.closeEvent(None)

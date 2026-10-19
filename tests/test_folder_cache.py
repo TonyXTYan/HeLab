@@ -87,7 +87,7 @@ def loaded_event(events: list[dict[str, Any]]) -> dict[str, Any]:
 def status_window(explorer: FolderExplorer | None, parent: QWidget) -> Any:
     """The main window's status-bar widgets, without a full main window and its startup jobs."""
     return SimpleNamespace(
-        _closing=False, _status_notice=None, action_tab_live_checked=True, _update_cancel_loading_action=lambda: None,
+        _closing=False, _status_notice=None, _update_live_action=lambda: None, _update_cancel_loading_action=lambda: None,
         tab_widget=SimpleNamespace(currentWidget=lambda: explorer, set_tab_switching_enable=lambda: None),
         status_bar_message_left=ElidedLabel("", parent), status_bar_spinner=QLabel(parent),
         status_bar_spinner_angle=0, status_bar_progress=QProgressBar(parent), _spinner_pixmap=QPixmap)
