@@ -20,8 +20,9 @@ number of spacings from the last detection (Live, a scan; the hidden centre then
 one). A first run with a transfer over about 2/3 can still take +1 for order 0 without a note:
 set both ends of Search T around order 0, or the orders by hand. A Search T with both ends set
 is the user's word on order 0: an order outside it gets a plain line, not the warning, and a
-last detection outside it is replaced without a "moved" warning. Under its title the plot also says when the
-orders overlap or no side peak was found, and which events were left out.
+last detection outside it is replaced without a "moved" warning (a plain line says so).
+Under its title the plot also says when the orders overlap or no side peak was found, and
+which events were left out.
 """
 from __future__ import annotations
 
@@ -301,7 +302,7 @@ def unsure(orders: Orders, totals: npt.NDArray[np.int64], low: float, high: floa
 
 def chosen_by_search(previous: float, low: float, high: float) -> bool:
     """Whether a Search T with both ends set leaves out the last detection's order 0: the new
-    one, found inside it, replaces it without a jump warning."""
+    one, found inside it, replaces it without a jump warning (a plain line says so)."""
     return math.isfinite(low) and math.isfinite(high) and not low <= previous <= high
 
 
@@ -314,7 +315,7 @@ class TransferFractions(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.transfer_fractions",
-            version="5",
+            version="6",
         )
 
     def get_actions(self) -> List[str]:
@@ -402,7 +403,11 @@ class TransferFractions(DatasetAnalysis):
         counts = counts.reshape(len(boxed), len(orders.numbers))
         if detected:
             notes.extend(unsure(orders, counts.sum(axis=0), low, high))
+            replaced = chosen_by_search(previous, low, high) and previous != CENTRE.default
             jumped = 0 if chosen_by_search(previous, low, high) else jump(previous, centre, spacing, each_side)
+            if replaced:  # The user's word on order 0, but say what it replaced.
+                notes.append(f"order 0 now at {centre:.6g} s; the last detection, {previous:.6g} s, was outside "
+                             f"Search T")
             if jumped:
                 notes.append(f"⚠ order 0 moved by {order_label(jumped)} order{'' if abs(jumped) == 1 else 's'} "
                              f"from the last detection ({previous:.6g} s → {centre:.6g} s): a strong transfer can "

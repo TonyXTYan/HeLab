@@ -183,7 +183,22 @@ warnings; one medium finding (R1) and a nit.
 | `f54a937` | nit | The "moved" advice ends "… set Order 0 at <c> s in manual mode, Rerun, then back to Auto". |
 
 - Trade-off of R1 (a): a Search T with both ends set that leaves the real order 0 out is no
-  longer a ⚠, only the plain line naming the taller order outside it.
+  longer a ⚠. Only plain lines remain: one naming an order outside it with at least half of
+  order 0's events, and, when it replaced a last detection outside it, "order 0 now at X s;
+  the last detection, Y s, was outside Search T" (R2, below). A first run with no last
+  detection, Search T around the wrong peak and a transfer over ~2/3 says nothing: the known
+  first-run limit.
+
+### After the second recheck
+
+[review.md](review.md), "Recheck at b16beb4": R1 and the nit fixed, no blocker; one low
+finding (R2) and a nit.
+
+| Commit | Finding | What |
+|---|---|---|
+| `5126335` | — | The second recheck, committed. |
+| R2 commit | R2 | When a both-ends Search T replaces a last detection outside it (not the default centre), a plain line: "order 0 now at X s; the last detection, Y s, was outside Search T". This covers 10 % → 90 % with Search T around +1, which was silent, and the R1 fix case. Version 6. |
+| nit commit | nit | Two blank lines, not three, before a section in `tests/test_transfer_fractions.py`. |
 - Checks after these fixes: full suite `pytest -n 6 --reruns 5 --reruns-delay 1
   --basetemp=.ai/temp/pytest`: **1204 passed, 2 skipped, 2 xfailed, no RERUN**; `mypy --strict`
   on helab and tests, also `--platform win32`: clean; `pyright helab tests`, also

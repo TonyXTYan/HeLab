@@ -489,11 +489,34 @@ def test_a_wrong_first_pick_fixed_by_search_t_updates_the_centre() -> None:
     fixed = run({**last, **AROUND_0})
     assert fixed.data.orders.centre == pytest.approx(CENTRE, abs=2e-4) and fixed.data.jumped == 0
     assert not [note for note in fixed.data.notes if note.startswith("⚠")]
+    assert (f"order 0 now at {fixed.data.orders.centre:.6g} s; the last detection, {last['centre']:.6g} s, was "
+            f"outside Search T") in fixed.data.notes
     filled = script.detected_parameters("Plot", fixed)
     assert filled["centre"] == fixed.data.orders.centre
     again = run({**filled, **AROUND_0})
-    assert again.data.jumped == 0 and not [note for note in again.data.notes if note.startswith("⚠")]
+    assert again.data.jumped == 0 and not [note for note in again.data.notes if note.startswith(("⚠", "order 0 now"))]
     # An open end keeps today's rules: the last centre is compared, and the warning sticks.
     open_end = run({**last, "search_max": CENTRE + SPACING / 2})
     assert open_end.data.orders.centre == pytest.approx(CENTRE, abs=2e-4) and open_end.data.jumped == -1
     assert "centre" not in script.detected_parameters("Plot", open_end)
+
+
+
+def test_search_t_around_the_wrong_peak_says_what_it_replaced() -> None:
+    """A right detection at 10 % transfer, then 90 % with both ends of Search T around +1 by
+    mistake: +1 is the user's order 0 (no ⚠, and the real order 0 holds too few events for the
+    outside line), but a plain line says the last detection was elsewhere."""
+    script = tf.TransferFractions()
+    first = context(shots_of(transferred(0.1)), {})
+    right = AnalysisResult.of(first, "completed", script.compute("Plot", first))
+    assert right.data.orders.centre == pytest.approx(CENTRE, abs=2e-4)
+    last = script.detected_parameters("Plot", right)
+    around_plus_1 = {"search_min": CENTRE + SPACING / 2, "search_max": CENTRE + 3 * SPACING / 2}
+    data = fractions(shots_of(transferred(0.9), seed=1), {**last, **around_plus_1})
+    assert data.orders.centre == pytest.approx(CENTRE + SPACING, abs=3e-4) and data.jumped == 0
+    assert not [note for note in data.notes if note.startswith("⚠") or "(outside Search T)" in note]
+    assert (f"order 0 now at {data.orders.centre:.6g} s; the last detection, {last['centre']:.6g} s, was outside "
+            f"Search T") in data.notes
+    # No last detection (the default centre): nothing replaced, no line.
+    assert not [note for note in fractions(shots_of(transferred(0.9)), around_plus_1).notes
+                if note.startswith("order 0 now")]
