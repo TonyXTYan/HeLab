@@ -155,3 +155,33 @@ What offscreen tests can't show (Tony's on-screen checklist):
   another to make a tab group: the panel and tab × buttons follow.
 - Keyboard: Tab/Shift-Tab into a plot's controls shows its settings; on macOS full keyboard
   access setting changes which widgets take Tab focus.
+
+## 7. UnitSpinBox
+
+Probed with real typed input + Enter (`.ai/temp/spin_probe.py`). Wrong before (Ground's
+version, which appended the shown unit to bare text and used pyqtgraph's loose regex):
+- "5 m", "5 u", "5 k" in a box showing "4 ms" → **5 s** (the prefix was lost).
+- "5 abc" → **5 as** (pyqtgraph's regex takes "a" as atto and the rest as a suffix).
+- "95,5" in a % box (English locale) → **9 %**; "95.5" in a German locale → 9 %.
+- "4.5" in a whole-number box → 4 (truncated).
+- Out of range ("150" in 0–100 %) → back to the old value (kept as it was).
+
+Now `UnitSpinBox.parse` reads strictly: number (one decimal mark, exponent allowed), then an
+optional SI prefix (`u` = µ), then optionally the unit. Bare number → shown unit and prefix
+(exponent included: "1e-3" in "4 ms" is 1 µs); prefix without unit → that prefix; with unit
+→ as written. Decimal mark: "." always, "," only where it is the locale's decimal point
+(the box never shows thousands separators, so "1.000" is 1 even in German). Whole-number
+boxes take integral values only ("4.0" yes, "4.5" no). Empty, letters, inf/nan, prefixes in
+a box without SI prefixes ("95 k" in %) are invalid: red outline while typing, value back
+when the edit ends. Beyond the limits: red outline while typing, and the edit's end sets
+the nearest limit (`fixup` → `setValue` clamps), as `ParameterSpec.coerce` and the arrows
+do. Maestro approved the clamping and the one assertion change in `tests/test_analysis.py`
+("20" in Point size → "10 px", comment "Above the limit: set to 10 px.").
+`suffixPower` is passed to `siApply` (pyqtgraph's own parser ignores it, so "4 mm²" would
+mis-parse there; unused by today's specs).
+
+`tests/test_unit_spin_box.py` (63 cases): each SI prefix shown (µ, m, none, k; s and m
+units, zero and negative values), with/without unit, invalid input, percent with limits,
+whole numbers, German decimal comma (`setLocale`, no system change), the red outline, and
+values reaching the parameter through the settings tree. The file imports
+QtWebEngineWidgets first: run alone, nothing else imports it before the app starts.
