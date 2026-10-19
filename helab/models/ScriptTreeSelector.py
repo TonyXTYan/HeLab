@@ -6,15 +6,16 @@ import time
 from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal
 
 from PyQt6 import sip
-from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QCloseEvent, QWindow
+from PyQt6.QtCore import QObject, QRect, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QCloseEvent, QPainter, QPaintEvent, QWindow
 # from uuid import uuid4
 
 # Import QWidget types first to avoid forward references
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QLabel, QPushButton, QTreeWidget, QVBoxLayout,
     QTreeWidgetItem, QHeaderView, QDockWidget, QFileDialog,
-    QComboBox, QMainWindow, QApplication, QStackedWidget, QTabBar, QToolButton
+    QComboBox, QMainWindow, QApplication, QStackedWidget, QTabBar, QToolButton, QAbstractButton,
+    QSizePolicy, QSplitter
 )
 from pyqtgraph.parametertree import Parameter
 
@@ -39,10 +40,248 @@ import numpy as np
 address_of = cast(Callable[[QObject], int], sip.unwrapinstance)
 
 
+# Qt's largest widget size (QWIDGETSIZE_MAX), which PyQt6 doesn't export.
+WIDGET_SIZE_MAX = (1 << 24) - 1
+
+
+class SettingsToggle(QAbstractButton):
+    """The header of a floating plot's settings section, which opens and closes it (a click,
+    or Space): open, one line across the top, "▾", the plot's name and its settings summary,
+    cut at the edge (the tooltip has it all); closed, a slim strip with "▸" and the same text
+    running down it."""
+
+    PADDING = 6
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)  # Repainted as the pointer enters and leaves.
+        self.name = ""
+        self.summary = ""
+        self.toggled.connect(self._fit)
+        self._fit()
+
+    def set_text(self, name: Optional[str] = None, summary: Optional[str] = None) -> None:
+        """The plot's name and settings summary (None: as before)."""
+        name = self.name if name is None else name
+        summary = self.summary if summary is None else summary
+        if (name, summary) != (self.name, self.summary):
+            self.name, self.summary = name, summary
+            self._fit()
+
+    def text_shown(self) -> str:
+        return " · ".join(filter(None, (self.name, self.summary)))
+
+    def strip_width(self) -> int:
+        return self.fontMetrics().height() + self.PADDING
+
+    def sizeHint(self) -> QSize:
+        across = self.strip_width()
+        along = self.fontMetrics().horizontalAdvance(f"▾  {self.text_shown()}") + 2 * self.PADDING
+        return QSize(along, across) if self.isChecked() else QSize(across, along)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(self.strip_width(), self.strip_width())
+
+    def _fit(self) -> None:
+        policy = QSizePolicy.Policy
+        if self.isChecked():
+            self.setSizePolicy(policy.Ignored, policy.Fixed)
+            action = "Hide this plot's settings"
+        else:
+            self.setSizePolicy(policy.Fixed, policy.Ignored)
+            action = "Show this plot's settings"
+        self.setToolTip("\n".join(filter(None, (action, self.name, self.summary))))
+        self.updateGeometry()
+        self.update()
+
+    def paintEvent(self, e: Optional[QPaintEvent]) -> None:
+        painter = QPainter(self)
+        palette = self.palette()
+        hovered = self.underMouse() or self.isDown()
+        painter.fillRect(self.rect(), palette.midlight() if hovered else palette.button())
+        painter.setPen(palette.buttonText().color())
+        if self.hasFocus():
+            painter.save()
+            painter.setPen(palette.highlight().color())
+            painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+            painter.restore()
+        metrics, centred = self.fontMetrics(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        if self.isChecked():
+            room = QRect(self.PADDING, 0, max(0, self.width() - 2 * self.PADDING), self.height())
+            painter.drawText(room, centred, metrics.elidedText(
+                f"▾  {self.text_shown()}", Qt.TextElideMode.ElideRight, room.width()))
+            return
+        # Closed: the arrow upright at the top, the text running down the strip below it.
+        arrow = QRect(0, self.PADDING, self.width(), metrics.height())
+        painter.drawText(arrow, Qt.AlignmentFlag.AlignCenter, "▸")
+        start = arrow.bottom() + self.PADDING
+        painter.translate(self.width(), start)
+        painter.rotate(90)
+        room = QRect(0, 0, max(0, self.height() - start - self.PADDING), self.width())
+        painter.drawText(room, centred, metrics.elidedText(self.text_shown(), Qt.TextElideMode.ElideRight, room.width()))
+
+
+class FloatingSettings(QWidget):
+    """A floating plot's settings section, right of the plot in its window (``AnalysisDock``):
+    the toggle, then the plot's settings page (``hold``, from the Settings panel) while open.
+    It starts closed, a slim strip. Whether it is open and its width open are the plot's for
+    the session: they last as long as its dock, floated and docked again."""
+
+    MIN_WIDTH = 160
+    DEFAULT_WIDTH = 300
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.toggle = SettingsToggle(self)
+        layout.addWidget(self.toggle)
+        self.page: Optional[QWidget] = None
+        self.open_width = self.DEFAULT_WIDTH
+        self._fit()
+
+    @property
+    def is_open(self) -> bool:
+        return self.toggle.isChecked()
+
+    def hold(self, page: QWidget) -> None:
+        """Show ``page`` here (the plot floats); it keeps its edits."""
+        self.page = page
+        layout = self.layout()
+        assert layout is not None
+        layout.addWidget(page)
+        cast(QVBoxLayout, layout).setStretchFactor(page, 1)
+        self._fit()
+        self.show()
+
+    def release(self) -> Optional[QWidget]:
+        """The page goes back to the Settings panel (the plot docks again, or closes)."""
+        page, self.page = self.page, None
+        layout = self.layout()
+        if page is not None and not sip.isdeleted(page) and layout is not None:
+            layout.removeWidget(page)
+        self.hide()
+        return page if page is not None and not sip.isdeleted(page) else None
+
+    def set_open(self, open_: bool) -> None:
+        self.toggle.setChecked(open_)
+        self._fit()
+
+    def _fit(self) -> None:
+        """Open: as wide as the splitter makes it; closed, the strip alone."""
+        if self.is_open:
+            self.setMinimumWidth(self.MIN_WIDTH)
+            self.setMaximumWidth(WIDGET_SIZE_MAX)
+        else:
+            self.setFixedWidth(self.toggle.strip_width())
+        if self.page is not None and not sip.isdeleted(self.page):
+            self.page.setVisible(self.is_open)
+
+
 class AnalysisDock(QDockWidget):
     """A plot dock that says when the user closes it (hiding, e.g. behind another tabbed
-    dock, is not closing)."""
+    dock, is not closing).
+
+    Its widget (``widget()``, ``setWidget``) is the plot. Around it is a frame, a splitter
+    with the plot's settings section (``settings``) on its right, shown only while the plot
+    floats: the Settings panel moves the plot's page there and back (``PlotSettingsPanel``).
+    Opening or closing the section widens or narrows the floating window by its width, so
+    the plot keeps its size; the splitter sets the width open."""
     closed = pyqtSignal()
+
+    def __init__(self, title: str = "", parent: Optional[QWidget] = None) -> None:
+        super().__init__(title, parent)
+        self.frame = QSplitter(Qt.Orientation.Horizontal)
+        self.frame.setChildrenCollapsible(False)
+        self._body_holder = QWidget()
+        body_layout = QVBoxLayout(self._body_holder)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        self._body: Optional[QWidget] = None
+        self.settings = FloatingSettings()
+        self.settings.hide()
+        self.frame.addWidget(self._body_holder)
+        self.frame.addWidget(self.settings)
+        self.frame.setStretchFactor(0, 1)
+        self.frame.setStretchFactor(1, 0)
+        self.frame.splitterMoved.connect(self._splitter_moved)
+        self.settings.toggle.clicked.connect(self.set_settings_open)
+        self._fit_handle()
+        super().setWidget(self.frame)
+
+    def widget(self) -> Optional[QWidget]:
+        """The plot (not the frame around it)."""
+        return self._body if self._body is not None and not sip.isdeleted(self._body) else None
+
+    def setWidget(self, widget: Optional[QWidget]) -> None:
+        """Show ``widget`` as the plot. As in Qt's own, the plot before it stays a (hidden)
+        child of the dock until its owner deletes it."""
+        layout = self._body_holder.layout()
+        assert layout is not None
+        old = self.widget()
+        if old is widget:
+            return
+        if old is not None:
+            layout.removeWidget(old)
+            old.hide()
+        self._body = widget
+        if widget is not None:
+            layout.addWidget(widget)
+            widget.show()
+
+    def hold_settings(self, page: QWidget) -> None:
+        """Show the plot's settings ``page`` beside it (it floats), open or closed as last
+        time, at its width (the plot gives up the room)."""
+        self.settings.hold(page)
+        self._fit_handle()
+        width = self.settings.open_width if self.settings.is_open else self.settings.toggle.strip_width()
+        self.frame.setSizes([max(1, self.frame.width() - self.frame.handleWidth() - width), width])
+
+    @pyqtSlot(bool)
+    def set_settings_open(self, open_: bool) -> None:
+        """Open or close the settings section. While floating, the window widens or narrows by
+        the change (within its screen), so the plot keeps its size; the width open is kept."""
+        side = self.settings
+        if not side.isVisible():
+            side.set_open(open_)
+            self._fit_handle()
+            return
+        before = side.width()  # The toggle has flipped already; the section hasn't.
+        if not open_ and before > side.toggle.strip_width():
+            side.open_width = before
+        width = side.open_width if open_ else side.toggle.strip_width()
+        side.setFixedWidth(width)  # While the window changes, the plot takes the difference.
+        if self.isFloating():
+            self._widen(width - before)
+        side.set_open(open_)
+        self._fit_handle()
+        # The splitter's own sizes don't follow the section's new width when the window shrinks.
+        self.frame.setSizes([max(1, self.frame.width() - self.frame.handleWidth() - width), width])
+
+    def _widen(self, delta: int) -> None:
+        geometry = self.geometry()
+        width = max(self.minimumSizeHint().width(), geometry.width() + delta)
+        left = geometry.x()
+        screen = self.screen()
+        if delta > 0 and screen is not None:  # Wider: kept on its screen, moved left if need be.
+            available = screen.availableGeometry()
+            width = min(width, available.width())
+            left = max(available.left(), min(left, available.right() + 1 - width))
+        self.setGeometry(left, geometry.y(), width, geometry.height())
+
+    def _fit_handle(self) -> None:
+        """The splitter's handle moves the section's edge only while it is open."""
+        handle = self.frame.handle(1)
+        if handle is not None:
+            handle.setEnabled(self.settings.is_open)
+            handle.setCursor(Qt.CursorShape.SplitHCursor if self.settings.is_open else Qt.CursorShape.ArrowCursor)
+
+    @pyqtSlot(int, int)
+    def _splitter_moved(self, pos: int, index: int) -> None:
+        if self.settings.is_open:
+            self.settings.open_width = self.settings.width()
 
     def closeEvent(self, event: QCloseEvent | None) -> None:
         super().closeEvent(event)
@@ -860,7 +1099,11 @@ class PlotSettingsPanel(QWidget):
     plot hidden: the most recently shown plot still visible shows, as when it closes). No
     Python runs per event (no event filter), and the connections end with the panel or
     ``detach()``. Whenever a plot shows, focus left in another plot moves to it, so focus is
-    never in a plot other than the shown one, and a click in any other plot changes focus."""
+    never in a plot other than the shown one, and a click in any other plot changes focus.
+
+    A floating plot's page moves into its window (``AnalysisDock.settings``: the same
+    editors, with their edits and Rerun) and back when it docks again; while it is the shown
+    plot, the panel says so, with a button that raises its window."""
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
@@ -886,6 +1129,17 @@ class PlotSettingsPanel(QWidget):
         self.hint.setWordWrap(True)
         self.hint.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.stack.addWidget(self.hint)
+        self.away = QWidget()  # The shown plot floats: its settings are in its window.
+        away_row = QHBoxLayout(self.away)
+        away_row.setContentsMargins(4, 0, 4, 0)
+        away_row.addWidget(QLabel("Settings are in this plot's window"))
+        self.away_button = QPushButton("Show plot window")
+        self.away_button.setToolTip("Raise this plot's floating window")
+        self.away_button.clicked.connect(self.raise_current)
+        away_row.addWidget(self.away_button)
+        away_row.addStretch(1)
+        away_row.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.stack.addWidget(self.away)
         layout.addWidget(self.stack, 1)
         self._pages: Dict[QDockWidget, QWidget] = {}
         self._order: List[QDockWidget] = []  # the chooser's order: as opened
@@ -923,6 +1177,10 @@ class PlotSettingsPanel(QWidget):
         dock.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         dock.destroyed.connect(self._forget_deleted)
         dock.visibilityChanged.connect(self._visibility_changed)
+        if isinstance(dock, AnalysisDock):
+            dock.settings.toggle.set_text(name=title)
+            dock.topLevelChanged.connect(self._floating_changed)
+            self._place(dock)
         self.show_plot(dock)
 
     def remove_plot(self, dock: QDockWidget) -> None:
@@ -935,7 +1193,9 @@ class PlotSettingsPanel(QWidget):
         self.chooser.removeItem(index)
         if dock in self._recent:
             self._recent.remove(dock)
-        if not sip.isdeleted(page):
+        if isinstance(dock, AnalysisDock) and not sip.isdeleted(dock):
+            dock.settings.release()
+        if not sip.isdeleted(page) and self.stack.indexOf(page) >= 0:
             self.stack.removeWidget(page)
         fallback = self._fallback()
         if fallback is not None:
@@ -951,7 +1211,7 @@ class PlotSettingsPanel(QWidget):
         if dock in self._recent:
             self._recent.remove(dock)
         self._recent.append(dock)
-        self.stack.setCurrentWidget(page)
+        self.stack.setCurrentWidget(page if self.stack.indexOf(page) >= 0 else self.away)
         self.chooser.setCurrentIndex(self._order.index(dock))
         self._update_chooser()
         if raise_dock:
@@ -975,9 +1235,12 @@ class PlotSettingsPanel(QWidget):
         return self._pages.get(dock)
 
     def set_title(self, dock: QDockWidget, title: str) -> None:
-        """A plot's name in the chooser (it changes as the plot follows Live to newer data)."""
+        """A plot's name in the chooser and its window's settings header (it changes as the
+        plot follows Live to newer data)."""
         if dock in self._pages:
             self.chooser.setItemText(self._order.index(dock), title)
+            if isinstance(dock, AnalysisDock):
+                dock.settings.toggle.set_text(name=title)
 
     def follow(self, area: QMainWindow) -> None:
         """Show a plot's page when its tab is clicked among tabbed docks in ``area``."""
@@ -989,6 +1252,36 @@ class PlotSettingsPanel(QWidget):
         dock = self.current_plot()
         if dock is not None:
             dock.close()
+
+    def raise_current(self) -> None:
+        dock = self.current_plot()
+        if dock is not None:
+            self.show_plot(dock, raise_dock=True)
+
+    def settings_away(self, dock: QDockWidget) -> bool:
+        """Whether ``dock``'s page is in its floating window."""
+        page = self._pages.get(dock)
+        return page is not None and isinstance(dock, AnalysisDock) and dock.settings.page is page
+
+    def _place(self, dock: AnalysisDock) -> None:
+        """The page goes where the plot is: into its window while it floats, else here."""
+        page = self._pages.get(dock)
+        if page is None or sip.isdeleted(page) or sip.isdeleted(dock):
+            return
+        if dock.isFloating() and dock.settings.page is not page:
+            self.stack.removeWidget(page)
+            dock.hold_settings(page)
+        elif not dock.isFloating() and dock.settings.page is page:
+            dock.settings.release()
+            self.stack.addWidget(page)
+        if dock is self.current_plot():
+            self.stack.setCurrentWidget(page if self.stack.indexOf(page) >= 0 else self.away)
+
+    @pyqtSlot(bool)
+    def _floating_changed(self, floating: bool) -> None:
+        dock = self.sender()
+        if isinstance(dock, AnalysisDock):
+            self._place(dock)
 
     def _update_chooser(self) -> None:
         self.chooser_row.setVisible(bool(self._order))

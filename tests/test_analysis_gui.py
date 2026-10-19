@@ -23,7 +23,7 @@ from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.runner import get_analysis_runner
 from helab.io_helper import list_folder, scan
-from helab.models.ScriptTreeSelector import AnalysisInstance, PlotSettingsPanel, TreePanelWidget
+from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import basic_plots, group
 from helab.utils.dash_server import dash_server
@@ -309,7 +309,9 @@ def test_settings_panel_follows_the_active_plot(
     two.show()
     two.activateWindow()
     qtbot.waitUntil(lambda: settings.current_plot() is two)
-    assert settings.stack.currentWidget() is second.param_tab
+    # Its page is in its window now; the panel says so.
+    assert settings.stack.currentWidget() is settings.away and settings.settings_away(two)
+    assert cast(AnalysisDock, two).settings.page is second.param_tab
     # A page keeps its edits while another plot's page shows.
     assert first.parameter_root is not None and second.parameter_root is not None
     first.parameter_root.child("scale").setValue(7)
@@ -325,7 +327,7 @@ def test_settings_panel_follows_the_active_plot(
     assert settings.current_plot() is three
     three.close()
     assert settings.current_plot() is None and settings.stack.currentWidget() is settings.hint
-    assert settings.chooser_row.isHidden() and settings.stack.count() == 1
+    assert settings.chooser_row.isHidden() and settings.stack.count() == 2  # The hint and the note.
 
 
 def test_plots_close_from_their_tab_and_the_settings_panel(
@@ -497,7 +499,10 @@ def test_twenty_plots_tabbed_and_floating(
         tabs_of(instances[n]).setCurrentIndex(n % 2)
     for n in (3, 8, 4, 0, 19):
         settings.chooser.activated.emit(n)
-        assert settings.current_plot() is docks[n] and settings.stack.currentWidget() is instances[n].param_tab
+        page = instances[n].param_tab
+        assert settings.current_plot() is docks[n]
+        assert settings.stack.currentWidget() is (settings.away if n % 4 == 0 else page)
+        assert cast(AnalysisDock, docks[n]).settings.page is (page if n % 4 == 0 else None)
     assert [instance.values() for instance in instances] == [
         {"scale": n % 10 + 1, "label": False} for n in range(20)]
     assert [tabs_of(instance).currentIndex() for instance in instances] == [n % 2 for n in range(20)]
@@ -519,7 +524,7 @@ def test_twenty_plots_tabbed_and_floating(
     for dock in list(settings.plots()):
         dock.close()
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
-    assert settings.plots() == [] and settings.stack.count() == 1 and settings.chooser.count() == 0
+    assert settings.plots() == [] and settings.stack.count() == 2 and settings.chooser.count() == 0
     assert not window.dock_widgets and not panel._analysis_instances
     assert all(sip.isdeleted(widget) for widget in [*docks, *pages, *contents])
     refs = [weakref.ref(instance) for instance in instances]

@@ -14,7 +14,8 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QLineEdit, QMainWindow, QTabBar, QVBoxLayout, QWidget
 import pyqtgraph as pg
 
-from helab.models.ScriptTreeSelector import AnalysisDock, DockTabCloser, PlotSettingsPanel, TreePanelWidget
+from helab.models.ScriptTreeSelector import (AnalysisDock, DockTabCloser, FloatingSettings, PlotSettingsPanel,
+                                             TreePanelWidget)
 
 
 def app() -> QApplication:
@@ -45,11 +46,11 @@ class Plots:
         self.panel.follow(self.area)
         self.docks: List[QDockWidget] = []
 
-    def add(self, content: Optional[QWidget] = None) -> QDockWidget:
+    def add(self, content: Optional[QWidget] = None, page: Optional[QWidget] = None) -> QDockWidget:
         dock = AnalysisDock(f"Plot ({len(self.docks) + 1})", self.area)
         dock.setWidget(content or QLabel(f"plot {len(self.docks) + 1}"))
         self.area.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
-        self.panel.add_plot(dock, QLabel(f"settings {len(self.docks) + 1}"), dock.windowTitle())
+        self.panel.add_plot(dock, page or QLabel(f"settings {len(self.docks) + 1}"), dock.windowTitle())
         self.docks.append(dock)
         return dock
 
@@ -390,3 +391,181 @@ def test_a_click_back_in_the_focused_plot(plots: Plots, qtbot: QtBot) -> None:
     plots.panel.chooser.setFocus()
     plots.panel.chooser.activated.emit(1)
     assert plots.panel.current_plot() is second and plots.panel.chooser.hasFocus()
+
+
+# A floating plot's settings (its page moves into its window)
+
+def floated(dock: QDockWidget, qtbot: QtBot, width: int = 0) -> AnalysisDock:
+    """``dock`` floating on its own, its settings section showing; ``width``: its window's."""
+    assert isinstance(dock, AnalysisDock)
+    dock.setFloating(True)
+    if width:
+        dock.setGeometry(40, 40, width, 300)
+    dock.show()
+    qtbot.waitUntil(dock.settings.isVisible)
+    return dock
+
+
+def docked(dock: AnalysisDock, qtbot: QtBot) -> None:
+    dock.setFloating(False)
+    qtbot.waitUntil(dock.settings.isHidden)
+
+
+def test_a_floating_plot_takes_its_page_and_gives_it_back(plots: Plots, qtbot: QtBot) -> None:
+    """Floating a plot moves its page into its window: the same widgets, with their edits,
+    starting closed. The panel keeps naming the plot and says where its settings are, with a
+    button that raises the window; other plots' pages show here as before. Docked again, the
+    page comes back."""
+    page = QLineEdit("unapplied")
+    one, two = plots.add(), plots.add(page=page)
+    plots.show(qtbot)
+    panel = plots.panel
+    assert panel.stack.currentWidget() is page and cast(AnalysisDock, two).settings.isHidden()
+    dock = floated(two, qtbot)
+    side = dock.settings
+    assert side.page is page and page.parentWidget() is side and panel.page(two) is page
+    assert panel.settings_away(two) and panel.stack.currentWidget() is panel.away
+    assert panel.stack.indexOf(page) == -1 and panel.chooser.currentText() == two.windowTitle()
+    assert not side.is_open and page.isHidden() and side.width() == side.toggle.strip_width()
+    panel.show_plot(one)
+    assert panel.stack.currentWidget() is panel.page(one) and not panel.settings_away(one)
+    plots.area.activateWindow()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is plots.area)
+    panel.chooser.activated.emit(1)  # Chosen: its window comes up.
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is two)
+    assert panel.current_plot() is two and panel.stack.currentWidget() is panel.away
+    plots.area.activateWindow()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is plots.area)
+    panel.away_button.click()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is two)
+    side.toggle.click()
+    assert side.is_open and page.isVisible()
+    page.setText("edited in the plot's window")
+    docked(dock, qtbot)
+    assert side.page is None and page.parentWidget() is panel.stack and panel.stack.currentWidget() is page
+    assert page.text() == "edited in the plot's window" and not panel.settings_away(two)
+
+
+def test_the_section_opens_wider_and_remembers_for_the_session(plots: Plots, qtbot: QtBot) -> None:
+    """Opening the section widens the window by its width (the plot keeps its size); the
+    splitter sets the width open, and closing narrows the window by as much. Whether it is
+    open and its width stay with the plot, docked and floated again."""
+    page = QLineEdit()
+    plots.add(page=page)
+    plots.show(qtbot)
+    dock = floated(plots.docks[0], qtbot, width=400)
+    side, frame = dock.settings, dock.frame
+    strip = side.toggle.strip_width()
+    plot_width = frame.sizes()[0]
+    assert not frame.handle(1).isEnabled()  # Closed: the strip can't be dragged wider.
+    side.toggle.click()
+    assert side.is_open and page.isVisible() and frame.handle(1).isEnabled()
+    assert side.width() == FloatingSettings.DEFAULT_WIDTH == side.open_width
+    assert frame.sizes()[0] == plot_width and dock.width() == 400 + FloatingSettings.DEFAULT_WIDTH - strip
+    frame.moveSplitter(frame.sizes()[0] - 60, 1)  # As a drag of the handle does.
+    wider = FloatingSettings.DEFAULT_WIDTH + 60
+    assert side.width() == side.open_width == wider and frame.sizes()[0] == plot_width - 60
+    side.toggle.click()
+    assert not side.is_open and page.isHidden() and side.width() == strip
+    assert frame.sizes()[0] == plot_width - 60 and dock.width() == 400 - 60
+    docked(dock, qtbot)
+    floated(dock, qtbot)
+    assert not side.is_open and side.width() == strip
+    side.toggle.click()
+    assert side.is_open and side.width() == wider
+    docked(dock, qtbot)
+    floated(dock, qtbot)
+    assert side.is_open and page.isVisible() and side.width() == wider
+
+
+def test_opening_keeps_the_window_on_its_screen(plots: Plots, qtbot: QtBot) -> None:
+    plots.add()
+    plots.show(qtbot)
+    dock = floated(plots.docks[0], qtbot)
+    screen = dock.screen()
+    assert screen is not None
+    available = screen.availableGeometry()
+    dock.setGeometry(available.right() - 300, 40, available.width() - 100, 300)
+    dock.settings.toggle.click()
+    assert dock.width() == available.width() and dock.geometry().left() == available.left()
+    assert dock.settings.width() == FloatingSettings.DEFAULT_WIDTH  # The plot gives up the rest.
+
+
+def test_the_header_names_the_plot_and_its_settings(plots: Plots, qtbot: QtBot) -> None:
+    one = plots.add()
+    toggle = cast(AnalysisDock, one).settings.toggle
+    assert toggle.name == "Plot (1)" and "Show this plot's settings" in toggle.toolTip()
+    plots.panel.set_title(one, "Plot (1) · run_L · rev 2")
+    toggle.set_text(summary="last 10 shots · bins auto")
+    assert toggle.text_shown() == "Plot (1) · run_L · rev 2 · last 10 shots · bins auto"
+    assert toggle.toolTip() == "Show this plot's settings\nPlot (1) · run_L · rev 2\nlast 10 shots · bins auto"
+    toggle.setChecked(True)
+    assert toggle.toolTip().startswith("Hide this plot's settings")
+    # Space opens and closes it too (it is a button).
+    plots.show(qtbot)
+    dock = floated(one, qtbot)
+    toggle.setChecked(False)
+    dock.activateWindow()
+    toggle.setFocus()
+    qtbot.waitUntil(toggle.hasFocus)
+    qtbot.keyClick(toggle, Qt.Key.Key_Space)
+    assert dock.settings.is_open
+
+
+def test_redocking_into_its_tab_group(plots: Plots, qtbot: QtBot) -> None:
+    """A plot floated from a tab group docks back into it, its page comes back, and the
+    group's tabs keep their close buttons."""
+    closer = DockTabCloser(plots.area)
+    one, two, three = plots.add(), plots.add(), plots.add()
+    for dock in (one, two, three):
+        closer.watch(dock)
+    plots.show(qtbot)
+    plots.area.tabifyDockWidget(one, two)
+    plots.area.tabifyDockWidget(one, three)
+    qtbot.waitUntil(lambda: bool(closable_bars(plots.area, 3)))
+    plots.panel.show_plot(two)
+    dock = floated(two, qtbot)
+    qtbot.waitUntil(lambda: bool(closable_bars(plots.area, 2)))
+    assert plots.panel.stack.currentWidget() is plots.panel.away
+    docked(dock, qtbot)
+    qtbot.waitUntil(lambda: bool(closable_bars(plots.area, 3)))
+    assert set(plots.area.tabifiedDockWidgets(two)) == {one, three}
+    assert plots.panel.current_plot() is two and plots.panel.stack.currentWidget() is plots.panel.page(two)
+
+
+def test_a_hidden_floating_plot_falls_back_to_a_visible_one(plots: Plots, qtbot: QtBot) -> None:
+    """A floating plot counts as shown; hidden (its window minimised), a visible plot shows,
+    with its page in the panel."""
+    one, two = plots.add(), plots.add()
+    plots.show(qtbot)
+    plots.panel.show_plot(one)
+    dock = floated(two, qtbot)
+    dock.activateWindow()
+    qtbot.waitUntil(lambda: plots.panel.current_plot() is two)
+    plots.area.activateWindow()  # Focus back in the main window, not in a plot: two stays.
+    qtbot.wait(50)
+    assert plots.panel.current_plot() is two and plots.panel.stack.currentWidget() is plots.panel.away
+    two.hide()
+    qtbot.waitUntil(lambda: plots.panel.current_plot() is one)
+    assert plots.panel.stack.currentWidget() is plots.panel.page(one)
+
+
+def test_many_floating_plots_each_hold_their_own_page(plots: Plots, qtbot: QtBot) -> None:
+    pages = [QLineEdit(f"page {n}") for n in range(8)]
+    docks = [plots.add(page=page) for page in pages]
+    plots.show(qtbot)
+    for dock in docks:
+        floated(dock, qtbot)
+    for n, dock in enumerate(docks):
+        assert cast(AnalysisDock, dock).settings.page is pages[n]
+        plots.panel.chooser.activated.emit(n)
+        assert plots.panel.current_plot() is dock and plots.panel.stack.currentWidget() is plots.panel.away
+    # A floating plot closed (its page goes with it) or deleted unclosed leaves nothing behind.
+    plots.panel.remove_plot(docks[3])
+    assert cast(AnalysisDock, docks[3]).settings.page is None
+    delete_now(docks[5])
+    assert sip.isdeleted(pages[5]) and docks[5] not in plots.panel.plots()
+    assert plots.panel.stack.count() == 2 and plots.panel.chooser.count() == 6
+    for dock in docks[:3]:
+        docked(cast(AnalysisDock, dock), qtbot)
+    assert plots.panel.stack.count() == 5

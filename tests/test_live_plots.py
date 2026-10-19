@@ -31,7 +31,7 @@ from helab.analysis.parameters import ParameterSpec, effective
 from helab.analysis.results import AnalysisContext, AnalysisResult, Coverage
 from helab.analysis.runner import AnalysisRunner
 from helab.io_helper import list_folder, live_check, load
-from helab.models.ScriptTreeSelector import AnalysisInstance, PlotSettingsPanel, TreePanelWidget
+from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import basic_plots, scatter_3d, transfer_fractions
 from helab.utils.dash_server import dash_server
@@ -782,6 +782,64 @@ def test_a_failed_rerun_keeps_the_last_plot_and_following_goes_on(
     window.live_feed.publish(revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 3, timeout=10_000)
     assert not error_line(instance).isVisibleTo(dock) and instance.error == ""
+
+
+
+def test_a_floating_plot_runs_and_follows_with_its_settings_in_its_window(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """Float, dock again and close a plot while it runs and follows Live: its page (Follow
+    Live, Rerun and unapplied edits) moves with it, its header names its settings, and closing
+    it while floating and running cancels the run and leaves nothing behind."""
+    ended = results_of(runner)
+    window.middle_mainwindow.show()
+    window.view = window.live_feed.publish(revision([1]))
+    script = Gated()
+    instance = plot(window, qtbot, script)
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    dock = cast(AnalysisDock, instance.dock_widget)
+    page = cast(QWidget, instance.param_tab)
+    settings = window.panel_right_top_plot_settings
+    script.go.clear()
+    window.live_feed.publish(revision([1, 2]))
+    qtbot.waitUntil(lambda: script.started == [1, 2], timeout=10_000)
+    dock.setFloating(True)  # While the Live rerun runs.
+    dock.show()
+    qtbot.waitUntil(dock.settings.isVisible)
+    assert dock.settings.page is page and settings.stack.currentWidget() is settings.away
+    toggle = dock.settings.toggle
+    assert toggle.name == "Gated (1) · run_L · rev 1" and toggle.summary == dock.property("plotSourceSettings")
+    window.live_feed.publish(revision([1, 2, 3]))  # Waits for the run in flight.
+    script.go.set()
+    qtbot.waitUntil(lambda: shown_revision(instance) == 3, timeout=10_000)
+    assert script.started == [1, 2, 3] and toggle.name == "Gated (1) · run_L · rev 3"
+    assert source(instance).text().startswith("Data source: run_L · rev 3 · following Live")
+    # Its Live settings, in its window: Follow Live off pins it.
+    set_live(instance, FOLLOW, False)
+    window.live_feed.publish(revision(range(1, 5)))
+    assert instance.follow_text() == "pinned (Follow Live off) · 1 newer shot"
+    # Unapplied edits and Rerun stay with the page, floating and docked again.
+    root = cast(Any, instance.parameter_root)
+    root.child("scale").setValue(4)
+    dock.setFloating(False)
+    qtbot.waitUntil(dock.settings.isHidden)
+    assert page.parentWidget() is settings.stack and instance.values() == {"scale": 4}
+    dock.setFloating(True)
+    dock.show()
+    qtbot.waitUntil(dock.settings.isVisible)
+    instance.rerun_button.click()
+    qtbot.waitUntil(lambda: len(script.started) == 4 and instance.job_id == "", timeout=10_000)
+    assert script.started[-1] == 3 and cast(AnalysisResult, instance.shown).parameters["scale"] == 4
+    # Closed while floating and running: the run is cancelled and nothing is left.
+    script.go.clear()
+    instance.rerun_button.click()
+    qtbot.waitUntil(lambda: len(script.started) == 5, timeout=10_000)
+    window.close_plots()  # As closing the main window does.
+    assert instance.is_closed and settings.plots() == [] and not window.dock_widgets
+    script.go.set()
+    qtbot.waitUntil(lambda: runner.running() == 0, timeout=10_000)
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    assert sip.isdeleted(page) and sip.isdeleted(dock) and not runner.results._pinned
+    assert ended[-1].state == "cancelled"
 
 
 def test_a_first_run_that_fails_shows_why(window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
