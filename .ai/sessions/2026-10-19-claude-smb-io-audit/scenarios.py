@@ -1,9 +1,9 @@
-"""Offscreen HeLab on a local test share with the I/O trace on (``IOService.trace_file``, as
-Help › Record I/O trace sets it, but in OUT_DIR): each scenario's source operations.
+"""Offscreen HeLab on a local test share with the I/O trace on (``IOService.trace_dir``, as
+Help › Record I/O trace sets it, but in OUT_DIR/trace): each scenario's source operations.
 
     python scenarios.py OUT_DIR --session 1     # empty disk cache: browse, load, Live, tab switch…
     python scenarios.py OUT_DIR --session 2     # restart on session 1's cache: cache first
-    python trace_summary.py OUT_DIR/trace.jsonl --under OUT_DIR
+    python trace_summary.py OUT_DIR/trace --under OUT_DIR
 
 Nothing here touches a real share or Tony's settings: the test share is built under OUT_DIR from
 tests_sample_data, a new tab's default folders are replaced by it, settings are a private ini file
@@ -117,7 +117,10 @@ def main() -> None:
     else:
         folders = {name: Path(value) for name, value in json.loads((out / "folders.json").read_text()).items()}
     (out / "folders.json").write_text(json.dumps({name: str(path) for name, path in folders.items()}))
-    trace = out / "trace.jsonl"
+    # The recording folder: one file per helper, this process's phase marks and hook lines in
+    # scenarios.jsonl, the fake writer's in writer.jsonl.
+    trace = out / "trace"
+    trace.mkdir(exist_ok=True)
     for kind in ("caches", "temps", "app"):
         (out / kind).mkdir(exist_ok=True)
     os.environ.update({
@@ -128,7 +131,7 @@ def main() -> None:
 
     def note(record: dict[str, Any]) -> None:
         line = json.dumps({"t": time.time(), "pid": os.getpid(), "reason": "", "path": "", **record}) + "\n"
-        descriptor = os.open(str(trace), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        descriptor = os.open(str(trace / "scenarios.jsonl"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
         try:
             os.write(descriptor, line.encode("ascii"))
         finally:
@@ -164,9 +167,9 @@ def main() -> None:
     tab_widget.DEV_POTENTIAL_DATA_PATHS = [str(folders["share"])]
     tab_widget.DEFAULT_DATA_PATH = str(folders["share"])
     IOService.TIMEOUTS = (3.0, 4.0, 5.0)
-    # The trace on, as Help › Record I/O trace does (helpers get the file with each request), but into
+    # The trace on, as Help › Record I/O trace does (helpers get the folder with each request), but into
     # OUT_DIR: the phase marks and the GUI hook's lines go into the same file.
-    get_io_service().trace_file = str(trace)
+    get_io_service().trace_dir = str(trace)
     IconsInitUtil.initialise_icons()
     hook = SourceHook([folders["share"], folders["ramshare"]], note)
 
@@ -300,7 +303,7 @@ def main() -> None:
         settle()
         phase("Live on, writer adds 12 shots every 4 s (1004 written over 7.5 s, 1009 pauses 4 s mid-file)")
         window.on_live_button_clicked()
-        writer = subprocess.Popen([sys.executable, str(HERE / "fake_writer.py"), str(folders["run_live"]), str(trace),
+        writer = subprocess.Popen([sys.executable, str(HERE / "fake_writer.py"), str(folders["run_live"]), str(trace / "writer.jsonl"),
                                    "--first", "1001", "--count", "12", "--every", "4", "--slow", "1004",
                                    "--stall", "1009", "--stall-pause", "4", "--template", str(out / "template.txt")])
         while writer.poll() is None:
@@ -314,7 +317,7 @@ def main() -> None:
         pump(1.0)
         settle()
         phase("load run_stall while its new shot 2001 stalls 8 s mid-file (selected 6.5 s in)")
-        writer = subprocess.Popen([sys.executable, str(HERE / "fake_writer.py"), str(folders["run_stall"]), str(trace),
+        writer = subprocess.Popen([sys.executable, str(HERE / "fake_writer.py"), str(folders["run_stall"]), str(trace / "writer.jsonl"),
                                    "--first", "2001", "--count", "1", "--every", "0", "--stall", "2001",
                                    "--template", str(out / "template.txt")])
         pump(6.5)

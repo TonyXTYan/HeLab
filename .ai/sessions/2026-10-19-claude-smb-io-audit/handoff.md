@@ -23,7 +23,7 @@ with trace tests, following Codex's constraints and Maestro's notes:
 | 6eb6a9c | Windows test | The read_marker trace test expects no steps for a folder-named `.helab-root` on Windows (can't be opened as a file there). |
 | d59f6a9 | Trace destination | `HELAB_IO_TRACE` is resolved (realpath) before the network check, so a local link to a share is refused; UNC prefixes refused given or resolved. Superseded in round 3: the trace always goes into the temp folder. |
 | 47d9def | Round 3: settle age only | Settle age only, by Tony's decision; the converter's temp-name rename remains the real fix. Loads and Live no longer look at a file's last row (`_whole_last_row`, `RECENT_SECONDS` and Live's `_txy_complete` removed); a file is read once it is 5 s old (`SETTLE_SECONDS`) and, in Live, unchanged in size and mtime since the previous check (`seen`, metadata only). The stalled-writer tests now document that a writer stalled for longer than the settle age is read as it is, by design. |
-| 9773b8a | Round 3: trace switch | **Help › Record I/O trace (this session)**, off at every start and never saved. Each recording is a new `io-trace-<date>-<time>.jsonl` in `<temp folder>/io-traces` (`IOService.start_io_trace`; a second one within the same second gets `-2`), never next to the data or at a path the user gives; helpers get the file with each request (`request.trace["file"]`). While on, the status bar shows "● I/O trace" (its tooltip names the file); **Help › Show I/O trace folder** opens the folder. The terminal gets one INFO line when it starts (`I/O trace on: <path>`) and one when it stops (`I/O trace off: <path>`), unticked or on quitting (`IOService.shutdown`), nothing else. Turning it on with earlier traces there asks once: "N earlier I/O traces (X MB) in <folder>." with **Keep** (default) or **Delete old traces** (only earlier `io-trace-*.jsonl` files there, never the new one); with none, no question. Nothing is deleted automatically. The test seam `HELAB_TEST_IO_TRACE=<file>` (helpers only) replaces the user-facing `HELAB_IO_TRACE`, and the network/realpath refusal of a given path is gone. |
+| 9773b8a (C below changes the files) | Round 3: trace switch | **Help › Record I/O trace (this session)**, off at every start and never saved. Each recording is a new `io-trace-<date>-<time>.jsonl` in `<temp folder>/io-traces` (`IOService.start_io_trace`; a second one within the same second gets `-2`), never next to the data or at a path the user gives; helpers get the file with each request (`request.trace["file"]`). While on, the status bar shows "● I/O trace" (its tooltip names the file); **Help › Show I/O trace folder** opens the folder. The terminal gets one INFO line when it starts (`I/O trace on: <path>`) and one when it stops (`I/O trace off: <path>`), unticked or on quitting (`IOService.shutdown`), nothing else. Turning it on with earlier traces there asks once: "N earlier I/O traces (X MB) in <folder>." with **Keep** (default) or **Delete old traces** (only earlier `io-trace-*.jsonl` files there, never the new one); with none, no question. Nothing is deleted automatically. The test seam `HELAB_TEST_IO_TRACE=<file>` (helpers only) replaces the user-facing `HELAB_IO_TRACE`, and the network/realpath refusal of a given path is gone. |
 
 ### Round 3 notes
 
@@ -35,6 +35,14 @@ with trace tests, following Codex's constraints and Maestro's notes:
   as the cache folder is, would be a change in `constants.py` (not mine).
 - One wording change outside my owned paths: `data_roots.read_marker`'s docstring said ``HELAB_IO_TRACE``;
   it now says "Help › Record I/O trace". No code change there beyond the approved `trace` keyword.
+- **Review fixes (C):** each recording is a folder `io-trace-<date>-<time>` (made with an exclusive
+  `mkdir`, so on, off and on within a second gets `-2`) holding one `<pid>.jsonl` per helper
+  (`io_helper._trace_path`): the MSVC C runtime emulates `O_APPEND` with a seek and a write, so helpers
+  sharing a file could silently overwrite each other's lines on Windows. A PID reused later appends after
+  the exited helper's lines. `trace_summary.py` and `compare_traces.py` read a recording's folder (or a
+  single file of an earlier build). Delete old traces works per recording (its `.jsonl` files, then the
+  emptied folder; older single files too); a file Windows won't delete because a running helper still has
+  it open is kept, and a message says how many were kept and where (`delete_io_traces`).
 - `HelabMainWindow`: only the Help menu items, the status-bar note and the Keep/Delete question
   (`_toggle_io_trace`, `_ask_delete_old_traces`, `_show_io_trace_folder`); no plot-dock code touched.
 - Tests: `tests/test_io_trace.py` (the seam, a helper tracing to the file its request names, the folder,
@@ -210,14 +218,16 @@ Sources:
 ### Proposed doc changes (for the coordinator)
 
 - AGENTS.md, Testing: beside `HELAB_TEST_LOCAL_MOUNT`, `HELAB_TEST_VOLUME_ID` and `HELAB_TEST_READ_GATE`,
-  add "`HELAB_TEST_IO_TRACE=<file>` (`helab/io_helper.py` only: every helper appends each source-folder
-  operation to `<file>`, as Help › Record I/O trace does; `tests/test_io_trace.py`)".
+  add "`HELAB_TEST_IO_TRACE=<folder>` (`helab/io_helper.py` only: every helper appends each source-folder
+  operation to its own `<folder>/<pid>.jsonl`, as Help › Record I/O trace does; `tests/test_io_trace.py`)".
 - AGENTS.md, Responsive I/O: "**I/O trace:** Help › Record I/O trace (this session), off at every start
-  and never saved, records every helper's source-folder operations as JSON lines in a new
-  `<temp folder>/io-traces/io-trace-<date>-<time>.jsonl` (`IOService.trace_file`, sent with each request);
+  and never saved, records every helper's source-folder operations as JSON lines in a new recording folder
+  `<temp folder>/io-traces/io-trace-<date>-<time>/`, one `<pid>.jsonl` per helper (Windows' C runtime
+  emulates O_APPEND, so helpers never share a file; `IOService.trace_dir`, sent with each request);
   refused when the temp folder is on a network or synced folder. A status-bar note while on; Help › Show
-  I/O trace folder; earlier traces are kept unless the user picks Delete old traces when asked." Summarise
-  with this folder's `trace_summary.py`, compare with `compare_traces.py` (both to move to `dev/`).
+  I/O trace folder; earlier recordings are kept unless the user picks Delete old traces when asked." Summarise
+  with this folder's `trace_summary.py`, compare with `compare_traces.py` (both read a recording's folder;
+  to move to `dev/`).
 - AGENTS.md, Responsive I/O: verification asked only by a listing's new mount table (one follow-up, never
   self-requeued, 5 s backstop); a load's fingerprint from its listing, the cache-save verify only after
   rereads; files still being written: settle age only, by Tony's decision (the converter's temp-name
@@ -472,12 +482,13 @@ prints `I/O trace on: <path>`). Use HeLab as when you saw the traffic: leave a t
 run Live during acquisition. Note the times of what you do. Then untick it (or quit HeLab): the terminal
 prints `I/O trace off: <path>`. **Help › Show I/O trace folder** opens the folder: by default
 `~/Library/Caches/HeLab/temps/io-traces` (Windows `%LOCALAPPDATA%\HeLab\temps\io-traces`; Settings →
-General shows the temp folder). Each recording is a new file; earlier ones stay unless you pick Delete old
-traces when asked. Summarise the newest:
+General shows the temp folder). Each recording is a new folder there (`io-trace-<date>-<time>`, one
+`<pid>.jsonl` per helper); earlier ones stay unless you pick Delete old traces when asked. Summarise the
+newest (the summary merges a folder's files in time order):
 
 ```bash
 python .ai/sessions/2026-10-19-claude-smb-io-audit/trace_summary.py \
-  "$(ls -t ~/Library/Caches/HeLab/temps/io-traces/io-trace-*.jsonl | head -1)" \
+  "$(ls -td ~/Library/Caches/HeLab/temps/io-traces/io-trace-*/ | head -1)" \
   --under /Volumes/dld_output --minutes > ~/Desktop/helab-trace-summary.md
 ```
 
@@ -486,8 +497,8 @@ and operations on files modified under 5 s before. Look for `roots_verify` lines
 (finding 1). Without phase marks the whole trace is one phase; split it with your noted times if useful.
 Expect ~0.6 kB of trace per operation.
 
-Windows lab PC: `py -m helab`, then the same menu item (lines are appended without a lock there; the
-summary skips a garbled one, if any).
+Windows lab PC: `py -m helab`, then the same menu item. Each helper writes its own file, so the C
+runtime's emulated append (a seek, then a write) can't make helpers overwrite each other's lines.
 
 Optional, to see what other programs do to the share (Finder, Spotlight, previews), not only HeLab:
 `sudo fs_usage -w -f filesys | grep dld_output` (Ctrl-C to stop). To count SMB requests on the wire:

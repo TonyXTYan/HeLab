@@ -1,6 +1,8 @@
 """Compare two I/O traces phase by phase (before and after a change): one markdown table.
 
-    python compare_traces.py BEFORE.jsonl AFTER.jsonl [--under PREFIX] [--under-after PREFIX]
+    python compare_traces.py BEFORE AFTER [--under PREFIX] [--under-after PREFIX]
+
+BEFORE and AFTER are recordings' folders or single trace files (earlier builds).
 
 Counts per phase (``op`` "phase" lines; phases match by name, else by the name before " (" when that
 is unique, marked † with the earlier name below the table): helpers started, listings, stats
@@ -13,17 +15,26 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import json
+import os
 from typing import Any
+
+
+def trace_files(path: str) -> list[str]:
+    """A trace file, or a recording folder's files (one per helper, ``*.jsonl``)."""
+    if not os.path.isdir(path):
+        return [path]
+    return sorted(os.path.join(path, name) for name in os.listdir(path) if name.endswith(".jsonl"))
 
 
 def records(path: str) -> list[dict[str, Any]]:
     found = []
-    with open(path, encoding="utf-8") as stream:
-        for line in stream:
-            try:
-                found.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
+    for file in trace_files(path):
+        with open(file, encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    found.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
     return sorted(found, key=lambda record: record.get("t", 0))
 
 

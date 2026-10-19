@@ -12,7 +12,8 @@ import types
 import warnings
 import threading
 import time
-from helab.utils.io_service import IORequest, earlier_io_traces, get_io_service, io_trace_folder, io_trace_problem
+from helab.utils.io_service import IORequest, delete_io_traces, earlier_io_traces, get_io_service, io_trace_files, \
+    io_trace_folder, io_trace_problem
 from helab.utils.folder_cache import get_folder_cache, set_disk_budget, store_options
 from helab.utils.gui_watchdog import GUIWatchdog
 from datetime import datetime, timedelta
@@ -519,8 +520,8 @@ class HelabMainWindow(QMainWindow):
         QMessageBox.about(self, "About HeLab", APP_BUILD_INFO.description())
 
     def _toggle_io_trace(self, on: bool) -> None:
-        """Help › Record I/O trace (this session): a new trace file in the temp folder's io-traces
-        folder; earlier ones are kept unless the user deletes them when asked."""
+        """Help › Record I/O trace (this session): a new recording folder in the temp folder's io-traces
+        folder; earlier recordings are kept unless the user deletes them when asked."""
         service = get_io_service()
         if not on:
             service.stop_io_trace()
@@ -536,17 +537,19 @@ class HelabMainWindow(QMainWindow):
         earlier = earlier_io_traces(folder)
         ask = self.ask_delete_old_traces or self._ask_delete_old_traces
         if earlier and ask(earlier, folder):
-            for file in earlier:  # (Only earlier traces: the new one doesn't exist yet.)
-                with contextlib.suppress(OSError):
-                    os.remove(file)
+            # (Only earlier recordings: the new one doesn't exist yet.)
+            if kept := delete_io_traces(earlier):
+                QMessageBox.information(self, "I/O trace", (
+                    f"{len(kept):,} trace file{'' if len(kept) == 1 else 's'} couldn't be deleted (still open by "
+                    f"a running helper, or protected) and {'was' if len(kept) == 1 else 'were'} kept in {folder}."))
         path = service.start_io_trace(DIR_TEMPS)
-        self.io_trace_label.setToolTip(f"Recording the I/O trace to\n{path}\nHelp › Record I/O trace to stop.")
+        self.io_trace_label.setToolTip(f"Recording the I/O trace in\n{path}\nHelp › Record I/O trace to stop.")
         self.io_trace_label.show()
 
     def _ask_delete_old_traces(self, earlier: list[str], folder: str) -> bool:
-        """Whether to delete the earlier traces (Keep is the default)."""
+        """Whether to delete the earlier recordings (Keep is the default)."""
         size = 0
-        for file in earlier:
+        for file in (file for recording in earlier for file in io_trace_files(recording)):
             with contextlib.suppress(OSError):
                 size += os.path.getsize(file)
         box = QMessageBox(QMessageBox.Icon.Question, "I/O trace",

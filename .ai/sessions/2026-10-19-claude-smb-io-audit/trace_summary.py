@@ -1,12 +1,13 @@
 """Summarise a HeLab I/O trace: what helpers did to source folders, how often, why.
 
-    python trace_summary.py TRACE.jsonl [--under /Volumes/dld_output] [--minutes] [--young 5]
+    python trace_summary.py RECORDING [--under /Volumes/dld_output] [--minutes] [--young 5]
 
-Recording one: Help › Record I/O trace (this session) in HeLab, until it is turned off (or HeLab quits).
-Each recording is a new ``io-trace-<date>-<time>.jsonl`` in ``<HeLab's temp folder>/io-traces``
-(Help › Show I/O trace folder opens it; Settings → General shows the temp folder). Earlier traces are
-kept unless you choose Delete old traces when asked. Tests and scripts set ``IOService.trace_file`` or
-the test seam ``HELAB_TEST_IO_TRACE=<file>`` (helpers only) instead.
+RECORDING is a recording's folder (every helper's ``<pid>.jsonl`` in it, merged in time order) or a
+single trace file (earlier builds). Recording one: Help › Record I/O trace (this session) in HeLab,
+until it is turned off (or HeLab quits). Each recording is a new folder ``io-trace-<date>-<time>`` in
+``<HeLab's temp folder>/io-traces`` (Help › Show I/O trace folder opens it; Settings → General shows the
+temp folder). Earlier recordings are kept unless you choose Delete old traces when asked. Tests and
+scripts set ``IOService.trace_dir`` or the test seam ``HELAB_TEST_IO_TRACE=<folder>`` (helpers only).
 
 Standalone (no HeLab import). Lines with ``op`` "phase" (written by scenarios.py) split the trace into
 phases; without them the whole trace is one phase, and ``--minutes`` adds a per-minute timeline.
@@ -35,14 +36,22 @@ def tail_marker_icon(op: str) -> bool:
     return op in ("read_tail", "icon") or op.startswith("marker_")
 
 
+def trace_files(path: str) -> list[str]:
+    """A trace file, or a recording folder's files (one per helper, ``*.jsonl``)."""
+    if not os.path.isdir(path):
+        return [path]
+    return sorted(os.path.join(path, name) for name in os.listdir(path) if name.endswith(".jsonl"))
+
+
 def load(path: str) -> tuple[list[dict[str, Any]], int]:
     records, bad = [], 0
-    with open(path, encoding="utf-8") as stream:
-        for line in stream:
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                bad += 1
+    for file in trace_files(path):
+        with open(file, encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    bad += 1
     records.sort(key=lambda record: record.get("t", 0))
     return records, bad
 
@@ -202,7 +211,7 @@ def report(path: str, under: str, minutes: bool, young: float) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("trace")
+    parser.add_argument("trace", help="a recording's folder, or a trace file")
     parser.add_argument("--under", default="", help="count only paths starting with this (e.g. the share)")
     parser.add_argument("--minutes", action="store_true", help="per-minute counts for long phases")
     parser.add_argument("--young", type=float, default=5.0, help="seconds a file counts as maybe being written")

@@ -1,7 +1,8 @@
 """The I/O trace (Help › Record I/O trace, this session): every operation a helper makes on a source
 folder, one JSON line each, with the request it serves, in HeLab's temp folder. Off by default: nothing
 is written then, and helpers make the same calls and send the same events. Tests turn it on for helpers
-with the test seam ``HELAB_TEST_IO_TRACE=<file>`` (or ``IOService.trace_file``, as the menu does)."""
+with the test seam ``HELAB_TEST_IO_TRACE=<folder>`` (or ``IOService.trace_dir``, as the menu does). Each
+helper writes its own file there (``<pid>.jsonl``)."""
 from __future__ import annotations
 
 import builtins
@@ -39,7 +40,10 @@ def write_shots(folder: Path, shots: range, *, age: float = 60.0) -> None:
 
 
 def lines(trace: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in trace.read_text().splitlines()] if trace.exists() else []
+    """A trace file's lines, or a recording folder's (every helper's file), in time order."""
+    files = sorted(trace.glob("*.jsonl")) if trace.is_dir() else [trace] if trace.exists() else []
+    records = [json.loads(line) for file in files for line in file.read_text().splitlines()]
+    return sorted(records, key=lambda record: record["t"])
 
 
 # Bookkeeping lines, not operations on a source folder.
@@ -52,14 +56,15 @@ def counts(records: list[dict[str, Any]]) -> Counter[tuple[str, str]]:
 
 @pytest.fixture
 def trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """Tracing on in this process (in-process helper calls) and in helpers it starts."""
-    file = tmp_path / "trace" / "io.jsonl"
-    file.parent.mkdir()
-    monkeypatch.setattr(io_helper, "TRACE", str(file))
+    """Tracing on in this process (in-process helper calls) and in helpers it starts: the recording
+    folder."""
+    folder = tmp_path / "trace"
+    folder.mkdir()
+    monkeypatch.setattr(io_helper, "TRACE", str(folder / f"{os.getpid()}.jsonl"))
     monkeypatch.setattr(io_helper, "_trace_request", {})
     monkeypatch.setattr(io_helper, "_trace_fd", None)
-    monkeypatch.setenv("HELAB_TEST_IO_TRACE", str(file))
-    yield file
+    monkeypatch.setenv("HELAB_TEST_IO_TRACE", str(folder))
+    yield folder
     if io_helper._trace_fd is not None:
         os.close(io_helper._trace_fd)
 
@@ -84,38 +89,42 @@ def events_of(call: Callable[[Callable[[dict[str, Any]], None]], None]) -> list[
     return [stable(event) for event in events]
 
 
-def test_off_unless_the_test_seam_names_a_file(tmp_path: Path) -> None:
+def test_off_unless_the_test_seam_names_a_folder(tmp_path: Path) -> None:
     """No user-facing variable: only the test seam turns a helper's trace on by itself (the old
-    HELAB_IO_TRACE does nothing)."""
-    script = "import helab.io_helper as h; print(h.TRACE)"
+    HELAB_IO_TRACE does nothing), into its own file in that folder."""
+    script = "import os, helab.io_helper as h; print(h.TRACE, os.getpid())"
     environment = {key: value for key, value in os.environ.items()
                    if key not in ("HELAB_TEST_IO_TRACE", "HELAB_IO_TRACE")}
-    for name, value, expected in (("", None, "None"), ("HELAB_TEST_IO_TRACE", "", "None"),
-                                  ("HELAB_IO_TRACE", str(tmp_path / "t.jsonl"), "None"),
-                                  ("HELAB_TEST_IO_TRACE", str(tmp_path / "t.jsonl"), str(tmp_path / "t.jsonl"))):
+    for name, value, traced in (("", None, False), ("HELAB_TEST_IO_TRACE", "", False),
+                                ("HELAB_IO_TRACE", str(tmp_path), False), ("HELAB_TEST_IO_TRACE", str(tmp_path), True)):
         run_environment = dict(environment, **({name: value} if name and value is not None else {}))
         result = subprocess.run([sys.executable, "-c", script], env=run_environment, capture_output=True,
                                 text=True, timeout=60, check=True)
-        assert result.stdout.strip() == expected
+        file, pid = result.stdout.split()
+        assert file == (os.path.join(str(tmp_path), f"{pid}.jsonl") if traced else "None")
 
 
-def test_a_helper_traces_to_the_file_its_request_names(tmp_path: Path) -> None:
-    """As the app sends it while the trace is on (``IOService.trace_file``); nothing on stdout but events."""
+def test_a_helper_traces_into_the_folder_its_request_names(tmp_path: Path) -> None:
+    """As the app sends it while the trace is on (``IOService.trace_dir``): the helper's own file there,
+    named by its process ID; nothing on stdout but events."""
     run = tmp_path / "run"
     write_shots(run, range(1, 3))
     environment = {key: value for key, value in os.environ.items() if key != "HELAB_TEST_IO_TRACE"}
     for traced in (False, True):
-        file = tmp_path / f"trace-{traced}.jsonl"
+        folder = tmp_path / f"trace-{traced}"
+        folder.mkdir()
         request: dict[str, Any] = {"operation": "list", "path": str(run)}
         if traced:
-            request["trace"] = {"file": str(file), "owner": "o", "tabs": ["tab"], "lane": "foreground", "attempt": 1}
+            request["trace"] = {"dir": str(folder), "owner": "o", "tabs": ["tab"], "lane": "foreground", "attempt": 1}
         result = subprocess.run([sys.executable, "-m", "helab.io_helper"], input=json.dumps(request) + "\n",
                                 env=environment, capture_output=True, text=True, timeout=60, check=True)
         assert all(json.loads(line)["kind"] for line in result.stdout.splitlines())
-        assert file.exists() is traced
-    records = lines(tmp_path / "trace-True.jsonl")
+        assert len(list(folder.iterdir())) == traced
+    [file] = (tmp_path / "trace-True").iterdir()
+    records = lines(file)
     assert {record["op"] for record in records} >= {"request", "scandir", "request_end"}
-    assert all(record["tabs"] == ["tab"] and "file" not in record for record in records)
+    assert all(record["tabs"] == ["tab"] and "dir" not in record and file.name == f"{record['pid']}.jsonl"
+               for record in records)
 
 
 def test_off_it_writes_nothing_and_lists_with_the_plain_scandir(tmp_path: Path,
@@ -241,7 +250,7 @@ def test_helpers_trace_their_request_and_the_tabs_they_work_for(
     share = tmp_path / "share"
     write_shots(share / "run", range(1, 3))
     service = IOService()
-    service.trace_file = str(trace)  # (As Help › Record I/O trace does: the app names the tabs.)
+    service.trace_dir = str(trace)  # (As Help › Record I/O trace does: the app names the tabs.)
     monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
     explorer = FolderExplorer(str(share), str(share), str(share), [0, 4, 5])
     qtbot.addWidget(explorer)
@@ -254,6 +263,10 @@ def test_helpers_trace_their_request_and_the_tabs_they_work_for(
     listing = next(record for record in records if record["op"] == "scandir" and record["pid"] == started["pid"])
     assert listing["request"] == "list" and listing["tabs"] == [explorer.model.owner]
     assert any(record["op"] == "request_end" and record["pid"] == started["pid"] for record in records)
+    # One writer per file: each helper's lines are in its own file only.
+    files = {file.name: lines(file) for file in trace.glob("*.jsonl")}
+    assert len(files) == len({record["pid"] for record in records}) + (f"{os.getpid()}.jsonl" in files)
+    assert all(record["pid"] == int(name.removesuffix(".jsonl")) for name, found in files.items() for record in found)
     explorer.close_cleanup()
     service.shutdown()
 
@@ -820,14 +833,15 @@ def test_reselecting_a_ram_only_folder_checks_it_without_listing_it(
 def test_the_trace_goes_to_the_temp_folder_and_says_so_once_each_way(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Help › Record I/O trace: a new file in the temp folder's io-traces folder, one INFO line when it
-    starts and one when it stops; refused (no file, no line) when the temp folder is on a share."""
+    """Help › Record I/O trace: a new recording folder in the temp folder's io-traces folder, one INFO
+    line when it starts and one when it stops; refused (no folder, no line) when the temp folder is on a
+    share."""
     import logging
     from helab.utils import cache_location
     from helab.utils.io_service import IO_TRACE_FOLDER
     service = IOService()
     try:
-        assert service.trace_file is None  # Off at every start.
+        assert service.trace_dir is None  # Off at every start.
         with caplog.at_level(logging.INFO):
             path = service.start_io_trace(str(tmp_path))
             service.stop_io_trace()
@@ -835,21 +849,17 @@ def test_the_trace_goes_to_the_temp_folder_and_says_so_once_each_way(
         assert said == [f"I/O trace on: {path}", f"I/O trace off: {path}"]
         assert all(record.levelname == "INFO" for record in caplog.records if "I/O trace" in record.getMessage())
         assert os.path.dirname(path) == str(tmp_path / IO_TRACE_FOLDER) and os.path.isdir(os.path.dirname(path))
-        assert os.path.basename(path).startswith("io-trace-") and path.endswith(".jsonl")
-        assert service.trace_file is None
+        assert os.path.basename(path).startswith("io-trace-") and os.path.isdir(path) and not os.listdir(path)
+        assert service.trace_dir is None
         caplog.clear()
         with caplog.at_level(logging.INFO):
             service.stop_io_trace()  # (Already off: nothing more said.)
         assert not caplog.records
-        open(path, "w").close()  # (A helper's first line creates it.)
-        again = service.start_io_trace(str(tmp_path))  # Within the same second: still a new file.
-        assert again != path and not os.path.exists(again)
-        service.stop_io_trace()
-        caplog.clear()
         monkeypatch.setattr(cache_location, "cache_location_problem", lambda folder: "on a network drive (smbfs)")
         with caplog.at_level(logging.INFO), pytest.raises(ValueError, match="network drive"):
             service.start_io_trace(str(tmp_path / "share"))
-        assert service.trace_file is None and not caplog.records
+        assert service.trace_dir is None and not caplog.records
+        assert os.listdir(tmp_path / IO_TRACE_FOLDER) == [os.path.basename(path)]
     finally:
         service.shutdown()
 
@@ -863,4 +873,35 @@ def test_quitting_with_the_trace_on_says_it_is_off(tmp_path: Path, caplog: pytes
         service.shutdown()
     assert [record.getMessage() for record in caplog.records if "I/O trace" in record.getMessage()] == [
         f"I/O trace off: {path}"]
-    assert service.trace_file is None
+    assert service.trace_dir is None
+
+
+def test_deleting_earlier_recordings_keeps_what_windows_wont_delete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Delete old traces: each recording's trace files, then its emptied folder, and single-file traces
+    of earlier builds; a file a running helper still has open (Windows refuses) is kept and named."""
+    from helab.utils.io_service import delete_io_traces, earlier_io_traces, io_trace_files
+    folder = tmp_path / "io-traces"
+    one, two = folder / "io-trace-20261019-120000", folder / "io-trace-20261019-120000-2"
+    for recording, names in ((one, ("1.jsonl", "2.jsonl")), (two, ("3.jsonl",))):
+        recording.mkdir(parents=True)
+        for name in names:
+            (recording / name).write_text("{}\n")
+    (two / "notes.txt").write_text("not a trace")
+    old = folder / "io-trace-20261018-090000.jsonl"
+    old.write_text("{}\n")
+    (folder / "other.jsonl").write_text("{}\n")
+    earlier = earlier_io_traces(str(folder))
+    assert earlier == [str(old), str(one), str(two)]
+    assert io_trace_files(str(one)) == [str(one / "1.jsonl"), str(one / "2.jsonl")] and io_trace_files(str(old)) == [str(old)]
+    remove = os.remove
+
+    def held_open(path: str) -> None:
+        if path.endswith("2.jsonl"):
+            raise PermissionError(13, "The process cannot access the file", path)
+        remove(path)
+    monkeypatch.setattr("helab.utils.io_service.os.remove", held_open)
+    assert delete_io_traces(earlier) == [str(one / "2.jsonl")]
+    assert sorted(path.name for path in folder.iterdir()) == [one.name, two.name, "other.jsonl"]
+    assert [path.name for path in one.iterdir()] == ["2.jsonl"] and [path.name for path in two.iterdir()] == ["notes.txt"]

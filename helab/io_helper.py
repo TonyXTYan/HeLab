@@ -48,19 +48,28 @@ def _read_gate(filename: str) -> None:
 
 
 # The I/O trace (Help › Record I/O trace, this session): every operation a helper makes on a source
-# folder is appended to the trace file as one JSON line (``_trace``), with the request it serves. The
-# app sends the file with each request while the trace is on (``IOService.trace_file``); test seam:
-# HELAB_TEST_IO_TRACE=<file> traces every helper. Off: nothing is written, and the wrappers below make
-# the same calls as untraced code.
-TRACE = os.environ.get("HELAB_TEST_IO_TRACE") or None
+# folder is appended to its own file in the recording's folder as one JSON line (``_trace``), with the
+# request it serves. The app sends the folder with each request while the trace is on
+# (``IOService.trace_dir``); test seam: HELAB_TEST_IO_TRACE=<folder> traces every helper. Off: nothing
+# is written, and the wrappers below make the same calls as untraced code.
+
+
+def _trace_path(folder: str | None) -> str | None:
+    """This helper's file in a recording's ``folder``: one writer per file (Windows' C runtime emulates
+    O_APPEND with a seek and a write, so helpers sharing a file could overwrite each other's lines). A
+    PID reused later appends after the earlier helper's lines; it has exited by then."""
+    return os.path.join(folder, f"{os.getpid()}.jsonl") if folder else None
+
+
+TRACE = _trace_path(os.environ.get("HELAB_TEST_IO_TRACE"))
 # This helper's request, on every line (``main``): its operation, owner and tabs, lane, flags.
 _trace_request: dict[str, Any] = {}
 _trace_fd: int | None = None
 
 
 def _trace(op: str, path: str, reason: str, **fields: Any) -> None:
-    """Append one line to the trace (``TRACE``). Each line is one write, so helpers append side by
-    side; a line that can't be written is skipped."""
+    """Append one line to this helper's trace file (``TRACE``), in one write; a line that can't be
+    written is skipped."""
     global _trace_fd
     if TRACE is None:
         return
@@ -75,12 +84,12 @@ def _trace(op: str, path: str, reason: str, **fields: Any) -> None:
 
 
 def _start_trace(request: dict[str, Any]) -> None:
-    """Trace to the file the app sent, if any; note the request every trace line serves, and that this
-    helper started."""
+    """Trace into the recording folder the app sent, if any; note the request every trace line serves,
+    and that this helper started."""
     global TRACE
     note = request.get("trace")
-    if isinstance(note, dict) and note.get("file"):
-        TRACE = str(note["file"])
+    if isinstance(note, dict) and note.get("dir"):
+        TRACE = _trace_path(str(note["dir"]))
     if TRACE is None:
         return
     operation = str(request.get("operation", ""))
@@ -88,7 +97,7 @@ def _start_trace(request: dict[str, Any]) -> None:
     _trace_request.update(request="live" if operation == "load" and request.get("live") else operation,
                           target=request.get("path", ""), flags=flags)
     if isinstance(note, dict):
-        _trace_request.update({key: value for key, value in note.items() if key != "file"})
+        _trace_request.update({key: value for key, value in note.items() if key != "dir"})
     if request.get("memory"):
         _trace_request["held"] = len(request["memory"])
     _trace("request", str(request.get("path", "")), operation)
