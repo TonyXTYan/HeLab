@@ -434,12 +434,16 @@ def test_a_floating_plot_takes_its_page_and_gives_it_back(plots: Plots, qtbot: Q
     panel.chooser.activated.emit(1)  # Chosen: its window comes up.
     qtbot.waitUntil(lambda: QApplication.activeWindow() is two)
     assert panel.current_plot() is two and panel.stack.currentWidget() is panel.away
+    assert not side.is_open  # The chooser only raises it.
     plots.area.activateWindow()
     qtbot.waitUntil(lambda: QApplication.activeWindow() is plots.area)
-    panel.away_button.click()
+    width = two.width()
+    panel.away_button.click()  # Show plot window: raised, with its settings open.
     qtbot.waitUntil(lambda: QApplication.activeWindow() is two)
-    side.toggle.click()
-    assert side.is_open and page.isVisible()
+    assert side.is_open and page.isVisible() and side.toggle.isChecked()
+    assert two.width() == width + FloatingSettings.DEFAULT_WIDTH - side.toggle.strip_width()
+    panel.away_button.click()  # Open already: stays as it is.
+    assert side.is_open and two.width() == width + FloatingSettings.DEFAULT_WIDTH - side.toggle.strip_width()
     page.setText("edited in the plot's window")
     docked(dock, qtbot)
     assert side.page is None and page.parentWidget() is panel.stack and panel.stack.currentWidget() is page

@@ -1136,7 +1136,7 @@ class PlotSettingsPanel(QWidget):
         away_row.setContentsMargins(4, 0, 4, 0)
         away_row.addWidget(QLabel("Settings are in this plot's window"))
         self.away_button = QPushButton("Show plot window")
-        self.away_button.setToolTip("Raise this plot's floating window")
+        self.away_button.setToolTip("Bring this plot's window to the front, with its settings open")
         self.away_button.clicked.connect(self.raise_current)
         away_row.addWidget(self.away_button)
         away_row.addStretch(1)
@@ -1256,9 +1256,12 @@ class PlotSettingsPanel(QWidget):
             dock.close()
 
     def raise_current(self) -> None:
+        """Show plot window: the shown plot's window comes up with its settings open."""
         dock = self.current_plot()
         if dock is not None:
             self.show_plot(dock, raise_dock=True)
+            if isinstance(dock, AnalysisDock) and self.settings_away(dock) and not dock.settings.is_open:
+                dock.set_settings_open(True)
 
     def settings_away(self, dock: QDockWidget) -> bool:
         """Whether ``dock``'s page is in its floating window."""
