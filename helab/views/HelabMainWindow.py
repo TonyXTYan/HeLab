@@ -14,6 +14,7 @@ import time
 from helab.utils.io_service import IORequest, delete_io_traces, get_io_service, io_trace_folder, io_trace_refused
 from helab.utils.folder_cache import FolderCache, get_folder_cache, set_disk_budget, store_options
 from helab.utils.gui_watchdog import GUIWatchdog
+from helab.utils.lab_parameters import read_lab_constants
 from datetime import datetime, timedelta
 from sys import getsizeof
 from typing import Any, Callable, List, Optional
@@ -423,6 +424,7 @@ class HelabMainWindow(QMainWindow):
             get_folder_cache(get_io_service()).set_ram_budget(read_ram_budget(settings))
             get_folder_cache(get_io_service()).check_level = read_check_level(settings)
             self._apply_live_settings(settings)
+            get_folder_cache(get_io_service()).set_lab_constants(read_lab_constants(settings))
 
             self.view_toggle_auto_load_ram = QAction('Toggle Auto Load to RAM', self)
             self.view_toggle_auto_load_ram.setCheckable(True)
@@ -656,6 +658,7 @@ class HelabMainWindow(QMainWindow):
             read_io_concurrency(settings))
         cache.check_level = read_check_level(settings)
         self._apply_live_settings(settings)
+        cache.set_lab_constants(read_lab_constants(settings))
         if read_disk_budget(settings) != store_options().get("budget"):
             # Saved without Save (e.g. Reset, then Cancel): the store is told until it has it.
             # (After Save it already has it: Settings saves a new disk budget only then.)

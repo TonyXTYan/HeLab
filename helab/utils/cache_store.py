@@ -65,6 +65,7 @@ CREATE INDEX IF NOT EXISTS subtrees_saved_at ON subtrees (saved_at);
 CREATE TABLE IF NOT EXISTS folder_prefs (
     path TEXT PRIMARY KEY, no_cache INTEGER NOT NULL DEFAULT 0, no_auto_load INTEGER NOT NULL DEFAULT 0,
     set_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS folder_constants (path TEXT PRIMARY KEY, record TEXT NOT NULL, set_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS pending_saves (
     pending_id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE,
     reason TEXT NOT NULL CHECK (reason IN ('over_budget', 'needs_approval')),
@@ -313,6 +314,15 @@ def _dumps(value: object) -> str:
     return json.dumps(value, separators=(",", ":"))
 
 
+def _constant_values(values: object) -> dict[str, float]:
+    """A folder's constants as saved: names with finite numbers (which constants exist, and
+    their limits, is the app's business: ``helab.analysis.constant_layers.clean_layer``)."""
+    if not isinstance(values, Mapping):
+        return {}
+    return {str(key): float(value) for key, value in values.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)}
+
+
 def _record_bytes(record: Mapping[str, Any]) -> int:
     """About what a dataset row adds to the records database (its JSON columns)."""
     return len(_dumps(record))
@@ -529,9 +539,9 @@ class CacheStore:
         if not old.startswith("root://") or not new.startswith("root://") or old == new:
             return []
         tables = ("folder_epochs", "folder_summaries", "scan_histories", "subtrees",
-                  "folder_prefs", "pending_saves", "datasets")
+                  "folder_prefs", "folder_constants", "pending_saves", "datasets")
         timestamps = {"folder_summaries": "saved_at", "scan_histories": "saved_at",
-                      "subtrees": "saved_at", "folder_prefs": "set_at",
+                      "subtrees": "saved_at", "folder_prefs": "set_at", "folder_constants": "set_at",
                       "pending_saves": "created_at", "datasets": "last_used"}
         moved: set[str] = set()
         try:
@@ -686,6 +696,55 @@ class CacheStore:
                                    (_dumps(now),))
                 return [self._source_path(path) for path in paths]
         except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+
+    # Folder constants (F0b): a folder's own values of the analyses' constants (fall distance, trap
+    # frequencies…), set by the user. Like the flags, never removed to make room, by Clear all,
+    # purges or a data root's Clear cached data; a nested root's re-key moves them.
+
+    def read_constants(self, paths: Sequence[str], *, keyed_only: bool = False) -> dict[str, Read[dict[str, Any]]]:
+        """Each folder's own constants, ``{"values": {key: number}, "set_at"}``; missing if never
+        set. With ``keyed_only``, a path without a key here (above every data root, on an
+        unsupported mount) is left out of the answer instead of raising."""
+        keys: dict[str, str] = {}
+        for path in dict.fromkeys(paths):
+            try:
+                keys[path] = self._path_key(path)
+            except Exception:
+                if not keyed_only:
+                    raise
+        stored = list(dict.fromkeys(keys.values()))
+        rows: dict[str, dict[str, Any]] = {}
+        try:
+            with self.transaction(write=False):
+                for start in range(0, len(stored), 500):
+                    chunk = stored[start:start + 500]
+                    for key, record, set_at in self._conn.execute(
+                            f"SELECT path, record, set_at FROM folder_constants "
+                            f"WHERE path IN ({','.join('?' * len(chunk))})", chunk):
+                        rows[key] = {"values": _constant_values(json.loads(record)), "set_at": float(set_at)}
+        except (sqlite3.Error, StoreError, ValueError) as exc:
+            failure: Read[dict[str, Any]] = _error(f"Disk cache could not be read: {exc}")
+            return {path: failure for path in keys}
+        return {path: _found(rows[key]) if key in rows else _missing() for path, key in keys.items()}
+
+    def set_constants(self, path: str, values: Mapping[str, Any], set_at: float) -> dict[str, Any]:
+        """Set a folder's own constants (all of them: a key left out is restored), unless a later
+        choice (``set_at``, e.g. in another HeLab) is saved; returns what is saved now. Restoring
+        every value keeps the row (with its ``set_at``), so an older choice arriving late can't
+        bring them back."""
+        key = self._path_key(path)
+        chosen = _constant_values(values)
+        try:
+            with self.transaction():
+                row = self._conn.execute("SELECT record, set_at FROM folder_constants WHERE path = ?",
+                                         (key,)).fetchone()
+                if row is not None and float(row[1]) > set_at:
+                    return {"values": _constant_values(json.loads(row[0])), "set_at": float(row[1])}
+                self._conn.execute("INSERT OR REPLACE INTO folder_constants (path, record, set_at) VALUES (?, ?, ?)",
+                                   (key, _dumps(chosen), set_at))
+                return {"values": chosen, "set_at": set_at}
+        except (sqlite3.Error, ValueError) as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
 
     def _meta(self) -> dict[str, Any]:

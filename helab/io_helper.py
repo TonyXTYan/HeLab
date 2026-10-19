@@ -660,6 +660,7 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit) -> dict[str,
     subtrees = store.read_records("subtrees", paths)
     datasets = store.read_dataset_infos(paths)
     prefs = store.read_prefs(paths)
+    constants = store.read_constants(paths)
     saved: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
     for path in paths:
@@ -679,6 +680,11 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit) -> dict[str,
         else:
             # The user's choices for this folder alone (never inherited).
             entry["prefs"] = prefs[path].value or {}
+        if constants[path].failed:
+            errors.append(constants[path].error)
+        else:
+            # The folder's own constants; its subfolders inherit them (the app decides).
+            entry["constants"] = constants[path].value or {}
         dataset = datasets[path]
         if dataset.failed:
             errors.append(dataset.error)
@@ -688,6 +694,7 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit) -> dict[str,
                 _cache_info(dataset.value["info"]), dataset.value)
         entry["saved_read"] = (history is not None and not summaries[path].failed
                                and not subtrees[path].failed and not prefs[path].failed
+                               and not constants[path].failed
                                and not dataset.failed)
         saved[path] = entry
     if errors:
@@ -725,7 +732,26 @@ def _send_saved(store: CacheStore | None, path: str, send: Emit) -> tuple[Any, d
         send({"kind": "subtree_cached", "subtree": saved["subtree"]})
     if "prefs" in saved:
         send({"kind": "folder_prefs", "path": path, "prefs": saved["prefs"]})
+    _send_constants(store, path, saved, send)
     return saved["scan_history"], saved
+
+
+def _send_constants(store: CacheStore, path: str, saved: dict[str, Any], send: Emit) -> None:
+    """The folder's own constants and those of the folders above it (with keys in this store), which
+    it inherits: the app needs them even when it never listed those folders (a tab's top folder).
+    One read; a folder whose record can't be read is left out (unknown, never "none set")."""
+    folders: dict[str, Any] = {path: saved["constants"]} if "constants" in saved else {}
+    above: list[str] = []
+    child, parent = path, os.path.dirname(path)
+    while parent and parent != child and len(above) < 64:
+        above.append(parent)
+        child, parent = parent, os.path.dirname(parent)
+    found = store.read_constants(above, keyed_only=True) if above else {}
+    folders.update({folder: read.value or {} for folder, read in found.items() if not read.failed})
+    if any(read.failed for read in found.values()):
+        send({"kind": "cache_warning", "message": next(read.error for read in found.values() if read.failed)})
+    if folders:
+        send({"kind": "folder_constants", "folders": folders})
 
 
 def _send_guard(store: CacheStore | None, path: str, send: Emit) -> SaveGuard | None:
@@ -2398,7 +2424,7 @@ def _removed_event(removal: Any) -> dict[str, Any]:
 
 
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
-                 "forget_root", "root_same", "clear_root")
+                 "constants", "forget_root", "root_same", "clear_root")
 
 
 def _marker_temporary(name: str) -> bool:
@@ -2703,6 +2729,21 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             send({"kind": "folder_prefs", "path": path, "prefs": saved})
             if flag_removal is not None:
                 send(_removed_event(flag_removal))
+        elif action == "constants":
+            # A folder's own constants (Folder constants…): every value it sets, newest choice wins.
+            from helab.utils.cache_paths import UnresolvedRemotePath
+            from helab.utils.data_roots import NoDataRoot
+            path = str(params["path"])
+            try:
+                saved_constants = store.set_constants(path, dict(params.get("values") or {}),
+                                                      float(params.get("set_at") or time.time()))
+            except UnresolvedRemotePath as exc:
+                # No disk cache for this folder (no data root, an unsupported mount): the app keeps
+                # its values for the session only.
+                reason = "no .helab-root found here or above" if isinstance(exc, NoDataRoot) else str(exc)
+                send({"kind": "folder_constants", "folders": {}, "session_only": {path: reason}})
+            else:
+                send({"kind": "folder_constants", "folders": {path: saved_constants}})
         elif action == "clear_prefs":
             cleared_at = time.time()
             send({"kind": "prefs_cleared", "paths": store.clear_prefs(cleared_at), "set_at": cleared_at})

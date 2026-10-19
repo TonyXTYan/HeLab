@@ -3,6 +3,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Any, Mapping, Optional, Sequence
 
+from helab.analysis.constant_layers import constant_keys, resolve_for_run, without_constants
+from helab.analysis.physics import ResolvedConstants
 from helab.analysis.follow import LivePolicy
 from helab.analysis.identity import AnalysisIdentity, file_name
 from helab.analysis.dataset_view import DatasetView
@@ -87,6 +89,13 @@ class DatasetAnalysis(HelabAnalysisScript):
 
     Metadata must give ``analysis_id`` and ``version``. Parameter values are plain JSON values
     (numbers, booleans, strings).
+
+    An analysis that uses physical constants adds ``constant_layers.constants_specs(keys)`` to its
+    parameters: the plot's settings then show each constant's value and source, and can set it
+    for that plot. Each run gets the lab and folder layers in ``context.constants`` and, resolved
+    with the plot's own values when it was submitted, ``context.resolved_constants``, which its
+    result records; ``compute`` reads them there, never from the table's defaults. An analysis
+    with its own override parameters declares ``constant_keys`` and ``run_constants`` instead.
     """
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
@@ -98,8 +107,9 @@ class DatasetAnalysis(HelabAnalysisScript):
         (line 1, after the folder and revision, e.g. "shots 51–60 (10 of 60)"; "" for all of
         it) and its settings in short form (line 2, e.g. "last 10 shots · auto-crop 99 %").
         The dock's tooltip always holds the full record. By default: no selection, and every
-        parameter in use as ``title value``."""
-        return "", describe(self.parameters(action_name), values)
+        parameter in use as ``title value`` (the Constants group left out: the dock adds the
+        constants the run resolved)."""
+        return "", describe(without_constants(self.parameters(action_name)), values)
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
         """Settings the run could not follow as given, and what it did instead (e.g. "X: min >
@@ -110,6 +120,22 @@ class DatasetAnalysis(HelabAnalysisScript):
         """When a plot following Live reruns by default (the plot's settings can change it):
         on every new shot unless a long analysis declares fewer reruns."""
         return LivePolicy()
+
+    def constant_keys(self, action_name: str) -> tuple[str, ...]:
+        """The physical constants the analysis uses (``physics.TABLE`` keys): its plots resolve them
+        when each run starts, name them in their settings and source line, and are marked when a
+        lab or folder value of one changes. Default: the keys of its Constants group
+        (``constant_layers.constants_specs``); none without one."""
+        return constant_keys(self.parameters(action_name))
+
+    def run_constants(self, action_name: str, values: Mapping[str, Any],
+                      layers: Mapping[str, Mapping[str, float]]) -> ResolvedConstants:
+        """The constants a run with these parameter ``values`` uses, from the lab and folder
+        ``layers`` (``AnalysisContext.constants``) and the plot's own values. Pure (it runs on the
+        GUI thread when the run is submitted). Default: the Constants group's choices
+        (``constant_layers.resolve_for_run``); an analysis with its own override parameters
+        returns its own resolution here."""
+        return resolve_for_run(values, layers.get("lab"), layers.get("folder"))
 
     def covered_shots(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> Sequence[int]:
         """The view's shots a run with ``values`` uses, recorded as its coverage: those the shared

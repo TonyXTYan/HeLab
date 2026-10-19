@@ -18,6 +18,7 @@ from typing import Any, Iterable, Literal, Mapping
 
 from helab.analysis.dataset_view import DatasetView, Fingerprint, ViewKey
 from helab.analysis.identity import AnalysisIdentity
+from helab.analysis.physics import ResolvedConstants
 
 State = Literal["completed", "failed", "cancelled"]
 # Where a result is kept (result caching rule 2). R1 has only RAM.
@@ -86,6 +87,15 @@ class AnalysisContext:
     cancel_event: threading.Event = field(default_factory=threading.Event, compare=False)
     # The shots the run uses (``DatasetAnalysis.covered_shots``); all of the view's by default.
     coverage: Coverage | None = None
+    # The lab and folder layers of the constants (``physics.resolve``), as {"lab": {key: value},
+    # "folder": {…}}, taken when the run starts (compute does no I/O); a plot adds its own
+    # overrides from its parameters. Empty until the Lab parameters and folder settings (F0b)
+    # exist: the table's defaults apply.
+    constants: Mapping[str, Mapping[str, float]] = field(default_factory=lambda: MappingProxyType({}))
+    # Those layers with the plot's own values, resolved when the run was submitted
+    # (``DatasetAnalysis.run_constants``), for an analysis that uses constants
+    # (``DatasetAnalysis.constant_keys``); None otherwise. ``compute`` may read them here.
+    resolved_constants: ResolvedConstants | None = None
 
     @property
     def covered(self) -> Coverage:
@@ -115,13 +125,26 @@ class AnalysisResult:
     policy: str = RAM_ONLY
     coverage: Coverage = field(default_factory=Coverage)
     input_signature: str = ""  # the input revision's own dataset signature (``DatasetView.signature``)
+    # The run's constant layers and what it resolved from them (``AnalysisContext``'s).
+    constant_layers: Mapping[str, Mapping[str, float]] = field(default_factory=lambda: MappingProxyType({}))
+    resolved_constants: ResolvedConstants | None = None
 
     @classmethod
     def of(cls, context: AnalysisContext, state: State, data: Any = None, error: str = "",
            started_at: float = 0.0) -> AnalysisResult:
         return cls(context.job_id, context.action, context.analysis, context.view.key,
                    MappingProxyType(dict(context.parameters)), state, data, error,
-                   started_at, time.time(), coverage=context.covered, input_signature=context.view.signature)
+                   started_at, time.time(), coverage=context.covered, input_signature=context.view.signature,
+                   constant_layers=context.constants, resolved_constants=context.resolved_constants)
+
+    @property
+    def constants_record(self) -> dict[str, Any] | None:
+        """The constants the run used, as JSON values: its lab and folder layers and, for an
+        analysis that uses constants, what it resolved (``ResolvedConstants.as_record``)."""
+        layers = {name: dict(values) for name, values in self.constant_layers.items()}
+        if self.resolved_constants is None:
+            return {"layers": layers} if layers else None
+        return {"layers": layers, **self.resolved_constants.as_record()}
 
     def reuse_key(self) -> dict[str, Any]:
         """What a later reuse of this result must match (result caching rule 5), as JSON values:
@@ -130,7 +153,8 @@ class AnalysisResult:
         return {"analysis_id": self.analysis.analysis_id, "version": self.analysis.version,
                 "file_hash": self.analysis.file_hash, "action": self.action, "root_key": identity.root_key,
                 "signature": identity.signature, "input_signature": self.input_signature,
-                "parameters": dict(self.parameters), "coverage": self.coverage.to_json()}
+                "parameters": dict(self.parameters), "coverage": self.coverage.to_json(),
+                **({"constants": record} if (record := self.constants_record) is not None else {})}
 
     def describe(self, parameters_text: str = "") -> str:
         """The record, one item per line, for a plot dock's tooltip."""
@@ -143,6 +167,9 @@ class AnalysisResult:
                     if self.input_signature and self.input_signature != identity.signature else ""),
                  f"Covers: {self.coverage.text()}",
                  f"Parameters: {parameters_text or _plain(self.parameters) or 'none'}"]
+        if self.resolved_constants is not None:
+            from helab.analysis.constant_layers import record_text
+            lines.append(f"Constants: {record_text(self.resolved_constants)}")
         when = datetime.fromtimestamp(self.finished_at).strftime("%H:%M:%S") if self.finished_at else ""
         took = f" in {self.finished_at - self.started_at:.1f} s" if self.started_at and self.finished_at else ""
         lines.append(f"Job {self.job_id} · {self.state} {when}{took} · kept in RAM only")

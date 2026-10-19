@@ -15,6 +15,7 @@ from helab.utils.number_format import fnum
 from helab.utils.constants import *
 from helab.views.DataRootsTab import DataRootsTab
 from helab.views.CacheTab import CacheTab
+from helab.views.LabParametersTab import LabParametersTab
 
 
 class SettingsDialog(QDialog):
@@ -160,6 +161,10 @@ class SettingsDialog(QDialog):
 
 
         self.tabs.addTab(self.general_tab, "General")
+
+        # Lab parameters: the constants every folder and plot starts from (F0b).
+        self.lab_tab = LabParametersTab(self.settings)
+        self.tabs.addTab(self.lab_tab, "Lab parameters")
 
         # TODO: default load folder
 
@@ -313,6 +318,7 @@ class SettingsDialog(QDialog):
         settings.remove("simultaneous_folder_loads")
         settings.setValue(AUTO_SCAN_VISIBLE_SETTING, self.auto_scan_visible_checkbox.isChecked())
         self.cache_tab.save(settings)
+        self.lab_tab.save(settings)
         self.accept()
         logging.debug("Settings saved")
 
@@ -338,6 +344,7 @@ class SettingsDialog(QDialog):
         if caches:
             settings.setValue("dir_caches", caches)
         self.load_settings()
+        self.lab_tab.load(settings)
         self.cache_tab.disk_budget.setValue(read_disk_budget(settings) / (1 << 30))
         self.cache_tab.ram_budget.setValue(read_ram_budget_steps(settings, self.cache_tab.ram_budget.total))
         self.cache_tab.live_autosave.setValue(read_live_autosave(settings))
