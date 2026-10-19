@@ -820,10 +820,9 @@ class HelabMainWindow(QMainWindow):
         # right_top_widget = QLabel("Right Top Placeholder")
         # right_top_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.panel_right_top_params_tab_widget = ParamTreeTabWidget(parent=self)
-        self.panel_right_top_params_tab_widget.add_example_tab()
+        self.panel_right_top_params_tab_widget.add_hint_tab()
 
         self.panel_right_bottom_script_selector = TreePanelWidget(helab_main_window=self)
-        self.panel_right_bottom_script_selector.add_example_groups_and_items()
 
         self.panel_right_bottom_script_selector.setVisible(True)
         # Add the bottom panel to the right_layout

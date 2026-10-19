@@ -263,8 +263,55 @@ may be slightly narrower after narrowing.
 left as it was for Tony's decision. The rule lives only in `crop_box`, and
 histogram ranges in `shortest_range`.
 
+## Placeholders replaced with working scripts
+
+Tony: "replace placeholder with working scripts". The Scripts panel now lists
+only scripts that work: today the "Plots" group, plus any folder loaded with
+**Load Scripts…**.
+
+Removed, and why:
+
+| Removed | Why |
+|---|---|
+| `helab/scripts/examples/basic_analysis.py` ("Basic Analysis" in group "Examples", "Advanced Analysis" in group "Advanced") | Demos: their four actions only wrote "Performing…/complete" log lines and never touched data. No real analysis in them to convert. |
+| `helab/scripts/folder_stats/` | An empty package (`__init__.py` of 0 bytes), never imported or scanned. |
+| The examples folder scan in `TreePanelWidget._load_default_scripts`, and its fallback | Only the examples folder was scanned. The panel now registers `helab.scripts.standard` (imported) and nothing else. |
+| Placeholder groups "Basic Analysis" and "Advanced Analysis" (`add_example_groups_and_items`, the `example` group type, `add_group_with_items`, `_show_example_analysis`; the main window's call to it) | Their Run buttons opened an empty dock saying "Analysis view for …" with made-up parameters. |
+| The parameter panel's "Info" tab (`ParamTreeTabWidget.add_example_tab`: "Parameter 1…5", "Advanced Settings") and the unused `add_example_todo_tab` | Fake parameters belonging to no script. Replaced by a non-closable "Settings" tab with one line: "Run a plot from Scripts below; its settings appear in a tab here." |
+
+Kept: `ScriptsManager.load_directory` and **Load Scripts…**, which load a lab
+folder of scripts; `legacy_plotly/` (untouched); `LinkedAnalysisInstance`, now
+used only as the base of `AnalysisInstance`. Older-style
+`HelabAnalysisScript`s from a loaded folder still get their action buttons
+(`execute_action`).
+
+Fixed along the way: a folder loaded with **Load Scripts…** never showed its
+groups. `_update_groups` listed them, but they were never registered, so
+selecting one logged "Unknown group". Groups are now registered as they are
+listed (test `test_load_scripts_adds_a_working_group`).
+
+Tests: `tests/test_script_system.py` no longer reads `helab/scripts/examples/`.
+It writes a small script folder in `tmp_path` and checks loading, the file
+hash, the panel listing only "Plots" (three Plot buttons), Load Scripts… adding
+a working group whose buttons run, and the hint tab.
+
+Additional proposed doc changes:
+
+- **AGENTS.md › Script system**: "The right-hand panel (`ScriptTreeSelector`)
+  loads `helab/scripts/examples/` by default" → "The right-hand panel
+  (`ScriptTreeSelector`) lists HeLab's bundled analyses
+  (`helab/scripts/standard/`, imported) and any folder loaded with Load
+  Scripts…".
+- **roadmaps/analysis-workflow.md** line 16: drop "`examples/` is loaded by
+  default", and "Bundled example scripts simulate actions through logging"
+  (they're gone).
+
 ## Checks
 
+- After removing the placeholders, `pytest -n 6 --reruns 5 --reruns-delay 1
+  --basetemp=.ai/temp/pytest`: 922 passed, 2 skipped, 2 xfailed, **no
+  RERUNs**. mypy (helab 72 files, tests 53, strict) and pyright: no issues.
+  `git diff --check 376c7dd` clean.
 - After the review fixes, `pytest -n 6 --reruns 5 --reruns-delay 1
   --basetemp=.ai/temp/pytest`: 920 passed, 2 skipped, 2 xfailed, **no
   RERUNs**. Before them: 914 passed, run twice, no RERUNs.
