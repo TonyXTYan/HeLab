@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QLabel, QWidget
 
 from helab.analysis.dataset_view import DatasetView, build_view
 from helab.analysis.parameter_tree import build_tree, tree_values
@@ -92,7 +92,8 @@ def test_search_range_and_a_lone_peak() -> None:
     script = tf.TransferFractions()
     data = script.compute("Plot", context(lone))
     assert data.orders.centre == pytest.approx(1.0, abs=2e-4) and data.orders.spacing == tf.SPACING.default
-    assert data.notes == ("no side peak found: spacing as set",)
+    assert len(data.notes) == 1 and data.notes[0].startswith("no side peak found beyond order 0's width (")
+    assert data.notes[0].endswith(" ms): spacing as set")
     outside = script.compute("Plot", context(lone, {"search_min": 2.0, "search_max": 3.0}))
     assert outside.notes == ("no events in the search range: orders as set",)
     assert outside.orders.centre == tf.CENTRE.default
@@ -116,3 +117,180 @@ def test_render_and_detected_values_fill_the_settings(run: DatasetView, qtbot: Q
     assert values["centre"] == pytest.approx(result.data.orders.centre)
     assert values["spacing"] == pytest.approx(result.data.orders.spacing)
     instance.close()
+
+
+# Detection edge cases: each gives the right orders or says why not, never a crash or a silent
+# wrong order 0.
+
+def orders_events(rng: np.random.Generator, populations: dict[int, int], centre: float = CENTRE,
+                  spacing: float = SPACING, sigma: float = SIGMA) -> Any:
+    times = np.concatenate([rng.normal(centre + order * spacing, sigma, count) for order, count in populations.items()])
+    return np.column_stack((times, rng.normal(0, 0.005, (len(times), 2))))
+
+
+def shots_of(populations: dict[int, int], count: int = 3, seed: int = 0, **orders: float) -> DatasetView:
+    rng = np.random.default_rng(seed)
+    return view({shot: orders_events(rng, populations, **orders) for shot in range(1, count + 1)})
+
+
+def fractions(data: DatasetView, values: dict[str, Any] | None = None) -> tf.Fractions:
+    result = tf.TransferFractions().compute("Plot", context(data, values))
+    assert isinstance(result, tf.Fractions)
+    return result
+
+
+def rendered(data: DatasetView, values: dict[str, Any] | None, qtbot: QtBot) -> QWidget:
+    script = tf.TransferFractions()
+    result = AnalysisResult.of(context(data, values), "completed", script.compute("Plot", context(data, values)))
+    widget = script.render(result)
+    qtbot.addWidget(widget)
+    return widget
+
+
+def pane_text(widget: QWidget) -> str:
+    """The empty plot's message."""
+    assert isinstance(widget, QLabel)
+    return widget.text()
+
+
+def unsure_notes(data: tf.Fractions) -> list[str]:
+    return [note for note in data.notes if "order 0 unsure" in note]
+
+
+SIDES = {-1: 150, 0: 600, 1: 150}
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_one_shot_finds_the_orders(seed: int) -> None:
+    data = fractions(shots_of({-2: 30, -1: 100, 0: 600, 1: 250, 2: 30}, count=1, seed=seed))
+    assert data.orders.centre == pytest.approx(CENTRE, abs=2e-4)
+    assert data.orders.spacing == pytest.approx(SPACING, rel=0.02) and data.notes == ()
+
+
+def test_no_events_and_all_outside_the_box_say_so(qtbot: QtBot) -> None:
+    empty = view({1: np.empty((0, 3)), 2: np.empty((0, 3))})
+    data = fractions(empty, {"min_counts": 0})
+    assert not data.detected and len(data.shots) == 0
+    assert "No events in the chosen shots" in pane_text(rendered(empty, {"min_counts": 0}, qtbot))
+    rng = np.random.default_rng(2)
+    events = orders_events(rng, SIDES)
+    events[:, 1] += 0.1  # 100 mm off centre: outside the ±30 mm box
+    outside = view({1: events})
+    assert not fractions(outside).detected
+    text = pane_text(rendered(outside, None, qtbot))
+    assert text.startswith("No shot has more than 50 counts in the XY box")
+    assert "1 shot with ≤ 50 counts left out" in text
+
+
+def test_not_a_number_in_t_is_left_out_and_said(qtbot: QtBot) -> None:
+    rng = np.random.default_rng(4)
+    events = orders_events(rng, SIDES)
+    events[:4, 0], events[4:6, 0], events[6, 0] = np.nan, np.inf, -np.inf
+    events[7:9, 1] = np.nan  # outside any box, so not counted
+    data = fractions(view({1: events}))
+    assert data.orders.centre == pytest.approx(CENTRE, abs=2e-4)
+    assert data.orders.spacing == pytest.approx(SPACING, rel=0.02)
+    assert data.notes == ("7 events with T not a number left out",)
+    assert int(data.counts.sum()) <= len(events) - 9
+    events = np.full((80, 3), np.nan)
+    assert fractions(view({1: events})).notes == ("80 events with T not a number left out",
+                                                    "1 shot with ≤ 50 counts left out")
+    rendered(view({1: orders_events(rng, SIDES)}), None, qtbot)
+
+
+def test_a_lone_peak_keeps_the_spacing_and_says_so() -> None:
+    data = fractions(shots_of({0: 600}))
+    assert data.orders.centre == pytest.approx(CENTRE, abs=2e-4) and data.orders.spacing == tf.SPACING.default
+    assert [note.split(" (")[0] for note in data.notes] == ["no side peak found beyond order 0's width"]
+
+
+@pytest.mark.parametrize("populations", [{-1: 590, 0: 600, 1: 580}, {-1: 100, 0: 300, 1: 600}],
+                         ids=["similar heights", "+1 taller"])
+def test_another_order_nearly_as_tall_makes_order_0_unsure(populations: dict[int, int]) -> None:
+    data = fractions(shots_of(populations))
+    # Order 0 is the tallest peak, which may be another order: the plot says so.
+    assert data.orders.spacing == pytest.approx(SPACING, rel=0.02)
+    notes = unsure_notes(data)
+    assert len(notes) == 1 and notes[0].startswith("⚠ order 0 unsure: order ")
+    assert notes[0].endswith("set Search T around order 0, or the orders by hand")
+    # Search T around the real order 0 settles it.
+    settled = fractions(shots_of(populations), {"search_min": CENTRE - SPACING / 2, "search_max": CENTRE + SPACING / 2})
+    assert settled.orders.centre == pytest.approx(CENTRE, abs=2e-4)
+
+
+def test_a_search_range_holding_only_side_peaks_says_order_0_is_outside() -> None:
+    populations = {-2: 30, -1: 100, 0: 600, 1: 250, 2: 100}
+    data = fractions(shots_of(populations), {"search_min": CENTRE + SPACING / 2, "search_max": CENTRE + 3 * SPACING})
+    assert data.orders.centre == pytest.approx(CENTRE + SPACING, abs=2e-4)  # +1, the tallest in the range
+    notes = unsure_notes(data)
+    assert len(notes) == 1 and notes[0].startswith("⚠ order 0 unsure: order −1 (outside Search T) holds ")
+
+
+def test_orders_closer_than_their_width_are_not_split() -> None:
+    data = fractions(shots_of(SIDES, spacing=0.0015))
+    assert data.orders.centre == pytest.approx(CENTRE, abs=3e-4) and data.orders.spacing == tf.SPACING.default
+    assert [note.split(" (")[0] for note in data.notes] == ["no side peak found beyond order 0's width"]
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_wide_peaks_say_the_orders_overlap(seed: int) -> None:
+    data = fractions(shots_of(SIDES, seed=seed, sigma=0.004))
+    assert data.orders.centre == pytest.approx(CENTRE, abs=1e-3)
+    assert any(note.startswith("orders overlap: order 0's width (FWHM ") for note in data.notes)
+    resolved = fractions(shots_of({-1: 400, 0: 600, 1: 400}, seed=seed, sigma=0.0025))
+    assert resolved.orders.spacing == pytest.approx(SPACING, rel=0.05)
+
+
+@pytest.mark.parametrize("sigma", [1e-6, 2e-5])
+def test_narrow_peaks_are_found(sigma: float) -> None:
+    data = fractions(shots_of(SIDES, sigma=sigma))
+    assert data.orders.centre == pytest.approx(CENTRE, abs=1e-5)
+    assert data.orders.spacing == pytest.approx(SPACING, rel=1e-3) and data.notes == ()
+
+
+def test_stray_events_far_out_and_the_bin_cap() -> None:
+    rng = np.random.default_rng(6)
+
+    def with_strays(strays: int, end: float, sigma: float) -> DatasetView:
+        return view({shot: np.concatenate((orders_events(rng, SIDES, sigma=sigma),
+                                           np.column_stack((rng.uniform(0, end, strays), np.zeros((strays, 2))))))
+                     for shot in range(1, 4)})
+    # A few per cent of stray events over the whole acquisition, and a few far out: the bins
+    # still resolve the orders.
+    for data in (with_strays(40, 4.0, 1e-5), with_strays(5, 100.0, 2e-5)):
+        found = fractions(data)
+        assert found.orders.centre == pytest.approx(CENTRE, abs=1e-4)
+        assert found.orders.spacing == pytest.approx(SPACING, rel=1e-2) and found.notes == ()
+    # Strays over 100 s that the capped bins can't leave out: they're too coarse, and it says so.
+    coarse = fractions(with_strays(400, 100.0, 2e-5))
+    assert any("are coarse for order 0, narrow Search T" in note for note in coarse.notes)
+    narrowed = fractions(with_strays(400, 100.0, 2e-5), {"search_min": 2.0, "search_max": 2.3})
+    assert narrowed.orders.spacing == pytest.approx(SPACING, rel=1e-2)
+
+
+def test_search_t_ends_open_alone_and_a_reversed_range_says_so() -> None:
+    data = shots_of(SIDES)
+    script = tf.TransferFractions()
+    # From alone: to the last event (it holds only +1, so order 0 is unsure and says so).
+    upper = fractions(data, {"search_min": CENTRE + SPACING / 2})
+    assert upper.orders.centre == pytest.approx(CENTRE + SPACING, abs=3e-4) and unsure_notes(upper)
+    lower = fractions(data, {"search_max": CENTRE + SPACING / 2})
+    assert lower.orders.centre == pytest.approx(CENTRE, abs=2e-4) and lower.notes == ()
+    values = {"search_min": 2.2, "search_max": 2.1}
+    flipped = fractions(data, values)
+    assert flipped.orders.centre == pytest.approx(CENTRE, abs=2e-4)
+    assert flipped.notes == ("Search T: from ≥ to, searching every event",)
+    assert script.parameter_warnings("Plot", effective(script.parameters("Plot"), values)) == [
+        "Search T: from ≥ to, searching every event"]
+    manual = effective(script.parameters("Plot"), {**values, "orders_mode": tf.MANUAL})
+    assert script.parameter_warnings("Plot", manual) == []
+
+
+def test_malformed_shots_and_identical_times_do_not_crash(qtbot: QtBot) -> None:
+    rng = np.random.default_rng(8)
+    same_time = np.column_stack((np.full(200, 2.0), np.zeros((200, 2))))
+    data = view({1: np.zeros(5), 2: orders_events(rng, SIDES), 3: same_time})
+    for values in (None, {"shots": "range", "first_shot": 3}):
+        rendered(data, values, qtbot)
+    same = fractions(data, {"shots": "range", "first_shot": 3})
+    assert same.orders.centre == 2.0 and same.detected
