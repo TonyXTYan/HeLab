@@ -57,19 +57,19 @@ Branch `agent/plot-ram-budget` from 531ec41. Brief: [brief.md](brief.md).
 
 ## Not counted (on purpose, to note)
 
-- Plot widgets' own copies (pyqtgraph items, the Dash figure's JSON lists of up to
-  the display cap). They go when the plot is released.
-- `RamResults`' unpinned results (up to 64, older runs no plot shows): results are
-  small next to shots; they can't hold views (only `ViewKey`s).
+- Plot widgets' own copies (pyqtgraph items, the Dash figure's JSON lists of up to the
+  display cap). They go when the plot is released.
 - `LiveFeed`'s views: they are the Live tab's pinned dataset's arrays.
+- After review, counted: each plot's older results `RamResults` keeps, and released
+  plots' PNG pictures. See the handoff's "After review" for the other fixes.
 
 ## Outside the owned paths
 
 - `helab/views/SettingsDialog.py`: one line so Reset all settings resets the new
   checkbox (else Save after Reset wrote the stale value). Not an I/O file.
-- New module `helab/analysis/budget.py` (the counter, thresholds, `RamBudget`,
-  `hollow`/`restore`); the setting key `plot_auto_reload` lives there, not in
-  `helab/utils/constants.py`, which I didn't own.
+- New modules `helab/analysis/budget.py` (thresholds, `RamBudget`, `hollow`/`restore`)
+  and, after review, `helab/utils/ram_buffers.py` (buffer counting); the setting key
+  `plot_auto_reload` moved to `helab/utils/constants.py` after review.
 - FolderCache: only the RAM accounting (`ram_users`, `plot_bytes`, `held_buffers`,
   `held_sizes`, `evict_to`, `_evict`). The reload uses the existing `submit(...,
   "cached")` API unchanged.

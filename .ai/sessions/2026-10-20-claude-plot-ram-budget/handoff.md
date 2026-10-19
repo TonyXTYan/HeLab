@@ -1,7 +1,8 @@
 # Handoff: Plot RAM budget
 
 Branch `agent/plot-ram-budget` (base 531ec41). Design and reasoning: [notes.md](notes.md).
-Not pushed yet (waiting for Maestro).
+Review: [review.md](review.md) (changes requested on ebf674d); the fixes are listed under
+"After review" below.
 
 ## Summary
 
@@ -27,7 +28,9 @@ checkbox, on by default) or on Reload; Rerun on it reloads with the settings sho
   whose arrays plots hold anyway).
 - `helab/models/ScriptTreeSelector.py`: `ReleasedPlot`, `snapshot`,
   `AnalysisInstance` release/reload, `PlotSettingsPanel.plotShown` and `recent()`.
-- `helab/analysis/results.py` (`RamResults.released`), `runner.py` (the worker no
+- `helab/utils/ram_buffers.py` (new: buffer counting), `helab/utils/constants.py` (the
+  setting), `helab/analysis/dataset_view.py` (`fingerprints_of` made public).
+- `helab/analysis/results.py` (`RamResults.released`, `peek`, `discard`), `runner.py` (the worker no
   longer keeps the last job's input alive while idle).
 - `helab/views/HelabMainWindow.py` (`setup_ram_budget`, status-bar button, the 75 %
   window, `replace_plot_content`), `helab/views/CacheTab.py` (checkbox, plots' bytes
@@ -38,8 +41,12 @@ checkbox, on by default) or on Reload; Rerun on it reloads with the settings sho
 
 ## Checks
 
-- Full suite `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest -rR`:
-  1272 passed, 2 skipped, 2 xfailed, no RERUN (61.8 s).
+- After review (at 498e1df): full suite `pytest -n 4 --reruns 5 --reruns-delay 1
+  --basetemp=.ai/temp/pytest -rR`: 1281 passed, 2 skipped, 2 xfailed, no RERUN (67.7 s);
+  `mypy --strict` helab and tests, also `--platform win32`: clean; `pyright helab tests`
+  and `--pythonplatform Windows`: 0 errors; `git diff --check 531ec41`: clean.
+  tests/test_plot_ram_budget.py: 25 tests.
+- First round (ebf674d): 1272 passed, 2 skipped, 2 xfailed, no RERUN (61.8 s).
 - `mypy --strict helab/` and `mypy --strict tests`: clean. `pyright helab tests` and
   `pyright --pythonplatform Windows helab tests`: 0 errors. `git diff --check`: clean.
 - Tests cover: shared arrays counted once (and a dataset whose arrays plots hold
@@ -65,10 +72,12 @@ Set Settings → Cache → RAM budget low (e.g. the minimum) to reach the thresh
    plots…"; the plots behind other tabs show "Released to free RAM: a picture, not
    interactive" with Reload over a picture that looks like the plot (right size, not
    a thumbnail). The shown plot, a plot still running and a plot following Live stay.
-4. **3D scatter**: released, its picture is its last frame as rotated (check on macOS
-   and on a lab PC; on the lab PCs whose GPU can't paint QtWebEngine it will be
-   black, like the pane). Open in browser for it no longer exists once released.
-5. Click a released plot's tab: it reloads (from RAM if the folder is still loaded,
+4. **3D scatter**: released, its picture is its last frame as rotated. Check on macOS
+   and on a lab PC (on the lab PCs whose GPU can't paint QtWebEngine it will be black,
+   like the pane). **A scatter never on screen** (opened behind another tab and never
+   brought to the front) has a web view that never painted: its picture is expected to
+   be blank; check what it looks like. Open in browser no longer exists once released.
+5. Click a released plot's tab: it reloads (once per show: clicks in it don't ask again) (from RAM if the folder is still loaded,
    else from the disk cache) and becomes interactive again. Untick Settings → Cache →
    "Reload a released plot when it is shown again": showing it keeps the picture;
    Reload still works.
@@ -79,6 +88,36 @@ Set Settings → Cache → RAM budget low (e.g. the minimum) to reach the thresh
    released plot of it: the amber line names the changed/missing shots.
 8. Activity Monitor: releasing plots of folders no longer loaded lowers HeLab's RAM.
 
+## After review (one commit each)
+
+1. `61aad80` Datasets first again after each release (`evict_to` and new held buffers
+   after every release). Test: the reviewer's probe (P_A released, A dropped, P_B kept).
+2. `2ccc757` A reload that fails or is cancelled puts `follow.ran` back to a hollow
+   view: nothing counted that can't be freed. Test: failed and cancelled.
+3. `1db5dba` Pictures are PNG bytes (decoded only to paint), counted as the released
+   plot's RAM; a candidate whose freeable bytes (`RamBudget.frees`: buffers no held
+   dataset or other plot has) are at most its picture's last cost is skipped, and
+   `release(frees)` gives up if the PNG is as large (cost remembered, no repeated grabs).
+4. `22cebcd` Reload and auto reload restore exactly `shown.coverage.shots` by
+   fingerprint, never a shot the plot didn't draw; the amber line names the changed or
+   missing ones among those. Rerun with new settings on a released plot takes the
+   view's shots.
+5. `562b89a` Counted rather than capped: each plot records its runs' job ids and
+   counts every result of those RamResults still keeps (`peek`); releasing and closing a
+   plot discard them (`RamResults.discard`; in R1 nothing reads them again).
+6. `37a16f6` A disk reload ending while a run is in flight (Live's revision) is dropped:
+   that run draws the plot.
+7. `6bfa985` `plotShown` fires only when a plot becomes the shown one. A reload that
+   finds nothing marks the plot: shows don't try again until the folder's
+   `datasetChanged` or `diskCacheChanged`; Reload always tries. A plot a reload drew in
+   the last 10 s (`RELOAD_GRACE`) goes after every other candidate. With two plots and
+   room for one, switching still reloads one and releases the other (by design).
+8. `4ed7361` The 75 % window re-arms only below 70 % (`REARM_SHARE`).
+9. `498e1df` Buffer counting moved to `helab/utils/ram_buffers.py` (utils no longer
+   imports analysis); `PLOT_AUTO_RELOAD_SETTING` / `read_plot_auto_reload` in
+   `constants.py`; one `fingerprints_of` (`dataset_view`).
+10. Checklist item 4 keeps the scatter-never-on-screen check.
+
 ## Proposed doc changes (for the coordinator)
 
 - AGENTS.md, **Caching** paragraph, after "The RAM budget (Settings → Cache, …)
@@ -88,13 +127,17 @@ Set Settings → Cache → RAM budget low (e.g. the minimum) to reach the thresh
   held dataset count once (`FolderCache.plot_bytes`); eviction keeps a dataset whose
   arrays plots hold anyway. From 50 % of the budget the status bar shows it, at 75 % a
   non-modal window lists the biggest plots and folders (once per crossing), above 80 %
-  datasets no tab shows go first (`evict_to`), then plots are released, least recently
-  viewed first, until under 80 % (never the shown, a running or a Live-following plot;
-  none closed). A released plot shows a picture (`ReleasedPlot`) with Reload and keeps
-  a hollow view (its shots' numbers and fingerprints); it reloads from RAM or a local
-  `cached` read only, never its folder, exactly its shots by fingerprint, naming
-  changed or missing ones, when shown again (Settings → Cache, `plot_auto_reload`,
-  default on) or on Reload."
+  datasets no tab shows go first (`evict_to`, again after each release), then plots are
+  released, least recently viewed first (one a reload drew in the last 10 s last), until
+  under 80 %, if releasing frees more than the picture costs (never the shown, a running
+  or a Live-following plot; none closed). The 75 % window re-arms below 70 %. A plot's
+  RAM includes its older results RamResults keeps; release and close drop them. A
+  released plot shows a PNG picture (`ReleasedPlot`, counted) with Reload and keeps a
+  hollow view (its shots' numbers and fingerprints); it reloads from RAM or a local
+  `cached` read only, never its folder, exactly the shots it drew by fingerprint,
+  naming changed or missing ones, when it becomes the shown plot (Settings → Cache,
+  `plot_auto_reload`, default on; not again after finding nothing until its folder's
+  data or disk cache changes) or on Reload. Buffer counting: `helab/utils/ram_buffers.py`."
 - AGENTS.md, **Script system**: "Results stay in RAM (`RamResults`, R1)" → add "; a
   released plot's result keeps its record without data (`RamResults.released`)".
 - `.ai/memory/results/disk-cache-and-budgets.md` (or analysis-plots.md): Tony's
@@ -109,5 +152,6 @@ Set Settings → Cache → RAM budget low (e.g. the minimum) to reach the thresh
 - "Least recently viewed" = least recently shown in the Settings panel, with plots not
   on screen before plots on screen (a floating window or a side-by-side dock counts
   as on screen).
-- Not counted: plot widgets' own copies (pyqtgraph items, the Dash figure), unpinned
-  older results in `RamResults` (small), Live's feed (the tab's own arrays).
+- Not counted: plot widgets' own copies (pyqtgraph items, the Dash figure, ~10 MB for a
+  100k-point scatter) and Live's feed (the tab's own arrays). Older results in
+  `RamResults` and released plots' pictures are counted (after review).
