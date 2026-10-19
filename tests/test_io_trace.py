@@ -462,10 +462,11 @@ def test_a_changed_cached_folder_is_listed_once_by_its_load(
     service.shutdown()
 
 
-def test_a_load_never_shows_or_caches_a_file_whose_writer_stalled_mid_row(tmp_path: Path, trace: Path) -> None:
-    """A file settled by age (its writer paused longer than the settle age) but ending mid-row is
-    still being written: read, then dropped, neither shown nor cached, and read once it's whole."""
-    from helab.utils.cache_store import unpack_dataset
+def test_a_writer_stalled_longer_than_the_settle_age_is_read_as_it_is(tmp_path: Path, trace: Path) -> None:
+    """Settle age only, by Tony's decision: a TXY write never takes longer, so a file unmodified for
+    the settle age is read as it is, without looking at its content. If a writer ever stalls longer
+    mid-row, the load shows (and caches) what is there, its partial row dropped as unreadable
+    (problematic); the finished file's new size makes the next check read it again."""
     run = tmp_path / "run"
     write_shots(run, range(1, 3))
     stalled = run / "d_txy_forc3.txt"
@@ -478,39 +479,16 @@ def test_a_load_never_shows_or_caches_a_file_whose_writer_stalled_mid_row(tmp_pa
     events: list[dict[str, Any]] = []
     load(str(run), str(output), events.append, cache)
     loaded = next(event for event in events if event["kind"] == "loaded")
-    assert [event["shot"] for event in events if event["kind"] == "shot"] == [1, 2]
-    assert loaded["files"] == 2 and loaded["unsettled_files"] == 1 and 3 not in loaded["problematic"]
+    assert [event["shot"] for event in events if event["kind"] == "shot"] == [1, 2, 3]
+    assert loaded["files"] == 3 and loaded["unsettled_files"] == 0 and loaded["problematic"] == [3]
     assert any(record["op"] == "read" and record["path"] == str(stalled) for record in lines(trace))
-    with io_helper._cache_store(cache["directory"], [str(run)]) as store:
-        found = store.read_dataset(str(run))
-        assert found.value is not None
-        row, packed = found.value
-        data = unpack_dataset(packed)
-        assert data is not None and sorted(data) == [1, 2] and row["info"]["unsettled"] == 1
     stalled.write_text("3,2,3\n3,4,5\n")  # The writer finished.
     os.utime(stalled, (when, when))
     events = []
     load(str(run), str(output), events.append, cache)
     loaded = next(event for event in events if event["kind"] == "loaded")
-    # Shots 1 and 2 come from the disk cache; only the finished file is read.
-    assert loaded["files"] == 3 and loaded["load_counts"]["read"] == 1 and loaded["unsettled_files"] == 0
-
-
-def test_an_old_file_ending_mid_row_is_read_as_far_as_it_goes(tmp_path: Path) -> None:
-    """Untouched for longer than ``RECENT_SECONDS``, a file ending mid-row is damaged, not being
-    written: it loads as problematic, without its partial row."""
-    run = tmp_path / "run"
-    run.mkdir()
-    damaged = run / "d_txy_forc1.txt"
-    damaged.write_text("1,2,3\n4,5")
-    when = time.time() - io_helper.RECENT_SECONDS - 60
-    os.utime(damaged, (when, when))
-    output = tmp_path / "out"
-    output.mkdir()
-    events: list[dict[str, Any]] = []
-    load(str(run), str(output), events.append)
-    loaded = next(event for event in events if event["kind"] == "loaded")
-    assert loaded["files"] == 1 and loaded["problematic"] == [1] and loaded["rows"] == 1
+    # Shots 1 and 2 come from the disk cache; the changed file is read again, whole now.
+    assert loaded["files"] == 3 and loaded["load_counts"]["modified_loaded"] == 1 and not loaded["problematic"]
 
 
 def memory_check_of(loaded: dict[str, Any]) -> dict[str, Any]:
@@ -842,29 +820,3 @@ def test_reselecting_a_ram_only_folder_checks_it_without_listing_it(
     assert listings == ["load"] and model.nodes[str(run)].txy_count == 21
     explorer.close_cleanup()
     service.shutdown()
-
-
-def test_a_load_takes_a_recent_last_row_with_an_empty_field_for_one_still_being_written(tmp_path: Path) -> None:
-    """Codex's repro: the last row ends with a newline but has an empty third field (``3,4,\\n``),
-    and the file is older than the settle age. As Live does, a load takes it for a file still being
-    written: not shown, not cached, unsettled."""
-    from helab.utils.cache_store import unpack_dataset
-    run = tmp_path / "run"
-    write_shots(run, range(1, 3))
-    paused = run / "d_txy_forc3.txt"
-    paused.write_text("3,2,3\n3,4,\n")
-    when = time.time() - 8
-    os.utime(paused, (when, when))
-    cache = store_options()
-    output = tmp_path / "out"
-    output.mkdir()
-    events: list[dict[str, Any]] = []
-    load(str(run), str(output), events.append, cache)
-    loaded = next(event for event in events if event["kind"] == "loaded")
-    assert [event["shot"] for event in events if event["kind"] == "shot"] == [1, 2]
-    assert loaded["files"] == 2 and loaded["unsettled_files"] == 1 and 3 not in loaded["problematic"]
-    with io_helper._cache_store(cache["directory"], [str(run)]) as store:
-        value = store.read_dataset(str(run)).value
-        assert value is not None
-        data = unpack_dataset(value[1])
-        assert data is not None and sorted(data) == [1, 2]

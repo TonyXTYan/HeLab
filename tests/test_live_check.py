@@ -192,25 +192,22 @@ def test_a_file_still_growing_with_an_old_stable_mtime_is_not_read_half_written(
     np.testing.assert_array_equal(np.load(shots[0]["artifact"]), [[3, 2, 3], [3, 4, 5]])
 
 
-def test_a_file_ending_mid_row_with_an_old_stable_mtime_waits(folder: Path, tmp_path: Path) -> None:
-    """The converter ends every row with a newline: a file ending mid-row (or with an empty row)
-    is still being written, even when its size and old mtime stay the same a check apart."""
+def test_a_file_ending_mid_row_is_read_once_unchanged_a_check_apart(folder: Path, tmp_path: Path) -> None:
+    """Settle age and "unchanged since the previous check" only (metadata), by Tony's decision: a TXY
+    write never takes longer than the settle age, so the file's content isn't checked. A file left
+    mid-row longer is read as it is, its partial row dropped as unreadable (problematic)."""
     memory = held(folder, tmp_path)
     partial = folder / "d_txy_forc3.txt"
     old = time.time() - 60
-    for text in ("3,2,3\n3,4", "3,2,3\n\n", ""):
-        partial.write_text(text)
-        os.utime(partial, (old, old))
-        age_folder(folder, 30)
-        first = last(check(folder, tmp_path, memory), "live_unchanged")
-        second = check(folder, tmp_path, memory, seen=first["live_seen"])
-        assert not any(event["kind"] == "shot" for event in second), text
-        assert last(second, "live_unchanged")["unsettled_files"] == 1
-    partial.write_text("3,2,3\n3,4,5\n")
+    partial.write_text("3,2,3\n3,4")
     os.utime(partial, (old, old))
+    age_folder(folder, 30)
     first = last(check(folder, tmp_path, memory), "live_unchanged")
-    shots = [event for event in check(folder, tmp_path, memory, seen=first["live_seen"]) if event["kind"] == "shot"]
-    assert [event["shot"] for event in shots] == [3]
+    assert first["unsettled_files"] == 1  # Seen once: read only if unchanged a check later.
+    second = check(folder, tmp_path, memory, seen=first["live_seen"])
+    shots = [event for event in second if event["kind"] == "shot"]
+    assert [event["shot"] for event in shots] == [3] and shots[0]["problematic"]
+    np.testing.assert_array_equal(np.load(shots[0]["artifact"]), [[3, 2, 3]])
 
 
 def check_load(folder: Path, tmp_path: Path) -> list[dict[str, Any]]:

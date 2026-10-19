@@ -294,11 +294,11 @@ def main() -> None:
         select(tab1, folders["run_live"])
         wait(lambda: shown(tab1, folders["run_live"]), 60, "run_live shown")
         settle()
-        phase("Live on, writer adds 12 shots every 4 s (1004 written over 7.5 s, 1009 stalls 8 s mid-file)")
+        phase("Live on, writer adds 12 shots every 4 s (1004 written over 7.5 s, 1009 pauses 4 s mid-file)")
         window.on_live_button_clicked()
         writer = subprocess.Popen([sys.executable, str(HERE / "fake_writer.py"), str(folders["run_live"]), str(trace),
                                    "--first", "1001", "--count", "12", "--every", "4", "--slow", "1004",
-                                   "--stall", "1009", "--template", str(out / "template.txt")])
+                                   "--stall", "1009", "--stall-pause", "4", "--template", str(out / "template.txt")])
         while writer.poll() is None:
             pump(0.5)
         phase("Live on, writer done: 15 s to settle")

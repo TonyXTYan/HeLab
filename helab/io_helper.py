@@ -26,6 +26,9 @@ if TYPE_CHECKING:
 Emit = Callable[[dict[str, Any]], None]
 # Another computer may still be writing a file modified this recently; it is
 # left for the next load rather than read half-written. Tests set it to 0.
+# Settle age only, by Tony's decision (2026-10-19): a TXY write never takes longer, so an older
+# file is read as it is; its content isn't checked. The converter writing to a temporary name and
+# renaming it remains the real fix.
 SETTLE_SECONDS = float(os.environ.get("HELAB_SETTLE_SECONDS", "5"))
 # Test seam: with HELAB_TEST_READ_GATE=<dir>, reading a TXY file <name> first waits until
 # <dir>/<name>.go exists (``_read_gate``). Unset in production: nothing is checked.
@@ -244,9 +247,10 @@ def _read_marker(folder: str, reason: str) -> Marker:
         raise
 
 
-def _read_txy_file(filename: str, reason: str) -> tuple[Any, bytes]:
-    """A whole TXY file, parsed, and its last 4 kB (for the last-row checks): read in one go, then
-    ``pandas.read_csv`` of its bytes. Traced with the bytes actually read (``read``)."""
+def _read_txy_file(filename: str, reason: str) -> Any:
+    """A whole TXY file, parsed: read in one go, then ``pandas.read_csv`` of its bytes. Traced with the
+    bytes actually read (``read``). (Its content isn't checked for a writer still at work: settled by
+    age, it's read as it is, by Tony's decision; see ``SETTLE_SECONDS``.)"""
     import io
     import numpy as np
     import pandas as pd
@@ -257,7 +261,7 @@ def _read_txy_file(filename: str, reason: str) -> tuple[Any, bytes]:
         _traced_error("read", filename, reason, exc)
         raise
     _trace("read", filename, reason, bytes=len(raw))
-    return pd.read_csv(io.BytesIO(raw), sep=",", names=["t", "x", "y"], dtype=np.float64), raw[-4096:]
+    return pd.read_csv(io.BytesIO(raw), sep=",", names=["t", "x", "y"], dtype=np.float64)
 
 
 def _mounts(reason: str) -> list[Mount]:
@@ -269,16 +273,6 @@ def _mounts(reason: str) -> list[Mount]:
     if TRACE is not None:
         _trace("mounts", "", reason, count=len(mounts))
     return mounts
-
-
-# A file modified this recently whose last row isn't whole is taken for one still being written (a
-# converter stalled mid-file): not shown or cached, and read again by the next check. Older, it's a
-# damaged file, read as far as it goes (problematic).
-RECENT_SECONDS = 600.0
-
-
-def _recent(mtime_ns: int) -> bool:
-    return time.time() - mtime_ns / 1e9 < RECENT_SECONDS
 
 
 # One helper handles one request. Reusing a volume ID within that request avoids
@@ -1664,12 +1658,9 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         info = _stat(filename, reason)
         return (info.st_size, info.st_mtime_ns) == fingerprint[index][1:]
 
-    def read_txy(shot: int, filename: str, mtime_ns: int, reason: str = "load: read") -> Any:
-        """The shot's array, or None if the file is recent and ends mid-row: still being written."""
+    def read_txy(shot: int, filename: str, reason: str = "load: read") -> Any:
         _read_gate(filename)
-        frame, tail = _read_txy_file(filename, reason)
-        if not _whole_last_row(tail) and _recent(mtime_ns):
-            return None
+        frame = _read_txy_file(filename, reason)
         if frame.isna().any().any():
             problematic.append(shot)
         array = np.asarray(frame.dropna(), dtype=np.float64)
@@ -1690,8 +1681,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                 load_counts["read"] += 1
                 read_bytes += fingerprint[i][1]
                 if unchanged(i, filename, "load: before read"):
-                    array = read_txy(shot, filename, fingerprint[i][2])
-                    if array is not None and not unchanged(i, filename, "load: after read"):
+                    array = read_txy(shot, filename)
+                    if not unchanged(i, filename, "load: after read"):
                         data.pop(shot, None)
                         array = None
                 if array is None:
@@ -1766,14 +1757,13 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # delays it. Shots only the caller holds are read again for completeness.
     try:
         reread = False
-        for i, (shot, filename) in enumerate(files):
+        for shot, filename in files:
             if shot in in_memory and shot not in data:
                 Pause.checkpoint(send)
                 send({"kind": "file_started", "filename": filename})
                 reread = True
                 try:
-                    if read_txy(shot, filename, fingerprint[i][2], "cache save: read") is None:
-                        raise ValueError("still being written")
+                    read_txy(shot, filename, "cache save: read")
                 except (OSError, ValueError, pd.errors.ParserError):
                     raise ValueError(f"Could not cache previously loaded shot {shot}") from None
                 send({"kind": "file_finished", "filename": filename})
@@ -1972,19 +1962,6 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
             store.close()
 
 
-def _whole_last_row(tail: bytes) -> bool:
-    """Whether a TXY file's last bytes end with a whole row (Live's test, and a load's for a recent
-    file): the last byte is a newline and the last row has three non-empty fields (the converter's
-    dlmwrite ends every row with one). A file still being written usually ends mid-row; one paused
-    exactly at a row's end can't be told apart (the converter's temporary-name rename is what will
-    settle it)."""
-    if not tail.endswith(b"\n"):
-        return False
-    # Three non-empty fields (a malformed but whole row is the read's to report as unreadable).
-    parts = tail[:-1].rsplit(b"\n", 1)[-1].rstrip(b"\r").split(b",")
-    return len(parts) == 3 and all(part.strip() for part in parts)
-
-
 def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]] | None = None,
                known: list[list[int]] | None = None, since: int | None = None, *,
                identity: str = "", seen: list[list[int]] | None = None,
@@ -2005,11 +1982,11 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     (``reason``: missing, changed or root). Only files the caller doesn't hold are stat'ed. A new
     file is read only once it is settled by age and has shown the same size and mtime on the
     previous check too (``seen``): stale or coarse metadata can't make a file being written look
-    finished twice a check apart. It is stat'ed again just before and after it is read. Files
-    not read yet are counted as still being written and sent back (``live_seen``). Nothing new:
-    ``live_unchanged``; else ``loaded`` with ``memory_shots`` (source ``updated``). The disk cache
-    is neither read nor written: the app saves with an ordinary load, every N new shots and when
-    Live stops.
+    finished twice a check apart. (Metadata only: its content isn't checked.) It is stat'ed again
+    just before and after it is read. Files not read yet are counted as still being written and
+    sent back (``live_seen``). Nothing new: ``live_unchanged``; else ``loaded`` with
+    ``memory_shots`` (source ``updated``). The disk cache is neither read nor written: the app
+    saves the data from RAM (``save_held``), every N new shots and when Live stops.
 
     While files are still being written the folder isn't listed every check: when its mtime is
     still the one the last listing saw (``listed_mtime``, sent back as ``live_listed_mtime``),
@@ -2173,16 +2150,14 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
             array = None
             if unchanged(filename, item, "live: before read"):
                 _read_gate(filename)
-                frame, tail = _read_txy_file(filename, "live: read")
-                # Ending mid-row (or with an empty row): still being written, whatever its metadata says.
-                if _whole_last_row(tail):
-                    if frame.isna().any().any():
-                        problematic.append(shot)
-                    array = np.asarray(frame.dropna(), dtype=np.float64)
-                    if not unchanged(filename, item, "live: after read"):
-                        array = None
+                frame = _read_txy_file(filename, "live: read")
+                if frame.isna().any().any():
+                    problematic.append(shot)
+                array = np.asarray(frame.dropna(), dtype=np.float64)
+                if not unchanged(filename, item, "live: after read"):
+                    array = None
             if array is None:
-                # Changed while read, or ending mid-row: still being written; the next check reads it again.
+                # Changed while read: still being written; the next check reads it again.
                 late.add(shot)
                 waiting.append(list(item))
                 problematic[:] = [value for value in problematic if value != shot]

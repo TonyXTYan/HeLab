@@ -14,7 +14,7 @@ with trace tests, following Codex's constraints and Maestro's notes:
 | cff8df3 | Trace caveats | `.helab-root` reads traced as `marker_open`, `marker_fstat`, `marker_read` (real bytes); each listing counts its `is_dir` checks; reads record the bytes actually read; no `is_symlink` probe while tracing; marker hiding's stat and chflags traced; `HELAB_IO_TRACE` on a network drive or share refused with a warning; the no-change test compares full events and the exact calls on the folder. |
 | 7b9b7e8 | 1. roots_verify loop | Only a listing reporting a mount table not yet asked about asks for a check (`_verify_asked`); a check that saw another table than listings reported never re-queues itself; a table reported while a check runs gets one follow-up; a failed check waits for the next listing; the marker check follows the local volume check and reuses its IDs (no second diskutil); marker checks at most every 5 s as a backstop. |
 | 0e9c0ad | 4. Load stats | The fingerprint comes from the load's own listing (free on Windows); the before- and after-read stats stay; the cache-save verify pass runs only if files were read after the load's own verify; a changed cached leaf folder takes the load's status instead of a relisting and details scan. |
-| 2b55d59, 8079252 | 6. Half-written files | A load reads a file in one go and drops it (not shown, not cached, unsettled, read again next check) if it was modified in the last 10 min and its last row isn't whole (a newline and three non-empty fields: Live's rule, one shared function since 8079252, after Codex found 2b55d59's newline-only check too weak). Live reads a ready file once and checks its last row on those bytes (one open instead of tail-then-file). |
+| 2b55d59, 8079252, then removed | 6. Half-written files | 2b55d59 and 8079252 dropped a recent file whose last row wasn't whole, in loads and Live. **Removed by Tony's decision** (round 3): settle age only. A TXY write never takes more than 5 s, a content check is an assumption about the file's format, and a writer paused at a row's end would pass it anyway. Kept: the 5 s settle age, Live's metadata-only "unchanged since the previous check", the before/after-read stats, and Live opening a ready file once (one open instead of tail-then-file). |
 | c53a058 | 5. RAM-only quick check | Data in RAM without a disk cache gets the quick check from its own load's listing time, names and identity: same location (mount table), same data root (one marker read), folder unmodified since, nothing unsettled then, the sample unchanged; never for Retry/Refresh. |
 | 1e83f20 | 3. Live checks | While the folder's mtime is the one its last listing saw, a check stats only the files still being written; once one is ready, it lists as before (identity, sample, read). The identity check reads only the marker the first listing found, on every listing check (not once a minute); a missing or different marker there is looked for again or stops Live (remount). |
 | 65a06b3 | 2. Live saves | A dedicated save: the RAM dataset's arrays go to the helper (written to its private local folder by IOService's reader thread, off the GUI thread); the helper lists the folder once, checks every held file's size and mtime from that listing (no sampling), the identity, missing and changed files, then saves the full dataset under a load's guard, budget and pending-save rules (`_write_dataset`, shared with `_load`). No TXY file is read. |
@@ -74,11 +74,16 @@ What HeLab does now (trace, `trace-session1-after.md` "Files touched while the f
 - **Stats:** still made of files being written (Live's new and pending files, a load's fingerprint, a
   details scan). They are how HeLab learns a file is young; on servers that follow Windows' oplock rules
   they shouldn't change the writer's caching (1 below).
-- **Opens and reads:** only of files settled by age (unchanged for 5 s), and for a file modified in the
-  last 10 minutes, kept only if its last row is whole: a newline and three non-empty fields (one rule
-  for loads and Live since 8079252; 2b55d59 had checked the newline alone for loads). In the rerun the
-  stalled file was read and dropped, and the disk cache holds `run_stall` without it (unsettled 1);
-  before, the half file was shown and cached. Live opens a ready file once instead of twice.
+- **Opens and reads:** only of files settled by age (unmodified for 5 s); Live also waits until a new
+  file shows the same size and mtime a check later (`seen`: metadata only, not a format assumption).
+  Settle age only, by Tony's decision; the converter's temp-name rename remains the real fix. Neither
+  loads nor Live look at a file's content to judge whether it's finished (the whole-row checks of
+  2b55d59 and 8079252, and Live L2's `_txy_complete`, were removed in round 3): a TXY write never takes
+  more than 5 s, and a writer paused at a row's end would pass such a check anyway. So a writer stalled
+  longer than the settle age is read as it is, by design: the partial row is dropped as unreadable
+  (problematic), the rest is shown and cached, and the finished file's new size makes the next check
+  read it again (in Live, a held shot that later changes stops Live with "changed": TXY files are
+  written once). Live opens a ready file once instead of twice (tail, then file).
 
 Research (sources at the end of this section). These are statements of the protocols and the client
 code; no SMB packet capture or native Windows run was made, and servers (Windows, Samba, NAS firmware)
@@ -116,15 +121,16 @@ and client versions differ.
    retried by the next check).
 
 Decision taken (implemented): stats of young files allowed; opens and reads only of files settled by age
-and, for recent files, with a whole last row; one data open per new file in Live.
+(settle age only, by Tony's decision; the converter's temp-name rename remains the real fix); Live also
+needs a new file unchanged since the previous check (metadata); one data open per new file in Live.
 
 Proposed, not done (Tony's call):
 - **Windows clients and Live's "unchanged since the last check" rule:** two stats 3 s apart can both come
   from the 10 s file-information cache [5], so on Windows the rule can be weaker than on macOS. A fix would
   be to require the two looks to be at least 10 s apart on Windows.
 - **The real fix stays the converter's temporary-name rename** (on the roadmap): write `…tmp`, close, then
-  rename to `d_txy_forc<N>.txt`. Age and a whole last row can't prove the writer finished: a writer paused
-  exactly at a row's end, or caching writes as in 3, still looks finished. And a converter that replaced a
+  rename to `d_txy_forc<N>.txt`. Age can't prove the writer finished: a writer stalled longer than the
+  settle age, or caching writes as in 3, still looks finished. And a converter that replaced a
   finished file by renaming over it could fail while a Windows HeLab reads it (5); writing new names
   doesn't.
 
