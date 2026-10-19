@@ -71,6 +71,8 @@ hook, landing): [.ai/maestri-setup.md](../.ai/maestri-setup.md).
      -r requirements.txt -e .`, 16 s measured 2026-10-15 with uv's cache), so
      it never installs into ground's venv.
    - **Profile**: a private settings/app/cache folder for the floor (below).
+   - **Stale bytecode**: delete the copied `__pycache__` folders, which carry Ground's
+     paths into tracebacks (Live L3 notes, 2026-10-19).
    - **Tests**: own `--basetemp`, and about `-n 4` per worker when several run.
    - CodeGraph: initialise `.codegraph/` in the floor if the worker uses it.
 4. The worker commits as it goes; when done it writes its handoff, pushes its

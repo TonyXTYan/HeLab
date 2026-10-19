@@ -89,7 +89,7 @@ notification/push follows the remote connection stage. See the
 |---|---|---|
 | L1 (done 2026-10-19) | Live on/off for the selected folder: new shots found by isolated I/O, settled shots merged into RAM, cache written at stop and quit (with Quit now) | Existing incremental loader |
 | L2 (done 2026-10-19) | Auto-save every N shots, with its setting | L1 |
-| L3 | Chosen analyses follow Live at a controlled cadence; unpinned views show revisions, pinned keep theirs | L1, [result caching](result-caching.md#stages) R3 |
+| L3 (done 2026-10-19) | Chosen analyses follow Live at a controlled cadence; unpinned views show revisions, pinned keep theirs | L1, [result caching](result-caching.md#stages) R3 |
 | L4 | Acquisition machine: raw → TXY conversion and QC as shots settle | L3, [QC](quality-control-and-repair.md) |
 | L5 | Remote Live revision notifications | [Network extension](network-runners-and-web.md), result caching R5 |
 
@@ -163,7 +163,8 @@ has a defined recovery path.
 
 ## Open decisions
 
-- Watch a folder before its first shot: decided yes (L3 above); needs an empty dataset.
+- Built in L3 (2026-10-19, `.ai/sessions/2026-10-19-claude-live-l3/`): Live may start on any folder (its own files only, never subfolders) before the first shot; Live off catches held plots up once (Tony); the scatter keeps its 5 s wait and its camera across reruns; "Highlight the newest shot" in the scatter and histograms, the histograms' newest shot on its own right axis (Tony). By design: with Live off, a pending delay timer may still finish one rerun.
+- Live with settle age only: a writer stalled longer than 5 s mid-file leaves a partial shot held; when it completes, Live sees the shot changed and stops as mismatched. Keep, or re-read recently changed shots in Live? (Tony to decide, 2026-10-19.)
 - Live's data grows in RAM without the large-folder limits: warn, and stop Live
   at 30 % of RAM? (with plots counting toward the RAM budget)
 - Add Cancel to the quit window (back to HeLab, saves carry on)?

@@ -53,6 +53,9 @@ still to choose (Tony, with the coordinator's proposal).
 
 ## Known issues
 
+- [ ] `test_gui_responsiveness.py::test_output_close_failure_cannot_leave_dead_helper_in_active_queue`
+  needed one rerun on the RSPE Windows PC on three branches (2026-10-19);
+  investigate if it fails outright.
 - [ ] `test_folder_cache.py::test_two_tabs_share_snapshot_arrays_and_default_resolution`
   needed one rerun in each of three full runs on the RSPE Windows PC
   (2026-10-19); investigate if it fails outright.
@@ -157,7 +160,7 @@ still to choose (Tony, with the coordinator's proposal).
   staged 2026-10-15). New shots stay in RAM; the disk cache is written every
   N shots (configurable) and when monitoring stops or HeLab quits
   ([decided](live-monitoring.md#dataset-cache-writes-while-monitoring)) (2026-10-13).
-  L1 and L2 done (2026-10-19); L3 next with the dataset view.
+  L1–L3 done (2026-10-19): plots follow Live; L4 (converter in HeLab) next.
 - [ ] QC script catalogue and safe derived-file repairs, kept in HeLab's cache
   folder; migrate the current status scan as its first provider
   ([plan](quality-control-and-repair.md)) (2026-10-14; revised 2026-10-15).
