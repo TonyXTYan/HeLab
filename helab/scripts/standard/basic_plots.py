@@ -12,16 +12,21 @@ from PyQt6.QtWidgets import QWidget
 
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.analysis.stats import AXES, DEFAULT_KEEP, MAX_BINS, UNITS, Histogram, counts_per_shot, histogram
+from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_bounds, range_specs, select_shots,
+                                      shots_text)
+from helab.analysis.stats import AXES, MAX_BINS, UNITS, Histogram, counts_per_shot, histogram
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 
-RANGE = ParameterSpec(
-    "keep_percent", "Range: keep", "float", DEFAULT_KEEP * 100, (50.0, 100.0), " %",
+RANGE = range_specs(
     "Each histogram covers the exact shortest range holding this share of its axis's events. "
     "100 % covers every event.")
+BINS_GROUP = "Histogram"
 BINS = ParameterSpec(
-    "bins", "Bins (0 = automatic)", "int", 0, (0, MAX_BINS), "",
-    "0 picks the bin count from the data (Freedman–Diaconis: width 2·IQR·n^-1/3).")
+    "bins", "Bins", "int", 0, (0, MAX_BINS), "", group=BINS_GROUP,
+    tip="0 = automatic: the bin count comes from the data (Freedman–Diaconis: width 2·IQR·n^-1/3).")
+LOG_Y = ParameterSpec("log_y", "Log Y", "bool", False, group=BINS_GROUP,
+                      tip="Logarithmic event axis; empty bins are left out.")
+COLOUR = (40, 90, 170)
 
 
 @dataclass(frozen=True)
@@ -29,14 +34,22 @@ class ShotCounts:
     shots: npt.NDArray[np.int64]
     counts: npt.NDArray[np.int64]
     unsettled_files: int
+    total_shots: int = 0  # the shots loaded (``shots`` are the chosen ones)
 
     @property
     def total(self) -> int:
         return int(self.counts.sum())
 
 
+@dataclass(frozen=True)
+class Histograms:
+    items: tuple[Histogram, ...]
+    shots: tuple[int, ...]
+    total_shots: int
+
+
 def counts_title(data: ShotCounts) -> str:
-    title = f"{len(data.shots):,} shots · {data.total:,} events"
+    title = f"{shots_text(data.shots.tolist(), data.total_shots or len(data.shots))} · {data.total:,} events"
     if data.unsettled_files:
         title += f" · {data.unsettled_files} files still being written left out"
     return title
@@ -61,15 +74,19 @@ class CountsPerShot(DatasetAnalysis):
             group="Plots",
             file_path=__file__,
             analysis_id="helab.counts_per_shot",
-            version="1",
+            version="2",
         )
 
     def get_actions(self) -> List[str]:
         return ["Plot"]
 
+    def parameters(self, action_name: str) -> List[ParameterSpec]:
+        return [*SHOT_SPECS]
+
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
-        shots, counts = counts_per_shot(context.view)
-        return ShotCounts(shots, counts, context.view.provenance.unsettled_files)
+        chosen = select_shots(context.view, context.parameters)
+        shots, counts = counts_per_shot(context.view, chosen)
+        return ShotCounts(shots, counts, context.view.provenance.unsettled_files, len(context.view.shots))
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: ShotCounts = result.data
@@ -79,8 +96,8 @@ class CountsPerShot(DatasetAnalysis):
         plot.setLabel("bottom", "Shot number")
         plot.setLabel("left", "Events")
         plot.showGrid(x=True, y=True, alpha=0.3)
-        plot.plot(data.shots, data.counts, pen=pg.mkPen((40, 90, 170), width=1),
-                  symbol="o", symbolSize=4, symbolBrush=(40, 90, 170), symbolPen=None)
+        plot.plot(data.shots, data.counts, pen=pg.mkPen(COLOUR, width=1),
+                  symbol="o", symbolSize=4, symbolBrush=COLOUR, symbolPen=None)
         return cast(QWidget, plot)
 
 
@@ -92,34 +109,52 @@ class TxyHistograms(DatasetAnalysis):
             group="Plots",
             file_path=__file__,
             analysis_id="helab.txy_histograms",
-            version="1",
+            version="2",
         )
 
     def get_actions(self) -> List[str]:
         return ["Plot"]
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
-        return [RANGE, BINS]
+        return [*SHOT_SPECS, *RANGE, BINS, LOG_Y]
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
-        events = context.view.events()
-        keep = float(context.parameters[RANGE.name]) / 100
-        bins = int(context.parameters[BINS.name])
+        values = context.parameters
+        shots = select_shots(context.view, values)
+        events = context.view.events(shots)
+        keep = keep_fraction(values)
+        bins = int(values[BINS.name])
+        bounds = manual_bounds(values) if manual(values) else (None,) * len(AXES)
         items = []
         for i, axis in enumerate(AXES):
             context.check()
-            items.append(histogram(np.ascontiguousarray(events[:, i]), axis, keep, bins))
-        return tuple(items)
+            column = np.ascontiguousarray(events[:, i])
+            given = bounds[i]
+            if manual(values) and given is None and len(column):
+                given = (float(column.min()), float(column.max()))
+            items.append(histogram(column, axis, keep, bins, given))
+        return Histograms(tuple(items), shots, len(context.view.shots))
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
-        items: tuple[Histogram, ...] = result.data
+        data: Histograms = result.data
+        items = data.items
+        log_y = bool(result.parameters.get(LOG_Y.name, False))
         widget: Any = pg.GraphicsLayoutWidget(parent)
         widget.setBackground("w")
-        widget.addLabel(source_title(result, f"{items[0].total:,} events" if items else ""), row=0, col=0)
+        events = f"{items[0].total:,} events" if items else ""
+        widget.addLabel(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}"), row=0, col=0)
         for row, item in enumerate(items, start=1):
             plot = widget.addPlot(row=row, col=0, title=histogram_title(item))
             plot.setLabel("bottom", f"{item.axis} ({UNITS[AXES.index(item.axis)]})")
             plot.setLabel("left", "Events")
-            plot.addItem(pg.PlotDataItem(item.edges, item.counts, stepMode="center", fillLevel=0,
-                                         pen=pg.mkPen((40, 90, 170)), brush=(40, 90, 170, 90)))
+            if log_y:
+                # Empty bins have no logarithm: they are left out of the bars.
+                counts = item.counts.astype(np.float64)
+                counts[counts <= 0] = np.nan
+                plot.setLogMode(x=False, y=True)
+                plot.addItem(pg.PlotDataItem(item.edges, counts, stepMode="center", connect="finite",
+                                             pen=pg.mkPen(COLOUR)))
+            else:
+                plot.addItem(pg.PlotDataItem(item.edges, item.counts, stepMode="center", fillLevel=0,
+                                             pen=pg.mkPen(COLOUR), brush=(*COLOUR, 90)))
         return cast(QWidget, widget)

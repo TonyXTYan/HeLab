@@ -14,7 +14,9 @@ from pytestqt.qtbot import QtBot
 from PyQt6.QtWidgets import QLabel, QWidget
 
 from helab.analysis.dataset_view import DatasetView, ViewKey, build_view, root_key, view_of
-from helab.analysis.parameters import ParameterSpec, describe, effective
+from helab.analysis import selection
+from helab.analysis.parameter_tree import build_tree, parameter_of, tree_values
+from helab.analysis.parameters import ParameterSpec, describe, effective, tree_children
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
 from helab.analysis.runner import AnalysisRunner
 from helab.analysis.stats import (
@@ -236,6 +238,9 @@ def test_histogram_totals_ranges_and_bins() -> None:
     same = histogram(np.full(5, 3.0), "X")
     assert int(same.counts.sum()) == 5 and same.outside == 0
     assert histogram(np.empty(0), "Y").total == 0
+    bounded = histogram(values, "T", bins=4, bounds=(0.5, 2.0))
+    assert (bounded.edges[0], bounded.edges[-1]) == (0.5, 2.0) and bounded.outside == 1000 - int(bounded.counts.sum())
+    assert histogram(np.empty(0), "Y", bounds=(1.0, 2.0)).edges.tolist() == [1.0, 2.0]
     assert shortest_range(np.array([1.0, 2.0, 3.0]), 1.0) == (1.0, 3.0)
     assert freedman_diaconis_bins(np.zeros(10), 0, 0) == 1
     assert freedman_diaconis_bins(np.array([0.0, 1e-12, 1.0]), 0.0, 1.0) <= MAX_BINS
@@ -250,6 +255,115 @@ def test_parameters_are_validated_and_described() -> None:
     assert effective(specs) == {"keep": 99.0, "bins": 0}
     assert describe(specs, {"keep": 99.0, "bins": 0}) == "Keep 99 %, Bins 0"
     assert specs[0].tree_item()["limits"] == (50.0, 100.0)
+
+
+def test_choice_parameters_gate_what_applies() -> None:
+    mode = ParameterSpec("mode", "Mode", "choice", "auto", choices=("auto", "manual"), group="Range")
+    keep = ParameterSpec("keep", "Keep", "float", 99.0, (50.0, 100.0), " %", group="Range", when=("mode", "auto"))
+    low = ParameterSpec("low", "Low", "float", 0.0, group="Range", when=("mode", "manual"))
+    log = ParameterSpec("log", "Log Y", "bool", False)
+    specs = [mode, keep, low, log]
+    assert effective(specs, {"mode": "other"})["mode"] == "auto"
+    manual = effective(specs, {"mode": "manual", "low": "2", "log": 1})
+    assert manual == {"mode": "manual", "keep": 99.0, "low": 2.0, "log": True}
+    assert describe(specs, manual) == "Mode manual, Low 2, Log Y on"
+    assert describe(specs, manual, every=True) == "Mode manual, Keep 99 %, Low 2, Log Y on"
+    assert mode.tree_item() == {"name": "mode", "title": "Mode", "type": "list", "value": "auto", "default": "auto",
+                                "limits": ["auto", "manual"]}
+    children = tree_children(specs)
+    assert [child["name"] for child in children] == ["Range", "log"]
+    assert [child["name"] for child in children[0]["children"]] == ["mode", "keep", "low"]
+
+
+def test_parameter_tree_shows_only_what_applies(qtbot: QtBot) -> None:
+    specs = scatter_3d.Scatter3D().parameters("Plot")
+    root = build_tree(specs)
+
+    def visible(spec: ParameterSpec) -> bool:
+        options: dict[str, Any] = parameter_of(root, spec).opts
+        return bool(options.get("visible", True))
+    assert visible(selection.SHOTS) and not visible(selection.LAST_SHOTS) and not visible(selection.FIRST_SHOT)
+    assert visible(scatter_3d.KEEP) and not visible(selection.BOUNDS[0][0])
+    parameter_of(root, selection.SHOTS).setValue(selection.LAST_N)
+    parameter_of(root, selection.RANGE_MODE).setValue(selection.MANUAL)
+    assert visible(selection.LAST_SHOTS) and not visible(selection.FIRST_SHOT)
+    assert not visible(scatter_3d.KEEP) and all(visible(spec) for pair in selection.BOUNDS for spec in pair)
+    values = tree_values(root, specs)
+    assert values["shots"] == "last N" and values["range_mode"] == "manual" and values["display_cap"] == 100_000
+    assert set(values) == {spec.name for spec in specs}
+
+
+# Shots and view range
+
+def test_select_shots() -> None:
+    view = build_view(dataset(shots={shot: np.ones((1, 3)) for shot in (1, 2, 5, 8, 9)}))
+    assert selection.select_shots(view, {}) == (1, 2, 5, 8, 9)
+    assert selection.select_shots(view, {"shots": "last N", "last_shots": 2}) == (8, 9)
+    assert selection.select_shots(view, {"shots": "last N", "last_shots": 50}) == (1, 2, 5, 8, 9)
+    assert selection.select_shots(view, {"shots": "range", "first_shot": 2, "last_shot": 8}) == (2, 5, 8)
+    assert selection.select_shots(view, {"shots": "range", "first_shot": 6, "last_shot": 0}) == (8, 9)
+    assert selection.select_shots(view, {"shots": "range", "first_shot": 10, "last_shot": 0}) == ()
+    assert selection.shots_text((1, 2, 5, 8, 9), 5) == "5 shots"
+    assert selection.shots_text((8, 9), 5) == "shots 8–9 (2 of 5)"
+    assert selection.shots_text((), 5) == "none of 5 shots"
+
+
+def test_manual_box_uses_set_bounds_and_the_data_extent() -> None:
+    events = np.array([[0.0, 0.0, 0.0], [1.0, 10.0, -1.0], [2.0, 20.0, 5.0], [3.0, 30.0, 2.0]])
+    values = {"range_mode": "manual", "t_min": 0.5, "t_max": 2.5, "x_min": 1.0, "x_max": 1.0}
+    assert selection.manual(values) and selection.manual_bounds(values) == ((0.5, 2.5), None, None)
+    box = selection.manual_box(events, values)
+    assert box.manual and (box.lower, box.upper) == ((0.5, 0.0, -1.0), (2.5, 30.0, 5.0))
+    assert (box.kept, box.total, box.left_out) == (2, 4, 2) and math.isnan(box.keep)
+    assert box.contains(events).tolist() == [False, True, True, False]
+    empty = selection.manual_box(np.empty((0, 3)), values)
+    assert empty.total == 0 and empty.lower[0] == 0.5 and math.isnan(empty.lower[1])
+
+
+def test_scatter_and_histograms_take_shots_and_manual_ranges() -> None:
+    rng = np.random.default_rng(3)
+    view = build_view(dataset(shots={shot: rng.normal(size=(1000, 3)) for shot in range(1, 11)}))
+    scatter = scatter_3d.Scatter3D()
+    values = {"shots": "last N", "last_shots": 2, "range_mode": "manual", "t_min": -1.0, "t_max": 1.0,
+              "display_cap": 1000, "point_size": 3, "opacity": 0.2}
+    data = scatter.compute("Plot", context(view, scatter, values))
+    assert data.shots == (9, 10) and data.total_shots == 10 and data.crop.total == 2000
+    assert data.crop.manual and (data.crop.lower[0], data.crop.upper[0]) == (-1.0, 1.0)
+    assert data.crop.kept == int(np.count_nonzero(np.abs(view.events((9, 10))[:, 0]) <= 1))
+    assert len(data.points) == 1000 and data.cap == 1000
+    assert scatter_3d.crop_text(data.crop).startswith(f"Manual range keeps {data.crop.fraction:.1%}")
+    assert scatter_3d.note_text(data).endswith("· shots 9–10 (2 of 10)")
+    result = AnalysisResult.of(context(view, scatter, values), "completed", data)
+    fig = scatter_3d.figure(result, data)
+    trace: Any = fig.data[0]
+    assert (trace.marker.size, trace.marker.opacity) == (3.0, 0.2) and len(trace.x) == 1000
+    assert tuple(fig.layout.scene.zaxis.range) == (-1.0, 1.0)
+    assert "shots 9–10 (2 of 10)" in fig.layout.title.text
+    histograms = basic_plots.TxyHistograms()
+    items = histograms.compute("Plot", context(view, histograms, {**values, "bins": 5})).items
+    t, x, _ = items
+    assert (t.edges[0], t.edges[-1]) == (-1.0, 1.0) and t.total == 2000 and t.outside == data.crop.left_out
+    assert x.edges[0] == view.events((9, 10))[:, 1].min() and x.outside == 0
+    assert all(len(item.counts) == 5 for item in items)
+    counts = basic_plots.CountsPerShot()
+    shots = counts.compute("Plot", context(view, counts, {"shots": "range", "first_shot": 3, "last_shot": 4}))
+    assert shots.shots.tolist() == [3, 4] and shots.total == 2000 and shots.total_shots == 10
+    assert basic_plots.counts_title(shots) == "shots 3–4 (2 of 10) · 2,000 events"
+
+
+def test_histogram_log_y_renders_without_empty_bins(qtbot: QtBot) -> None:
+    view = build_view(dataset(shots={1: np.array([[0.0, 0, 0], [0.0, 0, 0], [10.0, 0, 0]])}))
+    script = basic_plots.TxyHistograms()
+    values = {"bins": 10, "log_y": True, "range_mode": "auto-crop", "keep_percent": 100}
+    result = AnalysisResult.of(context(view, script, values), "completed",
+                               script.compute("Plot", context(view, script, values)))
+    widget: Any = script.render(result)
+    qtbot.addWidget(widget)
+    plot = widget.getItem(1, 0)
+    assert plot.ctrl.logYCheck.isChecked()
+    (item,) = plot.listDataItems()
+    _, ys = item.getOriginalDataset()
+    assert np.isnan(ys).sum() == 8 and np.nansum(ys) == 3
 
 
 # Analyses
@@ -267,9 +381,9 @@ def test_bundled_analyses_declare_identity_and_file_hash() -> None:
     assert set(names) == {"3D scatter", "Counts per shot", "T, X, Y histograms"}
     scatter = names["3D scatter"]
     expected = hashlib.sha256(open(scatter_3d.__file__, "rb").read()).hexdigest()
-    assert (scatter.analysis_id, scatter.version, scatter.file_hash) == ("helab.scatter_3d", "1", expected)
+    assert (scatter.analysis_id, scatter.version, scatter.file_hash) == ("helab.scatter_3d", "2", expected)
     identity = scatter.identity()
-    assert identity.file_name == "scatter_3d.py" and identity.text().startswith("helab.scatter_3d v1 · scatter_3d.py")
+    assert identity.file_name == "scatter_3d.py" and identity.text().startswith("helab.scatter_3d v2 · scatter_3d.py")
     assert all(metadata.analysis_id and metadata.version for metadata in names.values())
 
 
@@ -284,11 +398,11 @@ def test_scatter_samples_for_display_only() -> None:
     script = scatter_3d.Scatter3D()
     data = script.compute("Plot", context(view, script))
     assert data.crop.total == 250_000 and data.analysed == data.crop.kept >= 247_500
-    assert len(data.points) == 100_000 and data.shots == 5
+    assert len(data.points) == 100_000 and data.shots == (1, 2, 3, 4, 5) and data.total_shots == 5
     assert np.all(data.crop.contains(data.points))
     text = scatter_3d.sample_text(data)
     assert f"100,000 of {data.analysed:,}" in text and "analysis uses all" in text
-    assert scatter_3d.note_text(data).startswith(f"Display sample: 100,000 of {data.analysed:,} cropped events")
+    assert scatter_3d.note_text(data).startswith(f"Display sample: 100,000 of {data.analysed:,} events in range")
     result = AnalysisResult.of(context(view, script), "completed", data)
     fig = scatter_3d.figure(result, data)
     trace: Any = fig.data[0]
@@ -303,7 +417,7 @@ def test_scatter_without_crop_shows_every_event() -> None:
     script = scatter_3d.Scatter3D()
     data = script.compute("Plot", context(view, script, {"keep_percent": 100}))
     assert data.analysed == 10 and len(data.points) == 10
-    assert scatter_3d.sample_text(data) == "Showing all 10 events in the crop"
+    assert scatter_3d.sample_text(data) == "Showing all 10 events in the range"
     empty = script.compute("Plot", context(build_view(dataset(shots={})), script))
     assert empty.analysed == 0 and scatter_3d.crop_text(empty.crop) == "No events"
 
@@ -314,8 +428,9 @@ def test_basic_plots_compute() -> None:
     data = counts.compute("Plot", context(view, counts))
     assert data.shots.tolist() == [1, 4] and data.total == 8
     assert basic_plots.counts_title(data) == "2 shots · 8 events · 1 files still being written left out"
+    assert data.total_shots == 2
     histograms = basic_plots.TxyHistograms()
-    items = histograms.compute("Plot", context(view, histograms, {"bins": 4}))
+    items = histograms.compute("Plot", context(view, histograms, {"bins": 4})).items
     assert [item.axis for item in items] == ["T", "X", "Y"]
     assert all(len(item.counts) == 4 and int(item.counts.sum()) == 8 for item in items)
     assert basic_plots.histogram_title(items[0]) == "T · 4 bins (set) · 8 of 8 events"

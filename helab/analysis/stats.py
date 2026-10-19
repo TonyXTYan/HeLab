@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Iterable
 
 import numpy as np
 import numpy.typing as npt
@@ -27,8 +27,9 @@ class CropBox:
     upper: tuple[float, ...]
     kept: int
     total: int
-    keep: float  # the requested fraction
+    keep: float  # the requested fraction (nan for a manual box)
     left_out: int  # events outside the box
+    manual: bool = False  # the user's bounds, not auto-crop
 
     @property
     def fraction(self) -> float:
@@ -195,9 +196,11 @@ def display_sample(count: int, cap: int = DISPLAY_CAP, seed: int = 0) -> npt.NDA
     return np.sort(np.random.default_rng(seed).choice(count, size=cap, replace=False))
 
 
-def counts_per_shot(view: DatasetView) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-    """(shot numbers, events per shot), ascending by shot."""
-    shots = np.fromiter(view.shots, dtype=np.int64, count=len(view.shots))
+def counts_per_shot(view: DatasetView, shots: Iterable[int] | None = None
+                    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+    """(shot numbers, events per shot) of the chosen shots (default: all), ascending by shot."""
+    chosen = list(view.shots if shots is None else shots)
+    shots = np.fromiter(chosen, dtype=np.int64, count=len(chosen))
     counts = np.fromiter((len(view.shots[int(shot)]) for shot in shots), dtype=np.int64, count=len(shots))
     return shots, counts
 
@@ -235,13 +238,15 @@ class Histogram:
 
 
 def histogram(values: npt.NDArray[np.float64], axis: str, keep: float = DEFAULT_KEEP,
-              bins: int = 0) -> Histogram:
-    """A histogram over the shortest range holding ``keep`` of the values. ``bins`` 0 picks
-    the count automatically (Freedman–Diaconis). counts.sum() + outside == total."""
+              bins: int = 0, bounds: tuple[float, float] | None = None) -> Histogram:
+    """A histogram over the shortest range holding ``keep`` of the values, or over ``bounds``
+    when given. ``bins`` 0 picks the count automatically (Freedman–Diaconis).
+    counts.sum() + outside == total."""
     total = len(values)
-    lower, upper = shortest_range(values, keep)
+    lower, upper = bounds if bounds is not None else shortest_range(values, keep)
     if total == 0:
-        return Histogram(axis, np.array([0.0, 1.0]), np.zeros(1, dtype=np.int64), 0, 0, bins <= 0)
+        edges = np.array([lower, upper]) if bounds is not None and upper > lower else np.array([0.0, 1.0])
+        return Histogram(axis, edges, np.zeros(1, dtype=np.int64), 0, 0, bins <= 0)
     if not upper > lower:  # all values equal: one bin around them
         lower, upper = lower - 0.5, upper + 0.5
     count = bins if bins > 0 else freedman_diaconis_bins(values, lower, upper)

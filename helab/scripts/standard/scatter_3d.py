@@ -12,47 +12,61 @@ from PyQt6.QtWidgets import QWidget
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.analysis.stats import AXES, DEFAULT_KEEP, DISPLAY_CAP, UNITS, CropBox, axis_text, crop_box, display_sample
+from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_specs, select_shots,
+                                      shots_text)
+from helab.analysis.stats import AXES, DISPLAY_CAP, UNITS, CropBox, axis_text, crop_box, display_sample
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 
-KEEP = ParameterSpec(
-    "keep_percent", "Auto-crop: keep", "float", DEFAULT_KEEP * 100, (50.0, 100.0), " %",
+RANGE = range_specs(
     "Crop to a box holding at least this share of the events, found by a heuristic (not the "
     "narrowest possible box): sparse ends of T, X and Y are left out first, then each axis is "
     "narrowed to its shortest window over the events inside the others. 100 % keeps every event.")
+KEEP = RANGE[1]
+POINTS = "Points"
+POINT_SIZE = ParameterSpec("point_size", "Point size", "float", 1.5, (0.5, 10.0), " px", group=POINTS,
+                           tip="Marker size in pixels.")
+OPACITY = ParameterSpec("opacity", "Opacity", "float", 0.5, (0.05, 1.0), group=POINTS,
+                        tip="Marker opacity: lower shows density in dense regions.")
+CAP = ParameterSpec("display_cap", "Display cap", "int", DISPLAY_CAP, (1_000, 2_000_000), group=POINTS,
+                    tip="At most this many events are drawn (a fixed random sample of the events in the "
+                        "range); the crop and the counts use all of them.")
 
 
 @dataclass(frozen=True)
 class ScatterData:
     crop: CropBox
     points: npt.NDArray[np.float64]  # the displayed sample of the events inside the crop
-    shots: int
+    shots: tuple[int, ...]  # the shot numbers used
+    total_shots: int  # the shots loaded
+    cap: int = DISPLAY_CAP
 
     @property
     def analysed(self) -> int:
         return self.crop.kept
 
 
-def sample_text(data: ScatterData, cap: int = DISPLAY_CAP) -> str:
+def sample_text(data: ScatterData) -> str:
     shown, analysed = len(data.points), data.analysed
     if shown == analysed:
-        return f"Showing all {analysed:,} events in the crop"
-    return (f"Showing a random sample of {shown:,} of {analysed:,} events in the crop "
-            f"(display cap {cap:,}; the analysis uses all of them)")
+        return f"Showing all {analysed:,} events in the range"
+    return (f"Showing a random sample of {shown:,} of {analysed:,} events in the range "
+            f"(display cap {data.cap:,}; the analysis uses all of them)")
 
 
 def crop_text(crop: CropBox) -> str:
     if crop.total == 0:
         return "No events"
     bounds = " · ".join(axis_text(i, crop.lower[i], crop.upper[i]) for i in range(len(AXES)))
-    return f"Auto-crop (heuristic box) keeps {crop.fraction:.1%} ({crop.kept:,} of {crop.total:,} events): {bounds}"
+    how = "Manual range" if crop.manual else "Auto-crop (heuristic box)"
+    return f"{how} keeps {crop.fraction:.1%} ({crop.kept:,} of {crop.total:,} events): {bounds}"
 
 
 def note_text(data: ScatterData) -> str:
     """One line above the plot; the full sample and crop text are in its tooltip and the figure."""
-    shown = (f"All {data.analysed:,} cropped events shown" if len(data.points) == data.analysed else
-             f"Display sample: {len(data.points):,} of {data.analysed:,} cropped events")
-    return f"{shown} · crop keeps {data.crop.fraction:.1%} of {data.crop.total:,}"
+    shown = (f"All {data.analysed:,} events in range shown" if len(data.points) == data.analysed else
+             f"Display sample: {len(data.points):,} of {data.analysed:,} events in range")
+    how = "manual range" if data.crop.manual else "crop"
+    return f"{shown} · {how} keeps {data.crop.fraction:.1%} of {data.crop.total:,} · {shots_text(data.shots, data.total_shots)}"
 
 
 class Scatter3D(DatasetAnalysis):
@@ -63,23 +77,29 @@ class Scatter3D(DatasetAnalysis):
             group="Plots",
             file_path=__file__,
             analysis_id="helab.scatter_3d",
-            version="1",
+            version="2",
         )
 
     def get_actions(self) -> List[str]:
         return ["Plot"]
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
-        return [KEEP]
+        return [*SHOT_SPECS, *RANGE, POINT_SIZE, OPACITY, CAP]
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
-        events = context.view.events()
+        values = context.parameters
+        shots = select_shots(context.view, values)
+        events = context.view.events(shots)
         context.check()
-        crop = crop_box(events, float(context.parameters[KEEP.name]) / 100, context.cancelled)
+        if manual(values):
+            crop = manual_box(events, values)
+        else:
+            crop = crop_box(events, keep_fraction(values), context.cancelled)
         context.check()
         inside = events[crop.contains(events)] if len(events) else events
-        points = inside[display_sample(len(inside))]
-        return ScatterData(crop, points, len(context.view.shots))
+        cap = int(values[CAP.name])
+        points = inside[display_sample(len(inside), cap)]
+        return ScatterData(crop, points, shots, len(context.view.shots), cap)
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: ScatterData = result.data
@@ -90,8 +110,10 @@ class Scatter3D(DatasetAnalysis):
 
 def figure(result: AnalysisResult, data: ScatterData) -> go.Figure:
     points, crop = data.points, data.crop
+    size = float(result.parameters.get(POINT_SIZE.name, POINT_SIZE.default))
+    opacity = float(result.parameters.get(OPACITY.name, OPACITY.default))
     scatter = go.Scatter3d(x=points[:, 1], y=points[:, 2], z=points[:, 0], mode="markers",
-                           marker=dict(size=1.5, opacity=0.5), hoverinfo="x+y+z")
+                           marker=dict(size=size, opacity=opacity), hoverinfo="x+y+z")
 
     def axis(index: int) -> dict[str, Any]:
         settings: dict[str, Any] = {"title": f"{AXES[index]} ({UNITS[index]})"}
@@ -100,8 +122,8 @@ def figure(result: AnalysisResult, data: ScatterData) -> go.Figure:
         return settings
 
     layout = go.Layout(
-        title=dict(text=f"{result.input.short()} · {result.analysis.short()}<br>"
-                        f"<sup>{sample_text(data)}<br>{crop_text(crop)}</sup>", x=0.01),
+        title=dict(text=f"{result.input.short()} · {result.analysis.short()} · {shots_text(data.shots, data.total_shots)}"
+                        f"<br><sup>{sample_text(data)}<br>{crop_text(crop)}</sup>", x=0.01),
         scene=dict(xaxis=axis(1), yaxis=axis(2), zaxis=axis(0)),
         margin=dict(l=0, r=0, b=0, t=90))
     return go.Figure(data=[scatter], layout=layout)

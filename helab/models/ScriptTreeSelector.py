@@ -17,6 +17,7 @@ from pyqtgraph.parametertree import Parameter
 import pyqtgraph.parametertree as ptree
 
 from helab.analysis.dataset_view import DatasetView
+from helab.analysis.parameter_tree import build_tree, tree_values
 from helab.analysis.parameters import describe
 from helab.analysis.results import AnalysisResult
 from helab.analysis.runner import AnalysisRunner, get_analysis_runner
@@ -141,8 +142,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         """Open the dock and parameter tab, then run with the defaults."""
         self.setup_dock_widget(self._message(f"Running {self.name} on {self.view.key.short()}…"))
         specs = self.script.parameters(self.action)
-        self.parameter_root = Parameter.create(name='params', type='group',
-                                               children=[spec.tree_item() for spec in specs])
+        self.parameter_root = build_tree(specs)
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -163,7 +163,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
 
     def values(self) -> Dict[str, Any]:
         root = self.parameter_root
-        return {child.name(): child.value() for child in root.children()} if root is not None else {}
+        return tree_values(root, self.script.parameters(self.action)) if root is not None else {}
 
     def run(self) -> None:
         if self.is_closed:
@@ -200,7 +200,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         show = getattr(self.main_window, "set_plot_result", None)
         if callable(show):
-            show(self.dock_widget, content, result, describe(specs, result.parameters))
+            show(self.dock_widget, content, result, describe(specs, result.parameters),
+                 describe(specs, result.parameters, every=True))
         else:
             old = self.dock_widget.widget()
             self.dock_widget.setWidget(content)

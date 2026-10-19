@@ -255,11 +255,15 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     pane = instance.dock_widget.findChild(PlotlyPane)
     assert pane is not None and pane.plot_id in dash_server.plots
     assert pane.open_button.text() == "Open in browser"
-    assert pane.note.text().startswith("All 70 cropped events shown · crop keeps")
-    assert pane.note.toolTip().startswith("Showing all 70 events in the crop")
+    assert pane.note.text().startswith("All 70 events in range shown · crop keeps")
+    assert pane.note.toolTip().startswith("Showing all 70 events in the range")
     label = source_label(instance.dock_widget)
-    assert label.text() == "Data source: run_D · rev 1 · helab.scatter_3d v1 · Auto-crop: keep 99 %"
+    assert label.text() == ("Data source: run_D · rev 1 · helab.scatter_3d v2 · Shots all, Range auto-crop, "
+                            "Auto-crop: keep 99 %, Point size 1.5 px, Opacity 0.5, Display cap 100,000")
     assert metadata.file_hash[:12] in label.toolTip()
+    # The record lists every parameter, those not in use included.
+    assert "Parameters: Shots all, Last N 50, From shot 1, To shot (0 = last) 0, Range auto-crop, " \
+           "Auto-crop: keep 99 %, T min 0 s, T max 0 s," in label.toolTip()
     plot_id = pane.plot_id
     instance.dock_widget.close()
     qtbot.waitUntil(lambda: plot_id not in dash_server.plots)

@@ -900,15 +900,16 @@ class HelabMainWindow(QMainWindow):
         return view_of(dataset, current.model.cache.root_of(dataset.path))
 
     def set_plot_result(self, dock: QDockWidget, content: QWidget, result: AnalysisResult,
-                        parameters_text: str = "") -> None:
+                        parameters_text: str = "", record_text: str = "") -> None:
         """Show an analysis result in its dock, with its source line: the input folder and
-        revision, the analysis and its version, the parameters; the full record in the tooltip."""
+        revision, the analysis and its version, the parameters in use; the full record (every
+        parameter, ``record_text``) in the tooltip."""
         identity = result.input.identity
         dock.setProperty("dataSourcePath", identity.source_path)
         dock.setProperty("dataSourceSignature", identity.signature)
         dock.setProperty("plotSourceDetail", " · ".join(filter(None, (
             f"rev {result.input.revision}", result.analysis.short(), parameters_text))))
-        dock.setProperty("plotSourceRecord", result.describe(parameters_text))
+        dock.setProperty("plotSourceRecord", result.describe(record_text or parameters_text))
         old = dock.widget()
         HelabMainWindow._wrap_plot(dock, content)
         if old is not None:
