@@ -1502,7 +1502,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     try:
         folder = os.stat(path)
     except FileNotFoundError:
-        raise OSError(f"Folder not found: is its drive connected? ({path})") from None
+        raise OSError("Folder not found — is its drive connected?") from None
     racy = abs(time.time() - folder.st_mtime) < RACY_SECONDS
     held = {int(shot): (int(size), int(modified)) for shot, size, modified in memory}
 

@@ -319,7 +319,8 @@ def test_rules_that_stop_saving_show_on_the_line(
     session = explorer.live
     assert session is not None and session.unsaved == {3, 4, 5} and not session.saving
     explorer._update_activity()
-    assert "3 not cached (Don't cache is on for this folder)" in explorer.folder_freshness_label.text()
+    assert "3 not cached (Don't cache)" in explorer.folder_freshness_label.text()
+    assert "Not saved: you chose Don't cache for this folder" in explorer.folder_freshness_label.toolTip()
     explorer.stop_live()
     assert not explorer._live_sessions and ("load", path) not in cache.jobs
     explorer.close_cleanup()

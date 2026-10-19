@@ -53,6 +53,15 @@ MISMATCH_REVIEW_TOOLTIP = ("Cached data doesn't match this folder: shots it had 
                            "list of mismatched folders, where you can load it as it is now.")
 AMBER = "#b26a00"
 LIVE_RETRY_TOOLTIP = "Check the folder again and go on watching it"
+# Why Live's new shots aren't saved to the disk cache: the summary line's words, and the tooltip's.
+LIVE_BLOCKED = {
+    "disk cache off": "the disk cache is off for this session",
+    "Don't cache": "you chose Don't cache for this folder (right-click to change)",
+    "RAM only": "RAM only: no .helab-root found here or above",
+    "RAM only until confirmed": "RAM only until you answer whether its .helab-root is the same folder or a copy",
+    "cached data mismatched": "its cached data doesn't match the folder (Review…)",
+    "cache unavailable": "the disk cache couldn't be written for this folder this time",
+}
 
 
 def plural(count: int, noun: str) -> str:
@@ -1457,19 +1466,20 @@ class FolderExplorer(QWidget):
         self._update_activity()
 
     def _live_save_blocked(self, session: LiveSession) -> str:
-        """Why the folder's new shots can't be saved to the disk cache ("" if they can)."""
+        """Why the folder's new shots can't be saved to the disk cache, in a few words for the
+        summary line ("" if they can); ``LIVE_BLOCKED`` explains each in the tooltip."""
         cache = self.model.cache
         path = session.path
         if not store_options():
-            return "the disk cache is off"
+            return "disk cache off"
         if cache.folder_prefs(path)["no_cache"]:
-            return "Don't cache is on for this folder"
+            return "Don't cache"
         if cache.no_root(path) is not None:
-            return "RAM only: no .helab-root found here or above"
+            return "RAM only"
         if cache.pending_root(path) is not None:
-            return "RAM only until its .helab-root is confirmed"
+            return "RAM only until confirmed"
         if path in cache.mismatched:
-            return "its cached data doesn't match the folder"
+            return "cached data mismatched"
         return session.blocked
 
     def _live_save(self, session: LiveSession) -> bool:
@@ -1571,7 +1581,7 @@ class FolderExplorer(QWidget):
         elif what == "save":
             if not event.get("cached"):
                 # Nothing could be saved (e.g. the cache couldn't be opened): not tried again.
-                session.blocked = "the disk cache couldn't be written for this folder"
+                session.blocked = "cache unavailable"
                 session.unsaved |= session.saving | new
             session.saving = set()
         else:
@@ -1653,7 +1663,7 @@ class FolderExplorer(QWidget):
         lines.append(f"Not yet in the disk cache: {len(session.unsaved) + len(session.saving):,}; saved every "
                      f"{cache.live_autosave_shots:,} new shots (Settings → Cache) and when Live stops")
         if blocked:
-            lines.append(f"Not saved: {blocked}")
+            lines.append(f"Not saved: {LIVE_BLOCKED.get(blocked, blocked)}")
         if session.saved_at is not None:
             lines.append(f"Last saved: {datetime.fromtimestamp(session.saved_at).astimezone():%H:%M:%S}")
         if session.note:
@@ -1957,11 +1967,13 @@ class FolderExplorer(QWidget):
                                      AUTO_LOAD_OFF_TOOLTIP if off else
                                      "Wait for this folder's refresh to finish" if not self.retry_button.isEnabled() else
                                      "List this folder again, without a time limit")
-        scan_message = self.scan_message
+        watching = self.watching(path)
+        # (Live's own relisting of the tree is no news: its data is the folder's, as of its last check.)
+        scan_message = "" if watching else self.scan_message
         history = self.model.cache.scan_history(path)
         dataset = self.displayed_dataset
         shown = dataset is not None and dataset.path == path
-        changed = bool(shown and node and report and not node.cached_report and
+        changed = bool(shown and node and report and not node.cached_report and not watching and
                        self._changed_since_load(node, dataset)) if dataset else False
         unchecked = shown and self.folder_opened_path == path and self._unchecked_path == path
         # Data shown before its check keeps its counts while the check runs.
