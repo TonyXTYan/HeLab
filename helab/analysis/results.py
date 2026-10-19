@@ -1,5 +1,11 @@
 """An analysis run's input (``AnalysisContext``) and its record (``AnalysisResult``), kept in
-RAM only for now (result caching stage R1)."""
+RAM only for now (result caching stage R1).
+
+Each record keeps what a later reuse needs (result caching rules 5 and 8), though nothing
+reuses it yet: the analysis's ID, version and file hash, the input's root key and
+signatures, the effective parameters (JSON values only) and the coverage: the TXY shots the
+run used, with their fingerprints (``Coverage``), so HeLab can tell what a later revision
+adds (``Coverage.diff``)."""
 from __future__ import annotations
 
 import threading
@@ -8,9 +14,9 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import MappingProxyType
-from typing import Any, Literal, Mapping
+from typing import Any, Iterable, Literal, Mapping
 
-from helab.analysis.dataset_view import DatasetView, ViewKey
+from helab.analysis.dataset_view import DatasetView, Fingerprint, ViewKey
 from helab.analysis.identity import AnalysisIdentity
 
 State = Literal["completed", "failed", "cancelled"]
@@ -23,6 +29,52 @@ class Cancelled(Exception):
 
 
 @dataclass(frozen=True)
+class CoverageDiff:
+    """How a view differs from a result's coverage: shots it has that the run didn't use
+    (``new``), used shots whose fingerprints differ now (``changed``), used shots it lacks
+    (``gone``)."""
+    new: tuple[int, ...] = ()
+    changed: tuple[int, ...] = ()
+    gone: tuple[int, ...] = ()
+
+    @property
+    def current(self) -> bool:
+        return not (self.new or self.changed or self.gone)
+
+
+@dataclass(frozen=True)
+class Coverage:
+    """The TXY shots a run used, ascending, with their fingerprints (those the view knew)."""
+    shots: tuple[int, ...] = ()
+    fingerprints: Mapping[int, Fingerprint] = field(default_factory=lambda: MappingProxyType({}))
+
+    @classmethod
+    def of(cls, view: DatasetView, shots: Iterable[int] | None = None) -> Coverage:
+        """The view's ``shots`` (default: all of them); numbers the view lacks are left out."""
+        chosen = tuple(sorted({int(shot) for shot in (view.shots if shots is None else shots)} & set(view.shots)))
+        return cls(chosen, MappingProxyType({shot: view.fingerprints[shot] for shot in chosen
+                                             if shot in view.fingerprints}))
+
+    def diff(self, view: DatasetView, shots: Iterable[int] | None = None) -> CoverageDiff:
+        """``view``'s shots (or those of them chosen) against this coverage."""
+        wanted = set(view.shots if shots is None else shots) & set(view.shots)
+        covered = set(self.shots)
+        changed = [shot for shot in sorted(wanted & covered)
+                   if view.fingerprints.get(shot) != self.fingerprints.get(shot)]
+        return CoverageDiff(tuple(sorted(wanted - covered)), tuple(changed), tuple(sorted(covered - wanted)))
+
+    def text(self) -> str:
+        if not self.shots:
+            return "no shots"
+        count = len(self.shots)
+        return f"{count:,} shot{'' if count == 1 else 's'} ({self.shots[0]}–{self.shots[-1]})"
+
+    def to_json(self) -> dict[str, Any]:
+        return {"shots": list(self.shots), "fingerprints": [list(self.fingerprints[shot])
+                                                           for shot in self.shots if shot in self.fingerprints]}
+
+
+@dataclass(frozen=True)
 class AnalysisContext:
     """Everything a run gets: an immutable dataset view and its effective parameters,
     never the tab. ``cancelled()`` lets a long computation stop early."""
@@ -32,6 +84,12 @@ class AnalysisContext:
     parameters: Mapping[str, Any]
     analysis: AnalysisIdentity
     cancel_event: threading.Event = field(default_factory=threading.Event, compare=False)
+    # The shots the run uses (``DatasetAnalysis.covered_shots``); all of the view's by default.
+    coverage: Coverage | None = None
+
+    @property
+    def covered(self) -> Coverage:
+        return self.coverage if self.coverage is not None else Coverage.of(self.view)
 
     def cancelled(self) -> bool:
         return self.cancel_event.is_set()
@@ -55,13 +113,24 @@ class AnalysisResult:
     started_at: float = 0.0
     finished_at: float = 0.0
     policy: str = RAM_ONLY
+    coverage: Coverage = field(default_factory=Coverage)
+    input_signature: str = ""  # the input revision's own dataset signature (``DatasetView.signature``)
 
     @classmethod
     def of(cls, context: AnalysisContext, state: State, data: Any = None, error: str = "",
            started_at: float = 0.0) -> AnalysisResult:
         return cls(context.job_id, context.action, context.analysis, context.view.key,
                    MappingProxyType(dict(context.parameters)), state, data, error,
-                   started_at, time.time())
+                   started_at, time.time(), coverage=context.covered, input_signature=context.view.signature)
+
+    def reuse_key(self) -> dict[str, Any]:
+        """What a later reuse of this result must match (result caching rule 5), as JSON values:
+        not used yet (R2 and R3 will)."""
+        identity = self.input.identity
+        return {"analysis_id": self.analysis.analysis_id, "version": self.analysis.version,
+                "file_hash": self.analysis.file_hash, "action": self.action, "root_key": identity.root_key,
+                "signature": identity.signature, "input_signature": self.input_signature,
+                "parameters": dict(self.parameters), "coverage": self.coverage.to_json()}
 
     def describe(self, parameters_text: str = "") -> str:
         """The record, one item per line, for a plot dock's tooltip."""
@@ -69,7 +138,10 @@ class AnalysisResult:
         lines = [f"{self.analysis.text()} · {self.action}",
                  f"Input: {identity.source_path} · revision {self.input.revision}",
                  f"Data root: {identity.root_key or 'none known'}",
-                 f"Signature: {identity.signature[:16] or 'none'}",
+                 f"Signature: {identity.signature[:16] or 'none'}"
+                 + (f" (this revision: {self.input_signature[:16]})"
+                    if self.input_signature and self.input_signature != identity.signature else ""),
+                 f"Covers: {self.coverage.text()}",
                  f"Parameters: {parameters_text or _plain(self.parameters) or 'none'}"]
         when = datetime.fromtimestamp(self.finished_at).strftime("%H:%M:%S") if self.finished_at else ""
         took = f" in {self.finished_at - self.started_at:.1f} s" if self.started_at and self.finished_at else ""

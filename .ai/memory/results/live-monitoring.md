@@ -28,3 +28,9 @@ Live L1 and L2 (2026-10-19, `.ai/sessions/2026-10-19-claude-live-l1/`). Architec
 
 - Live checks pause background work only while reading a file: holding it like a load paused a background load 15 % of the time (-19 % files/s).
 - Errors keep Live on so the plots stay the focus and Retry is one click (open question whether to turn it off instead).
+
+## L3: plots following Live (2026-10-19)
+
+- Source line: `rev N · following Live · K new shots waiting`, `updating to rev N`, `pinned (Follow Live off) · K newer shots`; amber `⚠ rev N failed: <error> · showing rev M`; `waiting for the first shot`; empty states "No shots yet", "None of the N shots is chosen (Shots settings)", "No events in the chosen shots".
+- Live group labels: Follow Live, Rerun every N new shots, Wait after a run (scatter 5 s).
+- Tony: Live off catches held plots up; the scatter keeps its camera; "Highlight the newest shot" (red), its histogram counts on a right axis in its colour; Live may watch any folder (never its subfolders) from no data.

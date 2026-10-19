@@ -89,6 +89,23 @@ real experiment data without deciding where its top should be.
   background save: the window names the folders and closes by itself; Quit now
   quits at once; next launch the saved shots come from the cache.
 - [ ] Lab PCs (Windows): the same Live checks; a check's cost on the lab share.
+- [ ] Plots following Live (L3), Mac then a lab PC, from
+  `.ai/sessions/2026-10-19-claude-live-l3/handoff.md` (Tony's on-screen checklist):
+  1. During a run, open Counts per shot, histograms, Transfer fractions and the 3D
+     scatter, then Live on: new shots appear within seconds (scatter at most every
+     5 s); `rev N · following Live`, `updating to rev N · K new shots waiting`.
+  2. Policy: Rerun every 5 new shots; Wait after a run = 10 s.
+  3. Untick Follow Live: `pinned (Follow Live off) · K newer shots`; tick again: it
+     catches up.
+  4. An empty run folder: Live on says `waiting for the first shot`, plots say "No
+     shots yet", then follow from the first shot.
+  5. Transfer fractions: auto orders re-found as shots come; manual keeps them.
+  6. Live off (or tab switch) with shots held back: one catch-up rerun, then stays.
+  7. Scatter camera stays across reruns, in the dock and Open in browser; a closed
+     plot's browser tab says so; on a lab PC the 1 s polls cost nothing noticeable.
+  8. Highlight the newest shot (scatter, histograms): red, moves with each new shot;
+     histograms read its real counts on the red right axis, also with Log Y.
+  9. Live on a folder with subfolders: only its own new TXY files are added.
 - [ ] Plot settings (Plots v1 polish): change Shots, View range and Points in a
   plot's settings and press Rerun with these settings; the plot and its
   two-line source follow. Manual bounds' spin boxes step sensibly when scrolled.
@@ -102,11 +119,24 @@ real experiment data without deciding where its top should be.
   histogram's peaks (the windows shaded below); manual mode starts from them and
   edits apply on Rerun; the XY box keeps the hot spot out; compare with
   `monitor_momentum.m` on the same shots.
-- [ ] Settings panel follows the active plot (quick feature on Ground): with three
-  plots open, clicking a dock's tab, clicking inside a plot (pyqtgraph and the 3D
-  scatter's web view) and activating a floating plot's window each show that
-  plot's settings; the chooser raises the plot it names; unapplied edits survive
-  switching; closing the shown plot shows the one shown before it.
+- [ ] Settings panel on screen (Mac, then a lab PC), from
+  `.ai/sessions/2026-10-19-claude-settings-panel-hardening/handoff.md`:
+  1. Three plots, tabbed: clicking a tab, inside a plot (counts, a histogram, the
+     3D scatter's web view), its title strip, and Tab-ing in each show its settings.
+  2. A click in the 3D scatter's web view switches to it (lab PC too, black pane).
+  3. A floating plot: clicking its window, Cmd-` / Alt-Tab to it and back: the
+     settings follow.
+  4. Side by side: click A, B's tab, A again: A's settings. Untick the shown plot
+     in the plot area's menu: a visible plot's settings; float the shown plot:
+     its settings stay.
+  5. The chooser raises its plot; unapplied edits survive; ✕ and a tab's × close
+     the right plot; closing the shown plot shows the one before.
+  6. All others floating: a new plot docks alone, the next tabs with it; two
+     plots opened quickly are tabbed.
+  7. Drag a tab out and dock it onto another plot: the group has × buttons.
+  8. Typing: "5" in an ms box, "5 m", "5 k", "-5", empty, "abc", beyond the
+     limits (red while typing, nearest limit on Enter); on a lab PC, the decimal
+     mark shown and typed.
 - [ ] Plots on screen: the 3D scatter in the dock (QtWebEngine) and via Open in
   browser, on the Mac and a lab PC (black pane: the browser path must work);
   counts and histograms; closing and tabbing docks; the Dash page says "Plot not

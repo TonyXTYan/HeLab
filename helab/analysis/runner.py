@@ -19,7 +19,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from helab.analysis.dataset_view import DatasetView
 from helab.analysis.parameters import effective
-from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults, State
+from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, Coverage, RamResults, State
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 
 _Job = tuple[DatasetAnalysis, AnalysisContext]
@@ -44,9 +44,16 @@ class AnalysisRunner(QObject):
     def submit(self, script: DatasetAnalysis, metadata: ScriptMetadata, action: str,
                view: DatasetView, values: Optional[Mapping[str, Any]] = None) -> AnalysisContext:
         """Queue ``action`` on ``view`` with ``values`` validated against its declared parameters.
+        The run's coverage is the shots the script says it uses (all of them if it can't say).
         Raises ``RuntimeError`` while the runner is stopping (until its worker has exited)."""
         parameters = effective(script.parameters(action), values)
-        context = AnalysisContext(f"a{next(self._ids)}", action, view, parameters, metadata.identity())
+        try:
+            coverage = Coverage.of(view, script.covered_shots(action, parameters, view))
+        except Exception:
+            logging.exception("Coverage of %s: all shots", metadata.name)
+            coverage = Coverage.of(view)
+        context = AnalysisContext(f"a{next(self._ids)}", action, view, parameters, metadata.identity(),
+                                  coverage=coverage)
         with self._lock:
             if self._stopping:
                 raise RuntimeError("The analysis runner is stopping")

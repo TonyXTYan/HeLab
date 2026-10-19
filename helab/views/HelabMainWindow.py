@@ -21,7 +21,7 @@ from typing import Any, Callable, List, Optional
 import psutil
 from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
     QDir, QDateTime, QSettings, QStorageInfo, QRect
-from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QPainter, QPixmap, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QGuiApplication, QPainter, QPixmap, QKeySequence
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget, QHBoxLayout, \
     QPushButton, QTreeWidget, QTreeWidgetItem, QInputDialog, QProgressBar, QToolButton, QMessageBox
@@ -31,6 +31,7 @@ from pyqtgraph.parametertree import ParameterTree, Parameter
 from typing_extensions import no_type_check
 
 from helab.analysis.dataset_view import DatasetView, view_of
+from helab.analysis.follow import LiveFeed
 from helab.analysis.results import AnalysisResult
 from helab.models.ScriptTreeSelector import TreePanelWidget, PlotSettingsPanel
 from helab.resources.icons import ToolIcons
@@ -42,8 +43,8 @@ from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HoverMenuToolButton import HoverMenuToolButton
 from helab.views.FolderExplorer import (
-    AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP, IO_SPINNER, FolderExplorer, large_text,
-    paint_spinner,
+    AMBER, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP, IO_SPINNER, FolderExplorer,
+    large_text, paint_spinner,
 )
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
@@ -53,7 +54,6 @@ from helab.views.RootDuplicatesWindow import RootDuplicatesWindow
 from helab.views.SettingsDialog import SettingsDialog
 from helab.views.DebugIconsWindow import DebugIconsWindow
 
-from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 # sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 # from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density
@@ -798,7 +798,8 @@ class HelabMainWindow(QMainWindow):
         self.action_tab_folder_up.setToolTip("Navigate up one directory")
         self.action_tab_rescan.setToolTip(self.FOLDER_STATUS_TOOLTIP)
         self.action_tab_cancel.setToolTip("Cancel loading in this tab (Esc)")
-        self.action_tab_live.setToolTip("Live\nSelect a folder with loaded data to watch it for new shots.")
+        self.action_tab_live.setToolTip(
+            "Live\nSelect a folder with loaded data, or with no shots yet, to watch it for new shots.")
 
         # action_tab_new.triggered.connect(self.add_new_folder_explorer_tab)
         # action_tab_folder_up.triggered.connect(self.on_back_button_clicked)
@@ -950,6 +951,8 @@ class HelabMainWindow(QMainWindow):
         self.central_placeholder = CentralHint("Select a data folder to begin")
         self.middle_mainwindow.setCentralWidget(self.central_placeholder)
         self.dock_widgets: List[QDockWidget] = []
+        # The newest data of the folder Live watches, for the plots following it.
+        self.live_feed = LiveFeed(self)
 
 
         self.central_placeholder_timer = QTimer(self)
@@ -968,10 +971,27 @@ class HelabMainWindow(QMainWindow):
         window by destroying and recreating it, so the whole window closed and reopened when
         the first such plot opened. A hidden QQuickWidget child, made before the window is
         shown, makes it start that way. macOS only until checked on the lab PCs, whose GPUs
-        can't paint QtWebEngine."""
-        if sys.platform == "darwin":
+        can't paint QtWebEngine (``needs_rhi_surface``)."""
+        if HelabMainWindow.needs_rhi_surface():
+            from PyQt6.QtQuickWidgets import QQuickWidget  # Loaded only where it is used.
             self._rhi_surface = QQuickWidget(self)
             self._rhi_surface.hide()
+
+    @staticmethod
+    def needs_rhi_surface(system: str = sys.platform, qpa: str | None = None) -> bool:
+        """Whether the window starts with the hidden RHI surface: on macOS's own windows
+        (Qt's cocoa platform) only. Nothing is made on Windows or Linux, nor offscreen (tests),
+        where no window is recreated on screen."""
+        if qpa is None:
+            qpa = QGuiApplication.platformName()
+        return system == "darwin" and qpa == "cocoa"
+
+    def close_plots(self) -> None:
+        """Close every plot dock as its close button does: each run's job is cancelled, it
+        leaves the analysis runner and its result is unpinned (the window is closing; its
+        widgets may outlive it, as in tests)."""
+        for dock in list(self.dock_widgets):
+            dock.close()
 
     def update_placeholder_visibility(self) -> None:
         """The plot area's hint shows while no plot dock is open, and hides while any is.
@@ -993,8 +1013,26 @@ class HelabMainWindow(QMainWindow):
         HelabMainWindow._wrap_plot(dock, content)
         HelabMainWindow._update_plot_source_label(dock, explorer)
 
+    def follow_live(self, explorer: FolderExplorer) -> None:
+        """Plots follow Live: the data a Live tab shows is published as the newest revision of
+        its folder, and a folder no tab checks any more ends (Live off, another tab, or checks
+        stopped by an error until Retry): its plots catch up (memory only)."""
+        def checking(tab: FolderExplorer) -> bool:
+            return tab.live is not None and not tab.live.error and not tab.closed
+
+        session = explorer.live
+        dataset = explorer.displayed_dataset
+        if session is not None and checking(explorer) and dataset is not None and dataset.path == session.path:
+            self.live_feed.publish(dataset, explorer.model.cache.root_of(dataset.path))
+        watched = {other.live.path for _, other in self._explorers() if other.live is not None and checking(other)}
+        if explorer.live is not None and checking(explorer):
+            watched.add(explorer.live.path)
+        for path in self.live_feed.paths() - watched:
+            self.live_feed.stop(path)
+
     def current_dataset_view(self) -> DatasetView | None:
-        """An immutable view of the data the current tab shows (memory only), for a new run."""
+        """An immutable view of the data the current tab shows (memory only), for a new run.
+        While Live watches it, that is the revision the plots following it have."""
         current = self.tab_widget.currentWidget()
         if not isinstance(current, FolderExplorer) or current.displayed_dataset is None:
             return None
@@ -1009,25 +1047,30 @@ class HelabMainWindow(QMainWindow):
         ``record_text``) is in the tooltip."""
         identity = result.input.identity
         dock.setProperty("dataSourcePath", identity.source_path)
-        dock.setProperty("dataSourceSignature", identity.signature)
-        dock.setProperty("plotSourceDetail", " · ".join(filter(None, (
-            f"rev {result.input.revision}", selection_text, result.analysis.short()))))
+        dock.setProperty("dataSourceSignature", result.input_signature or identity.signature)
+        dock.setProperty("plotSourceRevision", f"rev {result.input.revision}")
+        dock.setProperty("plotSourceDetail", " · ".join(filter(None, (selection_text, result.analysis.short()))))
         dock.setProperty("plotSourceSettings", parameters_text)
         dock.setProperty("plotSourceRecord", result.describe(record_text or parameters_text))
         old = dock.widget()
-        HelabMainWindow._wrap_plot(dock, content)
-        if old is not None:
-            old.setParent(None)  # out of the dock now, so findChild sees only the new label
-            old.deleteLater()
+        if old is None or content.parentWidget() is not old:  # Else updated in place: kept as it is.
+            HelabMainWindow._wrap_plot(dock, content)
+            if old is not None:
+                old.setParent(None)  # out of the dock now, so findChild sees only the new label
+                old.deleteLater()
+        self.update_plot_source(dock)
+
+    def update_plot_source(self, dock: QDockWidget) -> None:
+        """A plot's source lines changed (its result, or its Live state): show them now."""
         current = self.tab_widget.currentWidget()
-        if isinstance(current, FolderExplorer):
-            HelabMainWindow._update_plot_source_label(dock, current)
+        HelabMainWindow._update_plot_source_label(dock, current if isinstance(current, FolderExplorer) else None)
 
     @staticmethod
     def _wrap_plot(dock: QDockWidget, content: QWidget) -> None:
         """The dock shows its source above the plot: one or two lines (source, then settings),
         never wrapped (a long line is cut at the dock's edge; the tooltip has it all), with no
-        vertical padding."""
+        vertical padding. Below them, only after a failed run, the error in amber (the plot
+        shown is the last one drawn)."""
         wrapper = QWidget(dock)
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(4, 0, 4, 0)
@@ -1038,30 +1081,46 @@ class HelabMainWindow(QMainWindow):
         label.setWordWrap(False)
         label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         layout.addWidget(label)
+        error = QLabel(wrapper)
+        error.setObjectName("plot_error")
+        error.setTextFormat(Qt.TextFormat.PlainText)
+        error.setStyleSheet(f"color: {AMBER};")
+        error.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        error.hide()
+        layout.addWidget(error)
         layout.addWidget(content, 1)
         dock.setWidget(wrapper)
 
     @staticmethod
-    def _update_plot_source_label(dock: QDockWidget, explorer: FolderExplorer) -> None:
+    def _update_plot_source_label(dock: QDockWidget, explorer: FolderExplorer | None) -> None:
         path = dock.property("dataSourcePath")
         if not isinstance(path, str):
             return
         label = dock.findChild(QLabel, "plot_data_source")
         if label is None:
             return
-        node = explorer.model.nodes.get(explorer.selected_path_globally)
-        # A names-only listing has no signature; the explorer compares shot lists then.
-        current = (path == explorer.selected_path_globally and node is not None
-                   and (not node.signature or dock.property("dataSourceSignature") == node.signature)
-                   and explorer.folder_opened_path == path)
+        node = explorer.model.nodes.get(explorer.selected_path_globally) if explorer is not None else None
+        # A names-only listing has no signature; the explorer compares shot lists then. A plot
+        # following Live is the folder's data, catching up as its line says.
+        current = bool(dock.property("plotFollowing")) or (
+            explorer is not None and path == explorer.selected_path_globally and node is not None
+            and (not node.signature or dock.property("dataSourceSignature") == node.signature)
+            and explorer.folder_opened_path == path)
         prefix = "Data source" if current else "Showing previously loaded data"
-        detail = dock.property("plotSourceDetail")
+        parts = [dock.property(name) for name in ("plotSourceRevision", "plotFollow", "plotSourceDetail")]
         settings = dock.property("plotSourceSettings")
         record = dock.property("plotSourceRecord")
         name = os.path.basename(path.rstrip(os.sep)) or path
-        label.setText(f"{prefix}: {name}" + (f" · {detail}" if isinstance(detail, str) and detail else "")
+        label.setText(" · ".join([f"{prefix}: {name}", *(part for part in parts if isinstance(part, str) and part)])
                       + (f"\n{settings}" if isinstance(settings, str) and settings else ""))
         label.setToolTip(record if isinstance(record, str) and record else path)
+        error_label = dock.findChild(QLabel, "plot_error")
+        error = dock.property("plotError")
+        if error_label is not None:
+            text = f"⚠ {error}" if isinstance(error, str) and error else ""
+            error_label.setText(text)
+            error_label.setToolTip(text)
+            error_label.setVisible(bool(text))
 
     def toggle_left_panel(self, checked: bool) -> None:
         if checked: # Expand the left panel
@@ -1303,7 +1362,8 @@ class HelabMainWindow(QMainWindow):
         if explorer.live is not None:
             live = explorer.live
             return ((f"Live stopped: {name} — Retry in the folder summary", live.error) if live.error else
-                    (f"Live: watching {name} · {live.new:,} new shot{'' if live.new == 1 else 's'}", ""))
+                    (f"Live: watching {name} · " + (f"{live.new:,} new shot{'' if live.new == 1 else 's'}"
+                                                     if live.shots else "waiting for the first shot"), ""))
         if explorer.load_error:
             verb = "check" if explorer.shows_unchecked(path) else "load"
             return f"Could not {verb} {name} — see Folder details", explorer.load_error
@@ -1360,6 +1420,8 @@ class HelabMainWindow(QMainWindow):
             current_folder_explorer.loadStateChanged.connect(self._update_folder_details)
             current_folder_explorer.loadStateChanged.connect(self._update_cancel_loading_action)
             current_folder_explorer.liveChanged.connect(self._update_live_action)
+            current_folder_explorer.liveChanged.connect(lambda fe=current_folder_explorer: self.follow_live(fe))
+            current_folder_explorer.dataLoaded.connect(lambda _, fe=current_folder_explorer: self.follow_live(fe))
             current_folder_explorer.dataLoaded.connect(
                 lambda p, fe=current_folder_explorer: self._snapshot_data_loaded(fe, p))
         else:
@@ -1518,6 +1580,8 @@ class HelabMainWindow(QMainWindow):
                 a0.ignore()
             return
         self._closing = True
+        self.close_plots()
+        self.panel_right_top_plot_settings.detach()
         if not self._cache_dialogs_detached:
             self.cache_dialogs.detach()
         self.watchdog.stop()

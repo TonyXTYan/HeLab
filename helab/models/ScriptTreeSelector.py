@@ -1,10 +1,13 @@
 from __future__ import annotations
 import logging
+import math
 import os
+import time
 from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal
 
-from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QCloseEvent
+from PyQt6 import sip
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QCloseEvent, QWindow
 # from uuid import uuid4
 
 # Import QWidget types first to avoid forward references
@@ -15,7 +18,8 @@ from PyQt6.QtWidgets import (
 )
 from pyqtgraph.parametertree import Parameter
 
-from helab.analysis.dataset_view import DatasetView
+from helab.analysis.dataset_view import DatasetView, ViewKey
+from helab.analysis.follow import FOLLOW, Follow, LiveFeed, changes, live_specs, policy_of, shots_text
 from helab.analysis.parameter_tree import build_tree, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import describe
 from helab.analysis.results import AnalysisResult
@@ -31,6 +35,9 @@ if TYPE_CHECKING:
 import numpy.typing as npt
 import numpy as np
 
+# A wrapped object's C++ address (PyQt6's stub types it as returning None).
+address_of = cast(Callable[[QObject], int], sip.unwrapinstance)
+
 
 class AnalysisDock(QDockWidget):
     """A plot dock that says when the user closes it (hiding, e.g. behind another tabbed
@@ -44,19 +51,32 @@ class AnalysisDock(QDockWidget):
 
 class DockTabCloser(QObject):
     """Gives the tabs of docks tabbed together in ``area`` a close button that closes that dock.
-    Qt makes those tab bars itself, as docks are tabbed, so each new one is fitted once."""
+    Qt makes those tab bars itself as docks are tabbed; they are fitted on the next pass of the
+    event loop after a watched dock is added, moved, floated, docked, shown or hidden (dock
+    signals, no event filter). A tab is matched to its dock by identity: Qt's dock tab bars
+    keep each tab's dock widget as its tab data (its address). Titles needn't be unique."""
 
     def __init__(self, area: QMainWindow) -> None:
         super().__init__(area)
         self.area = area
-        area.installEventFilter(self)
+        self._fit_soon = QTimer(self)
+        self._fit_soon.setSingleShot(True)
+        self._fit_soon.setInterval(0)
+        self._fit_soon.timeout.connect(self.fit)
 
-    def eventFilter(self, a0: Optional[QObject], a1: Optional[QEvent]) -> bool:
-        if a1 is not None and a1.type() in (QEvent.Type.ChildAdded, QEvent.Type.LayoutRequest):
-            QTimer.singleShot(0, self.fit)
-        return False
+    def watch(self, dock: QDockWidget) -> None:
+        for signal in (dock.dockLocationChanged, dock.topLevelChanged, dock.visibilityChanged):
+            signal.connect(self.schedule_fit)
+        self.schedule_fit()
+
+    @pyqtSlot()
+    def schedule_fit(self) -> None:
+        self._fit_soon.start()
 
     def fit(self) -> None:
+        layout = self.area.layout()
+        if layout is not None:
+            layout.activate()  # Qt makes or reuses the tab bars as it lays the docks out.
         for bar in self.area.findChildren(QTabBar, options=Qt.FindChildOption.FindDirectChildrenOnly):
             if not bar.property("helabClosable"):
                 bar.setProperty("helabClosable", True)
@@ -64,20 +84,28 @@ class DockTabCloser(QObject):
                 bar.tabCloseRequested.connect(lambda index, bar=bar: self.close_tab(bar, index))
 
     def close_tab(self, bar: QTabBar, index: int) -> None:
-        title = bar.tabText(index)
+        dock = self.dock_at(bar, index)
+        if dock is not None:
+            dock.close()
+
+    def dock_at(self, bar: QTabBar, index: int) -> Optional[QDockWidget]:
+        """The dock of tab ``index`` (None if Qt ever stops keeping it as the tab data)."""
+        address = bar.tabData(index)
         for dock in self.area.findChildren(QDockWidget):
-            if dock.windowTitle() == title and not dock.isFloating():
-                dock.close()
-                return
+            if address_of(dock) == address:
+                return dock
+        return None
 
 
-class LinkedAnalysisInstance:
+class LinkedAnalysisInstance(QObject):
     """Manages a linked pair of dock widget and its page in the Settings panel.
     
     This class handles:
     - Unique instance identification
     - Synchronized closing of linked UI components
-    - Cleanup of resources when either component is closed
+    - Cleanup of resources when either component is closed, or the dock is deleted unclosed
+      (its window went). That runs through Qt slots: PyQt can drop a plain Python callable
+      connected to ``destroyed`` before it runs.
     
     Args:
         name: Base name of the analysis (used for display)
@@ -85,7 +113,10 @@ class LinkedAnalysisInstance:
         main_window: Reference to main window for cleanup
     """
     
+    ended = pyqtSignal(str)  # instance_id, once closed
+
     def __init__(self, name: str, instance_id: str, main_window: Optional['HelabMainWindow']):
+        super().__init__()
         self.name = name
         self.instance_id = instance_id
         self.main_window = main_window
@@ -102,6 +133,8 @@ class LinkedAnalysisInstance:
         dock.setStyleSheet(QDOCKWIDGET_STYLESHEET)
         dock.setWidget(content)
         dock.closed.connect(self.close)
+        # A dock deleted unclosed (its window went) still ends the run and its connections.
+        dock.destroyed.connect(self.close)
         self.dock_widget = dock
         
     def setup_param_tab(self, param_tree: QWidget, title: str = "") -> None:
@@ -112,107 +145,201 @@ class LinkedAnalysisInstance:
         self.main_window.panel_right_top_plot_settings.add_plot(
             self.dock_widget, param_tree, title or f"{self.name} ({self.instance_id})")
         
+    @pyqtSlot()
     def close(self) -> None:
-        """Close and cleanup both components."""
+        """Close and cleanup both components (only what is still there: after the main window
+        went, its widgets are deleted already)."""
         if self.is_closed:
             return
             
         self.is_closed = True
-        
-        if self.main_window:
-            # Remove dock widget
-            if self.dock_widget:
-                self.main_window.middle_mainwindow.removeDockWidget(self.dock_widget)
-                if self.dock_widget in self.main_window.dock_widgets:
-                    self.main_window.dock_widgets.remove(self.dock_widget)
-                self.dock_widget.deleteLater()
-                
-            # Remove its page from the Settings panel
-            if self.param_tab:
-                if self.dock_widget:
-                    self.main_window.panel_right_top_plot_settings.remove_plot(self.dock_widget)
-                self.param_tab.deleteLater()
-            update = getattr(self.main_window, "update_placeholder_visibility", None)
-            if callable(update):
-                update()
+        self.ended.emit(self.instance_id)
+        window, dock = self.main_window, self.dock_widget
+        if window is None or sip.isdeleted(window):
+            return
+        if dock is not None and dock in window.dock_widgets:
+            window.dock_widgets.remove(dock)
+        if self.param_tab is not None and not sip.isdeleted(self.param_tab):
+            self.param_tab.deleteLater()
+        if dock is None or sip.isdeleted(dock):
+            return  # Deleted with the plot area: the Settings panel drops the page itself.
+        window.middle_mainwindow.removeDockWidget(dock)
+        dock.deleteLater()
+        if self.param_tab is not None:
+            window.panel_right_top_plot_settings.remove_plot(dock)
+        update = getattr(window, "update_placeholder_visibility", None)
+        if callable(update):
+            update()
 
 
 class AnalysisInstance(LinkedAnalysisInstance):
-    """One run of a dataset analysis: its plot dock and settings page, bound to the dataset
-    view it started with. **Rerun with these settings** runs again on that same view; a new
-    run on other data is a new instance (the script's button again)."""
+    """One plot of a dataset analysis: its dock and settings page, bound to the dataset view it
+    started with. **Rerun with these settings** runs again on that data (cancelling a run in
+    flight: the settings changed); a run on other data is a new plot (the script's button).
+
+    A plot of the folder Live watches follows it (roadmaps/live-monitoring.md, L3): each newer
+    revision of the folder's view (``LiveFeed``) is offered to it, and it reruns on the newest
+    one as its Live settings allow (``Follow``: hold and coalesce, never cancelled for new data).
+    Turning Follow Live off pins it at its revision. A failed run keeps the last plot drawn,
+    with the error in amber, and following goes on."""
 
     def __init__(self, metadata: ScriptMetadata, script: DatasetAnalysis, action: str, view: DatasetView,
                  instance_id: str, main_window: Optional['HelabMainWindow'],
                  runner: Optional[AnalysisRunner] = None) -> None:
         super().__init__(metadata.name, instance_id, main_window)
-        self.metadata, self.script, self.action, self.view = metadata, script, action, view
+        self.metadata, self.script, self.action = metadata, script, action
         self.runner = runner or get_analysis_runner()
         self.job_id = ""
+        # The last result (whatever its state), and the completed one whose plot shows.
         self.result: Optional[AnalysisResult] = None
+        self.shown: Optional[AnalysisResult] = None
+        # The data of the run in flight, and of the result shown (what Follow Live off pins).
+        self._job_view: Optional[DatasetView] = None
+        self._shown_view: Optional[DatasetView] = None
+        self._content: Optional[QWidget] = None  # The plot drawn (``render``), updated in place if it can
+        self.error = ""  # The last run's failure, while the plot before it stays
+        self.policy = script.live_policy(action)
+        self.follow = Follow(view, self.policy)
         self.parameter_root: Optional[Parameter] = None
         self.status_label = QLabel()
+        self.input_label = QLabel()
+        feed = getattr(main_window, "live_feed", None)
+        self.feed: Optional[LiveFeed] = feed if isinstance(feed, LiveFeed) else None
+        self._follow_timer = QTimer(self)
+        self._follow_timer.setSingleShot(True)
+        self._follow_timer.timeout.connect(self._follow_next)
         self.runner.finished.connect(self._finished)
+        if self.feed is not None:
+            self.feed.revised.connect(self._revised)
+            self.feed.ended.connect(self._live_ended)
+
+    @property
+    def view(self) -> DatasetView:
+        """The plot's data: the input of its run in flight, or of its last run."""
+        return self.follow.ran
+
+    @property
+    def path(self) -> str:
+        return self.follow.ran.identity.source_path
 
     def start(self) -> None:
         """Open the dock and its settings page, then run with the defaults."""
         self.setup_dock_widget(self._message(f"Running {self.name} on {self.view.key.short()}…"))
         specs = self.script.parameters(self.action)
-        self.parameter_root = build_tree(specs)
+        live = live_specs(self.policy, specs[0].page if specs else "")
+        self.parameter_root = build_tree([*specs, *live])
+        for spec in live:
+            parameter_of(self.parameter_root, spec).sigValueChanged.connect(self._live_settings_changed)
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        source = QLabel(f"Input: {self.view.key.short()} (stays with this plot)")
-        source.setToolTip(self.view.identity.source_path)
-        layout.addWidget(source)
-        layout.addWidget(settings_widget(self.parameter_root, specs), 1)
+        self.input_label.setToolTip(self.path)
+        layout.addWidget(self.input_label)
+        layout.addWidget(settings_widget(self.parameter_root, [*specs, *live]), 1)
         self.rerun_button = QPushButton("Rerun with these settings")
         self.rerun_button.setEnabled(bool(specs))
         self.rerun_button.clicked.connect(self.run)
         layout.addWidget(self.rerun_button)
         layout.addWidget(self.status_label)
-        self.setup_param_tab(tab, f"{self.name} ({self.instance_id}) · {self.view.key.short()}")
+        self.setup_param_tab(tab, self._title())
         self.run()
 
     def values(self) -> Dict[str, Any]:
+        """The analysis's parameters as set (not the plot's Live settings)."""
         root = self.parameter_root
         return tree_values(root, self.script.parameters(self.action)) if root is not None else {}
 
+    def live_values(self) -> Dict[str, Any]:
+        root = self.parameter_root
+        return tree_values(root, live_specs(self.policy)) if root is not None else {}
+
     def run(self) -> None:
+        """Run with the settings shown, on the newest data the plot has (what waits for it while
+        it follows Live, else its own); a run in flight is cancelled, its settings are old."""
         if self.is_closed:
             return
         if self.job_id:
             self.runner.cancel(self.job_id)
-        context = self.runner.submit(self.script, self.metadata, self.action, self.view, self.values())
-        self.job_id = context.job_id
-        self.status_label.setText(f"Running ({context.job_id})…")
+        self._submit(self.follow.latest)
 
+    def _submit(self, view: DatasetView) -> None:
+        self._follow_timer.stop()
+        try:
+            context = self.runner.submit(self.script, self.metadata, self.action, view, self.values())
+        except RuntimeError as error:  # The runner is stopping: HeLab is closing.
+            self.status_label.setText(str(error))
+            return
+        self.job_id, self._job_view = context.job_id, view
+        self.follow.start(view)
+        self.status_label.setText(f"Running ({context.job_id})…")
+        self._show_follow()
+
+    @pyqtSlot(object)
     def _finished(self, result: AnalysisResult) -> None:
+        # A slot (no PyQt proxy object): closing disconnects it at once, not at a later deletion.
         if self.is_closed or result.job_id != self.job_id:
             return
         self.job_id = ""
+        self.follow.end(time.monotonic())
+        view, self._job_view = self._job_view, None
         if result.state == "cancelled":
             self.status_label.setText("Cancelled")
+            self._show_follow()
             return
-        if self.result is not None:
-            self.runner.results.unpin(self.result.job_id)
+        if not self.follow.on and view is not None and view.key != self.follow.ran.key:
+            # A Live rerun that started before Follow Live went off: the plot stays pinned.
+            self.status_label.setText(f"Pinned at rev {self.follow.ran.revision}: "
+                                      f"the run on rev {view.revision} isn't shown")
+            self._show_follow()
+            return
         self.result = result
         specs = self.script.parameters(self.action)
         warnings = "; ".join(self.script.parameter_warnings(self.action, result.parameters))
+        content: Optional[QWidget] = None
+        error = result.error if result.state == "failed" else ""
         if result.state == "completed":
-            self.runner.results.pin(result.job_id)
             self._show_detected(result)
             try:
-                content = self.script.render(result)
-            except Exception as error:
+                content = self._updated(result)
+                if content is None:
+                    content = self.script.render(result)
+            except Exception as exc:
                 logging.exception("Could not draw %s", self.name)
-                content = self._message(f"Could not draw {self.name}: {error}")
-            self.status_label.setText(f"⚠ {warnings}" if warnings else "")
+                error = f"could not draw it: {exc}"
+        if error:
+            self.status_label.setText(f"Failed: {error}")
+            if self.shown is not None:
+                # The last plot stays; the error shows above it until a run succeeds.
+                self.error = f"rev {result.input.revision} failed: {error} · showing rev {self.shown.input.revision}"
+                self._show_follow()
+                self._follow_next()
+                return
+            content = self._message(f"{self.name} failed: {error}")
         else:
-            content = self._message(f"{self.name} failed: {result.error}")
-            self.status_label.setText(f"Failed: {result.error}")
+            self.status_label.setText(f"⚠ {warnings}" if warnings else "")
+        assert content is not None
+        self.error = ""
+        if self.shown is not None:
+            self.runner.results.unpin(self.shown.job_id)
+            self.shown = None
+        if result.state == "completed" and not error:
+            self.shown, self._shown_view = result, view
+            self.runner.results.pin(result.job_id)
+        self._show_content(content, result, specs, warnings)
+        self._follow_next()
+
+    def _updated(self, result: AnalysisResult) -> Optional[QWidget]:
+        """The plot drawn, showing ``result`` in place (the script's ``update``), or None."""
+        drawn = self._content
+        if self.shown is None or drawn is None or sip.isdeleted(drawn):
+            return None
+        return drawn if self.script.update(drawn, result) else None
+
+    def _show_content(self, content: QWidget, result: AnalysisResult, specs: List[Any], warnings: str) -> None:
+        self._content = content
         if self.dock_widget is None:
+            content.deleteLater()
             return
         show = getattr(self.main_window, "set_plot_result", None)
         if callable(show):
@@ -222,11 +349,12 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 settings = " · ".join(filter(None, (settings, f"⚠ {warnings}")))
                 record = f"{record}\nWarning: {warnings}"
             show(self.dock_widget, content, result, settings, record, chosen)
-        else:
+        elif self.dock_widget.widget() is not content:
             old = self.dock_widget.widget()
             self.dock_widget.setWidget(content)
             if old is not None:
                 old.deleteLater()
+        self._show_follow()
 
     def _show_detected(self, result: AnalysisResult) -> None:
         """Put what the run found into the settings (they don't rerun it)."""
@@ -238,6 +366,108 @@ class AnalysisInstance(LinkedAnalysisInstance):
             if name in specs:
                 parameter_of(root, specs[name]).setValue(specs[name].coerce(value))
 
+    # Following Live
+
+    def live(self) -> Optional[DatasetView]:
+        """The newest revision of the plot's folder while Live watches it (None: it doesn't)."""
+        return self.feed.latest(self.path) if self.feed is not None else None
+
+    @pyqtSlot(object)
+    def _revised(self, view: DatasetView) -> None:
+        if self.is_closed or view.identity.source_path != self.path:
+            return  # Plots of other folders stay put.
+        self.follow.live_on()
+        if self.follow.offer(view):
+            self._follow_next()
+        self._show_follow()
+
+    @pyqtSlot(str)
+    def _live_ended(self, path: str) -> None:
+        """Live stopped for the plot's folder: shots held back run once more, at once."""
+        if not self.is_closed and path == self.path:
+            self.follow.live_ended()
+            self._follow_timer.stop()
+            self._follow_next()
+
+    @pyqtSlot()
+    def _follow_next(self) -> None:
+        """Run on the newest revision waiting if the run in flight has ended and the policy
+        allows; else wait for the policy's delay, or for more shots."""
+        if self.is_closed:
+            return
+        view, wait = self.follow.due(time.monotonic())
+        if view is not None:
+            self._submit(view)
+            return
+        if wait > 0:
+            self._follow_timer.start(max(1, math.ceil(wait * 1000)))
+        self._show_follow()
+
+    @pyqtSlot()
+    def _live_settings_changed(self) -> None:
+        values = self.live_values()
+        self.follow.policy = policy_of(values, self.policy)
+        if not values.get(FOLLOW, True):
+            self.follow.pin(self._shown_view)  # Not newer data a run in flight may bring.
+            self._follow_timer.stop()
+        elif not self.follow.on:
+            self.follow.unpin()
+            if (latest := self.live()) is not None:
+                self.follow.offer(latest)  # Catch up with what came while pinned.
+        self._follow_next()
+
+    def follow_text(self) -> str:
+        """The plot's Live state for its source line: ``following Live · 3 new shots waiting``
+        ("" when Live doesn't watch its folder and nothing waits)."""
+        live = self.live()
+        follow = self.follow
+        if not follow.on:
+            if live is None:
+                return ""
+            added, other = changes(live, follow.ran)
+            return "pinned (Follow Live off)" + (f" · {shots_text(added, other, 'newer')}" if added + other else "")
+        parts = ["following Live"] if live is not None else []
+        shown = self.shown.input if self.shown is not None else None
+        if follow.running and shown is not None and follow.ran.key != shown:
+            parts.append(f"updating to rev {follow.ran.revision}")
+        added, other = follow.changes()
+        waiting, shots = added + other, shots_text(added, other)
+        if not waiting:
+            pass
+        elif live is None:
+            parts.append(f"Live off · {shots} waiting")  # The catch-up, after the run in flight.
+        elif self._follow_timer.isActive():
+            parts.append(f"{shots} waiting (runs {follow.policy.min_delay:g} s after the last run)")
+        elif follow.running:
+            parts.append(f"{shots} waiting")
+        else:
+            parts.append(f"{shots} waiting (runs every {follow.policy.every_shots:,})")
+        return " · ".join(parts)
+
+    def _show_follow(self) -> None:
+        """The source line's Live state and error, the settings' input line and title."""
+        following = self.follow.on and self.live() is not None
+        self.input_label.setText(f"Input: {self._shown_key().short()}"
+                                 + (" · following Live" if following else " (stays with this plot)"))
+        dock, window = self.dock_widget, self.main_window
+        if dock is None or window is None or sip.isdeleted(dock):
+            return
+        dock.setProperty("plotFollow", self.follow_text())
+        dock.setProperty("plotFollowing", following)
+        dock.setProperty("plotError", self.error)
+        update = getattr(window, "update_plot_source", None)
+        if callable(update):
+            update(dock)
+        if self.param_tab is not None:
+            window.panel_right_top_plot_settings.set_title(dock, self._title())
+
+    def _shown_key(self) -> ViewKey:
+        """The data the plot shows (before its first result: what it runs on)."""
+        return self.shown.input if self.shown is not None else self.view.key
+
+    def _title(self) -> str:
+        return f"{self.name} ({self.instance_id}) · {self._shown_key().short()}"
+
     @staticmethod
     def _message(text: str) -> QLabel:
         label = QLabel(text)
@@ -245,17 +475,22 @@ class AnalysisInstance(LinkedAnalysisInstance):
         label.setWordWrap(True)
         return label
 
+    @pyqtSlot()
     def close(self) -> None:
         if self.is_closed:
             return
+        self._follow_timer.stop()
         if self.job_id:
             self.runner.cancel(self.job_id)
-        if self.result is not None:
-            self.runner.results.unpin(self.result.job_id)
-        try:
-            self.runner.finished.disconnect(self._finished)
-        except TypeError:
-            pass
+        if self.shown is not None:
+            self.runner.results.unpin(self.shown.job_id)
+        for signal, slot in ((self.runner.finished, self._finished),
+                             *(((self.feed.revised, self._revised), (self.feed.ended, self._live_ended))
+                               if self.feed is not None else ())):
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                pass
         super().close()
 
 
@@ -550,22 +785,48 @@ class TreePanelWidget(QWidget):
         window, dock = self.helab_main_window, instance.dock_widget
         if window is None or not isinstance(dock, AnalysisDock):
             return
-        dock.closed.connect(lambda: self._analysis_instances.pop(instance.instance_id, None))
-        window.panel_right_top_plot_settings.follow(window.middle_mainwindow)
+        instance.ended.connect(self._forget_instance)
+        settings = window.panel_right_top_plot_settings
         area = window.middle_mainwindow
-        if area.findChild(DockTabCloser) is None:
-            DockTabCloser(area)
-        shown = [other for other in window.dock_widgets if other.isVisible()]
-        window.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
-        if shown:
+        settings.follow(area)
+        closer = area.findChild(DockTabCloser) or DockTabCloser(area)
+        target = self.tab_target(area, window.dock_widgets, settings.current_plot())
+        area.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        # In a shown area Qt hides the new dock and shows it later, and it won't tab a plot
+        # opened meanwhile with a hidden one: show it now.
+        dock.show()
+        if target is not None:
             # Plots share the area as tabs; the new one comes to the front.
-            window.middle_mainwindow.tabifyDockWidget(shown[-1], dock)
-            dock.show()
+            area.tabifyDockWidget(target, dock)
             dock.raise_()
+        closer.watch(dock)
         window.dock_widgets.append(dock)
         update = getattr(window, "update_placeholder_visibility", None)
         if callable(update):
             update()
+
+    @staticmethod
+    def tab_target(area: QMainWindow, open_docks: List[QDockWidget],
+                   shown: Optional[QDockWidget]) -> Optional[QDockWidget]:
+        """The open plot a new plot is tabbed with in ``area``: the plot whose settings show
+        (``shown``) if it is docked there, else the newest docked one. Docked means in the
+        area and not floating; a plot behind another tab counts, and whether docks are
+        visible yet doesn't matter (``addDockWidget`` shows a dock later, and the area may not
+        be shown). Never a floating plot (Qt would put the new one in its old place, beside
+        some other plot), nor a hidden plot on its own (unticked in the area's menu: the new
+        one would sit alone in its place); a hidden plot in a tab group still stands for that
+        group. Closed plots aren't open. None: the new plot docks on its own (no plot open,
+        or all floating or hidden)."""
+        docked = [dock for dock in open_docks if not sip.isdeleted(dock) and not dock.isFloating()
+                  and area.dockWidgetArea(dock) != Qt.DockWidgetArea.NoDockWidgetArea
+                  and (not dock.isHidden() or area.tabifiedDockWidgets(dock))]
+        if shown in docked:
+            return shown
+        return docked[-1] if docked else None
+
+    @pyqtSlot(str)
+    def _forget_instance(self, instance_id: str) -> None:
+        self._analysis_instances.pop(instance_id, None)
 
     def create_button(self, label: str, callback: Callable[..., Any]) -> QPushButton:
         """Create a standardized action button for script items.
@@ -591,7 +852,15 @@ class PlotSettingsPanel(QWidget):
     """The settings of the active plot: one page per open plot, showing the page of the plot
     last clicked, focused or brought to the front among tabbed docks, floating ones included.
     The chooser on top names it and picks another plot (raising its dock). A page keeps its
-    edits while another plot's page shows. With no plot open, a hint shows instead."""
+    edits while another plot's page shows. With no plot open, a hint shows instead.
+
+    It follows Qt's own signals, which fire only when something changes: the app's focus
+    (a click anywhere in a plot focuses it, as its dock takes click focus), the active window
+    (a floating plot), the plot area's tab activations and the plots' visibility (the shown
+    plot hidden: the most recently shown plot still visible shows, as when it closes). No
+    Python runs per event (no event filter), and the connections end with the panel or
+    ``detach()``. Whenever a plot shows, focus left in another plot moves to it, so focus is
+    never in a plot other than the shown one, and a click in any other plot changes focus."""
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
@@ -622,17 +891,38 @@ class PlotSettingsPanel(QWidget):
         self._order: List[QDockWidget] = []  # the chooser's order: as opened
         self._recent: List[QDockWidget] = []  # most recently shown last
         self._followed: List[QMainWindow] = []
+        self._check_shown = QTimer(self)
+        self._check_shown.setSingleShot(True)
+        self._check_shown.setInterval(0)
+        self._check_shown.timeout.connect(self._shown_still_visible)
         self._update_chooser()
         app = QApplication.instance()
-        if app is not None:
-            app.installEventFilter(self)
+        self._app = app if isinstance(app, QApplication) else None
+        if self._app is not None:
+            self._app.focusChanged.connect(self._focus_changed)
+            self._app.focusWindowChanged.connect(self._window_activated)
+
+    def detach(self) -> None:
+        """Stop following the app's focus and tab activations (the window is closing)."""
+        if self._app is not None:
+            self._app.focusChanged.disconnect(self._focus_changed)
+            self._app.focusWindowChanged.disconnect(self._window_activated)
+            self._app = None
+        for area in self._followed:
+            if not sip.isdeleted(area):
+                area.tabifiedDockWidgetActivated.disconnect(self._tab_activated)
+        self._followed.clear()
 
     def add_plot(self, dock: QDockWidget, page: QWidget, title: str) -> None:
-        """A new plot's page; it shows at once, as its dock comes to the front."""
+        """A new plot's page; it shows at once, as its dock comes to the front. The dock takes
+        click focus, so a click anywhere in it (title, plot, label) focuses it and shows its page."""
         self._pages[dock] = page
         self._order.append(dock)
         self.stack.addWidget(page)
         self.chooser.addItem(title)
+        dock.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        dock.destroyed.connect(self._forget_deleted)
+        dock.visibilityChanged.connect(self._visibility_changed)
         self.show_plot(dock)
 
     def remove_plot(self, dock: QDockWidget) -> None:
@@ -645,9 +935,11 @@ class PlotSettingsPanel(QWidget):
         self.chooser.removeItem(index)
         if dock in self._recent:
             self._recent.remove(dock)
-        self.stack.removeWidget(page)
-        if self._recent:
-            self.show_plot(self._recent[-1])
+        if not sip.isdeleted(page):
+            self.stack.removeWidget(page)
+        fallback = self._fallback()
+        if fallback is not None:
+            self.show_plot(fallback)
         else:
             self.stack.setCurrentWidget(self.hint)
         self._update_chooser()
@@ -667,18 +959,31 @@ class PlotSettingsPanel(QWidget):
             dock.raise_()
             if dock.isFloating():
                 dock.activateWindow()
+        # Focus left in another plot (this one came by its tab, its window or the chooser)
+        # moves here, so a click back in that plot changes focus and shows it again.
+        if self._plot_of(QApplication.focusWidget()) not in (None, dock) and dock.isVisible():
+            dock.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def current_plot(self) -> Optional[QDockWidget]:
         return self._recent[-1] if self._recent else None
 
+    def plots(self) -> List[QDockWidget]:
+        """The open plots, in the chooser's order."""
+        return list(self._order)
+
     def page(self, dock: QDockWidget) -> Optional[QWidget]:
         return self._pages.get(dock)
+
+    def set_title(self, dock: QDockWidget, title: str) -> None:
+        """A plot's name in the chooser (it changes as the plot follows Live to newer data)."""
+        if dock in self._pages:
+            self.chooser.setItemText(self._order.index(dock), title)
 
     def follow(self, area: QMainWindow) -> None:
         """Show a plot's page when its tab is clicked among tabbed docks in ``area``."""
         if area not in self._followed:
             self._followed.append(area)
-            area.tabifiedDockWidgetActivated.connect(self.show_plot)
+            area.tabifiedDockWidgetActivated.connect(self._tab_activated)
 
     def close_current(self) -> None:
         dock = self.current_plot()
@@ -695,12 +1000,58 @@ class PlotSettingsPanel(QWidget):
             widget = widget.parentWidget()
         return None
 
-    def eventFilter(self, a0: Optional[QObject], a1: Optional[QEvent]) -> bool:
-        """A click or focus inside a plot, or activating a floating plot's window, shows its page."""
-        # The filter is app-wide: it can outlive this wrapper's attributes as Python tears it down.
-        if (getattr(self, "_pages", None) and a1 is not None and isinstance(a0, QWidget)
-                and a1.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.FocusIn, QEvent.Type.WindowActivate)):
-            dock = self._plot_of(a0)
-            if dock is not None and dock is not self.current_plot():
-                self.show_plot(dock)
-        return False
+    def _fallback(self, leaving: Optional[QDockWidget] = None) -> Optional[QDockWidget]:
+        """The plot to show when the shown one goes: the most recently shown one still
+        visible, else the most recently shown one."""
+        others = [dock for dock in reversed(self._recent) if dock is not leaving and not sip.isdeleted(dock)]
+        return next((dock for dock in others if dock.isVisible()), others[0] if others else None)
+
+    def _activate(self, dock: Optional[QDockWidget]) -> None:
+        if dock is not None and dock is not self.current_plot():
+            self.show_plot(dock)
+
+    @pyqtSlot(QDockWidget)
+    def _tab_activated(self, dock: QDockWidget) -> None:
+        self._activate(dock)
+
+    @pyqtSlot(QWidget, QWidget)
+    def _focus_changed(self, old: Optional[QWidget], now: Optional[QWidget]) -> None:
+        """Focus moved into a plot: the user clicked or tabbed into it. Focus that moves only
+        because the focused widget was hidden (its dock went behind another tab, or closed)
+        is Qt's choice, not the user's, and shows nothing."""
+        if old is not None and not old.isVisible():
+            return
+        self._activate(self._plot_of(now))
+
+    @pyqtSlot(QWindow)
+    def _window_activated(self, window: Optional[QWindow]) -> None:
+        """A floating plot's window became active (clicked, even where nothing takes focus)."""
+        if window is None:
+            return
+        for dock in self._order:
+            if dock.isFloating() and dock.windowHandle() is window:
+                self._activate(dock)
+                return
+
+    @pyqtSlot(bool)
+    def _visibility_changed(self, visible: bool) -> None:
+        if not visible and self.sender() is self.current_plot():
+            self._check_shown.start()
+
+    def _shown_still_visible(self) -> None:
+        """The shown plot was hidden (unticked in the plot area's menu, its window minimised,
+        behind another tab on screen): a visible plot shows instead, as when it closes; if
+        none is visible, it stays. Checked a pass of the event loop later: floating or docking
+        a plot hides it for a moment, and a tab click shows the plot it brings forward."""
+        shown = self.current_plot()
+        if shown is None or sip.isdeleted(shown) or shown.isVisible():
+            return
+        fallback = self._fallback(shown)
+        if fallback is not None and fallback.isVisible():
+            self.show_plot(fallback)
+
+    @pyqtSlot()
+    def _forget_deleted(self) -> None:
+        """A plot's dock was deleted without being closed (its window went): drop its page."""
+        for dock in [dock for dock in self._order if sip.isdeleted(dock)]:
+            self.remove_plot(dock)

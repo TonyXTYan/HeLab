@@ -276,3 +276,49 @@ def test_held_shots_gone_from_the_folder_stop_the_check(folder: Path, tmp_path: 
 def test_a_missing_folder_says_so(tmp_path: Path) -> None:
     with pytest.raises(OSError, match="Folder not found"):
         check(tmp_path / "gone", tmp_path, [[1, 2, 3]])
+
+
+def test_live_can_start_before_the_first_shot(tmp_path: Path) -> None:
+    """No shots held (``memory=[]``): the check lists the folder, and a new file is read once it
+    shows the same size and mtime a check later, as any new file during Live."""
+    source = tmp_path / "empty"
+    source.mkdir()
+    age_folder(source)
+    nothing = last(check(source, tmp_path, []), "live_unchanged")
+    assert nothing["live_listed"] and nothing["total_files"] == 0 and nothing["unsettled_files"] == 0
+    assert nothing["live_since"] == source.stat().st_mtime_ns and nothing["live_seen"] == []
+
+    write_shot(source, 1)
+    age_folder(source)
+    first = check(source, tmp_path, [])
+    seen = last(first, "live_unchanged")
+    assert seen["live_listed"] and seen["unsettled_files"] == 1 and [entry[0] for entry in seen["live_seen"]] == [1]
+    assert not any(event["kind"] == "shot" for event in first)
+    second = check(source, tmp_path, [], seen=seen["live_seen"])
+    loaded = last(second, "loaded")
+    assert [event["shot"] for event in second if event["kind"] == "shot"] == [1]
+    assert loaded["memory_shots"] == [] and loaded["source"] == "updated" and loaded["unsettled_files"] == 0
+    assert [entry[0] for entry in loaded["fingerprint"]] == [1] and loaded["files"] == 1
+
+
+def test_a_check_without_held_shots_given_is_refused(folder: Path, tmp_path: Path) -> None:
+    """``memory`` None (not sent) is never taken for "no shots yet": the caller's data is unknown."""
+    output = tmp_path / "out"
+    output.mkdir()
+    with pytest.raises(ValueError, match="loaded data"):
+        live_check(str(folder), str(output), lambda event: None, None)
+
+
+def test_live_reads_only_the_folders_own_files_never_its_subfolders(folder: Path, tmp_path: Path) -> None:
+    """Live watches the folder itself: TXY files in its subfolders are neither counted nor read."""
+    parent = tmp_path
+    age_folder(parent)
+    first = check(parent, tmp_path, [])
+    assert last(first, "live_unchanged")["total_files"] == 0  # ``run`` (shots 1, 2) is a subfolder.
+    write_shot(folder, 3)
+    write_shot(parent, 7)
+    age_folder(parent)
+    events = check_twice(parent, tmp_path, [])
+    assert [event["shot"] for event in events if event["kind"] == "shot"] == [7]
+    loaded = last(events, "loaded")
+    assert [entry[0] for entry in loaded["fingerprint"]] == [7] and loaded["total_files"] == 1

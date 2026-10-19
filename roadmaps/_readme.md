@@ -53,6 +53,9 @@ still to choose (Tony, with the coordinator's proposal).
 
 ## Known issues
 
+- [ ] `test_gui_responsiveness.py::test_output_close_failure_cannot_leave_dead_helper_in_active_queue`
+  needed one rerun on the RSPE Windows PC on three branches (2026-10-19);
+  investigate if it fails outright.
 - [ ] `test_folder_cache.py::test_two_tabs_share_snapshot_arrays_and_default_resolution`
   needed one rerun in each of three full runs on the RSPE Windows PC
   (2026-10-19); investigate if it fails outright.
@@ -124,9 +127,10 @@ still to choose (Tony, with the coordinator's proposal).
   exceeded, least recently used first; Rerun reloads it (Tony, 2026-10-19).
 - [ ] One Settings panel follows the active plot (click, focus, tabbed or
   floating dock; chooser raises a plot; settings pages as tabs via
-  `ParameterSpec.page`). Quick version on Ground, hardening pending: real-app
-  focus with QtWebEngine and pyqtgraph, many plots, a pin to keep one plot's
-  settings shown (Tony, 2026-10-19).
+  `ParameterSpec.page`). Quick version on Ground (Tony, 2026-10-19); hardened
+  2026-10-19 (signals instead of an event filter, many plots, tab rule, tab
+  close by identity, activation sources, typed numbers). Left: the on-screen
+  checks (MANUAL_TODO) and a pin to keep one plot's settings shown.
 - [ ] Transfer fractions plot (port of Momentum_Bells_test's `monitor_momentum.m`):
   orders auto-found in T, manual centre/spacing filled from the detection. Quick
   version on Ground, hardening pending: check detection on real Bragg/magnetic
@@ -156,7 +160,7 @@ still to choose (Tony, with the coordinator's proposal).
   staged 2026-10-15). New shots stay in RAM; the disk cache is written every
   N shots (configurable) and when monitoring stops or HeLab quits
   ([decided](live-monitoring.md#dataset-cache-writes-while-monitoring)) (2026-10-13).
-  L1 and L2 done (2026-10-19); L3 next with the dataset view.
+  L1–L3 done (2026-10-19): plots follow Live; L4 (converter in HeLab) next.
 - [ ] QC script catalogue and safe derived-file repairs, kept in HeLab's cache
   folder; migrate the current status scan as its first provider
   ([plan](quality-control-and-repair.md)) (2026-10-14; revised 2026-10-15).
@@ -206,7 +210,9 @@ still to choose (Tony, with the coordinator's proposal).
   for the cache instead of holding a second copy of every shot (2026-10-10).
 
 - [ ] Plot-area hints when no plot is open: usage tips, or a daily motivational
-  quote. `CentralHint` already has a second line and `add_widget` for this (2026-10-09).
+  quote. Usage tips done on Ground (`CentralHint.TIPS`, a new one every 30 s
+  while shown, click for the next; keep them current as features change); the
+  quote stays unchosen (2026-10-09; tips 2026-10-19).
 
 - [ ] Lock the tree view during a recursive status check? (from the old README
   list; may no longer be needed).

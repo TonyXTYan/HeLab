@@ -322,7 +322,7 @@ def test_numbers_can_be_typed_without_their_unit(qtbot: QtBot) -> None:
     parameter_of(root, selection.RANGE_MODE).setValue(selection.AUTO)
     assert type_into(scatter_3d.KEEP, "95") == "95 %"
     assert type_into(scatter_3d.CAP, "5000") == "5000"
-    assert type_into(scatter_3d.POINT_SIZE, "20") == "1.5 px"  # Out of range: kept as it was.
+    assert type_into(scatter_3d.POINT_SIZE, "20") == "10 px"  # Above the limit: set to 10 px.
     values = tree_values(root, specs)
     assert values["t_min"] == pytest.approx(0.005) and values["keep_percent"] == 95.0
     assert values["display_cap"] == 5000 and isinstance(values["display_cap"], int)
@@ -511,9 +511,9 @@ def test_bundled_analyses_declare_identity_and_file_hash() -> None:
     assert set(names) == {"3D scatter", "Counts per shot", "T, X, Y histograms", "Transfer fractions"}
     scatter = names["3D scatter"]
     expected = hashlib.sha256(open(scatter_3d.__file__, "rb").read()).hexdigest()
-    assert (scatter.analysis_id, scatter.version, scatter.file_hash) == ("helab.scatter_3d", "2", expected)
+    assert (scatter.analysis_id, scatter.version, scatter.file_hash) == ("helab.scatter_3d", "3", expected)
     identity = scatter.identity()
-    assert identity.file_name == "scatter_3d.py" and identity.text().startswith("helab.scatter_3d v2 · scatter_3d.py")
+    assert identity.file_name == "scatter_3d.py" and identity.text().startswith("helab.scatter_3d v3 · scatter_3d.py")
     assert all(metadata.analysis_id and metadata.version for metadata in names.values())
     assert group.NAME == f"Basic plots v{group.VERSION}" and group.VERSION == 1
 

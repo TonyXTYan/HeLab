@@ -1,5 +1,5 @@
-"""Parameters every plot shares: which shots go in (Shots) and the view range (auto-crop or
-manual T/X/Y bounds), with the helpers that apply them. Live will use "last N" later."""
+"""Parameters every plot shares: which shots go in (Shots), the view range (auto-crop or
+manual T/X/Y bounds) and highlighting the newest shot, with the helpers that apply them."""
 from __future__ import annotations
 
 import math
@@ -7,7 +7,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from helab.analysis.dataset_view import DatasetView, Events
+from helab.analysis.dataset_view import DatasetView, Events, txy
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.stats import AXES, DEFAULT_KEEP, UNITS, CropBox
 
@@ -69,6 +69,44 @@ def shots_text(selected: Sequence[int], total: int) -> str:
     if not selected:
         return f"none of {total:,} shots"
     return f"shots {selected[0]}–{selected[-1]} ({len(selected):,} of {total:,})"
+
+
+# The newest shot
+
+# Colours a plot may draw the newest shot's events in (RGB); the rest keep the plot's own.
+NEWEST_COLOURS = {"red": (214, 39, 40), "orange": (255, 127, 14), "magenta": (200, 30, 180),
+                  "green": (44, 160, 44), "black": (0, 0, 0)}
+HIGHLIGHT = "highlight_newest"
+NEWEST_COLOUR = "newest_colour"
+
+
+def newest_specs(group: str) -> tuple[ParameterSpec, ParameterSpec]:
+    """Highlight the newest shot (off by default) and its colour, in a plot's ``group``."""
+    return (ParameterSpec(HIGHLIGHT, "Highlight the newest shot", "bool", False, group=group,
+                          tip="Draw the events of the newest shot used (the highest shot number) in their own "
+                              "colour, over the rest (histograms: its histogram, scaled to the same total). "
+                              "While Live adds shots, that is the latest one."),
+            ParameterSpec(NEWEST_COLOUR, "Newest shot colour", "choice", "red", choices=tuple(NEWEST_COLOURS),
+                          group=group, when=(HIGHLIGHT, "True"), tip="The newest shot's colour."))
+
+
+def newest_shot(values: Mapping[str, Any], shots: Sequence[int]) -> int | None:
+    """The shot to highlight: the highest of ``shots`` when highlighting is on (else None)."""
+    return max(shots) if values.get(HIGHLIGHT) and shots else None
+
+
+def newest_events(view: DatasetView, shot: int | None) -> Events:
+    """The highlighted shot's T/X/Y events ((0, 3) for none)."""
+    return txy(view.shots[shot]) if shot is not None and shot in view.shots else np.empty((0, 3))
+
+
+def newest_colour(values: Mapping[str, Any]) -> tuple[int, int, int]:
+    return NEWEST_COLOURS.get(str(values.get(NEWEST_COLOUR, "red")), NEWEST_COLOURS["red"])
+
+
+def newest_brief(values: Mapping[str, Any]) -> str:
+    """``newest shot in red`` for the dock's settings line, or "" when off."""
+    return f"newest shot in {values.get(NEWEST_COLOUR, 'red')}" if values.get(HIGHLIGHT) else ""
 
 
 # View range

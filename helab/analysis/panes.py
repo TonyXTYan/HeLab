@@ -15,11 +15,14 @@ from helab.utils.dash_server import DashServer, dash_server
 
 class PlotlyPane(QWidget):
     """A Plotly figure in the plot area, and an **Open in browser** button for the same
-    page: lab PCs whose GPU can't paint QtWebEngine show the plot in a browser instead."""
+    page: lab PCs whose GPU can't paint QtWebEngine show the plot in a browser instead.
+    ``update_figure`` shows a newer figure on the same page, in place (here and in browser tabs
+    showing it), keeping the view's rotation, zoom and pan."""
 
     def __init__(self, figure: Figure, note: str = "", parent: Optional[QWidget] = None,
                  server: DashServer = dash_server) -> None:
         super().__init__(parent)
+        self.server = server
         self.plot_id = uuid.uuid4().hex
         server.add_plot(self.plot_id, figure)
         self.url = server.plot_url(self.plot_id)
@@ -42,6 +45,11 @@ class PlotlyPane(QWidget):
         self.browser = QWebEngineView(self)
         self.browser.setUrl(QUrl(self.url))
         layout.addWidget(self.browser, 1)
+
+    def update_figure(self, figure: Figure, note: str = "") -> None:
+        """A newer figure: the page swaps it in without reloading (``DashServer.update_plot``)."""
+        self.server.update_plot(self.plot_id, figure)
+        self.note.setText(note)
 
     def open_in_browser(self) -> bool:
         return QDesktopServices.openUrl(QUrl(self.url))

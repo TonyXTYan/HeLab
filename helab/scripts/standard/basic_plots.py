@@ -9,12 +9,15 @@ from typing import Any, List, Mapping, Optional, cast
 import numpy as np
 import numpy.typing as npt
 import pyqtgraph as pg
+from PyQt6.QtCore import QRectF, pyqtSlot
 from PyQt6.QtWidgets import QWidget
 
+from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.dataset_view import DatasetView
-from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_bounds, range_brief, range_specs,
+from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_bounds, newest_brief, newest_colour,
+                                      newest_events, newest_shot, newest_specs, range_brief, range_specs,
                                       range_warnings, reversed_axes, select_shots, selection_text, shots_brief,
                                       shots_text)
 from helab.analysis.stats import AXES, MAX_BINS, UNITS, Histogram, counts_per_shot, histogram
@@ -30,6 +33,7 @@ BINS = ParameterSpec(
     tip="0 = automatic: the bin count comes from the data (Freedman–Diaconis: width 2·IQR·n^-1/3).")
 LOG_Y = ParameterSpec("log_y", "Log Y", "bool", False, group=BINS_GROUP,
                       tip="Logarithmic event axis; empty bins are left out.")
+HIGHLIGHT, NEWEST_COLOUR = newest_specs(BINS_GROUP)
 COLOUR = (40, 90, 170)
 
 
@@ -47,6 +51,70 @@ class DecadeLogAxis(pg.AxisItem):  # type: ignore[misc]
         minor = [v + math.log10(k) for v in range(math.floor(minVal), math.ceil(maxVal)) for k in range(2, 10)]
         self.setStyle(maxTextLevel=0)
         return [(1.0, decades), (None, [v for v in minor if minVal < v < maxVal])]
+
+
+class OverlayView(pg.ViewBox):  # type: ignore[misc]
+    """A view drawn over a plot (``source``, its ViewBox) that leaves the mouse to the plot below
+    (its zoom, pan and menu): it only follows the plot's geometry and ranges, its y range the
+    plot's divided by ``ratio`` (log Y: shifted by log10 of it). ``follow`` is a Qt slot, so
+    the plot's signals hold no Python reference to it and Qt ends the connections when either
+    is destroyed: nothing outlives the widget."""
+
+    def __init__(self, source: Any, ratio: float, log_y: bool) -> None:
+        super().__init__(enableMenu=False)
+        self.setMouseEnabled(x=False, y=False)  # Wheel events then pass to the plot below.
+        # (Not ``scale``: that is QGraphicsItem.scale(), which Qt and pyqtgraph call.)
+        self._source, self._ratio, self._log_y = source, ratio, log_y
+        self._shift = math.log10(ratio) if log_y and ratio > 0 else 0.0
+        source.sigResized.connect(self.follow)
+        source.sigYRangeChanged.connect(self.follow)
+
+    @pyqtSlot()
+    def follow(self) -> None:
+        source = self._source
+        # The plot's exact geometry (its scene bounding rect is half a pixel larger, which shifts
+        # the x link, mapped by pixel, by a pixel where rounding differs).
+        self.setGeometry(QRectF(source.scenePos(), source.size()))
+        self.linkedViewChanged(source, self.XAxis)  # The x link maps by pixel: again at the new size.
+        low, high = source.viewRange()[1]
+        if self._log_y:
+            self.setYRange(low - self._shift, high - self._shift, padding=0)
+        else:
+            self.setYRange(low / self._ratio, high / self._ratio, padding=0)
+
+    def mouseDragEvent(self, ev: Any, axis: Any = None) -> None:
+        ev.ignore()
+
+    def mouseClickEvent(self, ev: Any) -> None:
+        ev.ignore()
+
+
+def overlay_newest(plot: Any, edges: npt.NDArray[np.float64], counts: npt.NDArray[np.int64], scale: float,
+                   colour: tuple[int, int, int], log_y: bool, name: str) -> OverlayView:
+    """The newest shot's real counts over ``plot`` in a view of their own, linked on x, with the
+    right axis (in ``colour``) reading them. Its y range follows the plot's divided by ``scale``
+    (the histogram's total over the shot's; with log Y, shifted by log10 of it), so the line sits
+    where the shot's histogram scaled to the same total would."""
+    view = OverlayView(plot.vb, scale, log_y)
+    plot.scene().addItem(view)
+    axis = plot.getAxis("right")
+    plot.showAxis("right")
+    axis.linkToView(view)
+    view.setXLink(plot.vb)
+    hex_colour = pg.mkColor(colour).name()
+    axis.setPen(pg.mkPen(colour))
+    axis.setTextPen(pg.mkPen(colour))
+    plot.setLabel("right", f"{name} events", color=hex_colour)
+    values = counts.astype(np.float64)
+    if log_y:
+        values[values <= 0] = np.nan
+    curve = pg.PlotDataItem(edges, values, stepMode="center", connect="finite", pen=pg.mkPen(colour, width=2),
+                            name=name)
+    if log_y:
+        curve.setLogMode(False, True)
+    view.addItem(curve)
+    view.follow()
+    return view
 
 
 @dataclass(frozen=True)
@@ -67,6 +135,10 @@ class Histograms:
     shots: tuple[int, ...]
     total_shots: int
     reversed: tuple[str, ...] = ()  # axes whose manual min > max: shown over their full extent
+    # The highlighted newest shot (None: off): its counts in each item's bins, drawn over them.
+    newest_shot: int | None = None
+    newest: tuple[npt.NDArray[np.int64], ...] = ()
+    colour: tuple[int, int, int] = (214, 39, 40)
 
 
 def counts_title(data: ShotCounts) -> str:
@@ -115,6 +187,9 @@ class CountsPerShot(DatasetAnalysis):
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: ShotCounts = result.data
+        if not data.total:
+            # No shots, none chosen, or chosen shots without events: say which, not a flat line.
+            return empty_pane(empty_text(data.total_shots, len(data.shots), 0), parent)
         plot: Any = pg.PlotWidget(parent)
         plot.setBackground("w")
         plot.setTitle(source_title(result, counts_title(data)))
@@ -134,19 +209,19 @@ class TxyHistograms(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.txy_histograms",
-            version="2",
+            version="3",
         )
 
     def get_actions(self) -> List[str]:
         return ["Plot"]
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
-        return [*SHOT_SPECS, *RANGE, BINS, LOG_Y]
+        return [*SHOT_SPECS, *RANGE, BINS, LOG_Y, HIGHLIGHT, NEWEST_COLOUR]
 
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
         bins = int(values[BINS.name])
         settings = (shots_brief(values), range_brief(values), f"bins {bins:,}" if bins else "bins auto",
-                    "log Y" if values[LOG_Y.name] else "")
+                    "log Y" if values[LOG_Y.name] else "", newest_brief(values))
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
@@ -160,25 +235,41 @@ class TxyHistograms(DatasetAnalysis):
         bins = int(values[BINS.name])
         bounds = manual_bounds(values) if manual(values) else (None,) * len(AXES)
         items = []
+        newest = newest_shot(values, shots)
+        fresh = newest_events(context.view, newest)
+        newest_counts = []
         for i, axis in enumerate(AXES):
             context.check()
             column = np.ascontiguousarray(events[:, i])
             given = bounds[i]
             if manual(values) and given is None and len(column):
                 given = (float(column.min()), float(column.max()))
-            items.append(histogram(column, axis, keep, bins, given))
-        return Histograms(tuple(items), shots, len(context.view.shots), reversed_axes(values))
+            item = histogram(column, axis, keep, bins, given)
+            items.append(item)
+            if newest is not None:
+                newest_counts.append(np.histogram(fresh[:, i], bins=item.edges)[0].astype(np.int64))
+        return Histograms(tuple(items), shots, len(context.view.shots), reversed_axes(values), newest,
+                          tuple(newest_counts), newest_colour(values))
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Histograms = result.data
         items = data.items
+        if not items or not items[0].total:
+            return empty_pane(empty_text(data.total_shots, len(data.shots), 0), parent)
         log_y = bool(result.parameters.get(LOG_Y.name, False))
         widget: Any = pg.GraphicsLayoutWidget(parent)
         widget.setBackground("w")
         events = f"{items[0].total:,} events" if items else ""
-        widget.addLabel(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}"), row=0, col=0)
+        newest = (f" · shot {data.newest_shot} highlighted ({int(data.newest[0].sum()):,} in range, right axis)"
+                  if data.newest_shot is not None and data.newest else "")
+        widget.addLabel(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}{newest}"),
+                        row=0, col=0)
+        overlays = []
         for row, item in enumerate(items, start=1):
-            axes = {"left": DecadeLogAxis("left")} if log_y else None
+            highlighted = data.newest_shot is not None and row - 1 < len(data.newest)
+            # A right axis only for the newest shot's counts (pyqtgraph shows any axis it is given).
+            axes = ({"left": DecadeLogAxis("left"), **({"right": DecadeLogAxis("right")} if highlighted else {})}
+                    if log_y else None)
             plot = widget.addPlot(row=row, col=0, title=histogram_title(item, item.axis in data.reversed),
                                   axisItems=axes)
             plot.setLabel("bottom", f"{item.axis} ({UNITS[AXES.index(item.axis)]})")
@@ -193,4 +284,23 @@ class TxyHistograms(DatasetAnalysis):
             else:
                 plot.addItem(pg.PlotDataItem(item.edges, item.counts, stepMode="center", fillLevel=0,
                                              pen=pg.mkPen(COLOUR), brush=(*COLOUR, 90)))
+            if highlighted:
+                # One shot is a small share of all: drawn to the histogram's scale (its total over
+                # the shot's), its shape compares; its own axis on the right reads its real counts.
+                left = plot.getAxis("left")
+                left.setPen(pg.mkPen(COLOUR))
+                left.setTextPen(pg.mkPen(COLOUR))
+                plot.setLabel("left", "Events (all)", color=pg.mkColor(COLOUR).name())
+                counts_new = data.newest[row - 1]
+                scale = float(item.counts.sum()) / float(counts_new.sum()) if counts_new.sum() > 0 else 1.0
+                # The scaled line, transparent (hidden items don't count), keeps the plot's own range
+                # (and its Auto) holding the overlay.
+                scaled = counts_new * scale
+                if log_y:
+                    scaled = np.where(scaled > 0, scaled, np.nan)
+                plot.addItem(pg.PlotDataItem(item.edges, scaled, stepMode="center", connect="finite",
+                                             pen=pg.mkPen((0, 0, 0, 0))))
+                overlays.append(overlay_newest(plot, item.edges, counts_new, scale, data.colour, log_y,
+                                               f"shot {data.newest_shot}"))
+        widget.newest_views = overlays  # Kept with the widget (they live in its scene).
         return cast(QWidget, widget)
