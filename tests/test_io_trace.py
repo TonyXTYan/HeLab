@@ -876,6 +876,36 @@ def test_quitting_with_the_trace_on_says_it_is_off(tmp_path: Path, caplog: pytes
     assert service.trace_dir is None
 
 
+def test_on_off_on_never_shares_a_recording_and_running_helpers_finish_in_theirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recording's folder is made when it starts (exclusive mkdir), before any helper writes: on, off
+    and on again within one second gets a new name. A helper started while the first was on keeps
+    writing into the first one until it exits ("off" isn't immediate for it)."""
+    from helab.utils.io_service import IO_TRACE_FOLDER, _new_recording
+    folder = tmp_path / "taken"
+    folder.mkdir()
+    assert [os.path.basename(_new_recording(str(folder), "20261019-120000")) for _ in range(3)] == [
+        "io-trace-20261019-120000", "io-trace-20261019-120000-2", "io-trace-20261019-120000-3"]
+    service = IOService()
+    try:
+        first = service.start_io_trace(str(tmp_path))
+        monkeypatch.setattr(io_helper, "TRACE", None)
+        monkeypatch.setattr(io_helper, "_trace_request", {})
+        monkeypatch.setattr(io_helper, "_trace_fd", None)
+        io_helper._start_trace({"operation": "list", "path": "/x", "trace": {"dir": first}})  # (Started now…)
+        service.stop_io_trace()
+        second = service.start_io_trace(str(tmp_path))  # (…on again, at once: no helper of it has written.)
+        assert second != first and os.listdir(second) == []
+        io_helper._trace("stat", "/x/a", "late")  # (…and the first one's helper writes after that.)
+        assert [record["reason"] for record in lines(Path(first))] == ["list", "late"] and os.listdir(second) == []
+        assert sorted(os.listdir(tmp_path / IO_TRACE_FOLDER)) == sorted(map(os.path.basename, (first, second)))
+    finally:
+        if io_helper._trace_fd is not None:
+            os.close(io_helper._trace_fd)
+        service.shutdown()
+
+
 def test_deleting_earlier_recordings_keeps_what_windows_wont_delete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

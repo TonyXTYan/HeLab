@@ -250,6 +250,8 @@ class IOService(QObject):
         return recording
 
     def stop_io_trace(self) -> None:
+        """No new helper is traced from now on; one already running keeps tracing into its
+        recording's folder until it exits."""
         if self.trace_dir is not None:
             logging.info("I/O trace off: %s", self.trace_dir)
         self.trace_dir = None

@@ -43,6 +43,12 @@ with trace tests, following Codex's constraints and Maestro's notes:
   single file of an earlier build). Delete old traces works per recording (its `.jsonl` files, then the
   emptied folder; older single files too); a file Windows won't delete because a running helper still has
   it open is kept, and a message says how many were kept and where (`delete_io_traces`).
+- **Review fix (D):** a recording's name is reserved when it starts: its folder is made then, with an
+  exclusive `mkdir`, before any helper writes, so on, off and on again within one second always gets a
+  new folder (`-2`). **"Off" isn't immediate for helpers already running:** a helper started while the
+  trace was on keeps tracing into that recording's folder until it exits (a long load or a save can go
+  on after `I/O trace off` has printed); only helpers started later aren't traced. A recording's last
+  lines can therefore come after its off line; the next recording never gets them.
 - `HelabMainWindow`: only the Help menu items, the status-bar note and the Keep/Delete question
   (`_toggle_io_trace`, `_ask_delete_old_traces`, `_show_io_trace_folder`); no plot-dock code touched.
 - Tests: `tests/test_io_trace.py` (the seam, a helper tracing to the file its request names, the folder,
@@ -480,7 +486,7 @@ python -m helab
 In HeLab, **Help › Record I/O trace (this session)** (the status bar shows "● I/O trace"; the terminal
 prints `I/O trace on: <path>`). Use HeLab as when you saw the traffic: leave a tree open, browse, load,
 run Live during acquisition. Note the times of what you do. Then untick it (or quit HeLab): the terminal
-prints `I/O trace off: <path>`. **Help › Show I/O trace folder** opens the folder: by default
+prints `I/O trace off: <path>` (helpers already running finish their lines in that folder). **Help › Show I/O trace folder** opens the folder: by default
 `~/Library/Caches/HeLab/temps/io-traces` (Windows `%LOCALAPPDATA%\HeLab\temps\io-traces`; Settings →
 General shows the temp folder). Each recording is a new folder there (`io-trace-<date>-<time>`, one
 `<pid>.jsonl` per helper); earlier ones stay unless you pick Delete old traces when asked. Summarise the
