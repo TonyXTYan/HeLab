@@ -193,6 +193,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
         # The last result (whatever its state), and the completed one whose plot shows.
         self.result: Optional[AnalysisResult] = None
         self.shown: Optional[AnalysisResult] = None
+        # The data of the run in flight, and of the result shown (what Follow Live off pins).
+        self._job_view: Optional[DatasetView] = None
+        self._shown_view: Optional[DatasetView] = None
         self.error = ""  # The last run's failure, while the plot before it stays
         self.policy = script.live_policy(action)
         self.follow = Follow(view, self.policy)
@@ -266,7 +269,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         except RuntimeError as error:  # The runner is stopping: HeLab is closing.
             self.status_label.setText(str(error))
             return
-        self.job_id = context.job_id
+        self.job_id, self._job_view = context.job_id, view
         self.follow.start(view)
         self.status_label.setText(f"Running ({context.job_id})…")
         self._show_follow()
@@ -276,8 +279,15 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         self.job_id = ""
         self.follow.end(time.monotonic())
+        view, self._job_view = self._job_view, None
         if result.state == "cancelled":
             self.status_label.setText("Cancelled")
+            self._show_follow()
+            return
+        if not self.follow.on and view is not None and view.key != self.follow.ran.key:
+            # A Live rerun that started before Follow Live went off: the plot stays pinned.
+            self.status_label.setText(f"Pinned at rev {self.follow.ran.revision}: "
+                                      f"the run on rev {view.revision} isn't shown")
             self._show_follow()
             return
         self.result = result
@@ -309,7 +319,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.runner.results.unpin(self.shown.job_id)
             self.shown = None
         if result.state == "completed" and not error:
-            self.shown = result
+            self.shown, self._shown_view = result, view
             self.runner.results.pin(result.job_id)
         self._show_content(content, result, specs, warnings)
         self._follow_next()
@@ -381,7 +391,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         values = self.live_values()
         self.follow.policy = policy_of(values, self.policy)
         if not values.get(FOLLOW, True):
-            self.follow.pin()
+            self.follow.pin(self._shown_view)  # Not newer data a run in flight may bring.
             self._follow_timer.stop()
         elif not self.follow.on:
             self.follow.unpin()

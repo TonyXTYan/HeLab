@@ -449,6 +449,35 @@ def test_follow_live_off_pins_the_plot_and_on_again_catches_up(
     assert script.started == [1, 1, 3]
 
 
+def test_pinning_during_a_live_rerun_keeps_the_pinned_revision(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """Follow Live off while a rerun on newer data runs: that run ends, but its result isn't the
+    pinned plot's (dropped, not drawn), and Rerun stays on the pinned revision."""
+    window.view = window.live_feed.publish(revision([1]))
+    script = Gated()
+    instance = plot(window, qtbot, script)
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    script.go.clear()
+    window.live_feed.publish(revision([1, 2]))
+    qtbot.waitUntil(lambda: script.started == [1, 2], timeout=10_000)
+    set_live(instance, FOLLOW, False)
+    assert instance.follow.ran.revision == 1 and instance.job_id  # Pinned at rev 1; rev 2 still runs.
+    script.go.set()
+    qtbot.waitUntil(lambda: instance.job_id == "", timeout=10_000)
+    dock = cast(QDockWidget, instance.dock_widget)
+    plotted = dock.findChild(QLabel, "gated_plot")
+    assert plotted is not None and plotted.text() == "rev 1 · 1 shots" and shown_revision(instance) == 1
+    assert instance.status_label.text() == "Pinned at rev 1: the run on rev 2 isn't shown"
+    assert source(instance).text().startswith(
+        "Showing previously loaded data: run_L · rev 1 · pinned (Follow Live off) · 1 newer shot")
+    assert instance.input_label.text() == "Input: run_L · rev 1 (stays with this plot)"
+    instance.run()  # Rerun with these settings: the pinned revision.
+    qtbot.waitUntil(lambda: len(script.started) == 3 and instance.job_id == "", timeout=10_000)
+    assert script.started == [1, 2, 1] and shown_revision(instance) == 1
+    set_live(instance, FOLLOW, True)  # On again: catches up.
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
+
+
 def test_a_failed_rerun_keeps_the_last_plot_and_following_goes_on(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
     window.view = window.live_feed.publish(revision([1]))

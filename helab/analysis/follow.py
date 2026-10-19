@@ -145,9 +145,13 @@ class Follow:
         self.running = False
         self.finished_at = now
 
-    def pin(self) -> None:
+    def pin(self, at: Optional[DatasetView] = None) -> None:
+        """Follow Live off: the plot stays at ``at``, the data it shows (default: what ran). A run
+        in flight on newer data isn't the plot's any more (``AnalysisInstance`` drops its result)."""
         self.on = False
         self.pending = None
+        if at is not None:
+            self.ran = at
 
     def unpin(self) -> None:
         self.on = True
