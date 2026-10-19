@@ -37,6 +37,8 @@ if TYPE_CHECKING:
 WARN_SHARE = 0.50  # the status bar says so
 DIALOG_SHARE = 0.75  # a window lists the biggest plots and folders, once per crossing
 RELEASE_SHARE = 0.80  # plots are released, least recently viewed first, until under it
+# A plot a reload drew in the last this many seconds goes after the others (no ping-pong).
+RELOAD_GRACE = 10.0
 
 # Settings → Cache: a released plot reloads when it is shown again (on by default).
 PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
@@ -191,6 +193,8 @@ class Plot(Protocol):
 
     def picture_cost(self) -> int: ...
 
+    def recently_reloaded(self) -> bool: ...
+
     def ram_label(self) -> str: ...
 
     @property
@@ -279,15 +283,17 @@ class RamBudget(QObject):
         return Usage(datasets, self.cache.plot_bytes(), self.cache.max_data_bytes)
 
     def order(self) -> list[Plot]:
-        """The plots that may be released, first to go first: those not on screen before those
-        on screen, then least recently viewed (shown in the Settings panel) first."""
+        """The plots that may be released, first to go first: those a reload drew in the last
+        ``RELOAD_GRACE`` seconds last (so two plots under a tight budget don't keep releasing and
+        reloading each other while a third could go), those not on screen before those on
+        screen, then least recently viewed (shown in the Settings panel) first."""
         recent = self.panel.recent() if self.panel is not None else []
         shown = self.panel.current_plot() if self.panel is not None else None
 
-        def key(plot: Plot) -> tuple[bool, int]:
+        def key(plot: Plot) -> tuple[bool, bool, int]:
             dock = plot.dock_widget
             visible = bool(dock is not None and dock.isVisible())
-            return visible, recent.index(dock) if dock in recent else -1
+            return plot.recently_reloaded(), visible, recent.index(dock) if dock in recent else -1
 
         return sorted((plot for plot in self.plots if plot.dock_widget is not shown and plot.releasable()), key=key)
 

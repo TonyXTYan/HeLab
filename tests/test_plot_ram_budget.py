@@ -480,6 +480,68 @@ def test_auto_reload_when_shown_again_on_and_off(window: Window, cache: FolderCa
     qtbot.waitUntil(lambda: drawn(instance), timeout=10_000)
 
 
+def test_auto_reload_tries_once_until_the_folder_changes(
+        window: Window, cache: FolderCache, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A plot whose data is nowhere: its first show asks the disk cache once; clicks in it and
+    later shows don't ask again until the folder's data or disk cache changes. Reload always asks."""
+    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {"directory": "store"})
+    instance = open_plot(window, qtbot, dataset("nowhere", range(1, 3)))
+    other = open_plot(window, qtbot, dataset("other", range(1, 2)))
+    assert instance.release()
+    panel = window.panel_right_top_plot_settings
+    asked: list[str] = []
+    real_submit = cache.submit
+
+    def submit(owner: str, generation: int, path: str, operation: str, *args: Any, **kwargs: Any) -> bool:
+        asked.append(operation)
+        return real_submit(owner, generation, path, operation, *args, **kwargs)
+    monkeypatch.setattr(cache, "submit", submit)
+
+    def answer_nothing() -> None:
+        request = next(iter(cache.jobs[("cached", instance.path)].subscribers.values()))
+        cache.resultReady.emit(request, {"kind": "error", "message": "No cached data for this folder"})
+
+    panel.show_plot(dock_of(instance))
+    assert asked == ["cached"]
+    answer_nothing()
+    panel.show_plot(dock_of(instance))  # A click in the plot already shown: no new show.
+    panel.show_plot(dock_of(other))
+    panel.show_plot(dock_of(instance))
+    assert asked == ["cached"]  # Shown again, nothing changed: not asked again.
+    cache.diskCacheChanged.emit(instance.path)  # Its disk cache changed: worth a try.
+    panel.show_plot(dock_of(other))
+    panel.show_plot(dock_of(instance))
+    assert asked == ["cached", "cached"]
+    answer_nothing()
+    cast(ReleasedPlot, instance.released).reload_button.click()  # Reload always asks.
+    assert asked == ["cached", "cached", "cached"]
+
+
+def test_a_plot_just_reloaded_goes_after_the_others(window: Window, cache: FolderCache, qtbot: QtBot,
+                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two plots under a tight budget don't keep releasing and reloading each other while a third
+    could go: the one a reload drew just now is released last."""
+    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {})
+    entry = hold(cache, dataset("reloaded", range(1, 3)))
+    cache.retain("tab", entry)
+    reloaded = open_plot(window, qtbot, entry)
+    older = open_plot(window, qtbot, dataset("older", range(1, 3)))
+    shown = open_plot(window, qtbot, dataset("shown", range(1, 2)))
+    panel = window.panel_right_top_plot_settings
+    assert reloaded.release()
+    panel.show_plot(dock_of(reloaded))  # Reloads (auto reload).
+    qtbot.waitUntil(lambda: drawn(reloaded), timeout=10_000)
+    panel.show_plot(dock_of(older))
+    panel.show_plot(dock_of(shown))  # Least recently viewed: reloaded, then older.
+    assert reloaded.recently_reloaded() and not older.recently_reloaded()
+    window.ram_budget.check()
+    cache.max_data_bytes = int((window.ram_budget.usage.total - 1) / 0.8)
+    window.ram_budget.check()
+    assert older.released is not None and reloaded.released is None
+    reloaded.reloaded_at -= 60  # Later, it goes in its turn.
+    assert not reloaded.recently_reloaded()
+
+
 def test_auto_reload_setting_saved_and_read(qtbot: QtBot, cache: FolderCache, tmp_path: Path) -> None:
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     assert read_auto_reload(settings) is True  # On by default.

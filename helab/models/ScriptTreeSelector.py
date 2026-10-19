@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 )
 from pyqtgraph.parametertree import Parameter
 
-from helab.analysis.budget import (Buffers, RamBudget, Restored, arrays_in, buffers, hollow, restore, shots_list,
+from helab.analysis.budget import (RELOAD_GRACE, Buffers, RamBudget, Restored, arrays_in, buffers, hollow, restore, shots_list,
                                    view_buffers)
 from helab.analysis.dataset_view import DatasetView, ViewKey
 from helab.analysis.follow import FOLLOW, Follow, LiveFeed, changes, live_specs, policy_of, shots_text
@@ -583,6 +583,11 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._reload_shots: Optional[Tuple[int, ...]] = None  # The shots it takes (None: the view's).
         self._reload_note = ""  # What the last reload left out (changed or missing shots).
         self._picture_cost = 0  # Bytes its picture took when last taken (0: not yet).
+        # A reload found its data nowhere: showing it doesn't try again until its folder's data
+        # in RAM or its disk cache changes (Reload always tries).
+        self._nowhere = False
+        self._watching_folder = False
+        self.reloaded_at = -math.inf  # Monotonic: when a reload last drew it.
         # Its runs, whose completed results RamResults may keep (counted as the plot's RAM).
         self._runs: List[str] = []
 
@@ -721,7 +726,10 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if result.state == "completed" and not error:
             self.shown, self._shown_view = result, view
             self.runner.results.pin(result.job_id)
+            if self.released is not None:
+                self.reloaded_at = time.monotonic()
             self.released = None  # Drawn again: its picture goes.
+            self._nowhere = False
         self._show_content(content, result, specs, warnings)
         self._follow_next()
 
@@ -980,8 +988,19 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def _plot_shown(self, dock: QDockWidget) -> None:
         """Shown again (its settings show): a released plot reloads, if Settings → Cache says so."""
         if (dock is self.dock_widget and self.released is not None and self.budget is not None
-                and self.budget.auto_reload):
+                and self.budget.auto_reload and not self._nowhere):
             self.reload()
+
+    def recently_reloaded(self) -> bool:
+        """Drawn again by a reload in the last ``RELOAD_GRACE`` seconds: the budget releases
+        other plots before it, so two plots don't keep releasing and reloading each other."""
+        return time.monotonic() - self.reloaded_at < RELOAD_GRACE
+
+    @pyqtSlot(str)
+    def _folder_changed(self, path: str) -> None:
+        """The folder's data in RAM or its disk cache changed: a reload may find it now."""
+        if self._nowhere and FolderCache.key(path) == FolderCache.key(self.path):
+            self._nowhere = False
 
     def _cache(self) -> FolderCache:
         return self.budget.cache if self.budget is not None else get_folder_cache(get_io_service())
@@ -1097,8 +1116,15 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.status_label.setText(f"Reloading from {where}…")
 
     def _reload_failed(self, why: str) -> None:
-        """Nothing to reload from: the picture stays and says why."""
+        """Nothing to reload from: the picture stays and says why. Showing it again won't try
+        again until the folder's data or disk cache changes."""
         self._reload_values = None
+        self._nowhere = True
+        if not self._watching_folder:
+            cache = self._cache()
+            cache.datasetChanged.connect(self._folder_changed)
+            cache.diskCacheChanged.connect(self._folder_changed)
+            self._watching_folder = True
         if self.released is not None:
             self.released.set_state(f"can't reload: {why}")
         self.status_label.setText(f"Can't reload: {why}. Load the folder again, then Reload.")
@@ -1116,6 +1142,13 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._forget_runs()
         if self._reload_owner:
             self._end_disk_read(self._cache())
+        if self._watching_folder:
+            cache = self._cache()
+            for signal in (cache.datasetChanged, cache.diskCacheChanged):
+                try:
+                    signal.disconnect(self._folder_changed)
+                except TypeError:
+                    pass
         window = self.main_window
         panel = (window.panel_right_top_plot_settings
                  if self.param_tab is not None and window is not None and not sip.isdeleted(window) else None)
@@ -1551,7 +1584,8 @@ class PlotSettingsPanel(QWidget):
     (out, and maybe back) keeps its page where it is until the user lets go (``DragEnd``):
     then it moves once, or not at all if the plot is docked again.
 
-    ``plotShown`` says each time a plot's page shows (a released plot may reload then)."""
+    ``plotShown`` says when a plot becomes the shown one (a released plot may reload then);
+    clicks in the plot already shown don't repeat it."""
 
     plotShown = pyqtSignal(QDockWidget)
 
@@ -1670,6 +1704,7 @@ class PlotSettingsPanel(QWidget):
         page = self._pages.get(dock)
         if page is None:
             return
+        before = self.current_plot()
         if dock in self._recent:
             self._recent.remove(dock)
         self._recent.append(dock)
@@ -1685,7 +1720,8 @@ class PlotSettingsPanel(QWidget):
         # moves here, so a click back in that plot changes focus and shows it again.
         if self._plot_of(QApplication.focusWidget()) not in (None, dock) and dock.isVisible():
             dock.setFocus(Qt.FocusReason.OtherFocusReason)
-        self.plotShown.emit(dock)
+        if before is not dock:
+            self.plotShown.emit(dock)
 
     def current_plot(self) -> Optional[QDockWidget]:
         return self._recent[-1] if self._recent else None
