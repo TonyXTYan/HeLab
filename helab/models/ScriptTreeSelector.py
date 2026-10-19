@@ -767,6 +767,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if callable(show):
             chosen, settings = self.script.describe_run(self.action, result.parameters, self.view)
             record = describe(specs, result.parameters, every=True)
+            found = self.script.result_record(self.action, result) if result.state == "completed" else []
+            if found:
+                record = "\n".join((record, *found))
             if warnings:
                 settings = " · ".join(filter(None, (settings, f"⚠ {warnings}")))
                 record = f"{record}\nWarning: {warnings}"

@@ -299,7 +299,7 @@ def test_bounds_and_poor_models_are_noted() -> None:
 
 def test_registry() -> None:
     assert {"gaussian", "thomas_fermi_2", "thomas_fermi_1_5", "bimodal_tf2_gaussian",
-            "bimodal_tf1_5_gaussian"} <= set(MODELS)
+            "bimodal_tf1_5_gaussian", "arrival_time"} <= set(MODELS)
     with pytest.raises(ValueError):
         fits.register(MODELS["gaussian"])
     assert MODELS["gaussian"].names == ("amplitude", "centre", "sigma", "offset")

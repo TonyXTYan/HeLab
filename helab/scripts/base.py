@@ -116,6 +116,12 @@ class DatasetAnalysis(HelabAnalysisScript):
         Shots parameters choose (``selection.SHOT_SPECS``) when it has them, else all."""
         return select_shots(view, values) if SHOTS.name in values else view.shot_numbers
 
+    def result_record(self, action_name: str, result: AnalysisResult) -> List[str]:
+        """Lines a completed run adds to the plot dock's record (its tooltip), after the
+        parameters: what the run found or used beyond them (fit results, the constants and
+        where each came from). Default: none."""
+        return []
+
     def detected_parameters(self, action_name: str, result: AnalysisResult) -> dict[str, Any]:
         """Parameter values a completed run found in the data (e.g. where peaks are), which the
         plot's settings then show, so switching to manual starts from them. Default: none."""

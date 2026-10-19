@@ -86,6 +86,11 @@ class AnalysisContext:
     cancel_event: threading.Event = field(default_factory=threading.Event, compare=False)
     # The shots the run uses (``DatasetAnalysis.covered_shots``); all of the view's by default.
     coverage: Coverage | None = None
+    # The lab and folder layers of the constants (``physics.resolve``), as {"lab": {key: value},
+    # "folder": {…}}, taken when the run starts (compute does no I/O); a plot adds its own
+    # overrides from its parameters. Empty until the Lab parameters and folder settings (F0b)
+    # exist: the table's defaults apply.
+    constants: Mapping[str, Mapping[str, float]] = field(default_factory=lambda: MappingProxyType({}))
 
     @property
     def covered(self) -> Coverage:
