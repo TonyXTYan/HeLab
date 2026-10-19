@@ -173,6 +173,20 @@ fits may want `"counts"`, or a direct Poisson likelihood minimiser later.
   "Thermal amplitude consistent with 0", R within 1 % of the truth. The 40 % mixture: N0/N
   0.39–0.41 ± 0.005. Tested: pure thermal N0/N < 0.2 and noted or under 2 SE in ≥ 6 of 8
   seeds; pure condensate noted in every seed with N0/N > 0.95.
+- **The cap is a fit option**, `fit_histogram(…, max_radius_ratio=2.0)`, recorded in the
+  result's `options` and `as_record()["options"]`. The default 2 (μ ≤ 2 k_B T) is valid
+  near Tc down to roughly 0.4 Tc. Cold, deep condensates (T ≈ 0.1–0.3 Tc) often have
+  μ/k_B T of 3–10, a ratio of 2.5–4.5 (the Coordinator's point), and would be clamped.
+  So a fit ending within 1 % of the cap says "TF radius at its limit (R = c·σ_th): the
+  cloud may be colder than the limit allows; raise it or treat T and N0/N as bounds"
+  (instead of the generic "at its bound"). A fourth start at r = 3 (clipped to the cap)
+  lets a raised cap reach cold clouds. Tested on a cold mixture with R/σ_th = 3 (12,000
+  TF + 8,000 thermal events): the default gives the note in every seed (R clamped about
+  5 % low); a cap of 5 recovers r = 2.98–3.09 and R within 2.5 % in 6 of 6 seeds. A
+  higher cap brings back some of the ambiguity on thermal clouds, so **the default is
+  Tony's to choose** *(for Tony)*: 2 (safe for clouds near Tc, notes on cold ones), or a
+  higher default such as 4 with the note kept, or the cap as a D4 plot setting
+  (proposed: a D4 setting defaulting to 2).
 
 **The TF exponent of a DLD histogram is 2 on every axis** *(for Tony, a correction to the
 review notes)*. The 3D TF density n ∝ (1 − Σ xᵢ²/Rᵢ²)₊ keeps its shape through the

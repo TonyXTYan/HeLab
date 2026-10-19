@@ -183,6 +183,30 @@ def test_bimodal_on_a_pure_condensate_finds_no_thermal_part() -> None:
         assert result["sigma"].value >= result["radius"].value / fits.MAX_RADIUS_RATIO * (1 - 1e-9)
 
 
+def test_a_cold_condensate_at_the_ratio_cap_says_so() -> None:
+    """A deep condensate (μ ≈ 4.5 k_B T, true R/σ_th = 3) is clamped by the default cap of 2,
+    with a note; with the cap raised to 5 it is recovered."""
+    limit = "TF radius at its limit (R = 2·σ_th)"
+    for seed in range(3):
+        rng = np.random.default_rng(seed)
+        events = np.concatenate([thomas_fermi_events(rng, 12_000, 1.5e-3), rng.normal(0, 5e-4, 8000)])
+        counts, edges = np.histogram(events, bins=200, range=(-5e-3, 5e-3))
+        capped = fit_histogram(bin_centres(edges), counts, "bimodal_tf2_gaussian")
+        assert capped.ok
+        assert any(note.startswith(limit) for note in capped.notes), capped.notes
+        assert not any(note.startswith("at its bound") for note in capped.notes)
+        assert capped["ratio"].value == pytest.approx(2.0, rel=1e-6)
+        assert capped.as_record()["options"] == {"max_radius_ratio": 2.0}
+        raised = fit_histogram(bin_centres(edges), counts, "bimodal_tf2_gaussian", max_radius_ratio=5)
+        assert raised.ok and not any("at its limit" in note for note in raised.notes), raised.notes
+        assert raised["radius"].value == pytest.approx(1.5e-3, rel=0.04)
+        assert raised["ratio"].value == pytest.approx(3.0, rel=0.05)
+        assert raised.options == {"max_radius_ratio": 5.0}
+    assert fit_histogram([0.0], [1.0]).options == {}  # only models with a ratio take the cap
+    with pytest.raises(ValueError):
+        fit_histogram(np.linspace(0, 1, 20), np.ones(20), "bimodal_tf2_gaussian", max_radius_ratio=0)
+
+
 def test_areas_match_the_integrals() -> None:
     for power in (2.0, 1.5, 1.0):
         integral, _ = quad(lambda x: float(fits.thomas_fermi(np.array([x]), 3.0, 0.5, 2.0, 0.0, power)[0]), -1.5, 2.5)

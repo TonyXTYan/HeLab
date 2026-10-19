@@ -56,9 +56,12 @@ SETTLED = 0.01  # reweighting stops once no parameter moves more than this many 
 VARIANCE_FLOOR = 0.1  # counts: the least variance a bin is given when the model is near zero there
 CHI2_NOTE = 3.0  # a reduced χ² above this gets a note: the model doesn't describe the data well
 ZERO_SE = 2.0  # an amplitude within this many SEs of 0 is "consistent with 0"
-# The bimodal model's R / σ_thermal is at most this; see ``bimodal_model``.
+# The bimodal model's R / σ_thermal is at most this by default (fit_histogram's
+# max_radius_ratio); see the comment above ``bimodal_model``.
 MAX_RADIUS_RATIO = 2.0
 MIN_RADIUS_RATIO = 0.02
+RATIO = "ratio"  # the parameter max_radius_ratio caps
+RATIO_CAP_NEAR = 0.01  # a ratio within this fraction of the cap is "at its limit"
 
 # curve_fit warns when it can't estimate a covariance; the result's checks report that
 # instead. Set once here, for SciPy's optimizer only: per-call filters aren't thread-safe.
@@ -139,6 +142,7 @@ class FitResult:
     dof: int = 0
     points: int = 0  # bins fitted (after leaving out unusable ones)
     notes: tuple[str, ...] = ()
+    options: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}))  # e.g. max_radius_ratio
 
     def __post_init__(self) -> None:
         for array in (self.covariance, self.x, self.curve):
@@ -180,7 +184,7 @@ class FitResult:
         return {"model": self.model.key, "failure": self.failure, "notes": list(self.notes),
                 "estimates": {name: estimate.as_record() for name, estimate in self.estimates.items()},
                 "chi2": finite_or_none(self.chi2), "dof": self.dof, "points": self.points,
-                "reduced_chi2": finite_or_none(self.reduced_chi2)}
+                "reduced_chi2": finite_or_none(self.reduced_chi2), "options": dict(self.options)}
 
 
 def bin_centres(edges: npt.ArrayLike) -> Array:
@@ -190,12 +194,21 @@ def bin_centres(edges: npt.ArrayLike) -> Array:
 
 def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | FitModel = "gaussian", *,
                   weights: Weights = "poisson", sigma: npt.ArrayLike | None = None,
-                  max_evaluations: int = MAX_EVALUATIONS) -> FitResult:
+                  max_evaluations: int = MAX_EVALUATIONS,
+                  max_radius_ratio: float = MAX_RADIUS_RATIO) -> FitResult:
     """Fit ``model`` (a ``MODELS`` key or a ``FitModel``) to a histogram's bin centres and
     raw counts. ``sigma``, when given, is each bin's error (absolute) and replaces
     ``weights``: pass it for anything that isn't raw counts. Bins with a non-finite centre,
-    count or error, or an error ≤ 0, are left out (noted)."""
+    count or error, or an error ≤ 0, are left out (noted).
+
+    ``max_radius_ratio`` caps R/σ_th in models with a ``ratio`` parameter (bimodal; see
+    ``bimodal_model`` for why 2, and when to raise it). A fit that ends at the cap says so;
+    the cap goes in the result's ``options`` and record."""
     fit_model = MODELS[model] if isinstance(model, str) else model
+    has_ratio = RATIO in fit_model.names
+    if has_ratio and not max_radius_ratio > MIN_RADIUS_RATIO:
+        raise ValueError(f"max_radius_ratio must be above {MIN_RADIUS_RATIO}")
+    options = MappingProxyType({"max_radius_ratio": float(max_radius_ratio)} if has_ratio else {})
     x = np.asarray(centres, dtype=np.float64).ravel()
     y = np.asarray(counts, dtype=np.float64).ravel()
     if len(x) != len(y):
@@ -224,7 +237,8 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
     def failed(reason: str) -> FitResult:
         nan = MappingProxyType({name: Estimate(math.nan, math.nan)
                                 for name in (*fit_model.names, *(extra.name for extra in fit_model.extras))})
-        return FitResult(fit_model, reason, nan, None, x, np.empty(0), points=len(x), notes=tuple(notes))
+        return FitResult(fit_model, reason, nan, None, x, np.empty(0), points=len(x), notes=tuple(notes),
+                         options=options)
 
     if len(x) == 0:
         return failed("no data to fit")
@@ -251,7 +265,9 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
     def normalised_model(u: Array, *normalised: float) -> Array:
         return fit_model.function(centre + span * u, *to_data(np.asarray(normalised))) / height
 
-    lower, upper = (np.asarray(bound, dtype=np.float64) for bound in fit_model.bounds(x, y))
+    lower, upper = (np.array(bound, dtype=np.float64) for bound in fit_model.bounds(x, y))
+    if has_ratio:
+        upper[fit_model.names.index(RATIO)] = max_radius_ratio
     lower_n, upper_n = (lower - shift) / scale, (upper - shift) / scale
     u, y_n, errors_n = (x - centre) / span, y / height, errors / height
     room = np.where(np.isfinite(upper_n - lower_n), 1e-6 * (upper_n - lower_n), 1e-6)
@@ -311,10 +327,16 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
     if undetermined or not finite_covariance:
         failure = (f"not determined by the data: {', '.join(undetermined) or 'the covariance is not finite'} "
                    "(no usable SE)")
+    capped = has_ratio and RATIO not in gated and values[fit_model.names.index(RATIO)] >= \
+        (1 - RATIO_CAP_NEAR) * max_radius_ratio
+    if capped:
+        notes.append(f"TF radius at its limit (R = {max_radius_ratio:g}·σ_th): the cloud may be colder than "
+                     "the limit allows; raise it or treat T and N0/N as bounds")
     width = np.where(np.isfinite(upper_n - lower_n), upper_n - lower_n, np.maximum(np.abs(found), 1.0))
     at_bound = [parameter.title for parameter, value, low, high, size in
                 zip(fit_model.parameters, found, lower_n, upper_n, width)
                 if parameter.name not in zero and parameter.name not in gated
+                and not (capped and parameter.name == RATIO)
                 and (value - low <= 1e-6 * size or high - value <= 1e-6 * size)]
     if at_bound:
         notes.append(f"at its bound: {', '.join(at_bound)} (its SE is not reliable)")
@@ -327,7 +349,7 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
                              np.full((count, count), math.nan))
         estimates[extra.name] = Estimate(estimate.value, math.nan if set(extra.gates) & zero else estimate.se)
     return FitResult(fit_model, failure, MappingProxyType(estimates), covariance, x,
-                     fit_model.function(x, *values), chi2, dof, len(x), tuple(notes))
+                     fit_model.function(x, *values), chi2, dof, len(x), tuple(notes), options)
 
 
 def _zero_parts(model: FitModel, values: Array, ses: Mapping[str, float], found: Array, lower_n: Array,
@@ -485,22 +507,27 @@ def thomas_fermi_model(power: float) -> FitModel:
         areas=lambda p: {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2]), power)})
 
 
-# The bimodal model fits R as a ratio to the thermal width, r = R/σ_th ≤ MAX_RADIUS_RATIO.
-# Unconstrained, a TF part and a Gaussian sum to a shape close to either alone: on a purely
-# thermal cloud the fit invented a condensate wider than the Gaussian (R/σ 2–4, N0/N up to
-# 0.15), and on a pure condensate the "thermal" part became a narrow spike inside the TF.
-# The bound follows the physics: after a time of flight t both widths grow with t,
+# The bimodal model fits R as a ratio to the thermal width, r = R/σ_th, capped by
+# fit_histogram's max_radius_ratio (default MAX_RADIUS_RATIO = 2). Unconstrained, a TF part
+# and a Gaussian sum to a shape close to either alone: on a purely thermal cloud the fit
+# invented a condensate wider than the Gaussian (R/σ 2–4, N0/N up to 0.15), and on a pure
+# condensate the "thermal" part became a narrow spike inside the TF.
+# The cap follows the physics: after a time of flight t both widths grow with t,
 # σ_th = √(k_B T/m)·t and R = √(2μ/m)·t (a TF cloud expands at its sound-speed scale), so
-# R/σ_th = √(2μ/k_B T): 2 at μ = 2 k_B T. Colder clouds than that have so few thermal atoms
-# that the Gaussian part isn't measurable anyway (and its amplitude then reads consistent
-# with 0). Each part's shape parameters are gated by its amplitude.
+# R/σ_th = √(2μ/k_B T). The default 2 allows μ ≤ 2 k_B T: clouds near Tc down to roughly
+# 0.4 Tc. Colder, deep condensates (T ≈ 0.1–0.3 Tc) often have μ/k_B T of 3–10, a ratio of
+# 2.5–4.5: raise the cap for them (a run that ends at the cap says so, and its T and N0/N
+# are then bounds, not values). A higher cap brings back some of the ambiguity above, so
+# raise it only when the data call for it. Each part's shape parameters are gated by its
+# amplitude.
 
 
 def bimodal_model(power: float) -> FitModel:
     """A condensate on a thermal cloud, one centre:
     A_c (1 − u²)₊^p + A_t exp(−(x − x₀)²/2σ²) + offset, u = (x − x₀)/R, R = r σ with
-    r = R/σ in [MIN_RADIUS_RATIO, MAX_RADIUS_RATIO]. R is reported as an extra. Started from
-    a Gaussian fit (count weights, or the caller's errors), split three ways."""
+    r = R/σ from MIN_RADIUS_RATIO up to the fit's max_radius_ratio. R is reported as an
+    extra. Started from a Gaussian fit (count weights, or the caller's errors), split four
+    ways (the last a cold cloud's, clipped to the cap)."""
     def function(x: Array, condensate: float, centre: float, ratio: float, thermal: float, sigma: float,
                  offset: float) -> Array:
         return (thomas_fermi(x, condensate, centre, ratio * sigma, 0.0, power)
@@ -513,7 +540,7 @@ def bimodal_model(power: float) -> FitModel:
         else:
             baseline, peak, mean, spread = _moments(x, y)
         # (condensate share of the peak, R/σ_thermal, σ_thermal / σ_gauss)
-        splits = ((0.7, 1.5, 1.4), (0.5, 1.0, 1.3), (0.3, 0.6, 1.1))
+        splits = ((0.7, 1.5, 1.4), (0.5, 1.0, 1.3), (0.3, 0.6, 1.1), (0.7, 3.0, 0.8))
         return [np.array([share * peak, mean, ratio, (1 - share) * peak, s * spread, baseline])
                 for share, ratio, s in splits]
 

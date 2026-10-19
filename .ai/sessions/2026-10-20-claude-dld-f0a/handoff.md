@@ -16,11 +16,11 @@ checkout's venv, so `pyright` finds the packages.
   specials), `pooled_mean_and_std`, `sewm`, `propagate`.
 - `helab/analysis/fits.py`: `fit_histogram` → `FitResult` (read-only arrays, strict-JSON
   record); failures as results; a model registry with gates and extras; Gaussian + offset,
-  Thomas–Fermi p = 2 and 3/2, bimodal TF + Gaussian (shared centre, R/σ_th ≤ 2) with
+  Thomas–Fermi p = 2 and 3/2, bimodal TF + Gaussian (shared centre, R/σ_th capped) with
   component areas. Default weights are the Poisson maximum-likelihood fit (see notes.md;
   the plain √max(n, 1) fit biases widths low and is kept as `"counts"`).
 - Tests: `tests/test_physics.py`, `tests/test_fits.py`, `tests/test_uncertainty_format.py`
-  (157 tests, about 10 s with `-n 2`).
+  (158 tests, about 10 s with `-n 2`).
 
 Design choices, derivations and the items proposed for Tony: [notes.md](notes.md).
 
@@ -51,7 +51,14 @@ The Coordinator's review of `98ea572`, all addressed:
 13. He* mass from the He-4 atomic mass, 4.00260325413 u, checked against CODATA's alpha
     particle plus two electrons.
 
+Follow-up (third commit): the bimodal cap became the `max_radius_ratio` option, with the
+"TF radius at its limit" note, the cap in `options` / `as_record()`, and a cold-mixture
+test (R/σ_th = 3: noted at the default, recovered with the cap at 5).
+
 ## Checks
+
+Third commit: the three test files 158 passed, no reruns; `mypy helab tests --strict` and
+`pyright helab tests` (the venv's) clean; `git diff --check` clean.
 
 Second commit:
 - `mypy helab tests --strict` and `pyright helab tests` (the venv's): clean.
@@ -76,8 +83,11 @@ venv not activated): `6 failed, 1414 passed, 7 skipped, 2 xfailed, 31 rerun in 2
    review notes say; 3/2 is for a slice through one other axis. Correct the review's D4
    and legacy-bug 2 wording if he agrees.
 2. **Poisson likelihood weights by default** instead of plain √max(n, 1).
-3. **Bimodal R/σ_th ≤ 2** (μ ≤ 2 k_B T), so the fit doesn't invent a condensate on a thermal
-   cloud or a thermal spike inside a condensate.
+3. **Bimodal R/σ_th cap, default to choose.** `max_radius_ratio` (default 2, μ ≤ 2 k_B T)
+   stops the fit inventing a condensate on a thermal cloud or a thermal spike inside a
+   condensate, but clamps cold, deep condensates (T ≈ 0.1–0.3 Tc: ratio 2.5–4.5). Those
+   get a "TF radius at its limit" note, and the cap is in the record. Choose the default:
+   2 (proposed, as a D4 plot setting), or higher (e.g. 4) with the note kept.
 4. **Fall time rule** (cases in notes.md): a hand-set fall time wins only at the fall
    distance's (and g's) level or a more specific one; otherwise it's derived again. A kept
    one that disagrees with √(2h/g) by more than 0.1 % is noted.
@@ -126,5 +136,6 @@ venv not activated): `6 failed, 1414 passed, 7 skipped, 2 xfailed, 31 rerun in 2
   roles (and gates if it has parts), `guesses(x, y, errors)`, `bounds(x, y)`, `areas`.
 - D4: `bimodal_tf2_gaussian`; R is `result["radius"]` (an extra), N0/N
   `result.derived(…)` from `model.areas(p)`. Read "consistent with 0" notes as "no
-  condensate" or "no thermal part". Add the g_{5/2} thermal part as a model. Consider
+  condensate" or "no thermal part". Offer `max_radius_ratio` as a plot setting and show
+  the "TF radius at its limit" note. Add the g_{5/2} thermal part as a model. Consider
   integrating the model over bins when they are coarse compared with R (notes.md).
