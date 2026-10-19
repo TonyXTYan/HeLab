@@ -352,3 +352,93 @@ def test_review_from_settings_is_modal_only_while_settings_is_open(
         for key in (location, "smb://server/other"):
             cache.root_duplicates.pop(key, None)
         window.hide()
+
+
+def test_help_menu_records_the_io_trace_for_this_session(
+    main_window: HelabMainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
+) -> None:
+    """Off at every start; turned on, a new file in the temp folder's io-traces folder and a status-bar
+    note. Earlier traces ask once (Keep, the default, or Delete old traces); none, no question."""
+    import os
+    from helab.utils import cache_location
+    from helab.utils.io_service import get_io_service, io_trace_folder
+    service = get_io_service()
+    action = main_window.action_io_trace
+    help_menu = next(item.menu() for item in main_window.menu_bar.actions() if item.text() == "Help")
+    assert isinstance(help_menu, QMenu)
+    assert {"Record I/O trace (this session)", "Show I/O trace folder"} <= {a.text() for a in help_menu.actions()}
+    assert action.isCheckable() and not action.isChecked() and service.trace_file is None
+    assert main_window.io_trace_label.isHidden()
+    monkeypatch.setattr("helab.views.HelabMainWindow.DIR_TEMPS", str(tmp_path))
+    folder = io_trace_folder(str(tmp_path))
+    asked: list[tuple[list[str], str]] = []
+    answer = [False]
+
+    def ask(earlier: list[str], where: str) -> bool:
+        asked.append((earlier, where))
+        return answer[0]
+    main_window.ask_delete_old_traces = ask
+    try:
+        # No earlier traces: no question.
+        action.setChecked(True)
+        first = service.trace_file
+        assert first is not None and os.path.dirname(first) == folder and not asked
+        assert main_window.io_trace_label.isVisible() and first in main_window.io_trace_label.toolTip()
+        with open(first, "w", encoding="utf-8") as stream:
+            stream.write("{}\n")  # (As a helper would write it.)
+        action.setChecked(False)
+        assert service.trace_file is None and main_window.io_trace_label.isHidden()
+        other = os.path.join(folder, "notes.txt")  # Not a trace: never removed.
+        with open(other, "w", encoding="utf-8") as stream:
+            stream.write("kept")
+        # Keep (the default): the earlier trace stays.
+        action.setChecked(True)
+        second = service.trace_file
+        assert asked == [([first], folder)] and second != first  # (A new name, even within the same second.)
+        assert os.path.exists(first) and os.path.exists(other)
+        with open(str(second), "w", encoding="utf-8") as stream:
+            stream.write("{}\n")
+        action.setChecked(False)
+        # Delete old traces: only earlier io-trace-*.jsonl files go, never the one about to start.
+        asked.clear()
+        answer[0] = True
+        action.setChecked(True)
+        third = service.trace_file
+        assert asked == [(sorted([first, str(second)]), folder)] and third is not None
+        assert not os.path.exists(first) and not os.path.exists(str(second)) and os.path.exists(other)
+        assert sorted(os.listdir(folder)) == ["notes.txt"]  # (The new file appears with its first line.)
+        action.setChecked(False)
+        # A temp folder on a share: refused, unticked, nothing recorded.
+        monkeypatch.setattr(cache_location, "cache_location_problem", lambda path: "on a network drive (smbfs)")
+        with patch.object(QMessageBox, "warning") as warned:
+            action.setChecked(True)
+        assert not action.isChecked() and service.trace_file is None and main_window.io_trace_label.isHidden()
+        assert "network drive" in warned.call_args.args[2]
+    finally:
+        main_window.ask_delete_old_traces = None
+        action.setChecked(False)
+        service.stop_io_trace()
+
+
+@pytest.mark.parametrize("choice", ["Keep", "Delete old traces", None])
+def test_earlier_io_traces_ask_with_keep_as_the_default(
+    main_window: HelabMainWindow, monkeypatch: pytest.MonkeyPatch, tmp_path: Any, choice: str | None,
+) -> None:
+    earlier = [str(tmp_path / "io-trace-1.jsonl"), str(tmp_path / "io-trace-2.jsonl")]
+    for file in earlier:
+        with open(file, "wb") as stream:
+            stream.write(b"x" * 1500)
+    seen: list[tuple[str, str, list[str]]] = []
+
+    def run(box: QMessageBox) -> int:
+        default = box.defaultButton()
+        assert default is not None
+        seen.append((box.text(), default.text(), [button.text() for button in box.buttons()]))
+        if choice is not None:  # (None: closed with Esc or the title bar.)
+            next(button for button in box.buttons() if button.text() == choice).click()
+        return 0
+    monkeypatch.setattr(QMessageBox, "exec", run)
+    assert main_window._ask_delete_old_traces(earlier, str(tmp_path)) is (choice == "Delete old traces")
+    text, default, buttons = seen[0]
+    assert text.startswith("2 earlier I/O traces (") and text.endswith(f") in {tmp_path}.")
+    assert default == "Keep" and sorted(buttons) == ["Delete old traces", "Keep"]

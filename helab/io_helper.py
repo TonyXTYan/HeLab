@@ -47,34 +47,12 @@ def _read_gate(filename: str) -> None:
         time.sleep(READ_GATE_POLL)
 
 
-def _trace_file(value: str | None) -> str | None:
-    """Where the I/O trace goes: ``value`` (HELAB_IO_TRACE), unless it is on a network drive or
-    share, which the trace would then add traffic to (and sharing writes from several helpers there
-    can garble it): refused with a warning. The path is resolved first (``realpath``), so a local
-    link to a share is refused too; then only the mount table is read."""
-    if not value:
-        return None
-    given = os.path.abspath(os.path.expanduser(value))
-    path = os.path.realpath(given)
-    from helab.utils.cache_location import NETWORK_FILESYSTEMS, _filesystem
-    try:
-        fstype, remote = _filesystem(path)
-    except (OSError, RuntimeError):
-        fstype, remote = "", False
-    # (A UNC path, given or resolved: POSIX's realpath folds a leading "//" away.)
-    unc = any(candidate.startswith(("\\\\", "//")) for candidate in (given, path))
-    if unc or remote or fstype in NETWORK_FILESYSTEMS:
-        import logging
-        logging.warning("HELAB_IO_TRACE ignored: %s is on a network drive (%s); use a local file",
-                        path, fstype or "remote")
-        return None
-    return path
-
-
-# Debugging aid: with HELAB_IO_TRACE=<file>, every operation a helper makes on a source folder is
-# appended to <file> as one JSON line (``_trace``), with the request it serves. Unset in production:
-# nothing is written, and the wrappers below make the same calls as before.
-TRACE = _trace_file(os.environ.get("HELAB_IO_TRACE"))
+# The I/O trace (Help › Record I/O trace, this session): every operation a helper makes on a source
+# folder is appended to the trace file as one JSON line (``_trace``), with the request it serves. The
+# app sends the file with each request while the trace is on (``IOService.trace_file``); test seam:
+# HELAB_TEST_IO_TRACE=<file> traces every helper. Off: nothing is written, and the wrappers below make
+# the same calls as untraced code.
+TRACE = os.environ.get("HELAB_TEST_IO_TRACE") or None
 # This helper's request, on every line (``main``): its operation, owner and tabs, lane, flags.
 _trace_request: dict[str, Any] = {}
 _trace_fd: int | None = None
@@ -97,16 +75,20 @@ def _trace(op: str, path: str, reason: str, **fields: Any) -> None:
 
 
 def _start_trace(request: dict[str, Any]) -> None:
-    """Note the request every trace line serves, and that this helper started."""
+    """Trace to the file the app sent, if any; note the request every trace line serves, and that this
+    helper started."""
+    global TRACE
+    note = request.get("trace")
+    if isinstance(note, dict) and note.get("file"):
+        TRACE = str(note["file"])
     if TRACE is None:
         return
-    note = request.get("trace")
     operation = str(request.get("operation", ""))
     flags = [key for key in TRACE_FLAGS if request.get(key)]
     _trace_request.update(request="live" if operation == "load" and request.get("live") else operation,
                           target=request.get("path", ""), flags=flags)
     if isinstance(note, dict):
-        _trace_request.update(note)
+        _trace_request.update({key: value for key, value in note.items() if key != "file"})
     if request.get("memory"):
         _trace_request["held"] = len(request["memory"])
     _trace("request", str(request.get("path", "")), operation)

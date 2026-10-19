@@ -1,6 +1,12 @@
-"""Summarise a HeLab I/O trace (HELAB_IO_TRACE=<file>): what helpers did to source folders, how often, why.
+"""Summarise a HeLab I/O trace: what helpers did to source folders, how often, why.
 
     python trace_summary.py TRACE.jsonl [--under /Volumes/dld_output] [--minutes] [--young 5]
+
+Recording one: Help › Record I/O trace (this session) in HeLab, until it is turned off (or HeLab quits).
+Each recording is a new ``io-trace-<date>-<time>.jsonl`` in ``<HeLab's temp folder>/io-traces``
+(Help › Show I/O trace folder opens it; Settings → General shows the temp folder). Earlier traces are
+kept unless you choose Delete old traces when asked. Tests and scripts set ``IOService.trace_file`` or
+the test seam ``HELAB_TEST_IO_TRACE=<file>`` (helpers only) instead.
 
 Standalone (no HeLab import). Lines with ``op`` "phase" (written by scenarios.py) split the trace into
 phases; without them the whole trace is one phase, and ``--minutes`` adds a per-minute timeline.

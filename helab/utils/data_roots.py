@@ -223,7 +223,7 @@ def marker_label(folder: str) -> str:
 def read_marker(folder: str, *, trace: Callable[[str, dict[str, object]], None] | None = None) -> Marker:
     """Read a marker only from a source I/O operation, never from a local lane.
 
-    ``trace`` (the helpers' I/O trace, ``HELAB_IO_TRACE``) hears of each step that succeeded: open,
+    ``trace`` (the helpers' I/O trace, Help › Record I/O trace) hears of each step that succeeded: open,
     fstat (size, mtime_ns) and read (bytes)."""
     descriptor = os.open(os.path.join(folder, MARKER_NAME), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
     try:

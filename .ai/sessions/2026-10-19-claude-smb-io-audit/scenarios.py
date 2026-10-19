@@ -1,4 +1,5 @@
-"""Offscreen HeLab on a local test share with the I/O trace on: each scenario's source operations.
+"""Offscreen HeLab on a local test share with the I/O trace on (``IOService.trace_file``, as
+Help › Record I/O trace sets it, but in OUT_DIR): each scenario's source operations.
 
     python scenarios.py OUT_DIR --session 1     # empty disk cache: browse, load, Live, tab switch…
     python scenarios.py OUT_DIR --session 2     # restart on session 1's cache: cache first
@@ -122,7 +123,7 @@ def main() -> None:
     os.environ.update({
         "HELAB_DIR_CACHES_OVERRIDE": str(out / "caches"), "HELAB_DIR_TEMPS_OVERRIDE": str(out / "temps"),
         "HELAB_APP_DIR_OVERRIDE": str(out / "app"), "HELAB_TEST_VOLUME_ID": "trace-volume",
-        "HELAB_IO_TRACE": str(trace), "HELAB_TEST_READ_GATE": str(out / "gate"), "QT_QPA_PLATFORM": "offscreen"})
+        "HELAB_TEST_READ_GATE": str(out / "gate"), "QT_QPA_PLATFORM": "offscreen"})
     sys.path.insert(0, str(REPO))  # This checkout's helab (helpers follow it through PYTHONPATH).
 
     def note(record: dict[str, Any]) -> None:
@@ -163,6 +164,9 @@ def main() -> None:
     tab_widget.DEV_POTENTIAL_DATA_PATHS = [str(folders["share"])]
     tab_widget.DEFAULT_DATA_PATH = str(folders["share"])
     IOService.TIMEOUTS = (3.0, 4.0, 5.0)
+    # The trace on, as Help › Record I/O trace does (helpers get the file with each request), but into
+    # OUT_DIR: the phase marks and the GUI hook's lines go into the same file.
+    get_io_service().trace_file = str(trace)
     IconsInitUtil.initialise_icons()
     hook = SourceHook([folders["share"], folders["ramshare"]], note)
 

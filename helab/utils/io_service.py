@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+import itertools
 import json
 import logging
 import math
@@ -19,7 +20,6 @@ from typing import Any, Callable, Iterator, TYPE_CHECKING
 
 from PyQt6.QtCore import QCoreApplication, QObject, QTimer, pyqtSignal
 
-from helab import io_helper
 from helab.utils.constants import MAX_SIMULTANEOUS_IO
 from helab.utils.time_format import duration
 
@@ -55,11 +55,41 @@ class IORequest:
     paused: bool = False
     slow_stop_logged: bool = False
     control: threading.Lock = field(default_factory=threading.Lock)
-    # Whom the helper works for, sent to it only for the I/O trace (``io_helper.TRACE``).
+    # The I/O trace's file and whom the helper works for, sent only while the trace is on
+    # (``IOService.trace_file``).
     trace: dict[str, Any] | None = None
     # Arrays the helper needs from this process (Live's save: the data in RAM), by shot: written to
     # its private folder before it starts (``held_dir``), off the GUI thread.
     arrays: dict[int, Any] | None = None
+
+
+# Help › Record I/O trace (this session): every helper's operations on source folders, one JSON line
+# each, in this folder of HeLab's temp folder (Settings → General). Off at every start, never saved.
+IO_TRACE_FOLDER = "io-traces"
+
+
+def io_trace_folder(temps: str) -> str:
+    return os.path.join(temps, IO_TRACE_FOLDER)
+
+
+def io_trace_problem(temps: str) -> str:
+    """Why the trace can't go into the temp folder ``temps`` (on a network or synced folder: it would
+    add traffic there), or ""."""
+    from helab.utils.cache_location import cache_location_problem
+    problem = cache_location_problem(temps)
+    if not problem:
+        return ""
+    return f"HeLab's temp folder {temps} is {problem}: choose a local one in Settings → General and restart HeLab."
+
+
+def earlier_io_traces(folder: str) -> list[str]:
+    """The trace files already in ``folder`` (``io-trace-*.jsonl``), sorted by name."""
+    try:
+        with os.scandir(folder) as entries:
+            return sorted(entry.path for entry in entries
+                          if entry.name.startswith("io-trace-") and entry.name.endswith(".jsonl") and entry.is_file())
+    except OSError:
+        return []
 
 
 FOREGROUND = "foreground"
@@ -145,6 +175,8 @@ class IOService(QObject):
         self.owners_of: Callable[[IORequest], list[str]] = lambda request: [request.owner]
         # Set by FolderCache: last changes to a request's payload as its helper starts.
         self.before_start: Callable[[IORequest], None] | None = None
+        # The I/O trace's file while it's on (``start_io_trace``), sent with each request.
+        self.trace_file: str | None = None
         self._foreground_busy_at = -math.inf
         self._listing_busy_at = -math.inf
         self.timer = QTimer(self)
@@ -153,6 +185,26 @@ class IOService(QObject):
         app = QCoreApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self.shutdown)
+
+    def start_io_trace(self, temps: str) -> str:
+        """Record every helper's operations on source folders from now on, to a new file in the temp
+        folder ``temps`` (``io_trace_folder``); its path. Raises ``ValueError`` if ``temps`` is on a
+        network or synced folder."""
+        if problem := io_trace_problem(temps):
+            raise ValueError(problem)
+        folder = io_trace_folder(temps)
+        os.makedirs(folder, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        # A new name each time (on, off and on again within a second included): never an earlier file.
+        names = (f"io-trace-{stamp}{f'-{n}' if n > 1 else ''}.jsonl" for n in itertools.count(1))
+        self.trace_file = next(path for name in names if not os.path.exists(path := os.path.join(folder, name)))
+        logging.info("I/O trace on: %s", self.trace_file)
+        return self.trace_file
+
+    def stop_io_trace(self) -> None:
+        if self.trace_file is not None:
+            logging.info("I/O trace off: %s", self.trace_file)
+        self.trace_file = None
 
     def submit(self, owner: str, generation: int, path: str, operation: str,
                payload: dict[str, Any] | None = None, *, priority: bool = False,
@@ -345,9 +397,10 @@ class IOService(QObject):
         request.lane = lane
         request.started = time.monotonic()
         request.last_activity = request.started
-        if io_helper.TRACE is not None:
-            request.trace = {"owner": request.owner, "tabs": self.owners_of(request), "lane": lane,
-                             "attempt": request.attempt}
+        # (Each attempt: a retry after the trace was turned off isn't traced.)
+        request.trace = None if self.trace_file is None else {
+            "file": self.trace_file, "owner": request.owner, "tabs": self.owners_of(request), "lane": lane,
+            "attempt": request.attempt}
         self.active.append(request)
         self.resultReady.emit(request, {"kind": "started", "attempt": request.attempt})
         threading.Thread(target=self._run, args=(request,), daemon=True,

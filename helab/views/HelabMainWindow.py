@@ -1,3 +1,4 @@
+import contextlib
 import gc
 import logging
 import os
@@ -11,12 +12,12 @@ import types
 import warnings
 import threading
 import time
-from helab.utils.io_service import IORequest, get_io_service
+from helab.utils.io_service import IORequest, earlier_io_traces, get_io_service, io_trace_folder, io_trace_problem
 from helab.utils.folder_cache import get_folder_cache, set_disk_budget, store_options
 from helab.utils.gui_watchdog import GUIWatchdog
 from datetime import datetime, timedelta
 from sys import getsizeof
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 import psutil
 from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
@@ -182,6 +183,12 @@ class HelabMainWindow(QMainWindow):
         self.roots_button.setAutoRaise(True)
         self.roots_button.hide()
         self.status_bar.addPermanentWidget(self.roots_button)
+        # Shown while Help › Record I/O trace is on.
+        self.io_trace_label = QLabel("● I/O trace")
+        self.io_trace_label.hide()
+        self.status_bar.addPermanentWidget(self.io_trace_label)
+        # Replaceable in tests; None asks with a message box (``_ask_delete_old_traces``).
+        self.ask_delete_old_traces: Callable[[list[str], str], bool] | None = None
         self.status_bar.addPermanentWidget(self.status_bar_message_right)
         self.status_bar_message_right.setToolTip("(App resource usage) / (system total resource usage)")
 
@@ -496,9 +503,66 @@ class HelabMainWindow(QMainWindow):
             action_about = QAction("About HeLab", self)
             action_about.triggered.connect(self.show_about_dialog)
             menu_help.addAction(action_about)
+            menu_help.addSeparator()
+            # Off at every start and never saved.
+            self.action_io_trace = QAction("Record I/O trace (this session)", self)
+            self.action_io_trace.setCheckable(True)
+            self.action_io_trace.setToolTip("Record every operation HeLab's helpers make on source folders "
+                                            "(listings, stats, reads) in HeLab's temp folder, until turned off")
+            self.action_io_trace.toggled.connect(self._toggle_io_trace)
+            menu_help.addAction(self.action_io_trace)
+            action_trace_folder = QAction("Show I/O trace folder", self)
+            action_trace_folder.triggered.connect(self._show_io_trace_folder)
+            menu_help.addAction(action_trace_folder)
 
     def show_about_dialog(self) -> None:
         QMessageBox.about(self, "About HeLab", APP_BUILD_INFO.description())
+
+    def _toggle_io_trace(self, on: bool) -> None:
+        """Help › Record I/O trace (this session): a new trace file in the temp folder's io-traces
+        folder; earlier ones are kept unless the user deletes them when asked."""
+        service = get_io_service()
+        if not on:
+            service.stop_io_trace()
+            self.io_trace_label.hide()
+            return
+        if problem := io_trace_problem(DIR_TEMPS):
+            self.action_io_trace.blockSignals(True)
+            self.action_io_trace.setChecked(False)
+            self.action_io_trace.blockSignals(False)
+            QMessageBox.warning(self, "I/O trace", f"The I/O trace isn't recorded. {problem}")
+            return
+        folder = io_trace_folder(DIR_TEMPS)
+        earlier = earlier_io_traces(folder)
+        ask = self.ask_delete_old_traces or self._ask_delete_old_traces
+        if earlier and ask(earlier, folder):
+            for file in earlier:  # (Only earlier traces: the new one doesn't exist yet.)
+                with contextlib.suppress(OSError):
+                    os.remove(file)
+        path = service.start_io_trace(DIR_TEMPS)
+        self.io_trace_label.setToolTip(f"Recording the I/O trace to\n{path}\nHelp › Record I/O trace to stop.")
+        self.io_trace_label.show()
+
+    def _ask_delete_old_traces(self, earlier: list[str], folder: str) -> bool:
+        """Whether to delete the earlier traces (Keep is the default)."""
+        size = 0
+        for file in earlier:
+            with contextlib.suppress(OSError):
+                size += os.path.getsize(file)
+        box = QMessageBox(QMessageBox.Icon.Question, "I/O trace",
+                          f"{len(earlier):,} earlier I/O trace{'' if len(earlier) == 1 else 's'} "
+                          f"({byte_size(size)}) in {folder}.", QMessageBox.StandardButton.NoButton, self)
+        keep = box.addButton("Keep", QMessageBox.ButtonRole.RejectRole)
+        delete = box.addButton("Delete old traces", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(keep)
+        box.exec()
+        return box.clickedButton() is delete
+
+    def _show_io_trace_folder(self) -> None:
+        from PyQt6.QtGui import QDesktopServices
+        folder = io_trace_folder(DIR_TEMPS)
+        os.makedirs(folder, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def _on_drive_result(self, request: IORequest, event: dict[str, Any]) -> None:
         if self._closing or request.owner != self._drive_owner or event["kind"] != "drives":

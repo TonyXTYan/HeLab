@@ -1,6 +1,7 @@
-"""The opt-in I/O trace (``HELAB_IO_TRACE=<file>``): every operation a helper makes on a source folder,
-one JSON line each, with the request it serves. Off by default: nothing is written then, and helpers
-make the same calls and send the same events."""
+"""The I/O trace (Help › Record I/O trace, this session): every operation a helper makes on a source
+folder, one JSON line each, with the request it serves, in HeLab's temp folder. Off by default: nothing
+is written then, and helpers make the same calls and send the same events. Tests turn it on for helpers
+with the test seam ``HELAB_TEST_IO_TRACE=<file>`` (or ``IOService.trace_file``, as the menu does)."""
 from __future__ import annotations
 
 import builtins
@@ -57,7 +58,7 @@ def trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     monkeypatch.setattr(io_helper, "TRACE", str(file))
     monkeypatch.setattr(io_helper, "_trace_request", {})
     monkeypatch.setattr(io_helper, "_trace_fd", None)
-    monkeypatch.setenv("HELAB_IO_TRACE", str(file))
+    monkeypatch.setenv("HELAB_TEST_IO_TRACE", str(file))
     yield file
     if io_helper._trace_fd is not None:
         os.close(io_helper._trace_fd)
@@ -83,15 +84,38 @@ def events_of(call: Callable[[Callable[[dict[str, Any]], None]], None]) -> list[
     return [stable(event) for event in events]
 
 
-def test_off_unless_the_variable_names_a_file(tmp_path: Path) -> None:
+def test_off_unless_the_test_seam_names_a_file(tmp_path: Path) -> None:
+    """No user-facing variable: only the test seam turns a helper's trace on by itself (the old
+    HELAB_IO_TRACE does nothing)."""
     script = "import helab.io_helper as h; print(h.TRACE)"
-    environment = {key: value for key, value in os.environ.items() if key != "HELAB_IO_TRACE"}
-    for value, expected in ((None, "None"), ("", "None"), (str(tmp_path / "t.jsonl"), str(tmp_path / "t.jsonl"))):
-        if value is not None:
-            environment["HELAB_IO_TRACE"] = value
-        result = subprocess.run([sys.executable, "-c", script], env=environment, capture_output=True, text=True,
-                                timeout=60, check=True)
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ("HELAB_TEST_IO_TRACE", "HELAB_IO_TRACE")}
+    for name, value, expected in (("", None, "None"), ("HELAB_TEST_IO_TRACE", "", "None"),
+                                  ("HELAB_IO_TRACE", str(tmp_path / "t.jsonl"), "None"),
+                                  ("HELAB_TEST_IO_TRACE", str(tmp_path / "t.jsonl"), str(tmp_path / "t.jsonl"))):
+        run_environment = dict(environment, **({name: value} if name and value is not None else {}))
+        result = subprocess.run([sys.executable, "-c", script], env=run_environment, capture_output=True,
+                                text=True, timeout=60, check=True)
         assert result.stdout.strip() == expected
+
+
+def test_a_helper_traces_to_the_file_its_request_names(tmp_path: Path) -> None:
+    """As the app sends it while the trace is on (``IOService.trace_file``); nothing on stdout but events."""
+    run = tmp_path / "run"
+    write_shots(run, range(1, 3))
+    environment = {key: value for key, value in os.environ.items() if key != "HELAB_TEST_IO_TRACE"}
+    for traced in (False, True):
+        file = tmp_path / f"trace-{traced}.jsonl"
+        request: dict[str, Any] = {"operation": "list", "path": str(run)}
+        if traced:
+            request["trace"] = {"file": str(file), "owner": "o", "tabs": ["tab"], "lane": "foreground", "attempt": 1}
+        result = subprocess.run([sys.executable, "-m", "helab.io_helper"], input=json.dumps(request) + "\n",
+                                env=environment, capture_output=True, text=True, timeout=60, check=True)
+        assert all(json.loads(line)["kind"] for line in result.stdout.splitlines())
+        assert file.exists() is traced
+    records = lines(tmp_path / "trace-True.jsonl")
+    assert {record["op"] for record in records} >= {"request", "scandir", "request_end"}
+    assert all(record["tabs"] == ["tab"] and "file" not in record for record in records)
 
 
 def test_off_it_writes_nothing_and_lists_with_the_plain_scandir(tmp_path: Path,
@@ -217,6 +241,7 @@ def test_helpers_trace_their_request_and_the_tabs_they_work_for(
     share = tmp_path / "share"
     write_shots(share / "run", range(1, 3))
     service = IOService()
+    service.trace_file = str(trace)  # (As Help › Record I/O trace does: the app names the tabs.)
     monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
     explorer = FolderExplorer(str(share), str(share), str(share), [0, 4, 5])
     qtbot.addWidget(explorer)
@@ -315,36 +340,6 @@ def test_read_marker_behaves_the_same_with_a_trace_callback(tmp_path: Path) -> N
     data_roots.read_marker(str(good), trace=lambda name, fields: steps.append((name, fields)))
     size = (good / data_roots.MARKER_NAME).stat().st_size
     assert steps[1][1]["size"] == size and steps[2][1] == {"bytes": size}
-
-
-def test_a_trace_file_on_a_network_drive_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                                    caplog: pytest.LogCaptureFixture) -> None:
-    from helab.utils import cache_location
-    assert io_helper._trace_file(None) is None and io_helper._trace_file("") is None
-    assert io_helper._trace_file(str(tmp_path / "t.jsonl")) == str(tmp_path / "t.jsonl")
-    assert io_helper._trace_file("//server/share/t.jsonl") is None
-    monkeypatch.setattr(cache_location, "_filesystem", lambda path: ("smbfs", True))
-    assert io_helper._trace_file(str(tmp_path / "t.jsonl")) is None
-    assert "HELAB_IO_TRACE ignored" in caplog.text
-
-
-def test_a_trace_file_through_a_local_link_to_a_share_is_refused(tmp_path: Path,
-                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
-    """The destination is resolved before it's checked: a local folder linking to a share is the share."""
-    from helab.utils import cache_location
-    share = tmp_path / "share"  # (Stands in for a mounted share: the mount table below says so.)
-    share.mkdir()
-    local = tmp_path / "local"
-    local.mkdir()
-    try:
-        (local / "traces").symlink_to(share, target_is_directory=True)
-    except OSError as exc:  # (Windows without the symlink privilege.)
-        pytest.skip(f"Can't create a symlink here: {exc}")
-    real_share = os.path.realpath(share)
-    monkeypatch.setattr(cache_location, "_filesystem", lambda path: (
-        ("smbfs", False) if path.startswith(real_share) else ("apfs", False)))
-    assert io_helper._trace_file(str(local / "trace.jsonl")) == os.path.realpath(local / "trace.jsonl")
-    assert io_helper._trace_file(str(local / "traces" / "trace.jsonl")) is None
 
 
 def test_hiding_a_marker_is_traced(tmp_path: Path, trace: Path) -> None:
@@ -820,3 +815,40 @@ def test_reselecting_a_ram_only_folder_checks_it_without_listing_it(
     assert listings == ["load"] and model.nodes[str(run)].txy_count == 21
     explorer.close_cleanup()
     service.shutdown()
+
+
+def test_the_trace_goes_to_the_temp_folder_and_says_so_once_each_way(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Help › Record I/O trace: a new file in the temp folder's io-traces folder, one INFO line when it
+    starts and one when it stops; refused (no file, no line) when the temp folder is on a share."""
+    import logging
+    from helab.utils import cache_location
+    from helab.utils.io_service import IO_TRACE_FOLDER
+    service = IOService()
+    try:
+        assert service.trace_file is None  # Off at every start.
+        with caplog.at_level(logging.INFO):
+            path = service.start_io_trace(str(tmp_path))
+            service.stop_io_trace()
+        said = [record.getMessage() for record in caplog.records if "I/O trace" in record.getMessage()]
+        assert said == [f"I/O trace on: {path}", f"I/O trace off: {path}"]
+        assert all(record.levelname == "INFO" for record in caplog.records if "I/O trace" in record.getMessage())
+        assert os.path.dirname(path) == str(tmp_path / IO_TRACE_FOLDER) and os.path.isdir(os.path.dirname(path))
+        assert os.path.basename(path).startswith("io-trace-") and path.endswith(".jsonl")
+        assert service.trace_file is None
+        caplog.clear()
+        with caplog.at_level(logging.INFO):
+            service.stop_io_trace()  # (Already off: nothing more said.)
+        assert not caplog.records
+        open(path, "w").close()  # (A helper's first line creates it.)
+        again = service.start_io_trace(str(tmp_path))  # Within the same second: still a new file.
+        assert again != path and not os.path.exists(again)
+        service.stop_io_trace()
+        caplog.clear()
+        monkeypatch.setattr(cache_location, "cache_location_problem", lambda folder: "on a network drive (smbfs)")
+        with caplog.at_level(logging.INFO), pytest.raises(ValueError, match="network drive"):
+            service.start_io_trace(str(tmp_path / "share"))
+        assert service.trace_file is None and not caplog.records
+    finally:
+        service.shutdown()
