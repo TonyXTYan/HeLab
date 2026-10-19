@@ -536,6 +536,26 @@ def freed(refs: list[weakref.ref[Any]]) -> bool:
 
 
 @pytest.mark.parametrize("log_y", [False, True], ids=["linear", "log Y"])
+def test_without_the_highlight_there_is_no_right_axis(qtbot: QtBot, log_y: bool) -> None:
+    """The right axis belongs to the newest shot: with the highlight off, none shows (with log Y
+    either: a right decade axis would repeat the left one, unlabelled)."""
+    rng = np.random.default_rng(4)
+    data = {shot: rng.normal(size=(300, 3)) for shot in (1, 2, 3)}
+    view = view_of(Dataset(PATH, "sig-plain", data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
+    script = basic_plots.TxyHistograms()
+    widget = cast(Any, script.render(run_now(script, view, {"log_y": log_y})))
+    qtbot.addWidget(widget)
+    widget.resize(800, 600)
+    widget.show()
+    qtbot.wait(20)
+    assert widget.newest_views == []
+    for row in (1, 2, 3):
+        plot = widget.ci.getItem(row, 0)
+        assert not plot.getAxis("right").isVisible()
+        assert isinstance(plot.getAxis("left"), basic_plots.DecadeLogAxis) == log_y
+
+
+@pytest.mark.parametrize("log_y", [False, True], ids=["linear", "log Y"])
 def test_a_highlighted_histogram_is_freed_with_its_widget(qtbot: QtBot, log_y: bool) -> None:
     """The overlay keeps step with its plot through Qt connections that end with either: once
     the widget is deleted, its plot, overlay, curve and counts are freed."""

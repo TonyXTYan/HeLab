@@ -91,3 +91,32 @@ These are code review findings; the three new edge cases above were not added to
 - `venv/bin/mypy helab/ --strict` (79 files), `venv/bin/mypy tests --strict` (61), `venv/bin/mypy helab/ tests --strict --platform win32` (140): passed.
 - `venv/bin/pyright helab tests` and `venv/bin/pyright helab tests --pythonplatform Windows`: 0 errors each.
 - `git diff --check d0b8fbe..HEAD`: clean. This review section is left uncommitted.
+
+## Recheck at e51c1bf (Claude)
+
+**Verdict: approved; no blocker.** I reviewed `git diff 69c2ced..e51c1bf` (mainly `003b230`) at head `e51c1bf`, then took a short pass over `d0b8fbe..HEAD`. Codex's P2 (overlay callbacks keeping the plot, overlay, curve and counts alive) is resolved. One new P3, cosmetic, from `80af689`.
+
+### Finding
+
+1. **P3 — Log Y without the highlight shows an unlabelled second Y axis on the right.** `TxyHistograms.render` passes `{"left": DecadeLogAxis("left"), "right": DecadeLogAxis("right")}` whenever `log_y` (`helab/scripts/standard/basic_plots.py:269`), and pyqtgraph's `PlotItem.setAxisItems` shows every axis it is given. With highlight off there is no overlay, so the right axis links to the main view and repeats the left axis's decades in black, with no label. Before `80af689` only `"left"` was passed. Reproduced offscreen (log Y, highlight off: `getAxis("right").isVisible()` is True, empty label, linked to `plot.vb`); linear Y, highlight off has no right axis. Pass `"right"` only when the newest shot is highlighted (or hide it otherwise), and add the highlight-off case to `test_the_newest_shot_has_its_own_axis_on_the_right` or the log histogram tests.
+
+### Rechecked behavior (`003b230`)
+
+- **Mechanism:** `follow` is a `@pyqtSlot()` on `OverlayView` (a `pg.ViewBox`, so a QObject), connected to `source.sigResized` and `source.sigYRangeChanged`. PyQt makes a native connection by the slot's signature (a zero-argument slot takes signals with arguments), so no Python proxy holds the overlay. The overlay holds the plot's ViewBox as `_source`; that is an ordinary reference the gc collects with the widget, not a connection.
+- **Either side destroyed (offscreen probe):** overlay deleted first: the plot's receivers fell from (5, 3) to (3, 2) on (`sigResized`, `sigYRangeChanged`), the overlay wrapper was freed, and later Y range changes and resizes raised nothing. Plot deleted first (`sip.delete`): the overlay stayed valid, a resize raised nothing, and it was freed with the widget.
+- **Sensitivity:** replacing the slot connections with the old closure-style lambdas keeps the overlay alive after deferred delete and gc, so the new weakref assertions fail without the fix.
+- **Following:** after `setYRange(0, 100)` on the plot, the overlay's Y range is (0, 25) for ratio 4 in linear, and (−0.602, 2.398) for (0, 3) in log Y (shifted by log10 4). After a resize its geometry tracks the plot's `scenePos()`/`size()` (half a pixel inside the scene bounding rect, as the comment says). `ratio` is never 0 here: the newest shot is the highest chosen shot, so its counts are inside the histogram's.
+- **Toggling highlight:** rendering on/off/on/off in linear and log Y gave 3 overlays when on and none when off, and all 20 plot and overlay wrappers were freed after deferred delete and gc. A toggle reruns and draws a new widget (`TxyHistograms` has no in-place `update`), so the old one goes through `HelabMainWindow.set_plot_result`'s `deleteLater` like a Live redraw.
+- **Tests:** `test_a_highlighted_histogram_is_freed_with_its_widget` (linear and log Y) and `test_a_following_histograms_old_drawing_is_freed_when_redrawn` use weakrefs to the plot, overlay, curve and `yData`, one deferred-delete pass and `gc.collect()`. The Live redraw test runs in linear Y only; the log path differs only in the shift, so I don't count that as a gap.
+- **Private attributes:** `_source`, `_ratio`, `_log_y`, `_shift` and `follow` exist nowhere on `pg.ViewBox` (pyqtgraph 0.14.0, checked on an instance and in its sources), and nothing else in `helab/`, `tests/` or the session's render script reads them. `overlay_newest` keeps its signature. The rename has no other effects.
+
+### Whole-branch pass (`d0b8fbe..HEAD`)
+
+Apart from the P3 above, I found nothing the earlier reviews missed in `follow.py`, `LiveFeed`, the instance's widget swap (`_updated`/`_show_content`) or the histogram overlay. The handoff proposes the AGENTS.md and roadmap changes. The Live-off delay-timer behaviour is still a product question for Tony, as Codex noted.
+
+### Checks
+
+- `pytest -n 6 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`: **1142 passed, 2 skipped, 2 xfailed; no RERUN** (30 s).
+- `mypy helab/ --strict` (79 files), `mypy tests --strict` (61), `mypy helab/ tests --strict --platform win32` (140): no issues.
+- `pyright helab tests` and `pyright helab tests --pythonplatform Windows`: 0 errors each.
+- `git diff --check d0b8fbe..HEAD`: clean. This section is left uncommitted.

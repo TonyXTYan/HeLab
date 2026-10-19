@@ -266,7 +266,10 @@ class TxyHistograms(DatasetAnalysis):
                         row=0, col=0)
         overlays = []
         for row, item in enumerate(items, start=1):
-            axes = {"left": DecadeLogAxis("left"), "right": DecadeLogAxis("right")} if log_y else None
+            highlighted = data.newest_shot is not None and row - 1 < len(data.newest)
+            # A right axis only for the newest shot's counts (pyqtgraph shows any axis it is given).
+            axes = ({"left": DecadeLogAxis("left"), **({"right": DecadeLogAxis("right")} if highlighted else {})}
+                    if log_y else None)
             plot = widget.addPlot(row=row, col=0, title=histogram_title(item, item.axis in data.reversed),
                                   axisItems=axes)
             plot.setLabel("bottom", f"{item.axis} ({UNITS[AXES.index(item.axis)]})")
@@ -281,7 +284,7 @@ class TxyHistograms(DatasetAnalysis):
             else:
                 plot.addItem(pg.PlotDataItem(item.edges, item.counts, stepMode="center", fillLevel=0,
                                              pen=pg.mkPen(COLOUR), brush=(*COLOUR, 90)))
-            if data.newest_shot is not None and row - 1 < len(data.newest):
+            if highlighted:
                 # One shot is a small share of all: drawn to the histogram's scale (its total over
                 # the shot's), its shape compares; its own axis on the right reads its real counts.
                 left = plot.getAxis("left")
