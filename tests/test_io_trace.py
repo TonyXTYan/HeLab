@@ -960,10 +960,11 @@ def test_the_temp_folder_check_refuses_a_share_and_lists_earlier_recordings(
     folder = tmp_path / "io-traces"
     recording = folder / "io-trace-20261019-120000"
     recording.mkdir(parents=True)
-    (recording / "11.jsonl").write_text("{}\n")
-    (recording / "12.jsonl").write_text("{}\n{}\n")
+    # (Bytes: text mode writes "\r\n" on Windows, and the sizes below count "\n".)
+    (recording / "11.jsonl").write_bytes(b"{}\n")
+    (recording / "12.jsonl").write_bytes(b"{}\n{}\n")
     (recording / "notes.txt").write_text("not a trace")
-    (folder / "io-trace-20261018-090000.jsonl").write_text("{}\n")
+    (folder / "io-trace-20261018-090000.jsonl").write_bytes(b"{}\n")
     (folder / "io-trace-x.txt").write_text("not a trace")
     (folder / "other.jsonl").write_text("{}\n")
     found: list[dict[str, Any]] = []

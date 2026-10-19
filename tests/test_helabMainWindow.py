@@ -385,8 +385,8 @@ def test_help_menu_records_the_io_trace_for_this_session(
         return answer[0]
 
     def record(recording: str, *pids: int) -> None:
-        for pid in pids:  # (As helpers write them: 3 bytes each.)
-            with open(os.path.join(recording, f"{pid}.jsonl"), "w", encoding="utf-8") as stream:
+        for pid in pids:  # (As helpers write them: 3 bytes each, "\n" on every system.)
+            with open(os.path.join(recording, f"{pid}.jsonl"), "w", encoding="utf-8", newline="\n") as stream:
                 stream.write("{}\n")
 
     def turn_on() -> str:

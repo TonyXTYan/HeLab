@@ -318,7 +318,7 @@ def test_a_shot_live_read_recently_that_changes_is_read_again_and_said(
     assert session is not None
     # The writer pauses mid-row longer than the settle age: Live reads shot 3 unfinished.
     partial = run / "d_txy_forc3.txt"
-    partial.write_text("3,2,3\n3,4")
+    partial.write_bytes(b"3,2,3\n3,4")  # (Bytes: text mode writes "\r\n" on Windows.)
     old = time.time() - 60
     os.utime(partial, (old, old))
     age_folder(run, 50)
@@ -327,7 +327,7 @@ def test_a_shot_live_read_recently_that_changes_is_read_again_and_said(
     request = next_request(qtbot, explorer, path)
     assert request.payload["recent"] == [3]
     # It finishes, and the next shot comes (the folder changes: the check lists it).
-    partial.write_text("3,2,3\n3,4,5\n")
+    partial.write_bytes(b"3,2,3\n3,4,5\n")
     os.utime(partial, (old + 5, old + 5))
     write_shot(run, 4)
     age_folder(run, 40)
@@ -346,7 +346,7 @@ def test_a_shot_live_read_recently_that_changes_is_read_again_and_said(
     [warning] = [record for record in caplog.records if record.levelname == "WARNING" and "Live: shot" in record.getMessage()]
     message = warning.getMessage()
     assert f"shot 3 changed" in message and str(partial) in message and "read again" in message
-    assert f"size {len('3,2,3' + chr(10) + '3,4'):,} → {partial.stat().st_size:,} bytes" in message
+    assert f"size 9 → {partial.stat().st_size:,} bytes" in message
     assert {3, 4} <= session.unsaved  # (Its new data is saved with the next save.)
     # The note lasts a minute.
     text, at = explorer._reread_notes[path]
