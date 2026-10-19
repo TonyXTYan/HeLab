@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import QLabel
 from pytestqt.qtbot import QtBot
 
 from helab import io_helper
-from helab.analysis.dataset_view import DatasetView, build_view
+from helab.analysis.dataset_view import DatasetView, build_view, revise
 from helab.analysis.parameters import effective
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.io_helper import live_check, load, read_cached, save_held
@@ -166,6 +166,39 @@ def test_an_update_from_ram_stats_only_the_new_shots_raw_files(
     assert view.fallback_times() == (3,)
 
 
+def test_another_run_copied_over_the_folder_gets_its_own_times(
+        run: Path, tmp_path: Path, shot_time_stats: list[str]) -> None:
+    """A later run copied to the same path, with more shots of the same numbers: its changed shots
+    are read again with their own raw files' times, never the cached run's."""
+    run_load(run, tmp_path)
+    later = RAW_AT + 86400
+    for file in list(run.iterdir()):
+        file.unlink()
+    for shot in (1, 2, 3, 4):
+        txy = run / f"d_txy_forc{shot}.txt"
+        txy.write_text(f"{shot},7,7\n")
+        set_mtime(txy, later + 3600)
+        (run / f"d{shot}.txt").write_text("raw\n")
+        set_mtime(run / f"d{shot}.txt", later + shot)
+    age_folder(run)
+    shot_time_stats.clear()
+    event = loaded(run_load(run, tmp_path))
+    assert event["load_counts"]["modified"] == 3 and event["load_counts"]["new"] == 1
+    assert times(event) == {shot: later + shot for shot in (1, 2, 3, 4)}
+    assert sorted(shot_time_stats) == ["d1.txt", "d2.txt", "d3.txt", "d4.txt"]
+    assert times(loaded(run_cached(run, tmp_path))) == {shot: later + shot for shot in (1, 2, 3, 4)}
+
+
+def test_a_raw_file_still_being_written_gets_its_time_later(
+        monkeypatch: pytest.MonkeyPatch, run: Path, tmp_path: Path) -> None:
+    set_mtime(run / "d2.txt", time.time())
+    monkeypatch.setattr(io_helper, "SETTLE_SECONDS", 30.0)
+    first = loaded(run_load(run, tmp_path, no_cache=True))
+    assert times(first) == {1: raw_at(1)}
+    set_mtime(run / "d2.txt", raw_at(2))
+    assert times(loaded(run_load(run, tmp_path, no_cache=True))) == {1: raw_at(1), 2: raw_at(2)}
+
+
 def test_a_deleted_raw_file_keeps_the_cached_shot_and_its_time(run: Path, tmp_path: Path) -> None:
     first = loaded(run_load(run, tmp_path))
     (run / "d1.txt").unlink()
@@ -246,11 +279,13 @@ def test_live_reads_new_shots_times_and_its_save_keeps_them(
     assert times(loaded(run_cached(run, tmp_path))) == {1: raw_at(1), 2: raw_at(2), 4: raw_at(4)}
 
 
-def test_a_dataset_keeps_its_bases_times_for_the_shots_it_held() -> None:
+def test_a_dataset_keeps_its_bases_times_for_unchanged_shots() -> None:
     base = Dataset("/run", "a", {}, {"fingerprint": [[1, 1, 5], [2, 1, 5]], "raw_times": [[1, 10], [2, 20]]}, 0)
     update = {"fingerprint": [[1, 1, 5], [2, 1, 6], [3, 1, 7]], "raw_times": [[3, 30]]}
-    # A shot read again (2) keeps its time; shots not in the fingerprint drop out.
-    assert dataset_raw_times(base, update, {}) == [[1, 10], [2, 20], [3, 30]]
+    # An unchanged shot (1) keeps its time; a changed one (2) has only what the helper found now
+    # (it may be another run's shot 2); shots not in the fingerprint drop out.
+    assert dataset_raw_times(base, update, {}) == [[1, 10], [3, 30]]
+    assert dataset_raw_times(base, update, {2: 22}) == [[1, 10], [2, 22], [3, 30]]
     assert dataset_raw_times(base, {"fingerprint": [[1, 1, 5]]}, {}) == [[1, 10]]
     assert dataset_raw_times(None, update, {2: 25}) == [[2, 25], [3, 30]]
     # Malformed entries are ignored.
@@ -332,7 +367,7 @@ def test_the_plot_takes_raw_times_gaps_and_flags_txy_times() -> None:
     assert data.longest_gap() == (2, 60.0)
     assert shot_times.title_text(data) == (
         "4 shots · 10 events · longest gap 60 s before shot 2 · ⚠ 1 TXY time (no raw file) · "
-        "1 files still being written left out")
+        "1 file still being written left out")
     script = shot_times.ShotTimesPlot()
     values = effective(script.parameters("Plot"), {})
     assert script.describe_run("Plot", values, view) == ("4 shots · ⚠ 1 TXY time (no raw file)", "")
@@ -373,7 +408,23 @@ def test_the_plot_says_why_it_is_empty_and_draws_shots_without_events(qtbot: QtB
     # No raw files at all (an old cache): the TXY times' gaps, flagged.
     old = run_plot(build_view(synthetic({}, {1: 200.0, 2: 200.0, 3: 230.0}))).data
     assert old.fallbacks == 3 and old.longest_gap() == (3, 30.0)
-    assert shot_times.title_text(old).endswith("· ⚠ 3 TXY times (no raw file) · 1 files still being written left out")
+    assert shot_times.title_text(old).endswith(
+        "· ⚠ 3 TXY times (no raw file) · 1 file still being written left out")
+    # Times found later for the shots shown (a listing check of an old cache): a new revision.
+    filled = synthetic({1: 100.0, 2: 150.0, 3: 210.0}, {1: 200.0, 2: 200.0, 3: 230.0})
+    first = build_view(synthetic({}, {1: 200.0, 2: 200.0, 3: 230.0}))
+    later = revise(first, filled)
+    assert later.revision == 2 and later.added_shots == () and later.fallback_times() == ()
+    assert revise(later, synthetic({1: 100.0, 2: 150.0, 3: 210.0}, {1: 200.0, 2: 200.0, 3: 230.0})) is later
+    # A replaced shot (its TXY file changed) keeps no earlier time.
+    replaced = later.with_shots({2: np.ones((1, 3))}, {2: (2, 11, 300 * NS)})
+    assert replaced.fallback_times() == (2,) and replaced.shot_time(2) == 300.0
+
+
+def points(item: Any, drawn: bool = False) -> tuple[list[float], list[float]]:
+    """A point item's data as given, or as drawn (``drawn``: after the plot's log mode)."""
+    x, y = item.getData() if drawn else item.getOriginalDataset()
+    return ([] if x is None else x.tolist()), ([] if y is None else y.tolist())
 
 
 def test_the_plot_draws_raw_and_txy_times_apart_and_updates_in_place(qtbot: QtBot) -> None:
@@ -384,22 +435,36 @@ def test_the_plot_draws_raw_and_txy_times_apart_and_updates_in_place(qtbot: QtBo
     assert isinstance(widget, shot_times.ShotTimesWidget)
     assert "TXY file's" in widget.toolTip() and "copied or rewritten" in widget.toolTip()
     (counts_raw, counts_txy), (gaps_raw, gaps_txy) = widget.points
-    assert counts_raw.data["x"].tolist() == [100.0, 160.0] and counts_raw.data["y"].tolist() == [1.0, 2.0]
-    assert counts_txy.data["x"].tolist() == [900.0] and counts_txy.data["y"].tolist() == [3.0]
-    assert gaps_raw.data["y"].tolist() == [60.0] and gaps_txy.data["y"].tolist() == [740.0]
+    assert points(counts_raw) == ([100.0, 160.0], [1.0, 2.0])
+    assert points(counts_txy) == ([900.0], [3.0])
+    assert points(gaps_raw)[1] == [60.0] and points(gaps_txy)[1] == [740.0]
     assert [label.text for _, label in widget.plots[0].legend.items] == ["raw file time",
                                                                           "TXY file time (no raw file)"]
     # Live's next shot (with its raw time): the same widget, its points replaced.
     later = view.with_shots({4: np.ones((4, 3))}, {4: (4, 10, 950 * NS)}, raw_times={4: 800 * NS})
     assert script.update(widget, run_plot(later))
-    assert counts_raw.data["x"].tolist() == [100.0, 160.0, 800.0]
+    assert points(counts_raw)[0] == [100.0, 160.0, 800.0]
     assert "4 shots" in widget.title.text
     # Other settings, or nothing to draw: drawn anew.
     assert not script.update(widget, run_plot(later, {"panels": "counts"}))
     assert not script.update(widget, run_plot(later, {"first_shot": 10}))
-    only_gaps = script.render(run_plot(later, {"panels": "gaps", "log_gaps": True}))
-    qtbot.addWidget(only_gaps)
-    assert isinstance(only_gaps, shot_times.ShotTimesWidget) and len(only_gaps.plots) == 1
-    # Log gaps: the negative gap (shot 4 taken before shot 3's TXY time) has no logarithm.
-    (raw_points, txy_points), = only_gaps.points
-    assert raw_points.data["y"].tolist() == [60.0] and txy_points.data["y"].tolist() == [740.0]
+
+
+def test_log_gaps_draws_the_gaps_logarithm(qtbot: QtBot) -> None:
+    """Log gaps: points drawn at log10 of the gap (the axis reads seconds), the view around them;
+    a negative gap (a shot timed before the one before it) has no logarithm and is left out."""
+    script = shot_times.ShotTimesPlot()
+    view = build_view(synthetic({1: 0.0, 2: 100.0, 3: 1100.0, 4: 1000.0}, {shot: 5.0 for shot in range(1, 5)}))
+    widget = script.render(run_plot(view, {"panels": "gaps", "log_gaps": True}))
+    qtbot.addWidget(widget)
+    assert isinstance(widget, shot_times.ShotTimesWidget) and len(widget.plots) == 1
+    widget.resize(600, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+    ((raw_points, txy_points),) = widget.points
+    assert points(raw_points)[1] == [100.0, 1000.0] and points(txy_points) == ([], [])
+    assert points(raw_points, drawn=True)[1] == pytest.approx([2.0, 3.0])
+    plot = widget.plots[0]
+    plot.vb.autoRange()
+    low, high = plot.vb.viewRange()[1]
+    assert 1.0 < low < 2.0 < 3.0 < high < 4.0

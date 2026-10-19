@@ -257,6 +257,51 @@ def test_live_adds_new_shots_saves_every_n_and_when_it_stops(
     explorer.close_cleanup()
 
 
+def write_raw(folder: Path, shot: int, when: float) -> None:
+    file = folder / f"d{shot}.txt"
+    file.write_text("raw\n")
+    os.utime(file, (when, when))
+
+
+def test_live_shots_keep_their_raw_times_through_the_app_and_its_save(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path,
+) -> None:
+    """Shot times (D7) through the app: Live's new shot brings its raw file's time (``raw_mtime``)
+    into the shown dataset beside the held shots' times, and Live's save sends them all
+    (``held_raw_times``), so the cache has them."""
+    path = str(run)
+    base = 1_700_000_000
+    for shot in (1, 2):
+        write_raw(run, shot, base + shot)
+    age_folder(run, 120)
+    explorer = open_loaded(qtbot, service, run, tmp_path)
+    cache = explorer.model.cache
+    expected = [[1, (base + 1) * 10**9], [2, (base + 2) * 10**9]]
+    assert explorer.displayed_dataset is not None and explorer.displayed_dataset.metadata["raw_times"] == expected
+    assert explorer.start_live()
+    next_request(qtbot, explorer, path)
+    replay(cache, path, tmp_path)
+    write_shot(run, 3)
+    write_raw(run, 3, base + 3)
+    age_folder(run, 60)
+    checks(qtbot, explorer, path, tmp_path)
+    shown = explorer.displayed_dataset
+    assert shown is not None and sorted(shown.data) == [1, 2, 3]
+    assert shown.metadata["raw_times"] == [*expected, [3, (base + 3) * 10**9]]
+    explorer.stop_live()
+    save = next_request(qtbot, explorer, path)
+    assert save.payload["held_raw_times"] == shown.metadata["raw_times"]
+    replay(cache, path, tmp_path)
+    qtbot.waitUntil(lambda: not explorer._live_sessions)
+    output = tmp_path / "cached-times"
+    output.mkdir()
+    events: list[dict[str, Any]] = []
+    read_cached(path, str(output), events.append, store_options())
+    loaded = next(event for event in events if event["kind"] == "loaded")
+    assert loaded["raw_times"] == shown.metadata["raw_times"]
+    explorer.close_cleanup()
+
+
 def test_files_still_being_written_wait_and_are_counted(
     qtbot: QtBot, service: IOService, run: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

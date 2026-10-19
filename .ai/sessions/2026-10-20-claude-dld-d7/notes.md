@@ -25,8 +25,14 @@ scandir the folder and match every name against `FILE_KINDS`; they now keep the 
 | `load` with `cache_base` (the check beside a cached read) | 0, or 1 per shot the cache lacks a time for |
 | `load`, held shot read again for the cache save | 1 per such shot (beside a TXY read) |
 | quick checks (`_unchanged_since_cache` / `_memory`), `read_cached` | 0 (no listing; times from the cache / app) |
-| `live_check`, a new shot read | 1 per new shot; a held shot read again keeps the app's time |
-| `save_held` (Live's save) | 0: the app sends its times (`held_raw_times`) |
+| `live_check`, a shot read (new, or held and read again because it changed) | 1 per shot read |
+| `save_held` (Live's save) | 0 for shots saved as held (the app sends their times, `held_raw_times`); 1 per shot it reads again |
+
+A time is kept from the cache or the app only for a shot whose TXY fingerprint is unchanged
+(after review, the coordinator's call, proposed for Tony): a changed TXY file may be another
+run's shot of that number (a run copied over the folder), so it gets its raw file's time anew,
+one stat beside its TXY read. A raw file modified within `SETTLE_SECONDS` (or in the future)
+gives no time yet (`_raw_mtime`), so a later listing stats it again.
 
 **I/O cost.** On Windows `DirEntry.stat()` uses the listing's find data: no call. On macOS and
 Linux it is one `stat` per raw file, the same as a separate stat; on SMB each is a network
@@ -41,10 +47,12 @@ listed but gone by the stat (`OSError`) is a fallback, never an error.
 **Carrying times (GUI, `helab/utils/folder_cache.py`).** `shot` events carry `raw_mtime`
 (`SharedJob.raw_times` keeps them, so a resumed load keeps completed shots' times:
 `_resume_load`); `loaded` carries `raw_times` for what the helper knows. `dataset_raw_times`
-builds the dataset's list: the base's times (for shots it held: an update sends none for them),
-then the event's, then the shot events'; only shots in the fingerprint. A shot whose TXY file is
-read again keeps its time: the raw file is the same shot. Live's save sends the held dataset's
-times as `held_raw_times`. `revise` / `with_shots` add new revisions' times to the view.
+builds the dataset's list: the base's times for shots whose fingerprint is unchanged (an update
+sends none for them), then the event's, then the shot events'; only shots in the fingerprint.
+Live's save sends the held dataset's times as `held_raw_times`. `with_shots` keeps the view's
+times except for replaced shots; `revise` makes a new revision also when a check only found
+times for shots already shown (an older cache's), so plots following Live stop showing them as
+fallbacks.
 
 **Fingerprints unchanged.** Raw files enter no fingerprint, signature, summary signature,
 reuse decision, `shots_missing` check or quick-check sample. Deleting a raw file changes only
@@ -59,8 +67,10 @@ that a later *new* listing doesn't stat it; the cached time stays (tested).
 - Existing stores gain the column when a helper opens them writable (`_add_raw_times`: checked
   with `PRAGMA table_info`, added under `BEGIN IMMEDIATE`, re-checked inside so concurrent
   helpers don't race). No layout-version bump: older HeLabs name their columns in every
-  `SELECT`/`INSERT`, so they keep reading and writing the store (their saves leave `[]`). A
-  read-only store without the column (a newer layout opened read-only) selects `'[]'`.
+  `SELECT`/`INSERT`, so they keep reading and writing the store. An older HeLab's save is an
+  `INSERT OR REPLACE` without the column, so it resets that folder's `raw_times` to `[]`: the next
+  listing load of the folder by this version stats its raw files once again. A read-only store
+  without the column (a newer layout opened read-only) selects `'[]'`.
 - `DatasetRecord.raw_times` is `NotRequired`; pending saves keep it inside their record JSON, so
   Make room / Save update adopt it with the dataset. `confirm_dataset(..., raw_times)` records
   times an older cache lacked, after a full listing found the cache complete.
@@ -83,7 +93,9 @@ TXY time are amber too. Title: shots, events, the longest gap (between raw times
 conversion time would make up a stall) and "⚠ N TXY times (no raw file)"; the dock's first line
 carries the same count. Tooltip: what the time is and that a copied or rewritten file has a new
 mtime. `update` refreshes the points in place (Live keeps zoom and pan) unless Show or Log gaps
-changed. Live policy and coverage are the defaults (every shot; the Shots selection).
+changed. Live policy and coverage are the defaults (every shot; the Shots selection). The points
+are `PlotDataItem`s without a line, which follow the plot's log mode for Log gaps (a
+`ScatterPlotItem` doesn't, and drew seconds as exponents: fixed after review).
 
 ## Proposed, for Tony
 
@@ -94,8 +106,9 @@ changed. Live policy and coverage are the defaults (every shot; the Shots select
 2. **Gap units in the title** adapt (s, min, h, d); the gap axis is in seconds, with Log gaps
    for mixed scales.
 3. **Old caches fill in times only on a listing check** (above), not by the quick check.
-4. **Times by shot number**: a shot keeps its raw time when its TXY file is rewritten, and after
-   its raw file is deleted.
+4. **A changed shot gets its time anew** (reversed after review, the coordinator's call): a
+   shot keeps its raw time while its TXY fingerprint is unchanged, also after its raw file is
+   deleted; when its TXY file changes, its raw file is stat'ed again (no raw file: TXY time).
 5. **Counts plot against time**: D7 here is a separate plot; D2's trends (per-shot fits, moving
    mean) can take `DatasetView.shot_times()` for a time axis option later.
 

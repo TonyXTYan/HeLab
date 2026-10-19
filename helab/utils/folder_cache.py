@@ -2422,15 +2422,20 @@ class FolderCache(QObject):
 
 
 def dataset_raw_times(base: Dataset | None, metadata: Mapping[str, Any], sent: Mapping[int, int]) -> list[list[int]]:
-    """The shot times of a load's dataset (``metadata``: its ``loaded`` event): the base's, for the
-    shots it held (an update sends none for them), then the helper's (``raw_times``), then those
-    sent with its shots (``sent``); for the shots in its fingerprint. A shot keeps its time when its
-    TXY file is read again: the raw file is the same shot."""
-    times = file_kinds.raw_times(base.metadata.get("raw_times")) if base is not None else {}
+    """The shot times of a load's dataset (``metadata``: its ``loaded`` event): the base's for
+    shots whose fingerprint is unchanged (those it held: an update sends none for them), then the
+    helper's (``raw_times``), then those sent with its shots (``sent``); for the shots in its
+    fingerprint. A changed TXY file may be another run's shot of that number (a folder copied over
+    this one): it has only the time the helper found for it now."""
+    prints = {int(entry[0]): tuple(entry) for entry in metadata.get("fingerprint") or () if len(entry) >= 3}
+    times: dict[int, int] = {}
+    if base is not None:
+        held = {int(entry[0]): tuple(entry) for entry in base.metadata.get("fingerprint") or () if len(entry) >= 3}
+        times = {shot: value for shot, value in file_kinds.raw_times(base.metadata.get("raw_times")).items()
+                 if shot in prints and held.get(shot) == prints[shot]}
     times.update(file_kinds.raw_times(metadata.get("raw_times")))
     times.update(sent)
-    shots = {int(entry[0]) for entry in metadata.get("fingerprint") or () if len(entry) >= 1}
-    return [[shot, times[shot]] for shot in sorted(shots) if shot in times]
+    return [[shot, times[shot]] for shot in sorted(prints) if shot in times]
 
 
 def get_folder_cache(service: IOService) -> FolderCache:

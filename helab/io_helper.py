@@ -1181,13 +1181,16 @@ def _raw_mtime(entry: os.DirEntry[str] | None, reason: str) -> int | None:
     macOS and Linux; none on Windows, where the listing has it). None without one, or if it's gone:
     the shot's time is then its TXY file's (``DatasetView.shot_time``). The TXY file's mtime is
     when it was converted, and a converter catching up gives many shots the same time (Tony,
-    2026-10-20). Raw files never affect a shot's fingerprint, so deleting one changes nothing else."""
+    2026-10-20). Raw files never affect a shot's fingerprint, so deleting one changes nothing else.
+    A raw file modified within ``SETTLE_SECONDS`` (or in the future) may still be written: no time
+    yet, so a later listing stats it again."""
     if entry is None:
         return None
     try:
-        return _entry_stat(entry, reason).st_mtime_ns
+        modified = _entry_stat(entry, reason).st_mtime_ns
     except OSError:
         return None
+    return modified if modified / 1e9 <= time.time() - SETTLE_SECONDS else None
 
 
 def _raw_list(times: dict[int, int], shots: Iterable[int]) -> list[list[int]]:
@@ -1609,14 +1612,17 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                     raise StoreError(full.error)
                 row, packed = full.value if full.value is not None else (None, None)
             had_dataset = row is not None
-            if row is not None:
-                saved_raw = _saved_raw_times(row)
-                raw_times.update((shot, value) for shot, value in saved_raw.items() if shot in current)
             saved_fingerprint = _saved_fingerprint(row) if row is not None else None
             previous = [value for value in row["problematic"] if isinstance(value, int)] if row is not None else []
             cache_info = _with_sizes(_cache_info(row["info"]), row) if row is not None else {}
             if saved_fingerprint is not None:
                 baseline = {shot: (size, modified) for shot, size, modified in saved_fingerprint}
+            if row is not None:
+                # Only for shots whose TXY file is unchanged: a changed one may be another run's
+                # shot of that number (a folder copied over this one), so its raw file is stat'ed.
+                saved_raw = {shot: value for shot, value in _saved_raw_times(row).items()
+                             if shot in current and baseline.get(shot) == current[shot]}
+                raw_times.update(saved_raw)
 
             # Unpacking brings the whole cached dataset into RAM, more than the folder now holds if
             # it shrank: when that is too large, the cache isn't used and the files are read.
@@ -1920,7 +1926,8 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
     """Live's save: the folder's data the app holds in RAM written to the disk cache, without reading
     TXY files again. ``held`` is that data's fingerprint (unreadable shots included), its arrays
     are in ``held_dir`` (local files the app wrote), ``problematic`` its problematic shots,
-    ``raw_times`` its shot times (``[shot, raw mtime_ns]``), saved as they are: no raw file is stat'ed.
+    ``raw_times`` its shot times (``[shot, raw mtime_ns]``), saved as they are for the shots saved as
+    held: their raw files aren't stat'ed (a shot read again gets its time anew).
 
     The folder is listed once. Every held file must still be there with the size and mtime it had
     when it was read (else ``shots_missing``: missing or changed; TXY files are written once), and
@@ -1953,6 +1960,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         known = {shot for shot, _, _ in fingerprint}
         listed: dict[int, tuple[int, int]] = {}
         file_names: dict[int, str] = {}
+        raw_entries: dict[int, os.DirEntry[str]] = {}  # For the times of shots read again.
         found: dict[str, set[int]] = {}  # (For the summary of a save that reads shots again.)
         has_dirs = False
         listed_at = time.time()
@@ -1966,6 +1974,8 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
                         info = _entry_stat(entry, "save: checking")
                         listed[matched[1]] = (info.st_size, info.st_mtime_ns)
                         file_names[matched[1]] = entry.name
+                    elif matched[0] is file_kinds.RAW:
+                        raw_entries[matched[1]] = entry
                 elif not has_dirs and _is_dir(entry):
                     has_dirs = True
 
@@ -1995,6 +2005,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         settled = {item[0] for item in _settled(items)}
         replaced: dict[int, tuple[int, int, int]] = {}
         reread: list[dict[str, Any]] = []
+        times = file_kinds.raw_times(raw_times)
 
         def now(filename: str, reason: str) -> tuple[int, int]:
             info = _stat(filename, reason)
@@ -2023,11 +2034,15 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
                 np.save(artifact, array, allow_pickle=False)
                 data[shot] = array
                 problematic = sorted((set(problematic) - {shot}) | ({shot} if invalid else set()))
+                times.pop(shot, None)
+                if (found_time := _raw_mtime(raw_entries.get(shot), "save: shot time")) is not None:
+                    times[shot] = found_time
                 send({"kind": "shot", "shot": shot, "artifact": artifact, "fingerprint": list(item),
-                      "problematic": invalid})
+                      "problematic": invalid, **({"raw_mtime": times[shot]} if shot in times else {})})
             except (OSError, ValueError, pd.errors.ParserError):
                 data.pop(shot, None)  # Unreadable now: known by its new fingerprint, as a load keeps it.
                 problematic = sorted(set(problematic) | {shot})
+                times.pop(shot, None)  # (The held time was the old file's.)
             replaced[shot] = item
             reread.append({"shot": shot, "path": filename, "old": list(was[shot]), "new": list(item[1:]),
                            "read": shot in data})
@@ -2060,7 +2075,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
               "disk_cache_pending": saving, "cache_info": {}, "load_counts": counts,
               "cache_reason": f"Saved {len(kept)} shots from memory; " + (
                   f"read {len(replaced):,} that changed after Live read them again" if replaced else "no TXY file read"),
-              "live_reread": reread,
+              "live_reread": reread, "raw_times": _raw_list(times, replaced),
               "fingerprint": [list(entry) for entry in fingerprint], "memory_shots": kept,
               "base_signature": signature, "signature": signature,
               "listed_at": listed_at, "names": names, "identity": _location_identity(path, "save: identity")})
@@ -2070,7 +2085,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         try:
             _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, counts, unsettled,
                            had_dataset, (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
-                           send, file_kinds.raw_times(raw_times))
+                           send, times)
         except Exception as exc:
             _save_failed(store, exc, send)
     finally:
@@ -2264,7 +2279,8 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     late: set[int] = set()
     replaced: set[int] = set()  # Held shots read again: their new data, or now unreadable.
     reread: list[dict[str, Any]] = []
-    # New shots' times; a held shot read again keeps the time the app holds.
+    # The times of the shots read (new, or held and read again: a changed TXY file gets its time
+    # anew, as a load's does; the app keeps held times only for unchanged shots).
     raw_times: dict[int, int] = {}
     rows = size = loaded = read = read_bytes = 0
     total_read_bytes = sum(item[1] for item in to_read)
@@ -2317,8 +2333,8 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                     replaced.add(shot)
                 else:
                     loaded += 1
-                    if (found_time := _raw_mtime(raw_entries.get(shot), "live: shot time")) is not None:
-                        raw_times[shot] = found_time
+                if (found_time := _raw_mtime(raw_entries.get(shot), "live: shot time")) is not None:
+                    raw_times[shot] = found_time
                 fingerprint.append(item)
                 send({"kind": "shot", "shot": shot, "artifact": artifact, "fingerprint": list(item),
                       "problematic": shot in problematic,

@@ -19,6 +19,20 @@ Design, I/O cost, cache format and proposals: [notes.md](notes.md). Brief: [brie
    and "⚠ N TXY times (no raw file)" in the title and dock line, in-place updates for Live,
    tooltip caveat about copied or rewritten files.
 
+3. **After review** (coordinator's review of b924956; fixes in the commit after it):
+   - Log gaps drew seconds as exponents (`ScatterPlotItem` ignores log mode): the points are now
+     line-less `PlotDataItem`s; a test checks the drawn log10 positions and the view range.
+   - Times are kept from the cache (helper) or the base (`dataset_raw_times`) only for shots whose
+     TXY fingerprint is unchanged; a changed shot's raw file is stat'ed again, in loads, Live
+     checks' re-reads and Live's save's re-reads (proposed, for Tony; reverses my proposal 4).
+     Test: another run copied over the folder with more shots of the same numbers.
+   - App-level Live test (`tests/test_live.py`): `raw_mtime` → the shown dataset's `raw_times`
+     → `held_raw_times` in the save request → read back from the cache.
+   - A raw file modified within `SETTLE_SECONDS` gives no time yet (a later listing stats it).
+   - `revise` makes a new revision when a check only fills in times for shots shown.
+   - Notes: an older HeLab's save resets a folder's `raw_times` to `[]`.
+   - "1 file" / "N files still being written" in the title.
+
 ## Remaining / not done
 
 - D2's trend plots can use `DatasetView.shot_times()` for a time axis when they are built.
@@ -27,6 +41,16 @@ Design, I/O cost, cache format and proposals: [notes.md](notes.md). Brief: [brie
 - No AGENTS.md change was made (it's not this Worker's file); proposed text is below.
 
 ## Checks
+
+After review (venv bin first on `PATH`):
+
+- Full suite `python -m pytest -n 2 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest -rR`:
+  **2 failed, 1303 passed, 7 skipped, 2 xfailed, 10 rerun in 168.02s**; the 2 failures and all
+  10 reruns are the two known root-only tests. No other RERUN.
+- mypy --strict helab and tests (also `--platform win32`), pyright helab tests (also Windows),
+  `git diff --check`: clean.
+
+Before review (at 4a0a277):
 
 - Full suite, `PATH=venv/bin:$PATH python -m pytest -n 2 --reruns 5 --reruns-delay 1
   --basetemp=.ai/temp/pytest -rR` at 4a0a277: **2 failed, 1299 passed, 7 skipped, 2 xfailed,
@@ -71,6 +95,13 @@ Design, I/O cost, cache format and proposals: [notes.md](notes.md). Brief: [brie
    metadata request per shot read).
 4. On Windows, the raw stats should be `syscall: false` in the trace (from the listing).
 
+## Proposed .ai/MANUAL_TODO.md entry, for Tony
+
+> - **D7 shot times on SMB:** measure the first load of an uncached folder of ~10k shots on the
+>   lab share with and without this branch (one extra raw-file stat per shot read; Help › Record
+>   I/O trace, `load: shot time` lines), and a reload from the cache (no raw stats). Results in
+>   `.ai/sessions/`.
+
 ## Proposed AGENTS.md text, for Tony
 
 In **Responsive filesystem I/O**, after the "Files still being written" item:
@@ -78,18 +109,20 @@ In **Responsive filesystem I/O**, after the "Files still being written" item:
 > - **Shot times** (D7): a shot's time is its raw `d<N>.txt` file's mtime (Tony, 2026-10-20). A
 >   load's or Live check's own listing keeps the raw entries and stats one only for a shot whose
 >   time isn't known (a shot read now, one cached before shot times, one re-read for the cache;
->   free on Windows): never for shots held in RAM or cached with a time, never in quick checks,
->   cached reads or Live's save (the app sends its times). Raw files never enter fingerprints,
+>   free on Windows): never for unchanged shots held in RAM or cached with a time, never in quick
+>   checks or cached reads, and in Live's save only for shots it reads again (the app sends the
+>   others' times). A time is reused only while the shot's TXY fingerprint is unchanged; a raw
+>   file modified within `SETTLE_SECONDS` gives no time yet. Raw files never enter fingerprints,
 >   signatures or reuse; a deleted raw file keeps the shot and its time. Without a raw time the
 >   shot's time is its TXY fingerprint's mtime, flagged (`DatasetView.fallback_times`).
 
 In **Caching**, after the sentence on per-shot fingerprints:
 
 > Shot times are the `datasets.raw_times` column (`[shot, mtime_ns]`, `[]` for rows saved before
-> it; added to older store-v3 databases on open, no layout bump), not `info`, which listings read
-> per subfolder. `loaded` carries `raw_times` and `shot` events `raw_mtime`; `FolderCache`
-> merges them with the base's for held shots (`dataset_raw_times`); `confirm_dataset` fills times
-> an older cache lacked.
+> it; added to older store-v3 databases on open, no layout bump; an older HeLab's save resets it to
+> `[]`), not `info`, which listings read per subfolder. `loaded` carries `raw_times` and `shot` events `raw_mtime`; `FolderCache`
+> merges them with the base's for unchanged shots (`dataset_raw_times`); `confirm_dataset` fills
+> times an older cache lacked.
 
 In **Script system**, the bundled list: add **Shot times** (`shot_times.py`): events per shot and
 gaps between shots against shot time, TXY-time shots amber and counted.

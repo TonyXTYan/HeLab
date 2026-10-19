@@ -151,10 +151,12 @@ class DatasetView:
         """The next revision: this view plus ``added`` (new or replaced shots), same identity.
         The added arrays become shared, read-only data, as ``build_view``'s are. ``provenance``
         and ``signature``: the newer load's (default: this view's provenance, no signature).
-        ``raw_times``: shot times known now (added to this view's)."""
+        ``raw_times``: shot times known now; this view's are kept for shots not in ``added`` (a
+        replaced shot has only the time given for it)."""
         shots = {**self.shots, **{int(shot): read_only(array) for shot, array in added.items()}}
         prints = {**self.fingerprints, **(fingerprints or {})}
-        times = {**self.raw_times, **(raw_times or {})}
+        times = {**{shot: value for shot, value in self.raw_times.items() if shot not in added},
+                 **(raw_times or {})}
         return DatasetView(self.identity, self.revision + 1, _frozen(dict(sorted(shots.items()))),
                            MappingProxyType(dict(prints)), provenance or self.provenance, self.data_root,
                            tuple(sorted(int(shot) for shot in added)), dataset_signature=signature,
@@ -256,8 +258,8 @@ def view_of(dataset: Dataset, root: tuple[str, str, str] | None = None) -> Datas
 
 def revise(view: DatasetView, dataset: Dataset, root: tuple[str, str, str] | None = None) -> DatasetView:
     """``dataset``, a newer load of ``view``'s folder (Live's next), as a view: the next revision
-    of ``view`` with the shots it adds or replaces (by fingerprint), or ``view`` itself when it
-    adds none. A dataset of another folder, or one without some of ``view``'s shots, is no
+    of ``view`` with the shots it adds or replaces (by fingerprint) or the shot times it finds, or
+    ``view`` itself when it adds neither. A dataset of another folder, or one without some of ``view``'s shots, is no
     revision of it: its own view (``view_of``). From then on ``view_of(dataset)`` is this view,
     so a new run on the data shown starts from the same revision as the plots following it."""
     known = _views.get(dataset)
@@ -269,9 +271,12 @@ def revise(view: DatasetView, dataset: Dataset, root: tuple[str, str, str] | Non
     prints = fingerprints_of(dataset.metadata)
     added = {shot: array for shot, array in data.items()
              if shot not in view.shots or prints.get(shot, view.fingerprints.get(shot)) != view.fingerprints.get(shot)}
-    revised = view if not added else view.with_shots(
+    times = parse_raw_times(dataset.metadata.get("raw_times"))
+    # A check that only found times for shots already shown (an older cache's) is a revision too,
+    # so plots following Live stop showing them as fallbacks.
+    filled = any(times.get(shot) != view.raw_times.get(shot) for shot in view.shots if shot in times)
+    revised = view if not added and not filled else view.with_shots(
         added, {shot: prints[shot] for shot in added if shot in prints},
-        provenance=_provenance(dict(dataset.metadata)), signature=dataset.signature,
-        raw_times=parse_raw_times(dataset.metadata.get("raw_times")))
+        provenance=_provenance(dict(dataset.metadata)), signature=dataset.signature, raw_times=times)
     _views[dataset] = revised
     return revised

@@ -119,7 +119,8 @@ def title_text(data: ShotTimes) -> str:
     if data.untimed:
         parts.append(f"{data.untimed:,} without a time left out")
     if data.unsettled_files:
-        parts.append(f"{data.unsettled_files} files still being written left out")
+        files = data.unsettled_files
+        parts.append(f"{files:,} file{'' if files == 1 else 's'} still being written left out")
     return " · ".join(parts)
 
 
@@ -147,8 +148,12 @@ class ShotTimesWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
             if kind == GAPS and log_gaps:
                 plot.setLogMode(x=False, y=True)
             plot.addLegend(offset=(-10, 10))
-            measured = pg.ScatterPlotItem(size=6, pen=None, brush=pg.mkBrush(COLOUR), symbol="o")
-            fallback = pg.ScatterPlotItem(size=9, pen=None, brush=pg.mkBrush(FALLBACK_COLOUR), symbol="t")
+            # Points only (no line), as data items: they follow the plot's log mode (Log gaps), which
+            # a ScatterPlotItem doesn't (it would draw seconds as exponents).
+            measured = pg.PlotDataItem(pen=None, symbol="o", symbolSize=6, symbolPen=None,
+                                       symbolBrush=pg.mkBrush(COLOUR))
+            fallback = pg.PlotDataItem(pen=None, symbol="t", symbolSize=9, symbolPen=None,
+                                       symbolBrush=pg.mkBrush(FALLBACK_COLOUR))
             plot.addItem(measured)
             plot.addItem(fallback)
             plot.kind = kind
