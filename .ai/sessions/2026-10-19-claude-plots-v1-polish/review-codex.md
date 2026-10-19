@@ -27,3 +27,19 @@ Branch `agent/plots-v1-polish`, base `c8e3a2c`, reviewed at `1ee8b80` (7 commits
 - `git diff --check c8e3a2c..HEAD`: **clean**.
 
 The offscreen checks do not establish native Mac plot appearance or actual Windows runtime behavior.
+
+## Recheck at 2a72950
+
+**Verdict: round-1 findings resolved; round 2 ready for Maestro's review.** I reviewed `1ee8b80..2a72950` (six commits, including handoff updates). No new blocking finding.
+
+- Reversed manual bounds are still accepted, but the plot now explicitly says the axis uses its full extent. Scatter and histogram figures, the dock source line and full tooltip record, and the settings tab report the warning. Equal bounds remain the silent full-extent convention. The new numerical and GUI tests cover this behavior.
+- `HELAB_TEST_READ_GATE` is read once at helper import. When unset, `_read_gate` returns before any filesystem query or sleep; the only normal-path cost is a function call and `None` check before each TXY read. Activating the behavior requires explicitly setting that test-named environment variable to a directory, so normal production launches do not enter it. A closed gate follows `file_started`, emits no progress, and the parent's existing per-file no-progress timeout kills and retries the helper. The stuck-read test asserts three attempts, the timeout error, and confirmed exit before each retry.
+- The two Live I/O tests use regular TXY files and touch-file gates. Each event wait has an explicit timeout; opening a gate is a bounded file creation rather than a blocking pipe open. The pause test orders the background read, Live read, pause, Live completion, and background resume. Neither test uses POSIX-only calls or has a Windows skip. Windows typing passed; runtime behavior on Windows remains unverified here.
+- `DatasetAnalysis.describe_run` supplies the source selection and short settings, with a default for other dataset analyses. The dock renders one line for folder/revision/selection/analysis and an optional second settings line; `QLabel` has wrapping disabled and a size policy that allows clipping. The tooltip still receives `describe(..., every=True)` and any parameter warning. GUI tests assert the text and no wrapping. Very long settings can be clipped at a narrow dock, with the full record available in the tooltip.
+
+### Recheck validation
+
+- Full suite outside sandbox, `PATH="$PWD/venv/bin:$PATH" venv/bin/pytest -n 6 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review2`: **968 passed, 2 skipped, 2 xfailed, no RERUNs** (20.45 s).
+- Strict mypy: `helab` **76 files passed**; `tests` **56 files passed**; `tests --platform win32` **56 files passed**. The reviewer's writable temporary cache was used.
+- `pyright helab tests` and `pyright tests --pythonplatform Windows`: **0 errors, 0 warnings** each.
+- `git diff --check c8e3a2c..HEAD`: **clean**.
