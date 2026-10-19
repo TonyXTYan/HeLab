@@ -354,17 +354,27 @@ def test_failed_and_cancelled_results_record_coverage_too(qtbot: QtBot) -> None:
 @pytest.mark.parametrize("script", [basic_plots.CountsPerShot(), basic_plots.TxyHistograms(),
                                     scatter_3d.Scatter3D(), transfer_fractions.TransferFractions()],
                          ids=lambda script: type(script).__name__)
-@pytest.mark.parametrize("case", ["no shots yet", "none chosen"])
+@pytest.mark.parametrize("case", ["no shots yet", "none chosen", "no events"])
 def test_bundled_plots_say_why_they_are_empty(qtbot: QtBot, script: DatasetAnalysis, case: str) -> None:
-    view = view_of(revision([]) if case == "no shots yet" else revision([1, 2]))
+    if case == "no shots yet":
+        dataset = revision([])
+    elif case == "none chosen":
+        dataset = revision([1, 2])
+    else:  # Shots loaded, but their TXY files held no events.
+        dataset = Dataset(PATH, "sig-empty-shots", {1: np.empty((0, 3)), 2: np.empty((0, 3))},
+                          {"fingerprint": [[1, 0, 1_001], [2, 0, 1_002]]}, 0)
+    view = view_of(dataset)
     values = effective(script.parameters("Plot"), {"first_shot": 10} if case == "none chosen" else {})
     context = AnalysisContext("a1", "Plot", view, values, script.get_metadata().identity())
     result = AnalysisResult.of(context, "completed", script.compute("Plot", context))
     widget = script.render(result)
     qtbot.addWidget(widget)
     assert isinstance(widget, QLabel) and widget.objectName() == "plot_empty"
-    assert widget.text() == ("No shots yet" if case == "no shots yet"
-                             else "None of the 2 shots is chosen (Shots settings)")
+    expected = {"no shots yet": "No shots yet", "none chosen": "None of the 2 shots is chosen (Shots settings)",
+                "no events": "No events in the chosen shots"}[case]
+    if case == "no events" and isinstance(script, transfer_fractions.TransferFractions):
+        expected = "No shot has more than 50 counts in the XY box (Counting settings)"
+    assert widget.text() == expected
     assert script.detected_parameters("Plot", result) == {}
 
 

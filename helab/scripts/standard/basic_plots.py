@@ -116,8 +116,9 @@ class CountsPerShot(DatasetAnalysis):
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: ShotCounts = result.data
-        if not len(data.shots):
-            return empty_pane(empty_text(data.total_shots, 0), parent)
+        if not data.total:
+            # No shots, none chosen, or chosen shots without events: say which, not a flat line.
+            return empty_pane(empty_text(data.total_shots, len(data.shots), 0), parent)
         plot: Any = pg.PlotWidget(parent)
         plot.setBackground("w")
         plot.setTitle(source_title(result, counts_title(data)))
