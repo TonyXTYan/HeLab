@@ -212,18 +212,19 @@ def test_another_order_nearly_as_tall_makes_order_0_unsure(populations: dict[int
     assert data.orders.spacing == pytest.approx(SPACING, rel=0.02)
     notes = unsure_notes(data)
     assert len(notes) == 1 and notes[0].startswith("⚠ order 0 unsure: order ")
-    assert notes[0].endswith("set Search T around order 0, or the orders by hand")
-    # Search T around the real order 0 settles it.
+    assert notes[0].endswith("set both ends of Search T around order 0, or the orders by hand")
+    # Search T around the real order 0 settles it: a plain line names the taller order outside.
     settled = fractions(shots_of(populations), {"search_min": CENTRE - SPACING / 2, "search_max": CENTRE + SPACING / 2})
-    assert settled.orders.centre == pytest.approx(CENTRE, abs=2e-4)
+    assert settled.orders.centre == pytest.approx(CENTRE, abs=2e-4) and not unsure_notes(settled)
+    assert any(note.startswith("order ") and "(outside Search T)" in note for note in settled.notes)
 
 
 def test_a_search_range_holding_only_side_peaks_says_order_0_is_outside() -> None:
     populations = {-2: 30, -1: 100, 0: 600, 1: 250, 2: 100}
     data = fractions(shots_of(populations), {"search_min": CENTRE + SPACING / 2, "search_max": CENTRE + 3 * SPACING})
     assert data.orders.centre == pytest.approx(CENTRE + SPACING, abs=2e-4)  # +1, the tallest in the range
-    notes = unsure_notes(data)
-    assert len(notes) == 1 and notes[0].startswith("⚠ order 0 unsure: order −1 (outside Search T) holds ")
+    # Both ends set: the user's word on order 0, so no warning, but a plain line says what's outside.
+    assert not unsure_notes(data) and "order −1 (outside Search T) is taller than order 0" in data.notes
 
 
 def test_orders_closer_than_their_width_are_not_split() -> None:
@@ -273,7 +274,8 @@ def test_search_t_ends_open_alone_and_a_reversed_range_says_so() -> None:
     script = tf.TransferFractions()
     # From alone: to the last event (it holds only +1, so order 0 is unsure and says so).
     upper = fractions(data, {"search_min": CENTRE + SPACING / 2})
-    assert upper.orders.centre == pytest.approx(CENTRE + SPACING, abs=3e-4) and unsure_notes(upper)
+    assert upper.orders.centre == pytest.approx(CENTRE + SPACING, abs=3e-4)
+    assert unsure_notes(upper)[0].startswith("⚠ order 0 unsure: order −1 (outside Search T) holds ")
     lower = fractions(data, {"search_max": CENTRE + SPACING / 2})
     assert lower.orders.centre == pytest.approx(CENTRE, abs=2e-4) and lower.notes == ()
     values = {"search_min": 2.2, "search_max": 2.1}
@@ -453,3 +455,45 @@ def test_no_jump_from_the_default_centre_part_of_an_order_or_in_manual_mode() ->
     assert tf.jump(CENTRE + 1e-4, CENTRE + 1e-4 + 4 * SPACING, SPACING, 2) == 0  # beyond the orders counted
     manual = fractions(shots_of(transferred(0.9)), {"orders_mode": tf.MANUAL, "centre": CENTRE - SPACING})
     assert manual.jumped == 0 and manual.notes == ()
+
+
+
+# Search T with both ends set: the user's word on where order 0 is
+
+AROUND_0 = {"search_min": CENTRE - SPACING / 2, "search_max": CENTRE + SPACING / 2}
+
+
+@pytest.mark.parametrize(("share", "said"), [(0.45, "order +1 (outside Search T) holds 70% as many events as order 0"),
+                                             (0.6, "order +1 (outside Search T) is taller than order 0")])
+def test_search_t_around_order_0_clears_unsure_and_says_what_is_outside(share: float, said: str) -> None:
+    data = shots_of(transferred(share))
+    assert unsure_notes(fractions(data))  # Without Search T: unsure.
+    found = fractions(data, AROUND_0)
+    assert found.orders.centre == pytest.approx(CENTRE, abs=2e-4) and not unsure_notes(found) and said in found.notes
+    # No side peak inside such a narrow Search T: the spacing is the hidden (last) one.
+    assert found.orders.spacing == tf.SPACING.default
+    assert any(note.startswith("no side peak found beyond order 0's width") for note in found.notes)
+
+
+def test_a_wrong_first_pick_fixed_by_search_t_updates_the_centre() -> None:
+    script = tf.TransferFractions()
+    data = shots_of(transferred(0.6))
+
+    def run(values: dict[str, Any]) -> AnalysisResult:
+        start = context(data, values)
+        return AnalysisResult.of(start, "completed", script.compute("Plot", start))
+    first = run({})
+    assert first.data.orders.centre == pytest.approx(CENTRE + SPACING, abs=3e-4)  # +1 taken for order 0
+    last = script.detected_parameters("Plot", first)
+    # Search T around the real order 0 leaves the last centre out: the new one replaces it, no "moved".
+    fixed = run({**last, **AROUND_0})
+    assert fixed.data.orders.centre == pytest.approx(CENTRE, abs=2e-4) and fixed.data.jumped == 0
+    assert not [note for note in fixed.data.notes if note.startswith("⚠")]
+    filled = script.detected_parameters("Plot", fixed)
+    assert filled["centre"] == fixed.data.orders.centre
+    again = run({**filled, **AROUND_0})
+    assert again.data.jumped == 0 and not [note for note in again.data.notes if note.startswith("⚠")]
+    # An open end keeps today's rules: the last centre is compared, and the warning sticks.
+    open_end = run({**last, "search_max": CENTRE + SPACING / 2})
+    assert open_end.data.orders.centre == pytest.approx(CENTRE, abs=2e-4) and open_end.data.jumped == -1
+    assert "centre" not in script.detected_parameters("Plot", open_end)

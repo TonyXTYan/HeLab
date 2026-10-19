@@ -18,7 +18,9 @@ says order 0 is unsure when another order holds at least half as many events (co
 peaks, or a Search T that leaves the real order 0 out), and that it moved when it lands a whole
 number of spacings from the last detection (Live, a scan; the hidden centre then keeps the last
 one). A first run with a transfer over about 2/3 can still take +1 for order 0 without a note:
-set Search T around order 0, or the orders by hand. Under its title the plot also says when the
+set both ends of Search T around order 0, or the orders by hand. A Search T with both ends set
+is the user's word on order 0: an order outside it gets a plain line, not the warning, and a
+last detection outside it is replaced without a "moved" warning. Under its title the plot also says when the
 orders overlap or no side peak was found, and which events were left out.
 """
 from __future__ import annotations
@@ -62,7 +64,8 @@ HALF_WIDTH = ParameterSpec("half_width", "Window ± (0 = half spacing)", "float"
 SEARCH_MIN = ParameterSpec("search_min", "Search T from (0 = first)", "float", 0.0, (0.0, 100.0), " s",
                            group=ORDERS_GROUP, when=(MODE.name, AUTO), si=True,
                            tip="Auto looks for the orders between these times; 0 leaves that end open. Put order 0 "
-                               "inside: the tallest peak here is taken as order 0.")
+                               "inside: the tallest peak here is taken as order 0. With both ends set, the plot "
+                               "doesn't warn about orders outside it.")
 SEARCH_MAX = ParameterSpec("search_max", "Search T to (0 = last)", "float", 0.0, (0.0, 100.0), " s",
                            group=ORDERS_GROUP, when=(MODE.name, AUTO), si=True,
                            tip="See Search T from. A From at or above To searches every event, and the plot says so.")
@@ -273,18 +276,33 @@ def jump(previous: float, centre: float, spacing: float, each_side: int) -> int:
 def unsure(orders: Orders, totals: npt.NDArray[np.int64], low: float, high: float) -> tuple[str, ...]:
     """A note when auto's order 0 may be another order: one of the others holds at least
     UNSURE_SHARE of its events (order 0 is the tallest peak, which a strong transfer, or a search
-    range that leaves the real order 0 out, makes another order)."""
+    range that leaves the real order 0 out, makes another order). A Search T with both ends set
+    is the user's word on where order 0 is: such orders outside it get a plain line instead."""
     zero = int(totals[orders.each_side])
+    bounded = math.isfinite(low) and math.isfinite(high)
     rivals = [(int(total), order) for order, total in zip(orders.numbers, totals)
               if order and total > 0 and total >= UNSURE_SHARE * zero]
-    if not rivals:
-        return ()
-    total, order = max(rivals)
-    share = f"{total / zero:.0%} as many events as" if zero else "events, none in"
-    middle = orders.centre + order * orders.spacing
-    outside = " (outside Search T)" if not low <= middle <= high else ""
-    return (f"⚠ order 0 unsure: order {order_label(order)}{outside} holds {share} order 0; set Search T "
-            f"around order 0, or the orders by hand",)
+    outside = [(total, order) for total, order in rivals
+               if not low <= orders.centre + order * orders.spacing <= high]
+    warned = [rival for rival in rivals if not bounded or rival not in outside]
+    notes: list[str] = []
+    if warned:
+        total, order = max(warned)
+        share = f"{total / zero:.0%} as many events as" if zero else "events, none in"
+        where = " (outside Search T)" if (total, order) in outside else ""
+        notes.append(f"⚠ order 0 unsure: order {order_label(order)}{where} holds {share} order 0; set both ends "
+                     f"of Search T around order 0, or the orders by hand")
+    if bounded and outside:
+        total, order = max(outside)
+        share = "is taller than" if total > zero else f"holds {total / zero:.0%} as many events as"
+        notes.append(f"order {order_label(order)} (outside Search T) {share} order 0")
+    return tuple(notes)
+
+
+def chosen_by_search(previous: float, low: float, high: float) -> bool:
+    """Whether a Search T with both ends set leaves out the last detection's order 0: the new
+    one, found inside it, replaces it without a jump warning."""
+    return math.isfinite(low) and math.isfinite(high) and not low <= previous <= high
 
 
 class TransferFractions(DatasetAnalysis):
@@ -296,7 +314,7 @@ class TransferFractions(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.transfer_fractions",
-            version="4",
+            version="5",
         )
 
     def get_actions(self) -> List[str]:
@@ -384,7 +402,7 @@ class TransferFractions(DatasetAnalysis):
         counts = counts.reshape(len(boxed), len(orders.numbers))
         if detected:
             notes.extend(unsure(orders, counts.sum(axis=0), low, high))
-            jumped = jump(previous, centre, spacing, each_side)
+            jumped = 0 if chosen_by_search(previous, low, high) else jump(previous, centre, spacing, each_side)
             if jumped:
                 notes.append(f"⚠ order 0 moved by {order_label(jumped)} order{'' if abs(jumped) == 1 else 's'} "
                              f"from the last detection ({previous:.6g} s → {centre:.6g} s): a strong transfer can "
