@@ -19,6 +19,7 @@ from typing import Any, Callable, Iterator, TYPE_CHECKING
 
 from PyQt6.QtCore import QCoreApplication, QObject, QTimer, pyqtSignal
 
+from helab import io_helper
 from helab.utils.constants import MAX_SIMULTANEOUS_IO
 from helab.utils.time_format import duration
 
@@ -54,6 +55,8 @@ class IORequest:
     paused: bool = False
     slow_stop_logged: bool = False
     control: threading.Lock = field(default_factory=threading.Lock)
+    # Whom the helper works for, sent to it only for the I/O trace (``io_helper.TRACE``).
+    trace: dict[str, Any] | None = None
 
 
 FOREGROUND = "foreground"
@@ -135,6 +138,8 @@ class IOService(QObject):
         self.mismatch_hold = False
         # Set by the main window: a running request's tab, progress and time, for the I/O tooltip.
         self.request_note: Callable[[IORequest], str] | None = None
+        # Set by FolderCache: the owners (tabs) a request's helper works for, for the I/O trace.
+        self.owners_of: Callable[[IORequest], list[str]] = lambda request: [request.owner]
         self._foreground_busy_at = -math.inf
         self._listing_busy_at = -math.inf
         self.timer = QTimer(self)
@@ -332,6 +337,9 @@ class IOService(QObject):
         request.lane = lane
         request.started = time.monotonic()
         request.last_activity = request.started
+        if io_helper.TRACE is not None:
+            request.trace = {"owner": request.owner, "tabs": self.owners_of(request), "lane": lane,
+                             "attempt": request.attempt}
         self.active.append(request)
         self.resultReady.emit(request, {"kind": "started", "attempt": request.attempt})
         threading.Thread(target=self._run, args=(request,), daemon=True,
@@ -620,6 +628,8 @@ class IOService(QObject):
             if request.cancelled.is_set():
                 return
             payload = {**request.payload, "operation": request.operation, "path": request.path}
+            if request.trace is not None:
+                payload["trace"] = request.trace
             # Every helper gets a private folder: load artifacts, the frozen app's
             # request/response files, and the pause flag.
             with request.control:

@@ -14,14 +14,14 @@ import os
 import random
 import sys
 import time
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal
 
 from helab.utils import file_kinds, large_folder
 
 if TYPE_CHECKING:
     from helab.utils.cache_paths import Mount
     from helab.utils.cache_store import CacheStore, SaveGuard
-    from helab.utils.data_roots import LocalVolumes
+    from helab.utils.data_roots import LocalVolumes, Marker
 
 Emit = Callable[[dict[str, Any]], None]
 # Another computer may still be writing a file modified this recently; it is
@@ -42,6 +42,188 @@ def _read_gate(filename: str) -> None:
     go = os.path.join(READ_GATE, os.path.basename(filename) + ".go")
     while not os.path.exists(go):
         time.sleep(READ_GATE_POLL)
+
+
+# Debugging aid: with HELAB_IO_TRACE=<file>, every operation a helper makes on a source folder is
+# appended to <file> as one JSON line (``_trace``), with the request it serves. Unset in production:
+# nothing is written, and the wrappers below make the same calls as before.
+TRACE = os.environ.get("HELAB_IO_TRACE") or None
+# This helper's request, on every line (``main``): its operation, owner and tabs, lane, flags.
+_trace_request: dict[str, Any] = {}
+_trace_fd: int | None = None
+
+
+def _trace(op: str, path: str, reason: str, **fields: Any) -> None:
+    """Append one line to the trace (``TRACE``). Each line is one write, so helpers append side by
+    side; a line that can't be written is skipped."""
+    global _trace_fd
+    if TRACE is None:
+        return
+    line = json.dumps({"t": time.time(), "pid": os.getpid(), "op": op, "path": path, "reason": reason,
+                       **_trace_request, **fields}, ensure_ascii=True, default=str) + "\n"
+    try:
+        if _trace_fd is None:
+            _trace_fd = os.open(TRACE, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o644)
+        os.write(_trace_fd, line.encode("ascii"))
+    except OSError:
+        pass
+
+
+def _start_trace(request: dict[str, Any]) -> None:
+    """Note the request every trace line serves, and that this helper started."""
+    if TRACE is None:
+        return
+    note = request.get("trace")
+    operation = str(request.get("operation", ""))
+    flags = [key for key in TRACE_FLAGS if request.get(key)]
+    _trace_request.update(request="live" if operation == "load" and request.get("live") else operation,
+                          target=request.get("path", ""), flags=flags)
+    if isinstance(note, dict):
+        _trace_request.update(note)
+    if request.get("memory"):
+        _trace_request["held"] = len(request["memory"])
+    _trace("request", str(request.get("path", "")), operation)
+
+
+def _end_trace(started: float, error: str = "") -> None:
+    """Note that this helper's request ended (``error``: why it failed)."""
+    if TRACE is not None:
+        _trace("request_end", str(_trace_request.get("target", "")), str(_trace_request.get("request", "")),
+               seconds=round(time.monotonic() - started, 6), **({"error": error} if error else {}))
+
+
+# Request fields that say why it was asked for (the app's payload), copied to every trace line.
+TRACE_FLAGS = ("automatic", "scan_manual", "metadata_only", "listing_only", "revalidate", "refresh_sequence",
+               "save", "cache_base", "full_check", "allow_missing", "deliberate", "no_cache", "live_since")
+
+
+def _traced_error(op: str, path: str, reason: str, exc: BaseException) -> None:
+    _trace(op, path, reason, error=type(exc).__name__)
+
+
+def _stat(path: str, reason: str, *, follow_symlinks: bool = True) -> os.stat_result:
+    """``os.stat`` of a source path, traced."""
+    if TRACE is None:
+        return os.stat(path) if follow_symlinks else os.stat(path, follow_symlinks=False)
+    op = "stat" if follow_symlinks else "lstat"
+    try:
+        info = os.stat(path) if follow_symlinks else os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        _traced_error(op, path, reason, exc)
+        raise
+    _trace(op, path, reason, size=info.st_size, mtime_ns=info.st_mtime_ns)
+    return info
+
+
+def _lstat(path: str, reason: str) -> os.stat_result:
+    """``os.lstat`` of a source path, traced."""
+    if TRACE is None:
+        return os.lstat(path)
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        _traced_error("lstat", path, reason, exc)
+        raise
+    _trace("lstat", path, reason, size=info.st_size, mtime_ns=info.st_mtime_ns)
+    return info
+
+
+def _isdir(path: str, reason: str) -> bool:
+    """``os.path.isdir`` of a source path (one stat), traced."""
+    found = os.path.isdir(path)
+    if TRACE is not None:
+        _trace("stat", path, reason, isdir=found)
+    return found
+
+
+def _entry_stat(entry: os.DirEntry[str], reason: str) -> os.stat_result:
+    """A listed entry's ``stat()``, traced. One more call on macOS and Linux; on Windows the
+    listing already has it (``syscall`` False), unless the entry is a link."""
+    if TRACE is None:
+        return entry.stat()
+    syscall = sys.platform != "win32" or entry.is_symlink()
+    try:
+        info = entry.stat()
+    except OSError as exc:
+        _trace("entry_stat", entry.path, reason, error=type(exc).__name__, syscall=syscall)
+        raise
+    _trace("entry_stat", entry.path, reason, size=info.st_size, mtime_ns=info.st_mtime_ns, syscall=syscall)
+    return info
+
+
+class _TracedListing:
+    """``os.scandir`` of a source folder, traced: one line with its entry count when it ends."""
+
+    def __init__(self, path: str, reason: str) -> None:
+        self.path, self.reason, self.count = path, reason, 0
+        self.started = time.monotonic()
+        try:
+            self.directory = os.scandir(path)
+        except OSError as exc:
+            _traced_error("scandir", path, reason, exc)
+            raise
+
+    def __enter__(self) -> Iterator[os.DirEntry[str]]:
+        return self._entries()
+
+    def _entries(self) -> Iterator[os.DirEntry[str]]:
+        for entry in self.directory:
+            self.count += 1
+            yield entry
+
+    def __exit__(self, kind: type[BaseException] | None, *_: object) -> None:
+        self.directory.close()
+        _trace("scandir", self.path, self.reason, entries=self.count,
+               seconds=round(time.monotonic() - self.started, 6),
+               **({"error": kind.__name__} if kind is not None and issubclass(kind, OSError) else {}))
+
+
+def _scandir(path: str, reason: str) -> contextlib.AbstractContextManager[Iterator[os.DirEntry[str]]]:
+    """``os.scandir`` of a source folder, traced."""
+    return os.scandir(path) if TRACE is None else _TracedListing(path, reason)
+
+
+def _read_marker(folder: str, reason: str) -> Marker:
+    """``data_roots.read_marker`` (open, fstat and read the folder's ``.helab-root``), traced."""
+    from helab.utils import data_roots
+    if TRACE is None:
+        return data_roots.read_marker(folder)
+    path = os.path.join(folder, data_roots.MARKER_NAME)
+    try:
+        marker = data_roots.read_marker(folder)
+    except (OSError, ValueError) as exc:
+        _traced_error("marker_read", path, reason, exc)
+        raise
+    _trace("marker_read", path, reason)
+    return marker
+
+
+def _read_txy_file(filename: str, reason: str, size: int) -> Any:
+    """``pandas.read_csv`` of a whole TXY file, traced (``size``: its bytes, from its fingerprint)."""
+    import numpy as np
+    import pandas as pd
+    if TRACE is None:
+        return pd.read_csv(filename, sep=",", names=["t", "x", "y"], dtype=np.float64)
+    try:
+        frame = pd.read_csv(filename, sep=",", names=["t", "x", "y"], dtype=np.float64)
+    except Exception as exc:
+        _traced_error("read", filename, reason, exc)
+        raise
+    _trace("read", filename, reason, bytes=size)
+    return frame
+
+
+def _mounts(reason: str) -> list[Mount]:
+    """The mount table (``cache_paths.current_mounts``): the OS's list of mounts, which asks no
+    source folder or server (psutil's getfsstat without waiting; Windows' drive types and mapped
+    drives). Traced for completeness."""
+    from helab.utils import cache_paths
+    mounts = cache_paths.current_mounts()
+    if TRACE is not None:
+        _trace("mounts", "", reason, count=len(mounts))
+    return mounts
+
+
 # One helper handles one request. Reusing a volume ID within that request avoids
 # repeated diskutil calls during discovery and listing without persisting stale IDs.
 _volume_id_cache: dict[tuple[str, str], str | None] = {}
@@ -52,6 +234,8 @@ def _cached_volume_id(mount: Any) -> str | None:
     key = (str(mount.path), str(mount.source))
     if key not in _volume_id_cache:
         _volume_id_cache[key] = _volume_id(mount)
+        # (Local volumes only: shares are keyed by server and share, never by a volume ID.)
+        _trace("volume_id", str(mount.path), "location key")
     return _volume_id_cache[key]
 
 
@@ -191,14 +375,14 @@ def _cache_store(root: str, source_paths: list[str] | None = None,
     mount path and device would otherwise inherit the previous disk's ID, and its cached data.
     A source path on another hinted mount raises ``VolumeUnverified``.
     """
-    from helab.utils.cache_paths import CachePaths, UnresolvedRemotePath, _inside, _normal, current_mounts
+    from helab.utils.cache_paths import CachePaths, UnresolvedRemotePath, _inside, _normal
     from helab.utils.cache_store import CacheStore, StoreError
     from helab.utils.data_roots import (DataRoots, LocalVolumes, NoDataRoot, RootLocation, VolumeUnverified,
                                         current_local_volumes, fixed_mount)
     store: CacheStore | None = None
     held: list[str] = []
     try:
-        mounts = current_mounts()
+        mounts = _mounts("disk cache keys")
         paths = CachePaths(mounts)
         store = CacheStore(root, root_mode=True)
         if local_lane:
@@ -255,7 +439,7 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
         return False
     from helab.utils.cache_paths import UnresolvedRemotePath
     from helab.utils.cache_store import KINDS, StoreError
-    from helab.utils.data_roots import NoDataRoot, read_marker
+    from helab.utils.data_roots import NoDataRoot
     try:
         with _cache_store(cache_options["directory"], [path], allow_unrooted=True) as store:
             location = store._location_key(path)
@@ -267,7 +451,7 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                           "reason": "marker removed"})
                 return old is not None
             try:
-                marker = read_marker(path)
+                marker = _read_marker(path, "root discovery")
             except OSError as exc:
                 send({"kind": "cache_warning", "message": f"Cannot read {path}/.helab-root: {exc}"})
                 return False
@@ -320,9 +504,8 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
 
 
 def _mount_fingerprint() -> list[list[str]] | None:
-    from helab.utils.cache_paths import current_mounts
     try:
-        return sorted([[mount.path, mount.source] for mount in current_mounts()])
+        return sorted([[mount.path, mount.source] for mount in _mounts("mounts seen")])
     except (OSError, RuntimeError):
         return None
 
@@ -335,10 +518,9 @@ def verify_volumes(cache_options: dict[str, Any], send: Emit = emit,
     Reads only mounted volumes' IDs (diskutil, GetVolumeInformationW), never source folders,
     so it runs on the local lane at startup and after a mount change (``volumes_verify``).
     """
-    from helab.utils.cache_paths import current_mounts
     from helab.utils.cache_store import CacheStore
     from helab.utils.data_roots import current_local_volumes
-    mounts = current_mounts() if mounts is None else mounts
+    mounts = _mounts("volumes_verify") if mounts is None else mounts
     with CacheStore(cache_options["directory"], root_mode=True) as store:
         known_mounts = {(path, source) for path, source, _ in store.volume_locations()}
     local = current_local_volumes(mounts, paths=[mount.path for mount in mounts
@@ -364,10 +546,10 @@ def verify_known_roots(cache_options: dict[str, Any], send: Emit = emit) -> None
     Only the recorded marker folders are visited. Missing mounts are left alone;
     a mounted folder whose marker changed is reconciled like a listing.
     """
-    from helab.utils.cache_paths import CachePaths, current_mounts
+    from helab.utils.cache_paths import CachePaths
     from helab.utils.cache_store import CacheStore
     from helab.utils.data_roots import MARKER_NAME
-    mounts = current_mounts()
+    mounts = _mounts("roots_verify")
     with CacheStore(cache_options["directory"], root_mode=True) as store:
         roots = store.root_locations()
     local = verify_volumes(cache_options, send, mounts)
@@ -377,10 +559,10 @@ def verify_known_roots(cache_options: dict[str, Any], send: Emit = emit) -> None
         beat()
         source = (locations.source(location) if location.startswith("smb://")
                   else local.source(location))
-        if source == location or not os.path.isdir(source):
+        if source == location or not _isdir(source, "roots_verify: root folder"):
             continue
         try:
-            os.lstat(os.path.join(source, MARKER_NAME))
+            _lstat(os.path.join(source, MARKER_NAME), "roots_verify: marker")
             present = True
         except FileNotFoundError:
             present = False
@@ -540,7 +722,7 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
         marker_before = False  # Absent, or unknown: decided by the scandir below.
         if cache_options:
             try:
-                os.lstat(os.path.join(path, MARKER_NAME))
+                _lstat(os.path.join(path, MARKER_NAME), "listing: marker")
                 marker_before = True
             except OSError:
                 pass
@@ -579,7 +761,7 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
         marker_present = False
         listed_at = time.time()
         beat = Heartbeat(send, "listing")
-        with os.scandir(path) as directory:
+        with _scandir(path, "listing") as directory:
             for entry in directory:
                 beat()
                 if entry.name == MARKER_NAME:
@@ -727,7 +909,7 @@ def _valid_summary(info: object) -> dict[str, Any]:
 def _summary(path: str, found: dict[str, set[int]], sizes: dict[str, int], has_dirs: bool, empty: bool,
              fingerprint: list[tuple[int, int, int]], scanned_at: float) -> dict[str, Any]:
     """A complete status for this folder, as a scan or load computes it."""
-    folder_stat = os.stat(path)
+    folder_stat = _stat(path, "folder mtime")
     raw, txy = _shots(found)
     status, count = _classify(raw, txy, has_dirs)
     return {"kind": "status", "details": True, "status": status, "count": count, "empty": empty,
@@ -838,7 +1020,7 @@ def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | No
 
     beat = Heartbeat(send, "listing")
     # Do not traverse directory symlinks or recursively probe children.
-    with os.scandir(path) as directory:
+    with _scandir(path, "listing") as directory:
         for entry in directory:
             beat()
             if entry.name == ".helab-root" or _marker_temporary(entry.name):
@@ -850,13 +1032,13 @@ def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | No
                 if kind is file_kinds.TXY:
                     # Match load()'s fingerprint of the actual converted file,
                     # including when the file itself is a symlink.
-                    info = entry.stat()
+                    info = _entry_stat(entry, "fingerprint")
                     fingerprint.append((shot, info.st_size, info.st_mtime_ns))
                     txy_bytes += info.st_size
             if entry.is_dir(follow_symlinks=False):
                 has_dirs = True
                 try:
-                    stat = os.stat(entry.path, follow_symlinks=False)
+                    stat = _stat(entry.path, "subfolder date", follow_symlinks=False)
                     modified: float | None = stat.st_mtime
                 except OSError:
                     modified = None
@@ -964,7 +1146,7 @@ def _samples_unchanged(path: str, fingerprint: list[list[int]], names: object, l
         return False
     try:
         for index in indices:
-            info = os.stat(os.path.join(path, str(names[index])))
+            info = _stat(os.path.join(path, str(names[index])), "cached check: sample")
             if (info.st_size, info.st_mtime_ns) != tuple(fingerprint[index][1:]):
                 return False
     except (OSError, TypeError, ValueError):
@@ -1078,7 +1260,7 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
     as_of = _as_of(info)
     if info.get("signature") != base_signature or info.get("unsettled") or as_of is None:
         return False
-    modified = os.stat(path).st_mtime
+    modified = _stat(path, "cached check: folder").st_mtime
     fingerprint = [list(entry) for entry in _saved_fingerprint(row)]
     if modified > as_of or not _samples_unchanged(path, fingerprint, info.get("names"), check_level):
         return False
@@ -1183,7 +1365,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # Files added after this listing are not in the dataset; freshness compares against it.
     listed_at = time.time()
     beat = Heartbeat(send, "listing")
-    with os.scandir(path) as directory:
+    with _scandir(path, "load: listing") as directory:
         for entry in directory:
             beat()
             if matched := file_kinds.match(entry.name):
@@ -1197,16 +1379,16 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         raise ValueError("No converted TXY files in this folder")
     files.sort()
 
-    def stat_files(phase: str) -> list[tuple[int, int, int]]:
+    def stat_files(phase: str, reason: str) -> list[tuple[int, int, int]]:
         beat = Heartbeat(send, phase)
         result: list[tuple[int, int, int]] = []
         for shot, filename in files:
-            info = os.stat(filename)
+            info = _stat(filename, reason)
             result.append((shot, info.st_size, info.st_mtime_ns))
             beat()
         return result
 
-    fingerprint = stat_files("checking")
+    fingerprint = stat_files("checking", "load: checking")
     txy_bytes = sum(size for _, size, _ in fingerprint)
     # Files another computer may still be writing are left out entirely (not in
     # the fingerprint), so the next load sees them as new and reads them whole.
@@ -1351,13 +1533,13 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # load reads them again; their data is not kept.
     late: set[int] = set()
 
-    def unchanged(index: int, filename: str) -> bool:
-        info = os.stat(filename)
+    def unchanged(index: int, filename: str, reason: str) -> bool:
+        info = _stat(filename, reason)
         return (info.st_size, info.st_mtime_ns) == fingerprint[index][1:]
 
-    def read_txy(shot: int, filename: str) -> Any:
+    def read_txy(shot: int, filename: str, size: int, reason: str = "load: read") -> Any:
         _read_gate(filename)
-        frame = pd.read_csv(filename, sep=",", names=["t", "x", "y"], dtype=np.float64)
+        frame = _read_txy_file(filename, reason, size)
         if frame.isna().any().any():
             problematic.append(shot)
         array = np.asarray(frame.dropna(), dtype=np.float64)
@@ -1377,9 +1559,9 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             elif not cached:
                 load_counts["read"] += 1
                 read_bytes += fingerprint[i][1]
-                if unchanged(i, filename):
-                    array = read_txy(shot, filename)
-                    if not unchanged(i, filename):
+                if unchanged(i, filename, "load: before read"):
+                    array = read_txy(shot, filename, fingerprint[i][1])
+                    if not unchanged(i, filename, "load: after read"):
                         data.pop(shot, None)
                         array = None
                 if array is None:
@@ -1417,8 +1599,9 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         # Only the loaded files must be unchanged. Shots added during a live run
         # are left for the next load (their scan signature shows the change).
         settled = [item for item in fingerprint if item[0] not in late]
-        return settled != [item for item in stat_files("verifying") if item[0] not in late]
+        return settled != [item for item in stat_files("verifying", verify_reason) if item[0] not in late]
 
+    verify_reason = "load: verifying"  # (The trace's only: the second check is the cache save's.)
     if changed():
         raise ValueError("Folder changed while loading — Retry")
     send({"kind": "loaded", "rows": rows, "bytes": size, "files": loaded,
@@ -1451,15 +1634,16 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # delays it. Shots only the caller holds are read again for completeness.
     try:
         from helab.utils.cache_store import DATASET_FORMAT, pack_dataset
-        for shot, filename in files:
+        for i, (shot, filename) in enumerate(files):
             if shot in in_memory and shot not in data:
                 Pause.checkpoint(send)
                 send({"kind": "file_started", "filename": filename})
                 try:
-                    read_txy(shot, filename)
+                    read_txy(shot, filename, fingerprint[i][1], "cache save: read")
                 except (OSError, ValueError, pd.errors.ParserError):
                     raise ValueError(f"Could not cache previously loaded shot {shot}") from None
                 send({"kind": "file_finished", "filename": filename})
+        verify_reason = "cache save: verifying"
         if changed():
             raise ValueError("Folder changed before cache could be saved")
         file = store.write_dataset_file(pack_dataset(data))
@@ -1501,12 +1685,11 @@ def _folder_identity(path: str) -> str:
     """Which folder ``path`` is, beyond its spelling: the nearest data root's UUID, else its
     location (an SMB share's server and share, or a local mount's device) and relative path.
     "" if a marker is there but unreadable."""
-    from helab.utils.cache_paths import _inside, _normal, _smb_source, current_mounts
-    from helab.utils.data_roots import read_marker
+    from helab.utils.cache_paths import _inside, _normal, _smb_source
     folder = path
     while True:
         try:
-            return "root:" + read_marker(folder).uuid
+            return "root:" + _read_marker(folder, "live: identity").uuid
         except FileNotFoundError:
             pass
         except ValueError:
@@ -1517,7 +1700,7 @@ def _folder_identity(path: str) -> str:
         if parent == folder:
             break
         folder = parent
-    mounts = [mount for mount in current_mounts() if _inside(_normal(path), _normal(mount.path))]
+    mounts = [mount for mount in _mounts("live: identity") if _inside(_normal(path), _normal(mount.path))]
     if not mounts:
         return "location:" + path
     mount = max(mounts, key=lambda item: len(_normal(item.path)))
@@ -1529,11 +1712,16 @@ def _txy_complete(filename: str) -> bool:
     """Whether a TXY file ends with a whole row: its last byte is a newline and its last row has
     three fields (the converter's dlmwrite ends every row with one). A file still being written
     usually ends mid-row; one paused exactly at a row's end can't be told apart."""
-    with open(filename, "rb") as stream:
-        stream.seek(0, os.SEEK_END)
-        size = stream.tell()
-        stream.seek(max(0, size - 4096))
-        tail = stream.read()
+    try:
+        with open(filename, "rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(max(0, size - 4096))
+            tail = stream.read()
+    except OSError as exc:
+        _traced_error("read_tail", filename, "live: last row", exc)
+        raise
+    _trace("read_tail", filename, "live: last row", size=size, bytes=len(tail))
     if not tail.endswith(b"\n"):
         return False
     # Three non-empty fields (a malformed but whole row is the read's to report as unreadable).
@@ -1570,7 +1758,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     if not memory:
         raise ValueError("Live needs the folder's loaded data — Retry")
     try:
-        folder = os.stat(path)
+        folder = _stat(path, "live: folder")
     except FileNotFoundError:
         raise OSError("Folder not found — is its drive connected?") from None
     racy = abs(time.time() - folder.st_mtime) < RACY_SECONDS
@@ -1580,7 +1768,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
         import stat as stat_mode
         try:
             # (Not a regular file, or unreadable: the read itself reports it.)
-            return not stat_mode.S_ISREG(os.stat(filename).st_mode) or _txy_complete(filename)
+            return not stat_mode.S_ISREG(_stat(filename, "live: last row").st_mode) or _txy_complete(filename)
         except OSError:
             return True
 
@@ -1601,7 +1789,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     has_dirs = False
     listed_at = time.time()
     beat = Heartbeat(send, "listing")
-    with os.scandir(path) as directory:
+    with _scandir(path, "live: listing") as directory:
         for entry in directory:
             beat()
             if matched := file_kinds.match(entry.name):
@@ -1632,7 +1820,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     for index in range(len(ordered)) if indices is None else indices:
         shot = ordered[index]
         try:
-            info = os.stat(names[shot])
+            info = _stat(names[shot], "live: sample")
         except FileNotFoundError:
             changed.append(shot)
             continue
@@ -1648,7 +1836,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     candidates: list[tuple[int, int, int]] = []
     for shot in sorted(set(names) - set(held)):
         try:
-            info = os.stat(names[shot])
+            info = _stat(names[shot], "live: new file")
         except FileNotFoundError:
             continue  # Gone since the listing (e.g. renamed by its writer).
         candidates.append((shot, info.st_size, info.st_mtime_ns))
@@ -1686,8 +1874,8 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                 "failed_files": len(unreadable), "unsettled_files": young + len(late),
                 "read_bytes": read_bytes, "read_files": read, "total_read_bytes": total_read_bytes}
 
-    def unchanged(filename: str, item: tuple[int, int, int]) -> bool:
-        info = os.stat(filename)
+    def unchanged(filename: str, item: tuple[int, int, int], reason: str) -> bool:
+        info = _stat(filename, reason)
         return (info.st_size, info.st_mtime_ns) == item[1:]
 
     send(progress(0))
@@ -1700,13 +1888,13 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
         read_bytes += item[1]
         try:
             array = None
-            if unchanged(filename, item):
+            if unchanged(filename, item, "live: before read"):
                 _read_gate(filename)
-                frame = pd.read_csv(filename, sep=",", names=["t", "x", "y"], dtype=np.float64)
+                frame = _read_txy_file(filename, "live: read", item[1])
                 if frame.isna().any().any():
                     problematic.append(shot)
                 array = np.asarray(frame.dropna(), dtype=np.float64)
-                if not unchanged(filename, item):
+                if not unchanged(filename, item, "live: after read"):
                     array = None
             if array is None:
                 # Changed while read: still being written; the next check reads it again.
@@ -1769,6 +1957,8 @@ def folder_icons(paths: list[str], send: Emit = emit) -> None:
     for path in paths[:64]:
         Pause.checkpoint(send)
         encoded = ""
+        # (The OS looks the folder and its custom icon up: calls Python can't see, so one line.)
+        _trace("icon", path, "folder icon")
         try:
             pixmap = provider.icon(QFileInfo(path)).pixmap(32, 32)
             data = QByteArray()
@@ -1860,7 +2050,7 @@ def _marker_hint(folder: str) -> dict[str, Any] | None:
     folder. (The device number differs for every mount, even of one share, so it is left out.)"""
     from helab.utils.data_roots import MARKER_NAME
     try:
-        found = os.lstat(os.path.join(folder, MARKER_NAME))
+        found = _lstat(os.path.join(folder, MARKER_NAME), "root duplicate: hint")
     except OSError:
         return None
     return {"size": found.st_size, "mtime": found.st_mtime, "ino": found.st_ino}
@@ -1875,8 +2065,8 @@ def reassign_root(path: str, cache_options: dict[str, Any], old_uuid: str, keep:
     Without write permission nothing changes and ``root_manual`` hands out the new contents.
     """
     import uuid as uuids
-    from helab.utils.data_roots import MARKER_NAME, new_marker, read_marker
-    current = read_marker(path)
+    from helab.utils.data_roots import MARKER_NAME, new_marker
+    current = _read_marker(path, "root_reassign")
     if current.uuid != old_uuid:
         raise ValueError(f"The {MARKER_NAME} in {path} changed since HeLab found it. "
                          "Retry / Refresh the folder, then answer again.")
@@ -1891,11 +2081,13 @@ def reassign_root(path: str, cache_options: dict[str, Any], old_uuid: str, keep:
             os.fsync(stream.fileno())
         os.replace(temporary, file)
     except OSError as exc:
+        _traced_error("marker_write", file, "root_reassign", exc)
         with contextlib.suppress(OSError):
             os.remove(temporary)
         send({"kind": "root_manual", "path": path, "name": MARKER_NAME,
               "contents": contents.decode("utf-8"), "reason": str(exc), "replace": True})
         return
+    _trace("marker_write", file, "root_reassign", bytes=len(contents))
     _hide(file)
     with _cache_store(cache_options["directory"], [path], allow_unrooted=True) as store:
         location = store._location_key(path)
@@ -1953,15 +2145,17 @@ def create_root(path: str, cache_options: dict[str, Any] | None, send: Emit = em
     Without write permission nothing is left behind and ``root_manual`` hands the app the exact
     file name and contents to place by hand.
     """
-    from helab.utils.data_roots import MARKER_NAME, new_marker, read_marker
+    from helab.utils.data_roots import MARKER_NAME, new_marker
     marker, contents = new_marker(path)
     file = os.path.join(path, MARKER_NAME)
     created = False
     try:
         descriptor = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o644)
     except FileExistsError:
-        pass  # Another PC (or an earlier click) was first: adopt it.
+        # Another PC (or an earlier click) was first: adopt it.
+        _trace("marker_write", file, "root_create", error="FileExistsError")
     except OSError as exc:
+        _traced_error("marker_write", file, "root_create", exc)
         send({"kind": "root_manual", "path": path, "name": MARKER_NAME,
               "contents": contents.decode("utf-8"), "reason": str(exc)})
         return
@@ -1978,9 +2172,10 @@ def create_root(path: str, cache_options: dict[str, Any] | None, send: Emit = em
             send({"kind": "root_manual", "path": path, "name": MARKER_NAME,
                   "contents": contents.decode("utf-8"), "reason": str(exc)})
             return
+        _trace("marker_write", file, "root_create", bytes=len(contents))
         _hide(file)
     try:
-        found = read_marker(path)
+        found = _read_marker(path, "root_create")
     except ValueError as exc:  # Never overwritten: the user decides what it should be.
         raise ValueError(f"A {MARKER_NAME} already exists here but can't be used: {exc}. "
                          "Fix or remove it, then try again.") from None
@@ -1996,16 +2191,16 @@ def remove_root(path: str, cache_options: dict[str, Any], expected: str, locatio
     location, and those below it with the same UUID, in the roots table. Cached data stays, keyed
     by the UUID. Without permission the file stays and ``root_remove_refused`` names it."""
     import stat
-    from helab.utils.data_roots import MARKER_NAME, read_marker
+    from helab.utils.data_roots import MARKER_NAME
     file = os.path.join(path, MARKER_NAME)
     try:
-        found = os.lstat(file)
+        found = _lstat(file, "root_remove")
     except FileNotFoundError:
         raise ValueError(f"There is no {MARKER_NAME} in {path} now. Refresh the list.") from None
     if not stat.S_ISREG(found.st_mode):
         raise ValueError(f"{file} isn't a file: HeLab leaves it alone.")
     try:
-        marker = read_marker(path)
+        marker = _read_marker(path, "root_remove")
     except ValueError as exc:
         raise ValueError(f"{file} can't be read as a .helab-root ({exc}): HeLab never deletes it.") from None
     if marker.uuid != expected:
@@ -2015,8 +2210,10 @@ def remove_root(path: str, cache_options: dict[str, Any], expected: str, locatio
             os.chmod(file, stat.S_IWRITE)  # Read-only blocks deleting on Windows (hidden doesn't).
         os.remove(file)
     except OSError as exc:
+        _traced_error("marker_remove", file, "root_remove", exc)
         send({"kind": "root_remove_refused", "path": path, "file": file, "reason": exc.strerror or str(exc)})
         return
+    _trace("marker_remove", file, "root_remove")
     with _cache_store(cache_options["directory"], [path], allow_unrooted=True) as store:
         here = store._location_key(path)
         forgotten = store.forget_root_tree([top for top in (location, here) if top], expected)
@@ -2029,6 +2226,7 @@ def remove_root(path: str, cache_options: dict[str, Any], expected: str, locatio
 def _hide(file: str) -> None:
     """Hidden: the dot prefix, plus the Windows hidden attribute. From macOS, UF_HIDDEN, which
     smbfs maps to that attribute on a share (best effort: lab PCs browse those shares)."""
+    _trace("marker_hide", file, "hide")
     if sys.platform == "darwin":
         import stat
         with contextlib.suppress(OSError, AttributeError):
@@ -2257,10 +2455,12 @@ CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_adm
 
 
 def main() -> None:
+    started = time.monotonic()
     try:
         request = json.loads(sys.stdin.readline())
         operation = request["operation"]
         Pause.configure(request.get("control"))
+        _start_trace(request)
         if operation in CACHE_ONLY and not request.get("cache"):
             raise ValueError("The disk cache is off for this session")
         if operation == "drives":
@@ -2272,7 +2472,7 @@ def main() -> None:
                 raise OSError("Drive enumeration is only supported on Windows")
         elif operation == "resolve":
             for path in request["candidates"]:
-                if path and os.path.isdir(path):
+                if path and _isdir(path, "resolve"):
                     emit({"kind": "resolved", "path": path})
                     break
             else:
@@ -2331,7 +2531,9 @@ def main() -> None:
         else:
             raise ValueError(f"Unknown operation: {operation}")
         emit({"kind": "done"})
+        _end_trace(started)
     except Exception as exc:
+        _end_trace(started, str(exc))
         from helab.utils.data_roots import VolumeUnverified
         emit({"kind": "error", "message": str(exc), **({"unverified": True}
                                                         if isinstance(exc, VolumeUnverified) else {})})

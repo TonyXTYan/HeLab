@@ -343,6 +343,7 @@ class FolderCache(QObject):
         # background loads); their listings and loads use the foreground lane.
         self.foreground_owners: set[str] = set()
         service.is_foreground = self._is_foreground
+        service.owners_of = self._owners_of
         service.resultReady.connect(self._on_event)
 
     def _is_foreground(self, request: IORequest) -> bool:
@@ -350,6 +351,11 @@ class FolderCache(QObject):
         return (job is not None and job.operation in FOREGROUND_OPERATIONS
                 and (job.operation in MARKER_OPERATIONS
                      or any(r.owner in self.foreground_owners for r in job.subscribers.values())))
+
+    def _owners_of(self, request: IORequest) -> list[str]:
+        """Whom a helper works for: its shared job's subscribers (tabs), for the I/O trace."""
+        job = self._producers.get(request.owner)
+        return sorted({r.owner for r in job.subscribers.values()}) if job is not None else [request.owner]
 
     def set_foreground(self, owners: set[str]) -> None:
         """Make these subscribers' work the foreground; the previous tab's becomes background."""
