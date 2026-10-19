@@ -457,7 +457,6 @@ def test_no_jump_from_the_default_centre_part_of_an_order_or_in_manual_mode() ->
     assert manual.jumped == 0 and manual.notes == ()
 
 
-
 # Search T with both ends set: the user's word on where order 0 is
 
 AROUND_0 = {"search_min": CENTRE - SPACING / 2, "search_max": CENTRE + SPACING / 2}
@@ -499,7 +498,6 @@ def test_a_wrong_first_pick_fixed_by_search_t_updates_the_centre() -> None:
     open_end = run({**last, "search_max": CENTRE + SPACING / 2})
     assert open_end.data.orders.centre == pytest.approx(CENTRE, abs=2e-4) and open_end.data.jumped == -1
     assert "centre" not in script.detected_parameters("Plot", open_end)
-
 
 
 def test_search_t_around_the_wrong_peak_says_what_it_replaced() -> None:

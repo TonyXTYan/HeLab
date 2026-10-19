@@ -197,8 +197,8 @@ finding (R2) and a nit.
 | Commit | Finding | What |
 |---|---|---|
 | `5126335` | — | The second recheck, committed. |
-| R2 commit | R2 | When a both-ends Search T replaces a last detection outside it (not the default centre), a plain line: "order 0 now at X s; the last detection, Y s, was outside Search T". This covers 10 % → 90 % with Search T around +1, which was silent, and the R1 fix case. Version 6. |
-| nit commit | nit | Two blank lines, not three, before a section in `tests/test_transfer_fractions.py`. |
+| `54d1739` | R2 | When a both-ends Search T replaces a last detection outside it (not the default centre), a plain line: "order 0 now at X s; the last detection, Y s, was outside Search T". This covers 10 % → 90 % with Search T around +1, which was silent, and the R1 fix case. Version 6. |
+| this commit | nit | Two blank lines, not three, before a section in `tests/test_transfer_fractions.py` (and before the R2 test). |
 - Checks after these fixes: full suite `pytest -n 6 --reruns 5 --reruns-delay 1
   --basetemp=.ai/temp/pytest`: **1204 passed, 2 skipped, 2 xfailed, no RERUN**; `mypy --strict`
   on helab and tests, also `--platform win32`: clean; `pyright helab tests`, also
