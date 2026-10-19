@@ -14,6 +14,7 @@ import time
 from typing import Any, Callable, Iterator
 import uuid
 
+import numpy as np
 import pytest
 from PyQt6 import QtWebEngineWidgets  # noqa: F401  (before any QApplication: conftest loads the views)
 from pytestqt.qtbot import QtBot
@@ -63,7 +64,7 @@ def trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 
 
 # Event fields that differ between two runs of the same call: times, and each run's output folder.
-VOLATILE = {"scanned_at", "loaded_at", "modified_observed_at", "saved_at", "snapshot_at", "live_seconds",
+VOLATILE = {"scanned_at", "loaded_at", "listed_at", "modified_observed_at", "saved_at", "snapshot_at", "live_seconds",
             "artifact", "scan_operation_id", "revision"}
 
 
@@ -488,3 +489,74 @@ def test_an_old_file_ending_mid_row_is_read_as_far_as_it_goes(tmp_path: Path) ->
     load(str(run), str(output), events.append)
     loaded = next(event for event in events if event["kind"] == "loaded")
     assert loaded["files"] == 1 and loaded["problematic"] == [1] and loaded["rows"] == 1
+
+
+def memory_check_of(loaded: dict[str, Any]) -> dict[str, Any]:
+    """What ``FolderCache.submit`` sends with a load of data held in RAM."""
+    return {key: loaded.get(key) for key in ("listed_at", "names", "identity", "fingerprint", "problematic",
+                                             "data_root")} | {"signature": loaded["signature"],
+                                                              "unsettled": loaded["unsettled_files"]}
+
+
+def test_data_held_in_ram_without_a_disk_cache_gets_the_quick_check(tmp_path: Path, trace: Path) -> None:
+    """Re-checking unchanged RAM-only data: one folder stat and the check level's sample, no listing
+    (it used to list the folder and stat every file twice). A new file, unsettled files, another
+    location, a changed data root or Retry/Refresh (``full_check``) check every file."""
+    run = tmp_path / "run"
+    write_shots(run, range(1, 21))
+    output = tmp_path / "out"
+    output.mkdir()
+    events: list[dict[str, Any]] = []
+    load(str(run), str(output), events.append)  # No disk cache.
+    loaded = next(event for event in events if event["kind"] == "loaded")
+    assert loaded["names"] == [f"d_txy_forc{shot}.txt" for shot in range(1, 21)] and loaded["identity"]
+    memory = [list(entry) for entry in loaded["fingerprint"]]
+    check = memory_check_of(loaded)
+
+    def again(**kwargs: Any) -> tuple[dict[str, Any], Counter[tuple[str, str]]]:
+        before = len(lines(trace))
+        found: list[dict[str, Any]] = []
+        load(str(run), str(output), found.append, None, memory, loaded["signature"],
+             **{"memory_check": check, **kwargs})
+        return next(event for event in found if event["kind"] == "loaded"), counts(lines(trace)[before:])
+    result, found = again()
+    assert result["unchanged"] and result["memory_shots"] == list(range(1, 21))
+    assert found == {("stat", "memory check: folder"): 1, ("stat", "memory check: sample"): 5}
+    assert result["listed_at"] == loaded["listed_at"] and result["names"] == loaded["names"]
+    for changed in ({**check, "unsettled": 1}, {**check, "identity": "location:elsewhere|/run"},
+                    {**check, "data_root": {"path": str(tmp_path), "uuid": str(uuid.uuid4())}}):
+        before = len(lines(trace))
+        load(str(run), str(output), lambda _: None, None, memory, loaded["signature"], memory_check=changed)
+        assert counts(lines(trace)[before:])[("scandir", "load: listing")] == 1
+    result, found = again(full_check=True)
+    assert not result.get("unchanged") and found[("scandir", "load: listing")] == 1
+    write_shots(run, range(21, 22))
+    os.utime(run)  # (A new file changes the folder's mtime.)
+    result, found = again()
+    assert not result.get("unchanged") and result["load_counts"]["read"] == 1
+
+
+def test_folder_cache_sends_the_ram_quick_check_only_for_checked_data(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from helab.utils.folder_cache import Dataset, FolderCache
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_dispatch", lambda: None)
+    cache = FolderCache(service)
+    path = str(tmp_path / "run")
+    metadata = {"fingerprint": [[1, 6, 7]], "listed_at": 10.0, "names": ["d_txy_forc1.txt"],
+                "identity": "location:x|/run", "unsettled_files": 0, "problematic": []}
+    try:
+        cache.datasets[(path, "sig", 0)] = Dataset(path, "sig", {1: np.zeros((1, 3))}, metadata, 0)
+        assert cache.submit("tab", 0, path, "load", {"signature": "sig"})
+        (request,) = service.pending
+        assert request.payload["memory_check"]["names"] == ["d_txy_forc1.txt"]
+        assert request.payload["memory_check"]["signature"] == "sig"
+        cache.cancel("tab")
+        # Read from the disk cache and not checked yet: no quick check from it.
+        cache.datasets[(path, "sig", 0)].metadata["verified"] = False
+        assert cache.submit("tab", 1, path, "load", {"signature": "sig"})
+        assert "memory_check" not in service.pending[-1].payload
+    finally:
+        service.shutdown()

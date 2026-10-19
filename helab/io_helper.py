@@ -1200,7 +1200,8 @@ def _sample_indices(count: int, level: str) -> list[int] | None:
     return sorted(ends | set(random.sample(rest, min(extra, len(rest)))))
 
 
-def _samples_unchanged(path: str, fingerprint: list[list[int]], names: object, level: str) -> bool:
+def _samples_unchanged(path: str, fingerprint: list[list[int]], names: object, level: str,
+                       reason: str = "cached check: sample") -> bool:
     """Whether a sample of the cached TXY files still has the cached size and mtime_ns.
 
     Another folder moved into this path keeps its own, older mtime, so the folder stat alone
@@ -1213,7 +1214,7 @@ def _samples_unchanged(path: str, fingerprint: list[list[int]], names: object, l
         return False
     try:
         for index in indices:
-            info = _stat(os.path.join(path, str(names[index])), "cached check: sample")
+            info = _stat(os.path.join(path, str(names[index])), reason)
             if (info.st_size, info.st_mtime_ns) != tuple(fingerprint[index][1:]):
                 return False
     except (OSError, TypeError, ValueError):
@@ -1311,22 +1312,23 @@ def read_cached(path: str, output: str, send: Emit = emit,
 
 
 def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
-                           base_signature: str, memory: list[list[int]], check_level: str) -> bool:
+                           base_signature: str, memory: list[list[int]], check_level: str) -> bool | None:
     """One folder stat instead of listing and checking every file.
 
     When the caller holds the cached dataset (``base_signature``), the cache has
     no files that were still being written, and the folder has not been modified
     since the dataset's file list was taken, nothing can have been added or
-    removed: ``loaded`` names the caller's shots and True is returned.
+    removed: ``loaded`` names the caller's shots and True is returned. None: the
+    check doesn't apply (no such cached dataset), and the folder wasn't looked at.
     """
     found = store.read_dataset_row(path)
     if found.value is None:
-        return False
+        return None
     row = found.value
     info = _with_sizes(_cache_info(row["info"]), row)
     as_of = _as_of(info)
     if info.get("signature") != base_signature or info.get("unsettled") or as_of is None:
-        return False
+        return None
     modified = _stat(path, "cached check: folder").st_mtime
     fingerprint = [list(entry) for entry in _saved_fingerprint(row)]
     if modified > as_of or not _samples_unchanged(path, fingerprint, info.get("names"), check_level):
@@ -1348,12 +1350,55 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
     return True
 
 
+def _unchanged_since_memory(path: str, send: Emit, store: CacheStore | None, base_signature: str,
+                            memory: list[list[int]], check: dict[str, Any], check_level: str) -> bool:
+    """The quick check of data held in RAM without a disk cache (no .helab-root, Don't cache, or one
+    not saved yet), as ``_unchanged_since_cache`` from the dataset's own load: its listing time,
+    file names and identity (``memory_check``). The folder must be at the same location (and under
+    the same data root, whose marker is read), not modified since that listing, with no file then
+    still being written, and a sample of its files unchanged; else the load checks every file."""
+    fingerprint, names, listed_at = check.get("fingerprint"), check.get("names"), check.get("listed_at")
+    if (check.get("signature") != base_signature or check.get("unsettled")
+            or not isinstance(listed_at, (int, float)) or not isinstance(fingerprint, list)
+            or not isinstance(names, list) or len(names) != len(fingerprint)):
+        return False
+    identity = check.get("identity")
+    if not identity or _location_identity(path, "memory check: identity") != identity:
+        return False
+    root = check.get("data_root")
+    if isinstance(root, dict) and root.get("path"):
+        try:
+            if _read_marker(str(root["path"]), "memory check: root").uuid != root.get("uuid"):
+                return False
+        except (OSError, ValueError):
+            return False
+    modified = _stat(path, "memory check: folder").st_mtime
+    if modified > listed_at or not _samples_unchanged(path, fingerprint, names, check_level, "memory check: sample"):
+        return False
+    held = sorted({int(entry[0]) for entry in memory} & {int(entry[0]) for entry in fingerprint})
+    problematic = [value for value in check.get("problematic") or () if isinstance(value, int) and value in held]
+    send({"kind": "load_source", "source": "memory", "cache_reason": ""})
+    send({"kind": "loaded", "rows": 0, "bytes": 0, "files": len(held), "loaded_at": time.time(),
+          "total_files": len(fingerprint), "failed_files": len(fingerprint) - len(held), "unsettled_files": 0,
+          "problematic": problematic, "source": "memory", "cached": True, **_data_root(store, path),
+          "disk_cache_pending": False, "cache_info": {}, "unchanged": True, "modified": modified,
+          "modified_observed_at": time.time(),
+          "load_counts": {"reused_memory": len(held), "reused_disk": 0, "new": 0, "modified": 0,
+                          "removed": 0, "read": 0, "new_loaded": 0, "modified_loaded": 0},
+          "cache_reason": "Folder not modified since loaded", "fingerprint": fingerprint,
+          "memory_shots": held, "base_signature": base_signature, "signature": base_signature,
+          # Still the folder as of that listing, for the next quick check.
+          "listed_at": listed_at, "names": names, "identity": identity})
+    return True
+
+
 def load(path: str, output: str, send: Emit = emit,
          cache_options: dict[str, Any] | None = None,
          memory: list[list[int]] | None = None, base_signature: str = "",
          expected: str = "", *, limits: dict[str, Any] | None = None, allow_large: bool = False,
          no_cache: bool = False, full_check: bool = False, cache_base: bool = False,
-         check_level: str = DEFAULT_CHECK_LEVEL, allow_missing: bool = False) -> None:
+         check_level: str = DEFAULT_CHECK_LEVEL, allow_missing: bool = False,
+         memory_check: dict[str, Any] | None = None) -> None:
     """Load converted TXY files, reusing unchanged shots from RAM and disk cache.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for shots the caller already holds
@@ -1366,7 +1411,8 @@ def load(path: str, output: str, send: Emit = emit,
     ``cached`` request), so the cached shots count as held: ``memory_shots`` then names
     shots of that dataset (``base_signature``), which the caller takes from it.
     Shots cached or held that the folder no longer lists stop the load with ``shots_missing``
-    before any file is read, unless ``allow_missing``.
+    before any file is read, unless ``allow_missing``. ``memory_check``: what the held data's own
+    load saw (listing time, names, identity), for its quick check when no cached dataset has one.
     After its scan phase (saved as the folder's summary), a load whose new data is large
     (``limits``) stops with ``too_large`` before reading anything, unless ``allow_large``.
     A folder the user chose not to cache (``no_cache``, or its saved flag) is read into RAM
@@ -1397,7 +1443,7 @@ def load(path: str, output: str, send: Emit = emit,
               (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
               limits=limits, allow_large=allow_large, no_cache=no_cache, no_cache_reason=no_cache_reason,
               full_check=full_check, cache_base=cache_base, check_level=check_level,
-              allow_missing=allow_missing)
+              allow_missing=allow_missing, memory_check=memory_check)
     finally:
         if store is not None:
             store.close()
@@ -1408,7 +1454,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           budget_set_at: float | None = None, *, limits: dict[str, Any] | None = None,
           allow_large: bool = False, no_cache: bool = False, no_cache_reason: str = "",
           full_check: bool = False, cache_base: bool = False, check_level: str = DEFAULT_CHECK_LEVEL,
-          allow_missing: bool = False) -> None:
+          allow_missing: bool = False, memory_check: dict[str, Any] | None = None) -> None:
     from helab.utils.cache_store import StoreError
     held_from = "memory"  # Where the shots counted as held are: the caller's RAM, or its cached read.
     if cache_base and not memory and not no_cache and store is not None:
@@ -1418,8 +1464,15 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             memory = [list(entry) for entry in _saved_fingerprint(cached_row)]
             base_signature = _cached_signature(cached_row)
             held_from = "the disk cache"
-    if (not no_cache and not full_check and base_signature and store is not None and memory and expected in ("", base_signature)
-            and _unchanged_since_cache(path, send, store, base_signature, memory, check_level)):
+    quick: bool | None = None
+    if (not no_cache and not full_check and base_signature and store is not None and memory
+            and expected in ("", base_signature)):
+        quick = _unchanged_since_cache(path, send, store, base_signature, memory, check_level)
+        if quick:
+            return
+    if (quick is None and memory_check and not full_check and base_signature and memory
+            and expected in ("", base_signature)
+            and _unchanged_since_memory(path, send, store, base_signature, memory, memory_check, check_level)):
         return
     # These imports are deliberately local: scanning does not initialize numpy,
     # pandas, any HeLab caches, or a QApplication.
@@ -1679,6 +1732,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     verify_reason = "load: verifying"  # (The trace's only: the second check is the cache save's.)
     if changed():
         raise ValueError("Folder changed while loading — Retry")
+    names = [os.path.basename(filename) for _, filename in files]
     send({"kind": "loaded", "rows": rows, "bytes": size, "files": loaded,
           "loaded_at": time.time(),
           "total_files": len(files) + len(young), "failed_files": len(files) - loaded - len(late),
@@ -1691,10 +1745,11 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           "cache_info": cache_info, "load_counts": load_counts,
           "cache_reason": cache_reason,
           "fingerprint": fingerprint, "memory_shots": sorted(in_memory), "base_signature": base_signature,
-          "signature": hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest()})
+          "signature": hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest(),
+          # For a quick check of this data held in RAM (``_unchanged_since_memory``).
+          "listed_at": listed_at, "names": names, "identity": _location_identity(path, "load: identity")})
     if store is not None and (cached or reused):
         _touch(store, path)
-    names = [os.path.basename(filename) for _, filename in files]
     if cached and not young and store is not None and guard is not None and not no_cache:
         # This listing found the cache complete: it dates from now (a later non-TXY change no longer
         # rules out the quick check), and older caches get their file names for its samples.
@@ -1764,7 +1819,6 @@ def _folder_identity(path: str) -> str:
     """Which folder ``path`` is, beyond its spelling: the nearest data root's UUID, else its
     location (an SMB share's server and share, or a local mount's device) and relative path.
     "" if a marker is there but unreadable."""
-    from helab.utils.cache_paths import _inside, _normal, _smb_source
     folder = path
     while True:
         try:
@@ -1779,7 +1833,14 @@ def _folder_identity(path: str) -> str:
         if parent == folder:
             break
         folder = parent
-    mounts = [mount for mount in _mounts("live: identity") if _inside(_normal(path), _normal(mount.path))]
+    return _location_identity(path, "live: identity")
+
+
+def _location_identity(path: str, reason: str) -> str:
+    """Where ``path`` is, from the mount table alone (no source I/O): its SMB share's server and share,
+    or its local mount's device, and the path below it."""
+    from helab.utils.cache_paths import _inside, _normal, _smb_source
+    mounts = [mount for mount in _mounts(reason) if _inside(_normal(path), _normal(mount.path))]
     if not mounts:
         return "location:" + path
     mount = max(mounts, key=lambda item: len(_normal(item.path)))
@@ -2568,7 +2629,7 @@ def main() -> None:
                  allow_large=bool(request.get("allow_large")), no_cache=bool(request.get("no_cache")),
                  full_check=bool(request.get("full_check")), cache_base=bool(request.get("cache_base")),
                  check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL),
-                 allow_missing=bool(request.get("allow_missing")))
+                 allow_missing=bool(request.get("allow_missing")), memory_check=request.get("memory_check"))
         elif operation == "cached":
             read_cached(request["path"], request["output"], cache_options=request.get("cache"),
                         limits=request.get("limits"), allow_large=bool(request.get("allow_large")),

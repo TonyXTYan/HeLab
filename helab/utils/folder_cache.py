@@ -1048,6 +1048,11 @@ class FolderCache(QObject):
             payload = {**payload, "memory": [list(entry) for entry in base.metadata["fingerprint"]
                                              if entry[0] in base.data],
                        "base_signature": base.signature}
+            if self.verified(base) and base.metadata.get("listed_at") and base.metadata.get("identity"):
+                # The quick check of the data in RAM when no cached dataset has one (``io_helper``).
+                payload["memory_check"] = {key: base.metadata.get(key) for key in (
+                    "listed_at", "names", "identity", "fingerprint", "problematic", "data_root")} | {
+                    "signature": base.signature, "unsettled": base.metadata.get("unsettled_files", 0)}
         job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload, base=base, live=live)
         if operation in SCANS:
             job.payload = payload = {**payload, "scan_operation_id": job.owner,
