@@ -17,6 +17,12 @@ for a loaded dataset and goes up by one each time shots are added to it
 ``revise`` makes Live's next dataset of the folder the next revision of its view.
 
 A view may have no shots: Live started before the folder's first shot.
+
+Shot times (``shot_time``): when each shot was taken, from its raw ``d<N>.txt`` file's mtime as
+the helper found it (``raw_times``). Without one (the raw file is gone, or the dataset was cached
+before shot times were kept) a shot's time is its TXY file's mtime from the fingerprint, which is
+when it was converted: such shots are ``fallback_times``, and plots say so. A copied or rewritten
+file has a new mtime either way.
 """
 from __future__ import annotations
 
@@ -30,6 +36,8 @@ from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 import numpy as np
 import numpy.typing as npt
+
+from helab.utils.file_kinds import raw_times as parse_raw_times
 
 if TYPE_CHECKING:
     from helab.utils.folder_cache import Dataset
@@ -93,6 +101,8 @@ class DatasetView:
     created_at: float = field(default_factory=time.time)
     # The signature of the loaded dataset this revision is ("": the identity's, revision 1's).
     dataset_signature: str = ""
+    # shot number → its raw d<N>.txt file's mtime (ns), where the helper found one.
+    raw_times: Mapping[int, int] = field(default_factory=lambda: MappingProxyType({}))
 
     @property
     def key(self) -> ViewKey:
@@ -111,6 +121,24 @@ class DatasetView:
     def event_count(self) -> int:
         return sum(len(array) for array in self.shots.values())
 
+    def shot_time(self, shot: int) -> float | None:
+        """When ``shot`` was taken (s since the epoch): its raw file's mtime, else its TXY file's
+        (a fallback, ``fallback_times``); None if the view has neither."""
+        if shot in self.raw_times:
+            return self.raw_times[shot] / 1e9
+        fingerprint = self.fingerprints.get(shot)
+        return fingerprint[2] / 1e9 if fingerprint is not None else None
+
+    def shot_times(self, shots: Iterable[int] | None = None) -> dict[int, float]:
+        """``shot_time`` of the chosen shots (default: all) that have one, by shot."""
+        times = {int(shot): self.shot_time(int(shot)) for shot in (self.shots if shots is None else shots)}
+        return {shot: value for shot, value in sorted(times.items()) if value is not None}
+
+    def fallback_times(self, shots: Iterable[int] | None = None) -> tuple[int, ...]:
+        """The chosen shots (default: all) whose time is their TXY file's, not their raw file's."""
+        return tuple(sorted(int(shot) for shot in (self.shots if shots is None else shots)
+                            if shot not in self.raw_times and shot in self.fingerprints))
+
     def events(self, shots: Iterable[int] | None = None) -> Events:
         """All events of the chosen shots (default: all) as one new (n, 3) array."""
         chosen = [txy(self.shots[shot]) for shot in (self.shots if shots is None else shots)]
@@ -118,15 +146,19 @@ class DatasetView:
 
     def with_shots(self, added: Mapping[int, Events],
                    fingerprints: Mapping[int, Fingerprint] | None = None, *,
-                   provenance: Provenance | None = None, signature: str = "") -> DatasetView:
+                   provenance: Provenance | None = None, signature: str = "",
+                   raw_times: Mapping[int, int] | None = None) -> DatasetView:
         """The next revision: this view plus ``added`` (new or replaced shots), same identity.
         The added arrays become shared, read-only data, as ``build_view``'s are. ``provenance``
-        and ``signature``: the newer load's (default: this view's provenance, no signature)."""
+        and ``signature``: the newer load's (default: this view's provenance, no signature).
+        ``raw_times``: shot times known now (added to this view's)."""
         shots = {**self.shots, **{int(shot): read_only(array) for shot, array in added.items()}}
         prints = {**self.fingerprints, **(fingerprints or {})}
+        times = {**self.raw_times, **(raw_times or {})}
         return DatasetView(self.identity, self.revision + 1, _frozen(dict(sorted(shots.items()))),
                            MappingProxyType(dict(prints)), provenance or self.provenance, self.data_root,
-                           tuple(sorted(int(shot) for shot in added)), dataset_signature=signature)
+                           tuple(sorted(int(shot) for shot in added)), dataset_signature=signature,
+                           raw_times=MappingProxyType({shot: times[shot] for shot in shots if shot in times}))
 
 
 def read_only(array: Events) -> Events:
@@ -204,8 +236,10 @@ def build_view(dataset: Dataset, root: tuple[str, str, str] | None = None) -> Da
         data_root = DataRootRef(identifier, label, folder, root_key(folder, identifier, dataset.path))
     shots = {int(shot): read_only(array) for shot, array in sorted(dataset.data.items())}
     identity = ViewIdentity(dataset.path, data_root.key if data_root else "", dataset.signature)
+    times = parse_raw_times(metadata.get("raw_times"))
     return DatasetView(identity, 1, _frozen(shots), MappingProxyType(fingerprints_of(metadata)),
-                       _provenance(metadata), data_root)
+                       _provenance(metadata), data_root,
+                       raw_times=MappingProxyType({shot: times[shot] for shot in shots if shot in times}))
 
 
 # One view per Dataset object, so repeated runs on the same shown data share one input.
@@ -237,6 +271,7 @@ def revise(view: DatasetView, dataset: Dataset, root: tuple[str, str, str] | Non
              if shot not in view.shots or prints.get(shot, view.fingerprints.get(shot)) != view.fingerprints.get(shot)}
     revised = view if not added else view.with_shots(
         added, {shot: prints[shot] for shot in added if shot in prints},
-        provenance=_provenance(dict(dataset.metadata)), signature=dataset.signature)
+        provenance=_provenance(dict(dataset.metadata)), signature=dataset.signature,
+        raw_times=parse_raw_times(dataset.metadata.get("raw_times")))
     _views[dataset] = revised
     return revised

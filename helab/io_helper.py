@@ -14,7 +14,7 @@ import os
 import random
 import sys
 import time
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Literal
 
 from helab.utils import file_kinds, large_folder
 
@@ -1170,6 +1170,32 @@ def _saved_fingerprint(row: Any) -> list[tuple[int, int, int]]:
     return [(int(shot), int(size), int(modified)) for shot, size, modified in row["fingerprint"]]
 
 
+def _saved_raw_times(row: Any) -> dict[int, int]:
+    """A cached dataset's shot times: each shot's raw ``d<N>.txt`` mtime (ns), where one was found.
+    Datasets cached before shot times have none."""
+    return file_kinds.raw_times(row.get("raw_times"))
+
+
+def _raw_mtime(entry: os.DirEntry[str] | None, reason: str) -> int | None:
+    """A shot's time: its raw ``d<N>.txt`` file's mtime (ns), from the listing's entry (one stat on
+    macOS and Linux; none on Windows, where the listing has it). None without one, or if it's gone:
+    the shot's time is then its TXY file's (``DatasetView.shot_time``). The TXY file's mtime is
+    when it was converted, and a converter catching up gives many shots the same time (Tony,
+    2026-10-20). Raw files never affect a shot's fingerprint, so deleting one changes nothing else."""
+    if entry is None:
+        return None
+    try:
+        return _entry_stat(entry, reason).st_mtime_ns
+    except OSError:
+        return None
+
+
+def _raw_list(times: dict[int, int], shots: Iterable[int]) -> list[list[int]]:
+    """``[shot, raw mtime_ns]`` for those of ``shots`` with a known time, by shot, as events and the
+    cache carry them."""
+    return [[shot, times[shot]] for shot in sorted(set(shots)) if shot in times]
+
+
 # helab.utils.constants.DEFAULT_CHECK_LEVEL; not imported, since constants resolves the app's
 # folders at import, which a helper must not do.
 DEFAULT_CHECK_LEVEL = "medium"
@@ -1295,6 +1321,7 @@ def read_cached(path: str, output: str, send: Emit = emit,
           "load_counts": {"reused_memory": 0, "reused_disk": len(shots), "new": 0, "modified": 0,
                           "removed": 0, "read": 0, "new_loaded": 0, "modified_loaded": 0},
           "cache_reason": "", "fingerprint": fingerprint, "memory_shots": [], "verified": False, **root,
+          "raw_times": _raw_list(_saved_raw_times(row), shots),
           "signature": info.get("signature") or _fingerprint_signature(fingerprint)})
 
 
@@ -1333,6 +1360,7 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
           "load_counts": {"reused_memory": len(held), "reused_disk": 0, "new": 0, "modified": 0,
                           "removed": 0, "read": 0, "new_loaded": 0, "modified_loaded": 0},
           "cache_reason": "Folder not modified since cached", "fingerprint": fingerprint,
+          "raw_times": _raw_list(_saved_raw_times(row), held),
           "memory_shots": held, "base_signature": base_signature, "signature": base_signature})
     return True
 
@@ -1475,6 +1503,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # The fingerprint comes with the listing: each TXY entry's stat (free on Windows, where the
     # listing has it; one call on macOS and Linux, as a separate stat would be).
     listed_stats: dict[int, tuple[int, int]] = {}
+    # Raw files, for shot times: stat'ed later, only for shots whose time isn't known (``raw_time``).
+    raw_entries: dict[int, os.DirEntry[str]] = {}
     with _scandir(path, "load: listing") as directory:
         for entry in directory:
             beat()
@@ -1485,6 +1515,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                     files.append((shot, entry.path))
                     entry_info = _entry_stat(entry, "load: checking")
                     listed_stats[shot] = (entry_info.st_size, entry_info.st_mtime_ns)
+                elif kind is file_kinds.RAW:
+                    raw_entries[shot] = entry
             elif not has_dirs and _is_dir(entry):
                 has_dirs = True
     if not files:
@@ -1540,6 +1572,13 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     listed = found.get(file_kinds.TXY.name, set())
     held = {int(entry[0]) for entry in memory or ()}
     missing_checked = False
+    # Shot times (raw files' mtimes): the cache's, else stat'ed from the listing (``raw_time``).
+    raw_times: dict[int, int] = {}
+    saved_raw: dict[int, int] = {}
+
+    def raw_time(shot: int) -> None:
+        if shot not in raw_times and (found_time := _raw_mtime(raw_entries.get(shot), "load: shot time")) is not None:
+            raw_times[shot] = found_time
 
     def stop_if_missing(known: set[int]) -> bool:
         missing = sorted(known - listed)
@@ -1570,6 +1609,9 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                     raise StoreError(full.error)
                 row, packed = full.value if full.value is not None else (None, None)
             had_dataset = row is not None
+            if row is not None:
+                saved_raw = _saved_raw_times(row)
+                raw_times.update((shot, value) for shot, value in saved_raw.items() if shot in current)
             saved_fingerprint = _saved_fingerprint(row) if row is not None else None
             previous = [value for value in row["problematic"] if isinstance(value, int)] if row is not None else []
             cache_info = _with_sizes(_cache_info(row["info"]), row) if row is not None else {}
@@ -1664,7 +1706,11 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         try:
             array = None
             if shot in in_memory:
-                # Unchanged and already in the caller's RAM: nothing to read or send.
+                # Unchanged and already in the caller's RAM: nothing to read or send. Its time is the
+                # caller's, unless the caller's shots are the cache's (or all of them are), whose
+                # missing times (a cache saved before shot times) the listing can give.
+                if cached or held_from != "memory":
+                    raw_time(shot)
                 loaded += 1
             elif shot in reused:
                 array = data[shot]
@@ -1685,8 +1731,10 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                 rows += len(array)
                 size += array.nbytes
                 loaded += 1
+                raw_time(shot)
                 send({"kind": "shot", "shot": shot, "artifact": artifact,
-                      "fingerprint": fingerprint[i], "problematic": shot in problematic})
+                      "fingerprint": fingerprint[i], "problematic": shot in problematic,
+                      **({"raw_mtime": raw_times[shot]} if shot in raw_times else {})})
                 load_counts["new_loaded"] += int(shot in new_shots)
                 load_counts["modified_loaded"] += int(shot in modified_shots)
                 load_counts["reused_disk"] += int(shot in from_disk)
@@ -1727,7 +1775,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           **({} if had_dataset is None and not cached else {"disk_cached": cached or bool(had_dataset)}),
           "disk_cache_pending": guard is not None and not cached and not no_cache,
           "cache_info": cache_info, "load_counts": load_counts,
-          "cache_reason": cache_reason,
+          "cache_reason": cache_reason, "raw_times": _raw_list(raw_times, current),
           "fingerprint": fingerprint, "memory_shots": sorted(in_memory), "base_signature": base_signature,
           "signature": hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest(),
           # For a quick check of this data held in RAM (``_unchanged_since_memory``).
@@ -1738,8 +1786,10 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         # This listing found the cache complete: it dates from now (a later non-TXY change no longer
         # rules out the quick check), and older caches get their file names for its samples.
         from helab.utils.cache_store import SaveRejected
+        filled = _raw_list(raw_times, current)
         try:
-            store.confirm_dataset(path, fingerprint, names, listed_at, guard)
+            store.confirm_dataset(path, fingerprint, names, listed_at, guard,
+                                  filled if filled != _raw_list(saved_raw, current) else None)
         except (StoreError, SaveRejected):
             pass  # Best effort: the next full check tries again.
     if store is None or guard is None or cached or no_cache:
@@ -1757,13 +1807,14 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                     read_txy(shot, filename, "cache save: read")
                 except (OSError, ValueError, pd.errors.ParserError):
                     raise ValueError(f"Could not cache previously loaded shot {shot}") from None
+                raw_time(shot)
                 send({"kind": "file_finished", "filename": filename})
         verify_reason = "cache save: verifying"
         # Checked again only if files were read since the check above (else nothing came between).
         if reread and changed():
             raise ValueError("Folder changed before cache could be saved")
         _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, load_counts,
-                       unsettled, bool(had_dataset), budget, budget_set_at, send)
+                       unsettled, bool(had_dataset), budget, budget_set_at, send, raw_times)
     except Exception as exc:
         _save_failed(store, exc, send)
 
@@ -1771,10 +1822,11 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
 def _write_dataset(store: CacheStore, path: str, guard: SaveGuard, data: dict[int, Any],
                    fingerprint: list[tuple[int, int, int]], problematic: list[int], names: list[str],
                    listed_at: float, counts: dict[str, int], unsettled: int, had_dataset: bool,
-                   budget: int | None, budget_set_at: float | None, send: Emit) -> None:
+                   budget: int | None, budget_set_at: float | None, send: Emit,
+                   raw_times: dict[int, int] | None = None) -> None:
     """Save a folder's dataset to the disk cache within the budget (a pending save that doesn't fit),
     under the guard its job took when it started; ``cache_saved`` and ``disk_cached``, or the pending
-    event. Raises on failure (``_save_failed``)."""
+    event. ``raw_times``: its shots' times, where known. Raises on failure (``_save_failed``)."""
     from helab.utils.cache_store import DATASET_FORMAT, pack_dataset
     file = store.write_dataset_file(pack_dataset(data))
     info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(
@@ -1790,6 +1842,7 @@ def _write_dataset(store: CacheStore, path: str, guard: SaveGuard, data: dict[in
         "ram_bytes": sum(int(array.nbytes) for array in data.values()),
         "rows": sum(len(array) for array in data.values()), "shots": len(data),
         "fingerprint": [list(entry) for entry in fingerprint], "problematic": sorted(set(problematic)),
+        "raw_times": _raw_list(raw_times or {}, (entry[0] for entry in fingerprint)),
         "info": info}, guard, budget=budget, budget_set_at=budget_set_at)
     if not result.saved:
         # Held for the user's answer (Make room / Save update); nothing waits for it.
@@ -1862,10 +1915,12 @@ def _location_identity(path: str, reason: str) -> str:
 
 def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held: list[list[int]],
               problematic: list[int], held_dir: str, *, identity: str = "", identity_root: str | None = None,
-              no_cache: bool = False, recent: list[int] | None = None, output: str | None = None) -> None:
+              no_cache: bool = False, recent: list[int] | None = None, output: str | None = None,
+              raw_times: list[list[int]] | None = None) -> None:
     """Live's save: the folder's data the app holds in RAM written to the disk cache, without reading
     TXY files again. ``held`` is that data's fingerprint (unreadable shots included), its arrays
-    are in ``held_dir`` (local files the app wrote), ``problematic`` its problematic shots.
+    are in ``held_dir`` (local files the app wrote), ``problematic`` its problematic shots,
+    ``raw_times`` its shot times (``[shot, raw mtime_ns]``), saved as they are: no raw file is stat'ed.
 
     The folder is listed once. Every held file must still be there with the size and mtime it had
     when it was read (else ``shots_missing``: missing or changed; TXY files are written once), and
@@ -2015,7 +2070,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         try:
             _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, counts, unsettled,
                            had_dataset, (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
-                           send)
+                           send, file_kinds.raw_times(raw_times))
         except Exception as exc:
             _save_failed(store, exc, send)
     finally:
@@ -2120,6 +2175,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
         file_names.clear()
     found: dict[str, set[int]] = {}
     names: dict[int, str] = {}
+    raw_entries: dict[int, os.DirEntry[str]] = {}  # For new shots' times (``_raw_mtime``).
     has_dirs = False
     listed_at = time.time()
     beat = Heartbeat(send, "listing")
@@ -2132,6 +2188,8 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                 if kind.loaded:
                     names[shot] = entry.path
                     file_names[shot] = entry.name
+                elif kind is file_kinds.RAW:
+                    raw_entries[shot] = entry
             elif not has_dirs and _is_dir(entry):
                 has_dirs = True
 
@@ -2206,6 +2264,8 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     late: set[int] = set()
     replaced: set[int] = set()  # Held shots read again: their new data, or now unreadable.
     reread: list[dict[str, Any]] = []
+    # New shots' times; a held shot read again keeps the time the app holds.
+    raw_times: dict[int, int] = {}
     rows = size = loaded = read = read_bytes = 0
     total_read_bytes = sum(item[1] for item in to_read)
     last_progress = 0.0
@@ -2257,9 +2317,12 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                     replaced.add(shot)
                 else:
                     loaded += 1
+                    if (found_time := _raw_mtime(raw_entries.get(shot), "live: shot time")) is not None:
+                        raw_times[shot] = found_time
                 fingerprint.append(item)
                 send({"kind": "shot", "shot": shot, "artifact": artifact, "fingerprint": list(item),
-                      "problematic": shot in problematic})
+                      "problematic": shot in problematic,
+                      **({"raw_mtime": raw_times[shot]} if shot in raw_times else {})})
         except (OSError, ValueError, pd.errors.ParserError):
             # Sent back with ``known`` next time: not read again unless it changes.
             unreadable.add(shot)
@@ -2297,7 +2360,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
               "modified": len(replacing), "removed": 0, "read": read, "new_loaded": loaded,
               "modified_loaded": len(replaced - unreadable)},
           "cache_reason": f"Live: reused {len(kept)} shots from memory; read {read} TXY files{again_note}",
-          "live_reread": reread,
+          "live_reread": reread, "raw_times": _raw_list(raw_times, raw_times),
           "fingerprint": [list(item) for item in fingerprint], "memory_shots": kept,
           "base_signature": "", "modified": summary["modified"], "modified_observed_at": time.time(),
           "signature": _fingerprint_signature(fingerprint), **state(True, unsettled, True)})
@@ -2910,7 +2973,7 @@ def main() -> None:
                       request.get("held_problematic") or [], request["held_dir"],
                       identity=str(request.get("identity") or ""), identity_root=request.get("identity_root"),
                       no_cache=bool(request.get("no_cache")), recent=request.get("recent"),
-                      output=request.get("output"))
+                      output=request.get("output"), raw_times=request.get("held_raw_times"))
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),

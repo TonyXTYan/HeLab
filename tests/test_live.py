@@ -86,7 +86,7 @@ def run_helper(cache: FolderCache, path: str, tmp_path: Path,
             save_held(path, events.append, payload.get("cache"), payload.get("held") or [],
                       payload.get("held_problematic") or [], str(held), identity=payload.get("identity", ""),
                       identity_root=payload.get("identity_root"), no_cache=bool(payload.get("no_cache")),
-                      recent=payload.get("recent"), output=str(output))
+                      recent=payload.get("recent"), output=str(output), raw_times=payload.get("held_raw_times"))
         elif payload.get("live"):
             live_check(path, str(output), events.append, payload.get("memory"), payload.get("known"),
                        payload.get("live_since"), identity=payload.get("identity", ""), seen=payload.get("seen"),
