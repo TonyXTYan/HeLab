@@ -2,6 +2,7 @@
 and how a stuck read is retried (never beside the helper it replaces)."""
 from __future__ import annotations
 
+import errno
 import os
 from pathlib import Path
 import sys
@@ -43,10 +44,27 @@ def events_of(service: IOService) -> list[tuple[IORequest, dict[str, Any], float
     return events
 
 
-def release(fifo: Path) -> None:
-    """Let a helper blocked reading ``fifo`` (a TXY file that is a named pipe) finish that file."""
-    with open(fifo, "w") as writer:
-        writer.write("1,2,3\n")
+def release(fifo: Path, timeout: float = 10.0) -> None:
+    """Let a helper blocked reading ``fifo`` (a TXY file that is a named pipe) finish that file.
+
+    The writer opens without blocking, so a reader that has already exited can't strand the
+    test: opening fails with ENXIO while no one reads, retried until ``timeout``."""
+    if sys.platform != "win32":  # Named pipes and O_NONBLOCK are POSIX only (the tests skip Windows).
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                descriptor = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+                break
+            except OSError as error:
+                if error.errno != errno.ENXIO:
+                    raise
+                if time.monotonic() > deadline:
+                    pytest.fail(f"No helper is reading {fifo.name} to release it")
+                time.sleep(0.02)
+        try:
+            os.write(descriptor, b"1,2,3\n")
+        finally:
+            os.close(descriptor)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="named pipes hold the helpers in place on POSIX")
