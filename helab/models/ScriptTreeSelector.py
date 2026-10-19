@@ -10,7 +10,7 @@ from uuid import uuid4
 from PyQt6 import sip
 from PyQt6.QtCore import (QBuffer, QByteArray, QEvent, QIODevice, QObject, QRect, QSize, Qt, QTimer, pyqtSignal,
                           pyqtSlot)
-from PyQt6.QtGui import QCloseEvent, QFocusEvent, QGuiApplication, QImage, QPainter, QPaintEvent, QPixmap, QWindow
+from PyQt6.QtGui import QCloseEvent, QFocusEvent, QGuiApplication, QHideEvent, QImage, QPainter, QPaintEvent, QPixmap, QWindow
 # from uuid import uuid4
 
 # Import QWidget types first to avoid forward references
@@ -385,19 +385,28 @@ def snapshot(content: QWidget, area: QSize) -> Picture:
 
 
 class PlotPicture(QWidget):
-    """A released plot's picture, scaled to fit and centred (not interactive)."""
+    """A released plot's picture, scaled to fit and centred (not interactive). The PNG is
+    decoded once while it shows, and the decoded pixmap dropped when it is hidden (behind
+    another tab), so only the PNG stays in RAM then."""
 
     def __init__(self, picture: Picture, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.picture = picture
         self._size = picture.size
+        self.decoded: Optional[QPixmap] = None
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
 
     def sizeHint(self) -> QSize:
         return self._size if self._size.isValid() else QSize(200, 150)
 
+    def hideEvent(self, a0: Optional[QHideEvent]) -> None:
+        self.decoded = None
+        super().hideEvent(a0)
+
     def paintEvent(self, a0: Optional[QPaintEvent]) -> None:
-        pixmap = self.picture.pixmap()
+        if self.decoded is None:
+            self.decoded = self.picture.pixmap()
+        pixmap = self.decoded
         if pixmap.isNull():
             return
         painter = QPainter(self)

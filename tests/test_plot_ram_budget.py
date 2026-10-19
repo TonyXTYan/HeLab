@@ -29,7 +29,8 @@ from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult, RamResults
 from helab.analysis.runner import AnalysisRunner
-from helab.models.ScriptTreeSelector import AnalysisInstance, PlotSettingsPanel, ReleasedPlot, TreePanelWidget
+from helab.models.ScriptTreeSelector import (AnalysisInstance, PlotPicture, PlotSettingsPanel, ReleasedPlot,
+                                             TreePanelWidget)
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import scatter_3d
 from helab.utils.constants import PLOT_AUTO_RELOAD_SETTING, read_plot_auto_reload
@@ -460,6 +461,15 @@ def test_a_released_plot_keeps_a_picture_and_frees_its_data(window: Window, cach
     assert picture.png.startswith(b"\x89PNG") and picture.size.width() > 50 and not picture.pixmap().isNull()
     assert instance.ram_buffers() == released.ram_buffers() == {id(picture.png): len(picture.png)}
     assert instance.picture_cost() == len(picture.png)
+    shows = PlotPicture(picture)  # As it shows on screen (this plot is behind another tab).
+    qtbot.addWidget(shows)
+    shows.resize(200, 150)
+    with qtbot.waitExposed(shows):
+        shows.show()
+    shows.repaint()  # Drawn: decoded once and kept while it shows ...
+    assert shows.decoded is not None and not shows.decoded.isNull()
+    shows.hide()  # ... and dropped once hidden (only the PNG stays).
+    assert shows.decoded is None
     assert released.reload_button.isEnabled() and "Released to free RAM" in released.state.text()
     assert dock_of(instance).findChild(QLabel, "copied_plot") is None or sip.isdeleted(
         dock_of(instance).findChild(QLabel, "copied_plot"))
