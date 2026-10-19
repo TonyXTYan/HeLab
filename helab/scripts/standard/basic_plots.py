@@ -81,8 +81,9 @@ for _axis, _models, _extra in (
 FIT_DATA = ParameterSpec("fit_data", "Fit to", "choice", UNSMOOTHED, choices=(UNSMOOTHED, SMOOTHED),
                          group=FITS_GROUP, page=FITS_PAGE, when=(SMOOTH.name, "True"),
                          tip="The unsmoothed counts (Poisson weights; the default), or the smoothed curve (as the "
-                             "front panel did): its width is then corrected for the smoothing, and its SEs are "
-                             "approximate (smoothed bins are correlated).")
+                             "front panel did), with the same smoothing applied to the model: the results are "
+                             "the unsmoothed profile's (no correction for the smoothing), and their SEs count "
+                             "that smoothed bins share counts. Shown while Smooth is on; it applies to every fit.")
 CONSTANTS_GROUP = "Constants"
 FALL_DISTANCE = ParameterSpec(
     "fall_distance", "Fall distance (0 = default)", "float", 0.0, (0.0, 100.0), " m", group=CONSTANTS_GROUP,
@@ -92,7 +93,9 @@ FALL_DISTANCE = ParameterSpec(
 FALL_TIME = ParameterSpec(
     "fall_time", "Fall time (0 = from distance)", "float", 0.0, (0.0, 100.0), " s", group=CONSTANTS_GROUP,
     page=FITS_PAGE, si=True,
-    tip="This plot's fall time, set by hand; 0 derives it, √(2h/g). X and Y temperatures use it.")
+    tip="This plot's fall time, set by hand; 0 derives it, √(2h/g). X and Y temperatures use it. The "
+        "arrival-time model on T is built from the fall distance and g alone (a fall is √(2h/g) long in it), "
+        "so a hand-set fall time that disagrees isn't used there; the plot notes the disagreement.")
 COLOUR = (40, 90, 170)
 SMOOTH_COLOUR = (20, 50, 120)  # the smoothed curve, darker than the bars behind it
 FIT_COLOUR = (0, 0, 0)
@@ -230,7 +233,24 @@ class Histograms:
                                   "smoothing": {item.axis: sigma for item, sigma in zip(self.items, self.smoothing)}}
         if fits and self.constants is not None:
             record["constants"] = self.constants.as_record()
+        record["record_lines"] = self.record_lines()
         return record
+
+    def record_lines(self) -> list[str]:
+        """For the dock's record: each fit (its numbers, reduced χ² and notes) and, with any,
+        the constants used, with where each came from and which are still unconfirmed."""
+        lines = []
+        for item, fit in zip(self.items, self.fits):
+            if fit is None:
+                continue
+            chi2 = fit.fit.reduced_chi2
+            extra = f" · reduced χ² {chi2:.3g}" if fit.ok and math.isfinite(chi2) else ""
+            notes = f" · notes: {'; '.join(fit.notes)}" if fit.notes else ""
+            lines.append(f"Fit {item.axis}: {fit.text()}{extra}{notes}")
+        if lines and self.constants is not None:
+            lines.append(f"Constants: {constants_text(self.constants)}")
+            lines += [f"Constants note: {note}" for note in self.constants.notes]
+        return lines
 
 
 def counts_title(data: ShotCounts) -> str:
@@ -293,8 +313,6 @@ class CountsPerShot(DatasetAnalysis):
         plot.plot(data.shots, data.counts, pen=pg.mkPen(COLOUR, width=1),
                   symbol="o", symbolSize=4, symbolBrush=COLOUR, symbolPen=None)
         return cast(QWidget, plot)
-
-
 
 
 def plot_constants(values: Mapping[str, Any], layers: Mapping[str, Mapping[str, float]]) -> ResolvedConstants:
@@ -425,24 +443,10 @@ class TxyHistograms(DatasetAnalysis):
                           tuple(newest_counts), newest_colour(values), units, tuple(factors), tuple(smoothed),
                           tuple(sigmas), tuple(fits), tuple(bin_notes), box, constants)
 
-    def result_record(self, action_name: str, result: AnalysisResult) -> List[str]:
-        """Each fit (its numbers, reduced χ² and notes) and the constants used, with where each
-        came from and which are still unconfirmed."""
-        data = result.data
-        if not isinstance(data, Histograms) or not data.fitted():
-            return []
-        lines = []
-        for item, fit in zip(data.items, data.fits):
-            if fit is None:
-                continue
-            chi2 = fit.fit.reduced_chi2
-            extra = f" · reduced χ² {chi2:.3g}" if fit.ok and math.isfinite(chi2) else ""
-            notes = f" · notes: {'; '.join(fit.notes)}" if fit.notes else ""
-            lines.append(f"Fit {item.axis}: {fit.text()}{extra}{notes}")
-        if data.constants is not None:
-            lines.append(f"Constants: {constants_text(data.constants)}")
-            lines += [f"Constants note: {note}" for note in data.constants.notes]
-        return lines
+    def result_found(self, action_name: str, data: Any) -> dict[str, Any]:
+        """With any fit: ``Histograms.record()`` (each fit's record and the constants used),
+        whose ``record_lines`` the dock's record shows."""
+        return data.record() if isinstance(data, Histograms) and data.fitted() else {}
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Histograms = result.data

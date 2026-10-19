@@ -16,14 +16,17 @@ the same factor as the bars. No Qt and no I/O: runs in the analysis worker and i
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
+from scipy.sparse import csr_matrix
 
-from helab.analysis.estimates import Estimate, si_prefix
-from helab.analysis.fits import MODELS, FitModel, FitResult, arrival_time_model, bin_centres, fit_histogram
+from helab.analysis.estimates import Estimate, propagate, si_prefix
+from helab.analysis.fits import (MODELS, VARIANCE_FLOOR, FitModel, FitResult, arrival_time_model, bin_centres,
+                                 fit_histogram)
 from helab.analysis.physics import (TABLE, ResolvedConstants, sigma_v_from_arrival_width,
                                     sigma_v_from_transverse_width, temperature_estimate)
 
@@ -102,27 +105,41 @@ def gaussian_kernel(sigma_bins: float) -> Array:
     return np.asarray(kernel / kernel.sum(), dtype=np.float64)
 
 
-def _convolve(values: Array, kernel: Array) -> Array:
-    """``values`` convolved with ``kernel``, the edges reflected (the bins beyond an edge mirror
-    those inside), so what spreads past an edge folds back in and the total is kept."""
-    half = len(kernel) // 2
-    padded = np.pad(values, half, mode="symmetric")
-    return np.asarray(np.convolve(padded, kernel, mode="valid"), dtype=np.float64)
+class Smoothing:
+    """The smoothing of ``bins`` bins with a Gaussian of ``sigma_bins`` bins, as the linear map
+    s = S n (a sparse matrix): each bin's counts spread by the kernel, the edges reflected (the
+    bins beyond an edge mirror those inside, ``np.pad``'s "symmetric"), so what spreads past an
+    edge folds back in and every column sums to 1: the total is kept. The same S smooths what
+    is drawn and, in a fit of the smoothed curve, the model (``fit_axis``)."""
+
+    def __init__(self, bins: int, sigma_bins: float) -> None:
+        kernel = gaussian_kernel(sigma_bins)
+        half = len(kernel) // 2
+        source = np.pad(np.arange(bins), half, mode="symmetric")  # padded position → bin
+        rows = np.repeat(np.arange(bins), len(kernel))
+        columns = source[np.arange(bins)[:, None] + np.arange(len(kernel))[None, :]].ravel()
+        weights = np.tile(kernel, bins)
+        self.bins = bins
+        self.matrix = csr_matrix((weights, (rows, columns)), shape=(bins, bins))  # duplicates summed
+        self.squared = self.matrix.multiply(self.matrix).tocsr()
+
+    def apply(self, values: npt.ArrayLike) -> Array:
+        return np.asarray(self.matrix @ np.asarray(values, dtype=np.float64), dtype=np.float64)
+
+    def variance(self, mean_counts: npt.ArrayLike) -> Array:
+        """Each smoothed bin's variance when the raw bins are Poisson with these means: Σⱼ Sᵢⱼ² μⱼ."""
+        return np.asarray(self.squared @ np.asarray(mean_counts, dtype=np.float64), dtype=np.float64)
+
+    def covariance_times(self, mean_counts: Array, block: Array) -> Array:
+        """S diag(μ) Sᵀ · block: the smoothed bins' covariance (they share raw counts) times a
+        matrix, without forming the (bins × bins) covariance."""
+        return np.asarray(self.matrix @ (mean_counts[:, None] * (self.matrix.T @ block)), dtype=np.float64)
 
 
 def smooth(counts: npt.ArrayLike, sigma_bins: float) -> Array:
     """Counts smoothed with a Gaussian of ``sigma_bins`` bins; their sum is kept."""
-    return _convolve(np.asarray(counts, dtype=np.float64), gaussian_kernel(sigma_bins))
-
-
-def smoothed_errors(counts: npt.ArrayLike, sigma_bins: float) -> Array:
-    """Each smoothed bin's Poisson error, √(Σ k² n) (at least the error of one count spread
-    by the kernel, so empty stretches keep a weight). Neighbouring smoothed bins share counts,
-    so they are correlated: a fit treating them as independent gets approximate SEs."""
-    kernel = gaussian_kernel(sigma_bins)
-    variance = _convolve(np.asarray(counts, dtype=np.float64), kernel ** 2)
-    floor = float(np.sum(kernel ** 2))
-    return np.asarray(np.sqrt(np.maximum(variance, floor)), dtype=np.float64)
+    values = np.asarray(counts, dtype=np.float64)
+    return Smoothing(len(values), sigma_bins).apply(values)
 
 
 # Fits
@@ -131,7 +148,7 @@ GAUSSIAN, ARRIVAL, BIMODAL = "Gaussian", "Arrival-time thermal", "Bimodal TF² +
 T_MODELS = (GAUSSIAN, ARRIVAL, BIMODAL)
 XY_MODELS = (GAUSSIAN, BIMODAL)
 MODEL_KEYS = {GAUSSIAN: "gaussian", ARRIVAL: "arrival_time", BIMODAL: "bimodal_tf2_gaussian"}
-UNSMOOTHED, SMOOTHED = "unsmoothed counts", "smoothed curve"
+UNSMOOTHED, SMOOTHED = "unsmoothed counts", "smoothed curve (model smoothed too)"
 CURVE_POINTS = 600  # the drawn fit's samples across the range
 
 
@@ -182,7 +199,7 @@ class AxisFit:
                  f"T {self.temperature.text(unit='K')}"]
         if self.choice == BIMODAL and "radius" in self.fit.estimates:
             parts.insert(2, f"R {self.fit['radius'].text(unit=unit)}")
-        return f"{self.choice}: " + " · ".join(parts)
+        return f"{self.choice}{' ⊗ smoothing' if self.on_smoothed else ''}: " + " · ".join(parts)
 
     def as_record(self) -> dict[str, Any]:
         """Strict JSON: the fit's record and the numbers derived from it."""
@@ -200,9 +217,10 @@ def fit_axis(axis: str, edges: npt.ArrayLike, counts: npt.ArrayLike, choice: str
              smoothing: float | None = None) -> AxisFit:
     """Fit one histogram (``edges`` in s or m, raw ``counts``) with the model ``choice`` names.
 
-    ``smoothing`` (σ in the data's units) fits the smoothed curve instead, with each bin's
-    propagated error; the fitted width then includes the smoothing, which is taken out in
-    quadrature (√(σ² − σ_s²), exact for a Gaussian) before the temperature, with a note.
+    By default the raw counts, Poisson weighted (``fit_histogram``). ``smoothing`` (σ in the
+    data's units) fits the smoothed curve instead, with the smoothing in the model
+    (``fit_smoothed``): the parameters are the unsmoothed profile's, so the width (and a
+    bimodal fit's R) needs no correction, and the SEs count the smoothed bins' correlation.
     Temperatures are the ideal-gas, pure-expansion ones (``physics``): along T σ_v = g σ, along
     X and Y σ_v = σ / t_f, each with the run's constants."""
     edges = np.asarray(edges, dtype=np.float64)
@@ -211,38 +229,116 @@ def fit_axis(axis: str, edges: npt.ArrayLike, counts: npt.ArrayLike, choice: str
     model = model_for(choice, constants)
     notes: list[str] = []
     width_bins = float(np.mean(np.diff(edges))) if len(edges) > 1 else math.nan
-    if smoothing is not None and width_bins > 0:
-        sigma_bins = smoothing / width_bins
-        fit = fit_histogram(centres, smooth(raw, sigma_bins), model, sigma=smoothed_errors(raw, sigma_bins))
+    on_smoothed = smoothing is not None and width_bins > 0
+    span = float(edges[-1] - edges[0]) if len(edges) > 1 else math.nan
+    if on_smoothed and smoothing is not None and not smoothing <= span * MAX_SMOOTHING_SHARE:
+        # Folded back many times at the edges, the smoothed curve keeps little of the profile's
+        # shape, and the SEs stop being reliable (checked: right at a fifth of the range, 2× too
+        # large at half of it).
+        fit = replace(fit_histogram([], [], model), failure=(
+            f"the smoothing (σ {si_text(smoothing, unit_of(axis))}) is too wide for this range to fit the "
+            f"smoothed curve (at most {MAX_SMOOTHING_SHARE:g} of it): fit the unsmoothed counts"))
+        nan = Estimate(math.nan, math.nan)
+        return AxisFit(axis, choice, fit, nan, nan, nan, nan, np.empty(0), np.empty(0), (), True)
+    curve = np.empty(0)
+    if on_smoothed:
+        assert smoothing is not None
+        fit, curve = fit_smoothed(centres, raw, model, smoothing / width_bins)
         if fit.ok:
-            notes.append("fitted to the smoothed curve: neighbouring bins are correlated, so the SEs are "
-                         "approximate")
+            notes.append("fitted to the smoothed curve with the smoothing in the model; SEs include the "
+                         "smoothed bins' correlation")
     else:
-        smoothing = None
         fit = fit_histogram(centres, raw, model)
     nan = Estimate(math.nan, math.nan)
     if not fit.ok:
         return AxisFit(axis, choice, fit, nan, nan, nan, nan, np.empty(0), np.empty(0), (*fit.notes, *notes),
-                       smoothing is not None)
+                       on_smoothed)
     centre, width = fit["centre"], fit["sigma"]
-    if smoothing is not None:
-        squared = width.value ** 2 - smoothing ** 2
-        if squared > 0:
-            corrected = math.sqrt(squared)
-            width = Estimate(corrected, width.se * width.value / corrected)
-            notes.append(f"σ corrected for the smoothing σ_s {Estimate(smoothing, 0.0).text(unit=unit_of(axis))}: "
-                         "√(σ² − σ_s²)")
-        else:
-            width = nan
-            notes.append("the fitted width is no wider than the smoothing: no temperature")
     if axis == "T":
         sigma_v = _scaled(width, sigma_v_from_arrival_width(1.0, constants))
     else:
         sigma_v = _scaled(width, sigma_v_from_transverse_width(1.0, constants))
     temperature = temperature_estimate(sigma_v, constants) if math.isfinite(sigma_v.value) else nan
-    x = np.linspace(float(edges[0]), float(edges[-1]), CURVE_POINTS)
-    return AxisFit(axis, choice, fit, centre, width, sigma_v, temperature, x, fit.evaluate(x),
-                   (*fit.notes, *notes), smoothing is not None)
+    if on_smoothed:
+        # The smoothed model, on the bins (it compares with the smoothed curve drawn).
+        x, y = centres, curve
+    else:
+        x = np.linspace(float(edges[0]), float(edges[-1]), CURVE_POINTS)
+        y = fit.evaluate(x)
+    return AxisFit(axis, choice, fit, centre, width, sigma_v, temperature, x, y, (*fit.notes, *notes), on_smoothed)
+
+
+MAX_SMOOTHING_SHARE = 0.2  # a smoothed-curve fit needs σ_s ≤ this share of the histogram's range
+SMOOTHED_ROUNDS = 8  # reweighting rounds of a smoothed-curve fit
+SMOOTHED_SETTLED = 0.01  # stop once no parameter moves more than this many SEs
+
+
+def smoothed_model(model: FitModel, smoothing: Smoothing) -> FitModel:
+    """``model`` with the smoothing applied to its prediction on the bins: S·f(x, θ). Off that
+    grid (another number of points, as ``FitResult.evaluate`` on a finer one) it is the
+    unsmoothed model."""
+    def function(x: Array, *values: float) -> Array:
+        profile = model.function(x, *values)
+        return smoothing.apply(profile) if len(x) == smoothing.bins else profile
+
+    return replace(model, key=f"{model.key}+smoothing", title=f"{model.title} ⊗ smoothing", function=function)
+
+
+def fit_smoothed(centres: Array, raw: Array, model: FitModel, sigma_bins: float) -> tuple[FitResult, Array]:
+    """Fit the smoothed counts s = S n with the smoothed model S f(θ) (``smoothed_model``), and
+    the smoothed fit's curve on the bins.
+
+    - Weights: each smoothed bin's variance from the model, Σⱼ Sᵢⱼ² μⱼ with μ = f(θ) (floored as
+      ``fits.VARIANCE_FLOOR`` per raw bin), refitted until θ settles. The first round uses the
+      observed counts' (S² n); weights from observed counts alone would bias low-count fits.
+    - SEs: the smoothed bins share raw counts, so their covariance is S diag(μ) Sᵀ, not
+      diagonal. The covariance is the sandwich (JᵀWJ)⁻¹ JᵀW S diag(μ) Sᵀ WJ (JᵀWJ)⁻¹, with J the
+      smoothed model's derivatives and W the weights: what the estimator's spread really is.
+      Parameters a fit leaves without an SE (gated) keep none."""
+    smoothing = Smoothing(len(raw), sigma_bins)
+    forward = smoothed_model(model, smoothing)
+    data = smoothing.apply(raw)
+    floor = VARIANCE_FLOOR * smoothing.variance(np.ones_like(raw))
+    variance = np.maximum(smoothing.variance(raw), floor)
+    fit = fit_histogram(centres, data, forward, sigma=np.sqrt(variance))
+    for _ in range(SMOOTHED_ROUNDS):
+        if not fit.ok:
+            break
+        mean = np.clip(model.function(centres, *fit.values), 0, None)
+        variance = np.maximum(smoothing.variance(mean), floor)
+        refit = fit_histogram(centres, data, forward, sigma=np.sqrt(variance))
+        if not refit.ok:
+            break
+        spread = np.array([fit[name].se for name in model.names])
+        moved = np.abs(refit.values - fit.values) / np.where(np.isfinite(spread) & (spread > 0), spread, np.inf)
+        fit = refit
+        if float(np.max(moved)) <= SMOOTHED_SETTLED:
+            break
+    if not fit.ok:
+        return fit, np.empty(0)
+    values = fit.values
+    mean = np.clip(model.function(centres, *values), 0, None)
+    jacobian = np.empty((len(centres), len(values)))
+    for index, value in enumerate(values):
+        se = fit[model.names[index]].se
+        step = 1e-3 * se if math.isfinite(se) and se > 0 else 1e-6 * max(abs(value), 1e-12)
+        above, below = values.copy(), values.copy()
+        above[index] += step
+        below[index] -= step
+        jacobian[:, index] = (forward.function(centres, *above) - forward.function(centres, *below)) / (2 * step)
+    weighted = jacobian / variance[:, None]
+    inverse = np.linalg.pinv(jacobian.T @ weighted)
+    covariance = inverse @ (weighted.T @ smoothing.covariance_times(mean, weighted)) @ inverse
+    estimates = {}
+    for index, name in enumerate(model.names):
+        variance_k = float(covariance[index, index])
+        se = math.sqrt(variance_k) if math.isfinite(fit[name].se) and variance_k > 0 else math.nan
+        estimates[name] = Estimate(float(values[index]), se)
+    for extra in model.extras:
+        derived = propagate(extra.function, values, covariance)
+        estimates[extra.name] = Estimate(derived.value, derived.se if math.isfinite(fit[extra.name].se) else math.nan)
+    honest = replace(fit, estimates=MappingProxyType(estimates), covariance=covariance)
+    return honest, forward.function(centres, *values)
 
 
 CONSTANT_NAMES = {"fall_distance": "fall distance", "fall_time": "fall time", "g": "g", "mass": "mass"}

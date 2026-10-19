@@ -21,8 +21,8 @@ from helab.analysis.parameter_tree import apply_visibility, build_tree, paramete
 from helab.analysis.parameters import effective
 from helab.analysis.physics import DEFAULTS, ResolvedConstants
 from helab.analysis.profiles import (ARRIVAL, BIMODAL, GAUSSIAN, RATE, SMOOTHED, display_unit, fit_axis,
-                                     rate_factor, smooth, smoothed_errors, smoothing_bins)
-from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled
+                                     Smoothing, rate_factor, smooth, smoothing_bins)
+from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
 from helab.scripts.standard import basic_plots
 from helab.utils.folder_cache import Dataset
 
@@ -69,7 +69,8 @@ def run(view: DatasetView, values: dict[str, Any] | None = None,
     script = basic_plots.TxyHistograms()
     context = AnalysisContext("a1", "Plot", view, effective(script.parameters("Plot"), values),
                               script.get_metadata().identity(), constants=layers or {})
-    return AnalysisResult.of(context, "completed", script.compute("Plot", context))
+    data = script.compute("Plot", context)
+    return AnalysisResult.of(context, "completed", data, found=script.result_found("Plot", data))
 
 
 # The arrival-time model
@@ -216,13 +217,16 @@ def test_smoothing_keeps_the_area_and_sets_bins_of_a_fifth_of_sigma() -> None:
     edge = np.zeros(101)
     edge[0] = 10.0
     assert smooth(edge, 5.0).sum() == pytest.approx(10.0)
-    errors = smoothed_errors(np.zeros(20), 5.0)
-    assert np.all(errors > 0)
+    # The operator: every raw bin's counts go somewhere (columns sum to 1); its variance map is Σ S².
+    operator = Smoothing(60, 4.0)
+    assert np.asarray(operator.matrix.sum(axis=0)).ravel() == pytest.approx(np.ones(60))
+    assert operator.variance(np.ones(60)) == pytest.approx(np.asarray(operator.squared.sum(axis=1)).ravel())
+    assert operator.apply(spike[:60]) == pytest.approx(smooth(spike[:60], 4.0))
 
 
 def test_fits_use_the_unsmoothed_counts_by_default(qtbot: QtBot) -> None:
     """Smoothing changes what is drawn, not the fit (unless Fit to says the smoothed curve:
-    then its width is corrected for the smoothing)."""
+    then the model is smoothed too, so its parameters are the unsmoothed profile's)."""
     events = cloud(np.random.default_rng(4), 20_000, 1e-6)
     view = view_of({1: events})
     values: dict[str, Any] = {"fit_t": True, "fit_x": True, "smooth": True, "smooth_t": 1e-3,
@@ -238,12 +242,25 @@ def test_fits_use_the_unsmoothed_counts_by_default(qtbot: QtBot) -> None:
     on_curve = run(view, {**values, "fit_data": SMOOTHED}).data
     smoothed_fit = on_curve.fits[0]
     assert smoothed_fit is not None and smoothed_fit.ok and smoothed_fit.on_smoothed
-    assert smoothed_fit.fit["sigma"].value > t_fit.width.value  # the smoothing widens the curve,
-    assert smoothed_fit.width.value == pytest.approx(t_fit.width.value, rel=0.03)  # and is taken out
-    assert any("corrected for the smoothing" in note for note in smoothed_fit.notes)
-    assert any("SEs are approximate" in note for note in smoothed_fit.notes)
-    too_wide = fit_axis("T", histogram.edges, histogram.counts, GAUSSIAN, DEFAULTS, smoothing=0.1)
-    assert not too_wide.ok or math.isnan(too_wide.temperature.value)
+    # The smoothing is in the model: the width is the profile's, as the unsmoothed fit's.
+    assert smoothed_fit.width.value == smoothed_fit.fit["sigma"].value
+    assert abs(smoothed_fit.width.value - t_fit.width.value) < 0.5 * t_fit.width.se
+    assert smoothed_fit.width.se == pytest.approx(t_fit.width.se, rel=0.15)  # the same information
+    assert any("smoothing in the model" in note for note in smoothed_fit.notes)
+    assert smoothed_fit.fit.model.key == "gaussian+smoothing"
+    assert smoothed_fit.text().startswith("Gaussian ⊗ smoothing")
+    # The drawn curve is the smoothed model on the bins, next to the smoothed counts.
+    assert len(smoothed_fit.x) == len(histogram.counts)
+    assert np.abs(smoothed_fit.y - on_curve.smoothed[0]).max() < 0.2 * on_curve.smoothed[0].max()
+    # Smoothing nearly as wide as the cloud (σ_s 3 ms against ~4.7 ms): still the cloud's width.
+    span = float(histogram.edges[-1] - histogram.edges[0])
+    wide = fit_axis("T", histogram.edges, histogram.counts, GAUSSIAN, DEFAULTS, smoothing=0.003)
+    assert wide.ok, wide.failure
+    assert abs(wide.width.value - t_fit.width.value) < 3 * wide.width.se
+    assert wide.width.se >= 0.95 * t_fit.width.se  # no more certain than the raw counts allow
+    # Beyond a fifth of the range, the smoothed curve isn't fitted, and the plot says why.
+    too_wide = fit_axis("T", histogram.edges, histogram.counts, GAUSSIAN, DEFAULTS, smoothing=0.21 * span)
+    assert not too_wide.ok and "too wide for this range" in too_wide.failure and too_wide.on_smoothed
     result = run(view, values)
     widget: Any = basic_plots.TxyHistograms().render(result)
     qtbot.addWidget(widget)
@@ -311,6 +328,11 @@ def test_fits_are_drawn_titled_and_recorded_with_their_constants(qtbot: QtBot) -
     assert record["constants"]["values"]["fall_distance"] == 0.85
     assert not {"fall_distance", "fall_time"} & set(record["constants"]["unconfirmed"])
     assert record["fits"]["X"]["temperature"]["value"] == pytest.approx(1e-6, rel=0.2)
+    # The structured record is the result's ``found``: the dock's lines come from it, and it stays
+    # when the plot is released (its data dropped).
+    assert json.loads(json.dumps(dict(result.found), allow_nan=False)) == record
+    released = RamResults().released(result)
+    assert released.data is None and script.result_record("Plot", released) == record["record_lines"]
     lines = script.result_record("Plot", result)
     assert lines[0].startswith("Fit T: Arrival-time thermal: centre (") and "T (" in lines[0] and "K" in lines[0]
     assert lines[1].startswith("Fit X: Gaussian: centre (") and "reduced χ²" in lines[1]
@@ -397,3 +419,65 @@ def test_the_fits_have_their_own_settings_tab(qtbot: QtBot) -> None:
     apply_visibility(root, specs)
     assert model.opts["visible"] and model.opts["limits"] == list(profiles.T_MODELS)
     assert parameter_of(root, basic_plots.FIT_SPECS["X"][1]).opts["limits"] == list(profiles.XY_MODELS)
+
+
+@pytest.mark.parametrize("count, bins", [(5000, 200), (300, 600)])  # the second: ≤ 1 count per raw bin
+def test_smoothed_curve_fits_have_honest_errors_and_no_low_count_bias(count: int, bins: int) -> None:
+    """With the smoothing in the model and the sandwich covariance, the widths' scatter over
+    seeds matches their SE (smoothed bins treated as independent gave SEs ~4× too small), and
+    model-based weights leave no bias at about one count per bin."""
+    widths, errors = [], []
+    counts = np.zeros(bins, dtype=np.int64)
+    for seed in range(40):
+        rng = np.random.default_rng(1000 + seed)
+        counts, edges = np.histogram(rng.normal(0, 1e-3, count), bins, range=(-5e-3, 5e-3))
+        fitted = fit_axis("X", edges.astype(np.float64), counts.astype(np.float64), GAUSSIAN, DEFAULTS,
+                          smoothing=5 * float(edges[1] - edges[0]))
+        assert fitted.ok, fitted.failure
+        widths.append(fitted.width.value)
+        errors.append(fitted.width.se)
+    if bins == 600:
+        assert counts.max() <= 6 and np.mean(counts[counts > 0]) < 2
+    scatter_over_se = float(np.std(widths) / np.mean(errors))
+    assert 0.7 <= scatter_over_se <= 1.4, scatter_over_se
+    pulls = (np.array(widths) - 1e-3) / np.array(errors)
+    assert abs(float(np.mean(pulls))) < 0.5, float(np.mean(pulls))
+
+
+def test_fit_curves_follow_the_rate_scale_and_log_y(qtbot: QtBot) -> None:
+    rng = np.random.default_rng(12)
+    view = view_of({shot: cloud(rng, 3000, 1e-6) for shot in (1, 2, 3)})
+    script = basic_plots.TxyHistograms()
+    for log_y in (False, True):
+        result = run(view, {"fit_x": True, "units": RATE, "log_y": log_y, "bins": 60})
+        fit = result.data.fits[1]
+        assert fit is not None and fit.ok
+        widget: Any = script.render(result)
+        qtbot.addWidget(widget)
+        plot = widget.getItem(2, 0)
+        assert plot.ctrl.logYCheck.isChecked() == log_y
+        bars, curve = plot.listDataItems()
+        xs, ys = curve.getOriginalDataset()
+        expected = fit.y * result.data.factor(1)
+        assert xs == pytest.approx(fit.x * 1e3)
+        if log_y:
+            # Where the model is ≤ 0 (the offset can be negative) it has no logarithm: left out.
+            assert np.array_equal(np.isnan(ys), expected <= 0)
+            assert ys[~np.isnan(ys)] == pytest.approx(expected[expected > 0])
+        else:
+            assert ys == pytest.approx(expected)
+        assert np.nanmax(bars.getOriginalDataset()[1]) == pytest.approx(
+            result.data.items[1].counts.max() * result.data.factor(1))
+
+
+def test_t_is_shown_in_seconds_over_a_long_range(qtbot: QtBot) -> None:
+    rng = np.random.default_rng(13)
+    events = cloud(rng, 2000, 1e-6)
+    events[:1000, 0] += 1.5  # a second cloud 1.5 s later: T spans over 1 s
+    result = run(view_of({1: events}), {"keep_percent": 100.0, "bins": 100, "fit_t": True})
+    widget: Any = basic_plots.TxyHistograms().render(result)
+    qtbot.addWidget(widget)
+    plot = widget.getItem(1, 0)
+    assert plot.getAxis("bottom").labelText == "T (s)"
+    bars = plot.listDataItems()[0]
+    assert bars.getOriginalDataset()[0][0] == pytest.approx(result.data.items[0].edges[0])  # not scaled

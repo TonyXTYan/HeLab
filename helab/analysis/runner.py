@@ -114,8 +114,9 @@ class AnalysisRunner(QObject):
             try:
                 data = script.compute(context.action, context)
                 state: State = "cancelled" if context.cancelled() else "completed"
+                found = script.result_found(context.action, data) if state == "completed" else {}
                 result = AnalysisResult.of(context, state, data if state == "completed" else None,
-                                           started_at=started)
+                                           started_at=started, found=found)
             except Cancelled:
                 result = AnalysisResult.of(context, "cancelled", started_at=started)
             except Exception as error:

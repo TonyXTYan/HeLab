@@ -120,13 +120,17 @@ class AnalysisResult:
     policy: str = RAM_ONLY
     coverage: Coverage = field(default_factory=Coverage)
     input_signature: str = ""  # the input revision's own dataset signature (``DatasetView.signature``)
+    # What the run found or used beyond its parameters, as JSON values (``DatasetAnalysis.result_found``:
+    # fit results, the constants used). Part of the record, kept when the plot is released.
+    found: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
     @classmethod
     def of(cls, context: AnalysisContext, state: State, data: Any = None, error: str = "",
-           started_at: float = 0.0) -> AnalysisResult:
+           started_at: float = 0.0, found: Mapping[str, Any] | None = None) -> AnalysisResult:
         return cls(context.job_id, context.action, context.analysis, context.view.key,
                    MappingProxyType(dict(context.parameters)), state, data, error,
-                   started_at, time.time(), coverage=context.covered, input_signature=context.view.signature)
+                   started_at, time.time(), coverage=context.covered, input_signature=context.view.signature,
+                   found=MappingProxyType(dict(found or {})))
 
     def reuse_key(self) -> dict[str, Any]:
         """What a later reuse of this result must match (result caching rule 5), as JSON values:

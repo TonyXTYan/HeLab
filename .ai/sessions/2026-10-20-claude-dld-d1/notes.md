@@ -86,11 +86,31 @@ order (tested: recovered within SE).
 - Convolution with a normalised Gaussian cut at ±4σ, edges reflected (`np.pad` symmetric): what
   spreads past an edge folds back in, so the total is kept exactly (tested, including a kernel
   wider than the histogram).
-- Fits default to the unsmoothed counts. **Fit to: smoothed curve** fits the smoothed values with
-  each bin's propagated Poisson error √(Σ k² n) (floored at one count's), notes that the SEs are
-  approximate (bins are correlated), and takes the smoothing out of the width in quadrature,
-  √(σ² − σ_s²) (exact for a Gaussian, approximate for the others), noting it. The front panel
-  fitted the smoothed curve without that correction.
+- Fits default to the unsmoothed counts.
+- **Fit to: smoothed curve (model smoothed too)**, after the review of `05e5401`. The first
+  version fitted s = S n as independent bins with observed errors and took the smoothing out in
+  quadrature: its SEs were ~4× too small (bins share counts), and observed-count weights biased
+  low-count fits. Now (`profiles.fit_smoothed`):
+  - S is the smoothing as a sparse matrix (`Smoothing`; the same reflected-edge map that smooths
+    what is drawn). The model is smoothed with it: s is fitted with S f(θ), so θ are the
+    unsmoothed profile's parameters (no quadrature step; a bimodal R is deconvolved too).
+  - Weights: Var(sᵢ) = Σⱼ Sᵢⱼ² μⱼ with μ = f(θ) (model-based, refitted until θ settles; the first
+    round uses the observed counts), floored at 0.1 count per raw bin.
+  - Covariance: the sandwich (JᵀWJ)⁻¹ JᵀW · S diag(μ) Sᵀ · WJ (JᵀWJ)⁻¹, J the smoothed model's
+    derivatives: the estimator's real spread, counting the correlation.
+  - Checked over 40 seeds: scatter/SE 0.84 (5 000 events) and 0.83 (600 events over 600 bins),
+    as the raw fit's 0.83/0.77; width pull −0.36 at about one count per bin. The test uses fixed
+    seeds: ratio in 0.7–1.4, mean pull within ±0.5, at 5 000 events/200 bins and 300/600.
+  - Smoothing wider than a fifth of the histogram's range is refused for this fit (a failure
+    note: "too wide for this range … fit the unsmoothed counts"): folded back at the edges many
+    times, the SEs came out 2× too large at half the range.
+  - Why not "fit the raw counts against S f(θ)", as the review suggested: E[n] is the profile
+    f itself, so that would fit f = S⁻¹(profile), the profile narrowed by the smoothing. The
+    smoothed data's expectation is S f, so the smoothing goes on the model when the data are
+    smoothed. Statistically the smoothed curve holds no more than the raw counts (its SEs come
+    out about the same), so the option is for comparison with the front panel.
+  - Drawn: the smoothed model on the bins, over the smoothed curve; the title says
+    "Gaussian ⊗ smoothing: …".
 - Drawn: faint bars behind a darker smoothed line.
 
 ## Fits
@@ -107,8 +127,18 @@ order (tested: recovered within SE).
   the constants with origins and unconfirmed flags; constants notes (fall time disagreeing with
   √(2h/g)) in amber.
 - Record: `Histograms.record()` holds each `AxisFit.as_record()` (with `FitResult.as_record()`,
-  including `fixed`) and, with any fit, `ResolvedConstants.as_record()`. The dock tooltip gets
-  "Fit T: …" lines (numbers, reduced χ², notes) and "Constants: …".
+  including `fixed`), with any fit `ResolvedConstants.as_record()`, and `record_lines`. It is
+  the result's new `AnalysisResult.found` (JSON): the runner sets it in the worker thread from
+  `DatasetAnalysis.result_found(action, data)` (default `{}`, so other plots are unchanged), it
+  survives `RamResults.released`, and the base `result_record` shows its `record_lines` in the
+  dock's tooltip ("Fit T: …" with reduced χ² and notes, "Constants: …"). Not in `reuse_key`
+  (it is output, not input).
+- Fall time: the arrival-time model is built from h and g (its fall is √(2h/g)); a hand-set
+  fall time is used by X/Y temperatures only. The Fall time tip says so, and the plot already
+  notes a disagreeing hand-set fall time. (Kept: building the T model from a hand-set t_f would
+  need an h or g that disagrees with the table's.)
+- "Fit to" shows while Smooth is on; `ParameterSpec.when` takes one condition, so it can't
+  also wait for a fit to be on (the tip says it applies to every fit).
 - Live: fits add ~20–30 ms per Gaussian axis, ~50 ms per bimodal axis at 300 000 events
   (whole run 56 ms without fits, 85 ms with three Gaussians, 215 ms with three bimodals). The
   default policy (every shot) stays.
@@ -132,6 +162,7 @@ order (tested: recovered within SE).
 3. "Only events inside all three ranges" off by default.
 4. Smoothing defaults σ_T 0.1 ms, σ_XY 0.2 mm, at most 5 000 bins.
 5. T in ms below a 1 s range, else s.
-6. Fitting the smoothed curve corrects the width for the smoothing in quadrature.
+6. Fitting the smoothed curve smooths the model too (honest SEs, no correction step), and is
+   refused when σ_s exceeds a fifth of the range.
 7. The arrival-time model has no free launch velocity (it is degenerate with T₀).
 8. Bimodal offered on D1's axes with p = 2 only; D4 adds its outputs.
