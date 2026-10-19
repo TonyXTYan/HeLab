@@ -40,3 +40,12 @@ Branch `agent/dataset-view-plots`, base `376c7dd`, reviewed at `e7f4e61`.
 - **3 — still open.** Keeping 99% of raw events necessarily keeps part of a 2% uniform tail. The new crop method and wording do not choose a cloud-oriented default; Tony's decision and lab-data validation are still needed.
 
 Checks rerun from the floor environment: `pytest -n 6 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review2` **920 passed, 2 skipped, 2 xfailed, no RERUNs** (16.68 s); `mypy helab/ --strict` **passed** (74 files); `pyright helab tests` **passed** (0 errors, 0 warnings). This recheck edited only this tracked review file and leaves it uncommitted.
+
+## Recheck at 0eb1420
+
+**Verdict: code accepted; one documentation follow-up.** I reviewed `git diff d9c85bc..0eb1420`. The deleted example script and empty `folder_stats` package have no remaining references in runtime code, `HeLab.spec`, README or tests. The old placeholder groups, docks and fake Info parameters are removed; the new Settings tab contains a short hint. `Load Scripts...` now registers newly loaded groups before populating the selector. Its GUI test clicks the button, selects a newly loaded group and runs both actions of a temporary user script. The bundled Plots group still appears and has its action buttons.
+
+- **Minor documentation follow-up — `AGENTS.md:151`:** the Script system section still says the right-hand panel loads `helab/scripts/examples/` by default. That directory is gone. The handoff already proposes the replacement wording; the coordinator should update `AGENTS.md` when integrating. Historical session notes and the handoff also name the removed parts as history, which is appropriate.
+- The earlier finding 3 about the 99%-of-raw-events default remains awaiting Tony's decision; this commit does not change it.
+
+Checks from the floor environment: `pytest -n 6 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review3` **922 passed, 2 skipped, 2 xfailed, no RERUNs** (19.62 s); `mypy helab/ --strict` **passed** (72 files); `pyright helab tests` **passed** (0 errors, 0 warnings); `git diff --check d9c85bc..0eb1420` **passed**. Only this review file was edited, left uncommitted.
