@@ -33,3 +33,14 @@ Branch `agent/live-l3`, base `d0b8fbe`, reviewed head `959bcf5` (2026-10-19).
 - `git diff --check d0b8fbe..HEAD`: clean.
 
 These are code review findings; the three new edge cases above were not added to the worker branch as tests or fixes.
+
+## Recheck at 30723a9
+
+**Verdict: approved for these three findings.** I reviewed `git diff 959bcf5..30723a9` at head `30723a9`. No new findings in the fix diff.
+
+- **P1 resolved (`2089da4`):** the instance keeps each job's view and the last successfully shown view. Turning Follow off pins `Follow.ran` to the shown view; completion of the already running newer job is ignored while pinned. A manual Rerun stays on the pinned view, and turning Follow on again offers the feed's latest view. The new gated test covers that sequence. The result cannot be delivered to a closed dock because the existing close guard and signal cleanup still apply.
+- **P2 changed input resolved (`9d9c54e`):** pending data now compares shot numbers and fingerprints. A different input identity with changed shots runs once even below an every-N threshold; subsequent revisions of one input still obey the policy. Purely identical shot content remains held. The new unit and plot-level tests cover an equal shot set with a changed fingerprint and verify the result's coverage and signature.
+- **P2 empty state resolved (`f80091f`):** Counts per shot now shows the explicit empty pane when selected shots have zero events. The shared empty-state test now covers no shots, none chosen and zero events for all four bundled plots.
+- The previously noted Live-off delay-timer behavior is unchanged by agreement in the handoff: an already offered revision may finish one rerun after Live stops or the tab switches. This remains a product decision for Tony, not a new finding on these fixes.
+
+**Validation:** full suite outside sandbox with `venv/bin` on `PATH`, `venv/bin/pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`: **1122 passed, 2 skipped, 2 xfailed, no RERUN**. `venv/bin/mypy helab/ --strict` (79 files), `venv/bin/mypy tests --strict` (61), and `venv/bin/mypy helab/ tests --strict --platform win32` (140) passed. `venv/bin/pyright helab tests` and `venv/bin/pyright helab tests --pythonplatform Windows` both reported 0 errors. `git diff --check 959bcf5..30723a9` was clean. This recheck section is left uncommitted.
