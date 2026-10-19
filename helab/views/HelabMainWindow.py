@@ -12,7 +12,7 @@ import warnings
 import threading
 import time
 from helab.utils.io_service import IORequest, delete_io_traces, get_io_service, io_trace_folder, io_trace_refused
-from helab.utils.folder_cache import get_folder_cache, set_disk_budget, store_options
+from helab.utils.folder_cache import FolderCache, get_folder_cache, set_disk_budget, store_options
 from helab.utils.gui_watchdog import GUIWatchdog
 from datetime import datetime, timedelta
 from sys import getsizeof
@@ -30,6 +30,7 @@ from humanfriendly.terminal import message
 from pyqtgraph.parametertree import ParameterTree, Parameter
 from typing_extensions import no_type_check
 
+from helab.analysis.budget import DIALOG_SHARE, RELEASE_SHARE, WARN_SHARE, RamBudget
 from helab.analysis.dataset_view import DatasetView, view_of
 from helab.analysis.follow import LiveFeed
 from helab.analysis.results import AnalysisResult
@@ -140,6 +141,7 @@ class HelabMainWindow(QMainWindow):
         self.root_duplicates = RootDuplicatesWindow(cache, self)
         self.roots_button.clicked.connect(lambda: self.review_root(None))
         cache.rootDuplicatesChanged.connect(self._update_roots_button)
+        self.setup_ram_budget(cache, QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME))
 
         # Create Left Panel (File Tree View)
         self.tab_widget.currentChanged.connect(self.on_current_tab_changed)
@@ -182,6 +184,11 @@ class HelabMainWindow(QMainWindow):
         self.roots_button.setAutoRaise(True)
         self.roots_button.hide()
         self.status_bar.addPermanentWidget(self.roots_button)
+        # Shown from 50 % of the RAM budget (loaded folders and plots); opens their sizes.
+        self.ram_button = QToolButton()
+        self.ram_button.setAutoRaise(True)
+        self.ram_button.hide()
+        self.status_bar.addPermanentWidget(self.ram_button)
         # Shown while Help › Record I/O trace is on.
         self.io_trace_label = QLabel("● I/O trace")
         self.io_trace_label.hide()
@@ -662,6 +669,9 @@ class HelabMainWindow(QMainWindow):
             size = sum(int(dataset.metadata.get("bytes", 0)) for dataset in dropped)
             self.show_status_notice(f"RAM budget lowered: dropped {len(dropped)} loaded "
                                     f"folder{'' if len(dropped) == 1 else 's'} ({byte_size(size)}) not shown in tabs")
+        if (budget := getattr(self, "ram_budget", None)) is not None:
+            budget.auto_reload = read_plot_auto_reload(settings)
+            budget.check()  # The plots' share of a new budget.
         self.apply_auto_scan_visible(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
 
     @staticmethod
@@ -673,6 +683,74 @@ class HelabMainWindow(QMainWindow):
     def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
         self._status_notice = (text, time.monotonic() + seconds)
         self.update_status_bar_left()
+
+    def setup_ram_budget(self, cache: FolderCache, settings: QSettings) -> None:
+        """Plots count toward the RAM budget: from 50 % the status bar's button (``ram_button``),
+        the 75 % window once per crossing, and plots released above 80 % (``RamBudget``)."""
+        self.ram_budget = RamBudget(cache, self.panel_right_top_plot_settings, self)
+        self.ram_budget.auto_reload = read_plot_auto_reload(settings)
+        self.ram_budget.changed.connect(self._update_ram_button)
+        self.ram_budget.warning.connect(lambda: self.show_ram_report(warn=True))
+        self.ram_budget.released.connect(self._plots_released)
+        self.ram_button.clicked.connect(lambda: self.show_ram_report())
+        self._ram_report: QMessageBox | None = None
+
+    def _update_ram_button(self) -> None:
+        """From 50 % of the RAM budget the status bar says how much is in use (amber from 75 %)."""
+        usage = self.ram_budget.usage
+        self.ram_button.setVisible(usage.share >= WARN_SHARE)
+        if usage.share < WARN_SHARE:
+            return
+        released = self.ram_budget.released_count()
+        self.ram_button.setText(f"RAM {usage.share:.0%} of budget")
+        self.ram_button.setStyleSheet(f"color: {AMBER};" if usage.share >= DIALOG_SHARE else "")
+        self.ram_button.setToolTip(
+            f"Loaded folders and plots use {byte_size(usage.total)} of the {byte_size(usage.budget)} RAM budget "
+            f"(Settings → Cache): folders {byte_size(usage.datasets)}, plots {byte_size(usage.plots)} more.\n"
+            f"Above {RELEASE_SHARE:.0%}, plots not viewed lately are released (each keeps a picture and reloads "
+            "when shown)." + (f"\n{released} plot{'' if released == 1 else 's'} released now." if released else "")
+            + "\nClick for the biggest plots and folders.")
+
+    def _plots_released(self, count: int) -> None:
+        self.show_status_notice(f"Released {count} plot{'' if count == 1 else 's'} to keep RAM under "
+                                f"{RELEASE_SHARE:.0%} of its budget: shown again, each reloads")
+
+    def ram_report_text(self) -> tuple[str, str]:
+        """The 75 % window's text: how RAM stands, and the biggest plots and folders."""
+        usage = self.ram_budget.usage
+        plots, folders = self.ram_budget.biggest()
+        text = (f"Loaded folders and plots use {byte_size(usage.total)}, {usage.share:.0%} of the RAM budget "
+                f"({byte_size(usage.budget)}, Settings → Cache). Above {RELEASE_SHARE:.0%}, HeLab first drops "
+                "loaded folders no tab shows, then releases plots not viewed lately: each keeps a picture and "
+                "reloads from RAM or the disk cache when shown again. Closing plots or tabs frees RAM too.")
+        lines = ["Biggest plots:", *(f"  {label} — {byte_size(size)}" for label, size in plots)] if plots else []
+        if folders:
+            lines.append("Biggest loaded folders:")
+            for path, size, shown in folders:
+                name = os.path.basename(path.rstrip(os.sep)) or path
+                lines.append(f"  {name} — {byte_size(size)}" + (" (shown in a tab)" if shown else ""))
+        return text, "\n".join(lines)
+
+    def show_ram_report(self, warn: bool = False) -> None:
+        """The biggest plots and folders: a window that doesn't block (at 75 % once per crossing,
+        or from the status bar)."""
+        if self._closing:
+            return
+        text, details = self.ram_report_text()
+        box = self._ram_report
+        if box is None:
+            box = self._ram_report = QMessageBox(self)
+            box.setWindowModality(Qt.WindowModality.NonModal)
+            box.setStandardButtons(QMessageBox.StandardButton.Ok)
+            settings = box.addButton("Settings…", QMessageBox.ButtonRole.ActionRole)
+            if settings is not None:
+                settings.clicked.connect(lambda: QTimer.singleShot(0, self.show_settings_dialog))
+        box.setIcon(QMessageBox.Icon.Warning if warn else QMessageBox.Icon.Information)
+        box.setWindowTitle("RAM nearly at its budget" if warn else "RAM in use")
+        box.setText(text)
+        box.setInformativeText(details)
+        box.show()
+        box.raise_()
 
     def _auto_load_pause_changed(self, paused: bool) -> None:
         cache = get_folder_cache(get_io_service())
@@ -1058,6 +1136,16 @@ class HelabMainWindow(QMainWindow):
             if old is not None:
                 old.setParent(None)  # out of the dock now, so findChild sees only the new label
                 old.deleteLater()
+        self.update_plot_source(dock)
+
+    def replace_plot_content(self, dock: QDockWidget, content: QWidget) -> None:
+        """Show ``content`` (a released plot's picture) in place of the plot, under the same
+        source lines; the plot before it is deleted."""
+        old = dock.widget()
+        HelabMainWindow._wrap_plot(dock, content)
+        if old is not None:
+            old.setParent(None)
+            old.deleteLater()
         self.update_plot_source(dock)
 
     def update_plot_source(self, dock: QDockWidget) -> None:
@@ -1585,6 +1673,8 @@ class HelabMainWindow(QMainWindow):
             return
         self._closing = True
         self.close_plots()
+        if (budget := getattr(self, "ram_budget", None)) is not None:
+            budget.detach()
         self.panel_right_top_plot_settings.detach()
         if not self._cache_dialogs_detached:
             self.cache_dialogs.detach()

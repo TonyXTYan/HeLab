@@ -168,7 +168,8 @@ def _wall_time(monotonic: Any) -> float | None:
     return time.time() - (time.monotonic() - float(monotonic))
 
 
-def _fingerprints(metadata: Mapping[str, Any]) -> dict[int, Fingerprint]:
+def fingerprints_of(metadata: Mapping[str, Any]) -> dict[int, Fingerprint]:
+    """Each shot's (shot, size, mtime) from a load's ``fingerprint`` list."""
     prints: dict[int, Fingerprint] = {}
     for entry in metadata.get("fingerprint") or ():
         if len(entry) >= 3:
@@ -203,7 +204,7 @@ def build_view(dataset: Dataset, root: tuple[str, str, str] | None = None) -> Da
         data_root = DataRootRef(identifier, label, folder, root_key(folder, identifier, dataset.path))
     shots = {int(shot): read_only(array) for shot, array in sorted(dataset.data.items())}
     identity = ViewIdentity(dataset.path, data_root.key if data_root else "", dataset.signature)
-    return DatasetView(identity, 1, _frozen(shots), MappingProxyType(_fingerprints(metadata)),
+    return DatasetView(identity, 1, _frozen(shots), MappingProxyType(fingerprints_of(metadata)),
                        _provenance(metadata), data_root)
 
 
@@ -231,7 +232,7 @@ def revise(view: DatasetView, dataset: Dataset, root: tuple[str, str, str] | Non
     data = {int(shot): array for shot, array in dataset.data.items()}
     if dataset.path != view.identity.source_path or not set(view.shots) <= set(data):
         return view_of(dataset, root)
-    prints = _fingerprints(dataset.metadata)
+    prints = fingerprints_of(dataset.metadata)
     added = {shot: array for shot, array in data.items()
              if shot not in view.shots or prints.get(shot, view.fingerprints.get(shot)) != view.fingerprints.get(shot)}
     revised = view if not added else view.with_shots(

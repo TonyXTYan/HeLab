@@ -11,7 +11,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from types import MappingProxyType
 from typing import Any, Iterable, Literal, Mapping
@@ -181,6 +181,17 @@ class RamResults:
                 self._results.move_to_end(job_id)
             return result
 
+    def peek(self, job_id: str) -> AnalysisResult | None:
+        """The result, if kept, without making it recently used (for counting RAM)."""
+        with self._lock:
+            return self._results.get(job_id)
+
+    def discard(self, job_id: str) -> None:
+        """Forget a result (its plot was released or closed: nothing reads it again)."""
+        with self._lock:
+            self._pinned.discard(job_id)
+            self._results.pop(job_id, None)
+
     def for_input(self, key: ViewKey) -> list[AnalysisResult]:
         with self._lock:
             return [result for result in self._results.values() if result.input == key]
@@ -192,6 +203,13 @@ class RamResults:
     def unpin(self, job_id: str) -> None:
         with self._lock:
             self._pinned.discard(job_id)
+
+    def released(self, result: AnalysisResult) -> AnalysisResult:
+        """``result`` without its data, forgotten here: its plot was released to free RAM. The
+        record (input, parameters, coverage) stays with the plot, so it can say what it showed
+        and reload exactly that."""
+        self.discard(result.job_id)
+        return replace(result, data=None)
 
     def __len__(self) -> int:
         return len(self._results)

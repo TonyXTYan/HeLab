@@ -341,4 +341,5 @@ class SettingsDialog(QDialog):
         self.cache_tab.disk_budget.setValue(read_disk_budget(settings) / (1 << 30))
         self.cache_tab.ram_budget.setValue(read_ram_budget_steps(settings, self.cache_tab.ram_budget.total))
         self.cache_tab.live_autosave.setValue(read_live_autosave(settings))
+        self.cache_tab.plot_auto_reload.setChecked(read_plot_auto_reload(settings))
         logging.debug("Settings reset to default")
