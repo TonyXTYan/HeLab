@@ -294,3 +294,55 @@ def test_malformed_shots_and_identical_times_do_not_crash(qtbot: QtBot) -> None:
         rendered(data, values, qtbot)
     same = fractions(data, {"shots": "range", "first_shot": 3})
     assert same.orders.centre == 2.0 and same.detected
+
+
+# Manual mode
+
+def test_a_window_wider_than_half_the_spacing_is_clipped_and_said(qtbot: QtBot) -> None:
+    data = shots_of(SIDES)
+    script = tf.TransferFractions()
+    values = {"orders_mode": tf.MANUAL, "centre": CENTRE, "spacing": SPACING, "half_width": 0.01}
+    clipped = fractions(data, values)
+    said = ("Window ± 10 ms is over half the spacing: using 6.25 ms, so neighbouring windows touch without "
+            "sharing events")
+    assert clipped.orders.half_width == SPACING / 2 and clipped.notes == (said,)
+    assert script.parameter_warnings("Plot", effective(script.parameters("Plot"), values)) == [said]
+    # Every event in the orders' span counts once: the windows touch and are half-open.
+    assert np.array_equal(clipped.counts, fractions(data, {**values, "half_width": 0.0}).counts)
+    within = fractions(data, {**values, "half_width": SPACING / 2})
+    assert within.notes == () and within.orders.half_width == SPACING / 2
+    # Auto clips against the spacing it found, and says so in the plot only.
+    auto = fractions(data, {"half_width": 0.01})
+    assert auto.orders.half_width == pytest.approx(auto.orders.spacing / 2)
+    assert auto.notes[0].startswith("Window ± 10 ms")
+    assert script.parameter_warnings("Plot", effective(script.parameters("Plot"), {"half_width": 0.01})) == []
+    rendered(data, values, qtbot)
+
+
+def test_a_window_edge_on_an_event_counts_it_once() -> None:
+    orders = tf.Orders(1.0, 0.5, 0.25, 1)  # windows [0.25, 0.75), [0.75, 1.25), [1.25, 1.75)
+    times = np.array([0.25, 0.75, 1.25, 1.75, 1.0])
+    assert tf.count_orders(times, orders).tolist() == [1, 2, 1]
+
+
+def test_a_centre_outside_the_data_says_where_the_events_are(qtbot: QtBot) -> None:
+    data = shots_of(SIDES)
+    values = {"orders_mode": tf.MANUAL, "centre": 5.0, "spacing": SPACING}
+    outside = fractions(data, values)
+    assert not outside.counts.any() and len(outside.shots) == 3
+    text = pane_text(rendered(data, values, qtbot))
+    assert text.startswith("No events in the orders' windows: order 0 at 5 s, spacing 12.5 ms, and the events counted "
+                           "are at T 2.1") and text.endswith(" s (Orders settings)")
+
+
+def test_shots_with_no_events_in_the_windows_have_no_fractions(qtbot: QtBot) -> None:
+    rng = np.random.default_rng(9)
+    elsewhere = np.column_stack((rng.normal(3.0, SIGMA, 200), np.zeros((200, 2))))
+    data = view({1: orders_events(rng, SIDES), 2: elsewhere, 3: orders_events(rng, SIDES)})
+    values = {"orders_mode": tf.MANUAL, "centre": CENTRE, "spacing": SPACING, "orders_each_side": 1}
+    result = fractions(data, values)
+    assert result.shots.tolist() == [1, 2, 3] and result.counts[1].tolist() == [0, 0, 0]
+    assert result.notes == ("1 shot with no events in the windows: no fractions",)
+    shares = result.fractions
+    assert np.isnan(shares[1]).all() and np.allclose(shares[[0, 2]].sum(axis=1), 1.0)
+    rendered(data, values, qtbot)

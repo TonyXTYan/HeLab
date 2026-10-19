@@ -50,7 +50,8 @@ SPACING = ParameterSpec("spacing", "Spacing", "float", 0.0125, (1e-6, 10.0), " s
                         when=(MODE.name, MANUAL), si=True, tip="Time between neighbouring orders.")
 HALF_WIDTH = ParameterSpec("half_width", "Window ± (0 = half spacing)", "float", 0.0, (0.0, 10.0), " s",
                            group=ORDERS_GROUP, si=True,
-                           tip="Each order's window is its time ± this; 0 makes neighbouring windows touch.")
+                           tip="Each order's window is its time ± this; 0 makes neighbouring windows touch. Over "
+                               "half the spacing it is clipped to that (the plot says so): windows never overlap.")
 SEARCH_MIN = ParameterSpec("search_min", "Search T from (0 = first)", "float", 0.0, (0.0, 100.0), " s",
                            group=ORDERS_GROUP, when=(MODE.name, AUTO), si=True,
                            tip="Auto looks for the orders between these times; 0 leaves that end open. Put order 0 "
@@ -118,6 +119,7 @@ class Fractions:
     detected: bool = False  # Auto found order 0 in this run's events (it had some to search)
     minimum: int = 0  # Shots with no more counts than this in the XY box were left out
     events: int = 0  # events in the chosen shots, before the XY box
+    extent: tuple[float, float] = (math.nan, math.nan)  # T of the events counted, first to last
 
     @property
     def fractions(self) -> npt.NDArray[np.float64]:
@@ -211,12 +213,23 @@ def refine(times: npt.NDArray[np.float64], position: float, reach: float) -> flo
 
 
 def count_orders(times: npt.NDArray[np.float64], orders: Orders) -> npt.NDArray[np.int64]:
+    """Events per order window, each window half-open [low, high), so windows that touch never
+    share an event."""
     ordered = np.sort(times)
     counts = []
     for order in orders.numbers:
         low, high = orders.window(order)
-        counts.append(int(np.searchsorted(ordered, high, "right") - np.searchsorted(ordered, low, "left")))
+        counts.append(int(np.searchsorted(ordered, high, "left") - np.searchsorted(ordered, low, "left")))
     return np.array(counts, dtype=np.int64)
+
+
+def window_half(half_width: float, spacing: float) -> tuple[float, str]:
+    """The window ± used: as set, half the spacing for 0, and clipped to half the spacing when
+    set wider, so neighbouring windows never overlap (each event counts once); with what it says."""
+    if half_width > spacing / 2:
+        return spacing / 2, (f"Window ± {half_width * 1e3:.3g} ms is over half the spacing: using "
+                             f"{spacing / 2 * 1e3:.3g} ms, so neighbouring windows touch without sharing events")
+    return half_width or spacing / 2, ""
 
 
 def search_bounds(values: Mapping[str, Any]) -> tuple[float, float]:
@@ -262,7 +275,7 @@ class TransferFractions(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.transfer_fractions",
-            version="2",
+            version="3",
         )
 
     def get_actions(self) -> List[str]:
@@ -286,7 +299,10 @@ class TransferFractions(DatasetAnalysis):
         return {CENTRE.name: data.orders.centre, SPACING.name: data.orders.spacing}
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
-        return list(search_warnings(values))
+        if values[MODE.name] == AUTO:
+            return list(search_warnings(values))  # The spacing, and so the window's limit, is found later.
+        _, clipped = window_half(float(values[HALF_WIDTH.name]), float(values[SPACING.name]))
+        return [clipped] if clipped else []
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         values = context.parameters
@@ -337,19 +353,25 @@ class TransferFractions(DatasetAnalysis):
                                  f"spacing, so neighbouring orders share events")
             else:
                 notes.append("no events in the search range: orders as set")
-        width = float(values[HALF_WIDTH.name]) or spacing / 2
+        width, clipped = window_half(float(values[HALF_WIDTH.name]), spacing)
+        if clipped:
+            notes.append(clipped)
         orders = Orders(centre, spacing, width, each_side)
         counts = np.array([count_orders(boxed[shot], orders) for shot in boxed], dtype=np.int64)
         counts = counts.reshape(len(boxed), len(orders.numbers))
         if detected:
             notes.extend(unsure(orders, counts.sum(axis=0), low, high))
+        empty = int(np.count_nonzero(counts.sum(axis=1) == 0))
+        if empty and empty < len(boxed):
+            notes.append(f"{empty:,} shot{'' if empty == 1 else 's'} with no events in the windows: no fractions")
         span = (each_side + 1) * spacing
         around = times[np.abs(times - centre) <= span]
         histogram = np.histogram(around, bins=400, range=(centre - span, centre + span)) if len(times) else None
         return Fractions(orders, np.fromiter(boxed, dtype=np.int64, count=len(boxed)), counts, len(chosen),
                          len(view.shots), auto, tuple(notes),
                          (histogram[1], histogram[0].astype(np.float64)) if histogram else (np.empty(0), np.empty(0)),
-                         detected, minimum, events_total)
+                         detected, minimum, events_total,
+                         (float(times.min()), float(times.max())) if len(times) else (math.nan, math.nan))
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Fractions = result.data
@@ -357,6 +379,12 @@ class TransferFractions(DatasetAnalysis):
         if not len(data.shots):
             text = empty_text(data.total_shots, data.chosen, data.events) or (
                 f"No shot has more than {data.minimum:,} counts in the XY box (Counting settings)")
+            return empty_pane(" · ".join((text, *data.notes)), parent)
+        if not data.counts.any():
+            first, last = data.extent
+            text = (f"No events in the orders' windows: order 0 at {orders.centre:.6g} s, spacing "
+                    f"{orders.spacing * 1e3:.4g} ms, and the events counted are at T {first:.6g}–{last:.6g} s "
+                    f"(Orders settings)")
             return empty_pane(" · ".join((text, *data.notes)), parent)
         widget: Any = pg.GraphicsLayoutWidget(parent)
         widget.setBackground("w")
@@ -376,7 +404,7 @@ class TransferFractions(DatasetAnalysis):
         fractions = data.fractions
         for column, order in enumerate(orders.numbers):
             colour = colours[column]
-            plot.plot(data.shots, fractions[:, column], name=f"order {order_label(order)}",
+            plot.plot(data.shots, fractions[:, column], name=f"order {order_label(order)}", connect="finite",
                       pen=pg.mkPen(colour, width=1.5), symbol="o", symbolSize=4, symbolBrush=colour, symbolPen=None)
         edges, counts = data.histogram
         times = widget.addPlot(row=2, col=0, title="T around the orders, with their windows")
