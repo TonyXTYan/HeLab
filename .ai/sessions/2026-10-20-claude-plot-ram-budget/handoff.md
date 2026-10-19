@@ -41,6 +41,8 @@ checkbox, on by default) or on Reload; Rerun on it reloads with the settings sho
 
 ## Checks
 
+- After the second recheck (at 7bec1d1): full suite 1284 passed, 2 skipped, 2 xfailed, no
+  RERUN (76.1 s); typing (also Windows) and diff check clean; 28 budget tests.
 - After the recheck (at 2ce2e77): full suite 1283 passed, 2 skipped, 2 xfailed, no RERUN
   (77.4 s); mypy --strict helab and tests (also win32), pyright (also Windows) and
   `git diff --check 531ec41`: clean. tests/test_plot_ram_budget.py: 27 tests.
@@ -131,6 +133,10 @@ After the recheck at e261905 (blocker from #3):
   does it one at a time). Tests: the recheck's two probes; a folder shown in a tab is
   still skipped. Also dropped the dead `PLOT_AUTO_RELOAD_SETTING` in budget.py.
 - `PlotPicture` decodes the PNG once while it shows and drops the pixmap when hidden.
+
+After the recheck at fa75cc9 (should-fix): `RamBudget.check` releases in two passes, in
+the same order: first only plots that free more than their picture with every other plot
+staying, then (still over 80 %) the shared rule. Test: the recheck's probe (P3 alone goes).
 
 ## Proposed doc changes (for the coordinator)
 
