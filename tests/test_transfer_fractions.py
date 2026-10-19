@@ -403,3 +403,52 @@ def test_detection_uses_only_the_shots_chosen() -> None:
     assert fractions(data, {"shots": "range", "last_shot": 3}).orders.centre == pytest.approx(CENTRE, abs=2e-4)
     past = fractions(data, {"first_shot": 7})
     assert not past.detected and past.chosen == 0 and past.total_shots == 6
+
+
+# A strong transfer: +1 the tallest peak
+
+def transferred(share: float) -> dict[int, int]:
+    """Orders −1…+2 with ``share`` of order 0's atoms moved to +1 and +2."""
+    return {-1: 30, 0: round(800 * (1 - share)), 1: round(680 * share), 2: round(120 * share)}
+
+
+@pytest.mark.parametrize("share", [0.75, 0.9, 0.97])
+def test_a_first_run_over_two_thirds_transfer_takes_plus_1_for_order_0(share: float) -> None:
+    # A known limit: with no earlier detection, the tallest peak (+1) is taken for order 0 and
+    # the real order 0 holds under half of its events, so nothing is said.
+    data = fractions(shots_of(transferred(share)))
+    assert data.orders.centre == pytest.approx(CENTRE + SPACING, abs=3e-4)
+    assert data.jumped == 0 and data.notes == ()
+
+
+def test_order_0_jumping_a_whole_order_from_the_last_detection_warns_until_settled() -> None:
+    script = tf.TransferFractions()
+    before = fractions(shots_of(transferred(0.3)))
+    assert before.orders.centre == pytest.approx(CENTRE, abs=2e-4) and before.notes == ()
+    last = {"centre": before.orders.centre, "spacing": before.orders.spacing}  # what the run filled in
+    for share in (0.75, 0.97):
+        values = {**last}
+        start = context(shots_of(transferred(share), seed=1), values)
+        result = AnalysisResult.of(start, "completed", script.compute("Plot", start))
+        data = result.data
+        assert data.jumped == 1 and data.orders.centre == pytest.approx(CENTRE + SPACING, abs=3e-4)
+        moved = "⚠ order 0 moved by +1 order from the last detection ("
+        assert [note for note in data.notes if note.startswith(moved)]
+        # The last detection's centre stays in the settings, so the next rerun warns again.
+        assert script.detected_parameters("Plot", result) == {"spacing": data.orders.spacing}
+    # Back to a low transfer: order 0 is where it was, no warning, and the centre is filled in again.
+    again = context(shots_of(transferred(0.3), seed=2), last)
+    settled = AnalysisResult.of(again, "completed", script.compute("Plot", again))
+    assert settled.data.jumped == 0 and settled.data.notes == ()
+    assert script.detected_parameters("Plot", settled) == {"centre": settled.data.orders.centre,
+                                                           "spacing": settled.data.orders.spacing}
+
+
+def test_no_jump_from_the_default_centre_part_of_an_order_or_in_manual_mode() -> None:
+    assert tf.jump(float(tf.CENTRE.default), CENTRE + SPACING, SPACING, 2) == 0  # the default is no detection
+    assert tf.jump(CENTRE, CENTRE + 0.5 * SPACING, SPACING, 2) == 0
+    assert tf.jump(CENTRE + 1e-4, CENTRE + 1e-4 - 1.25 * SPACING, SPACING, 2) == -1
+    assert tf.jump(CENTRE + 1e-4, CENTRE + 1e-4 + 3 * SPACING, SPACING, 2) == 3
+    assert tf.jump(CENTRE + 1e-4, CENTRE + 1e-4 + 4 * SPACING, SPACING, 2) == 0  # beyond the orders counted
+    manual = fractions(shots_of(transferred(0.9)), {"orders_mode": tf.MANUAL, "centre": CENTRE - SPACING})
+    assert manual.jumped == 0 and manual.notes == ()

@@ -13,9 +13,13 @@ Where this differs from ``fraction_calc`` on purpose (fractions over the orders'
 wide window; shots left out by their counts in the counting box, not the import box;
 half-open windows; no X/Y rotation): ``tests/test_transfer_fractions_matlab.py``.
 
-Auto can't tell which order is 0 when another is nearly as tall (a strong transfer, or a Search
-T that leaves the real order 0 out): the plot then says order 0 is unsure. Under its title it
-also says when the orders overlap or no side peak was found, and which events were left out.
+The T histogram alone can't say which peak is order 0, and auto takes the tallest. The plot
+says order 0 is unsure when another order holds at least half as many events (comparable
+peaks, or a Search T that leaves the real order 0 out), and that it moved when it lands a whole
+number of spacings from the last detection (Live, a scan; the hidden centre then keeps the last
+one). A first run with a transfer over about 2/3 can still take +1 for order 0 without a note:
+set Search T around order 0, or the orders by hand. Under its title the plot also says when the
+orders overlap or no side peak was found, and which events were left out.
 """
 from __future__ import annotations
 
@@ -44,7 +48,7 @@ ORDERS_GROUP = "Orders"
 MODE = ParameterSpec("orders_mode", "Orders", "choice", AUTO, choices=(AUTO, MANUAL), group=ORDERS_GROUP,
                      tip="Auto finds order 0 (the tallest peak in T) and the spacing (the nearest clear side "
                          "peak) on each run; manual uses the centre and spacing below, which each auto run "
-                         "fills in.")
+                         "fills in (not the centre when order 0 jumped a whole order: the plot warns).")
 EACH_SIDE = ParameterSpec("orders_each_side", "Orders each side", "int", 2, (1, 6), group=ORDERS_GROUP,
                           tip="Orders −N…+N are counted; +1 arrives later than 0.")
 CENTRE = ParameterSpec("centre", "Order 0 at", "float", 2.1375, (0.0, 100.0), " s", group=ORDERS_GROUP,
@@ -80,6 +84,7 @@ SIDE_PEAK_SHARE = 0.02  # a side peak's least prominence, as a share of order 0'
 SIDE_PEAK_COUNTS = 4.0  # … and in (smoothed) events per bin, against noise in sparse bins
 SIDE_PEAK_FWHMS = 0.5  # how far a side peak must be from order 0, in order 0's full widths
 UNSURE_SHARE = 0.5  # another order with at least this share of order 0's events makes order 0 unsure
+JUMP_SLACK = 0.3  # a centre within this many spacings of a whole number (≥ 1) from the last one has jumped
 
 
 @dataclass(frozen=True)
@@ -123,6 +128,7 @@ class Fractions:
     minimum: int = 0  # Shots with no more counts than this in the XY box were left out
     events: int = 0  # events in the chosen shots, before the XY box
     extent: tuple[float, float] = (math.nan, math.nan)  # T of the events counted, first to last
+    jumped: int = 0  # auto's order 0 is this many orders from the last detection (``jump``)
 
     @property
     def fractions(self) -> npt.NDArray[np.float64]:
@@ -252,6 +258,18 @@ def search_warnings(values: Mapping[str, Any]) -> tuple[str, ...]:
     return ()
 
 
+def jump(previous: float, centre: float, spacing: float, each_side: int) -> int:
+    """How many orders auto's order 0 moved from the last detection (the hidden manual centre):
+    a whole number of spacings, n with 1 ≤ |n| ≤ each_side + 1, within JUMP_SLACK; else 0. A
+    strong transfer can make another order the tallest peak from one run to the next (Live, an
+    amplitude scan). The default centre is no detection: 0."""
+    if previous == CENTRE.default or not spacing > 0:
+        return 0
+    moved = (centre - previous) / spacing
+    orders = round(moved)
+    return orders if 1 <= abs(orders) <= each_side + 1 and abs(moved - orders) <= JUMP_SLACK else 0
+
+
 def unsure(orders: Orders, totals: npt.NDArray[np.int64], low: float, high: float) -> tuple[str, ...]:
     """A note when auto's order 0 may be another order: one of the others holds at least
     UNSURE_SHARE of its events (order 0 is the tallest peak, which a strong transfer, or a search
@@ -278,7 +296,7 @@ class TransferFractions(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.transfer_fractions",
-            version="3",
+            version="4",
         )
 
     def get_actions(self) -> List[str]:
@@ -299,6 +317,8 @@ class TransferFractions(DatasetAnalysis):
         data = result.data
         if not isinstance(data, Fractions) or not data.auto or not data.detected:
             return {}
+        if data.jumped:  # The last detection's order 0 stays: the warning stays too, and manual starts there.
+            return {SPACING.name: data.orders.spacing}
         return {CENTRE.name: data.orders.centre, SPACING.name: data.orders.spacing}
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
@@ -335,7 +355,7 @@ class TransferFractions(DatasetAnalysis):
         times = np.concatenate(list(boxed.values())) if boxed else np.empty(0)
         auto = values[MODE.name] == AUTO
         centre, spacing = float(values[CENTRE.name]), float(values[SPACING.name])
-        detected = False
+        previous, detected, jumped = centre, False, 0
         low, high = search_bounds(values)
         if auto and len(times):
             notes.extend(search_warnings(values))
@@ -364,6 +384,11 @@ class TransferFractions(DatasetAnalysis):
         counts = counts.reshape(len(boxed), len(orders.numbers))
         if detected:
             notes.extend(unsure(orders, counts.sum(axis=0), low, high))
+            jumped = jump(previous, centre, spacing, each_side)
+            if jumped:
+                notes.append(f"⚠ order 0 moved by {order_label(jumped)} order{'' if abs(jumped) == 1 else 's'} "
+                             f"from the last detection ({previous:.6g} s → {centre:.6g} s): a strong transfer can "
+                             f"make another order the tallest; Orders manual starts from the last one")
         empty = int(np.count_nonzero(counts.sum(axis=1) == 0))
         if empty and empty < len(boxed):
             notes.append(f"{empty:,} shot{'' if empty == 1 else 's'} with no events in the windows: no fractions")
@@ -374,7 +399,8 @@ class TransferFractions(DatasetAnalysis):
                          len(view.shots), auto, tuple(notes),
                          (histogram[1], histogram[0].astype(np.float64)) if histogram else (np.empty(0), np.empty(0)),
                          detected, minimum, events_total,
-                         (float(times.min()), float(times.max())) if len(times) else (math.nan, math.nan))
+                         (float(times.min()), float(times.max())) if len(times) else (math.nan, math.nan),
+                         jumped)
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Fractions = result.data
