@@ -20,6 +20,76 @@ step in the workflow plan.
   floors, recruits workers, reviews and integrates. It asks you before starting
   a worker, and before landing or opening a PR.
 
+## 0. A new computer, from nothing
+
+For a Mac with nothing installed (2026-10-19). Steps marked **(check)**
+haven't been done on a second machine yet. Then continue with sections 1–4.
+
+1. **Command-line tools and Homebrew**: `xcode-select --install` (gives
+   `git`), then [Homebrew](https://brew.sh) and `brew install gh node`
+   (`node` for the npm tools below).
+2. **Git identity**: `git config --global user.name "…"` and
+   `git config --global user.email "…"`.
+3. **GitHub**: `gh auth login` with the account that can push to
+   `TonyXTYan/HeLab`; `gh auth setup-git` lets `git push` use it.
+4. **uv**: `curl -LsSf https://astral.sh/uv/install.sh | sh`, then open a new
+   terminal.
+5. **Clone** outside iCloud Drive if you can (inside it, keep the venv in
+   `venv.nosync/` with a `venv` symlink, see AGENTS.md):
+
+   ```bash
+   git clone --recurse-submodules https://github.com/TonyXTYan/HeLab.git
+   cd HeLab && git switch dev/v0.0.6
+   ```
+
+6. **Python and packages** (the README's "Setup (any machine)"):
+
+   ```bash
+   uv python install 3.13
+   uv venv --seed --python 3.13 venv && source venv/bin/activate
+   uv pip install -r requirements.txt -e .
+   pytest -n 4 --reruns 5 --reruns-delay 1   # should pass; report any RERUN
+   ```
+
+7. **Agents**: Claude Code (`curl -fsSL https://claude.ai/install.sh | bash`)
+   and Codex (`npm install -g @openai/codex`); run `claude` and `codex` once
+   each to sign in.
+8. **Claude's global instructions**: copy `~/.claude/CLAUDE.md` from the
+   existing Mac (the AGENTS.md / CLAUDE.md convention and the CodeGraph rules).
+   It isn't in the repo.
+9. **CodeGraph**: `npm install -g @colbymchenry/codegraph`, register it for
+   Claude Code with `claude mcp add --scope user codegraph -- codegraph serve --mcp`,
+   then run `codegraph init -i` in the repo (`.codegraph/` is gitignored).
+10. **Project memory**: Claude keeps memory per checkout path, in
+    `~/.claude/projects/<encoded path>/memory`. HeLab's lives in the repo
+    (`.ai/memory`), so link it. Start `claude` once in the repo and quit, then:
+
+    ```bash
+    dir=$(ls -d ~/.claude/projects/*HeLab | head -1)   # the encoded repo path
+    [ -d "$dir/memory" ] && [ ! -L "$dir/memory" ] && mv "$dir/memory" "$dir/memory.local"
+    ln -s "$PWD/.ai/memory" "$dir/memory"
+    ```
+
+    Without the link, Claude on this Mac starts with an empty memory.
+11. **Maestri**: install the app from [themaestri.app](https://www.themaestri.app),
+    open it and sign in. It provides the `maestri` CLI inside its terminals
+    (`$MAESTRI_CLI`) and installs its agent skills (`maestri`,
+    `maestri-chat`, `maestri-manager`, … in `~/.claude/skills/`) **(check)**.
+12. **Maestri settings don't sync**: `.maestri/` (roles, floors) is gitignored
+    and hooks live in the app. Redo sections 1–4 here: workspace,
+    notifications, presets, the coordinator terminal and role (the role text
+    is in section 2), the register note and the floor setup hook.
+13. **HeLab's own state is per machine**: settings (QSettings plist) and the
+    cache in `~/Library/Caches/HeLab` start empty. Data roots are found again
+    from their `.helab-root` markers. A drive this Mac reaches at a new
+    location asks "same folder or a copy?" once.
+
+**Two computers at once.** Run one coordinator on each. Both branch
+`agent/<task>` from `dev/v0.0.6` and land back into it. Before landing, pull
+`dev/v0.0.6` first: `git pull` on Ground, or **Sync** in the land dialog. Keep
+the two machines on different roadmap items, and say in the register note
+which machine owns which task.
+
 ## 1. One-time setup
 
 1. **Install the agents** Maestri will run: Claude Code and Codex, signed in
