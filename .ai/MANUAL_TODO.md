@@ -118,7 +118,9 @@ real experiment data without deciding where its top should be.
 - [ ] Transfer fractions on real data: order 0 and the spacing match the T
   histogram's peaks (the windows shaded below); manual mode starts from them and
   edits apply on Rerun; the XY box keeps the hot spot out; compare with
-  `monitor_momentum.m` on the same shots.
+  `monitor_momentum.m` on the same shots. Steps in
+  `.ai/sessions/2026-10-19-claude-transfer-fractions-hardening/handoff.md` (unsure
+  note, Search T ends, clipped windows, typed centre kept during a Live rerun).
 - [ ] Settings panel on screen (Mac, then a lab PC), from
   `.ai/sessions/2026-10-19-claude-settings-panel-hardening/handoff.md`:
   1. Three plots, tabbed: clicking a tab, inside a plot (counts, a histogram, the

@@ -133,9 +133,16 @@ still to choose (Tony, with the coordinator's proposal).
   checks (MANUAL_TODO) and a pin to keep one plot's settings shown.
 - [ ] Transfer fractions plot (port of Momentum_Bells_test's `monitor_momentum.m`):
   orders auto-found in T, manual centre/spacing filled from the detection. Quick
-  version on Ground, hardening pending: check detection on real Bragg/magnetic
-  data, draggable windows on the T histogram, the averaged-vs-detuning view,
-  Live updates with L3 (Tony, 2026-10-19).
+  version on Ground; hardened 2026-10-20 (detection edge cases with "order 0
+  unsure" and "moved", clipped manual windows, typed values kept across reruns,
+  From-shot wording, counts checked against a Python `fraction_calc`). Left:
+  detection on real Bragg/magnetic data (MANUAL_TODO); a hot spot near the XY
+  box's edge without MATLAB's `dld_xy_rot` (to investigate; new detector since);
+  draggable windows on the T histogram; the averaged-vs-detuning view (Tony,
+  2026-10-19/20).
+- [ ] How auto detection should find orders 0, ±1, ±2 (it also covers a first run
+  at high transfer, where +1 can be taken for order 0): Tony to describe; not built
+  (2026-10-20).
 - [x] Floating plot settings: a floating plot's settings travel with its window (collapsible, on the right, draggable splitter) (Tony, 2026-10-19; landed 2026-10-20).
 - [ ] Show the analysis worker beside I/O: status-bar counts and Folder
   details' activity, each job with script, input, revision, time and Cancel;
