@@ -502,17 +502,17 @@ def test_shot_times_are_kept_with_a_dataset_and_a_pending_save(store: CacheStore
     file = store.write_dataset_file(pack_dataset(shots(1)))
     store.save_dataset("a", file, {**record(1), "raw_times": [[1, 5], [2, 6]]}, store.start_dataset_job("a"))
     row = store.read_dataset_row("a").value
-    assert row is not None and row["raw_times"] == [[1, 5], [2, 6]]
+    assert row is not None and row.get("raw_times") == [[1, 5], [2, 6]]
     file = store.write_dataset_file(pack_dataset(shots(2)))
     pending = store.add_pending("a", file, {**record(2), "raw_times": [[1, 7]]}, store.start_dataset_job("a"),
                                 "over_budget")
     store.adopt_pending(pending)
     row = store.read_dataset_row("a").value
-    assert row is not None and row["raw_times"] == [[1, 7]]
+    assert row is not None and row.get("raw_times") == [[1, 7]]
     # A record without them (an older HeLab's) has none.
     save(store, "a", store.start_dataset_job("a"), 3)
     row = store.read_dataset_row("a").value
-    assert row is not None and row["raw_times"] == []
+    assert row is not None and row.get("raw_times") == []
 
 
 def test_a_store_from_before_shot_times_gains_the_column_and_keeps_its_datasets(root: str) -> None:
@@ -526,8 +526,8 @@ def test_a_store_from_before_shot_times_gains_the_column_and_keeps_its_datasets(
         connection.close()
     with CacheStore(root) as store:
         row = store.read_dataset_row("a").value
-        assert row is not None and row["raw_times"] == [] and stored_value(store, "a") == 1
+        assert row is not None and row.get("raw_times") == [] and stored_value(store, "a") == 1
         guard = store.start_dataset_job("a")
         assert store.confirm_dataset("a", row["fingerprint"], ["x", "y"], time.time(), guard, [[2, 9]])
         row = store.read_dataset_row("a").value
-        assert row is not None and row["raw_times"] == [[2, 9]]
+        assert row is not None and row.get("raw_times") == [[2, 9]]

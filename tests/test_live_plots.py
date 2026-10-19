@@ -33,7 +33,7 @@ from helab.analysis.runner import AnalysisRunner
 from helab.io_helper import list_folder, live_check, load
 from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import basic_plots, scatter_3d, transfer_fractions
+from helab.scripts.standard import basic_plots, scatter_3d, shot_times, transfer_fractions
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest, IOService
@@ -316,7 +316,8 @@ def test_coverage_records_the_shots_used_and_diffs_a_later_revision() -> None:
 
 
 @pytest.mark.parametrize("script", [basic_plots.CountsPerShot(), basic_plots.TxyHistograms(),
-                                    scatter_3d.Scatter3D(), transfer_fractions.TransferFractions()],
+                                    scatter_3d.Scatter3D(), transfer_fractions.TransferFractions(),
+                                    shot_times.ShotTimesPlot()],
                          ids=lambda script: type(script).__name__)
 def test_every_result_records_coverage_and_a_json_reuse_key(qtbot: QtBot, script: DatasetAnalysis) -> None:
     """Completed, failed and cancelled runs alike; the Shots settings decide the coverage."""
@@ -407,6 +408,28 @@ def test_a_following_scatter_updates_its_page_in_place(
     plot_id = pane.plot_id
     window.close_plots()
     qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None, timeout=10_000)  # Freed with the pane.
+
+
+def test_a_following_shot_times_plot_updates_in_place(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """Live's next shot joins the shot-times plots already drawn (zoom and pan stay), with its time."""
+    first = revision([1, 2])
+    first.metadata["raw_times"] = [[1, 1_000 * 10**9], [2, 1_060 * 10**9]]
+    window.view = window.live_feed.publish(first)
+    instance = plot(window, qtbot, shot_times.ShotTimesPlot())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    set_live(instance, DELAY, 0.0)
+    dock = cast(QDockWidget, instance.dock_widget)
+    widget = dock.findChild(shot_times.ShotTimesWidget)
+    assert widget is not None
+    later = revision([1, 2, 3])
+    later.metadata["raw_times"] = [*first.metadata["raw_times"], [3, 1_180 * 10**9]]
+    window.live_feed.publish(later)
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
+    assert dock.findChild(shot_times.ShotTimesWidget) is widget  # Updated, not drawn anew.
+    result = cast(AnalysisResult, instance.shown)
+    assert result.data.times.tolist() == [1_000.0, 1_060.0, 1_180.0] and not result.data.fallbacks
+    assert "longest gap 2.0 min before shot 3" in widget.title.text
 
 
 def run_now(script: DatasetAnalysis, view: DatasetView, values: dict[str, Any]) -> AnalysisResult:
@@ -604,7 +627,8 @@ def test_a_following_plot_highlights_lives_newest_shot(
 
 def test_scatter_declares_a_live_policy_others_rerun_on_every_shot() -> None:
     assert scatter_3d.Scatter3D().live_policy("Plot") == LivePolicy(min_delay=5.0)
-    for script in (basic_plots.CountsPerShot(), basic_plots.TxyHistograms(), transfer_fractions.TransferFractions()):
+    for script in (basic_plots.CountsPerShot(), basic_plots.TxyHistograms(), transfer_fractions.TransferFractions(),
+                   shot_times.ShotTimesPlot()):
         assert script.live_policy("Plot") == LivePolicy()
 
 
