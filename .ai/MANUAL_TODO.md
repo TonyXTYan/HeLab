@@ -94,6 +94,10 @@ real experiment data without deciding where its top should be.
   two-line source follow. Manual bounds' spin boxes step sensibly when scrolled.
   The centre hint disappears when the first plot opens and returns when all
   close. Scatter point size and opacity in the dock and via Open in browser.
+- [ ] Transfer fractions on real data: order 0 and the spacing match the T
+  histogram's peaks (the windows shaded below); manual mode starts from them and
+  edits apply on Rerun; the XY box keeps the hot spot out; compare with
+  `monitor_momentum.m` on the same shots.
 - [ ] Settings panel follows the active plot (quick feature on Ground): with three
   plots open, clicking a dock's tab, clicking inside a plot (pyqtgraph and the 3D
   scatter's web view) and activating a floating plot's window each show that

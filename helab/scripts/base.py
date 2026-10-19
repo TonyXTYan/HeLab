@@ -98,6 +98,11 @@ class DatasetAnalysis(HelabAnalysisScript):
         max, using full extent"), for the dock's source line, its record and the settings tab."""
         return []
 
+    def detected_parameters(self, action_name: str, result: AnalysisResult) -> dict[str, Any]:
+        """Parameter values a completed run found in the data (e.g. where peaks are), which the
+        plot's settings then show, so switching to manual starts from them. Default: none."""
+        return {}
+
     @abstractmethod
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         """The numerical result (no Qt). Check ``context.cancelled()`` in long loops."""

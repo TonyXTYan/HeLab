@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 from pyqtgraph.parametertree import Parameter
 
 from helab.analysis.dataset_view import DatasetView
-from helab.analysis.parameter_tree import build_tree, settings_widget, tree_values
+from helab.analysis.parameter_tree import build_tree, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import describe
 from helab.analysis.results import AnalysisResult
 from helab.analysis.runner import AnalysisRunner, get_analysis_runner
@@ -173,6 +173,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         warnings = "; ".join(self.script.parameter_warnings(self.action, result.parameters))
         if result.state == "completed":
             self.runner.results.pin(result.job_id)
+            self._show_detected(result)
             try:
                 content = self.script.render(result)
             except Exception as error:
@@ -197,6 +198,16 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.dock_widget.setWidget(content)
             if old is not None:
                 old.deleteLater()
+
+    def _show_detected(self, result: AnalysisResult) -> None:
+        """Put what the run found into the settings (they don't rerun it)."""
+        root = self.parameter_root
+        if root is None:
+            return
+        specs = {spec.name: spec for spec in self.script.parameters(self.action)}
+        for name, value in self.script.detected_parameters(self.action, result).items():
+            if name in specs:
+                parameter_of(root, specs[name]).setValue(specs[name].coerce(value))
 
     @staticmethod
     def _message(text: str) -> QLabel:

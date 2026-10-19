@@ -127,6 +127,11 @@ still to choose (Tony, with the coordinator's proposal).
   `ParameterSpec.page`). Quick version on Ground, hardening pending: real-app
   focus with QtWebEngine and pyqtgraph, many plots, a pin to keep one plot's
   settings shown (Tony, 2026-10-19).
+- [ ] Transfer fractions plot (port of Momentum_Bells_test's `monitor_momentum.m`):
+  orders auto-found in T, manual centre/spacing filled from the detection. Quick
+  version on Ground, hardening pending: check detection on real Bragg/magnetic
+  data, draggable windows on the T histogram, the averaged-vs-detuning view,
+  Live updates with L3 (Tony, 2026-10-19).
 - [ ] Show the analysis worker beside I/O: status-bar counts and Folder
   details' activity, each job with script, input, revision, time and Cancel;
   later remote/CLI workers in the same list (Tony, 2026-10-19).

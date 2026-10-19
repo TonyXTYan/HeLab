@@ -499,7 +499,7 @@ def scripts_manager() -> ScriptsManager:
 def test_bundled_analyses_declare_identity_and_file_hash() -> None:
     manager = scripts_manager()
     names = {metadata.name: metadata for metadata in manager.get_scripts_in_group(group.NAME)}
-    assert set(names) == {"3D scatter", "Counts per shot", "T, X, Y histograms"}
+    assert set(names) == {"3D scatter", "Counts per shot", "T, X, Y histograms", "Transfer fractions"}
     scatter = names["3D scatter"]
     expected = hashlib.sha256(open(scatter_3d.__file__, "rb").read()).hexdigest()
     assert (scatter.analysis_id, scatter.version, scatter.file_hash) == ("helab.scatter_3d", "2", expected)
