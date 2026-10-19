@@ -274,7 +274,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.status_label.setText(f"Running ({context.job_id})…")
         self._show_follow()
 
+    @pyqtSlot(object)
     def _finished(self, result: AnalysisResult) -> None:
+        # A slot (no PyQt proxy object): closing disconnects it at once, not at a later deletion.
         if self.is_closed or result.job_id != self.job_id:
             return
         self.job_id = ""
