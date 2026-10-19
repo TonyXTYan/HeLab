@@ -97,4 +97,3 @@ class DatasetAnalysis(HelabAnalysisScript):
         if not isinstance(context, AnalysisContext):
             raise ValueError(f"{action_name} needs loaded data: run it from the Scripts panel")
         self.compute(action_name, context)
-

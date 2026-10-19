@@ -17,7 +17,7 @@ from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 
 RANGE = ParameterSpec(
     "keep_percent", "Range: keep", "float", DEFAULT_KEEP * 100, (50.0, 100.0), " %",
-    "Each histogram covers the shortest range holding this share of its axis's events. "
+    "Each histogram covers the exact shortest range holding this share of its axis's events. "
     "100 % covers every event.")
 BINS = ParameterSpec(
     "bins", "Bins (0 = automatic)", "int", 0, (0, MAX_BINS), "",
@@ -105,7 +105,11 @@ class TxyHistograms(DatasetAnalysis):
         events = context.view.events()
         keep = float(context.parameters[RANGE.name]) / 100
         bins = int(context.parameters[BINS.name])
-        return tuple(histogram(np.ascontiguousarray(events[:, i]), AXES[i], keep, bins) for i in range(len(AXES)))
+        items = []
+        for i, axis in enumerate(AXES):
+            context.check()
+            items.append(histogram(np.ascontiguousarray(events[:, i]), axis, keep, bins))
+        return tuple(items)
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         items: tuple[Histogram, ...] = result.data

@@ -5,6 +5,7 @@ import hashlib
 import math
 import threading
 import time
+from pathlib import Path
 from typing import Any, List, Optional
 
 import numpy as np
@@ -14,10 +15,10 @@ from PyQt6.QtWidgets import QLabel, QWidget
 
 from helab.analysis.dataset_view import DatasetView, ViewKey, build_view, root_key, view_of
 from helab.analysis.parameters import ParameterSpec, describe, effective
-from helab.analysis.results import AnalysisContext, AnalysisResult, RamResults
+from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
 from helab.analysis.runner import AnalysisRunner
 from helab.analysis.stats import (
-    MAX_BINS, central_range, counts_per_shot, crop_box, display_sample, freedman_diaconis_bins, histogram)
+    MAX_BINS, counts_per_shot, shortest_range, crop_box, display_sample, freedman_diaconis_bins, histogram)
 from helab.scripts import standard
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.scripts_manager import ScriptsManager
@@ -52,10 +53,12 @@ def test_view_snapshot_shares_read_only_arrays_and_copies_records() -> None:
             provenance.verified) == ("merged", 2, 1, (2,), False)
     assert provenance.loaded_at == 1_700_000_000.0
     assert provenance.checked_at is not None and abs(time.time() - 10 - provenance.checked_at) < 1
-    # The arrays are shared, never copied, and can't be written.
-    assert view.shots[2] is shown.data[2]
+    # The arrays are shared, never copied, and can't be written or made writable.
+    assert view.shots[2] is not shown.data[2] and np.shares_memory(view.shots[2], shown.data[2])
     with pytest.raises(ValueError):
         view.shots[2][0, 0] = 5
+    with pytest.raises(ValueError):
+        view.shots[2].setflags(write=True)
     with pytest.raises(TypeError):
         view.shots[3] = np.ones((1, 3))  # type: ignore[index]
     # Later changes to what the browser holds don't reach the view.
@@ -71,8 +74,42 @@ def test_view_makes_writable_arrays_read_only_without_copying() -> None:
     shown = Dataset("/x", "", {1: array}, {}, 0)
     view = build_view(shown)
     assert np.shares_memory(view.shots[1], array) and not view.shots[1].flags.writeable
-    assert array.flags.writeable  # the browser's own array is left as it was
+    # Shared shot data is read-only by convention: the source array is made read-only too.
+    assert not array.flags.writeable
+    with pytest.raises(ValueError):
+        view.shots[1].setflags(write=True)
     assert view.provenance.checked_at is None and view.identity.root_key == ""
+
+
+def loaded_shot(folder: Path, name: str, rows: int, value: float) -> Any:
+    """A shot as IOService delivers it: np.load of a saved artifact (a non-owning array whose
+    base owns writable memory), then made read-only as FolderCache does."""
+    path = folder / f"{name}.npy"
+    np.save(path, np.full((rows, 3), value))
+    array = np.load(path)
+    assert not array.flags.owndata and isinstance(array.base, np.ndarray) and array.base.flags.writeable
+    array.setflags(write=False)
+    return array
+
+
+def test_view_guards_the_loaded_shot_path(tmp_path: Path) -> None:
+    source = loaded_shot(tmp_path, "s1", 2, 1.0)
+    shown = Dataset("/x", "sig", {1: source}, {}, 0)
+    view = build_view(shown)
+    for array in (view.shots[1], source):  # neither the view nor the tab's array can be re-enabled
+        with pytest.raises(ValueError):
+            array.setflags(write=True)
+        with pytest.raises(ValueError):
+            array[0, 0] = 99
+    added = loaded_shot(tmp_path, "s2", 3, 2.0)
+    added.setflags(write=True)  # e.g. Live hands over a fresh, writable shot
+    later = view.with_shots({2: added})
+    for array in (later.shots[1], later.shots[2], added):
+        with pytest.raises(ValueError):
+            array.setflags(write=True)
+        with pytest.raises(ValueError):
+            array[0, 0] = 99
+    assert float(shown.data[1][0, 0]) == 1.0 and float(later.shots[2][0, 0]) == 2.0
 
 
 def test_view_root_from_session_and_one_view_per_dataset() -> None:
@@ -128,6 +165,38 @@ def test_crop_holds_the_share_on_independent_axes() -> None:
     assert max(abs(v) for v in box.lower + box.upper) < 10  # outliers are outside
 
 
+def test_crop_finds_the_gap_behind_a_clustered_tail() -> None:
+    values = [0.0, 1, 2, 3, 100, 101]
+    events = np.array([[value, 0.5, 0.5] for value in values])
+    box = crop_box(events, 4 / 6)
+    assert box.lower[0] == 0.0 and box.upper[0] == 3.0 and box.kept == 4
+    assert shortest_range(np.array(values), 4 / 6) == (0.0, 3.0)
+
+
+def test_shortest_range_is_exact() -> None:
+    rng = np.random.default_rng(3)
+    for _ in range(50):
+        values = np.concatenate([rng.normal(size=40), rng.exponential(10, size=rng.integers(0, 10))])
+        keep = float(rng.uniform(0.5, 1.0))
+        m = math.ceil(keep * len(values))
+        ordered = np.sort(values)
+        best = min(ordered[i + m - 1] - ordered[i] for i in range(len(values) - m + 1))
+        lower, upper = shortest_range(values, keep)
+        assert upper - lower == pytest.approx(best)
+        assert np.count_nonzero((values >= lower) & (values <= upper)) >= m
+
+
+def test_crop_and_scatter_stop_when_cancelled() -> None:
+    events = np.random.default_rng(4).normal(size=(5_000, 3))
+    with pytest.raises(Cancelled):
+        crop_box(events, 0.99, lambda: True)
+    script = scatter_3d.Scatter3D()
+    run = context(build_view(dataset(shots={1: events})), script)
+    run.cancel_event.set()
+    with pytest.raises(Cancelled):
+        script.compute("Plot", run)
+
+
 def test_crop_with_ties_full_keep_and_no_events() -> None:
     grid = np.stack(np.meshgrid(*[np.arange(10.0)] * 3), axis=-1).reshape(-1, 3)
     box = crop_box(grid, 0.99)
@@ -167,7 +236,7 @@ def test_histogram_totals_ranges_and_bins() -> None:
     same = histogram(np.full(5, 3.0), "X")
     assert int(same.counts.sum()) == 5 and same.outside == 0
     assert histogram(np.empty(0), "Y").total == 0
-    assert central_range(np.array([1.0, 2.0, 3.0]), 1.0) == (1.0, 3.0)
+    assert shortest_range(np.array([1.0, 2.0, 3.0]), 1.0) == (1.0, 3.0)
     assert freedman_diaconis_bins(np.zeros(10), 0, 0) == 1
     assert freedman_diaconis_bins(np.array([0.0, 1e-12, 1.0]), 0.0, 1.0) <= MAX_BINS
 
@@ -225,7 +294,7 @@ def test_scatter_samples_for_display_only() -> None:
     trace: Any = fig.data[0]
     assert len(trace.x) == 100_000
     assert "run_1 · rev 1" in fig.layout.title.text and text in fig.layout.title.text
-    assert "Auto-crop keeps 99.0%" in fig.layout.title.text
+    assert "Auto-crop (heuristic box) keeps 99.0%" in fig.layout.title.text
     assert tuple(fig.layout.scene.zaxis.range) == (data.crop.lower[0], data.crop.upper[0])
 
 
@@ -353,6 +422,24 @@ def test_runner_reports_failure_and_cancellation(qtbot: QtBot, harness: Harness)
     slow.release.set()
     assert harness.finished(qtbot, first.job_id).state == "cancelled"
     assert harness.finished(qtbot, second.job_id).state == "cancelled"
+
+
+def test_stop_keeps_a_blocked_worker_registered(qtbot: QtBot, harness: Harness) -> None:
+    runner = harness.runner
+    script = Blocking()  # ignores cancellation
+    view = build_view(dataset())
+    first = runner.submit(script, script.get_metadata(), "Plot", view)
+    assert script.entered.wait(5)
+    assert runner.stop(timeout=0.2) is False  # still computing after the join timed out
+    with pytest.raises(RuntimeError, match="stopping"):
+        runner.submit(script, script.get_metadata(), "Plot", view)
+    script.release.set()
+    assert harness.finished(qtbot, first.job_id).state == "cancelled"
+    qtbot.waitUntil(lambda: runner._thread is None, timeout=5_000)
+    # Exited: the runner takes work again, on one new worker.
+    again = runner.submit(script, script.get_metadata(), "Plot", view)
+    assert harness.finished(qtbot, again.job_id).state == "completed"
+    assert runner.stop() is True
 
 
 def test_ram_results_drop_least_recent_unpinned() -> None:

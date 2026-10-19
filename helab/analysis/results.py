@@ -18,6 +18,10 @@ State = Literal["completed", "failed", "cancelled"]
 RAM_ONLY = "ram"
 
 
+class Cancelled(Exception):
+    """Raised inside a computation that noticed ``AnalysisContext.cancelled()``."""
+
+
 @dataclass(frozen=True)
 class AnalysisContext:
     """Everything a run gets: an immutable dataset view and its effective parameters,
@@ -31,6 +35,11 @@ class AnalysisContext:
 
     def cancelled(self) -> bool:
         return self.cancel_event.is_set()
+
+    def check(self) -> None:
+        """Stop here (raise ``Cancelled``) if the run was cancelled: call between phases."""
+        if self.cancel_event.is_set():
+            raise Cancelled()
 
 
 @dataclass(frozen=True)

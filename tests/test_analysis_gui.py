@@ -111,6 +111,7 @@ class Blocking(DatasetAnalysis):
     def __init__(self) -> None:
         self.release = threading.Event()
         self.entered = threading.Event()
+        self.renders = 0
 
     def get_metadata(self) -> ScriptMetadata:
         return self.create_metadata("Blocking", "test", "Tests", __file__, "tests.blocking", "3")
@@ -127,6 +128,7 @@ class Blocking(DatasetAnalysis):
         return context.view.event_count * int(context.parameters["scale"])
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
+        self.renders += 1
         return QLabel(f"events {result.data}", parent)
 
 
@@ -202,6 +204,30 @@ def test_rerun_uses_the_same_input_and_close_cleans_up(
     instance.dock_widget.close()
     assert instance.is_closed and instance.instance_id not in panel._analysis_instances
     assert window.panel_right_top_params_tab_widget.indexOf(instance.param_tab) < 0
+
+
+def test_closing_a_dock_mid_run_delivers_nothing(
+        window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path) -> None:
+    run = folder(tmp_path, "run_E", 1)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 2})
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = Blocking()
+    instance = panel.run_analysis(script.get_metadata(), script, "Plot")
+    assert instance is not None and instance.dock_widget is not None
+    job_id = instance.job_id
+    ended: list[AnalysisResult] = []
+    instance.runner.finished.connect(lambda result: ended.append(result) if result.job_id == job_id else None)
+    assert script.entered.wait(5)
+    instance.dock_widget.close()
+    assert instance.is_closed and instance.instance_id not in panel._analysis_instances
+    script.release.set()
+    qtbot.waitUntil(lambda: bool(ended), timeout=10_000)
+    QApplication.processEvents()
+    assert ended[0].state == "cancelled" and ended[0].data is None
+    assert script.renders == 0 and instance.result is None
+    assert instance.runner.results.get(job_id) is None
 
 
 def test_run_without_data_says_so(window: Window, qtbot: QtBot) -> None:

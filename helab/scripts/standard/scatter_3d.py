@@ -17,8 +17,9 @@ from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 
 KEEP = ParameterSpec(
     "keep_percent", "Auto-crop: keep", "float", DEFAULT_KEEP * 100, (50.0, 100.0), " %",
-    "Crop to a box holding this share of the events: the shortest interval of T, X and Y "
-    "each, widened together until the box holds that share. 100 % keeps every event.")
+    "Crop to a box holding at least this share of the events, found by a heuristic (not the "
+    "narrowest possible box): sparse ends of T, X and Y are left out first, then each axis is "
+    "narrowed to its shortest window over the events inside the others. 100 % keeps every event.")
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,7 @@ def crop_text(crop: CropBox) -> str:
     if crop.total == 0:
         return "No events"
     bounds = " · ".join(axis_text(i, crop.lower[i], crop.upper[i]) for i in range(len(AXES)))
-    return f"Auto-crop keeps {crop.fraction:.1%} ({crop.kept:,} of {crop.total:,} events): {bounds}"
+    return f"Auto-crop (heuristic box) keeps {crop.fraction:.1%} ({crop.kept:,} of {crop.total:,} events): {bounds}"
 
 
 def note_text(data: ScatterData) -> str:
@@ -73,7 +74,9 @@ class Scatter3D(DatasetAnalysis):
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         events = context.view.events()
-        crop = crop_box(events, float(context.parameters[KEEP.name]) / 100)
+        context.check()
+        crop = crop_box(events, float(context.parameters[KEEP.name]) / 100, context.cancelled)
+        context.check()
         inside = events[crop.contains(events)] if len(events) else events
         points = inside[display_sample(len(inside))]
         return ScatterData(crop, points, len(context.view.shots))

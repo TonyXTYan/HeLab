@@ -88,8 +88,14 @@ investigation: [notes.md](notes.md). Screenshots: `screenshots/`.
   Live should call it for each batch of new shots; results bind to `ViewKey`
   (identity + revision).
 - **Shots**: `shots` is a read-only mapping from shot number (ascending) to the
-  shared read-only (n, 3) T/X/Y array.
-  - A writable array gets a read-only *view*, never a copy.
+  shared (n, 3) T/X/Y array, handed out as a non-owning read-only view, never
+  a copy.
+  - Building a view (and `with_shots()`) makes each array and its whole
+    `.base` chain read-only, e.g. the buffer `np.load` reads a shot into. So
+    neither the view nor the tab's array can be written or made writable again.
+  - This guards against accidents, not a security boundary: a deliberate
+    `.base.setflags(write=True)` on the owning buffer still gets round it.
+    `with_shots()` makes the arrays it is given read-only the same way.
   - `events(shots=None)` concatenates the shots into a new array; that copy is
     the analysis's choice.
   - Malformed arrays give no events.
@@ -102,14 +108,20 @@ investigation: [notes.md](notes.md). Screenshots: `screenshots/`.
   validates the values against the declared parameters (unknown keys are
   dropped, values are coerced and clamped), builds an immutable
   `AnalysisContext` and queues it. `finished` emits an `AnalysisResult` with
-  state completed, failed or cancelled. Completed results go into `RamResults`
+  state completed, failed or cancelled. A computation can stop early with
+  `context.check()` (raises `Cancelled`) or by polling `context.cancelled()`.
+  `stop(timeout)` returns True once the worker has exited. Until then it stays
+  registered, and `submit` raises `RuntimeError`. Completed results go into `RamResults`
   (limit 64, least recently used dropped first; results that docks show are
   pinned).
 
 ## Decisions I made (judgement calls)
 
-1. **Auto-crop rule: peeling, not central intervals.** Central and
-   common-window rules keep one-sided tails; see [notes.md](notes.md#auto-crop-rule-how-it-was-chosen).
+1. **Auto-crop rule: a heuristic box, peeling then narrowing** (see
+   [Review fixes](#review-fixes)). Central and common-window rules keep
+   one-sided tails; see [notes.md](notes.md#auto-crop-rule-how-it-was-chosen).
+   The whole rule is in `stats.crop_box`, behind the keep % parameter, so a
+   different rule is a change to that one function.
    - The rule is in the parameter's tooltip and on the figure (bounds and kept
      share).
    - The crop bounds are derived results, not parameters. Keep % is the saved
@@ -200,9 +212,61 @@ investigation: [notes.md](notes.md). Screenshots: `screenshots/`.
 - Close and tab docks: the parameter tabs follow, and the Dash page says "Plot
   not found" after closing.
 
+## Review fixes
+
+From Codex's review ([review-codex.md](review-codex.md)), as Maestro asked:
+
+1. **Immutability (finding 1, with Maestro's correction)**:
+   - `read_only()` walks the `.base` chain, making each array read-only, then
+     hands out `arr.view()`. With no copies, NumPy refuses both
+     `setflags(write=True)` and writes, on the view and on the tab's array.
+     `with_shots()` does the same.
+   - The docstring calls this a guard against accidents, not a security
+     boundary (trusted scripts; `.base` still reaches the buffer).
+   - Tests:
+     - `test_view_guards_the_loaded_shot_path` follows the real path (`np.save`,
+       `np.load`, FolderCache-style `setflags(False)`) through `build_view` and
+       `with_shots()`, including a writable added shot.
+     - The writable-source test now expects the source to become read-only.
+   - Only `dataset_view.py` changed (not `folder_cache.py`).
+2. **Shortest range (finding 2)**:
+   - Histograms use `shortest_range`, the exact shortest sorted sliding window
+     (checked against brute force on 50 random cases).
+   - `crop_box` now peels, then narrows each axis to the exact shortest window
+     over the events inside the other axes, repeating while any axis narrows
+     (at most 4 rounds). The `[0,1,2,3,100,101]` keep-4/6 case now gives
+     `[0,3]` (tested).
+   - It is still a heuristic: the parameter help and the figure say "Auto-crop
+     (heuristic box)".
+   - 5 M events take 2.75 s (was 1.9 s).
+3. **Cancellation (finding 4)**:
+   - The scatter checks between phases and passes `context.cancelled` into the
+     crop (polled every 4096 peel steps and each narrowing step); the histogram
+     checks per axis. `Cancelled` ends a job as `cancelled`.
+   - GUI test `test_closing_a_dock_mid_run_delivers_nothing`: a dock closed
+     while a blocked computation runs ends `cancelled`, with no render, no
+     stored result and nothing delivered to the instance.
+4. **Runner stop (finding 5)**:
+   - The worker stays registered until it exits (the worker clears it in a
+     `finally`), and submissions raise `RuntimeError` while it is stopping.
+   - `stop()` returns whether the worker exited.
+   - Test `test_stop_keeps_a_blocked_worker_registered`: the join times out,
+     submit is refused, then after release one new worker takes work again.
+5. **Whitespace (finding 6)**: the blank line at the end of `base.py` is
+   removed; `git diff --check 376c7dd` is clean.
+
+The screenshots in `screenshots/` were taken before these fixes. The crop
+figure's label now reads "Auto-crop (heuristic box) keeps …", and its bounds
+may be slightly narrower after narrowing.
+
+**Finding 3** (what "keep 99 %" means for a cloud on a flat background) is
+left as it was for Tony's decision. The rule lives only in `crop_box`, and
+histogram ranges in `shortest_range`.
+
 ## Checks
 
-- `pytest -n 6 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
-  914 passed, 2 skipped, 2 xfailed, **no RERUNs** (run twice, 2026-10-19).
+- After the review fixes, `pytest -n 6 --reruns 5 --reruns-delay 1
+  --basetemp=.ai/temp/pytest`: 920 passed, 2 skipped, 2 xfailed, **no
+  RERUNs**. Before them: 914 passed, run twice, no RERUNs.
 - `mypy helab/ --strict` (74 files), `mypy tests --strict` (53 files),
   `pyright helab tests`: no issues.

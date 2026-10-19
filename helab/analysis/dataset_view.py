@@ -1,9 +1,14 @@
 """A read-only, immutable snapshot of a loaded dataset: the one input an analysis gets.
 
 A view is built from the ``Dataset`` a tab shows (``FolderExplorer.displayed_dataset``)
-without changing the browser. It shares the dataset's arrays (read-only, never copied)
-and copies only the small records around them, so a later load, check, eviction or
-selection change can't alter what an analysis already received.
+without changing the browser. It shares the dataset's arrays, never copied, and copies
+only the small records around them, so a later load, check, eviction or selection change
+can't alter what an analysis already received.
+
+Each shot is handed out as a non-owning, read-only view of the shared array, and that
+array and the buffers behind it are made read-only too (``read_only``), so NumPy refuses
+both writes and ``setflags(write=True)``. This guards against accidents, not a security
+boundary: scripts are trusted lab code, and ``.base`` still reaches the shared array.
 
 Identity: the source folder, its data-root key when one is known, and the loaded
 dataset's signature (the helper's hash of the TXY fingerprints). ``revision`` starts at 1
@@ -103,7 +108,8 @@ class DatasetView:
 
     def with_shots(self, added: Mapping[int, Events],
                    fingerprints: Mapping[int, Fingerprint] | None = None) -> DatasetView:
-        """The next revision: this view plus ``added`` (new or replaced shots), same identity."""
+        """The next revision: this view plus ``added`` (new or replaced shots), same identity.
+        The added arrays become shared, read-only data, as ``build_view``'s are."""
         shots = {**self.shots, **{int(shot): read_only(array) for shot, array in added.items()}}
         prints = {**self.fingerprints, **(fingerprints or {})}
         return DatasetView(self.identity, self.revision + 1, _frozen(dict(sorted(shots.items()))),
@@ -112,9 +118,15 @@ class DatasetView:
 
 
 def read_only(array: Events) -> Events:
-    """The array itself if already read-only, else a read-only view of it (never a copy)."""
-    if not array.flags.writeable:
-        return array
+    """A non-owning, read-only view of ``array`` (never a copy). ``array`` and every array
+    behind it (its ``.base`` chain, e.g. the buffer ``np.load`` reads a shot into) are made
+    read-only too, as shared shot data is by convention, so neither the view nor ``array``
+    can be made writable again; only a deliberate ``setflags`` on the owning base can."""
+    chain: Any = array
+    while isinstance(chain, np.ndarray):
+        if chain.flags.writeable:
+            chain.setflags(write=False)
+        chain = chain.base
     view = array.view()
     view.setflags(write=False)
     return view

@@ -19,7 +19,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from helab.analysis.dataset_view import DatasetView
 from helab.analysis.parameters import effective
-from helab.analysis.results import AnalysisContext, AnalysisResult, RamResults, State
+from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults, State
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 
 _Job = tuple[DatasetAnalysis, AnalysisContext]
@@ -36,15 +36,20 @@ class AnalysisRunner(QObject):
         self._queue: queue.Queue[_Job | None] = queue.Queue()
         self._contexts: dict[str, AnalysisContext] = {}
         self._lock = threading.Lock()
+        # The worker stays registered until it has exited, so there is never a second one.
         self._thread: threading.Thread | None = None
+        self._stopping = False
         self._ids = itertools.count(1)
 
     def submit(self, script: DatasetAnalysis, metadata: ScriptMetadata, action: str,
                view: DatasetView, values: Optional[Mapping[str, Any]] = None) -> AnalysisContext:
-        """Queue ``action`` on ``view`` with ``values`` validated against its declared parameters."""
+        """Queue ``action`` on ``view`` with ``values`` validated against its declared parameters.
+        Raises ``RuntimeError`` while the runner is stopping (until its worker has exited)."""
         parameters = effective(script.parameters(action), values)
         context = AnalysisContext(f"a{next(self._ids)}", action, view, parameters, metadata.identity())
         with self._lock:
+            if self._stopping:
+                raise RuntimeError("The analysis runner is stopping")
             self._contexts[context.job_id] = context
             if self._thread is None:
                 self._thread = threading.Thread(target=self._work, name="AnalysisWorker", daemon=True)
@@ -63,17 +68,30 @@ class AnalysisRunner(QObject):
         with self._lock:
             return len(self._contexts)
 
-    def stop(self) -> None:
-        """End the worker after the jobs already queued (cancelled first)."""
+    def stop(self, timeout: float = 5.0) -> bool:
+        """Cancel every job and end the worker; True once it has exited. A computation that
+        ignores cancellation may outlast ``timeout``: the worker then stays registered and
+        submissions are refused until it exits (it then frees the runner for a new worker)."""
         with self._lock:
-            contexts, thread, self._thread = list(self._contexts.values()), self._thread, None
+            contexts, thread = list(self._contexts.values()), self._thread
+            if thread is not None and not self._stopping:
+                self._stopping = True
+                self._queue.put(None)
         for context in contexts:
             context.cancel_event.set()
         if thread is not None:
-            self._queue.put(None)
-            thread.join(timeout=5)
+            thread.join(timeout=timeout)
+            return not thread.is_alive()
+        return True
 
     def _work(self) -> None:
+        try:
+            self._run_jobs()
+        finally:
+            with self._lock:
+                self._thread, self._stopping = None, False
+
+    def _run_jobs(self) -> None:
         while (job := self._queue.get()) is not None:
             script, context = job
             started = time.time()
@@ -86,6 +104,8 @@ class AnalysisRunner(QObject):
                     state: State = "cancelled" if context.cancelled() else "completed"
                     result = AnalysisResult.of(context, state, data if state == "completed" else None,
                                                started_at=started)
+                except Cancelled:
+                    result = AnalysisResult.of(context, "cancelled", started_at=started)
                 except Exception as error:
                     logging.exception("Analysis %s failed", context.analysis.short())
                     result = AnalysisResult.of(context, "failed", error=str(error) or type(error).__name__,
