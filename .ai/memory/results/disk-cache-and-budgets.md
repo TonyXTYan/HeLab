@@ -56,3 +56,8 @@ session reviewed by Codex until clean.
   the store records it before Settings saves it).
 - Destructive steps act only on what they can prove is theirs (a move's marked copy, its own
   record id, a lock holder's token).
+
+## Plot RAM budget (Tony, 2026-10-19/20)
+
+- Plots count toward the existing RAM budget (a fraction of the machine's RAM). 50 % of it: status-bar warning only; 75 %: a non-modal window, once per crossing (re-armed below 70 %); 80 %: release plots, least recently shown first, after datasets no tab shows. Never close a plot; never release the shown, running or Live plot.
+- A released plot keeps a static picture with Reload; it reloads automatically when shown again (Settings → Cache, default on), only from RAM or the local disk cache, never the source folder (no "Reload from folder"), exactly the shots it drew.

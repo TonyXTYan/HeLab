@@ -154,6 +154,14 @@ real experiment data without deciding where its top should be.
   and Show plot window (opens a closed section); dragging out and back moves nothing,
   letting go moves the page once (Windows: drag by the title bar too); minimising the
   shown plot falls back; Windows title bars, scaling, Tab + Space on the strip.
+- [ ] Plot RAM budget (Mac, then a lab PC), from
+  `.ai/sessions/2026-10-20-claude-plot-ram-budget/handoff.md` (8 steps; set the RAM
+  budget low): status bar from 50 %; the 75 % window once per crossing; past 80 %
+  plots behind other tabs released as pictures with Reload (shown, running, Live
+  plots stay); a released 3D scatter's picture (and one never on screen: blank?);
+  reload on show (and the setting off); no reload when neither RAM nor the cache has
+  the data, no source access (I/O trace); changed or missing shots named; Activity
+  Monitor shows RAM going down.
 - [ ] Plots on screen: the 3D scatter in the dock (QtWebEngine) and via Open in
   browser, on the Mac and a lab PC (black pane: the browser path must work);
   counts and histograms; closing and tabbing docks; the Dash page says "Plot not
