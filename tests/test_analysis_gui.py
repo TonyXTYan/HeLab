@@ -16,16 +16,18 @@ from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QTabBar, QTabWidget, QWidget
 
+from helab.analysis.dataset_view import build_view
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
+from helab.analysis.runner import get_analysis_runner
 from helab.io_helper import list_folder, scan
 from helab.models.ScriptTreeSelector import AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import basic_plots, group
 from helab.utils.dash_server import dash_server
-from helab.utils.folder_cache import FolderCache
+from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest, IOService
 from helab.views.CentralHint import CentralHint
 from helab.views.FolderExplorer import FolderExplorer
@@ -551,3 +553,42 @@ def test_a_new_plot_docks_alone_when_all_others_float(
     fourth = cast(AnalysisInstance, panel.run_analysis(script.get_metadata(), script, "Plot"))
     assert area.tabifiedDockWidgets(dock) == [fourth.dock_widget]
     assert all(cast(QDockWidget, instance.dock_widget).isFloating() for instance in (first, second))
+
+
+def test_closing_the_main_window_ends_its_plots(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An accepted close of the main window closes its plots as their close buttons do: the
+    running job is cancelled, no instance stays connected to the runner, none pins a result."""
+    shots = {1: np.full((3, 3), 1.0), 2: np.full((4, 3), 2.0)}
+    for array in shots.values():
+        array.setflags(write=False)
+    view = build_view(Dataset("/data/root/run_Q", "sig-q", shots, {
+        "fingerprint": [[shot, 100 + shot, 1_000 + shot] for shot in shots], "source": "files",
+        "loaded_at": 1_700_000_000.0}, 0))
+    window = HelabMainWindow()
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "current_dataset_view", lambda: view)
+    runner = get_analysis_runner()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)  # Earlier tests' plots go.
+    connected, pinned = runner.receivers(runner.finished), set(runner.results._pinned)
+    selector = window.panel_right_bottom_script_selector
+    done, running = Blocking(), Blocking()
+    done.release.set()
+    try:
+        finished = cast(AnalysisInstance, selector.run_analysis(done.get_metadata(), done, "Plot"))
+        qtbot.waitUntil(lambda: finished.result is not None, timeout=10_000)
+        busy = cast(AnalysisInstance, selector.run_analysis(running.get_metadata(), running, "Plot"))
+        assert running.entered.wait(5)
+        job = busy.job_id
+        cancelled: list[AnalysisResult] = []
+        runner.finished.connect(lambda result: cancelled.append(result) if result.job_id == job else None)
+        result_job = cast(AnalysisResult, finished.result).job_id
+        assert result_job in runner.results._pinned
+        assert runner.receivers(runner.finished) == connected + 3
+        window.close()
+        assert finished.is_closed and busy.is_closed and not window.dock_widgets
+        assert runner.receivers(runner.finished) == connected + 1  # This test's own lambda.
+        assert result_job not in runner.results._pinned and set(runner.results._pinned) <= pinned
+    finally:
+        running.release.set()
+    qtbot.waitUntil(lambda: bool(cancelled), timeout=10_000)
+    assert cancelled[0].state == "cancelled" and running.renders == 0

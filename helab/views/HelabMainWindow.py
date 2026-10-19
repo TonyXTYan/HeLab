@@ -891,6 +891,13 @@ class HelabMainWindow(QMainWindow):
             qpa = QGuiApplication.platformName()
         return system == "darwin" and qpa == "cocoa"
 
+    def close_plots(self) -> None:
+        """Close every plot dock as its close button does: each run's job is cancelled, it
+        leaves the analysis runner and its result is unpinned (the window is closing; its
+        widgets may outlive it, as in tests)."""
+        for dock in list(self.dock_widgets):
+            dock.close()
+
     def update_placeholder_visibility(self) -> None:
         """The plot area's hint shows while no plot dock is open, and hides while any is.
 
@@ -1436,6 +1443,7 @@ class HelabMainWindow(QMainWindow):
                 a0.ignore()
             return
         self._closing = True
+        self.close_plots()
         self.panel_right_top_plot_settings.detach()
         if not self._cache_dialogs_detached:
             self.cache_dialogs.detach()
