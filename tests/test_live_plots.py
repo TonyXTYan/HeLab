@@ -407,6 +407,73 @@ def test_a_following_scatter_updates_its_page_in_place(
     qtbot.waitUntil(lambda: plot_id not in dash_server.plots, timeout=10_000)  # Freed with the pane.
 
 
+def run_now(script: DatasetAnalysis, view: DatasetView, values: dict[str, Any]) -> AnalysisResult:
+    context = AnalysisContext("a1", "Plot", view, effective(script.parameters("Plot"), values),
+                              script.get_metadata().identity())
+    return AnalysisResult.of(context, "completed", script.compute("Plot", context))
+
+
+def test_the_scatter_highlights_the_newest_shot(qtbot: QtBot) -> None:
+    """Off by default; on, the newest shot's events are a second trace in the chosen colour."""
+    view = view_of(revision([1, 2, 3]))
+    script = scatter_3d.Scatter3D()
+    plain = run_now(script, view, {})
+    assert plain.data.newest_shot is None and len(plain.data.newest) == 0
+    assert len(cast(Any, scatter_3d.figure(plain, plain.data)).data) == 1
+    lit = run_now(script, view, {"highlight_newest": True, "newest_colour": "magenta"})
+    data = lit.data
+    assert data.newest_shot == 3 and (data.newest[:, 0] == 3.0).all() and len(data.newest) == 2
+    assert not (data.points[:, 0] == 3.0).any() and data.shown == 6 == data.analysed
+    traces = cast(Any, scatter_3d.figure(lit, data)).data
+    assert len(traces) == 2 and traces[1].marker.color == "rgb(200, 30, 180)" and traces[1].name == "shot 3 (newest)"
+    assert "shot 3 highlighted (2 events)" in scatter_3d.note_text(data)
+    assert script.describe_run("Plot", lit.parameters, view)[1].endswith("newest shot in magenta")
+    assert script.get_metadata().version == "3" and basic_plots.TxyHistograms().get_metadata().version == "3"
+
+
+def test_the_display_cap_keeps_the_newest_shot_whole() -> None:
+    rng = np.random.default_rng(1)
+    data = {1: rng.normal(size=(1500, 3)), 2: rng.normal(size=(1500, 3)), 3: rng.normal(size=(300, 3)) + 5}
+    view = view_of(Dataset(PATH, "sig-cap", data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
+    result = run_now(scatter_3d.Scatter3D(), view, {"highlight_newest": True, "display_cap": 1000,
+                                                    "keep_percent": 100.0})
+    assert len(result.data.newest) == 300 and len(result.data.points) == 700 and result.data.shown == 1000
+
+
+def test_the_histograms_overlay_the_newest_shot(qtbot: QtBot) -> None:
+    rng = np.random.default_rng(2)
+    data = {1: rng.normal(size=(400, 3)), 2: rng.normal(size=(400, 3)), 3: rng.normal(size=(50, 3)) * 0.1}
+    view = view_of(Dataset(PATH, "sig-hist", data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
+    script = basic_plots.TxyHistograms()
+    plain = run_now(script, view, {})
+    assert plain.data.newest_shot is None and plain.data.newest == ()
+    lit = run_now(script, view, {"highlight_newest": True, "keep_percent": 100.0})
+    histograms = lit.data
+    assert histograms.newest_shot == 3 and len(histograms.newest) == 3
+    for item, counts in zip(histograms.items, histograms.newest):
+        assert len(counts) == len(item.counts) and counts.sum() == 50  # Every newest event, in the same bins.
+        assert (counts <= item.counts).all()
+    widget = script.render(lit)
+    qtbot.addWidget(widget)
+    names = [item.name() for item in cast(Any, widget).ci.items if hasattr(item, "listDataItems")
+             for item in item.listDataItems()]
+    assert names.count("shot 3 (newest)") == 3
+    assert script.describe_run("Plot", lit.parameters, view)[1].endswith("newest shot in red")
+
+
+def test_a_following_plot_highlights_lives_newest_shot(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    window.view = window.live_feed.publish(revision([1, 2]))
+    instance = plot(window, qtbot, basic_plots.TxyHistograms())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    assert instance.parameter_root is not None
+    parameter_of(instance.parameter_root, basic_plots.HIGHLIGHT).setValue(True)
+    instance.run()
+    qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
+    window.live_feed.publish(revision([1, 2, 3]))
+    qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 3, timeout=10_000)
+
+
 def test_scatter_declares_a_live_policy_others_rerun_on_every_shot() -> None:
     assert scatter_3d.Scatter3D().live_policy("Plot") == LivePolicy(min_delay=5.0)
     for script in (basic_plots.CountsPerShot(), basic_plots.TxyHistograms(), transfer_fractions.TransferFractions()):

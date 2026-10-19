@@ -3,10 +3,14 @@ with the floor's environment (``source .ai/local/floor-env.sh``: HeLab's cache, 
 folders point at the floor's own), e.g.
 
     QT_QPA_PLATFORM=offscreen python .ai/sessions/2026-10-19-claude-live-l3/render_live_plots.py
+
+The highlighted newest shot (round 2): the T/X/Y histograms render offscreen; the 3D scatter's
+figure (WebGL) is written to HTML and photographed with headless Chrome when it is installed.
 """
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -28,7 +32,10 @@ from helab.analysis.follow import LiveFeed
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.models.ScriptTreeSelector import AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis
-from helab.scripts.standard.basic_plots import CountsPerShot
+from helab.analysis.dataset_view import view_of
+from helab.analysis.parameters import effective
+from helab.scripts.standard.basic_plots import CountsPerShot, TxyHistograms
+from helab.scripts.standard.scatter_3d import Scatter3D, figure
 from helab.utils.folder_cache import Dataset
 from helab.views.CentralHint import CentralHint
 from helab.views.HelabMainWindow import HelabMainWindow
@@ -106,6 +113,50 @@ def save(widget: QWidget, name: str) -> None:
     print("wrote", OUT / name)
 
 
+CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+
+def cloud(last: int) -> Dataset:
+    """Shots of a cloud falling through the detector: T about 0.42 s, X and Y within a few mm;
+    the newest shot is a little off-centre, as a drifting cloud would be."""
+    rng = np.random.default_rng(7)
+    data = {}
+    for shot in range(1, last + 1):
+        count = int(rng.integers(1500, 2500))
+        shift = 0.0015 if shot == last else 0.0
+        data[shot] = np.column_stack([rng.normal(0.4205, 0.0012, count), rng.normal(shift, 0.004, count),
+                                      rng.normal(-shift, 0.004, count)])
+    return Dataset(PATH, f"cloud-{last}", data, {
+        "fingerprint": [[shot, 10_000 + shot, 1_000 + shot] for shot in data], "source": "updated",
+        "loaded_at": time.time()}, 0)
+
+
+def highlighted(app: QApplication) -> None:
+    view = view_of(cloud(30))
+    values = {"highlight_newest": True, "newest_colour": "red"}
+    histograms = TxyHistograms()
+    context = AnalysisContext("r1", "Plot", view, effective(histograms.parameters("Plot"), values),
+                              histograms.get_metadata().identity())
+    widget = histograms.render(AnalysisResult.of(context, "completed", histograms.compute("Plot", context)))
+    widget.resize(760, 620)
+    widget.show()
+    wait(app, lambda: True)
+    save(widget, "histograms-newest-shot.png")
+    scatter = Scatter3D()
+    context = AnalysisContext("r2", "Plot", view, effective(scatter.parameters("Plot"), values),
+                              scatter.get_metadata().identity())
+    result = AnalysisResult.of(context, "completed", scatter.compute("Plot", context))
+    html = OUT / "scatter-newest-shot.html"
+    figure(result, result.data).write_html(str(html), include_plotlyjs=True, full_html=True)
+    if os.path.exists(CHROME):
+        out = OUT / "scatter-newest-shot.png"
+        subprocess.run([CHROME, "--headless=new", "--enable-unsafe-swiftshader", "--hide-scrollbars",
+                        f"--screenshot={out}", "--window-size=900,640", "--virtual-time-budget=4000",
+                        html.as_uri()], check=False, capture_output=True, timeout=60)
+        print("wrote", out)
+    html.unlink()
+
+
 def main() -> None:
     app = QApplication(sys.argv)
     window = Window()
@@ -148,6 +199,9 @@ def main() -> None:
     wait(app, lambda: empty.shown is not None)
     save(empty.dock_widget or area, "empty-no-shots-yet.png")
     window.close_plots()
+
+    # 5. The newest shot highlighted (round 2).
+    highlighted(app)
 
 
 if __name__ == "__main__":

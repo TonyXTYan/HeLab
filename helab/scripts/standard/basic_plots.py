@@ -15,7 +15,8 @@ from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.dataset_view import DatasetView
-from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_bounds, range_brief, range_specs,
+from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_bounds, newest_brief, newest_colour,
+                                      newest_events, newest_shot, newest_specs, range_brief, range_specs,
                                       range_warnings, reversed_axes, select_shots, selection_text, shots_brief,
                                       shots_text)
 from helab.analysis.stats import AXES, MAX_BINS, UNITS, Histogram, counts_per_shot, histogram
@@ -31,6 +32,7 @@ BINS = ParameterSpec(
     tip="0 = automatic: the bin count comes from the data (Freedman–Diaconis: width 2·IQR·n^-1/3).")
 LOG_Y = ParameterSpec("log_y", "Log Y", "bool", False, group=BINS_GROUP,
                       tip="Logarithmic event axis; empty bins are left out.")
+HIGHLIGHT, NEWEST_COLOUR = newest_specs(BINS_GROUP)
 COLOUR = (40, 90, 170)
 
 
@@ -68,6 +70,10 @@ class Histograms:
     shots: tuple[int, ...]
     total_shots: int
     reversed: tuple[str, ...] = ()  # axes whose manual min > max: shown over their full extent
+    # The highlighted newest shot (None: off): its counts in each item's bins, drawn over them.
+    newest_shot: int | None = None
+    newest: tuple[npt.NDArray[np.int64], ...] = ()
+    colour: tuple[int, int, int] = (214, 39, 40)
 
 
 def counts_title(data: ShotCounts) -> str:
@@ -138,19 +144,19 @@ class TxyHistograms(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.txy_histograms",
-            version="2",
+            version="3",
         )
 
     def get_actions(self) -> List[str]:
         return ["Plot"]
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
-        return [*SHOT_SPECS, *RANGE, BINS, LOG_Y]
+        return [*SHOT_SPECS, *RANGE, BINS, LOG_Y, HIGHLIGHT, NEWEST_COLOUR]
 
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
         bins = int(values[BINS.name])
         settings = (shots_brief(values), range_brief(values), f"bins {bins:,}" if bins else "bins auto",
-                    "log Y" if values[LOG_Y.name] else "")
+                    "log Y" if values[LOG_Y.name] else "", newest_brief(values))
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
@@ -164,14 +170,21 @@ class TxyHistograms(DatasetAnalysis):
         bins = int(values[BINS.name])
         bounds = manual_bounds(values) if manual(values) else (None,) * len(AXES)
         items = []
+        newest = newest_shot(values, shots)
+        fresh = newest_events(context.view, newest)
+        newest_counts = []
         for i, axis in enumerate(AXES):
             context.check()
             column = np.ascontiguousarray(events[:, i])
             given = bounds[i]
             if manual(values) and given is None and len(column):
                 given = (float(column.min()), float(column.max()))
-            items.append(histogram(column, axis, keep, bins, given))
-        return Histograms(tuple(items), shots, len(context.view.shots), reversed_axes(values))
+            item = histogram(column, axis, keep, bins, given)
+            items.append(item)
+            if newest is not None:
+                newest_counts.append(np.histogram(fresh[:, i], bins=item.edges)[0].astype(np.int64))
+        return Histograms(tuple(items), shots, len(context.view.shots), reversed_axes(values), newest,
+                          tuple(newest_counts), newest_colour(values))
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Histograms = result.data
@@ -182,7 +195,10 @@ class TxyHistograms(DatasetAnalysis):
         widget: Any = pg.GraphicsLayoutWidget(parent)
         widget.setBackground("w")
         events = f"{items[0].total:,} events" if items else ""
-        widget.addLabel(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}"), row=0, col=0)
+        newest = (f" · shot {data.newest_shot} highlighted ({int(data.newest[0].sum()):,} events in range), "
+                  "scaled to each histogram's total" if data.newest_shot is not None and data.newest else "")
+        widget.addLabel(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}{newest}"),
+                        row=0, col=0)
         for row, item in enumerate(items, start=1):
             axes = {"left": DecadeLogAxis("left")} if log_y else None
             plot = widget.addPlot(row=row, col=0, title=histogram_title(item, item.axis in data.reversed),
@@ -199,4 +215,14 @@ class TxyHistograms(DatasetAnalysis):
             else:
                 plot.addItem(pg.PlotDataItem(item.edges, item.counts, stepMode="center", fillLevel=0,
                                              pen=pg.mkPen(COLOUR), brush=(*COLOUR, 90)))
+            if data.newest_shot is not None and row - 1 < len(data.newest):
+                # One shot is a small share of all: scaled to the same total, its shape compares.
+                counts_new = data.newest[row - 1].astype(np.float64)
+                if counts_new.sum() > 0:
+                    counts_new *= item.counts.sum() / counts_new.sum()
+                if log_y:
+                    counts_new[counts_new <= 0] = np.nan
+                plot.addItem(pg.PlotDataItem(item.edges, counts_new, stepMode="center", connect="finite",
+                                             pen=pg.mkPen(data.colour, width=2),
+                                             name=f"shot {data.newest_shot} (newest)"))
         return cast(QWidget, widget)

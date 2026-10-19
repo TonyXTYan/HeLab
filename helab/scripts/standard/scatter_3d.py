@@ -1,7 +1,7 @@
 """The 3D scatter of a loaded folder's T/X/Y events (Plotly, served by the Dash server)."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, List, Mapping, Optional
 
 import numpy as np
@@ -14,9 +14,10 @@ from helab.analysis.follow import LivePolicy
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.analysis.dataset_view import DatasetView
-from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
-                                      range_warnings, select_shots, selection_text, shots_brief, shots_text)
+from helab.analysis.dataset_view import DatasetView, txy
+from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, newest_brief, newest_colour,
+                                      newest_shot, newest_specs, range_brief, range_specs, range_warnings,
+                                      select_shots, selection_text, shots_brief, shots_text)
 from helab.analysis.stats import AXES, DISPLAY_CAP, UNITS, CropBox, axis_text, crop_box, display_sample
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
@@ -34,6 +35,7 @@ OPACITY = ParameterSpec("opacity", "Opacity", "float", 0.5, (0.05, 1.0), group=P
 CAP = ParameterSpec("display_cap", "Display cap", "int", DISPLAY_CAP, (1_000, 2_000_000), group=POINTS,
                     tip="At most this many events are drawn (a fixed random sample of the events in the "
                         "range); the crop and the counts use all of them.")
+HIGHLIGHT, NEWEST_COLOUR = newest_specs(POINTS)
 
 
 UI_REVISION = "helab.scatter_3d"
@@ -47,14 +49,22 @@ class ScatterData:
     total_shots: int  # the shots loaded
     cap: int = DISPLAY_CAP
     warnings: tuple[str, ...] = ()  # settings not followed as given (``range_warnings``)
+    # The highlighted newest shot (None: off) and its events inside the crop, drawn apart.
+    newest_shot: int | None = None
+    newest: npt.NDArray[np.float64] = field(default_factory=lambda: np.empty((0, 3)))
+    colour: tuple[int, int, int] = (214, 39, 40)
 
     @property
     def analysed(self) -> int:
         return self.crop.kept
 
+    @property
+    def shown(self) -> int:
+        return len(self.points) + len(self.newest)
+
 
 def sample_text(data: ScatterData) -> str:
-    shown, analysed = len(data.points), data.analysed
+    shown, analysed = data.shown, data.analysed
     if shown == analysed:
         return f"Showing all {analysed:,} events in the range"
     return (f"Showing a random sample of {shown:,} of {analysed:,} events in the range "
@@ -72,10 +82,12 @@ def crop_text(crop: CropBox, warnings: tuple[str, ...] = ()) -> str:
 
 def note_text(data: ScatterData) -> str:
     """One line above the plot; the full sample and crop text are in its tooltip and the figure."""
-    shown = (f"All {data.analysed:,} events in range shown" if len(data.points) == data.analysed else
-             f"Display sample: {len(data.points):,} of {data.analysed:,} events in range")
+    shown = (f"All {data.analysed:,} events in range shown" if data.shown == data.analysed else
+             f"Display sample: {data.shown:,} of {data.analysed:,} events in range")
     how = "manual range" if data.crop.manual else "crop"
     text = f"{shown} · {how} keeps {data.crop.fraction:.1%} of {data.crop.total:,} · {shots_text(data.shots, data.total_shots)}"
+    if data.newest_shot is not None:
+        text += f" · shot {data.newest_shot} highlighted ({len(data.newest):,} events)"
     return text + "".join(f" · ⚠ {warning}" for warning in data.warnings)
 
 
@@ -87,14 +99,14 @@ class Scatter3D(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.scatter_3d",
-            version="2",
+            version="3",
         )
 
     def get_actions(self) -> List[str]:
         return ["Plot"]
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
-        return [*SHOT_SPECS, *RANGE, POINT_SIZE, OPACITY, CAP]
+        return [*SHOT_SPECS, *RANGE, POINT_SIZE, OPACITY, CAP, HIGHLIGHT, NEWEST_COLOUR]
 
     def live_policy(self, action_name: str) -> LivePolicy:
         # Each rerun reloads the figure's page (up to the display cap's points) and the crop of a
@@ -105,7 +117,7 @@ class Scatter3D(DatasetAnalysis):
         points = f"points {float(values[POINT_SIZE.name]):g} px, opacity {float(values[OPACITY.name]):g}"
         if int(values[CAP.name]) != CAP.default:
             points += f", cap {int(values[CAP.name]):,}"
-        settings = (shots_brief(values), range_brief(values), points)
+        settings = (shots_brief(values), range_brief(values), points, newest_brief(values))
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
@@ -121,10 +133,22 @@ class Scatter3D(DatasetAnalysis):
         else:
             crop = crop_box(events, keep_fraction(values), context.cancelled)
         context.check()
-        inside = events[crop.contains(events)] if len(events) else events
+        mask = crop.contains(events) if len(events) else np.zeros(0, dtype=bool)
+        inside = events[mask]
         cap = int(values[CAP.name])
-        points = inside[display_sample(len(inside), cap)]
-        return ScatterData(crop, points, shots, len(context.view.shots), cap, range_warnings(values))
+        newest = newest_shot(values, shots)
+        if newest is None:
+            points = inside[display_sample(len(inside), cap)]
+            return ScatterData(crop, points, shots, len(context.view.shots), cap, range_warnings(values))
+        # The newest shot's events come last in ``events`` (shots ascending): drawn apart, all of
+        # them up to the cap, and the sample of the rest fills what the cap leaves.
+        is_newest = np.zeros(len(events), dtype=bool)
+        is_newest[len(events) - len(txy(context.view.shots[newest])):] = True
+        fresh, rest = inside[is_newest[mask]], inside[~is_newest[mask]]
+        fresh = fresh[display_sample(len(fresh), cap)]
+        points = rest[display_sample(len(rest), cap - len(fresh))]
+        return ScatterData(crop, points, shots, len(context.view.shots), cap, range_warnings(values), newest,
+                           fresh, newest_colour(values))
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: ScatterData = result.data
@@ -148,8 +172,13 @@ def figure(result: AnalysisResult, data: ScatterData) -> go.Figure:
     points, crop = data.points, data.crop
     size = float(result.parameters.get(POINT_SIZE.name, POINT_SIZE.default))
     opacity = float(result.parameters.get(OPACITY.name, OPACITY.default))
-    scatter = go.Scatter3d(x=points[:, 1], y=points[:, 2], z=points[:, 0], mode="markers",
-                           marker=dict(size=size, opacity=opacity), hoverinfo="x+y+z")
+    traces = [go.Scatter3d(x=points[:, 1], y=points[:, 2], z=points[:, 0], mode="markers",
+                           marker=dict(size=size, opacity=opacity), hoverinfo="x+y+z", name="earlier shots")]
+    if data.newest_shot is not None:
+        fresh = data.newest
+        traces.append(go.Scatter3d(x=fresh[:, 1], y=fresh[:, 2], z=fresh[:, 0], mode="markers",
+                                   marker=dict(size=size, opacity=max(opacity, 0.8), color=f"rgb{data.colour}"),
+                                   hoverinfo="x+y+z", name=f"shot {data.newest_shot} (newest)"))
 
     def axis(index: int) -> dict[str, Any]:
         settings: dict[str, Any] = {"title": f"{AXES[index]} ({UNITS[index]})"}
@@ -163,5 +192,6 @@ def figure(result: AnalysisResult, data: ScatterData) -> go.Figure:
         scene=dict(xaxis=axis(1), yaxis=axis(2), zaxis=axis(0)),
         margin=dict(l=0, r=0, b=0, t=90),
         # Constant: a newer figure on the same page keeps the user's rotation, zoom and pan.
-        uirevision=UI_REVISION)
-    return go.Figure(data=[scatter], layout=layout)
+        uirevision=UI_REVISION, showlegend=data.newest_shot is not None,
+        legend=dict(x=0.99, xanchor="right", y=0.99))
+    return go.Figure(data=traces, layout=layout)
