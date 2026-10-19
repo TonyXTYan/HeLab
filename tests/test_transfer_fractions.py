@@ -346,3 +346,50 @@ def test_shots_with_no_events_in_the_windows_have_no_fractions(qtbot: QtBot) -> 
     shares = result.fractions
     assert np.isnan(shares[1]).all() and np.allclose(shares[[0, 2]].sum(axis=1), 1.0)
     rendered(data, values, qtbot)
+
+
+# Detected values and Live reruns
+
+def test_live_reruns_refill_the_detection_and_keep_what_was_typed(qtbot: QtBot) -> None:
+    script = tf.TransferFractions()
+    rng = np.random.default_rng(10)
+    first = view({shot: orders_events(rng, SIDES) for shot in (1, 2)})
+    instance = AnalysisInstance(script.get_metadata(), script, "Plot", first, "1", None)
+    specs = script.parameters("Plot")
+    instance.parameter_root = build_tree(specs)
+    root = instance.parameter_root
+    changes: list[str] = []
+    for name in ("centre", "spacing"):
+        root.child(tf.ORDERS_GROUP, name).sigValueChanged.connect(
+            lambda parameter, _value: changes.append(parameter.name()))
+
+    def ran(data: DatasetView) -> AnalysisResult:
+        """A run as the plot submits it: with the settings shown when it starts."""
+        start = context(data, instance.values())
+        return AnalysisResult.of(start, "completed", script.compute("Plot", start))
+
+    one = ran(first)
+    instance._show_detected(one)
+    assert instance.values()["centre"] == one.data.orders.centre and changes == ["centre", "spacing"]
+    # Live adds shots with order 0 a little later: each auto rerun fills in its own detection.
+    later = first.with_shots({shot: orders_events(rng, SIDES, centre=CENTRE + 0.002) for shot in (3, 4, 5, 6)})
+    two = ran(later)
+    assert two.data.orders.centre > one.data.orders.centre + 5e-4
+    instance._show_detected(two)
+    assert instance.values()["centre"] == two.data.orders.centre
+    # The same data again finds the same values: nothing is written (no flicker).
+    changes.clear()
+    instance._show_detected(ran(later))
+    assert changes == []
+    # Switching to manual keeps the last detection, and a manual run uses it.
+    root.child(tf.ORDERS_GROUP, "orders_mode").setValue(tf.MANUAL)
+    manual = ran(later)
+    assert (manual.data.orders.centre, manual.data.orders.spacing) == (two.data.orders.centre, two.data.orders.spacing)
+    # An auto run still in flight when manual is chosen and a centre typed doesn't overwrite it.
+    root.child(tf.ORDERS_GROUP, "orders_mode").setValue(tf.AUTO)
+    in_flight = context(later.with_shots({7: orders_events(rng, SIDES, centre=CENTRE + 0.004)}), instance.values())
+    root.child(tf.ORDERS_GROUP, "orders_mode").setValue(tf.MANUAL)
+    root.child(tf.ORDERS_GROUP, "centre").setValue(2.14)
+    instance._show_detected(AnalysisResult.of(in_flight, "completed", script.compute("Plot", in_flight)))
+    assert instance.values()["centre"] == 2.14
+    instance.close()

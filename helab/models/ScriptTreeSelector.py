@@ -357,14 +357,17 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._show_follow()
 
     def _show_detected(self, result: AnalysisResult) -> None:
-        """Put what the run found into the settings (they don't rerun it)."""
+        """Put what the run found into the settings (they don't rerun it), except a setting changed
+        since the run started (what was typed meanwhile stays) or already holding the value."""
         root = self.parameter_root
         if root is None:
             return
         specs = {spec.name: spec for spec in self.script.parameters(self.action)}
         for name, value in self.script.detected_parameters(self.action, result).items():
             if name in specs:
-                parameter_of(root, specs[name]).setValue(specs[name].coerce(value))
+                parameter, value = parameter_of(root, specs[name]), specs[name].coerce(value)
+                if parameter.value() == result.parameters.get(name) and parameter.value() != value:
+                    parameter.setValue(value)
 
     # Following Live
 
