@@ -111,3 +111,97 @@ Lanes: `save_held` stays a background `load`, Live checks stay foreground, and `
 - `pyright helab tests` and with `--pythonplatform Windows`: **0 errors, 0 warnings**.
 - `git diff --check 486cf56..HEAD`: **clean**.
 - Not run: native Windows. The Windows points (C, F) come from reading the code and CRT behaviour.
+
+# Recheck at 660ba9c (Claude)
+
+Reviewed `49c1132..660ba9c`: the round 3 fixes (e66003a B, 97e2f02 C, 118e0f0 D, 14005be F), the dev merge (02c88dc), E (f79ec8e, Tony's decision) and 660ba9c. **Verdict: one correctness bug in E's save path to fix before landing, and one flaky new test.** The merge, the trace pieces and E's Live-check path pass.
+
+## Findings (most severe first)
+
+1. **E: a Live save that reads a shot again is cancelled, and that cancel stops the save.** (`helab/io_helper.py` `save_held`, `helab/utils/folder_cache.py:2251-2259`.) How it happens:
+   - When `save_held` reads a recent changed shot again, its `loaded` carries a new `signature`.
+   - It sends no `scan_summary`, so the folder's snapshot still has the signature of the Live check that read the shot unfinished.
+   - FolderCache drops any `load` whose signature differs from the snapshot's: `_cancel_job` calls `service.cancel`, which stops the helper. The helper writes the disk cache only after `loaded` (`disk_cache_pending`), so that write is lost or cut short.
+   - The tab gets `cancelled`, so no WARNING and no note appear, and RAM keeps the unfinished shot.
+
+   **Repro** (scratch copy of HEAD, the `tests/test_live.py` harness, the save run through the real `save_held` with the request's `arrays` and `recent`):
+   - Live reads shot 3 mid-row.
+   - The writer finishes and the folder is aged.
+   - `stop_live()` runs before another check, and the save is run.
+   - Result: `save_held` sends `shot, load_source, loaded(live_reread=[3]), cache_saved, disk_cached`. FolderCache's `_cancel_job` fires for the folder, the only dataset kept is the old one, and the tab still shows shot 3 as `[[3,2,3]]`.
+   - In production the helper would be stopped rather than finish its write. My replay ran it to the end, so here the disk got the whole shot while RAM kept the partial one.
+
+   This hits the saves at Live off, another folder, tab switch or close, and quit: any save where the save, not a check, is the first to read the shot again. An autosave while Live is on usually follows a listing check that already read it.
+
+   **Test gap:** `tests/test_live.py`'s `replay` runs an ordinary `load` for saves and never `save_held`. The only `save_held` re-read test is at helper level (`tests/test_io_trace.py:736`), which doesn't go through FolderCache.
+
+   **Fix direction:** have `save_held` send a `scan_summary` with its new fingerprint before `loaded`, adopted as Live's summaries are. Or exempt `save_memory` jobs from the snapshot-signature check. Then add a tab-level test that runs saves through `save_held`.
+
+2. **Flaky new test: `tests/test_helabMainWindow.py::test_help_menu_records_the_io_trace_for_this_session`.**
+   - It needed a RERUN in the official run, and it failed both of my no-rerun runs (`-n 6 -x`).
+   - Failure: `asked == [(1, 1664, …)]` instead of `[(1, 6, …)]` at `:411`.
+   - Cause: the `main_window` fixture's own startup helpers (listing, volume checks) are traced into the first recording while it's on. The test assumes only its own 6 bytes are there. The trace works correctly; the test assumes an idle app.
+   - Fix: compute the expected size from the files actually in the recording, or wait for the service to go idle before turning the trace on.
+
+3. **E, information for Tony (by design, worth stating in the AGENTS.md wording):**
+   - Within the 5-minute window, a held recent shot is guarded only by the missing-file and identity checks, which run first (`io_helper.py:2126-2134`), not by the sample.
+   - A Live session started from an empty folder (L3) has every held shot recent for its first 5 minutes.
+   - So a copy of the same data root swapped in at the same path within that window would be read again rather than flagged. Older shots in the sample still catch a remount or copy.
+
+4. **Docs:**
+   - The handoff now proposes the AGENTS.md Live wording, which fixes my round 3 point A for AGENTS.md. `roadmaps/live-monitoring.md:108-110` ("ending with a whole row") is still not on the proposal list.
+   - AGENTS.md's local-lane paragraph should name `trace_check`.
+   - `compare_traces.py` on traces without phase lines prints an empty table. That predates this change; a whole-trace row would help Tony's real-share comparison.
+
+## 1. The merge (02c88dc): pass
+
+- L3's pieces are all at HEAD: the `if memory is None` guard (`io_helper.py:2057`), `FolderCache.empty_dataset` (`folder_cache.py:797`), the "waiting for the first shot" state (`FolderExplorer.py:1793`, `HelabMainWindow.py:1366`) and plot following (`helab/analysis/follow.py`).
+- `git diff 9f6ee5a 02c88dc` changes only this branch's files.
+- The Live tests from both sides run in the full suite: `test_live.py`, `test_live_check.py`, `test_live_io.py`, `test_live_plots.py` and `test_io_trace.py`'s Live tests.
+
+## 2. E's rules
+
+- **Per shot, and reset on a re-read:**
+  - `read_at` is set when a check delivers new shots (`FolderExplorer.py:1694-1696`).
+  - It is reset to now in `_live_reread` when a shot is read again.
+  - It is pruned at 5 minutes when the request is built (`_live_recent`).
+  - The initial load's shots never enter it.
+  - On the save path, the reset never happens because of finding 1.
+- **Identity first:** pass. In `live_check`, missing shots, then identity (`root`), then the sample run before any re-read. A changed shot that isn't recent stops the check before re-reads are considered (`:2136-2158`). `save_held` checks identity before `changed` as well.
+- **Older shots:** pass. `shots_missing changed` for a held shot that isn't recent, and `missing` and `root`, are unchanged. The tab test pins a shot older than the window stopping Live as mismatched.
+- **No extra I/O in the steady state:** pass. The sample adds only held shots the previous check saw changed (`previous & held`). Re-reads cost a stat before, one read and a stat after, only for changed recent shots. The pending-only path is unchanged.
+
+## 3. Trace pieces
+
+- **B, quitting:** pass. `IOService.shutdown` logs "I/O trace off".
+- **C, one file per helper:** pass.
+  - Each helper writes its own `<recording>/<pid>.jsonl`, so there is one writer per file, which also fixes the Windows CRT append race.
+  - If Windows reuses a PID, the file is appended after the earlier helper has exited.
+  - Delete removes the listed files, then `rmdir`s each emptied folder. It reports files Windows refuses to delete and keeps them.
+  - Nit: a file a still-running helper of that recording creates after the check stops the `rmdir`, so that folder is kept without a message. Harmless.
+- **D, reserved name:** pass. `_new_recording` uses an exclusive `os.mkdir` with `-2`, `-3`… suffixes.
+- **F, the temp-folder check:** pass.
+  - `trace_check` runs on the local lane with a 10 s no-progress timeout. It reads only the temp folder and the mount table, and isn't traced.
+  - The window keeps an owner and a generation. Unticking cancels the request, and late or stale answers are dropped (`_on_trace_check`).
+  - An error or timeout refuses with a warning. Unticking while asked is honoured.
+  - The GUI thread only deletes and makes folders, all in the temp folder.
+  - A stalled check holds one of the 2 local slots until its helper exits.
+- **Summary scripts:** pass. I ran a two-helper recording folder through `trace_summary.py` and `compare_traces.py`: both read every `*.jsonl` and merge them in time order.
+
+## 4. AGENTS.md I/O rules across the whole branch (486cf56..HEAD, after the merge)
+
+- **Lanes:** unchanged apart from adding `trace_check` to the local lane. Live checks stay foreground, `save_held` stays a background `load`, and `volumes_verify` and `roots_verify` are as Codex passed them.
+- **Pausing:** `Pause.checkpoint` is in `save_held`'s re-read loop and in `live_check`'s reads.
+- **Slots until exit:** `_run`'s `finally` and `_reap` are unchanged.
+- **Retries:** carry `arrays`, and get a fresh `trace` at each attempt.
+- **Mismatch:** unchanged except for E's recent window.
+- **Cache first:** unchanged.
+- I found no regression apart from finding 1, which is a FolderCache interaction, not a lane or slot issue.
+
+## Checks rerun (floor root, venv and floor-env)
+
+- `pytest -n 6 --reruns 5 --reruns-delay 1 -rR --basetemp=.ai/temp/pytest-review`: **1181 passed, 2 skipped, 2 xfailed, 1 rerun.** `RERUN tests/test_helabMainWindow.py::test_help_menu_records_the_io_trace_for_this_session` (finding 2). Two more runs without reruns (`-n 6 -x`) failed that test both times.
+- `mypy helab/ --strict` (79 files) and `mypy tests --strict` (62), both also with `--platform win32`: **no issues**.
+- `pyright helab tests`, also with `--pythonplatform Windows`: **0 errors, 0 warnings**.
+- `git diff --check 486cf56..HEAD`: **clean**.
+- Not run: native Windows. The repro for finding 1 lives in a scratch copy and touches nothing in the floor.
