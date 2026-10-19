@@ -47,6 +47,13 @@ def crop_text(crop: CropBox) -> str:
     return f"Auto-crop keeps {crop.fraction:.1%} ({crop.kept:,} of {crop.total:,} events): {bounds}"
 
 
+def note_text(data: ScatterData) -> str:
+    """One line above the plot; the full sample and crop text are in its tooltip and the figure."""
+    shown = (f"All {data.analysed:,} cropped events shown" if len(data.points) == data.analysed else
+             f"Display sample: {len(data.points):,} of {data.analysed:,} cropped events")
+    return f"{shown} · crop keeps {data.crop.fraction:.1%} of {data.crop.total:,}"
+
+
 class Scatter3D(DatasetAnalysis):
     def get_metadata(self) -> ScriptMetadata:
         return self.create_metadata(
@@ -73,7 +80,9 @@ class Scatter3D(DatasetAnalysis):
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: ScatterData = result.data
-        return PlotlyPane(figure(result, data), f"{sample_text(data)}\n{crop_text(data.crop)}", parent)
+        pane = PlotlyPane(figure(result, data), note_text(data), parent)
+        pane.note.setToolTip(f"{sample_text(data)}\n{crop_text(data.crop)}")
+        return pane
 
 
 def figure(result: AnalysisResult, data: ScatterData) -> go.Figure:

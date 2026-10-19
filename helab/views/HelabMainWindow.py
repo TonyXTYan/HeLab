@@ -903,6 +903,7 @@ class HelabMainWindow(QMainWindow):
         old = dock.widget()
         HelabMainWindow._wrap_plot(dock, content)
         if old is not None:
+            old.setParent(None)  # out of the dock now, so findChild sees only the new label
             old.deleteLater()
         current = self.tab_widget.currentWidget()
         if isinstance(current, FolderExplorer):

@@ -219,6 +219,7 @@ def test_scatter_samples_for_display_only() -> None:
     assert np.all(data.crop.contains(data.points))
     text = scatter_3d.sample_text(data)
     assert f"100,000 of {data.analysed:,}" in text and "analysis uses all" in text
+    assert scatter_3d.note_text(data).startswith(f"Display sample: 100,000 of {data.analysed:,} cropped events")
     result = AnalysisResult.of(context(view, script), "completed", data)
     fig = scatter_3d.figure(result, data)
     trace: Any = fig.data[0]

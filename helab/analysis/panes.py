@@ -33,7 +33,6 @@ class PlotlyPane(QWidget):
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         self.note = QLabel(note, self)
-        self.note.setWordWrap(True)
         row.addWidget(self.note, 1)
         self.open_button = QPushButton("Open in browser", self)
         self.open_button.setToolTip(f"Show this plot in your web browser\n{self.url}")
