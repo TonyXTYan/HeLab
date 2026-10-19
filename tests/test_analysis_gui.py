@@ -404,7 +404,7 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     assert instance is not None and instance.dock_widget is not None
     qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
     pane = instance.dock_widget.findChild(PlotlyPane)
-    assert pane is not None and pane.plot_id in dash_server.plots
+    assert pane is not None and dash_server.snapshot(pane.plot_id) is not None
     assert pane.open_button.text() == "Open in browser"
     assert pane.note.text().startswith("All 70 events in range shown · crop keeps")
     assert pane.note.toolTip().startswith("Showing all 70 events in the range")
@@ -419,7 +419,7 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
            "Auto-crop: keep 99 %, T min 0 s, T max 0 s," in label.toolTip()
     plot_id = pane.plot_id
     instance.dock_widget.close()
-    qtbot.waitUntil(lambda: plot_id not in dash_server.plots)
+    qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None)
     QApplication.processEvents()
 
 

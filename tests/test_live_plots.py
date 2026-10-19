@@ -391,20 +391,20 @@ def test_a_following_scatter_updates_its_page_in_place(
     dock = cast(QDockWidget, instance.dock_widget)
     pane = dock.findChild(PlotlyPane)
     assert pane is not None
-    first = dash_server.plots[pane.plot_id]
-    revision_before = dash_server.revisions[pane.plot_id]
-    assert first.to_dict()["layout"]["uirevision"] == scatter_3d.UI_REVISION
+    before = dash_server.snapshot(pane.plot_id)
+    assert before is not None and before.figure.to_dict()["layout"]["uirevision"] == scatter_3d.UI_REVISION
     window.live_feed.publish(revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
     assert dock.findChild(PlotlyPane) is pane  # Not drawn anew: no page reload.
-    updated = cast(Any, dash_server.plots[pane.plot_id])  # Plotly's attributes are untyped.
+    after = dash_server.snapshot(pane.plot_id)
+    assert after is not None and after.revision == before.revision + 1
+    updated = cast(Any, after.figure)  # Plotly's attributes are untyped.
     figure = updated.to_dict()
-    assert dash_server.revisions[pane.plot_id] == revision_before + 1
     assert figure["layout"]["uirevision"] == scatter_3d.UI_REVISION and len(updated.data[0].x) == 6
     assert "rev 2" in figure["layout"]["title"]["text"] and pane.note.text().endswith("3 shots")
     plot_id = pane.plot_id
     window.close_plots()
-    qtbot.waitUntil(lambda: plot_id not in dash_server.plots, timeout=10_000)  # Freed with the pane.
+    qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None, timeout=10_000)  # Freed with the pane.
 
 
 def run_now(script: DatasetAnalysis, view: DatasetView, values: dict[str, Any]) -> AnalysisResult:

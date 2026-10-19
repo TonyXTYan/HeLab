@@ -44,3 +44,29 @@ These are code review findings; the three new edge cases above were not added to
 - The previously noted Live-off delay-timer behavior is unchanged by agreement in the handoff: an already offered revision may finish one rerun after Live stops or the tab switches. This remains a product decision for Tony, not a new finding on these fixes.
 
 **Validation:** full suite outside sandbox with `venv/bin` on `PATH`, `venv/bin/pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`: **1122 passed, 2 skipped, 2 xfailed, no RERUN**. `venv/bin/mypy helab/ --strict` (79 files), `venv/bin/mypy tests --strict` (61), and `venv/bin/mypy helab/ tests --strict --platform win32` (140) passed. `venv/bin/pyright helab tests` and `venv/bin/pyright helab tests --pythonplatform Windows` both reported 0 errors. `git diff --check 959bcf5..30723a9` was clean. This recheck section is left uncommitted.
+
+## Round 2 review at 4492385
+
+**Verdict: changes requested.** I reviewed `3b417ae..4492385` at head `4492385`. The Live-off catch-up, any-folder Live behavior and newest-shot paths follow the Round 2 handoff in the cases tested. Two Dash page lifecycle issues remain.
+
+### Findings
+
+1. **P1 — A page can stay permanently one figure behind.** `DashServer` stores the figure and revision in separate synchronized dictionaries and reads them separately in both `display_page` and `newer_figure` (`helab/utils/dash_server.py:43-53,65-78`). A poll can read figure 1, then `update_plot` writes figure 2 and revision 2, then the poll reads revision 2 and sends **figure 1 with revision 2**. The client's store now says 2, so subsequent polls return 204 and never show figure 2. I reproduced this interleaving deterministically: `newer_figure('/plot/p', 1)` returned the old figure paired with revision 2, and the next call with `shown=2` returned `None`. The initial page callback has the same split-read risk. Store each plot's `(figure, revision)` as one atomic value or protect both operations with one lock, and test an update interleaved with a poll/page load.
+
+2. **P2 — A browser page keeps the last plot after its dock closes.** `remove_plot` drops both server entries, but the polling callback maps a missing plot to `PreventUpdate` (`helab/utils/dash_server.py:56-63,84-87`). An existing **Open in browser** page therefore retains its old `dcc.Graph` and continues its one-second polling indefinitely. I sent the Dash callback a poll after `remove_plot` and received HTTP 204 with no body. The existing test checks only that server dictionaries are empty, not what an already open page shows. Return a closed/removed state that clears the graph or replaces it with the plot-not-found message, and stop that page's interval. Keep the no-figure-in-server behavior after close.
+
+### Other review points
+
+- `Follow.live_ended()` bypasses N and delay for one pending catch-up; an in-flight run is left to finish, then the pending newest view runs. `Follow.due()` blocks a pinned plot, and the new tests cover delay, N, pinning, in-flight work and an errored Live tab. I found no cancellation added for Live stop.
+- The expanded empty-folder rule still requires a known zero-TXY status and no existing loaded or disk-cached dataset. `live_check` scans one directory with `os.scandir` and treats child directories only as `has_dirs`; the tab and helper tests check that a subfolder's shots are not read.
+- `PlotlyPane.destroyed` removes its server figure and revision; the in-place scatter keeps one pane and URL across revisions. The new `@pyqtSlot` closes the runner connection promptly. These paths did not reveal a server-side per-plot data leak in the normal close test.
+- The scatter reserves the display cap for the highlighted newest shot first, then samples older events into the remaining slots; when the newest shot alone exceeds the cap, the cap necessarily samples it. The histogram uses the same bins and labels its overlay as scaled. The v3 result identities reflect both plot changes. Tests cover a newest shot below the cap, the overlays and a following Live revision; an above-cap newest shot and a native camera-retention check remain untested.
+- Every open Dash page sends one callback request per second, even when its figure has not changed (then a 204 response); the server uses threaded requests. No multi-page polling benchmark or native lab-PC load check was provided. That is a performance caveat, separate from the two correctness findings.
+- `dash_server.py` is outside the original brief's owned paths, but the Round 2 handoff records Maestro's authorization for this change.
+
+### Checks
+
+- Full suite outside sandbox with `venv/bin` on `PATH`, `venv/bin/pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`: **1135 passed, 2 skipped, 2 xfailed; no RERUN**.
+- `venv/bin/mypy helab/ --strict` (79 files), `venv/bin/mypy tests --strict` (61), and `venv/bin/mypy helab/ tests --strict --platform win32` (140): passed.
+- `venv/bin/pyright helab tests` and `venv/bin/pyright helab tests --pythonplatform Windows`: 0 errors each.
+- `git diff --check d0b8fbe..HEAD`: clean. The review section is left uncommitted.
