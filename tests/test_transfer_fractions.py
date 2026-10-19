@@ -432,8 +432,9 @@ def test_order_0_jumping_a_whole_order_from_the_last_detection_warns_until_settl
         result = AnalysisResult.of(start, "completed", script.compute("Plot", start))
         data = result.data
         assert data.jumped == 1 and data.orders.centre == pytest.approx(CENTRE + SPACING, abs=3e-4)
-        moved = "⚠ order 0 moved by +1 order from the last detection ("
-        assert [note for note in data.notes if note.startswith(moved)]
+        moved = [note for note in data.notes if note.startswith("⚠ order 0 moved by +1 order from the last detection")]
+        accept = f"to accept the new one, set Order 0 at {data.orders.centre:.6g} s in manual mode and Rerun"
+        assert len(moved) == 1 and moved[0].endswith(accept)
         # The last detection's centre stays in the settings, so the next rerun warns again.
         assert script.detected_parameters("Plot", result) == {"spacing": data.orders.spacing}
     # Back to a low transfer: order 0 is where it was, no warning, and the centre is filled in again.
