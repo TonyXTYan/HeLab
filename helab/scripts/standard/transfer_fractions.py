@@ -378,9 +378,9 @@ class TransferFractions(DatasetAnalysis):
         orders = data.orders
         if not len(data.shots):
             text = empty_text(data.total_shots, data.chosen, data.events)  # No events: nothing to add
-            notes = () if text else data.notes
+            said = () if text else data.notes
             text = text or f"No shot has more than {data.minimum:,} counts in the XY box (Counting settings)"
-            return empty_pane(" · ".join((text, *notes)), parent)
+            return empty_pane(" · ".join((text, *said)), parent)
         if not data.counts.any():
             first, last = data.extent
             text = (f"No events in the orders' windows: order 0 at {orders.centre:.6g} s, spacing "
