@@ -43,9 +43,6 @@ RELEASE_SHARE = 0.80  # plots are released, least recently viewed first, until u
 # A plot a reload drew in the last this many seconds goes after the others (no ping-pong).
 RELOAD_GRACE = 10.0
 
-# Settings → Cache: a released plot reloads when it is shown again (on by default).
-PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
-
 _view_buffers: weakref.WeakKeyDictionary[DatasetView, Buffers] = weakref.WeakKeyDictionary()
 
 
@@ -240,19 +237,21 @@ class RamBudget(QObject):
         if usage.budget > 0 and usage.total > limit and (candidates := self.order()):
             self.cache.evict_to(limit)
             usage = self.measure()
-            datasets = self.cache.held_buffers()
+            staying = [plot for plot in self.plots if plot not in candidates]
             for plot in candidates:
                 if usage.total <= limit:
                     break
-                frees = self.frees(plot, datasets)
+                frees = self.frees(plot, staying)
                 if frees <= plot.picture_cost():
-                    continue  # Its data is mostly a loaded folder's: its picture would cost more.
+                    staying.append(plot)
+                    continue  # Its data is mostly a shown folder's: its picture would cost more.
                 if plot.release(frees):
                     released += 1
                     # A dataset only this plot's arrays kept may go now: datasets first, again.
                     self.cache.evict_to(limit)
                     usage = self.measure()
-                    datasets = self.cache.held_buffers()
+                else:
+                    staying.append(plot)
             if released:
                 logging.info("RAM budget: released %d plot%s, now %.0f%% of %d bytes", released,
                              "" if released == 1 else "s", usage.share * 100, usage.budget)
@@ -268,13 +267,15 @@ class RamBudget(QObject):
         if usage != before or released:
             self.changed.emit()
 
-    def frees(self, plot: Plot, datasets: Buffers) -> int:
-        """What releasing ``plot`` frees: its buffers no held dataset and no other plot has."""
-        others: set[int] = set()
-        for other in self.plots:
-            if other is not plot:
-                others.update(other.ram_buffers())
-        return sum(size for key, size in plot.ram_buffers().items() if key not in datasets and key not in others)
+    def frees(self, plot: Plot, staying: Sequence[Plot]) -> int:
+        """What releasing ``plot`` makes freeable: its buffers that neither a dataset shown in a
+        tab nor a plot that stays (``staying``: shown, running, following Live, or not released
+        this time) holds. A dataset no tab shows goes once no plot holds it (``evict_to`` after
+        each release), and plots sharing buffers with it are released next, as candidates."""
+        kept = set(self.cache.shown_buffers())
+        for other in staying:
+            kept.update(other.ram_buffers())
+        return sum(size for key, size in plot.ram_buffers().items() if key not in kept)
 
     def biggest(self, count: int = 5) -> tuple[list[tuple[str, int]], list[tuple[str, int, bool]]]:
         """For the 75 % window: the biggest plots (label, bytes of their data) and folders

@@ -364,6 +364,38 @@ class Tiny(Copy):
         return Copied(np.zeros(1), tuple(context.view.shots))
 
 
+def test_one_small_plot_of_a_held_unshown_folder(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
+    """The recheck's probe: a histogram-sized plot of a folder held but no tab shows. Releasing
+    it makes the folder freeable, so the plot goes and then the folder does."""
+    held = hold(cache, dataset("held", range(1, 41)))  # 40 shots, no tab shows it
+    plot = open_plot(window, qtbot, held, Tiny())
+    shown = open_plot(window, qtbot, dataset("c", range(1, 2)))
+    panel = window.panel_right_top_plot_settings
+    for instance in (plot, shown):
+        panel.show_plot(dock_of(instance))
+    cache.max_data_bytes = int(10 * SHOT_BYTES / 0.8)
+    window.ram_budget.check()
+    assert plot.released is not None and not cache.holds(held)
+    assert window.ram_budget.usage.total <= 10 * SHOT_BYTES
+
+
+def test_two_small_plots_of_one_unloaded_folder(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
+    """The recheck's probe: two small plots share the shots of a folder no longer held. Neither
+    alone frees them, but both may go: each is judged against the plots that stay."""
+    shared = dataset("shared", range(1, 41))  # 40 shots, not held
+    first = open_plot(window, qtbot, shared, Tiny())
+    second = open_plot(window, qtbot, shared, Tiny())
+    del shared
+    shown = open_plot(window, qtbot, dataset("c", range(1, 2)))
+    panel = window.panel_right_top_plot_settings
+    for instance in (first, second, shown):
+        panel.show_plot(dock_of(instance))
+    cache.max_data_bytes = int(10 * SHOT_BYTES / 0.8)
+    window.ram_budget.check()
+    assert first.released is not None and second.released is not None
+    assert window.ram_budget.usage.total <= 10 * SHOT_BYTES
+
+
 def test_older_results_count_and_go_with_a_release_or_close(
         window: Window, cache: FolderCache, runner: AnalysisRunner, qtbot: QtBot) -> None:
     """RamResults keeps a plot's older (unpinned) results: they count as the plot's RAM, and

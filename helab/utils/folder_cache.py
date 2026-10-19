@@ -954,6 +954,13 @@ class FolderCache(QObject):
             merged.update(dataset_buffers(entry))
         return merged
 
+    def shown_buffers(self) -> Buffers:
+        """The memory the datasets shown in tabs use (never dropped)."""
+        merged: Buffers = {}
+        for entry in {id(entry): entry for entry in self.pins.values()}.values():
+            merged.update(dataset_buffers(entry))
+        return merged
+
     def plot_bytes(self) -> int:
         """RAM the plots hold beyond the datasets held here: arrays shared with one count once."""
         plots = self._plot_buffers()
