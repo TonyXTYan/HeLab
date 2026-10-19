@@ -205,3 +205,44 @@ Reviewed `49c1132..660ba9c`: the round 3 fixes (e66003a B, 97e2f02 C, 118e0f0 D,
 - `pyright helab tests`, also with `--pythonplatform Windows`: **0 errors, 0 warnings**.
 - `git diff --check 486cf56..HEAD`: **clean**.
 - Not run: native Windows. The repro for finding 1 lives in a scratch copy and touches nothing in the floor.
+
+# Recheck at 65a15a2 (Claude)
+
+Reviewed `660ba9c..65a15a2`: 3e0b59b (fix 1), a34707d (flaky test), d6d6d24 (Windows line endings), c872478 (doc proposals, unphased `compare_traces`) and 65a15a2. **Verdict: no blocker. Fix 1 fixes my repro.** One narrow race remains in the save's summary adoption (finding 1). It is worth a small fix, but it is short-lived and self-correcting.
+
+## Fix 1 (3e0b59b)
+
+- **My repro, rerun unchanged on a scratch copy of HEAD** (files written as bytes): `save_held` sends `shot, scan_summary, load_source, loaded, cache_saved, disk_cached`. `_cancel_job` doesn't fire, and FolderCache keeps the new dataset `[1, 2, 3]`. **Fixed.** The worker's tab test `test_the_save_at_live_off_reads_a_recently_read_shot_again_and_saves_it` (`tests/test_live.py`) pins the same sequence: the shown data, the dataset, the snapshot's signature, the disk cache, the note after the session ends, and the WARNING.
+- **Can it hide a real mismatch? No.** `save_held` sends the summary only after the missing-file, identity (`root`) and stale-changed (`changed`, not recent) checks have passed; each of those `return`s first. It sends it only when a shot was replaced (`if replaced:`). An unsettled recent shot isn't replaced, so it keeps the held fingerprint and sends no summary.
+- **Saves with nothing re-read: unchanged in events and outcome.** `test_io_trace.py` now asserts the plain save sends no `scan_summary`, and the rest of that test's assertions are unchanged. One small I/O difference: the listing loop now also calls `_is_dir` on entries that aren't TXY or raw files, until it finds a subfolder (`io_helper.py:1906-1915`). That happens on every save, not only re-reads. It is usually free (d_type on macOS and Windows) and is traced as `is_dir`, but it isn't strictly "unchanged". Gating the subfolder check on a re-read would need the listing to be redone. This is a nit, acceptable as is.
+- **Did the replay change weaken a test? No.** `replay` now runs a request with `save_memory` and `arrays` through the real `save_held`, as `IOService._run` would. Requests without arrays (FolderCache's fallback when no base data is held) still run the ordinary `load`. The existing Live save tests keep their assertions and now exercise the production save path, which makes them stronger. The only edited assertion is the note-expiry line, adapted to `_reread_notes`.
+- **The note per folder** (`FolderExplorer._reread_notes`) is pruned when read after its minute. The summary's third line shows it after Live stops. Fine.
+
+## Findings
+
+1. **Adopting a save's summary as Live's can overwrite a newer listing and mark it freshly checked.** (`folder_cache.py:2231-2233`, then `_adopt_load_summary`'s `live` branch at `:1255-1259`, which has no ordering guard.)
+   - **Probe** (scratch copy of HEAD):
+     - Run `save_held`, which lists at t0 and reads shot 3 again.
+     - Meanwhile shot 4 arrives, and the snapshot takes a newer listing (txy `[1,2,3,4]`, newer `scanned_at`, a details signature).
+     - Then deliver the save's events.
+   - **Result:** the snapshot goes back to txy `[1, 2, 3]` with the save's older `scanned_at`, and `checked_at` is now. The `loaded` signature then matches, so the save is kept and its data counts as checked.
+   - **When:** after Live off the tree is unlocked, and a Refresh listing runs in the foreground while the save runs in the background. A second tab browsing the folder is another way in. The window is the save's listing plus its re-read, about a second.
+   - **Effect:** for `FRESH_SECONDS` the tree's counts and the folder's "checked" state miss shot 4. The next check or selection relists the folder. No data is lost.
+   - Before fix 1, the newer signature would have cancelled this save instead. That was worse.
+   - **Fix:** for `save_memory` jobs, adopt only when the summary's `scanned_at` isn't older than the snapshot's, as the non-live branch at `:1265-1266` does. When it is older, let the save through without the signature check rather than cancel it. (Live checks have the same unguarded adoption, but while Live is on the tab's tree is locked; only another tab could race it.)
+
+2. **Rerun in an untouched test:** `tests/test_two_step_browse.py::test_refresh_cancels_only_automatic_subscriptions_and_suppresses_new_checks` (RERUN, then PASSED, in the official run below). This branch doesn't change that test file. Three more full runs without reruns (`-n 6`) were clean. The worker reports it's comparing it with the base. I have no evidence it's a regression.
+
+## Other commits
+
+- **a34707d:** the trace-menu test waits for the service to go idle after each recording is turned off, and expects the actual files' size. It stays strict about which recordings are listed, kept and deleted. It passed all my runs, including 3 without reruns.
+- **d6d6d24:** the size-sensitive files are written as bytes, or with `newline="\n"`. That matches the RSPE failures, and the production code is unchanged.
+- **c872478:** traces without phase lines give one "whole trace" row (seconds up to the last line). It adds the proposed wording for `roadmaps/live-monitoring.md:108-110` and the AGENTS.md local-lane `trace_check` wording. Both close my earlier doc points.
+
+## Checks rerun (floor root, venv and floor-env)
+
+- `pytest -n 6 --reruns 5 --reruns-delay 1 -rR --basetemp=.ai/temp/pytest-review`: **1182 passed, 2 skipped, 2 xfailed, 1 rerun** (finding 2). Three more runs with `-n 6` and no reruns: **1182 passed each**.
+- `mypy helab/ --strict` (79 files) and `mypy tests --strict` (62), both also with `--platform win32`: **no issues**.
+- `pyright helab tests`, also with `--pythonplatform Windows`: **0 errors, 0 warnings**.
+- `git diff --check 486cf56..HEAD`: **clean**.
+- Not run: native Windows. The probes live in a scratch copy and touch nothing in the floor.
