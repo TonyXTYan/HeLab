@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Callable, Literal, Sequence
 
 import numpy as np
@@ -33,9 +34,28 @@ class Estimate:
     def text(self, style: Style = "pm", unit: str = "", si: bool = True, digits: int = 2) -> str:
         return format_uncertainty(self.value, self.se, style, unit, si, digits)
 
-    def as_record(self) -> dict[str, float]:
-        """JSON-ready; ``json`` writes nan and inf as NaN and Infinity."""
-        return {"value": float(self.value), "se": float(self.se)}
+    def as_record(self) -> dict[str, float | None]:
+        """Strict JSON: a nan or infinite value or error is None."""
+        return {"value": finite_or_none(self.value), "se": finite_or_none(self.se)}
+
+
+def finite_or_none(value: float) -> float | None:
+    return float(value) if math.isfinite(value) else None
+
+
+def decimal_exponent(value: float) -> int:
+    """The power of ten of ``value``'s leading digit (0 for 0 and non-finite values), exact
+    for subnormals too (no log10 rounding)."""
+    if value == 0 or not math.isfinite(value):
+        return 0
+    return int(f"{abs(value):e}".split("e")[1])
+
+
+def _scaled(value: float, exponent: int) -> float:
+    """value × 10^−exponent, exactly rounded, without 10**exponent under- or overflowing."""
+    if not math.isfinite(value) or value == 0:
+        return value
+    return float(Decimal(value).scaleb(-exponent))
 
 
 def si_prefix(value: float) -> tuple[int, str]:
@@ -43,7 +63,7 @@ def si_prefix(value: float) -> tuple[int, str]:
     pyqtgraph's ``siScale`` does: (0, "") for 0 and non-finite values, clamped to y…Y."""
     if value == 0 or not math.isfinite(value):
         return 0, ""
-    exponent = min(max(int(math.floor(math.log10(abs(value)) / 3)) * 3, -24), 24)
+    exponent = min(max(decimal_exponent(value) // 3 * 3, -24), 24)
     return exponent, SI_PREFIX_BY_EXPONENT[exponent]
 
 
@@ -58,7 +78,11 @@ def format_uncertainty(value: float, se: float, style: Style = "pm", unit: str =
       units that take no prefix (kg). Without a prefix, numbers (the larger again) outside
       10⁻³…10⁵ are written ``(6.6465 ± 0.0002)×10⁻²⁷``.
     - An error of 0 writes the value to 6 significant digits, ``± 0``; a nan or infinite
-      error ``± nan`` / ``± ∞``, likewise. A negative error is taken as its size.
+      error ``± nan`` / ``± ∞``, likewise. A negative error is taken as its size. An error
+      below the value's float precision (10⁻¹⁵ of it) is written to 2 significant digits on
+      its own (``1 ± 1e−20``) rather than as 20 decimals.
+    - When rounding carries a number up a digit (999.96 ms → 1000.0 ms, 9.999×10⁷ → 10.00×10⁷,
+      the value's or the error's), the next prefix or power is used.
     - Negative numbers use "−" (U+2212).
     """
     digits = max(int(digits), 1)
@@ -66,21 +90,35 @@ def format_uncertainty(value: float, se: float, style: Style = "pm", unit: str =
     if not math.isfinite(value):
         return _join(_special(value), _plain(se) if math.isfinite(se) else _special(se), style, "", unit)
     reference = max(abs(value), se if math.isfinite(se) else 0.0)
+
+    def render(exponent: int) -> tuple[str, str]:
+        return _numbers(_scaled(value, exponent), _scaled(se, exponent), digits)
+
     if unit and si:
-        exponent, prefix = si_prefix(reference)
-        text_value, text_se = _numbers(value / 10 ** exponent, se / 10 ** exponent, digits)
-        if abs(float(text_value.replace(MINUS, "-"))) >= 1000 and exponent < 24:
-            # 999.96 ms rounded to 1000.0 ms: the next prefix up
+        exponent, _ = si_prefix(reference)
+        texts = render(exponent)
+        if _largest(texts) >= 1000 and exponent < 24:
             exponent += 3
-            prefix = SI_PREFIX_BY_EXPONENT[exponent]
-            text_value, text_se = _numbers(value / 10 ** exponent, se / 10 ** exponent, digits)
-        return _join(text_value, text_se, style, "", prefix + unit)
-    exponent = int(math.floor(math.log10(reference))) if reference > 0 else 0
+            texts = render(exponent)
+        return _join(*texts, style, "", SI_PREFIX_BY_EXPONENT[exponent] + unit)
+    exponent = decimal_exponent(reference)
     if exponent in PLAIN_EXPONENTS:
         exponent = 0
-    text_value, text_se = _numbers(value / 10 ** exponent, se / 10 ** exponent, digits)
+    texts = render(exponent)
+    if exponent and _largest(texts) >= 10:
+        exponent += 1
+        texts = render(exponent)
+    elif not exponent and _largest(texts) >= 10 ** PLAIN_EXPONENTS.stop:  # 99999.7 → 100000
+        exponent = PLAIN_EXPONENTS.stop
+        texts = render(exponent)
     power = f"×10{str(exponent).translate(SUPERSCRIPTS)}" if exponent else ""
-    return _join(text_value, text_se, style, power, unit)
+    return _join(*texts, style, power, unit)
+
+
+def _largest(texts: tuple[str, str]) -> float:
+    """The larger size of the written value and error (specials count as 0)."""
+    sizes = [abs(float(text.replace(MINUS, "-"))) for text in texts if text not in ("nan", "∞", MINUS + "∞")]
+    return max(sizes, default=0.0)
 
 
 def _numbers(value: float, se: float, digits: int) -> tuple[str, str]:
@@ -88,7 +126,9 @@ def _numbers(value: float, se: float, digits: int) -> tuple[str, str]:
     ``±`` (``_join`` makes the bracket form)."""
     if not math.isfinite(se) or se == 0:
         return _plain(value), _special(se) if not math.isfinite(se) else "0"
-    place = digits - 1 - int(math.floor(math.log10(se)))  # decimals to keep
+    if se < abs(value) * 1e-15:
+        return _plain(value), f"{se:.{digits}g}".replace("-", MINUS)
+    place = digits - 1 - decimal_exponent(se)  # decimals to keep
     if abs(float(_fixed(se, place))) >= 10 ** (digits - place):  # 0.0996 → 0.10, not 0.100
         place -= 1
     return _fixed(value, place), _fixed(se, place)
@@ -139,21 +179,28 @@ def pooled_mean_and_std(means: Sequence[float] | npt.ArrayLike, stds: Sequence[f
                         counts: Sequence[int] | npt.ArrayLike, ddof: int = 1) -> tuple[float, float, int]:
     """(mean, standard deviation, count) of the groups' data taken together, from each
     group's mean, standard deviation (with ``ddof``) and size: what ``np.mean`` and
-    ``np.std(ddof=ddof)`` give on the concatenated data. Groups of size 0 are ignored, and
-    a group too small for its own deviation (size ≤ ddof) adds only its mean's spread.
-    nan when there are no data, or too few for ``ddof``."""
+    ``np.std(ddof=ddof)`` give on the concatenated data. Counts must be whole numbers ≥ 0
+    (else ``ValueError``). Groups of size 0 are ignored, and a group too small for its own
+    deviation (size ≤ ddof) adds only its mean's spread; any other group's nan deviation
+    makes the pooled one nan (its spread is unknown, not 0). nan when there are no data, or
+    too few for ``ddof``."""
     mean_array = np.asarray(means, dtype=np.float64).ravel()
     std_array = np.asarray(stds, dtype=np.float64).ravel()
     count_array = np.asarray(counts, dtype=np.float64).ravel()
     if not len(mean_array) == len(std_array) == len(count_array):
         raise ValueError("means, stds and counts must have the same length")
+    if not np.all((count_array >= 0) & (count_array == np.floor(count_array))):
+        raise ValueError("counts must be whole numbers ≥ 0")
     used = count_array > 0
     mean_array, std_array, count_array = mean_array[used], std_array[used], count_array[used]
     total = int(count_array.sum())
     if total == 0:
         return math.nan, math.nan, 0
     mean = float(np.dot(count_array, mean_array) / total)
-    within = np.where(count_array > ddof, (count_array - ddof) * np.nan_to_num(std_array) ** 2, 0.0)
+    own = count_array > ddof
+    if not np.all(np.isfinite(std_array[own])):
+        return mean, math.nan, total
+    within = np.where(own, (count_array - ddof) * np.where(own, std_array, 0.0) ** 2, 0.0)
     squares = float(within.sum() + np.dot(count_array, (mean_array - mean) ** 2))
     std = math.sqrt(squares / (total - ddof)) if total > ddof else math.nan
     return mean, std, total

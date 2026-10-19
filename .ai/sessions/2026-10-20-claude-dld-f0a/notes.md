@@ -29,8 +29,10 @@ all "values with errors"; `fits.py` depends on it, not the other way).
 - **CODATA rows (ħ, k_B, u) are level "lab" with `codata=True`.** The roadmap says every
   constant can be set by hand; F0b may still choose not to offer ħ and k_B. *Proposed, for
   Tony:* show them read-only.
-- **He* mass:** 4.002602 u × CODATA u = 6.64648e-27 kg (the brief's number; the He-4
-  atomic mass is 4.00260325 u, a 2e-7 relative difference, far below any fit's error).
+- **He* mass:** the He-4 atomic mass, 4.00260325413 u (AME2020) × CODATA u =
+  6.64648e-27 kg. The brief's 4.002602 is helium's standard atomic weight, a different
+  number (2e-7 relative). A test checks it against CODATA's alpha-particle mass plus two
+  electrons.
 - **Layers:** `resolve(lab=…, folder=…, plot=…)` applies the defaults, then each layer
   (more specific wins), and records each value's origin ("default", "lab", "folder",
   "plot" or "derived"). Unknown keys and values that aren't finite and positive raise
@@ -42,8 +44,22 @@ all "values with errors"; `fits.py` depends on it, not the other way).
 - **Unconfirmed** in a resolved set: keys still at an unconfirmed default, and the derived
   fall time while its distance is (`ResolvedConstants.unconfirmed`). A value set at any
   layer counts as the user's word.
-- **Record:** `as_record()` gives `{"values", "origins", "unconfirmed"}` with JSON values
-  only; `from_record` reads it back (tested through `json.dumps`).
+- **Fall time rule, every case** *(for Tony to confirm)*:
+  - nothing set: derived from the distance and g in use;
+  - a fall time set at a layer at least as specific as the most specific layer that set the
+    distance or g: kept as set;
+  - otherwise derived again. So a plot's g override discards a folder's hand-set fall time,
+    and a folder's distance discards a lab-wide fall time;
+  - a kept fall time more than 0.1 % from √(2h/g) is noted in `ResolvedConstants.notes`
+    and the record ("fall time and distance disagree…"): e.g. a lab-wide 0.417 s beside the
+    default 0.848 m (0.4161 s).
+- **Record:** `as_record()` gives `{"values", "origins", "unconfirmed", "notes"}` with JSON
+  values only. `from_record` needs every table key with a finite value and a known origin
+  (`ValueError` otherwise), ignores keys the table doesn't have (a newer version's), and
+  recomputes `unconfirmed` and `notes`. `ResolvedConstants` hashes by its values
+  (`origins` is compared, not hashed).
+- **The conversions take the run's `ResolvedConstants`** (required), never the defaults, so
+  a plot can't show a temperature from constants its result didn't record.
 
 ### Temperature from widths (pure expansion, ideal gas)
 
@@ -63,14 +79,32 @@ exact arrival times of atoms with Gaussian v_z (the sign: faster upward atoms ar
   `evaluate(x)` for a fine curve, `chi2`, `dof`, `reduced_chi2`, `failure` ("" when it
   worked), `notes` (warnings) and `derived(f)` for a number computed from the parameters
   with its SE (delta method).
+- **Input:** raw counts, or anything else with its errors as `sigma=` (rates, smoothed
+  counts). Count weights on values that aren't whole numbers give a note.
 - **Failures are results**, with nan estimates: "no data to fit", "no counts to fit",
   "too few bins to fit: N for P parameters", "all counts in one bin: no width to fit",
-  "the fit did not converge", "the fit could not run: …", and "not determined by the data:
-  <parameter> (no usable SE)". The last one matters: SciPy's pseudo-inverse covariance gives
-  a parameter the data don't constrain a variance of exactly **0**, not inf, which would
-  read as an exact value; any variance that isn't finite and positive is a failure.
-- **Notes on a fit that worked:** non-finite bins left out; a parameter at its bound (its
-  SE isn't reliable); reduced χ² above 3.
+  "counts in only N bins: too few to fit this model (it needs M)" (3 for the one-part
+  models, 4 for bimodal), "the fit did not converge in N evaluations", "the fit could not
+  run: …", and "not determined by the data: <parameter> (no usable SE)". The last one
+  matters: SciPy's pseudo-inverse covariance gives a parameter the data don't constrain a
+  variance of exactly **0**, not inf, which would read as an exact value; any variance that
+  isn't finite and positive is a failure, unless the parameter is gated (below).
+- **Notes on a fit that worked:** bins left out (a non-finite centre or count; an error
+  that isn't finite and > 0, each said separately); counts that aren't whole numbers; a
+  part's amplitude consistent with 0; a parameter at its bound (its SE isn't reliable);
+  the Poisson weights not settling; reduced χ² above 3.
+- **Gates:** a parameter that only shapes one part names that part's amplitude
+  (`ModelParameter.gates`). When the amplitude is within 2 SE of 0 (or at 0 with no SE),
+  the note says "<amplitude> consistent with 0 (within 2 SE): <parameters> not determined",
+  those SEs are nan, and the fit isn't failed for them.
+- **Extras:** numbers computed from the parameters and reported in `estimates` with a
+  delta-method SE (`FitModel.extras`; the bimodal R).
+- **Record:** `FitResult.as_record()` is strict JSON (nan → None), without the curve.
+  The result's arrays are read-only.
+- **Threads:** fits run in the analysis worker, so nothing changes warning filters per
+  call (`warnings.catch_warnings` isn't thread-safe). `fits.py` sets one filter at import
+  for SciPy's `OptimizeWarning` (the covariance checks report that case), and wraps each
+  solve in `np.errstate` (thread-local) for trial-step overflows.
 - **Scaling:** x and the counts are mapped to order one before fitting, each parameter by
   its role (position, width, height, shape); the covariance is mapped back. A T profile at
   0.416 s with σ = 0.1 ms fits as well as one at 0.
@@ -87,7 +121,11 @@ parameter moves more than 0.01 SE (at most 10 rounds). The fixed point solves
 Σ (n − μ)/μ · ∂μ/∂θ = 0, the Poisson likelihood's own score equations, so it is the
 Poisson maximum-likelihood fit, and the last covariance is the inverse Fisher information.
 The plain iteration oscillated (mostly the offset, through the near-empty tails); the
-variances use the mean of the last two parameter sets, which damps it.
+variances use the mean of the last two parameter sets, which damps it. When 10 rounds
+still don't settle (a model that doesn't describe the data: a Gaussian on a flat-topped
+cloud moves about 0.7 SE per round), the result is the round that moved least, with a note
+"the Poisson weights did not settle in 10 rounds (… up to N SE per round)". The bimodal
+model's inner Gaussian guess uses count weights, or the caller's `sigma`.
 
 Coverage after (fraction within 2 SE, mean pull, pull SD; 300 seeds):
 
@@ -97,7 +135,7 @@ Coverage after (fraction within 2 SE, mean pull, pull SD; 300 seeds):
 | Gaussian, 5000 events | 0.95, 0.02, 1.01 | 0.94, 0.09, 1.01 |
 | Gaussian, 50,000 events | 0.95, −0.08, 1.04 | 0.94, 0.13, 1.08 |
 | TF p = 2, 5000 events | 0.95, 0.02, 0.99 | 0.94, 0.13, 1.05 |
-| Bimodal, 20,000 events, 100 bins (100 seeds) | 0.96 | R 0.89 (pull +0.54), σ_th 0.94 |
+| Bimodal, 20,000 events, 100 bins (100 seeds; before the R/σ bound) | 0.96 | R 0.89 (pull +0.54), σ_th 0.94 |
 
 The bimodal R's +0.5 SE bias is from coarse bins (R spanned 12 bins; the model is
 evaluated at bin centres, not integrated over bins); the test uses 200 bins. *Possible
@@ -119,6 +157,22 @@ fits may want `"counts"`, or a direct Poisson likelihood minimiser later.
 - **Bimodal:** A_c (1 − u²)₊^p + A_t exp(−(x − x₀)²/2σ²) + c, one centre
   (`bimodal_tf2_gaussian`, `bimodal_tf1_5_gaussian`). `areas` gives both parts, so N0/N
   is `result.derived(…)` with its SE (tested: recovers 0.4 within 2 SE in ≥ 9 of 12 seeds).
+- **Bimodal constraint** *(proposed, for Tony)*: R is fitted as the ratio r = R/σ_th in
+  [0.02, 2] (parameter `ratio`; R is reported as the extra `radius`). Unconstrained, the
+  review found the fit inventing a condensate on a purely thermal cloud (20,000 events,
+  20 seeds: always "ok", N0/N 0.013–0.148, R/σ 2–4: a TF wider than the Gaussian), and on
+  a pure condensate the thermal part became a narrow spike inside the TF. Why 2: after a
+  time of flight t both widths grow with t, σ_th = √(k_B T/m)·t and R = √(2μ/m)·t, so
+  R/σ_th = √(2μ/k_B T), which is 2 at μ = 2 k_B T; colder clouds than that have too few
+  thermal atoms to fit the Gaussian part anyway. The gates: `ratio` by both amplitudes,
+  `sigma` by the thermal one, `radius` by the condensate one.
+
+  After (200 bins, 20,000 events): pure thermal, 8 seeds: N0/N 0.001–0.16, 6 with
+  "Condensate amplitude consistent with 0", and the others at 1.7 and 2.6 SE (one with R/σ
+  at its bound of 2, noted). Pure condensate, 8 seeds: N0/N ≥ 0.9999, every one with
+  "Thermal amplitude consistent with 0", R within 1 % of the truth. The 40 % mixture: N0/N
+  0.39–0.41 ± 0.005. Tested: pure thermal N0/N < 0.2 and noted or under 2 SE in ≥ 6 of 8
+  seeds; pure condensate noted in every seed with N0/N > 0.95.
 
 **The TF exponent of a DLD histogram is 2 on every axis** *(for Tony, a correction to the
 review notes)*. The 3D TF density n ∝ (1 − Σ xᵢ²/Rᵢ²)₊ keeps its shape through the
@@ -148,8 +202,16 @@ built from the review's description of Core's `string_value_with_unc`
   `(416.12 ± 0.12) ms`, `416.12(12) ms`, `(0 ± 50) mm`. The ± form takes parentheses with a
   unit (ISO 80000-1; *proposed, for Tony* — drop them if they're too wide for titles).
   `si=False` for units that take no prefix (kg). Without a prefix, numbers outside
-  10⁻³…10⁵ get `×10ⁿ`: `(6.64650 ± 0.00020)×10⁻²⁷ kg`. A value that rounds to 1000 of a
-  prefix moves up one (`0.9999996 s` → `(1.00000 ± 0.00010) s`).
+  10⁻³…10⁵ get `×10ⁿ`: `(6.64650 ± 0.00020)×10⁻²⁷ kg`.
+- **Rollover:** when rounding carries the value or the error up a digit, the next prefix
+  or power is used: `0.9999996 s` → `(1.00000 ± 0.00010) s`, `0 ± 0.9996 s` →
+  `(0.0 ± 1.0) s`, `9.999e7 ± 1e6` → `(1.000 ± 0.010)×10⁸` (also with an error of 0), and
+  `99999.97` → `(1 ± 0)×10⁵`.
+- **Robust exponents:** the decimal exponent comes from Python's `e` formatting and the
+  scaling from `Decimal.scaleb`, so subnormals work (`5e-324` → `(4.94066 ± 0)×10⁻³²⁴`, no
+  ZeroDivisionError; `1e-320` → `×10⁻³²¹`). An error below 10⁻¹⁵ of the value is written to
+  2 significant digits on its own (`1 ± 1e−20`), not as 20 decimals.
+- `Estimate.as_record()` is strict JSON: a nan or infinite value or error is None.
 - **Reused helper:** the spin boxes (`UnitSpinBox`, `ParameterSpec(si=True)`) use
   pyqtgraph's `siScale`. `estimates.py` stays Qt-free, so it has its own `si_prefix`, and
   a test checks it gives pyqtgraph's prefix for 68 values over y…Y (µ is U+00B5 in both).
@@ -164,7 +226,10 @@ built from the review's description of Core's `string_value_with_unc`
 
 - `pooled_mean_and_std(means, stds, counts, ddof=1)` → (mean, SD, N), equal to NumPy on the
   joined data for ddof 0 and 1 (tested with groups of 0, 1, 2, 5, 40 and 300). Groups of
-  size ≤ ddof add only their mean's spread (their SD is nan).
+  size ≤ ddof add only their mean's spread (their SD is nan). Any other group's nan SD
+  makes the pooled SD nan: its spread is unknown, not 0 (the first version read it as 0,
+  pooled([1, 2], [1, nan], [5, 5]) gave 0.85). Counts must be whole numbers ≥ 0, else
+  `ValueError`.
 - `sewm(values, weights)` → `Estimate` of the weighted mean, Cochran (1977) as Gatz & Smith
   (1995): SE² = n/((n − 1)(Σw)²) · Σ w² (x − x̄_w)². I showed the review's expanded form
   equals Gatz & Smith's three-term bracket (it is Σ (wᵢxᵢ − w̄x̄_w − x̄_w(wᵢ − w̄))²); the test

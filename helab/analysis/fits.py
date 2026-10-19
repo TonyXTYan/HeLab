@@ -8,6 +8,8 @@ convergence, an undetermined parameter) are results with a note, never exception
 plot can say why it shows no fit.
 
 How a fit runs:
+- Input: raw counts per bin, or anything else with its errors given as ``sigma=`` (rates,
+  smoothed counts). The count weights assume whole-number counts and say so otherwise.
 - Weights: counts are Poisson. ``weights="poisson"`` (the default) first fits with each
   bin's error √max(n, 1), then refits with the model's own variance until the parameters
   settle: the Poisson maximum-likelihood fit (``_reweight`` says why: the first fit alone
@@ -19,12 +21,16 @@ How a fit runs:
   dimensionless shape), and mapped back with the covariance.
 - Starting points come from moments (each model's ``guesses``); a model may give several,
   and the converged one with the lowest χ² is kept.
+- Components: a parameter that only shapes one part of a model (a TF radius) names that
+  part's amplitude as its ``gate``. When the amplitude is consistent with 0 (within 2 SE)
+  the fit says so in a note and the parameter's SE is nan, instead of failing.
 
 Models are derived from the physics, not copied from the MATLAB code (which has bugs:
 roadmaps/dld-front-panel-port.md). Registered now: Gaussian + offset, the Thomas–Fermi
 projection (1 − u²)^p + offset, and bimodal TF^p + Gaussian with a shared centre. D1/D4 add
 the arrival-time ("Yavin") thermal profile and the Bose-enhanced g_{5/2} part with
-``register``. Pure NumPy/SciPy, no Qt.
+``register``. Pure NumPy/SciPy, no Qt. Fits run in the analysis worker thread, so nothing
+here changes warning filters per call (``warnings.catch_warnings`` isn't thread-safe).
 """
 from __future__ import annotations
 
@@ -32,14 +38,14 @@ import math
 import warnings
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Callable, Literal, Mapping, Sequence, cast
+from typing import Any, Callable, Literal, Mapping, Sequence, cast
 
 import numpy as np
 import numpy.typing as npt
 from scipy.optimize import OptimizeWarning, curve_fit
 from scipy.special import gammaln
 
-from helab.analysis.estimates import Estimate, propagate
+from helab.analysis.estimates import Estimate, finite_or_none, propagate
 
 Array = npt.NDArray[np.float64]
 Role = Literal["position", "width", "height", "shape"]
@@ -49,6 +55,14 @@ REWEIGHT_ROUNDS = 10
 SETTLED = 0.01  # reweighting stops once no parameter moves more than this many SEs
 VARIANCE_FLOOR = 0.1  # counts: the least variance a bin is given when the model is near zero there
 CHI2_NOTE = 3.0  # a reduced χ² above this gets a note: the model doesn't describe the data well
+ZERO_SE = 2.0  # an amplitude within this many SEs of 0 is "consistent with 0"
+# The bimodal model's R / σ_thermal is at most this; see ``bimodal_model``.
+MAX_RADIUS_RATIO = 2.0
+MIN_RADIUS_RATIO = 0.02
+
+# curve_fit warns when it can't estimate a covariance; the result's checks report that
+# instead. Set once here, for SciPy's optimizer only: per-call filters aren't thread-safe.
+warnings.filterwarnings("ignore", category=OptimizeWarning, module=r"scipy\.optimize")
 
 
 @dataclass(frozen=True)
@@ -56,23 +70,38 @@ class ModelParameter:
     name: str
     title: str
     role: Role  # how it scales with x and the counts: position and width with x, height with counts
+    # Amplitudes of the parts this parameter shapes: when any is consistent with 0, this one
+    # is undetermined by design (nan SE and a note, not a failure).
+    gates: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Extra:
+    """A number computed from the parameters and reported beside them, with its SE from the
+    covariance (a bimodal fit's R, fitted as a ratio)."""
+    name: str
+    title: str
+    function: Callable[[Array], float]
+    gates: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class FitModel:
     """A model y = function(x, *parameters), with how to start and bound a fit of it.
 
-    ``guesses`` and ``bounds`` get the cleaned (centres, counts) and work in data units.
-    ``areas`` gives each component's integral over x (counts × x units: divide by the bin
-    width for counts), without the offset; D4's condensate fraction comes from these."""
+    ``guesses`` gets the cleaned (centres, counts, errors) and ``bounds`` (centres, counts);
+    both work in data units. ``areas`` gives each component's integral over x (counts × x
+    units: divide by the bin width for counts), without the offset; D4's condensate fraction
+    comes from these. ``extras`` are reported in the result's estimates too."""
     key: str
     title: str
     parameters: tuple[ModelParameter, ...]
     function: Callable[..., Array]
-    guesses: Callable[[Array, Array], list[Array]]
+    guesses: Callable[[Array, Array, Array], list[Array]]
     bounds: Callable[[Array, Array], tuple[Array, Array]]
     areas: Callable[[Array], dict[str, float]] | None = None
-    min_bins: int = 2  # fewer bins with counts than this: "all counts in one bin"
+    min_bins: int = 3  # fewer bins with counts than this: too few to fit a width
+    extras: tuple[Extra, ...] = ()
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -97,7 +126,9 @@ def register(model: FitModel) -> FitModel:
 class FitResult:
     """A fit's outcome. ``failure`` is "" when it worked; otherwise it says why, and the
     estimates (nan when nothing was fitted) shouldn't be shown as results. ``notes`` are
-    warnings about a fit that worked (a parameter at its bound, a large reduced χ²)."""
+    warnings about a fit that worked (a parameter at its bound, a large reduced χ², a part
+    consistent with 0). ``estimates`` has the parameters, then the model's extras. Its
+    arrays are read-only."""
     model: FitModel = field(repr=False)
     failure: str
     estimates: Mapping[str, Estimate]
@@ -106,8 +137,13 @@ class FitResult:
     curve: Array = field(repr=False)  # the model at ``x`` (empty without a fit)
     chi2: float = math.nan
     dof: int = 0
-    points: int = 0  # bins fitted (after leaving out non-finite ones)
+    points: int = 0  # bins fitted (after leaving out unusable ones)
     notes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for array in (self.covariance, self.x, self.curve):
+            if array is not None:
+                array.flags.writeable = False
 
     @property
     def ok(self) -> bool:
@@ -119,6 +155,7 @@ class FitResult:
 
     @property
     def values(self) -> Array:
+        """The fitted parameters in ``model.names`` order (extras left out)."""
         return np.array([self.estimates[name].value for name in self.model.names])
 
     def __getitem__(self, name: str) -> Estimate:
@@ -137,6 +174,14 @@ class FitResult:
         covariance = self.covariance if self.covariance is not None else np.full((len(self.values),) * 2, math.nan)
         return propagate(function, self.values, covariance)
 
+    def as_record(self) -> dict[str, Any]:
+        """Strict JSON (nan and inf as None) for a result's record; the curve is left out
+        (``evaluate`` redraws it from the model and estimates)."""
+        return {"model": self.model.key, "failure": self.failure, "notes": list(self.notes),
+                "estimates": {name: estimate.as_record() for name, estimate in self.estimates.items()},
+                "chi2": finite_or_none(self.chi2), "dof": self.dof, "points": self.points,
+                "reduced_chi2": finite_or_none(self.reduced_chi2)}
+
 
 def bin_centres(edges: npt.ArrayLike) -> Array:
     edges = np.asarray(edges, dtype=np.float64)
@@ -147,8 +192,9 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
                   weights: Weights = "poisson", sigma: npt.ArrayLike | None = None,
                   max_evaluations: int = MAX_EVALUATIONS) -> FitResult:
     """Fit ``model`` (a ``MODELS`` key or a ``FitModel``) to a histogram's bin centres and
-    counts. ``sigma``, when given, is each bin's error (absolute) and replaces ``weights``.
-    Bins with a non-finite centre, count or error are left out (noted)."""
+    raw counts. ``sigma``, when given, is each bin's error (absolute) and replaces
+    ``weights``: pass it for anything that isn't raw counts. Bins with a non-finite centre,
+    count or error, or an error ≤ 0, are left out (noted)."""
     fit_model = MODELS[model] if isinstance(model, str) else model
     x = np.asarray(centres, dtype=np.float64).ravel()
     y = np.asarray(counts, dtype=np.float64).ravel()
@@ -161,15 +207,23 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
         errors = np.sqrt(np.maximum(np.where(np.isfinite(y), y, 0.0), 1.0))
     else:
         errors = np.ones_like(y)
-    finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(errors) & (errors > 0)
     notes: list[str] = []
+    finite = np.isfinite(x) & np.isfinite(y)
+    positive = np.isfinite(errors) & (errors > 0)
     if not finite.all():
-        notes.append(f"{int((~finite).sum()):,} bins with non-finite values left out")
-    x, y, errors = x[finite], y[finite], errors[finite]
+        notes.append(f"{int((~finite).sum()):,} bins with a non-finite centre or count left out")
+    if not positive[finite].all():
+        notes.append(f"{int((~positive[finite]).sum()):,} bins with an error that isn't finite and > 0 left out")
+    usable = finite & positive
+    x, y, errors = x[usable], y[usable], errors[usable]
+    if sigma is None and weights != "none" and not np.all(y == np.round(y)):
+        notes.append("the counts aren't whole numbers: Poisson weights assume raw counts "
+                     "(give errors as sigma for rates or smoothed counts)")
     count = len(fit_model.parameters)
 
     def failed(reason: str) -> FitResult:
-        nan = MappingProxyType({name: Estimate(math.nan, math.nan) for name in fit_model.names})
+        nan = MappingProxyType({name: Estimate(math.nan, math.nan)
+                                for name in (*fit_model.names, *(extra.name for extra in fit_model.extras))})
         return FitResult(fit_model, reason, nan, None, x, np.empty(0), points=len(x), notes=tuple(notes))
 
     if len(x) == 0:
@@ -178,8 +232,10 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
         return failed("no counts to fit")
     if len(x) <= count:
         return failed(f"too few bins to fit: {len(x)} for {count} parameters")
-    if np.count_nonzero(y != 0) < fit_model.min_bins:
-        return failed("all counts in one bin: no width to fit")
+    filled = int(np.count_nonzero(y != 0))
+    if filled < fit_model.min_bins:
+        return failed("all counts in one bin: no width to fit" if filled == 1 else
+                      f"counts in only {filled} bins: too few to fit this model (it needs {fit_model.min_bins})")
 
     order = np.argsort(x, kind="stable")
     x, y, errors = x[order], y[order], errors[order]
@@ -203,63 +259,95 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
     def solve(start_n: Array, errors_n: Array) -> tuple[float, Array, Array] | str:
         """(χ², parameters, covariance), normalised, or why curve_fit gave none."""
         start_n = np.clip(np.nan_to_num(start_n), lower_n + room, upper_n - room)  # or curve_fit refuses
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", OptimizeWarning)
-            warnings.simplefilter("ignore", RuntimeWarning)
+        with np.errstate(all="ignore"):  # overflow in a trial step's exp; np.errstate is thread-local
             try:
                 found, covariance = cast(tuple[Array, Array], curve_fit(
                     normalised_model, u, y_n, p0=start_n, sigma=errors_n, absolute_sigma=absolute,
                     bounds=(lower_n, upper_n), method="trf", max_nfev=max_evaluations))
             except RuntimeError:
-                return "the fit did not converge"
+                return f"the fit did not converge in {max_evaluations:,} evaluations"
             except ValueError as error:
                 return f"the fit could not run: {error}"
-        chi2 = float(np.sum(((y_n - normalised_model(u, *found)) / errors_n) ** 2))
-        return (chi2, np.asarray(found), np.asarray(covariance)) if math.isfinite(chi2) else "the fit did not converge"
+            chi2 = float(np.sum(((y_n - normalised_model(u, *found)) / errors_n) ** 2))
+        return (chi2, np.asarray(found), np.asarray(covariance)) if math.isfinite(chi2) else \
+            "the fit gave a non-finite χ²"
 
     best: tuple[float, Array, Array] | None = None
     reasons: list[str] = []
-    for start in fit_model.guesses(x, y):
+    for start in fit_model.guesses(x, y, errors):
         outcome = solve((np.asarray(start, dtype=np.float64) - shift) / scale, errors_n)
         if isinstance(outcome, str):
             reasons.append(outcome)
         elif best is None or outcome[0] < best[0]:
             best = outcome
     if best is None:
-        return failed(reasons[0] if reasons else "the fit did not converge")
+        return failed(reasons[0] if reasons else "the model gave no starting point")
     if sigma is None and weights == "poisson":
-        best = _reweight(best, solve, lambda found: normalised_model(u, *found) * height, height)
+        best, moving = _reweight(best, solve, lambda found: normalised_model(u, *found) * height, height)
+        if moving:
+            notes.append(f"the Poisson weights did not settle in {REWEIGHT_ROUNDS} rounds (the parameters "
+                         f"still moved up to {moving:.2g} SE per round)")
 
     chi2, found, covariance_n = best
     values = to_data(found)
     covariance = covariance_n * np.outer(scale, scale)
     dof = len(x) - count
-    failure = ""
+    finite_covariance = bool(np.all(np.isfinite(covariance)))
+    variances = np.diag(covariance) if finite_covariance else np.full(count, math.nan)
+    ses = {name: math.sqrt(variance) if variance > 0 else math.nan
+           for name, variance in zip(fit_model.names, variances)}
+    zero = _zero_parts(fit_model, values, ses, found, lower_n, room)
+    gated = {parameter.name for parameter in fit_model.parameters if set(parameter.gates) & zero}
+    if zero:
+        titles = {parameter.name: parameter.title for parameter in fit_model.parameters}
+        shaped = [titles[name] for name in fit_model.names if name in gated]
+        notes.append(f"{', '.join(titles[name] for name in fit_model.names if name in zero)} consistent with 0 "
+                     f"(within {ZERO_SE:g} SE)" + (f": {', '.join(shaped)} not determined" if shaped else ""))
     # SciPy's pseudo-inverse gives a parameter the data don't determine a variance of exactly
-    # 0, or inf: either way it has no usable SE.
-    usable = bool(np.all(np.isfinite(covariance)))
-    undetermined = [parameter.title for parameter, variance in zip(fit_model.parameters, np.diag(covariance))
-                    if not (math.isfinite(variance) and variance > 0)]
-    if undetermined or not usable:
+    # 0, or inf: either way it has no usable SE. A gated one is expected, and was noted.
+    undetermined = [parameter.title for parameter in fit_model.parameters
+                    if parameter.name not in gated and math.isnan(ses[parameter.name])]
+    failure = ""
+    if undetermined or not finite_covariance:
         failure = (f"not determined by the data: {', '.join(undetermined) or 'the covariance is not finite'} "
                    "(no usable SE)")
     width = np.where(np.isfinite(upper_n - lower_n), upper_n - lower_n, np.maximum(np.abs(found), 1.0))
-    at_bound = [parameter.title for parameter, value, low, high, room in
+    at_bound = [parameter.title for parameter, value, low, high, size in
                 zip(fit_model.parameters, found, lower_n, upper_n, width)
-                if value - low <= 1e-6 * room or high - value <= 1e-6 * room]
+                if parameter.name not in zero and parameter.name not in gated
+                and (value - low <= 1e-6 * size or high - value <= 1e-6 * size)]
     if at_bound:
         notes.append(f"at its bound: {', '.join(at_bound)} (its SE is not reliable)")
     if absolute and dof > 0 and chi2 / dof > CHI2_NOTE:
         notes.append(f"reduced χ² {chi2 / dof:.3g}: the model doesn't describe the data well")
-    variances = np.diag(covariance) if usable else np.full(count, math.nan)
-    estimates = MappingProxyType({name: Estimate(float(value), math.sqrt(variance) if variance > 0 else math.nan)
-                                  for name, value, variance in zip(fit_model.names, values, variances)})
-    return FitResult(fit_model, failure, estimates, covariance, x, fit_model.function(x, *values), chi2, dof,
-                     len(x), tuple(notes))
+    estimates = {name: Estimate(float(value), math.nan if name in gated else ses[name])
+                 for name, value in zip(fit_model.names, values)}
+    for extra in fit_model.extras:
+        estimate = propagate(extra.function, values, covariance if finite_covariance else
+                             np.full((count, count), math.nan))
+        estimates[extra.name] = Estimate(estimate.value, math.nan if set(extra.gates) & zero else estimate.se)
+    return FitResult(fit_model, failure, MappingProxyType(estimates), covariance, x,
+                     fit_model.function(x, *values), chi2, dof, len(x), tuple(notes))
+
+
+def _zero_parts(model: FitModel, values: Array, ses: Mapping[str, float], found: Array, lower_n: Array,
+                room: Array) -> set[str]:
+    """The gate amplitudes consistent with 0: within ``ZERO_SE`` SEs of it, or at their lower
+    bound of 0 without a usable SE."""
+    gates = {gate for parameter in model.parameters for gate in parameter.gates}
+    zero: set[str] = set()
+    for index, name in enumerate(model.names):
+        if name not in gates:
+            continue
+        se = ses[name]
+        at_zero = found[index] - lower_n[index] <= 10 * room[index]
+        if (math.isfinite(se) and values[index] <= ZERO_SE * se) or (not math.isfinite(se) and at_zero):
+            zero.add(name)
+    return zero
 
 
 def _reweight(best: tuple[float, Array, Array], solve: Callable[[Array, Array], tuple[float, Array, Array] | str],
-              curve: Callable[[Array], Array], height: float) -> tuple[float, Array, Array]:
+              curve: Callable[[Array], Array], height: float) -> tuple[tuple[float, Array, Array], float]:
     """Refit with each bin's variance from the model instead of its count, until the
     parameters settle. Errors of √max(n, 1) pull a fit towards the bins with fewer counts
     (Neyman's χ²: a Gaussian's σ comes out about one SE low at 500 events); with the model's
@@ -268,20 +356,28 @@ def _reweight(best: tuple[float, Array, Array], solve: Callable[[Array, Array], 
     inverse Fisher information. Bins where the model is below ``VARIANCE_FLOOR`` use that.
     The variances come from the mean of the last two fits' parameters: the plain iteration
     overshoots and oscillates (mostly in the offset, through the near-empty tails), and the
-    mean damps it to a few rounds."""
+    mean damps it to a few rounds.
+
+    Returns the last fit and 0, or, when ``REWEIGHT_ROUNDS`` rounds don't settle (a model
+    that doesn't describe the data can keep moving), the fit whose round moved least and how
+    many SEs it moved, for a note."""
     previous = best[1]
+    calmest: tuple[float, tuple[float, Array, Array]] | None = None
     for _ in range(REWEIGHT_ROUNDS):
         _, found, _ = best
         errors_n = np.sqrt(np.maximum(curve((found + previous) / 2), VARIANCE_FLOOR)) / height
         outcome = solve(found, errors_n)
         if isinstance(outcome, str):
-            return best
+            return best, 0.0
         spread = np.sqrt(np.abs(np.diag(outcome[2]))) if np.all(np.isfinite(outcome[2])) else np.abs(found) + 1
-        settled = bool(np.all(np.abs(outcome[1] - found) <= SETTLED * np.maximum(spread, 1e-12)))
+        moved = float(np.max(np.abs(outcome[1] - found) / np.maximum(spread, 1e-12)))
         previous, best = found, outcome
-        if settled:
-            break
-    return best
+        if moved <= SETTLED:
+            return best, 0.0
+        if calmest is None or moved < calmest[0]:
+            calmest = (moved, outcome)
+    assert calmest is not None
+    return calmest[1], calmest[0]
 
 
 # Models
@@ -320,7 +416,7 @@ def _position_bounds(x: Array) -> tuple[float, float]:
     return low - span, high + span
 
 
-def _gaussian_guesses(x: Array, y: Array) -> list[Array]:
+def _gaussian_guesses(x: Array, y: Array, errors: Array) -> list[Array]:
     baseline, peak, mean, spread = _moments(x, y)
     return [np.array([peak, mean, spread, baseline])]
 
@@ -337,7 +433,7 @@ register(FitModel(
     (ModelParameter("amplitude", "Amplitude", "height"), ModelParameter("centre", "Centre", "position"),
      ModelParameter("sigma", "σ", "width"), ModelParameter("offset", "Offset", "height")),
     gaussian, _gaussian_guesses, _gaussian_bounds,
-    areas=lambda p: {"gaussian": gaussian_area(float(p[0]), float(p[2]))}, min_bins=2))
+    areas=lambda p: {"gaussian": gaussian_area(float(p[0]), float(p[2]))}))
 
 
 # Thomas–Fermi. A condensate's 3D density in the Thomas–Fermi limit is an inverted
@@ -370,7 +466,7 @@ def thomas_fermi_model(power: float) -> FitModel:
     def function(x: Array, amplitude: float, centre: float, radius: float, offset: float) -> Array:
         return thomas_fermi(x, amplitude, centre, radius, offset, power)
 
-    def guesses(x: Array, y: Array) -> list[Array]:
+    def guesses(x: Array, y: Array, errors: Array) -> list[Array]:
         baseline, peak, mean, spread = _moments(x, y)
         # The variance of (1 − u²)^p is R²/(2p + 3).
         return [np.array([peak, mean, spread * math.sqrt(2 * power + 3), baseline])]
@@ -386,45 +482,62 @@ def thomas_fermi_model(power: float) -> FitModel:
         (ModelParameter("amplitude", "Amplitude", "height"), ModelParameter("centre", "Centre", "position"),
          ModelParameter("radius", "R", "width"), ModelParameter("offset", "Offset", "height")),
         function, guesses, bounds,
-        areas=lambda p: {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2]), power)}, min_bins=2)
+        areas=lambda p: {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2]), power)})
+
+
+# The bimodal model fits R as a ratio to the thermal width, r = R/σ_th ≤ MAX_RADIUS_RATIO.
+# Unconstrained, a TF part and a Gaussian sum to a shape close to either alone: on a purely
+# thermal cloud the fit invented a condensate wider than the Gaussian (R/σ 2–4, N0/N up to
+# 0.15), and on a pure condensate the "thermal" part became a narrow spike inside the TF.
+# The bound follows the physics: after a time of flight t both widths grow with t,
+# σ_th = √(k_B T/m)·t and R = √(2μ/m)·t (a TF cloud expands at its sound-speed scale), so
+# R/σ_th = √(2μ/k_B T): 2 at μ = 2 k_B T. Colder clouds than that have so few thermal atoms
+# that the Gaussian part isn't measurable anyway (and its amplitude then reads consistent
+# with 0). Each part's shape parameters are gated by its amplitude.
 
 
 def bimodal_model(power: float) -> FitModel:
-    """A condensate on a thermal cloud, one centre: A_c (1 − u²)₊^p + A_t exp(−(x − x₀)²/2σ²)
-    + offset. Started from a Gaussian fit, from three splits of it between the parts."""
-    def function(x: Array, condensate: float, centre: float, radius: float, thermal: float, sigma: float,
+    """A condensate on a thermal cloud, one centre:
+    A_c (1 − u²)₊^p + A_t exp(−(x − x₀)²/2σ²) + offset, u = (x − x₀)/R, R = r σ with
+    r = R/σ in [MIN_RADIUS_RATIO, MAX_RADIUS_RATIO]. R is reported as an extra. Started from
+    a Gaussian fit (count weights, or the caller's errors), split three ways."""
+    def function(x: Array, condensate: float, centre: float, ratio: float, thermal: float, sigma: float,
                  offset: float) -> Array:
-        return thomas_fermi(x, condensate, centre, radius, 0.0, power) + gaussian(x, thermal, centre, sigma, offset)
+        return (thomas_fermi(x, condensate, centre, ratio * sigma, 0.0, power)
+                + gaussian(x, thermal, centre, sigma, offset))
 
-    def guesses(x: Array, y: Array) -> list[Array]:
-        single = fit_histogram(x, y, "gaussian")
+    def guesses(x: Array, y: Array, errors: Array) -> list[Array]:
+        single = fit_histogram(x, y, "gaussian", sigma=errors)
         if single.ok:
             peak, mean, spread, baseline = (single[name].value for name in ("amplitude", "centre", "sigma", "offset"))
         else:
             baseline, peak, mean, spread = _moments(x, y)
-        # (condensate share of the peak, R / σ_gauss, σ_thermal / σ_gauss)
-        splits = ((0.8, 2.0, 2.0), (0.5, 1.5, 1.5), (0.3, 1.0, 1.2))
-        return [np.array([share * peak, mean, r * spread, (1 - share) * peak, s * spread, baseline])
-                for share, r, s in splits]
+        # (condensate share of the peak, R/σ_thermal, σ_thermal / σ_gauss)
+        splits = ((0.7, 1.5, 1.4), (0.5, 1.0, 1.3), (0.3, 0.6, 1.1))
+        return [np.array([share * peak, mean, ratio, (1 - share) * peak, s * spread, baseline])
+                for share, ratio, s in splits]
 
     def bounds(x: Array, y: Array) -> tuple[Array, Array]:
         low, high = _position_bounds(x)
         _, _, span, step = _extent(x)
         top = float(np.max(np.abs(y)))
-        return (np.array([0.0, low, step / 10, 0.0, step / 100, -top]),
-                np.array([np.inf, high, 10 * span, np.inf, 10 * span, top]))
+        return (np.array([0.0, low, MIN_RADIUS_RATIO, 0.0, step / 10, -top]),
+                np.array([np.inf, high, MAX_RADIUS_RATIO, np.inf, 10 * span, top]))
 
     def areas(p: Array) -> dict[str, float]:
-        return {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2]), power),
+        return {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2] * p[4]), power),
                 "gaussian": gaussian_area(float(p[3]), float(p[4]))}
 
     return FitModel(
         f"bimodal_tf{_power_text(power)}_gaussian", f"Bimodal: Thomas–Fermi (1 − u²)^{power:g} + Gaussian",
         (ModelParameter("condensate", "Condensate amplitude", "height"),
-         ModelParameter("centre", "Centre", "position"), ModelParameter("radius", "R", "width"),
-         ModelParameter("thermal", "Thermal amplitude", "height"), ModelParameter("sigma", "σ thermal", "width"),
+         ModelParameter("centre", "Centre", "position"),
+         ModelParameter("ratio", "R / σ thermal", "shape", gates=("condensate", "thermal")),
+         ModelParameter("thermal", "Thermal amplitude", "height"),
+         ModelParameter("sigma", "σ thermal", "width", gates=("thermal",)),
          ModelParameter("offset", "Offset", "height")),
-        function, guesses, bounds, areas=areas, min_bins=3)
+        function, guesses, bounds, areas=areas, min_bins=4,
+        extras=(Extra("radius", "R", lambda p: float(p[2] * p[4]), gates=("condensate",)),))
 
 
 for _power in (2.0, 1.5):

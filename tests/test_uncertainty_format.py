@@ -38,6 +38,16 @@ from helab.analysis.estimates import (Estimate, Style, format_uncertainty, poole
     (1.23456e8, 2.3e5, "paren", "1.2346(23)×10⁸"),
     (3.2e-7, 1.1e-8, "pm", "(3.20 ± 0.11)×10⁻⁷"),
     (2.5e-3, 1e-4, "pm", "0.00250 ± 0.00010"),  # 10⁻³ is still written plainly
+    # Rounding carries a digit: the next power, for the value or the error.
+    (9.999e7, 1e6, "pm", "(1.000 ± 0.010)×10⁸"),
+    (9.9999999e7, 0.0, "pm", "(1 ± 0)×10⁸"),
+    (99999.97, 0.0, "pm", "(1 ± 0)×10⁵"),
+    (99999.7, 0.0, "pm", "99999.7 ± 0"),
+    (9.6e-5, 9.96e-5, "pm", "(1.0 ± 1.0)×10⁻⁴"),
+    # Subnormals: no ZeroDivisionError, no off-by-one exponent.
+    (5e-324, 0.0, "pm", "(4.94066 ± 0)×10⁻³²⁴"),
+    (1e-320, 0.0, "pm", "(9.99989 ± 0)×10⁻³²¹"),
+    (1.0, 1e-20, "pm", "1 ± 1e−20"),  # an error below the value's float precision
 ])
 def test_formatting(value: float, se: float, style: Style, expected: str) -> None:
     assert format_uncertainty(value, se, style) == expected
@@ -49,6 +59,7 @@ def test_formatting(value: float, se: float, style: Style, expected: str) -> Non
     (9.89e-5, 1.1e-6, "paren", "s", True, "98.9(11) µs"),
     (0.99996, 0.00001, "pm", "s", True, "(999.960 ± 0.010) ms"),
     (0.9999996, 0.0001, "pm", "s", True, "(1.00000 ± 0.00010) s"),  # 1000.00 ms: the next prefix
+    (0.0, 0.9996, "pm", "s", True, "(0.0 ± 1.0) s"),  # the error's 1000 ms too
     (0.0, 2e-6, "pm", "m", True, "(0.0 ± 2.0) µm"),  # the prefix from the error when the value is 0
     (-2.5e-3, 1e-4, "pm", "m", True, "(−2.50 ± 0.10) mm"),
     (4e-4, 0.05, "pm", "m", True, "(0 ± 50) mm"),  # the prefix from the larger: the error
@@ -72,6 +83,7 @@ def test_digits_and_estimates() -> None:
     assert Estimate(0.41612, 0.000123).text("paren", "s") == "416.12(12) ms"
     record = Estimate(1.5, 0.25).as_record()
     assert record == {"value": 1.5, "se": 0.25}
+    assert Estimate(math.inf, math.nan).as_record() == {"value": None, "se": None}  # strict JSON
 
 
 @pytest.mark.parametrize("value", [0.0, 1.0, -1.0, 999.0, 1000.0, -2.5e-3, math.nan]
@@ -106,6 +118,14 @@ def test_pooled_edge_cases() -> None:
     assert math.isnan(mean) and math.isnan(std) and count == 0
     mean, std, count = pooled_mean_and_std([2.0], [math.nan], [1])
     assert (mean, count) == (2.0, 1) and math.isnan(std)
+    # An unknown spread is not 0.
+    mean, std, count = pooled_mean_and_std([1.0, 2.0], [1.0, math.nan], [5, 5])
+    assert (mean, count) == (1.5, 10) and math.isnan(std)
+    # A single-event group's nan SD is fine with ddof 1: it adds only its mean's spread.
+    assert math.isfinite(pooled_mean_and_std([1.0, 2.0], [1.0, math.nan], [5, 1])[1])
+    for counts in ([2.5, 3], [-1, 3]):
+        with pytest.raises(ValueError):
+            pooled_mean_and_std([1.0, 2.0], [1.0, 1.0], counts)
     with pytest.raises(ValueError):
         pooled_mean_and_std([1.0], [1.0, 2.0], [1])
 

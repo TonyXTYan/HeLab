@@ -17,7 +17,11 @@ def test_table_values_and_metadata() -> None:
     assert TABLE["hbar"].value == codata.hbar
     assert TABLE["k_B"].value == codata.k
     assert TABLE["mass"].value == pytest.approx(6.6465e-27, rel=1e-4)
-    assert TABLE["mass"].value == 4.002602 * codata.atomic_mass
+    assert TABLE["mass"].value == 4.00260325413 * codata.atomic_mass  # He-4, not He's atomic weight 4.002602
+    # The atom is the alpha particle plus two electrons (less 79 eV of binding).
+    electrons = 2 * codata.m_e / codata.physical_constants["alpha particle mass"][0]
+    assert TABLE["mass"].value / codata.physical_constants["alpha particle mass"][0] == pytest.approx(
+        1 + electrons, abs=1e-7)
     assert TABLE["g"].value == 9.79602
     assert TABLE["scattering_length"].value == 7.512e-9
     assert TABLE["fall_distance"].value == 0.848
@@ -84,6 +88,32 @@ def test_record_is_json_and_round_trips() -> None:
     assert resolved.value("g") == 9.8
     with pytest.raises(KeyError):
         resolved.value("origins")
+    newer = {"values": {**record["values"], "later": 1.0}, "origins": {**record["origins"], "later": "lab"}}
+    assert ResolvedConstants.from_record(newer) == resolved  # a newer version's keys are ignored
+    for broken in ({"values": record["values"], "origins": {**record["origins"], "g": "guess"}},
+                   {"values": {**record["values"], "g": None}, "origins": record["origins"]},
+                   {"values": {key: value for key, value in record["values"].items() if key != "g"},
+                    "origins": record["origins"]}):
+        with pytest.raises((ValueError, TypeError)):
+            ResolvedConstants.from_record(broken)
+
+
+def test_resolved_constants_are_hashable() -> None:
+    assert hash(resolve(lab={"g": 9.8})) == hash(resolve(lab={"g": 9.8}))
+    assert len({DEFAULTS, resolve(), resolve(lab={"g": 9.8})}) == 2
+
+
+def test_a_hand_set_fall_time_that_disagrees_is_noted() -> None:
+    assert DEFAULTS.notes == () and DEFAULTS.as_record()["notes"] == []
+    # A lab-wide 0.417 s is kept beside the default 0.848 m (√(2h/g) = 0.4161 s): noted.
+    kept = resolve(lab={"fall_time": 0.417})
+    assert kept.fall_time == 0.417
+    assert len(kept.notes) == 1 and kept.notes[0].startswith("fall time and distance disagree")
+    assert kept.as_record()["notes"] == list(kept.notes)
+    assert resolve(lab={"fall_time": 0.41612}).notes == ()  # within the tolerance
+    # A plot's g discards the folder's fall time (the rule): derived again, nothing to note.
+    replaced = resolve(folder={"fall_time": 0.417}, plot={"g": 9.8})
+    assert replaced.origins["fall_time"] == "derived" and replaced.notes == ()
 
 
 def test_arrival_width_gives_the_velocity_spread() -> None:
@@ -92,7 +122,7 @@ def test_arrival_width_gives_the_velocity_spread() -> None:
     v = np.random.default_rng(1).normal(0, sigma_v, 200_000)
     t = (v + np.sqrt(v ** 2 + 2 * g * h)) / g
     assert float(np.mean(t)) == pytest.approx(DEFAULTS.fall_time, abs=1e-5)
-    assert physics.sigma_v_from_arrival_width(float(np.std(t)), g) == pytest.approx(sigma_v, rel=0.01)
+    assert physics.sigma_v_from_arrival_width(float(np.std(t)), DEFAULTS) == pytest.approx(sigma_v, rel=0.01)
     # Faster upward atoms arrive later.
     assert np.corrcoef(v, t)[0, 1] > 0.99
 
@@ -102,9 +132,11 @@ def test_transverse_width_and_temperature() -> None:
     sigma_v = math.sqrt(codata.k * temperature / DEFAULTS.mass)
     assert sigma_v == pytest.approx(0.0456, rel=1e-3)  # He* at 1 µK
     sigma_x = sigma_v * DEFAULTS.fall_time
-    assert physics.sigma_v_from_transverse_width(sigma_x) == pytest.approx(sigma_v)
-    assert math.isnan(physics.sigma_v_from_transverse_width(1e-3, 0.0))
-    assert physics.thermal_temperature(sigma_v) == pytest.approx(temperature)
-    estimate = physics.temperature_estimate(Estimate(sigma_v, sigma_v * 0.01))
+    assert physics.sigma_v_from_transverse_width(sigma_x, DEFAULTS) == pytest.approx(sigma_v)
+    assert physics.thermal_temperature(sigma_v, DEFAULTS) == pytest.approx(temperature)
+    heavier = resolve(lab={"mass": 2 * DEFAULTS.mass}, folder={"fall_time": 0.5})
+    assert physics.thermal_temperature(sigma_v, heavier) == pytest.approx(2 * temperature)
+    assert physics.sigma_v_from_transverse_width(sigma_x, heavier) == pytest.approx(sigma_x / 0.5)
+    estimate = physics.temperature_estimate(Estimate(sigma_v, sigma_v * 0.01), DEFAULTS)
     assert estimate.value == pytest.approx(temperature)
     assert estimate.se == pytest.approx(0.02 * temperature)

@@ -12,14 +12,16 @@ defaults to trust). Values are layered (F0b builds the settings that fill the la
 
 ``resolve`` merges them when a run starts (compute does no I/O) into a frozen
 ``ResolvedConstants`` that the run records in its result (``as_record``, JSON values only).
+The conversions take the run's ``ResolvedConstants``, never the defaults, so every number a
+result shows comes from constants it recorded.
 No Qt and no I/O, so it runs in the analysis worker and in tests. SI units throughout.
 """
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from types import MappingProxyType
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, cast, get_args
 
 import scipy.constants as codata
 
@@ -29,9 +31,14 @@ Level = Literal["lab", "folder"]
 # Where a resolved value came from: the table's default, one of the layers, or derived
 # from other values (the fall time from the distance and g).
 Origin = Literal["default", "lab", "folder", "plot", "derived"]
+ORIGINS: tuple[str, ...] = get_args(Origin)
 LAYERS: tuple[Origin, ...] = ("lab", "folder", "plot")
 
-HE4_MASS_U = 4.002602  # He-4 in unified atomic mass units; the metastable state's ~20 eV/c² is negligible
+# The He-4 atomic mass (AME2020, 4.002 603 254 13(6) u); helium's standard atomic weight,
+# 4.002602, is a different number. The metastable state's ~20 eV/c² is negligible (2e-8).
+HE4_MASS_U = 4.00260325413
+# A fall time set by hand that differs from √(2h/g) by more than this (relative) is noted.
+FALL_TIME_TOLERANCE = 1e-3
 
 
 @dataclass(frozen=True)
@@ -59,7 +66,8 @@ CONSTANTS: tuple[Constant, ...] = (
     Constant("u", "Atomic mass constant u", "kg", codata.atomic_mass, "CODATA (scipy.constants)", "lab",
              codata=True),
     Constant("mass", "He* mass", "kg", HE4_MASS_U * codata.atomic_mass,
-             f"He-4, {HE4_MASS_U} u (CODATA u). The legacy front panel had 6.6464e-27 kg", "lab"),
+             f"He-4 atomic mass, {HE4_MASS_U} u (AME2020) × CODATA u. The legacy front panel had 6.6464e-27 kg",
+             "lab"),
     Constant("g", "Gravitational acceleration g", "m/s²", 9.79602,
              "Canberra, Core hebec_constants (9.7960207 − 78e-8, GGMplus at the ANU)", "lab"),
     Constant("scattering_length", "He* scattering length a", "m", 7.512e-9,
@@ -93,7 +101,8 @@ def fall_time(distance: float, g: float) -> float:
 
 @dataclass(frozen=True)
 class ResolvedConstants:
-    """The values a run used, one attribute per ``TABLE`` key, and where each came from."""
+    """The values a run used, one attribute per ``TABLE`` key, and where each came from.
+    Hashable by its values (``origins`` is compared, not hashed)."""
     hbar: float
     k_B: float
     u: float
@@ -106,7 +115,7 @@ class ResolvedConstants:
     trap_axial: float
     dld_trigger: float
     dld_acquisition: float
-    origins: Mapping[str, Origin]
+    origins: Mapping[str, Origin] = field(hash=False)
 
     def value(self, key: str) -> float:
         if key not in TABLE:
@@ -122,16 +131,39 @@ class ResolvedConstants:
             return self.origins[key] == "default" and TABLE[key].unconfirmed
         return tuple(key for key in TABLE if borrowed(key))
 
+    @property
+    def notes(self) -> tuple[str, ...]:
+        """Disagreements to show beside the values: a fall time set by hand more than
+        ``FALL_TIME_TOLERANCE`` from √(2h/g) of the distance and g in use."""
+        expected = fall_time(self.fall_distance, self.g)
+        if self.origins["fall_time"] == "derived" or not math.isfinite(expected):
+            return ()
+        if abs(self.fall_time - expected) <= FALL_TIME_TOLERANCE * expected:
+            return ()
+        return (f"fall time and distance disagree: t_f {self.fall_time:.6g} s ({self.origins['fall_time']}), "
+                f"but √(2h/g) is {expected:.6g} s for h {self.fall_distance:.6g} m "
+                f"({self.origins['fall_distance']}) and g {self.g:.6g} m/s² ({self.origins['g']})",)
+
     def as_record(self) -> dict[str, Any]:
-        """JSON values only, for a result's record: ``{"values": …, "origins": …, "unconfirmed": […]}``."""
+        """JSON values only, for a result's record:
+        ``{"values": …, "origins": …, "unconfirmed": […], "notes": […]}``."""
         return {"values": {key: self.value(key) for key in TABLE}, "origins": dict(self.origins),
-                "unconfirmed": list(self.unconfirmed)}
+                "unconfirmed": list(self.unconfirmed), "notes": list(self.notes)}
 
     @classmethod
     def from_record(cls, record: Mapping[str, Any]) -> ResolvedConstants:
+        """Read back ``as_record``. Every ``TABLE`` key needs a finite value and a known
+        origin (else ``ValueError``); keys the table doesn't have (a newer version's) are
+        ignored, and ``unconfirmed`` and ``notes`` are recomputed, not read."""
         values, origins = record["values"], record["origins"]
+        missing = [key for key in TABLE if key not in values or key not in origins]
+        if missing:
+            raise ValueError(f"constants record lacks {', '.join(missing)}")
+        bad = [key for key in TABLE if origins[key] not in ORIGINS or not math.isfinite(float(values[key]))]
+        if bad:
+            raise ValueError(f"constants record has bad values or origins for {', '.join(bad)}")
         return cls(**{key: float(values[key]) for key in TABLE},
-                   origins=MappingProxyType({key: origins[key] for key in TABLE}))
+                   origins=MappingProxyType({key: cast(Origin, origins[key]) for key in TABLE}))
 
 
 def resolve(lab: Mapping[str, float] | None = None, folder: Mapping[str, float] | None = None,
@@ -142,7 +174,8 @@ def resolve(lab: Mapping[str, float] | None = None, folder: Mapping[str, float] 
 
     The fall time is derived, √(2h/g), from the effective distance and g, unless a layer at
     least as specific as the one that set the distance (or g) sets it by hand: a folder's new
-    fall distance isn't silently paired with a lab-wide fall time."""
+    fall distance isn't silently paired with a lab-wide fall time. A fall time kept by hand
+    that disagrees with √(2h/g) is noted (``ResolvedConstants.notes``)."""
     chosen: dict[str, tuple[float, Origin]] = {key: (constant.value, "default") for key, constant in TABLE.items()}
     rank = {"default": 0, **{layer: index + 1 for index, layer in enumerate(LAYERS)}}
     for layer, given in zip(LAYERS, (lab, folder, plot)):
@@ -156,12 +189,12 @@ def resolve(lab: Mapping[str, float] | None = None, folder: Mapping[str, float] 
     _, time_origin = chosen["fall_time"]
     if time_origin == "default" or rank[time_origin] < max(rank[chosen[key][1]] for key in ("fall_distance", "g")):
         chosen["fall_time"] = (fall_time(chosen["fall_distance"][0], chosen["g"][0]), "derived")
-    names = {field.name for field in fields(ResolvedConstants)} - {"origins"}
-    assert names == set(TABLE), "ResolvedConstants and TABLE must list the same keys"
     return ResolvedConstants(**{key: value for key, (value, _) in chosen.items()},
                              origins=MappingProxyType({key: origin for key, (_, origin) in chosen.items()}))
 
 
+assert {item.name for item in fields(ResolvedConstants)} - {"origins"} == set(TABLE), \
+    "ResolvedConstants and TABLE must list the same keys"
 DEFAULTS = resolve()
 
 
@@ -173,25 +206,26 @@ DEFAULTS = resolve()
 #   (An initial height spread σ_z0 would add σ_z0 / (g t_f); neglected.)
 # - Along X/Y: x = v_x t_f, so σ_v = σ_x / t_f.
 # - Each axis's Maxwell–Boltzmann velocity spread is σ_v² = k_B T / m.
-# The defaults below are the table's; a run passes its own ResolvedConstants' values.
+# Each takes the run's constants, so the numbers match what its result records.
 
 
-def sigma_v_from_arrival_width(sigma_t: float, g: float = DEFAULTS.g) -> float:
+def sigma_v_from_arrival_width(sigma_t: float, constants: ResolvedConstants) -> float:
     """σ_v = g σ_t, from the width of the arrival-time (T) profile."""
-    return g * sigma_t
+    return constants.g * sigma_t
 
 
-def sigma_v_from_transverse_width(sigma_x: float, t_fall: float = DEFAULTS.fall_time) -> float:
+def sigma_v_from_transverse_width(sigma_x: float, constants: ResolvedConstants) -> float:
     """σ_v = σ_x / t_f, from the width of an X or Y profile after the fall."""
-    return sigma_x / t_fall if t_fall > 0 else math.nan
+    return sigma_x / constants.fall_time if constants.fall_time > 0 else math.nan
 
 
-def thermal_temperature(sigma_v: float, mass: float = DEFAULTS.mass, k_B: float = DEFAULTS.k_B) -> float:
+def thermal_temperature(sigma_v: float, constants: ResolvedConstants) -> float:
     """T = m σ_v² / k_B, in kelvin: the temperature whose velocity spread along one axis is σ_v."""
-    return mass * sigma_v ** 2 / k_B
+    return constants.mass * sigma_v ** 2 / constants.k_B
 
 
-def temperature_estimate(sigma_v: Estimate, mass: float = DEFAULTS.mass, k_B: float = DEFAULTS.k_B) -> Estimate:
+def temperature_estimate(sigma_v: Estimate, constants: ResolvedConstants) -> Estimate:
     """``thermal_temperature`` with its standard error: T ∝ σ_v², so SE(T) = 2 T · SE(σ_v)/σ_v
     (first order), i.e. 2 m |σ_v| SE(σ_v) / k_B."""
-    return Estimate(thermal_temperature(sigma_v.value, mass, k_B), 2 * mass * abs(sigma_v.value) * sigma_v.se / k_B)
+    return Estimate(thermal_temperature(sigma_v.value, constants),
+                    2 * constants.mass * abs(sigma_v.value) * sigma_v.se / constants.k_B)

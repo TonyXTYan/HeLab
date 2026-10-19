@@ -1,7 +1,9 @@
 """Histogram fits on synthetic events with known parameters, and the failures they report."""
 from __future__ import annotations
 
+import json
 import math
+import warnings
 from typing import Callable
 
 import numpy as np
@@ -10,6 +12,7 @@ import pytest
 from scipy.integrate import quad
 
 from helab.analysis import fits
+from helab.analysis.estimates import Estimate
 from helab.analysis.fits import MODELS, FitModel, FitResult, ModelParameter, bin_centres, fit_histogram
 
 Array = npt.NDArray[np.float64]
@@ -117,29 +120,67 @@ def test_thomas_fermi_three_halves() -> None:
     assert abs(result["centre"].value - 0.3) < 3 * result["centre"].se
 
 
-def test_bimodal_recovers_the_condensate_fraction() -> None:
-    model = MODELS["bimodal_tf2_gaussian"]
-    assert model.areas is not None
-    areas = model.areas
+def condensate_fraction(result: FitResult) -> Estimate:
+    areas = result.model.areas
+    assert areas is not None
 
     def fraction(values: Array) -> float:
         parts = areas(values)
         return parts["thomas_fermi"] / (parts["thomas_fermi"] + parts["gaussian"])
+    return result.derived(fraction)
 
+
+def fit_bimodal(events: Array) -> FitResult:
+    return fit_events(events, 200, (-1e-2, 1e-2), "bimodal_tf2_gaussian")
+
+
+def test_bimodal_recovers_the_condensate_fraction() -> None:
     hits = 0
     seeds = 12
     for seed in range(seeds):
         rng = np.random.default_rng(seed)
-        events = np.concatenate([thomas_fermi_events(rng, 8000, 1e-3), rng.normal(0, 2.5e-3, 12_000)]) + 5e-4
-        result = fit_events(events, 200, (-1e-2, 1e-2), "bimodal_tf2_gaussian")
+        result = fit_bimodal(np.concatenate([thomas_fermi_events(rng, 8000, 1e-3),
+                                             rng.normal(0, 2.5e-3, 12_000)]) + 5e-4)
         assert result.ok, result.failure
-        shares = result.derived(fraction)
+        assert not any("consistent with 0" in note for note in result.notes)
+        shares = condensate_fraction(result)
         assert 0 < shares.se < 0.05
         assert abs(result["centre"].value - 5e-4) < 4 * result["centre"].se
         assert abs(result["radius"].value - 1e-3) < 4 * result["radius"].se
+        assert result["radius"].value == pytest.approx(result["ratio"].value * result["sigma"].value)
         assert abs(result["sigma"].value - 2.5e-3) < 4 * result["sigma"].se
         hits += abs(shares.value - 0.4) < 2 * shares.se
     assert hits >= seeds - 3
+
+
+def test_bimodal_on_a_thermal_cloud_finds_no_condensate() -> None:
+    """Unconstrained, the fit invented a condensate here (N0/N up to 0.15, R/σ 2–4)."""
+    clear = 0
+    seeds = 8
+    for seed in range(seeds):
+        result = fit_bimodal(np.random.default_rng(seed).normal(0, 2e-3, 20_000))
+        assert result.ok, result.failure
+        shares = condensate_fraction(result)
+        assert shares.value < 0.2
+        assert result["ratio"].value <= fits.MAX_RADIUS_RATIO
+        assert abs(result["sigma"].value - 2e-3) < 4 * result["sigma"].se
+        noted = any(note.startswith("Condensate amplitude consistent with 0") for note in result.notes)
+        if noted:
+            assert math.isnan(result["ratio"].se) and math.isnan(result["radius"].se)
+        clear += noted or shares.value < 2 * shares.se
+    assert clear >= seeds - 2
+
+
+def test_bimodal_on_a_pure_condensate_finds_no_thermal_part() -> None:
+    """Unconstrained, the thermal part became a narrow spike inside the TF profile."""
+    for seed in range(4):
+        result = fit_bimodal(thomas_fermi_events(np.random.default_rng(seed), 20_000, 1e-3))
+        assert result.ok, result.failure
+        assert any(note.startswith("Thermal amplitude consistent with 0") for note in result.notes), result.notes
+        assert math.isnan(result["sigma"].se)
+        assert condensate_fraction(result).value > 0.95
+        assert abs(result["radius"].value - 1e-3) < 4 * result["radius"].se
+        assert result["sigma"].value >= result["radius"].value / fits.MAX_RADIUS_RATIO * (1 - 1e-9)
 
 
 def test_areas_match_the_integrals() -> None:
@@ -152,9 +193,9 @@ def test_areas_match_the_integrals() -> None:
     assert fits.gaussian_area(2.0, 0.3) == pytest.approx(integral, rel=1e-8)
 
 
-def failure_of(centres: npt.ArrayLike, counts: npt.ArrayLike, max_evaluations: int = fits.MAX_EVALUATIONS
-               ) -> FitResult:
-    result = fit_histogram(centres, counts, max_evaluations=max_evaluations)
+def failure_of(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str = "gaussian",
+               max_evaluations: int = fits.MAX_EVALUATIONS) -> FitResult:
+    result = fit_histogram(centres, counts, model, max_evaluations=max_evaluations)
     assert not result.ok
     assert all(math.isnan(estimate.value) for estimate in result.estimates.values())
     return result
@@ -168,11 +209,22 @@ def test_failures_are_results_with_a_reason() -> None:
     one = np.zeros(20)
     one[10] = 50
     assert failure_of(x, one).failure.startswith("all counts in one bin")
+    two = np.zeros(20)
+    two[[9, 10]] = [50, 30]
+    assert failure_of(x, two).failure == "counts in only 2 bins: too few to fit this model (it needs 3)"
+    three = np.zeros(20)
+    three[[9, 10, 11]] = [30, 50, 30]
+    assert fit_histogram(x, three).ok
+    assert failure_of(x, three, "bimodal_tf2_gaussian").failure == \
+        "counts in only 3 bins: too few to fit this model (it needs 4)"
     assert failure_of(x, 100 * np.exp(-((x - 0.5) / 0.1) ** 2 / 2), max_evaluations=1).failure == \
-        "the fit did not converge"
+        "the fit did not converge in 1 evaluations"
     nothing = failure_of(x, np.full(20, np.nan))
-    assert nothing.failure == "no data to fit" and nothing.notes == ("20 bins with non-finite values left out",)
+    assert nothing.failure == "no data to fit"
+    assert nothing.notes == ("20 bins with a non-finite centre or count left out",)
     assert np.all(np.isnan(nothing.evaluate([0.1, 0.2])))
+    assert set(failure_of(x, one, "bimodal_tf2_gaussian").estimates) == {*MODELS["bimodal_tf2_gaussian"].names,
+                                                                         "radius"}
     with pytest.raises(ValueError):
         fit_histogram([1, 2], [1])
 
@@ -180,7 +232,7 @@ def test_failures_are_results_with_a_reason() -> None:
 def test_an_undetermined_parameter_is_a_failure() -> None:
     # "b" has no effect: SciPy gives it a variance of 0, which must not read as an exact value.
     flat = FitModel("flat", "Flat", (ModelParameter("a", "a", "height"), ModelParameter("b", "b", "shape")),
-                    lambda x, a, b: a + 0 * x, lambda x, y: [np.array([1.0, 1.0])],
+                    lambda x, a, b: a + 0 * x, lambda x, y, errors: [np.array([1.0, 1.0])],
                     lambda x, y: (np.array([0.0, 0.0]), np.array([np.inf, 10.0])))
     result = fit_histogram(np.linspace(0, 1, 20), np.full(20, 10.0), flat)
     assert result.failure == "not determined by the data: b (no usable SE)"
@@ -188,14 +240,25 @@ def test_an_undetermined_parameter_is_a_failure() -> None:
     assert math.isnan(result["b"].se)
 
 
-def test_non_finite_bins_are_left_out_and_noted() -> None:
+def test_unusable_bins_are_left_out_and_noted() -> None:
     x = np.linspace(0, 1, 22)
-    y = 100 * np.exp(-((x - 0.5) / 0.1) ** 2 / 2)
+    y = np.round(100 * np.exp(-((x - 0.5) / 0.1) ** 2 / 2))
     y[[0, 1]] = [np.nan, np.inf]
     result = fit_histogram(x, y)
     assert result.ok and result.points == 20
-    assert result.notes[0] == "2 bins with non-finite values left out"
+    assert result.notes == ("2 bins with a non-finite centre or count left out",)
     assert result["centre"].value == pytest.approx(0.5, abs=1e-3)
+    given = fit_histogram(x[2:], y[2:], sigma=np.r_[0.0, -1.0, np.ones(18)])
+    assert given.points == 18
+    assert given.notes == ("2 bins with an error that isn't finite and > 0 left out",)
+
+
+def test_count_weights_say_when_the_input_isnt_counts() -> None:
+    x = np.linspace(0, 1, 20)
+    rate = 100.5 * np.exp(-((x - 0.5) / 0.1) ** 2 / 2)
+    assert any(note.startswith("the counts aren't whole numbers") for note in fit_histogram(x, rate).notes)
+    assert fit_histogram(x, rate, sigma=1.0).notes == ()
+    assert fit_histogram(x, rate, weights="none").notes == ()
 
 
 def test_bounds_and_poor_models_are_noted() -> None:
@@ -205,6 +268,9 @@ def test_bounds_and_poor_models_are_noted() -> None:
     rng = np.random.default_rng(0)
     square = fit_events(rng.uniform(-1, 1, 50_000), 60, (-1.5, 1.5))
     assert any("reduced χ²" in note for note in square.notes)
+    # A Gaussian on a flat-topped cloud: the Poisson weights keep moving, and say so.
+    assert any(note.startswith("the Poisson weights did not settle") for note in square.notes)
+    assert square.ok
 
 
 def test_registry() -> None:
@@ -221,3 +287,24 @@ def test_evaluate_draws_the_fitted_model() -> None:
     result = fit_histogram(x, 50 * np.exp(-x ** 2 / 2) + 2, sigma=0.01)
     assert result.evaluate([0.0]) == pytest.approx([52.0], abs=1e-4)
     assert result.derived(lambda values: float(values[0] + values[3])).value == pytest.approx(52.0, abs=1e-4)
+
+
+def test_record_is_strict_json_and_arrays_are_read_only() -> None:
+    x = np.linspace(-3, 3, 31)
+    result = fit_histogram(x, np.round(50 * np.exp(-x ** 2 / 2)))
+    record = json.loads(json.dumps(result.as_record(), allow_nan=False))
+    assert record["model"] == "gaussian" and record["failure"] == "" and record["dof"] == 27
+    assert record["estimates"]["sigma"]["value"] == pytest.approx(result["sigma"].value)
+    failed = json.loads(json.dumps(fit_histogram([], []).as_record(), allow_nan=False))
+    assert failed["estimates"]["centre"] == {"value": None, "se": None} and failed["chi2"] is None
+    for array in (result.x, result.curve, result.covariance):
+        assert array is not None
+        with pytest.raises(ValueError):
+            array[0] = 1.0
+
+
+def test_fits_leave_the_warning_filters_alone() -> None:
+    """Fits run in the analysis worker thread: no per-call changes to the global filters."""
+    before = list(warnings.filters)
+    fit_events(np.random.default_rng(1).normal(0, 1, 2000), 40, (-4, 4), "bimodal_tf2_gaussian")
+    assert warnings.filters == before
