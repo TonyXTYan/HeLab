@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QSpinBox, QVBoxLayout, QWidget,
 )
 
+from helab.analysis.budget import PLOT_AUTO_RELOAD_SETTING, RELEASE_SHARE, read_auto_reload
 from helab.utils.cache_store import KINDS, purge_estimate, trim_estimate
 from helab.utils.constants import (
     DISK_BUDGET_SETTING, LIVE_AUTOSAVE_SETTING, MAX_LIVE_AUTOSAVE, MIN_DISK_BUDGET, RAM_BUDGET_SETTING, RAM_STEPS,
@@ -230,11 +231,21 @@ class CacheTab(QWidget):
         self.ram_budget.setValue(read_ram_budget_steps(settings, self.ram_budget.total))
         self.ram_budget.setToolTip(
             "Loaded folders not shown in a tab are dropped from RAM, least recently used first, until the rest "
-            "fit. Folders shown in tabs are never dropped, so HeLab can use more than this.")
+            "fit. Plots count too: from 50 % the status bar says so, at 75 % a window lists the biggest plots and "
+            f"folders, and above {RELEASE_SHARE:.0%} plots not viewed lately are released (each keeps a picture). "
+            "Folders shown in tabs and the shown, running or Live plots are never dropped, so HeLab can use "
+            "more than this.")
         memory.addWidget(self.ram_budget)
         self.memory_label = QLabel("")
         memory.addWidget(self.memory_label, 1)
         layout.addLayout(memory)
+        self.plot_auto_reload = QCheckBox("Reload a released plot when it is shown again")
+        self.plot_auto_reload.setChecked(read_auto_reload(settings))
+        self.plot_auto_reload.setToolTip(
+            "A plot released to free RAM keeps a picture of itself. On: showing it again (its tab, its window or "
+            "its settings) draws it again from RAM or the disk cache, never from its folder. Off: only its "
+            "Reload button does.")
+        layout.addWidget(self.plot_auto_reload)
         layout.addStretch(1)
 
         if cache is not None:
@@ -423,8 +434,10 @@ class CacheTab(QWidget):
             self.memory_label.setText("")
             return
         count, total, shown = self.cache.memory_usage()
+        plots = self.cache.plot_bytes()
         self.memory_label.setText(f"In use: {plural(count, 'folder')} · {byte_size(total)} "
-                                  f"({byte_size(shown)} shown in tabs)")
+                                  f"({byte_size(shown)} shown in tabs)"
+                                  + (f" · plots {byte_size(plots)} more" if plots else ""))
 
     def _show_estimates(self) -> None:
         inventory = self.inventory
@@ -562,5 +575,6 @@ class CacheTab(QWidget):
         settings.setValue(DISK_BUDGET_SETTING,
                           self._acknowledged if self._acknowledged is not None else read_disk_budget(settings))
         settings.setValue(RAM_BUDGET_SETTING, self.ram_budget.value())
+        settings.setValue(PLOT_AUTO_RELOAD_SETTING, self.plot_auto_reload.isChecked())
         settings.setValue(LIVE_AUTOSAVE_SETTING, self.live_autosave.value())
 

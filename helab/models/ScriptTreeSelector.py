@@ -4,10 +4,11 @@ import math
 import os
 import time
 from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal
+from uuid import uuid4
 
 from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QCloseEvent, QFocusEvent, QGuiApplication, QPainter, QPaintEvent, QWindow
+from PyQt6.QtGui import QCloseEvent, QFocusEvent, QGuiApplication, QPainter, QPaintEvent, QPixmap, QWindow
 # from uuid import uuid4
 
 # Import QWidget types first to avoid forward references
@@ -19,6 +20,8 @@ from PyQt6.QtWidgets import (
 )
 from pyqtgraph.parametertree import Parameter
 
+from helab.analysis.budget import (Buffers, RamBudget, Restored, arrays_in, buffers, hollow, restore, shots_list,
+                                   view_buffers)
 from helab.analysis.dataset_view import DatasetView, ViewKey
 from helab.analysis.follow import FOLLOW, Follow, LiveFeed, changes, live_specs, policy_of, shots_text
 from helab.analysis.parameter_tree import build_tree, parameter_of, settings_widget, tree_values
@@ -28,6 +31,8 @@ from helab.analysis.runner import AnalysisRunner, get_analysis_runner
 from helab.scripts import standard
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.utils.constants import QDOCKWIDGET_STYLESHEET
+from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache, store_options
+from helab.utils.io_service import IORequest, get_io_service
 from helab.scripts.scripts_manager import ScriptsManager
 if TYPE_CHECKING:
     from helab.views.FolderExplorer import FolderExplorer
@@ -339,6 +344,78 @@ class DockTabCloser(QObject):
         return None
 
 
+def snapshot(content: QWidget, area: QSize) -> QPixmap:
+    """A picture of a plot as drawn. A plot never laid out (always behind another tab) is
+    first given the plot area's size, ``area``."""
+    if (not content.isVisible() and area.isValid()
+            and (content.width() < area.width() // 2 or content.height() < area.height() // 2)):
+        content.resize(area)
+    return content.grab()
+
+
+class PlotPicture(QWidget):
+    """A released plot's picture, scaled to fit and centred (not interactive)."""
+
+    def __init__(self, picture: QPixmap, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.picture = picture
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+
+    def sizeHint(self) -> QSize:
+        return self.picture.deviceIndependentSize().toSize() if not self.picture.isNull() else QSize(200, 150)
+
+    def paintEvent(self, a0: Optional[QPaintEvent]) -> None:
+        if self.picture.isNull():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        size = self.picture.deviceIndependentSize().toSize().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
+        left, top = (self.width() - size.width()) // 2, (self.height() - size.height()) // 2
+        painter.drawPixmap(QRect(left, top, size.width(), size.height()), self.picture)
+
+
+class ReleasedPlot(QWidget):
+    """A plot released to free RAM: one line (what happened, its reload's state) with Reload,
+    over the picture of the plot as it was last drawn."""
+
+    RELEASED = "Released to free RAM: a picture, not interactive"
+
+    def __init__(self, picture: QPixmap, reload: Callable[[], None], parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        self.state = QLabel(self.RELEASED, self)
+        self.state.setObjectName("released_state")
+        self.state.setTextFormat(Qt.TextFormat.PlainText)
+        self.state.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        row.addWidget(self.state, 1)
+        self.reload_button = QPushButton("Reload", self)
+        self.reload_button.setToolTip("Draw this plot again from its data in RAM or in the disk cache "
+                                      "(never from its folder): exactly its shots, by their fingerprints")
+        self.reload_button.clicked.connect(lambda: reload())
+        row.addWidget(self.reload_button)
+        layout.addLayout(row)
+        self.picture = PlotPicture(picture, self)
+        if picture.isNull():
+            self.picture.hide()
+            layout.addWidget(QLabel("(no picture: the plot couldn't be captured)", self), 1)
+        else:
+            layout.addWidget(self.picture, 1)
+        self.set_state("")
+
+    def set_state(self, text: str, busy: bool = False) -> None:
+        """The reload's state after the line's first words ("" when none); Reload waits while busy."""
+        line = " · ".join(filter(None, (self.RELEASED, text)))
+        self.state.setText(line)
+        self.state.setToolTip(
+            f"{line}\nHeLab released this plot when RAM in use passed 80 % of the RAM budget "
+            "(Settings → Cache). Reload draws it again from RAM or the disk cache, never from its folder.")
+        self.reload_button.setEnabled(not busy)
+
+
 class LinkedAnalysisInstance(QObject):
     """Manages a linked pair of dock widget and its page in the Settings panel.
     
@@ -423,7 +500,11 @@ class AnalysisInstance(LinkedAnalysisInstance):
     revision of the folder's view (``LiveFeed``) is offered to it, and it reruns on the newest
     one as its Live settings allow (``Follow``: hold and coalesce, never cancelled for new data).
     Turning Follow Live off pins it at its revision. A failed run keeps the last plot drawn,
-    with the error in amber, and following goes on."""
+    with the error in amber, and following goes on.
+
+    Plots count toward the RAM budget (``RamBudget``, helab/analysis/budget.py): one may be
+    released to free RAM (``release``: a picture stays, its view and result go) and reloads
+    from RAM or the disk cache, never its folder (``reload``), when shown again or on Reload."""
 
     def __init__(self, metadata: ScriptMetadata, script: DatasetAnalysis, action: str, view: DatasetView,
                  instance_id: str, main_window: Optional['HelabMainWindow'],
@@ -454,6 +535,14 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if self.feed is not None:
             self.feed.revised.connect(self._revised)
             self.feed.ended.connect(self._live_ended)
+        budget = getattr(main_window, "ram_budget", None)
+        self.budget: Optional[RamBudget] = budget if isinstance(budget, RamBudget) else None
+        # Released to free RAM: the picture shown instead of the plot, until a run draws it again.
+        self.released: Optional[ReleasedPlot] = None
+        self._reload_owner = ""  # The disk-cache read of a reload in flight (its request's owner).
+        self._reload_found: Optional[Restored] = None  # Meanwhile, the best match RAM had.
+        self._reload_values: Optional[Dict[str, Any]] = None  # The settings it runs with.
+        self._reload_note = ""  # What the last reload left out (changed or missing shots).
 
     @property
     def view(self) -> DatasetView:
@@ -485,6 +574,10 @@ class AnalysisInstance(LinkedAnalysisInstance):
         layout.addWidget(self.rerun_button)
         layout.addWidget(self.status_label)
         self.setup_param_tab(tab, self._title())
+        if self.param_tab is not None and self.main_window is not None:
+            self.main_window.panel_right_top_plot_settings.plotShown.connect(self._plot_shown)
+        if self.budget is not None:
+            self.budget.add(self)
         self.run()
 
     def values(self) -> Dict[str, Any]:
@@ -501,14 +594,24 @@ class AnalysisInstance(LinkedAnalysisInstance):
         it follows Live, else its own); a run in flight is cancelled, its settings are old."""
         if self.is_closed:
             return
+        if self.released is not None and not self.job_id:
+            # Its data was released: drawn again from RAM or the disk cache, with these settings.
+            if self._reload_owner:
+                self._reload_values = self.values()
+            else:
+                self.reload(self.values())
+            return
         if self.job_id:
             self.runner.cancel(self.job_id)
         self._submit(self.follow.latest)
 
-    def _submit(self, view: DatasetView) -> None:
+    def _submit(self, view: DatasetView, values: Optional[Dict[str, Any]] = None, *, reloading: bool = False) -> None:
         self._follow_timer.stop()
+        if not reloading:
+            self._reload_note = ""
         try:
-            context = self.runner.submit(self.script, self.metadata, self.action, view, self.values())
+            context = self.runner.submit(self.script, self.metadata, self.action, view,
+                                         self.values() if values is None else values)
         except RuntimeError as error:  # The runner is stopping: HeLab is closing.
             self.status_label.setText(str(error))
             return
@@ -525,6 +628,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.job_id = ""
         self.follow.end(time.monotonic())
         view, self._job_view = self._job_view, None
+        if self.released is not None:
+            self.released.set_state("")  # A reload's run ended; a failure shows in the amber line.
         if result.state == "cancelled":
             self.status_label.setText("Cancelled")
             self._show_follow()
@@ -549,6 +654,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
             except Exception as exc:
                 logging.exception("Could not draw %s", self.name)
                 error = f"could not draw it: {exc}"
+        if self.budget is not None:
+            self.budget.schedule()
         if error:
             self.status_label.setText(f"Failed: {error}")
             if self.shown is not None:
@@ -568,13 +675,14 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if result.state == "completed" and not error:
             self.shown, self._shown_view = result, view
             self.runner.results.pin(result.job_id)
+            self.released = None  # Drawn again: its picture goes.
         self._show_content(content, result, specs, warnings)
         self._follow_next()
 
     def _updated(self, result: AnalysisResult) -> Optional[QWidget]:
         """The plot drawn, showing ``result`` in place (the script's ``update``), or None."""
         drawn = self._content
-        if self.shown is None or drawn is None or sip.isdeleted(drawn):
+        if self.shown is None or self.released is not None or drawn is None or sip.isdeleted(drawn):
             return None
         return drawn if self.script.update(drawn, result) else None
 
@@ -699,7 +807,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         dock.setProperty("plotFollow", self.follow_text())
         dock.setProperty("plotFollowing", following)
-        dock.setProperty("plotError", self.error)
+        dock.setProperty("plotError", self.error or self._reload_note)
         update = getattr(window, "update_plot_source", None)
         if callable(update):
             update(dock)
@@ -720,6 +828,200 @@ class AnalysisInstance(LinkedAnalysisInstance):
         label.setWordWrap(True)
         return label
 
+    # The RAM budget (helab/analysis/budget.py)
+
+    @property
+    def is_released(self) -> bool:
+        return self.released is not None
+
+    def following(self) -> bool:
+        """Whether the plot follows Live now (Live watches its folder and Follow Live is on)."""
+        return self.follow.on and self.live() is not None
+
+    def ram_buffers(self) -> Buffers:
+        """The memory this plot's data uses: the views it shows, runs on or holds waiting, and
+        its results' arrays. Nothing once released (its view keeps no events)."""
+        merged: Buffers = {}
+        for view in (self.follow.ran, self.follow.pending, self._shown_view, self._job_view):
+            if view is not None:
+                merged.update(view_buffers(view))
+        for result in {id(result): result for result in (self.shown, self.result) if result is not None}.values():
+            merged.update(buffers(arrays_in(result.data)))
+        return merged
+
+    def ram_label(self) -> str:
+        return self._title()
+
+    def releasable(self) -> bool:
+        """Whether the budget may release it: a plot drawn, not released, not running or
+        reloading, nothing waiting to run, not following Live. (The budget never offers the
+        shown plot.)"""
+        content = self._content
+        return (not self.is_closed and self.released is None and not self.job_id and not self._reload_owner
+                and self.shown is not None and content is not None and not sip.isdeleted(content)
+                and self.dock_widget is not None and self.follow.pending is None and not self.following())
+
+    def release(self) -> bool:
+        """Free the plot's data to keep RAM within the budget: its views and results go, and a
+        picture of the plot stays in its place (no longer interactive), with Reload. It keeps
+        its shot numbers and fingerprints, to reload exactly those (``reload``). Whether it did."""
+        if not self.releasable():
+            return False
+        assert self.shown is not None and self._content is not None
+        area = getattr(self.main_window, "middle_mainwindow", None)
+        picture = snapshot(self._content, area.size() if isinstance(area, QWidget) else QSize())
+        shown = self.runner.results.released(self.shown)
+        self.result = shown if self.result is self.shown or self.result is None else self.runner.results.released(self.result)
+        self.shown = shown
+        drawn = self._shown_view or self.follow.ran
+        view = hollow(drawn)
+        self.follow.ran = view if self.follow.ran is drawn else hollow(self.follow.ran)
+        self._shown_view = view
+        self.released = ReleasedPlot(picture, self.reload)
+        self._content = self.released
+        self._swap_content(self.released)
+        self.status_label.setText("Released to free RAM: Reload or Rerun draws it again")
+        self._show_follow()
+        logging.info("Released plot %s (RAM budget)", self._title())
+        return True
+
+    def _swap_content(self, content: QWidget) -> None:
+        """Show ``content`` in the dock in place of the plot, keeping its source lines."""
+        dock, window = self.dock_widget, self.main_window
+        if dock is None or sip.isdeleted(dock):
+            content.deleteLater()
+            return
+        replace = getattr(window, "replace_plot_content", None)
+        if callable(replace):
+            replace(dock, content)
+            return
+        old = dock.widget()
+        dock.setWidget(content)
+        if old is not None:
+            old.deleteLater()
+
+    @pyqtSlot(QDockWidget)
+    def _plot_shown(self, dock: QDockWidget) -> None:
+        """Shown again (its settings show): a released plot reloads, if Settings → Cache says so."""
+        if (dock is self.dock_widget and self.released is not None and self.budget is not None
+                and self.budget.auto_reload):
+            self.reload()
+
+    def _cache(self) -> FolderCache:
+        return self.budget.cache if self.budget is not None else get_folder_cache(get_io_service())
+
+    def reload(self, values: Optional[Dict[str, Any]] = None) -> None:
+        """Draw a released plot again with ``values`` (default: the settings it was drawn with),
+        on exactly its shots, by their fingerprints: from the folder's dataset in RAM, else from
+        the local disk cache, never from the folder. If neither has them, it says so and keeps
+        its picture; shots changed or missing are left out and named."""
+        if self.is_closed or self.released is None or self.shown is None or self.job_id:
+            return
+        self._reload_values = dict(self.shown.parameters) if values is None else values
+        if self._reload_owner:
+            return  # Reading the disk cache already.
+        cache, view = self._cache(), self._shown_view or self.follow.ran
+        found = self._in_ram(cache, view)
+        if found is not None and not found.changed and not found.missing:
+            self._reload_from(found, "RAM")
+            return
+        self._reload_found = found
+        if self._read_disk_cache(cache, view.identity.source_path):
+            self.released.set_state("reading the disk cache…", busy=True)
+            self.status_label.setText("Reloading from the disk cache…")
+            return
+        self._reload_found = None
+        if found is not None:
+            self._reload_from(found, "RAM")
+        else:
+            self._reload_failed("its data isn't in RAM or in the disk cache")
+
+    @staticmethod
+    def _in_ram(cache: FolderCache, view: DatasetView) -> Optional[Restored]:
+        """The folder's dataset held in RAM (shown in a tab or not) with most of the view's shots."""
+        path = cache.key(view.identity.source_path)
+        held = {id(entry): entry for entry in (*cache.pins.values(), *cache.datasets.values()) if entry.path == path}
+        found = [restore(view, entry) for entry in held.values()]
+        return max(found, key=lambda item: (len(item.kept), -len(item.changed)), default=None)
+
+    def _read_disk_cache(self, cache: FolderCache, path: str) -> bool:
+        """Ask a helper for the folder's dataset from the local disk cache (the local lane: it
+        never reads the folder). False if the disk cache is off or can't be asked now."""
+        options = store_options()
+        if not options or path in cache.mismatched:
+            return False
+        owner = f"plot-reload:{uuid4().hex}"
+        cache.resultReady.connect(self._reload_event)
+        self._reload_owner = owner
+        if cache.submit(owner, 0, path, "cached",
+                        {"cache": options, "verified_volumes": cache.verified_volumes(),
+                         "limits": cache.large_limits(), "deliberate": True, "allow_large": True}, priority=True):
+            return True
+        self._end_disk_read(cache)
+        return False
+
+    def _end_disk_read(self, cache: FolderCache) -> None:
+        owner, self._reload_owner = self._reload_owner, ""
+        if owner:
+            try:
+                cache.resultReady.disconnect(self._reload_event)
+            except TypeError:
+                pass
+            cache.cancel(owner)
+
+    @pyqtSlot(object, object)
+    def _reload_event(self, request: IORequest, event: Dict[str, Any]) -> None:
+        if request.owner != self._reload_owner or self.is_closed:
+            return
+        kind = event.get("kind")
+        dataset = event.get("dataset")
+        if kind not in ("loaded", "error", "too_large", "cancelled"):
+            return  # Progress.
+        cache = self._cache()
+        self._end_disk_read(cache)
+        found, self._reload_found = self._reload_found, None
+        if self.released is None or self.shown is None:
+            return
+        view = self._shown_view or self.follow.ran
+        read = restore(view, dataset) if kind == "loaded" and isinstance(dataset, Dataset) else None
+        if read is not None and (found is None or len(read.kept) >= len(found.kept)):
+            self._reload_from(read, "the disk cache")
+        elif found is not None:
+            self._reload_from(found, "RAM")
+        else:
+            why = str(event.get("message") or "") if kind == "error" else (
+                "it is too large to read back" if kind == "too_large" else "")
+            self._reload_failed("its data isn't in RAM, and the disk cache couldn't give it"
+                                + (f" ({why})" if why else ""))
+
+    def _reload_from(self, found: Restored, where: str) -> None:
+        """Run on the restored view; name the plot's shots it lacks."""
+        assert self.released is not None and self.shown is not None
+        drew = self.shown.coverage.shots
+        changed, missing = found.lost(drew)
+        if drew and not set(drew) & set(found.kept):
+            self._reload_failed(f"none of its {len(drew):,} shots are in RAM or the disk cache as they were")
+            return
+        lost = []
+        if changed:
+            lost.append(f"shot{'' if len(changed) == 1 else 's'} {shots_list(changed)} changed since")
+        if missing:
+            lost.append(f"shot{'' if len(missing) == 1 else 's'} {shots_list(missing)} missing")
+        self._reload_note = (f"Reloaded from {where} without {len(changed) + len(missing):,} of its "
+                             f"{len(drew):,} shots: {'; '.join(lost)}") if lost else ""
+        values, self._reload_values = self._reload_values, None
+        self.released.set_state(f"reloading from {where}…", busy=True)
+        self._submit(found.view, values, reloading=True)
+        self.status_label.setText(f"Reloading from {where}…")
+
+    def _reload_failed(self, why: str) -> None:
+        """Nothing to reload from: the picture stays and says why."""
+        self._reload_values = None
+        if self.released is not None:
+            self.released.set_state(f"can't reload: {why}")
+        self.status_label.setText(f"Can't reload: {why}. Load the folder again, then Reload.")
+        self._show_follow()
+
     @pyqtSlot()
     def close(self) -> None:
         if self.is_closed:
@@ -729,13 +1031,22 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.runner.cancel(self.job_id)
         if self.shown is not None:
             self.runner.results.unpin(self.shown.job_id)
+        if self._reload_owner:
+            self._end_disk_read(self._cache())
+        window = self.main_window
+        panel = (window.panel_right_top_plot_settings
+                 if self.param_tab is not None and window is not None and not sip.isdeleted(window) else None)
         for signal, slot in ((self.runner.finished, self._finished),
                              *(((self.feed.revised, self._revised), (self.feed.ended, self._live_ended))
-                               if self.feed is not None else ())):
+                               if self.feed is not None else ()),
+                             *(((panel.plotShown, self._plot_shown),) if panel is not None and not sip.isdeleted(panel)
+                               else ())):
             try:
                 signal.disconnect(slot)
             except TypeError:
                 pass
+        if self.budget is not None:
+            self.budget.remove(self)
         super().close()
 
 
@@ -1155,7 +1466,11 @@ class PlotSettingsPanel(QWidget):
     editors, with their edits and Rerun) and back when it docks again; while it is the shown
     plot, the panel says so, with a button that raises its window. A plot being dragged
     (out, and maybe back) keeps its page where it is until the user lets go (``DragEnd``):
-    then it moves once, or not at all if the plot is docked again."""
+    then it moves once, or not at all if the plot is docked again.
+
+    ``plotShown`` says each time a plot's page shows (a released plot may reload then)."""
+
+    plotShown = pyqtSignal(QDockWidget)
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
@@ -1287,9 +1602,14 @@ class PlotSettingsPanel(QWidget):
         # moves here, so a click back in that plot changes focus and shows it again.
         if self._plot_of(QApplication.focusWidget()) not in (None, dock) and dock.isVisible():
             dock.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.plotShown.emit(dock)
 
     def current_plot(self) -> Optional[QDockWidget]:
         return self._recent[-1] if self._recent else None
+
+    def recent(self) -> List[QDockWidget]:
+        """The open plots by when they last showed, least recently first."""
+        return list(self._recent)
 
     def plots(self) -> List[QDockWidget]:
         """The open plots, in the chooser's order."""

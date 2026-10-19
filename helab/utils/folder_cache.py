@@ -1,7 +1,7 @@
 """Session memory reuse above isolated I/O; no filesystem or disk-cache reads."""
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 import base64
 from dataclasses import dataclass, field
 import logging
@@ -10,12 +10,14 @@ import os
 import time
 from typing import Any, Iterable
 from uuid import uuid4
+import weakref
 
 import numpy as np
 import numpy.typing as npt
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 
+from helab.analysis.budget import Buffers, dataset_buffers
 from helab.utils import large_folder
 from helab.utils.cache_store import APPROVAL_SHARE, KINDS, store_root
 from helab.utils.constants import (
@@ -230,6 +232,9 @@ class FolderCache(QObject):
         self.pins: dict[str, Dataset] = {}
         # The RAM budget for datasets no tab shows (Settings → Cache; ``set_ram_budget``).
         self.max_data_bytes = DEFAULT_RAM_STEPS * ram_step_bytes()
+        # What else counts against it: the open plots' data (``helab.analysis.budget.RamBudget``),
+        # each with ``ram_buffers()``. Arrays they share with a dataset held here count once.
+        self.ram_users: weakref.WeakSet[Any] = weakref.WeakSet()
         self.total_ram = large_folder.total_ram()
         # The disk cache's live bytes, as the newest helper measurement reported them.
         self.disk_usage: int | None = None
@@ -925,27 +930,80 @@ class FolderCache(QObject):
 
     def memory_usage(self) -> tuple[int, int, int]:
         """Loaded datasets in memory: (count, bytes, bytes shown in tabs)."""
-        held = {id(entry): entry for entry in (*self.datasets.values(), *self.pins.values())}
+        held = self._held()
         shown = {id(entry) for entry in self.pins.values()}
         total = sum(int(entry.metadata.get("bytes", 0)) for entry in held.values())
         pinned = sum(int(entry.metadata.get("bytes", 0)) for key, entry in held.items() if key in shown)
         return len(held), total, pinned
 
-    def _evict(self) -> list[Dataset]:
-        """Drop datasets no tab shows, least recently used first, until the rest fit the RAM budget."""
+    def _held(self) -> dict[int, Dataset]:
+        """Everything held in RAM, once each: tabs may still show datasets no longer in
+        ``datasets`` (e.g. invalidated), and those count too."""
+        return {id(entry): entry for entry in (*self.datasets.values(), *self.pins.values())}
+
+    def _plot_buffers(self) -> Buffers:
+        merged: Buffers = {}
+        for user in list(self.ram_users):
+            merged.update(user.ram_buffers())
+        return merged
+
+    def held_buffers(self) -> Buffers:
+        """The memory the datasets held in RAM use (their arrays' buffers)."""
+        merged: Buffers = {}
+        for entry in self._held().values():
+            merged.update(dataset_buffers(entry))
+        return merged
+
+    def plot_bytes(self) -> int:
+        """RAM the plots hold beyond the datasets held here: arrays shared with one count once."""
+        plots = self._plot_buffers()
+        if not plots:
+            return 0
+        held = self.held_buffers()
+        return sum(size for key, size in plots.items() if key not in held)
+
+    def held_sizes(self) -> list[tuple[str, int, bool]]:
+        """Each dataset held in RAM: (path, bytes, shown in a tab)."""
+        shown = {id(entry) for entry in self.pins.values()}
+        return [(entry.path, int(entry.metadata.get("bytes", 0)), key in shown) for key, entry in self._held().items()]
+
+    def evict_to(self, target: int) -> list[Dataset]:
+        """Drop datasets no tab shows until RAM in use, the plots' included, fits ``target``
+        (the plots' budget checks: before releasing plots, ``RamBudget.check``)."""
+        return self._evict(target)
+
+    def _evict(self, target: int | None = None) -> list[Dataset]:
+        """Drop datasets no tab shows, least recently used first, until the rest, with what the
+        plots hold beyond them, fit the RAM budget (or ``target``). A dataset whose arrays plots
+        hold anyway would free nothing: it stays."""
+        limit = self.max_data_bytes if target is None else target
         dropped: list[Dataset] = []
-        # Everything held in RAM, once each: tabs may still show datasets no longer in
-        # ``datasets`` (e.g. invalidated), and those count too.
         _, total, _ = self.memory_usage()
+        plots = self._plot_buffers()
+        holders: Counter[int] = Counter()
+        if plots and total + sum(plots.values()) <= limit:
+            plots = {}  # It fits even counting every plot array apart: no need to find the shared ones.
+        if plots:
+            for entry in self._held().values():
+                holders.update(dataset_buffers(entry).keys())
+            total += sum(size for key, size in plots.items() if not holders[key])
         pinned = {id(entry) for entry in self.pins.values()}
         for key, entry in list(self.datasets.items()):
-            if total <= self.max_data_bytes:
+            if total <= limit:
                 break
-            if id(entry) not in pinned:
-                total -= int(entry.metadata.get("bytes", 0))
-                del self.datasets[key]
-                dropped.append(entry)
-                self.datasetChanged.emit(entry.path)
+            if id(entry) in pinned:
+                continue
+            frees = int(entry.metadata.get("bytes", 0))
+            if plots:
+                own = dataset_buffers(entry)
+                frees -= sum(size for buffer, size in own.items() if buffer in plots and holders[buffer] == 1)
+                if frees <= 0:
+                    continue
+                holders.subtract(own.keys())
+            total -= frees
+            del self.datasets[key]
+            dropped.append(entry)
+            self.datasetChanged.emit(entry.path)
         count = sum(len(s.entries) for s in self.snapshots.values())
         while self.snapshots and (len(self.snapshots) > self.MAX_SNAPSHOTS or count > self.MAX_ENTRIES):
             _, snapshot = self.snapshots.popitem(last=False)

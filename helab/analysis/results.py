@@ -11,7 +11,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from types import MappingProxyType
 from typing import Any, Iterable, Literal, Mapping
@@ -192,6 +192,15 @@ class RamResults:
     def unpin(self, job_id: str) -> None:
         with self._lock:
             self._pinned.discard(job_id)
+
+    def released(self, result: AnalysisResult) -> AnalysisResult:
+        """``result`` without its data, forgotten here: its plot was released to free RAM. The
+        record (input, parameters, coverage) stays with the plot, so it can say what it showed
+        and reload exactly that."""
+        with self._lock:
+            self._pinned.discard(result.job_id)
+            self._results.pop(result.job_id, None)
+        return replace(result, data=None)
 
     def __len__(self) -> int:
         return len(self._results)

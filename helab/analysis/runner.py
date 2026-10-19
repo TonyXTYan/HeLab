@@ -100,28 +100,33 @@ class AnalysisRunner(QObject):
 
     def _run_jobs(self) -> None:
         while (job := self._queue.get()) is not None:
-            script, context = job
-            started = time.time()
-            if context.cancelled():
+            self._run(*job)
+            # Nothing of the job stays referenced while the worker waits for the next one: a plot
+            # released to free RAM must free its input (``helab.analysis.budget``).
+            del job
+
+    def _run(self, script: DatasetAnalysis, context: AnalysisContext) -> None:
+        started = time.time()
+        if context.cancelled():
+            result = AnalysisResult.of(context, "cancelled", started_at=started)
+        else:
+            self.started.emit(context.job_id)
+            try:
+                data = script.compute(context.action, context)
+                state: State = "cancelled" if context.cancelled() else "completed"
+                result = AnalysisResult.of(context, state, data if state == "completed" else None,
+                                           started_at=started)
+            except Cancelled:
                 result = AnalysisResult.of(context, "cancelled", started_at=started)
-            else:
-                self.started.emit(context.job_id)
-                try:
-                    data = script.compute(context.action, context)
-                    state: State = "cancelled" if context.cancelled() else "completed"
-                    result = AnalysisResult.of(context, state, data if state == "completed" else None,
-                                               started_at=started)
-                except Cancelled:
-                    result = AnalysisResult.of(context, "cancelled", started_at=started)
-                except Exception as error:
-                    logging.exception("Analysis %s failed", context.analysis.short())
-                    result = AnalysisResult.of(context, "failed", error=str(error) or type(error).__name__,
-                                               started_at=started)
-            with self._lock:
-                self._contexts.pop(context.job_id, None)
-            if result.state == "completed":
-                self.results.add(result)
-            self.finished.emit(result)
+            except Exception as error:
+                logging.exception("Analysis %s failed", context.analysis.short())
+                result = AnalysisResult.of(context, "failed", error=str(error) or type(error).__name__,
+                                           started_at=started)
+        with self._lock:
+            self._contexts.pop(context.job_id, None)
+        if result.state == "completed":
+            self.results.add(result)
+        self.finished.emit(result)
 
 
 _runner: AnalysisRunner | None = None
