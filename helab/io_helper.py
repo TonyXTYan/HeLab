@@ -570,6 +570,7 @@ def verify_volumes(cache_options: dict[str, Any], send: Emit = emit,
                                                  if (mount.path, mount.source) in known_mounts],
                                   id_reader=_cached_volume_id)
     verified: list[list[str]] = []
+    ids: list[list[str]] = []
     if local.volumes:
         with CacheStore(cache_options["directory"], root_mode=True) as store:
             known = {(path, source): identifier for path, source, identifier in store.volume_locations()}
@@ -579,23 +580,34 @@ def verify_volumes(cache_options: dict[str, Any], send: Emit = emit,
                     known[(mount.path, mount.source)] = identifier
                 if known.get((mount.path, mount.source)) == identifier:
                     verified.append([mount.path, mount.source])
-    send({"kind": "volumes_verified", "volumes": sorted(verified)})
+                    ids.append([mount.path, mount.source, identifier])
+    # ``ids``: for the marker check that follows (``verify_known_roots``), so it needn't ask again.
+    send({"kind": "volumes_verified", "volumes": sorted(verified), "ids": sorted(ids)})
     return local
 
 
-def verify_known_roots(cache_options: dict[str, Any], send: Emit = emit) -> None:
+def verify_known_roots(cache_options: dict[str, Any], send: Emit = emit,
+                       volume_ids: list[list[str]] | None = None) -> None:
     """Check remembered marker locations in a background source helper.
 
     Only the recorded marker folders are visited. Missing mounts are left alone;
     a mounted folder whose marker changed is reconciled like a listing.
+    ``volume_ids`` ([path, device, ID]): the volume check just made (``volumes_verify``), used
+    instead of checking the volumes again; local volumes it didn't check are left alone.
     """
     from helab.utils.cache_paths import CachePaths
     from helab.utils.cache_store import CacheStore
-    from helab.utils.data_roots import MARKER_NAME
+    from helab.utils.data_roots import MARKER_NAME, LocalVolumes
     mounts = _mounts("roots_verify")
     with CacheStore(cache_options["directory"], root_mode=True) as store:
         roots = store.root_locations()
-    local = verify_volumes(cache_options, send, mounts)
+    if volume_ids is None:
+        local = verify_volumes(cache_options, send, mounts)
+    else:
+        checked = {(str(path), str(source)): str(identifier) for path, source, identifier in volume_ids}
+        _volume_id_cache.update(checked)  # (So reconciling a root doesn't ask for its volume's ID.)
+        local = LocalVolumes((mount, checked[(mount.path, mount.source)]) for mount in mounts
+                             if (mount.path, mount.source) in checked)
     locations = CachePaths(mounts)
     beat = Heartbeat(send, "verifying data roots")
     for location, _, _ in roots:
@@ -2565,7 +2577,7 @@ def main() -> None:
         elif operation == "cache_admin":
             cache_admin(request["cache"], request["action"], **request.get("params", {}))
         elif operation == "roots_verify":
-            verify_known_roots(request["cache"])
+            verify_known_roots(request["cache"], volume_ids=request.get("volume_ids"))
         elif operation == "volumes_verify":
             verify_volumes(request["cache"])
         elif operation == "root_create":

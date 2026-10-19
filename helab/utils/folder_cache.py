@@ -182,6 +182,9 @@ class FolderCache(QObject):
     MAX_FOLDER_ICONS = 4096
     # Seconds before a sweep the queue rejected is tried again.
     SWEEP_RETRY = 5.0
+    # Data-root marker checks (``roots_verify``) start at most this often. A backstop only: they are
+    # asked for by listings that report a mount table not yet asked about (``_verify_roots``).
+    VERIFY_MIN_SECONDS = 5.0
     MAX_SUBTREES = 4096
     SUBTREE_SAVE_DELAY_MS = 500
     FRESH_SECONDS: float = 10.0
@@ -305,6 +308,18 @@ class FolderCache(QObject):
         # The mounts listings had reported when verification was last asked for: listed again
         # while it waits, the same mounts don't ask again.
         self._verify_asked: tuple[tuple[str, str], ...] | None = None
+        # The last volume check's IDs (path, device, ID), handed to the marker check when it starts
+        # (``_before_start``) so it doesn't check the volumes again.
+        self._volume_ids: tuple[tuple[str, str, str], ...] = ()
+        # Asked for again while a check runs: one more after it (each at most once).
+        self._volumes_again = False
+        self._markers_again = False
+        # The marker check waits for the volume check asked for with it.
+        self._markers_wanted = False
+        self._markers_started = -math.inf
+        self._markers_timer = QTimer(self)
+        self._markers_timer.setSingleShot(True)
+        self._markers_timer.timeout.connect(self._verify_markers)
         # cache_admin jobs by owner: their action.
         self._admin: dict[str, str] = {}
         # When cache_admin jobs and history writes started: removals since then void their results.
@@ -344,6 +359,7 @@ class FolderCache(QObject):
         self.foreground_owners: set[str] = set()
         service.is_foreground = self._is_foreground
         service.owners_of = self._owners_of
+        service.before_start = self._before_start
         service.resultReady.connect(self._on_event)
 
     def _is_foreground(self, request: IORequest) -> bool:
@@ -1438,19 +1454,63 @@ class FolderCache(QObject):
 
     def _verify_roots(self) -> None:
         """Check the saved volume IDs at once on the local lane (cached reads of external volumes
-        wait for that), and queue one background source helper for remembered marker locations."""
+        wait for that), then remembered marker locations in one background source helper, which
+        reuses those IDs. Asked for at startup and by listings reporting a mount table not yet
+        asked about; a check already queued sees the newest table when it starts, and one asked for
+        while a check runs follows it once. Never asked again because a check saw a newer table
+        than the listings reported: only a new listing observation asks."""
         options = store_options()
         if not options or self.service.closed or self.quitting:
             return
         self._verify_asked = self._mounts_observed
-        if not self._volume_verify_owner:
-            owner = uuid4().hex
-            if self.service.submit(owner, 0, options["directory"], "volumes_verify", {"cache": options}):
-                self._volume_verify_owner = owner
-        if not self._root_verify_owner:
-            owner = uuid4().hex
-            if self.service.submit(owner, 0, options["directory"], "roots_verify", {"cache": options}):
-                self._root_verify_owner = owner
+        if self._volume_verify_owner:
+            self._volumes_again = self._volumes_again or self._started_request(self._volume_verify_owner)
+        else:
+            self._verify_volumes(options)
+        running = self._started_request(self._root_verify_owner)
+        if running:
+            self._markers_again = True
+        elif not self._root_verify_owner:
+            self._markers_wanted = True
+            if not self._volume_verify_owner:
+                self._verify_markers()
+
+    def _started_request(self, owner: str) -> bool:
+        return bool(owner) and any(request.owner == owner for request in self.service.active)
+
+    def _verify_volumes(self, options: dict[str, Any]) -> None:
+        self._volume_verify_owner = uuid4().hex
+        if not self.service.submit(self._volume_verify_owner, 0, options["directory"], "volumes_verify",
+                                   {"cache": options}):
+            self._volume_verify_owner = ""
+
+    def _verify_markers(self) -> None:
+        """Queue the marker check asked for, at most every ``VERIFY_MIN_SECONDS``."""
+        options = store_options()
+        if (not self._markers_wanted or self._root_verify_owner or not options or self.service.closed
+                or self.quitting):
+            return
+        wait = self._markers_started + self.VERIFY_MIN_SECONDS - time.monotonic()
+        if wait > 0:
+            if not self._markers_timer.isActive():
+                self._markers_timer.start(int(wait * 1000) + 1)
+            return
+        # The owner is known before the job can start (``_before_start`` runs as it does).
+        self._root_verify_owner = uuid4().hex
+        if self.service.submit(self._root_verify_owner, 0, options["directory"], "roots_verify", {"cache": options}):
+            self._markers_wanted = False
+            self._markers_started = time.monotonic()
+        else:
+            self._root_verify_owner = ""
+
+    def _before_start(self, request: IORequest) -> None:
+        """The marker check uses the volume IDs checked last, unless a volume check still runs (it
+        checks them itself then)."""
+        if request.operation == "roots_verify" and request.owner == self._root_verify_owner:
+            if self._volume_verify_owner or not self._volume_ids:
+                request.payload.pop("volume_ids", None)
+            else:
+                request.payload["volume_ids"] = [list(item) for item in self._volume_ids]
 
     def verified_volumes(self) -> list[list[str]]:
         """For a cached read (``verified_volumes``): a disk swapped in at the same mount path and
@@ -1800,16 +1860,28 @@ class FolderCache(QObject):
                                            if pair in self._mounts_observed)
             if self._mounts_observed not in (self._roots_mounts, self._verify_asked):
                 self._verify_roots()
+            elif self._mounts_observed == self._roots_mounts:
+                # The table the last check saw: covered, so a later change back is new again.
+                self._verify_asked = self._mounts_observed
             return
         if producer.owner == self._volume_verify_owner:
             if event["kind"] == "volumes_verified":
                 self._verified_volumes = tuple(tuple(pair) for pair in event["volumes"])
+                self._volume_ids = tuple((str(path), str(source), str(identifier))
+                                         for path, source, identifier in event.get("ids", ()))
                 self.volumesVerified.emit()
             elif event["kind"] in ("error", "cancelled"):
                 logging.warning("Volume verification: %s", event.get("message", "Cancelled"))
                 self._verify_asked = None  # The next listing asks again.
+                self._volume_ids = ()
             if event["kind"] in ("done", "error", "cancelled"):
                 self._volume_verify_owner = ""
+                options = store_options()
+                if self._volumes_again and options and not self.quitting:
+                    self._volumes_again = False
+                    self._verify_volumes(options)
+                else:
+                    self._verify_markers()
             return
         if producer.owner == self._root_verify_owner:
             if event["kind"] == "volumes_verified":
@@ -1821,12 +1893,15 @@ class FolderCache(QObject):
                 self.removed(event.get("paths"), event["kinds"])
             elif event["kind"] in ("error", "cancelled"):
                 logging.warning("Data-root verification: %s", event.get("message", "Cancelled"))
-                self._verify_asked = None
+                self._verify_asked = None  # The next listing asks again (no retry before it).
             if event["kind"] in ("done", "error", "cancelled"):
                 self._root_verify_owner = ""
-                if (event["kind"] == "done" and self._roots_mounts is not None
-                        and self._mounts_observed is not None and self._mounts_observed != self._roots_mounts):
-                    self._verify_roots()
+                # Once, for a listing that reported a table while it ran, unless it checked that table.
+                again, self._markers_again = self._markers_again, False
+                if again and self._mounts_observed != self._roots_mounts and not self.quitting:
+                    self._markers_wanted = True
+                    if not self._volume_verify_owner:
+                        self._verify_markers()
             return
         if event["kind"] == "cache_skipped":
             self._remember_mount_warning(event)

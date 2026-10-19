@@ -327,3 +327,44 @@ def test_hiding_a_marker_is_traced(tmp_path: Path, trace: Path) -> None:
     io_helper._hide(str(marker))
     expected = {"darwin": ["stat", "chflags"], "win32": ["get_attributes", "set_attributes"]}.get(sys.platform, [])
     assert [record["op"] for record in lines(trace)] == expected
+
+
+def test_a_changed_mount_table_makes_at_most_one_verification_until_a_listing_reports_another(
+    qtbot: QtBot, tmp_path: Path, trace: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With real helpers: a listing that reports a mount table the next check doesn't see (a disk
+    that came and went) makes one volume check and one marker check, not a loop of them."""
+    from helab.utils.cache_paths import current_mounts
+    from helab.utils.folder_cache import FolderCache
+    from helab.utils.io_service import IORequest
+    service = IOService()
+    cache = FolderCache(service)
+    monkeypatch.setattr(cache, "VERIFY_MIN_SECONDS", 0.0)
+    real = sorted([[mount.path, mount.source] for mount in current_mounts()])
+    listing = IORequest("tab", 0, str(tmp_path), "list", {}, 60.0)
+
+    def seen(mounts: list[list[str]]) -> None:
+        service.resultReady.emit(listing, {"kind": "mounts_seen", "mounts": mounts})
+
+    def started(operation: str) -> int:
+        return sum(record["op"] == "request" and record["request"] == operation for record in lines(trace))
+    try:
+        seen(sorted([*real, ["/Volumes/HeLabTestGone", "//nobody@nowhere/gone"]]))
+        qtbot.waitUntil(lambda: started("roots_verify") == 1 and not service.active and not service.pending,
+                        timeout=20000)
+        qtbot.wait(1500)  # (A loop would have started more by now.)
+        assert (started("volumes_verify"), started("roots_verify")) == (1, 1)
+        # The marker check used the volume check's IDs: it asked for none itself.
+        verify = [record for record in lines(trace) if record.get("request") == "roots_verify"]
+        assert not any(record["op"] == "volume_id" for record in verify)
+        assert any(record["op"] == "marker_read" for record in verify)
+        seen(real)  # The table the check saw: nothing to verify.
+        qtbot.wait(500)
+        assert (started("volumes_verify"), started("roots_verify")) == (1, 1)
+        seen(sorted([*real, ["/Volumes/HeLabTestOther", "//nobody@nowhere/other"]]))
+        qtbot.waitUntil(lambda: started("roots_verify") == 2 and not service.active and not service.pending,
+                        timeout=20000)
+        qtbot.wait(1000)
+        assert (started("volumes_verify"), started("roots_verify")) == (2, 2)
+    finally:
+        service.shutdown()

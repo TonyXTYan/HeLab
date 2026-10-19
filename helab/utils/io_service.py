@@ -140,6 +140,8 @@ class IOService(QObject):
         self.request_note: Callable[[IORequest], str] | None = None
         # Set by FolderCache: the owners (tabs) a request's helper works for, for the I/O trace.
         self.owners_of: Callable[[IORequest], list[str]] = lambda request: [request.owner]
+        # Set by FolderCache: last changes to a request's payload as its helper starts.
+        self.before_start: Callable[[IORequest], None] | None = None
         self._foreground_busy_at = -math.inf
         self._listing_busy_at = -math.inf
         self.timer = QTimer(self)
@@ -333,6 +335,8 @@ class IOService(QObject):
             # Queued before a cache move: it opens the cache where it is now, or none if the disk
             # cache is off now (a cache-only job then fails; a source job runs without the cache).
             request.payload["cache"] = self.cache_options()
+        if self.before_start is not None:
+            self.before_start(request)
         self.pending.remove(request)
         request.lane = lane
         request.started = time.monotonic()

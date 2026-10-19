@@ -10,6 +10,7 @@ import uuid
 from typing import Any
 
 import pytest
+from PyQt6 import QtWebEngineWidgets  # noqa: F401  (before any QApplication: FolderCache tests load the views)
 from pytestqt.qtbot import QtBot
 
 from helab import io_helper
@@ -342,7 +343,8 @@ def test_volume_check_alone_refreshes_hints_without_visiting_markers(
     monkeypatch.setattr(data_roots, "read_marker", lambda _: pytest.fail("read a marker"))
     events: list[dict[str, Any]] = []
     io_helper.verify_volumes(cache, events.append)
-    assert events == [{"kind": "volumes_verified", "volumes": [[mount.path, mount.source]]}]
+    assert events == [{"kind": "volumes_verified", "volumes": [[mount.path, mount.source]],
+                       "ids": [[mount.path, mount.source, "disk-b"]]}]
     with CacheStore(cache["directory"], root_mode=True) as store:
         assert ("disk-b" in {identifier for _, _, identifier in store.volume_locations()})
 
@@ -634,9 +636,11 @@ def test_verification_is_asked_once_per_mount_table_and_waits_behind_other_backg
     try:
         seen(["/", "disk1"])
         volumes = queued("volumes_verify")
-        assert len(volumes) == 1 and len(queued("roots_verify")) == 1
+        # The marker check follows the volume check, and reuses its IDs.
+        assert len(volumes) == 1 and not queued("roots_verify")
         service.resultReady.emit(volumes[0], {"kind": "done"})
         service.pending.remove(volumes[0])
+        assert len(queued("roots_verify")) == 1
         seen(["/", "disk1"])  # Listed again while the roots check waits: nothing new to verify.
         assert not queued("volumes_verify") and len(queued("roots_verify")) == 1
         seen(["/", "disk1"], ["/Volumes/USB", "disk2"])  # A disk appeared: its volume ID is checked.
@@ -645,5 +649,79 @@ def test_verification_is_asked_once_per_mount_table_and_waits_behind_other_backg
         assert service.submit("tab", 0, str(tmp_path), "details")
         background = [request.operation for request in service.pending if request.operation != "volumes_verify"]
         assert background == ["details", "roots_verify"]
+    finally:
+        service.shutdown()
+
+
+def test_a_verification_never_asks_again_for_the_table_it_saw_itself(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Only listings ask: a check that saw another table than they reported ends there (it used to
+    start again at once, back to back, until the next listing). A table reported while a check runs
+    gets one more check after it, unless that check saw the same table."""
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_dispatch", lambda: None)
+    cache = FolderCache(service)
+    monkeypatch.setattr(cache, "VERIFY_MIN_SECONDS", 0.0)
+    monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: options(tmp_path))
+    listing = IORequest("tab", 0, str(tmp_path), "list", {}, 60.0)
+
+    def seen(*mounts: list[str]) -> None:
+        service.resultReady.emit(listing, {"kind": "mounts_seen", "mounts": list(mounts)})
+
+    def queued(operation: str) -> list[IORequest]:
+        return [request for request in service.pending if request.operation == operation]
+
+    def start(operation: str) -> IORequest:
+        """As ``IOService._start``, without the helper."""
+        (request,) = queued(operation)
+        assert service.before_start is not None
+        service.before_start(request)
+        service.pending.remove(request)
+        service.active.append(request)
+        return request
+
+    def finish(request: IORequest, *events: dict[str, Any]) -> None:
+        for event in (*events, {"kind": "done"}):
+            service.resultReady.emit(request, event)
+        service.active.remove(request)
+
+    try:
+        first, second, third = ["/", "disk1"], ["/Volumes/USB", "disk2"], ["/Volumes/Other", "disk3"]
+        seen(first)
+        volumes = start("volumes_verify")
+        seen(first, second)  # While the volume check runs: one more after it.
+        finish(volumes, {"kind": "volumes_verified", "volumes": [], "ids": []})
+        volumes = start("volumes_verify")
+        assert not queued("roots_verify")
+        finish(volumes, {"kind": "volumes_verified", "volumes": [first], "ids": [[*first, "id1"]]})
+        markers = start("roots_verify")
+        # The marker check reuses the volume check's IDs.
+        assert markers.payload["volume_ids"] == [[*first, "id1"]]
+        # It saw a table the listings didn't report (a disk came and went): no new check.
+        finish(markers, {"kind": "roots_verified", "mounts": [first, third]})
+        assert not queued("roots_verify") and not queued("volumes_verify")
+        # A listing reports the table that check saw: nothing to do.
+        seen(first, third)
+        assert not queued("roots_verify") and not queued("volumes_verify")
+        # A new table while a check runs: one more check after it, then none.
+        seen(first, second)
+        finish(start("volumes_verify"), {"kind": "volumes_verified", "volumes": [], "ids": []})
+        markers = start("roots_verify")
+        seen(second)
+        seen(second)
+        finish(markers, {"kind": "roots_verified", "mounts": [first, second]})
+        finish(start("volumes_verify"))
+        markers = start("roots_verify")
+        finish(markers, {"kind": "roots_verified", "mounts": [first]})
+        assert not queued("roots_verify") and not queued("volumes_verify")
+        # A failed check isn't retried until a listing reports a table again.
+        seen(third)
+        finish(start("volumes_verify"))
+        markers = start("roots_verify")
+        service.resultReady.emit(markers, {"kind": "error", "message": "store locked"})
+        service.active.remove(markers)
+        assert not queued("roots_verify") and not queued("volumes_verify")
     finally:
         service.shutdown()
