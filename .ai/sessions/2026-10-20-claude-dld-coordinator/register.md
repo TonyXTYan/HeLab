@@ -17,7 +17,7 @@ Plan: [roadmaps/dld-front-panel-port.md](../../../roadmaps/dld-front-panel-port.
 | `agent/dld-d3` | 1231025 | 2790741 | "Density images" XY/XT/YT | 1 (colour compression lost below 1/256 of max) |
 | `agent/dld-d5-d6` | 1231025 | 2a3bbfb | "Mean X, Y against T" and "T spectrum" with peak lists (`spectrum.py`, `display_units.py`) | 3 (power-mode noise peaks; sidelobe rule dropped real lines) |
 | `agent/dld-d7` | 1231025 | 597a89b | Shot times from raw `d<N>.txt` mtimes through helper, cache (`datasets.raw_times` column) and `DatasetView`; "Shot times" plot | 2 (Log gaps drawn as exponents; stale times on a copied-over run) |
-| `agent/dld-d8-d10` | e7d0aba | (see below) | Numerics only: `velocity.py` (z up), `release.py` (release time from one cloud), `peaks.py`, `bootstrap.py` (over shots) | 1 + fixes |
+| `agent/dld-d8-d10` | e7d0aba | f0e8512 | Numerics only: `velocity.py` (z up), `release.py` (release time from one cloud, plus `bootstrap_release_time`), `peaks.py`, `bootstrap.py` (over shots) | 1 (sparse clouds missed; hand-set fall time gave v_z ≠ 0 at rest; unusable bootstrap SE reported ok) |
 
 Every final head ran the full suite (`-n 2 --reruns 5 --reruns-delay 1`) with only
 the two tests that fail as root: `test_constants.py::test_read_only_saved_folder_is_replaced`
@@ -72,8 +72,9 @@ Physics and statistics (proposed, with reasons in each branch's notes):
   hand-set.
 - Smoothed-curve fits smooth the model too (honest sandwich SEs); refused when
   σ_s > range/5.
-- Release time: tallest peak, Gaussian centre ± within-run SE (shot jitter only via
-  the bootstrap); wide-cloud skew noted, not corrected.
+- Release time: tallest peak, Gaussian centre ± within-run SE, labelled so; the
+  shot bootstrap (`bootstrap_release_time`) gives the honest error with shot jitter
+  and is recommended wherever an error is shown; wide-cloud skew noted, not corrected.
 - Bootstrap defaults: 1000 resamples, seed 0, 68.27 % percentile interval.
 - D6: Hann window, power = amplitude², sinc binning correction, peaks ≥ 4× median
   prominence. D5: Hann (notes said Hamming), SD only.
