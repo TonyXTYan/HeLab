@@ -39,3 +39,39 @@ Branch `agent/smb-io-audit`, base 486cf56. Part 1 only: study and trace, no beha
   `DEV_POTENTIAL_DATA_PATHS`, starting with `/Volumes/dld_output`: a helper stats it and, if mounted, lists
   it, runs its details scan and fetches icons. On a Mac with the share mounted every such test run (and
   every agent's) touches the real share. Not mounted on this Mac today.
+
+## Part 2 (2026-10-19, after Tony's go via Maestro)
+
+Codex agreed with all six findings (review-codex.md); Maestro's constraints were followed. Commits, each
+with its trace test:
+
+- cff8df3 trace exactness (Codex's caveats): marker_open/fstat/read with real bytes (optional `trace`
+  keyword on `data_roots.read_marker`, approved by Maestro, no other change there), `is_dir` counts per
+  listing, real bytes read, no `is_symlink` probe, marker hiding traced, network trace files refused,
+  stronger no-change test (full events and exact calls).
+- 7b9b7e8 roots_verify loop.
+- 0e9c0ad load stats (fingerprint from the listing, second verify only after rereads, a changed cached
+  leaf folder takes the load's own status instead of a relisting and details scan).
+- 2b55d59 half-written files in loads (recent file not ending with a newline: still being written);
+  Live reads a ready file once instead of tail-then-file.
+- c53a058 RAM-only quick check.
+- 1e83f20 Live: pending-file checks without listing; the known root's marker only.
+- 65a06b3 dedicated Live save from RAM (`io_helper.save_held`, arrays handed over by IOService).
+
+Decisions worth recording:
+- Live identity: the known root's marker is read on every listing check (one open), not once a minute;
+  a missing or invalid marker walks again; another root at the folder stops Live. Location identities
+  (no marker) use the mount table only. Codex warned once-a-minute alone would weaken remount protection.
+- Live's pending path only answers "still waiting"; once a pending file is ready it lists the folder, so
+  identity, the held-shot sample and the summary are unchanged for any check that reads.
+- The Live save checks every held file by the listing's stats (no sample trust), hands all held arrays to
+  the helper (local temp, written by the reader thread, not the GUI thread). Possible later optimisation:
+  hand over only shots not in the cached dataset and unpack the rest.
+- Loads' half-written rule is the trailing newline only (a whole row with an empty field is a damaged
+  file's, read as problematic); Live keeps its stricter rule. RECENT_SECONDS = 600: older files ending
+  mid-row are damaged, not being written.
+- Not done (not among the six): tests' default tab resolving /Volumes/dld_output (conftest is shared),
+  details per visible row only, icons kept across Refresh.
+
+Test-tree note: the floor's `tests/__pycache__` was cloned from Ground, so tracebacks show Ground's
+paths (`../../../HeLab/tests/...`) for unchanged test files; the code run is the floor's.

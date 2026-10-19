@@ -1,9 +1,181 @@
-# Handoff: SMB I/O audit, Part 1 (study and trace)
+# Handoff: SMB I/O audit
+
+Branch `agent/smb-io-audit` (base 486cf56). **Part 2 (fixes) is done** and comes first below; Part 1
+(the study, the "before") follows unchanged in substance. Codex's review of Part 1: `review-codex.md`.
+
+## Part 2 summary
+
+Tony's rule: fix what Codex agreed with; Codex agreed with all six findings. Each fix is its own commit
+with trace tests, following Codex's constraints and Maestro's notes:
+
+| Commit | Finding | What changed |
+|---|---|---|
+| cff8df3 | Trace caveats | `.helab-root` reads traced as `marker_open`, `marker_fstat`, `marker_read` (real bytes); each listing counts its `is_dir` checks; reads record the bytes actually read; no `is_symlink` probe while tracing; marker hiding's stat and chflags traced; `HELAB_IO_TRACE` on a network drive or share refused with a warning; the no-change test compares full events and the exact calls on the folder. |
+| 7b9b7e8 | 1. roots_verify loop | Only a listing reporting a mount table not yet asked about asks for a check (`_verify_asked`); a check that saw another table than listings reported never re-queues itself; a table reported while a check runs gets one follow-up; a failed check waits for the next listing; the marker check follows the local volume check and reuses its IDs (no second diskutil); marker checks at most every 5 s as a backstop. |
+| 0e9c0ad | 4. Load stats | The fingerprint comes from the load's own listing (free on Windows); the before- and after-read stats stay; the cache-save verify pass runs only if files were read after the load's own verify; a changed cached leaf folder takes the load's status instead of a relisting and details scan. |
+| 2b55d59 | 6. Half-written files | A load reads a file in one go and drops it (not shown, not cached, unsettled, read again next check) if it was modified in the last 10 min and doesn't end with a newline. Live reads a ready file once and checks its last row on those bytes (one open instead of tail-then-file). |
+| c53a058 | 5. RAM-only quick check | Data in RAM without a disk cache gets the quick check from its own load's listing time, names and identity: same location (mount table), same data root (one marker read), folder unmodified since, nothing unsettled then, the sample unchanged; never for Retry/Refresh. |
+| 1e83f20 | 3. Live checks | While the folder's mtime is the one its last listing saw, a check stats only the files still being written; once one is ready, it lists as before (identity, sample, read). The identity check reads only the marker the first listing found, on every listing check (not once a minute); a missing or different marker there is looked for again or stops Live (remount). |
+| 65a06b3 | 2. Live saves | A dedicated save: the RAM dataset's arrays go to the helper (written to its private local folder by IOService's reader thread, off the GUI thread); the helper lists the folder once, checks every held file's size and mtime from that listing (no sampling), the identity, missing and changed files, then saves the full dataset under a load's guard, budget and pending-save rules (`_write_dataset`, shared with `_load`). No TXY file is read. |
+| b71a698 | 5 and 4, follow-up | The rerun showed a duplicate: selecting a RAM-held leaf folder relisted it and rescanned its details. Now it's checked by its load (as disk-cached folders already were), whose listing updates the row on a change; a load's listing marks a leaf folder's snapshot as just checked, so other tabs don't relist it. |
+
+### Before and after (the same scenarios, rerun)
+
+Same setup as Part 1 (offscreen HeLab, local APFS test share, real defaults, read timeouts 3/4/5 s).
+Counts are HeLab's calls on the share; marker reads are counted as opens in both runs. Only rows that
+changed, plus idle rows; full tables: `compare-session1.md`, `compare-session2.md`; per-phase detail:
+`trace-session{1,2}-before.md`, `trace-session{1,2}-after.md`.
+
+| Phase | Helpers | Listings | Stats | Marker opens | Reads | Tail reads |
+|---|---|---|---|---|---|---|
+| Idle, tree open (60 s, both sessions) | 0 | 0 | 0 | 0 | 0 | 0 |
+| Tab switches (4 × 15 s) | 0 | 0 | 0 | 0 | 0 | 0 |
+| Select and load run_a (120 TXY) | 3 | 2 | 602 → **482** | 0 | 120 | 0 |
+| Select and load run_b (40 TXY) | 2 | 2 | 202 → **162** | 0 | 40 | 0 |
+| Select and load run_live (30 TXY) | 3 | 2 | 152 → **122** | 0 | 30 | 0 |
+| **Live, writer adds 12 shots in 64 s** | 30 → 31 | 20 → **18** | 313 → **213** | 95 → **22** | 21 → **11** | 11 → **0** |
+| Live, files settling (15 s) | 5 → 6 | 2 | 21 → 25 | 10 → **2** | 1 → 2 | 1 → **0** |
+| Live, nothing new (60 s) | 20 | 1 | 25 | 5 → **1** | 0 | 0 |
+| **Live off: save** | 1 | 1 | 127 → **42** | 0 → 1 | 1 → **0** | 0 |
+| Load during a stalled write (11 TXY) | 4 → 2 | 2 | 59 → **45** | 1 → 0 | 11 | 0 |
+| **Mount table reported changed (30 s)** | 803 → **2** | 0 | 828 → **2** | 414 → **1** | 0 | 0 |
+| **Cached folder with one new shot (41 TXY)** | 4 → 2 | 3 → **1** | 170 → **86** | 0 | 1 | 0 |
+| **RAM-only folder reselected, unchanged (120 TXY)** | 4 → 3 | 4 → **2** | 245 → **9** | 0 | 0 | 0 |
+| Startup, fresh store | 8 → 9 | 2 | 5 → 7 | 1 → 2 | 0 | 0 |
+| Toolbar Refresh | 11 → 13 | 10 | 22 → 24 | 1 → 2 | 0 | 0 |
+
+- **Unchanged by design:** a first load of a RAM-only folder (485 stats on macOS: the fingerprint from
+  the listing is still one stat per file there, free only on Windows), Retry/Refresh's full check, the
+  listing before an uncached folder's load (it gives the tree's names and saved status first), the
+  stuck-read retries, the failing listing.
+- **Startup +1 helper, +2 stats, +1 marker:** the marker check now follows the volume check, so on a
+  fresh store it also checks the root the first listing just found; and the first listing's report
+  during the startup volume check gets its one follow-up volume check (local lane, no share).
+- **Toolbar Refresh +2 helpers:** a real mount change (an iOS Simulator runtime image mounted on this Mac
+  during the run); the Refresh listing reported it, and it got exactly one verification.
+- **Live, writer adding a file every 4 s:** each new file changes the folder's mtime, so most checks still
+  list (20 → 18); the savings there are the marker opens (5 → 1 per listing) and the tail reads (gone).
+  The pending-file checks pay off when files are slow to finish or rare.
+
+Projected for a real run (N = 1,000 TXY files, a new shot every ~10 s, macOS):
+- Live autosave every 10 shots: ~3,000 stats and 10 reads from the share → 1 listing, 1,000 listing
+  stats (none on Windows), 1 marker read, no read.
+- A load of N files: 5N → 4N stats on macOS, 3N on Windows (when the cache is saved).
+- Re-selecting unchanged data: 6 operations whether it's disk cached or RAM only (was 2N + 4 listings for
+  RAM only).
+- After a mount change: one verification per new table reported (was unbounded until a listing).
+
+### Files still being written: rule now, research, limits
+
+What HeLab does now (trace, `trace-session1-after.md` "Files touched while the fake writer was writing them"):
+- **Stats:** still made of files being written (Live's new and pending files, a load's fingerprint, a
+  details scan). They don't disturb the writer (below), and they're how HeLab learns a file is young.
+- **Opens and reads:** only of files settled by age (unchanged for 5 s). A load now drops a recent file
+  that doesn't end with a newline; Live drops one whose last row isn't whole. In the rerun the stalled
+  file was read and dropped, and the disk cache holds `run_stall` without it (unsettled 1); before, the
+  half file was shown and cached. Live opens a ready file once instead of twice.
+
+Research (sources at the end of this section):
+1. **A stat doesn't break the writer's caching.** Opening with only FILE_READ_ATTRIBUTES,
+   FILE_WRITE_ATTRIBUTES or SYNCHRONIZE "does not break" any oplock [1]. macOS's SMB client stats with a
+   compound CREATE/QUERY_INFO/CLOSE asking for SMB2_FILE_READ_ATTRIBUTES | SMB2_SYNCHRONIZE and share
+   access ALL [2].
+2. **A data open from another computer does.** It breaks the writer's Read-Write-Handle oplock or lease
+   to Read-Handle (to Read-Write if the share modes would conflict), and "an acknowledgment must be
+   received before the operation continues" [1]: the converter's client flushes its cached writes and
+   stops caching writes to that file. That costs the converter speed, not correctness.
+3. **The server's size and mtime can lag the writer.** A write-caching lease "allows caching writes and is
+   exclusive to only one client"; under it writes need no network packets [3]. So a file can look
+   unchanged on the server for more than 5 s while its writer is still writing into its own cache; a
+   reader's open forces the flush. This is why age alone can't prove a file is finished.
+4. **Client caches make stats stale too.** macOS caches a file's attributes for (now − mtime)/10, between
+   2 and 30 s [4]: a young file's attributes are re-fetched after 2 s. Windows caches file information
+   for 10 s, directory listings for 10 s and "not found" for 5 s (FileInfoCacheLifetime,
+   DirectoryCacheLifetime, FileNotFoundCacheLifetime), with only 64 files' information by default
+   (FileInfoCacheEntriesMax) [5].
+5. **Sharing modes.** macOS opens files for reading with share access ALL [2]: it never blocks the writer.
+   Python's `open()` on Windows goes through the C runtime's `_wopen`, which shares read and write but not
+   delete (`_SH_DENYNO` → FILE_SHARE_READ | FILE_SHARE_WRITE) [6][7]: while a Windows HeLab reads a file,
+   its writer can keep writing but can't delete or rename that file.
+
+Decision taken (implemented): stats of young files allowed; opens and reads only of files settled by age
+and, now for loads too, with a whole last row; one data open per new file in Live.
+
+Proposed, not done (Tony's call):
+- **Windows clients and Live's "unchanged since the last check" rule:** two stats 3 s apart can both come
+  from the 10 s file-information cache [5], so on Windows the rule is weaker than on macOS. A fix would be
+  to require the two looks to be at least 10 s apart on Windows.
+- **The real fix stays the converter's temporary-name rename** (on the roadmap): write `…tmp`, close, then
+  rename to `d_txy_forc<N>.txt`. Age and a whole last row can't prove the writer finished: a writer paused
+  exactly at a row's end, or caching writes as in 3, still looks finished. And a converter that replaced a
+  finished file by renaming over it would fail while a Windows HeLab reads it (5); writing new names
+  doesn't.
+
+Sources:
+[1] Microsoft, "Checking the Oplock State of an IRP_MJ_CREATE Operation", https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/irp-mj-create2
+[2] Apple SMBClient source, `kernel/smbfs/smbfs_smb_2.c` (`smb2fs_smb_cmpd_query`, `smb2fs_smb_cmpd_create_read`), https://github.com/apple-oss-distributions/SMBClient
+[3] Microsoft Open Specifications blog, "Client caching features: Oplock vs. Lease", https://learn.microsoft.com/en-us/archive/blogs/openspecification/client-caching-features-oplock-vs-lease
+[4] Apple SMBClient source, `kernel/smbfs/smbfs_node.h` (`SMB_CACHE_TIME`, `SMB_MINATTRTIMO` 2, `SMB_MAXATTRTIMO` 30), https://github.com/apple-oss-distributions/SMBClient
+[5] Microsoft, "Performance tuning for file servers" (client registry defaults), https://learn.microsoft.com/en-us/windows-server/administration/performance-tuning/role/file-server
+[6] Microsoft, "_sopen, _wsopen" (`_SH_DENYNO` "Permits read and write access"), https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/sopen-wsopen
+[7] UCRT `lowio/open.cpp` as carried in ReactOS (`_wopen` → `_SH_DENYNO`; `_SH_DENYNO` → FILE_SHARE_READ | FILE_SHARE_WRITE), https://doxygen.reactos.org/d2/dce/open_8cpp_source.html
+
+### Ownership
+
+- One change outside my owned paths, approved by Maestro: `helab/utils/data_roots.py` `read_marker`
+  gained an optional keyword-only `trace` callback (default None: unchanged without it), so the trace can
+  record its open, fstat and read. No other change there; `test_read_marker_behaves_the_same_with_a_trace_callback`
+  checks identical results and errors with and without it.
+- Otherwise only owned paths: `helab/io_helper.py`, `helab/utils/io_service.py`, `helab/utils/folder_cache.py`,
+  `helab/views/FolderExplorer.py`, `helab/models/SnapshotFileSystemModel.py`, and their tests
+  (`tests/test_io_trace.py`, plus small updates in `test_root_discovery.py`, `test_cache_first.py`,
+  `test_folder_cache.py`, `test_live_check.py`, `test_gui_responsiveness.py`).
+- Live L3 runs in parallel: `memory=[]` stays a valid Live start (I left the `if not memory` line to L3);
+  a Live save only runs with new shots, and a growing dataset saves (tested).
+
+### Checks (Part 2)
+
+- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`: **1010 passed, 2 skipped,
+  2 xfailed, no RERUN** (the last full run). One earlier run had reruns: a strict-mypy failure in my own
+  new test helper, fixed before that commit.
+- `mypy helab/ --strict`, `mypy tests --strict`, both with `--platform win32`; `pyright helab tests`, also
+  `--pythonplatform Windows`: clean.
+- `tests/test_io_trace.py`: 24 tests (the trace itself, and one or more per fix).
+- Scenario reruns: two sessions, no GUI-process call on the share.
+
+### Not done (outside the six; for Tony)
+
+- Tests whose main window opens a default tab on `/Volumes/dld_output` (Part 1 finding 9): a conftest
+  change (shared file).
+- Details scans for visible rows only; icons kept across Refresh (Part 1 finding 6).
+- The startup "database is locked" on a fresh store (notes).
+- The Windows "seen twice" interval above.
+
+### Proposed doc changes (for the coordinator)
+
+- AGENTS.md, Testing: the `HELAB_IO_TRACE=<file>` debug trace (io_helper only; refused on a network
+  drive), summarised by this folder's `trace_summary.py` and compared by `compare_traces.py` (to move to
+  `dev/`).
+- AGENTS.md, Responsive I/O: verification asked only by a listing's new mount table (one follow-up, never
+  self-requeued, 5 s backstop); a load's fingerprint from its listing, the cache-save verify only after
+  rereads; a recent TXY file not ending with a newline is still being written (RECENT_SECONDS 600);
+  the RAM quick check (`memory_check`); selecting a RAM-held leaf folder doesn't list it.
+- AGENTS.md, Live: checks stat only pending files while the folder's mtime is the last listing's; the
+  identity reads the known root's marker; saves are `save_held` from RAM (listing, every held file
+  checked, no read), not an ordinary load.
+- `roadmaps/_readme.md`: mark the SMB audit's Part 2 done; add the Windows "seen twice" interval and the
+  remaining Part 1 items (tests' default tab, details per visible row, icons across Refresh).
+- `.ai/MANUAL_TODO.md`: trace the real share before and after this branch (recipe in Part 1, section 7;
+  compare with `compare_traces.py`).
+
+---
+
+## Part 1: study and trace (before the fixes)
 
 Branch `agent/smb-io-audit` (base 486cf56). Part 1 only: the code's logic is unchanged; an opt-in trace was
 added. **Part 2 (fixes) waits for Tony's go.**
 
-## Summary
+### Summary
 
 - **Trace:** `HELAB_IO_TRACE=<file>` makes every helper append each operation it makes on a source folder
   to `<file>`, one JSON line each (what, which file, size and mtime, why, which request and tab). It is off by
@@ -30,7 +202,7 @@ added. **Part 2 (fixes) waits for Tony's go.**
   next check re-reads it.
 - **Real share:** not touched. A recipe below lets Tony run the trace himself.
 
-## 1. The trace
+### 1. The trace
 
 Set `HELAB_IO_TRACE` to a **local** file before starting HeLab. Helpers inherit it; it is read in
 `helab/io_helper.py` only (`io_helper.TRACE`). While tracing, the GUI adds whom each helper works for.
@@ -60,7 +232,7 @@ every Python `os.stat`/`lstat`/`scandir`/`listdir`/`open`/`os.path.*` call the G
 Qt's native file access isn't visible to that hook; the GUI uses none on source paths (only the user's
 Open/Save dialogs).
 
-## 2. Inventory: every code path that reaches a source folder
+### 2. Inventory: every code path that reaches a source folder
 
 N = TXY files in the folder, S = its subfolders, D = folder levels from the folder up to its `.helab-root`
 (up to `/` without one), K = known data-root locations that are mounted.
@@ -85,7 +257,7 @@ N = TXY files in the folder, S = its subfolders, D = folder levels from the fold
 
 The GUI process has no row: it makes none.
 
-## 3. Scenario runs (counts from the trace)
+### 3. Scenario runs (counts from the trace)
 
 **Setup:** `scenarios.py` ran offscreen HeLab on a test share built from `tests_sample_data`: a local folder
 with a `.helab-root`, dated runs of 30–300 TXY files (~100 kB each) and a sibling folder without a
@@ -131,7 +303,7 @@ Nothing ran without a user action except Live checks, Live's saves and the verif
 operation that repeated more often than designed is the loop. (Live and the per-file retries run as
 designed; Live's listing on every check during acquisition follows its rule, see finding 3.)
 
-## 4. Findings, ranked by SMB traffic
+### 4. Findings, ranked by SMB traffic
 
 1. **`roots_verify` loops back to back (bug).** `FolderCache._on_event` re-submits `_verify_roots()` when a
    verification ends with `_mounts_observed != _roots_mounts`: the mount table the last listing reported is
@@ -186,7 +358,7 @@ designed; Live's listing on every check during acquisition follows its rule, see
    Every agent's test run on Tony's Mac would then touch the real share. Not mounted here today. *Fix:*
    conftest replaces the default folders with a temporary one.
 
-## 5. Files still being written
+### 5. Files still being written
 
 From the code, confirmed by the trace (the fake writer marked each file's write window):
 
@@ -202,7 +374,7 @@ Windows' SMB client breaks the writer's oplock or lease, or meets its sharing mo
 the converter; and then a fresh-file rule, for example: decide age from the listing's own data; never open
 or read a file younger than the settle age or not seen unchanged across two looks; loads apply Live's rule.
 
-## 6. Proposed Part 2 order (for Tony's decision)
+### 6. Proposed Part 2 order (for Tony's decision)
 
 1. Stop the verification loop (finding 1), with a trace test: "a changed mount table makes at most one
    verification until a listing reports another".
@@ -215,7 +387,7 @@ or read a file younger than the settle age or not seen unchanged across two look
 Each fix gets a trace test, e.g. "an idle tree makes 0 source operations per minute after the first
 listing" (true today: worth pinning down first).
 
-## 7. Recipe: trace the real share (Tony)
+### 7. Recipe: trace the real share (Tony)
 
 macOS, from a checkout of this branch:
 
@@ -249,7 +421,7 @@ SMB2 (not readable if the share encrypts SMB3 traffic).
 
 Don't run `scenarios.py` against a real share: it builds and deletes its own test share.
 
-## 8. Checks
+### 8. Checks
 
 - `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`: 992 passed, 2 skipped, 2 xfailed,
   **no RERUN**.
@@ -258,7 +430,7 @@ Don't run `scenarios.py` against a real share: it builds and deletes its own tes
 - `tests/test_io_trace.py`: 7 tests (section 1).
 - Scenario runs: `scenarios.py OUT --session 1` then `--session 2` (11 minutes), summaries in this folder.
 
-## 9. Proposed doc changes (for the coordinator)
+### 9. Proposed doc changes (for the coordinator)
 
 - AGENTS.md, Testing: add the debug trace beside the test seams: "`HELAB_IO_TRACE=<file>` (`helab/io_helper.py`
   only): every helper appends each source-folder operation to `<file>` as one JSON line; off by default.
@@ -267,7 +439,7 @@ Don't run `scenarios.py` against a real share: it builds and deletes its own tes
 - `roadmaps/_readme.md`: an item "SMB I/O audit Part 2" with section 6's order, and finding 1 as a bug.
 - `.ai/MANUAL_TODO.md`: "Trace HeLab on the real share (recipe in the audit's handoff, section 7)".
 
-## 10. Files
+### 10. Files
 
 - Code: `helab/io_helper.py` (trace and wrappers), `helab/utils/io_service.py` (`IORequest.trace`, `owners_of`),
   `helab/utils/folder_cache.py` (`_owners_of`), `tests/test_io_trace.py`.
