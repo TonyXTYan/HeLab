@@ -13,14 +13,17 @@ from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QTabWidget, QWidget
 
 from helab.analysis.panes import PlotlyPane
+from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.io_helper import list_folder, scan
 from helab.models.ScriptTreeSelector import AnalysisInstance, ParamTreeTabWidget, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
+from helab.scripts.standard import basic_plots, group
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import FolderCache
 from helab.utils.io_service import IORequest, IOService
+from helab.views.CentralHint import CentralHint
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.HelabMainWindow import HelabMainWindow
 
@@ -91,6 +94,8 @@ class Window(HelabMainWindow):
     def __init__(self, explorer: FolderExplorer) -> None:
         QMainWindow.__init__(self)
         self.middle_mainwindow = QMainWindow()
+        self.central_placeholder = CentralHint("Select a data folder to begin")
+        self.middle_mainwindow.setCentralWidget(self.central_placeholder)
         self.dock_widgets: List[QDockWidget] = []
         self.tab_widget = QTabWidget()  # type: ignore[assignment]
         self.tab_widget.addTab(explorer, "tab")
@@ -99,9 +104,6 @@ class Window(HelabMainWindow):
 
     def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
         self.notices.append(text)
-
-    def update_placeholder_visibility(self) -> None:
-        pass
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         QMainWindow.closeEvent(self, a0)
@@ -169,7 +171,7 @@ def test_selection_change_mid_run_keeps_the_input(
     assert result.data == 7  # run_A's events, not run_B's
     label = source_label(instance.dock_widget)
     window._update_plot_source_label(instance.dock_widget, browser)
-    assert label.text() == "Showing previously loaded data: run_A · rev 1 · tests.blocking v3 · Scale 1"
+    assert label.text() == "Showing previously loaded data: run_A · rev 1 · tests.blocking v3\nScale 1"
     assert "Input: " + str(first) in label.toolTip() and "kept in RAM only" in label.toolTip()
     # A new run takes the data shown now.
     view = window.current_dataset_view()
@@ -192,7 +194,7 @@ def test_rerun_uses_the_same_input_and_close_cleans_up(
     assert first is not None and first.data == 2
     assert window.panel_right_top_params_tab_widget.indexOf(instance.param_tab) >= 0
     label = source_label(instance.dock_widget)
-    assert label.text() == "Data source: run_C · rev 1 · tests.blocking v3 · Scale 1"
+    assert label.text() == "Data source: run_C · rev 1 · tests.blocking v3\nScale 1"
     instance.parameter_root.child("scale").setValue(4)
     instance.rerun_button.click()
     qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
@@ -230,6 +232,58 @@ def test_closing_a_dock_mid_run_delivers_nothing(
     assert instance.runner.results.get(job_id) is None
 
 
+def test_centre_hint_hides_while_a_plot_dock_is_open(
+        window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path) -> None:
+    """The hint goes as soon as the first dock is added (its show is queued, so visibility
+    can't tell) and comes back only when the last open dock closes."""
+    run = folder(tmp_path, "run_H", 1)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3})
+    window.show()
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = Blocking()
+    metadata = script.get_metadata()
+    hint = window.central_placeholder
+    assert not hint.isHidden()
+    first = panel.run_analysis(metadata, script, "Plot")
+    assert first is not None and first.dock_widget is not None
+    assert hint.isHidden()
+    second = panel.run_analysis(metadata, script, "Plot")
+    assert second is not None and second.dock_widget is not None
+    script.release.set()
+    qtbot.waitUntil(lambda: first.result is not None and second.result is not None, timeout=10_000)
+    first.dock_widget.close()
+    assert hint.isHidden() and window.dock_widgets == [second.dock_widget]
+    second.dock_widget.close()
+    assert not hint.isHidden() and not window.dock_widgets
+
+
+def test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab(
+        window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path) -> None:
+    run = folder(tmp_path, "run_R", 2)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3, 2: 4})
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = basic_plots.TxyHistograms()
+    instance = panel.run_analysis(script.get_metadata(), script, "Plot")
+    assert instance is not None and instance.dock_widget is not None and instance.parameter_root is not None
+    qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
+    assert "⚠" not in source_label(instance.dock_widget).text() and instance.status_label.text() == ""
+    specs = script.parameters("Plot")
+    for name, value in (("range_mode", "manual"), ("x_min", 5.0), ("x_max", 2.0)):
+        parameter_of(instance.parameter_root, next(spec for spec in specs if spec.name == name)).setValue(value)
+    first = instance.result
+    instance.rerun_button.click()
+    qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
+    label = source_label(instance.dock_widget)
+    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v2\n"
+                            "manual range: full extent · bins auto · ⚠ X: min > max, using full extent")
+    assert "Warning: X: min > max, using full extent" in label.toolTip()
+    assert instance.status_label.text() == "⚠ X: min > max, using full extent"
+
+
 def test_run_without_data_says_so(window: Window, qtbot: QtBot) -> None:
     panel = TreePanelWidget(window)
     qtbot.addWidget(panel)
@@ -244,7 +298,7 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     load(browser, qtbot, run, {1: 30, 2: 40})
     panel = TreePanelWidget(window)
     qtbot.addWidget(panel)
-    metadata = next(m for m in panel.script_manager.get_scripts_in_group("Plots") if m.name == "3D scatter")
+    metadata = next(m for m in panel.script_manager.get_scripts_in_group(group.NAME) if m.name == "3D scatter")
     script_class = panel.script_manager.get_script(metadata.script_id)
     assert script_class is not None
     script = script_class()
@@ -255,11 +309,17 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     pane = instance.dock_widget.findChild(PlotlyPane)
     assert pane is not None and pane.plot_id in dash_server.plots
     assert pane.open_button.text() == "Open in browser"
-    assert pane.note.text().startswith("All 70 cropped events shown · crop keeps")
-    assert pane.note.toolTip().startswith("Showing all 70 events in the crop")
+    assert pane.note.text().startswith("All 70 events in range shown · crop keeps")
+    assert pane.note.toolTip().startswith("Showing all 70 events in the range")
     label = source_label(instance.dock_widget)
-    assert label.text() == "Data source: run_D · rev 1 · helab.scatter_3d v1 · Auto-crop: keep 99 %"
+    # Two lines: source (folder, revision, shots, analysis), then the settings in short form.
+    assert label.text() == ("Data source: run_D · rev 1 · 2 shots · helab.scatter_3d v2\n"
+                            "auto-crop 99 % · points 1.5 px, opacity 0.5")
+    assert not label.wordWrap() and label.contentsMargins().top() == 0
     assert metadata.file_hash[:12] in label.toolTip()
+    # The record lists every parameter, those not in use included.
+    assert "Parameters: Shots all, Last N 50, From shot 1, To shot (0 = last) 0, Range auto-crop, " \
+           "Auto-crop: keep 99 %, T min 0 s, T max 0 s," in label.toolTip()
     plot_id = pane.plot_id
     instance.dock_widget.close()
     qtbot.waitUntil(lambda: plot_id not in dash_server.plots)

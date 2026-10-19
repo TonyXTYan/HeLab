@@ -872,13 +872,13 @@ class HelabMainWindow(QMainWindow):
         self.update_placeholder_visibility()
 
     def update_placeholder_visibility(self) -> None:
-        # Check if any dock widgets are visible
-        logging.debug(f"update_placeholder_visibility: called")
-        any_visible = any(dock_widget.isVisible() for dock_widget in self.dock_widgets)
-        if any_visible:
-            self.central_placeholder.hide()
-        else:
-            self.central_placeholder.show()
+        """The plot area's hint shows while no plot dock is open, and hides while any is.
+
+        Open docks are those in ``dock_widgets`` (closing removes them), not the visible
+        ones: ``addDockWidget`` shows a new dock through a queued event, so the first dock
+        isn't visible yet when it is added, and a dock behind another tabbed one isn't
+        visible either but is still open."""
+        self.central_placeholder.setVisible(not self.dock_widgets)
 
     def _set_plot_source(self, dock: QDockWidget, explorer: FolderExplorer) -> None:
         """Attach provenance to a plot at creation, before the selection changes."""
@@ -900,15 +900,18 @@ class HelabMainWindow(QMainWindow):
         return view_of(dataset, current.model.cache.root_of(dataset.path))
 
     def set_plot_result(self, dock: QDockWidget, content: QWidget, result: AnalysisResult,
-                        parameters_text: str = "") -> None:
-        """Show an analysis result in its dock, with its source line: the input folder and
-        revision, the analysis and its version, the parameters; the full record in the tooltip."""
+                        parameters_text: str = "", record_text: str = "", selection_text: str = "") -> None:
+        """Show an analysis result in its dock, with two source lines: the input folder and
+        revision, which shots (``selection_text``) and the analysis with its version; then the
+        settings in short form (``parameters_text``). The full record (every parameter,
+        ``record_text``) is in the tooltip."""
         identity = result.input.identity
         dock.setProperty("dataSourcePath", identity.source_path)
         dock.setProperty("dataSourceSignature", identity.signature)
         dock.setProperty("plotSourceDetail", " · ".join(filter(None, (
-            f"rev {result.input.revision}", result.analysis.short(), parameters_text))))
-        dock.setProperty("plotSourceRecord", result.describe(parameters_text))
+            f"rev {result.input.revision}", selection_text, result.analysis.short()))))
+        dock.setProperty("plotSourceSettings", parameters_text)
+        dock.setProperty("plotSourceRecord", result.describe(record_text or parameters_text))
         old = dock.widget()
         HelabMainWindow._wrap_plot(dock, content)
         if old is not None:
@@ -920,14 +923,18 @@ class HelabMainWindow(QMainWindow):
 
     @staticmethod
     def _wrap_plot(dock: QDockWidget, content: QWidget) -> None:
-        """The dock shows a one-line source label above the plot."""
+        """The dock shows its source above the plot: one or two lines (source, then settings),
+        never wrapped (a long line is cut at the dock's edge; the tooltip has it all), with no
+        vertical padding."""
         wrapper = QWidget(dock)
         layout = QVBoxLayout(wrapper)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(0)
         label = QLabel(wrapper)
         label.setObjectName("plot_data_source")
         label.setTextFormat(Qt.TextFormat.PlainText)
-        label.setWordWrap(True)
+        label.setWordWrap(False)
+        label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         layout.addWidget(label)
         layout.addWidget(content, 1)
         dock.setWidget(wrapper)
@@ -947,9 +954,11 @@ class HelabMainWindow(QMainWindow):
                    and explorer.folder_opened_path == path)
         prefix = "Data source" if current else "Showing previously loaded data"
         detail = dock.property("plotSourceDetail")
+        settings = dock.property("plotSourceSettings")
         record = dock.property("plotSourceRecord")
         name = os.path.basename(path.rstrip(os.sep)) or path
-        label.setText(f"{prefix}: {name}" + (f" · {detail}" if isinstance(detail, str) and detail else ""))
+        label.setText(f"{prefix}: {name}" + (f" · {detail}" if isinstance(detail, str) and detail else "")
+                      + (f"\n{settings}" if isinstance(settings, str) and settings else ""))
         label.setToolTip(record if isinstance(record, str) and record else path)
 
     def toggle_left_panel(self, checked: bool) -> None:
