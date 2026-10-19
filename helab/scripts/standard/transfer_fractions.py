@@ -407,7 +407,7 @@ class TransferFractions(DatasetAnalysis):
                 notes.append(f"⚠ order 0 moved by {order_label(jumped)} order{'' if abs(jumped) == 1 else 's'} "
                              f"from the last detection ({previous:.6g} s → {centre:.6g} s): a strong transfer can "
                              f"make another order the tallest. Manual starts from the last one; to accept the new "
-                             f"one, set Order 0 at {centre:.6g} s in manual mode and Rerun")
+                             f"one, set Order 0 at {centre:.6g} s in manual mode, Rerun, then back to Auto")
         empty = int(np.count_nonzero(counts.sum(axis=1) == 0))
         if empty and empty < len(boxed):
             notes.append(f"{empty:,} shot{'' if empty == 1 else 's'} with no events in the windows: no fractions")
