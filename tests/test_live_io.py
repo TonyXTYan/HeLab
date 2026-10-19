@@ -43,43 +43,80 @@ def events_of(service: IOService) -> list[tuple[IORequest, dict[str, Any], float
     return events
 
 
+def release(fifo: Path) -> None:
+    """Let a helper blocked reading ``fifo`` (a TXY file that is a named pipe) finish that file."""
+    with open(fifo, "w") as writer:
+        writer.write("1,2,3\n")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="named pipes hold the helpers in place on POSIX")
 def test_a_live_check_pauses_background_work_only_while_it_reads(
     qtbot: QtBot, service: IOService, tmp_path: Path,
 ) -> None:
+    """Two named pipes fix the order of events, whatever the machine's speed: the other tab's
+    load blocks on one of its TXY files until the Live check is reading, and the check blocks
+    on its last new file until the load has reported itself paused."""
     background = tmp_path / "other folder"
     background.mkdir()
-    write_files(background, range(1, 3001), rows=500)
+    write_files(background, range(1, 41), rows=200)
+    hold_load = background / "d_txy_forc41.txt"
+    write_files(background, range(42, 52), rows=200)
     watched = tmp_path / "run"
     watched.mkdir()
     write_files(watched, range(1, 11))
     held = fingerprints(watched, range(1, 11))
+    hold_check = watched / "d_txy_forc211.txt"
+    if sys.platform != "win32":  # Always true (skipif); type checkers see os.mkfifo as POSIX only.
+        os.mkfifo(hold_load)
+        os.mkfifo(hold_check)
+    old = time.time() - 60
+    os.utime(hold_load, (old, old))
     events = events_of(service)
-    assert service.submit("other tab", 0, str(background), "load")
-    qtbot.waitUntil(lambda: any(e["kind"] == "file_finished" for r, e, _ in events if r.owner == "other tab"),
-                    timeout=10000)
 
-    def check(owner: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    def seen(owner: str, kind: str, filename: Path | None = None) -> bool:
+        return any(r.owner == owner and e["kind"] == kind and (filename is None or e.get("filename") == str(filename))
+                   for r, e, _ in events)
+
+    assert service.submit("other tab", 0, str(background), "load")
+    qtbot.waitUntil(lambda: seen("other tab", "file_finished"), timeout=10000)
+
+    def check(owner: str, payload: dict[str, Any]) -> None:
         assert service.submit(owner, 0, str(watched), "load", {"live": True, "memory": held, **payload})
-        qtbot.waitUntil(lambda: any(r.owner == owner and e["kind"] in ("done", "error") for r, e, _ in events),
-                        timeout=10000)
+
+    def finished(owner: str) -> list[dict[str, Any]]:
+        qtbot.waitUntil(lambda: seen(owner, "done") or seen(owner, "error"), timeout=10000)
         return [e for r, e, _ in events if r.owner == owner]
 
-    # Nothing new: the check lists the folder and never holds the other tab's load.
-    nothing = check("live 1", {})
+    # Nothing new: the check lists the folder and never holds the other tab's load, which reads on.
+    check("live 1", {})
+    nothing = finished("live 1")
     assert [e["kind"] for e in nothing][-2:] == ["live_unchanged", "done"]
-    assert not any(e["kind"] == "paused" for r, e, _ in events if r.owner == "other tab")
+    assert not seen("other tab", "paused")
+    # The load is now provably mid-way: blocked reading its pipe, with files still to read after it.
+    qtbot.waitUntil(lambda: seen("other tab", "file_started", hold_load), timeout=10000)
+    assert not seen("other tab", "file_finished", hold_load)
     # New files (seen unchanged by the previous check): background work waits while they are read,
     # then resumes.
     write_files(watched, range(11, 211), rows=2000)
-    found = check("live 2", {"seen": fingerprints(watched, range(11, 211))})
-    assert sum(e["kind"] == "shot" for e in found) == 200
-    qtbot.waitUntil(lambda: any(e["kind"] == "resumed" for r, e, _ in events if r.owner == "other tab"),
-                    timeout=10000)
+    os.utime(hold_check, (old, old))
+    check("live 2", {"seen": fingerprints(watched, range(11, 212))})
+    qtbot.waitUntil(lambda: seen("live 2", "file_started"), timeout=10000)
+    assert not seen("other tab", "paused")
+    # The check is reading: the load, let go, pauses at its next file.
+    release(hold_load)
+    qtbot.waitUntil(lambda: seen("other tab", "paused"), timeout=10000)
+    assert not seen("live 2", "done")
+    # Only then may the check finish; the load resumes after it.
+    release(hold_check)
+    found = finished("live 2")
+    assert sum(e["kind"] == "shot" for e in found) >= 200
+    qtbot.waitUntil(lambda: seen("other tab", "resumed"), timeout=10000)
     kinds = [(r.owner, e["kind"], at) for r, e, at in events if e["kind"] in ("paused", "resumed", "file_started")]
     paused = next(at for owner, kind, at in kinds if owner == "other tab" and kind == "paused")
     first_read = next(at for owner, kind, at in kinds if owner == "live 2" and kind == "file_started")
     assert paused >= first_read  # Only once the check reads a file.
     assert not any(r.owner.startswith("live") and e["kind"] == "paused" for r, e, _ in events)
+    qtbot.waitUntil(lambda: seen("other tab", "done"), timeout=15000)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="named pipes stand in for a stuck read on POSIX")
