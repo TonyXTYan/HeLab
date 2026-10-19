@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from PyQt6.QtCore import QPoint, QProcess, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabel, QMenu, QMessageBox,
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
                              QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from helab.utils.folder_cache import FolderCache, marker_path, store_options
@@ -38,6 +38,8 @@ CLEAR_TOOLTIP = ("Clear what this computer cached below this data root (datasets
                  "The .helab-root and folder flags stay.")
 REVIEW = "Review…"
 REVIEW_TOOLTIP = "Same folder or a copy? This location uses RAM only until answered"
+DETAIL_NONE = "Select a location to see its .helab-root's path and UUID"
+NOT_MOUNTED = "Not mounted"
 REFUSED_TEXT = ("HeLab can't delete {file} ({reason}). Delete it by hand ({show} finds it), then Refresh "
                 "this list.")
 
@@ -62,7 +64,10 @@ def show_command(marker: str) -> tuple[str, list[str]] | None:
 
 
 class DataRootsTab(QWidget):
-    COLUMNS = ("Data root", "Folder", "Status", "Last seen", "Cached")
+    # No folder column (Tony, 2026-10-19): the long path would scroll the list sideways. The two lines
+    # below the list show the selected row's full path and UUID.
+    COLUMNS = ("Data root", "Status", "Last seen", "Cached")
+    LABEL, STATUS, SEEN, CACHED = range(4)
     reviewRequested = pyqtSignal(str)  # A pending location: RootDuplicatesWindow at it.
 
     def __init__(self, cache: FolderCache | None, parent: QWidget | None = None) -> None:
@@ -95,6 +100,14 @@ class DataRootsTab(QWidget):
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._context_menu)
         layout.addWidget(self.list, 1)
+        # Read-only and frameless: lines that select and scroll, whatever the path's length.
+        self.path_line, self.uuid_line = QLineEdit(), QLineEdit()
+        for line in (self.path_line, self.uuid_line):
+            line.setReadOnly(True)
+            line.setFrame(False)
+            line.setStyleSheet("background: transparent")
+            layout.addWidget(line)
+        self.path_line.setPlaceholderText(DETAIL_NONE)
         footer = QHBoxLayout()
         self.status_label = QLabel("Checking…")
         footer.addWidget(self.status_label, 1)
@@ -151,7 +164,7 @@ class DataRootsTab(QWidget):
 
     def selected(self) -> dict[str, Any] | None:
         items = self.list.selectedItems()
-        row = items[0].data(0, Qt.ItemDataRole.UserRole) if items else None
+        row = items[0].data(self.LABEL, Qt.ItemDataRole.UserRole) if items else None
         return row if isinstance(row, dict) else None
 
     def forget_selected(self) -> None:
@@ -301,20 +314,22 @@ class DataRootsTab(QWidget):
         self.list.clear()
         for row in self.roots or ():
             folder = row["path"]
+            status = DECISIONS.get(row["decision"], row["decision"])
             item = QTreeWidgetItem([
-                row["label"], folder or f"Not mounted · {row['location']}",
-                DECISIONS.get(row["decision"], row["decision"]),
+                row["label"], status if folder or row["decision"] != "confirmed" else NOT_MOUNTED,
                 f"{datetime.fromtimestamp(row['last_seen']):%Y-%m-%d %H:%M}",
                 byte_size(row["cached"]["bytes"]) if row.get("cached") else "—"])
-            item.setData(0, Qt.ItemDataRole.UserRole, row)
-            item.setToolTip(0, f"{row['label']} · {row['uuid']}")
-            item.setToolTip(1, "\n".join(filter(None, (marker_path(folder) if folder else "",
-                                                        f"Location: {row['location']}"))))
+            item.setData(self.LABEL, Qt.ItemDataRole.UserRole, row)
+            item.setToolTip(self.LABEL, marker_path(folder) if folder
+                            else f"{NOT_MOUNTED_TOOLTIP} · {row['location']}")
+            if not folder:  # Greyed: not mounted now.
+                for column in range(len(self.COLUMNS)):
+                    item.setForeground(column, self.palette().placeholderText())
             first = datetime.fromtimestamp(row["first_seen"])
-            item.setToolTip(3, f"First seen {first:%Y-%m-%d %H:%M}")
+            item.setToolTip(self.SEEN, f"First seen {first:%Y-%m-%d %H:%M}")
             cached = row.get("cached")
-            item.setToolTip(4, f"{cached['folders']:,} folders cached below this data root on this computer"
-                            if cached else "Nothing cached below this data root on this computer")
+            item.setToolTip(self.CACHED, f"{cached['folders']:,} folders cached below this data root on this "
+                            "computer" if cached else "Nothing cached below this data root on this computer")
             self.list.addTopLevelItem(item)
         for column in range(len(self.COLUMNS)):
             self.list.resizeColumnToContents(column)
@@ -340,3 +355,16 @@ class DataRootsTab(QWidget):
         self.delete_button.setToolTip(DELETE_TOOLTIP if row is None or row["path"] else NOT_MOUNTED_TOOLTIP)
         self.clear_button.setEnabled(idle and row is not None)
         self.review_button.setEnabled(row is not None and row["decision"] == "pending")
+        for line, text in zip((self.path_line, self.uuid_line), self.detail_lines(row)):
+            if line.text() != text:
+                line.setText(text)
+                line.setCursorPosition(0)
+        self.path_line.setToolTip(f"Location: {row['location']}" if row is not None else "")
+
+    @staticmethod
+    def detail_lines(row: dict[str, Any] | None) -> tuple[str, str]:
+        """The selected row's full .helab-root path (or where it was last seen), and its UUID."""
+        if row is None:
+            return "", ""
+        path = marker_path(row["path"]) if row["path"] else f"{NOT_MOUNTED} · last seen at {row['location']}"
+        return path, f"UUID {row['uuid']}"

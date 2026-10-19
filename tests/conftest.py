@@ -1,5 +1,6 @@
 # tests/conftest.py
 import os
+import sys
 import tempfile
 import json
 import uuid
@@ -28,6 +29,14 @@ if not os.environ.get("HELAB_SHOW_GUI") and "QT_QPA_PLATFORM" not in os.environ:
 # isolation. Each worker re-executes this module at its own startup, so an
 # unconditional assignment here always lets it stomp the inherited value with
 # a directory unique to itself.
+#
+# helab.utils.constants reads these overrides once, when it is first imported. A run that
+# imported helab before this file (a script calling pytest.main() after its own helab imports)
+# would already have the real cache folder and settings, and tests would write there.
+if "helab.utils.constants" in sys.modules:
+    raise RuntimeError("helab was imported before tests/conftest.py, so tests would use the real cache "
+                       "folder: import helab only after pytest has loaded conftest (e.g. patch it from a "
+                       "fixture or the test itself).")
 _worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
 os.environ["HELAB_DIR_TEMPS_OVERRIDE"] = tempfile.mkdtemp(prefix=f"helab_test_temps_{_worker_id}_")
 os.environ["HELAB_DIR_CACHES_OVERRIDE"] = tempfile.mkdtemp(prefix=f"helab_test_caches_{_worker_id}_")
@@ -44,6 +53,13 @@ import pytest  # noqa: E402  (after the environment above is set)
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "no_auto_data_root: test the RAM-only or explicit marker path")
+    # The folders HeLab resolved must be this process's private ones, never the real app's.
+    from helab.utils import constants
+    expected = (os.environ["HELAB_DIR_CACHES_OVERRIDE"], os.environ["HELAB_DIR_TEMPS_OVERRIDE"],
+                os.environ["HELAB_APP_DIR_OVERRIDE"])
+    if (constants.cache_dir(), constants.DIR_TEMPS, constants.app_folder()) != expected:
+        raise pytest.UsageError(f"Tests would use HeLab's real folders ({constants.cache_dir()}, "
+                                f"{constants.DIR_TEMPS}, {constants.app_folder()}), not {expected}")
 
 
 @pytest.fixture(autouse=True)

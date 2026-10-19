@@ -28,9 +28,22 @@ VOLUMES = "This is the folder of mounted drives, not a drive: choose a drive or 
 ADMIN = "Writing in {drive} may need administrator rights. If Windows refuses, HeLab shows the file to place by hand."
 MANUAL_TITLE = "Place the data-root file manually"
 MANUAL_TEXT = "HeLab can't write {name} in {folder} ({reason}).\nPut this file in {folder}, then Retry / Refresh that folder."
-# A visible name for Save as…: save panels refuse or hide names starting with a dot.
-SAVE_NAME = "helab-root.txt"
-SAVED_TEXT = "Saved as {target}. Rename it to {name} and move it into {folder}, then Retry / Refresh that folder."
+SAVE_ACTION = "Save to folder…"
+# Saved under its exact name (Tony, 2026-10-19): renaming by hand can leave ".helab-root.txt". Save panels
+# refuse or hide names starting with a dot, so the user picks a folder instead.
+SAVED_TEXT = "Saved {name} in {target}. {hidden}\nMove it into {folder}, then Retry / Refresh that folder."
+REPLACE_TEXT = "{target} already has a {name}. Replace it?"
+
+
+def hidden_hint() -> str:
+    """How to see the saved file: names starting with a dot are normally hidden."""
+    if sys.platform == "darwin":
+        return ("Finder hides it (its name starts with a dot): press ⌘⇧. (Command-Shift-period) in Finder "
+                "to show it.")
+    if sys.platform == "win32":
+        return ("It may be hidden: in File Explorer, turn on View › Show › Hidden items "
+                "(Windows 10: View › Hidden items).")
+    return "File managers hide it (its name starts with a dot): Ctrl+H shows it in most."
 
 
 def _system_folders() -> dict[str, str]:
@@ -117,7 +130,7 @@ def ask_place_root(parent: QWidget | None, cache: FolderCache, path: str) -> str
 
 
 class ManualMarkerDialog(QDialog):
-    """No write permission: the exact file name and contents, to Copy or Save as… and move into place."""
+    """No write permission: the exact file name and contents, to Copy or save to a folder and move into place."""
 
     def __init__(self, parent: QWidget | None, folder: str, name: str, contents: str, reason: str) -> None:
         super().__init__(parent)
@@ -139,10 +152,9 @@ class ManualMarkerDialog(QDialog):
         copy = QPushButton("Copy")
         copy.setToolTip("Copy the file's contents")
         copy.clicked.connect(self.copy)
-        save = QPushButton("Save as…")
-        save.setToolTip(f"Save it as {SAVE_NAME} in a folder you can write, then rename it to {name} and "
-                        f"move it into {folder}")
-        save.clicked.connect(self.save_as)
+        save = QPushButton(SAVE_ACTION)
+        save.setToolTip(f"Save {name} in a folder you can write, then move it into {folder}.\n{hidden_hint()}")
+        save.clicked.connect(self.save_to_folder)
         buttons.addButton(copy, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.addButton(save, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.rejected.connect(self.close)
@@ -152,22 +164,24 @@ class ManualMarkerDialog(QDialog):
         if (clipboard := QApplication.clipboard()) is not None:
             clipboard.setText(self.contents)
 
-    def save_as(self) -> None:
-        target, _ = QFileDialog.getSaveFileName(self, "Save .helab-root", os.path.join(os.path.expanduser("~"),
-                                                                                       SAVE_NAME))
-        if target:
+    def save_to_folder(self) -> None:
+        if target := QFileDialog.getExistingDirectory(self, f"Save {self.name} to folder", os.path.expanduser("~")):
             self.write(target)
 
     def write(self, target: str) -> None:
-        """The exact bytes HeLab would have written (a local folder the user chose, not the source)."""
+        """The exact bytes HeLab would have written, as {name} in a local folder the user chose (not the source)."""
+        path = os.path.join(target, self.name)
+        if os.path.lexists(path) and QMessageBox.question(
+                self, MANUAL_TITLE, REPLACE_TEXT.format(target=target, name=self.name),
+                defaultButton=QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
         try:
-            with open(target, "wb") as stream:
+            with open(path, "wb") as stream:
                 stream.write(self.contents.encode("utf-8"))
         except OSError as exc:
-            QMessageBox.warning(self, MANUAL_TITLE, f"Couldn't save {target}: {exc}")
+            QMessageBox.warning(self, MANUAL_TITLE, f"Couldn't save {path}: {exc}")
             return
-        if os.path.basename(target) != self.name:
-            self.intro.setText(SAVED_TEXT.format(target=target, name=self.name, folder=self.folder))
+        self.intro.setText(SAVED_TEXT.format(name=self.name, target=target, hidden=hidden_hint(), folder=self.folder))
 
 
 __all__ = ["PLACE_ROOT_ACTION", "ManualMarkerDialog", "ask_place_root", "placement_checks"]

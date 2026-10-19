@@ -2111,14 +2111,14 @@ def get_folder_cache(service: IOService) -> FolderCache:
 
 # Data roots (Tony, 2026-10-18): the right-click action, and how a folder's disk cache is described.
 PLACE_ROOT_ACTION = "Place .helab-root here…"
-PLACE_ROOT_TOOLTIP = ("No .helab-root found above this folder, so it uses RAM only.\n"
+PLACE_ROOT_TOOLTIP = ("No .helab-root found here or above, so this folder uses RAM only.\n"
                       "Place it as high up as possible (the top folder of the drive or share), unless this "
                       "folder is also shared on its own, so other computers see it as a top folder.")
-RAM_ONLY = "RAM only · no .helab-root above this folder"
+RAM_ONLY = "RAM only · no .helab-root found here or above"
 RAM_ONLY_TOOLTIP = ("No .helab-root at or above this folder, so its statuses, settings and loaded data stay in "
                     "RAM for this session.\nTo use the disk cache: right-click the top folder of this drive "
                     "or share › " + PLACE_ROOT_ACTION)
-NEEDS_ROOT_TOOLTIP = "No .helab-root above this folder: " + PLACE_ROOT_ACTION + " first"
+NEEDS_ROOT_TOOLTIP = "No .helab-root found here or above: " + PLACE_ROOT_ACTION + " first"
 # A location whose .helab-root is also elsewhere, until Same folder or Copy (D4).
 PENDING_ROOT = "RAM only · this .helab-root is also at another location · Review…"
 PENDING_ROOT_TOOLTIP = ("HeLab found the same .helab-root at two locations. Say whether they're the same "
@@ -2149,7 +2149,7 @@ def data_root_text(cache: FolderCache, path: str) -> str:
         folder, _, label = root
         return f"Data root: {label or os.path.basename(folder)} · " + (
             ".helab-root in this folder" if folder == path else marker_path(folder))
-    return "RAM only: no .helab-root above this folder" if cache.no_root(path) is not None else ""
+    return "RAM only: no .helab-root found here or above" if cache.no_root(path) is not None else ""
 
 
 def data_root_row(cache: FolderCache, path: str) -> tuple[str, str]:

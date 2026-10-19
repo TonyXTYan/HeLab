@@ -11,7 +11,7 @@ import uuid
 import numpy as np
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox, QPushButton
 from pytestqt.qtbot import QtBot
 
 from helab import io_helper
@@ -195,7 +195,7 @@ def test_menu_offers_the_action_and_greys_disk_cache_items_for_ram_only_folders(
     assert enabled and "own identity" in tooltip
     elsewhere = str(Path(tmp_path).parent / f"elsewhere-{uuid.uuid4().hex}")
     assert tab.place_root_state(elsewhere) == (True, PLACE_ROOT_TOOLTIP)
-    assert NEEDS_ROOT_TOOLTIP.startswith("No .helab-root above this folder")
+    assert NEEDS_ROOT_TOOLTIP.startswith("No .helab-root found here or above")
 
 
 def test_placing_a_root_writes_it_then_lists_the_folder_again(
@@ -248,7 +248,7 @@ def test_without_write_permission_the_dialog_hands_out_the_exact_file(
     assert clipboard is not None and clipboard.text() == text
     saved = tmp_path / "saved" / ".helab-root"
     saved.parent.mkdir()
-    dialog.write(str(saved))
+    dialog.write(str(saved.parent))
     assert saved.read_bytes() == contents
     dialog.close()
 
@@ -277,11 +277,17 @@ def test_settings_lists_roots_and_forgets_a_location_after_asking(
     cache.cacheAdminDone.emit("job-1", "inventory", "")
     assert page.list.topLevelItemCount() == 2
     second = page.list.topLevelItem(1)
-    assert second is not None and second.text(1) == "Not mounted · vol://abc/data"
-    assert second.text(2) == "Waiting: same folder or a copy?"
+    assert second is not None and second.text(DataRootsTab.STATUS) == "Waiting: same folder or a copy?"
+    assert "Folder" not in DataRootsTab.COLUMNS  # The path is in the lines below the list.
+    assert (page.path_line.text(), page.uuid_line.text()) == ("", "")
+    page.list.setCurrentItem(second)
+    assert page.path_line.text() == "Not mounted · last seen at vol://abc/data"
+    assert page.uuid_line.text() == f"UUID {rows[1]['uuid']}"
     first = page.list.topLevelItem(0)
-    assert first is not None
+    assert first is not None and first.text(DataRootsTab.STATUS) == "In use"
     page.list.setCurrentItem(first)
+    assert page.path_line.text() == os.path.join("/Volumes/dld_output", ".helab-root")
+    assert page.uuid_line.text() == f"UUID {rows[0]['uuid']}"
     assert page.forget_button.isEnabled()
     asked: list[str] = []
 
@@ -323,16 +329,31 @@ def test_confirmation_buttons_and_cancel_by_default_with_warnings(
     service.shutdown()
 
 
-def test_saving_by_hand_uses_a_visible_name_and_says_to_rename_it(qtbot: QtBot, tmp_path: Path) -> None:
+def test_saving_by_hand_writes_the_exact_name_and_says_it_is_hidden(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
     folder = str(tmp_path / "share")
     _, contents = data_roots.new_marker(folder)
+    monkeypatch.setattr(DataRootDialogs, "sys", types.SimpleNamespace(platform="darwin"))
     dialog = ManualMarkerDialog(None, folder, ".helab-root", contents.decode("utf-8"), "Read-only file system")
     qtbot.addWidget(dialog)
-    target = tmp_path / DataRootDialogs.SAVE_NAME
+    save = next(button for button in dialog.findChildren(QPushButton) if button.text() == DataRootDialogs.SAVE_ACTION)
+    assert "⌘⇧." in save.toolTip()
+    target = tmp_path / "saved"
+    target.mkdir()
     dialog.write(str(target))
-    assert target.read_bytes() == contents
-    assert dialog.intro.text() == DataRootDialogs.SAVED_TEXT.format(target=target, name=".helab-root",
-                                                                    folder=folder)
+    assert (target / ".helab-root").read_bytes() == contents
+    assert dialog.intro.text() == DataRootDialogs.SAVED_TEXT.format(
+        name=".helab-root", target=target, hidden=DataRootDialogs.hidden_hint(), folder=folder)
+    assert "⌘⇧." in dialog.intro.text()
+    # An existing file is replaced only on Yes.
+    (target / ".helab-root").write_text("mine")
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.No)
+    dialog.write(str(target))
+    assert (target / ".helab-root").read_text() == "mine"
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    dialog.write(str(target))
+    assert (target / ".helab-root").read_bytes() == contents
 
 
 def test_placing_at_the_top_lists_the_clicked_folder_again_too(

@@ -44,14 +44,20 @@ Decided with Tony in Maestri chat (2026-10-16 and 2026-10-18). Code:
   `//<pc>/C`): offered as "Place at C:\", no warning, only a note that it may
   need admin rights (the manual dialog follows a refusal).
 - RAM only is shown in the **Folder details** panel ("RAM only · no
-  .helab-root above this folder", how to enable it in the tooltip), for the
+  .helab-root found here or above" — "here or above", Tony 2026-10-19, how to enable it in the tooltip), for the
   selected folder or the tab's folder when none is selected; the tooltip and
   Folder details name the .helab-root in use ("⚓ <label> · <path>").
 - **ANCHOR** (Tabler) badge beside the status icon on folders holding a
   .helab-root.
 - No write permission: a dialog with the file name, folder and exact JSON,
-  Copy and Save as… (saved as `helab-root.txt`, then renamed by the user).
-- A separate **Settings → Data roots** page lists the known locations;
+  Copy and Save to folder… (Tony, 2026-10-19: writes `.helab-root` under its exact
+  name in a folder the user picks, since renaming `helab-root.txt` by hand could leave
+  `.helab-root.txt`; the button tooltip and the saved note say it is hidden and how to
+  show it: ⌘⇧. in Finder, View › Hidden items in File Explorer, Ctrl+H elsewhere).
+- A separate **Settings → Data roots** page lists the known locations (columns
+  Data root, Status, Last seen, Cached, no folder column; two selectable lines under
+  the list give the selected row's full .helab-root path and its UUID; rows not
+  mounted are greyed with status "Not mounted" — Tony, 2026-10-19);
   "Forget location (found again if its .helab-root is still there)".
 - Row menu (Tony, 2026-10-18): **Show in Finder** / Show in File Explorer /
   Show in File Manager (tooltip: the file is hidden; Cmd+Shift+. in Finder,

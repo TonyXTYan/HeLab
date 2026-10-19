@@ -152,7 +152,7 @@ def test_clear_names_the_root_and_its_size_then_asks_a_helper(
 ) -> None:
     first, second = page.list.topLevelItem(0), page.list.topLevelItem(1)
     assert first is not None and second is not None
-    assert first.text(4) == "3.0 GB" and second.text(4) == "—"
+    assert first.text(DataRootsTab.CACHED) == "3.0 GB" and second.text(DataRootsTab.CACHED) == "—"
     page.list.setCurrentItem(first)  # Not mounted: its cache can still be cleared.
     assert page.clear_button.isEnabled()
     assert next(a for a in page.context_menu().actions() if a.text() == CLEAR).isEnabled()

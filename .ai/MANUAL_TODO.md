@@ -20,8 +20,8 @@ real experiment data without deciding where its top should be.
   Windows Explorer on the lab PCs (`UF_HIDDEN`), and from Windows it gets the
   hidden attribute. The folder's cache works after the relisting.
 - [ ] A read-only share (or write-protected USB disk): the manual dialog's Copy and
-  Save as… (`helab-root.txt`) give the exact file; placed and renamed by hand,
-  Retry / Refresh finds it.
+  Save to folder… (writes `.helab-root`, hidden; ⌘⇧. shows it in Finder) give the
+  exact file; moved into place by hand, Retry / Refresh finds it.
 - [ ] The placement checks: a share's subfolder offers "Place at <top>", Return
   cancels, a nested root and a home folder warn.
 - [ ] Windows, a tab at a mapped drive's top (e.g. `Z:\`), nothing selected:
