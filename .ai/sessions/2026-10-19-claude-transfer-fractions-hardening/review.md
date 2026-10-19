@@ -212,3 +212,68 @@ line in the checklist.
 - `mypy --strict` on helab and tests, also `--platform win32`: no issues.
 - `pyright helab tests`, also `--pythonplatform Windows`: 0 errors.
 - `git diff --check 9f6ee5a..d0255ca`: clean.
+
+## Recheck at b16beb4
+
+Reviewed `git diff d0255ca..b16beb4`: `c3f6b5b` (R1, option (a)), `f54a937` ("then back to
+Auto"), `b16beb4` (handoff). Probes as before (`jump.py` plus inline runs that write each run's
+`detected_parameters` back, as `_show_detected` does).
+
+**Verdict: R1 is fixed and the nit is done. No blocker.** One low finding (R2): a consequence of
+option (a) that the handoff's trade-off line describes only in part. F2 (XY rotation) is still
+Tony's decision.
+
+### What I checked
+
+- **45 % / 60 % (and 90 %) with Search T both ends around the real order 0:** right centre, no ⚠.
+  A plain line says "order +1 (outside Search T) holds 72 % as many events as order 0" or "… is
+  taller than order 0". At 90 % the real order 0 is found too.
+- **Wrong first pick (60 %, "unsure"), then both ends around the real order 0:** the right centre
+  replaces the hidden +1 with no "moved". The rerun is quiet (plain line only). Clearing Search T
+  afterwards gives "unsure" + "moved by +1" again, which is correct because +1 is the tallest.
+- **Open-ended Search T unchanged:** To only, after the same wrong first pick, gives the right
+  centre with "⚠ unsure … (outside Search T)" and the sticky "⚠ moved by −1", as at d0255ca.
+- **No regression with a wide both-ends Search T:** Live, last 5, amplitude scan 5 → 100 → 5 %, with
+  Search T over orders −2…+3. "unsure", then "moved by +1" while +1 is the tallest, then quiet.
+  Same as an open Search T, because the last centre is inside it. With a both-ends Search T
+  over orders 0 and +1, Live scan 10 → 90 → 10 %: the same.
+- **Search T both ends around the WRONG peak (+1), first run:** 10 / 30 / 60 % give the wrong
+  centre with only the plain line ("order −1 (outside Search T) is taller than order 0" /
+  "holds 76 %"). Not silent, but no longer ⚠: the handoff's stated trade-off. At 90 % it is
+  silent, which is the known first-run limit (it was silent before c3f6b5b too).
+- **Right detection at 30 %, then both ends set around +1 by mistake:** the centre moves to +1
+  with only the plain line. Before c3f6b5b this gave ⚠ unsure + ⚠ moved.
+
+### R2 (low): a both-ends Search T around the wrong peak at high transfer replaces a right centre silently
+
+Steps: a right detection at 10 %, then 90 % transfer with Search T both ends around +1. That gives
+order 0 = +1 and `jumped` 0, with **no** ⚠ and no plain line; the only note is "no side peak
+found … spacing as set". Before c3f6b5b the "moved by +1" warning caught it. This follows from "the
+user's word", and it needs an explicit Search T around the wrong peak. But the handoff trade-off
+("only the plain line naming the taller order outside it") isn't true here: there is no line,
+because the real order 0 holds under half of +1's events.
+
+The cheap fix: when `chosen_by_search` replaces the last detection, add a plain (non-⚠) line,
+"order 0 now at X s; the last detection, Y s, was outside Search T". It's informative both in the
+R1 fix case and in this one, and needs no extra rule. Otherwise, extend the handoff's trade-off
+line to say "at a transfer over ~2/3, nothing".
+
+### Nits
+
+- `tests/test_transfer_fractions.py:458-460`: three blank lines before the "# Search T with both
+  ends set" section (two elsewhere). `git diff --check` doesn't flag it.
+
+### Claims
+
+- **Module docstring, Search T tip, proposed AGENTS.md sentence, checklist steps 3–4, the "moved"
+  advice ("… Rerun, then back to Auto") and "set both ends … which clears it":** true (probed).
+- **The handoff's R1 trade-off line:** true except at high transfer (R2).
+- **Version 4 → 5:** right (notes change).
+
+### Checks at b16beb4 (rerun by me, floor root, venv + floor-env)
+
+- `pytest -n 6 --reruns 5 --reruns-delay 1 -rR --basetemp=.ai/temp/pytest-review`: **1204 passed,
+  2 skipped, 2 xfailed, no RERUN**.
+- `mypy --strict` on helab and tests, also `--platform win32`: no issues.
+- `pyright helab tests`, also `--pythonplatform Windows`: 0 errors.
+- `git diff --check 9f6ee5a..b16beb4`: clean.
