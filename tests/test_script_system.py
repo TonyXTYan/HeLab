@@ -56,8 +56,9 @@ def test_tree_panel_widget(qtbot: QtBot) -> None:
     assert hasattr(widget, 'group_selector'), "Widget should have group_selector"
     assert hasattr(widget, 'tree_widget'), "Widget should have tree_widget"
     
-    # Check group selector
-    assert widget.group_selector.count() == 2, "Should have two groups"
+    # Check group selector: HeLab's bundled analyses first, then the examples
+    groups = [widget.group_selector.itemText(i) for i in range(widget.group_selector.count())]
+    assert groups[0] == "Plots" and sorted(groups[1:]) == ["Advanced", "Examples"]
     
     # Select Examples group
     widget.group_selector.setCurrentText("Examples")

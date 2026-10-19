@@ -35,17 +35,20 @@ class DashServer:
         @self.app.callback(Output('page-content', 'children'),
                            Input('url', 'pathname'))
         def display_page(pathname: Optional[str]) -> Any:
-            print(f"{pathname = }")
             if pathname and pathname.startswith('/plot/'):
                 plot_id = pathname.split('/plot/')[1]
                 fig = self.plots.get(plot_id)
                 if fig:
-                    return dcc.Graph(figure=fig)
-            return html.Div("Plot not found.")
+                    return dcc.Graph(figure=fig, style={"height": "96vh"})
+            return html.Div("Plot not found. It is removed when its plot is closed in HeLab.")
 
     def add_plot(self, plot_id: str, fig: Figure) -> None:
         self.start()
         self.plots[plot_id] = fig
+
+    def remove_plot(self, plot_id: str) -> None:
+        """Forget a figure (its plot dock closed), freeing its data."""
+        self.plots.pop(plot_id, None)
 
     def _bind(self) -> socket.socket:
         """Listen on HOST_PORT, or on any free port if it is in use (e.g. by another HeLab)."""

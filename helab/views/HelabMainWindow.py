@@ -30,6 +30,8 @@ from humanfriendly.terminal import message
 from pyqtgraph.parametertree import ParameterTree, Parameter
 from typing_extensions import no_type_check
 
+from helab.analysis.dataset_view import DatasetView, view_of
+from helab.analysis.results import AnalysisResult
 from helab.models.ScriptTreeSelector import TreePanelWidget, ParamTreeTabWidget
 from helab.resources.icons import ToolIcons
 from helab.utils.constants import *
@@ -877,6 +879,38 @@ class HelabMainWindow(QMainWindow):
             return
         dock.setProperty("dataSourcePath", dataset.path)
         dock.setProperty("dataSourceSignature", dataset.signature)
+        HelabMainWindow._wrap_plot(dock, content)
+        HelabMainWindow._update_plot_source_label(dock, explorer)
+
+    def current_dataset_view(self) -> DatasetView | None:
+        """An immutable view of the data the current tab shows (memory only), for a new run."""
+        current = self.tab_widget.currentWidget()
+        if not isinstance(current, FolderExplorer) or current.displayed_dataset is None:
+            return None
+        dataset = current.displayed_dataset
+        return view_of(dataset, current.model.cache.root_of(dataset.path))
+
+    def set_plot_result(self, dock: QDockWidget, content: QWidget, result: AnalysisResult,
+                        parameters_text: str = "") -> None:
+        """Show an analysis result in its dock, with its source line: the input folder and
+        revision, the analysis and its version, the parameters; the full record in the tooltip."""
+        identity = result.input.identity
+        dock.setProperty("dataSourcePath", identity.source_path)
+        dock.setProperty("dataSourceSignature", identity.signature)
+        dock.setProperty("plotSourceDetail", " · ".join(filter(None, (
+            f"rev {result.input.revision}", result.analysis.short(), parameters_text))))
+        dock.setProperty("plotSourceRecord", result.describe(parameters_text))
+        old = dock.widget()
+        HelabMainWindow._wrap_plot(dock, content)
+        if old is not None:
+            old.deleteLater()
+        current = self.tab_widget.currentWidget()
+        if isinstance(current, FolderExplorer):
+            HelabMainWindow._update_plot_source_label(dock, current)
+
+    @staticmethod
+    def _wrap_plot(dock: QDockWidget, content: QWidget) -> None:
+        """The dock shows a one-line source label above the plot."""
         wrapper = QWidget(dock)
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -887,7 +921,6 @@ class HelabMainWindow(QMainWindow):
         layout.addWidget(label)
         layout.addWidget(content, 1)
         dock.setWidget(wrapper)
-        HelabMainWindow._update_plot_source_label(dock, explorer)
 
     @staticmethod
     def _update_plot_source_label(dock: QDockWidget, explorer: FolderExplorer) -> None:
@@ -903,8 +936,11 @@ class HelabMainWindow(QMainWindow):
                    and (not node.signature or dock.property("dataSourceSignature") == node.signature)
                    and explorer.folder_opened_path == path)
         prefix = "Data source" if current else "Showing previously loaded data"
-        label.setText(f"{prefix}: {os.path.basename(path.rstrip(os.sep)) or path}")
-        label.setToolTip(path)
+        detail = dock.property("plotSourceDetail")
+        record = dock.property("plotSourceRecord")
+        name = os.path.basename(path.rstrip(os.sep)) or path
+        label.setText(f"{prefix}: {name}" + (f" · {detail}" if isinstance(detail, str) and detail else ""))
+        label.setToolTip(record if isinstance(record, str) and record else path)
 
     def toggle_left_panel(self, checked: bool) -> None:
         if checked: # Expand the left panel

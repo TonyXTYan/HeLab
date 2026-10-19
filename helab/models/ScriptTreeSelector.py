@@ -4,6 +4,7 @@ import os
 from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QCloseEvent
 # from uuid import uuid4
 
 # Import QWidget types first to avoid forward references
@@ -15,7 +16,12 @@ from PyQt6.QtWidgets import (
 from pyqtgraph.parametertree import Parameter
 import pyqtgraph.parametertree as ptree
 
-from helab.scripts.plotly_3d_sactter import Plotly3DScatter
+from helab.analysis.dataset_view import DatasetView
+from helab.analysis.parameters import describe
+from helab.analysis.results import AnalysisResult
+from helab.analysis.runner import AnalysisRunner, get_analysis_runner
+from helab.scripts import standard
+from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.utils.constants import QDOCKWIDGET_STYLESHEET
 from helab.scripts.scripts_manager import ScriptsManager
 if TYPE_CHECKING:
@@ -24,6 +30,17 @@ if TYPE_CHECKING:
 
 import numpy.typing as npt
 import numpy as np
+
+
+class AnalysisDock(QDockWidget):
+    """A plot dock that says when the user closes it (hiding, e.g. behind another tabbed
+    dock, is not closing)."""
+    closed = pyqtSignal()
+
+    def closeEvent(self, event: QCloseEvent | None) -> None:
+        super().closeEvent(event)
+        self.closed.emit()
+
 
 class LinkedAnalysisInstance:
     """Manages a linked pair of dock widget and parameter tab.
@@ -53,10 +70,11 @@ class LinkedAnalysisInstance:
         if not self.main_window:
             return
             
-        self.dock_widget = QDockWidget(f"{self.name} ({self.instance_id})", self.main_window)
-        self.dock_widget.setStyleSheet(QDOCKWIDGET_STYLESHEET)
-        self.dock_widget.setWidget(content)
-        self.dock_widget.visibilityChanged.connect(self._on_dock_closed)
+        dock = AnalysisDock(f"{self.name} ({self.instance_id})", self.main_window)
+        dock.setStyleSheet(QDOCKWIDGET_STYLESHEET)
+        dock.setWidget(content)
+        dock.closed.connect(self.close)
+        self.dock_widget = dock
         
     def setup_param_tab(self, param_tree: QWidget) -> None:
         """Create and setup the parameter tab."""
@@ -75,11 +93,6 @@ class LinkedAnalysisInstance:
                 self.instance_id
             )
         
-    def _on_dock_closed(self, visible: bool) -> None:
-        """Handle dock widget being closed."""
-        if not visible and not self.is_closed:
-            self.close()
-            
     def close(self) -> None:
         """Close and cleanup both components."""
         if self.is_closed:
@@ -95,10 +108,126 @@ class LinkedAnalysisInstance:
                     self.main_window.dock_widgets.remove(self.dock_widget)
                 self.dock_widget.deleteLater()
                 
-            # Remove parameter tab
-            if self.param_tab and self.param_tab_index >= 0:
-                self.main_window.panel_right_top_params_tab_widget.removeTab(self.param_tab_index)
+            # Remove parameter tab (its index moves as other tabs close)
+            if self.param_tab:
+                tabs = self.main_window.panel_right_top_params_tab_widget
+                index = tabs.indexOf(self.param_tab)
+                if index >= 0:
+                    tabs.removeTab(index)
                 self.param_tab.deleteLater()
+            update = getattr(self.main_window, "update_placeholder_visibility", None)
+            if callable(update):
+                update()
+
+
+class AnalysisInstance(LinkedAnalysisInstance):
+    """One run of a dataset analysis: its plot dock and parameter tab, bound to the dataset
+    view it started with. **Rerun with these settings** runs again on that same view; a new
+    run on other data is a new instance (the script's button again)."""
+
+    def __init__(self, metadata: ScriptMetadata, script: DatasetAnalysis, action: str, view: DatasetView,
+                 instance_id: str, main_window: Optional['HelabMainWindow'],
+                 runner: Optional[AnalysisRunner] = None) -> None:
+        super().__init__(metadata.name, instance_id, main_window)
+        self.metadata, self.script, self.action, self.view = metadata, script, action, view
+        self.runner = runner or get_analysis_runner()
+        self.job_id = ""
+        self.result: Optional[AnalysisResult] = None
+        self.parameter_root: Optional[Parameter] = None
+        self.status_label = QLabel()
+        self.runner.finished.connect(self._finished)
+
+    def start(self) -> None:
+        """Open the dock and parameter tab, then run with the defaults."""
+        self.setup_dock_widget(self._message(f"Running {self.name} on {self.view.key.short()}…"))
+        specs = self.script.parameters(self.action)
+        self.parameter_root = Parameter.create(name='params', type='group',
+                                               children=[spec.tree_item() for spec in specs])
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        source = QLabel(f"Input: {self.view.key.short()} (stays with this plot)")
+        source.setToolTip(self.view.identity.source_path)
+        layout.addWidget(source)
+        tree = ptree.ParameterTree()
+        tree.setParameters(self.parameter_root, showTop=False)
+        layout.addWidget(tree, 1)
+        self.rerun_button = QPushButton("Rerun with these settings")
+        self.rerun_button.setEnabled(bool(specs))
+        self.rerun_button.clicked.connect(self.run)
+        layout.addWidget(self.rerun_button)
+        layout.addWidget(self.status_label)
+        self.setup_param_tab(tab)
+        self.run()
+
+    def values(self) -> Dict[str, Any]:
+        root = self.parameter_root
+        return {child.name(): child.value() for child in root.children()} if root is not None else {}
+
+    def run(self) -> None:
+        if self.is_closed:
+            return
+        if self.job_id:
+            self.runner.cancel(self.job_id)
+        context = self.runner.submit(self.script, self.metadata, self.action, self.view, self.values())
+        self.job_id = context.job_id
+        self.status_label.setText(f"Running ({context.job_id})…")
+
+    def _finished(self, result: AnalysisResult) -> None:
+        if self.is_closed or result.job_id != self.job_id:
+            return
+        self.job_id = ""
+        if result.state == "cancelled":
+            self.status_label.setText("Cancelled")
+            return
+        if self.result is not None:
+            self.runner.results.unpin(self.result.job_id)
+        self.result = result
+        specs = self.script.parameters(self.action)
+        if result.state == "completed":
+            self.runner.results.pin(result.job_id)
+            try:
+                content = self.script.render(result)
+            except Exception as error:
+                logging.exception("Could not draw %s", self.name)
+                content = self._message(f"Could not draw {self.name}: {error}")
+            self.status_label.setText("")
+        else:
+            content = self._message(f"{self.name} failed: {result.error}")
+            self.status_label.setText(f"Failed: {result.error}")
+        if self.dock_widget is None:
+            return
+        show = getattr(self.main_window, "set_plot_result", None)
+        if callable(show):
+            show(self.dock_widget, content, result, describe(specs, result.parameters))
+        else:
+            old = self.dock_widget.widget()
+            self.dock_widget.setWidget(content)
+            if old is not None:
+                old.deleteLater()
+
+    @staticmethod
+    def _message(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setWordWrap(True)
+        return label
+
+    def close(self) -> None:
+        if self.is_closed:
+            return
+        if self.job_id:
+            self.runner.cancel(self.job_id)
+        if self.result is not None:
+            self.runner.results.unpin(self.result.job_id)
+        try:
+            self.runner.finished.disconnect(self._finished)
+        except TypeError:
+            pass
+        super().close()
+
+
 ExampleGroup = List[Tuple[str, Callable[[], None]]]
 
 GroupType = Literal["dynamic", "example"]
@@ -246,6 +375,8 @@ class TreePanelWidget(QWidget):
                 'examples'
             )
             
+            for module in standard.MODULES:
+                self.script_manager.load_module(module)
             if os.path.exists(examples_dir):
                 self.script_manager.load_directory(examples_dir)
                 for group in self.script_manager.get_groups():
@@ -307,7 +438,9 @@ class TreePanelWidget(QWidget):
         """
         current = self.group_selector.currentText()
         self.group_selector.clear()
-        groups = self.script_manager.get_groups()
+        groups = self.script_manager.get_groups() + [
+            name for name, data in self.groups.items()
+            if data.type == "example" and name not in self.script_manager.get_groups()]
         if groups:
             self.group_selector.addItems(groups)
             
@@ -391,16 +524,10 @@ class TreePanelWidget(QWidget):
                         actions = script.get_actions()
                         
                         item = QTreeWidgetItem(group_item, [metadata.name])
-                        if len(actions) >= 1:
+                        item.setToolTip(0, f"{metadata.description}\n{metadata.identity().text()}")
+                        for column, action in enumerate(actions[:2], start=1):
                             self.tree_widget.setItemWidget(
-                                item, 1,
-                                self.create_button(actions[0], lambda s=script, a=actions[0]: s.execute_action(a))
-                            )
-                        if len(actions) >= 2:
-                            self.tree_widget.setItemWidget(
-                                item, 2,
-                                self.create_button(actions[1], lambda s=script, a=actions[1]: s.execute_action(a))
-                            )
+                                item, column, self.create_button(action, self._action_callback(metadata, script, action)))
                     except Exception as e:
                         logging.error(f"Error loading script {metadata.name}: {e}")
                         error_item = QTreeWidgetItem(group_item, [f"{metadata.name} (Error)"])
@@ -425,6 +552,49 @@ class TreePanelWidget(QWidget):
 
         group_item.setExpanded(True)
         group_data.is_loaded = True
+
+    def _action_callback(self, metadata: ScriptMetadata, script: Any, action: str) -> Callable[[], None]:
+        if isinstance(script, DatasetAnalysis):
+            def run() -> None:
+                self.run_analysis(metadata, script, action)
+            return run
+        return lambda: script.execute_action(action)
+
+    def run_analysis(self, metadata: ScriptMetadata, script: DatasetAnalysis,
+                     action: str) -> Optional[AnalysisInstance]:
+        """Run ``action`` on the current tab's shown dataset, in a new plot dock."""
+        window = self.helab_main_window
+        current = getattr(window, "current_dataset_view", None)
+        view = current() if callable(current) else None
+        if window is None or not isinstance(view, DatasetView):
+            notice = getattr(window, "show_status_notice", None)
+            if callable(notice):
+                notice(f"{metadata.name}: load a folder's data first")
+            return None
+        self._instance_counter += 1
+        instance_id = f"{self._instance_counter}"
+        instance = AnalysisInstance(metadata, script, action, view, instance_id, window)
+        self._analysis_instances[instance_id] = instance
+        instance.start()
+        self._add_dock(instance)
+        return instance
+
+    def _add_dock(self, instance: LinkedAnalysisInstance) -> None:
+        window, dock = self.helab_main_window, instance.dock_widget
+        if window is None or not isinstance(dock, AnalysisDock):
+            return
+        dock.closed.connect(lambda: self._analysis_instances.pop(instance.instance_id, None))
+        shown = [other for other in window.dock_widgets if other.isVisible()]
+        window.middle_mainwindow.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        if shown:
+            # Plots share the area as tabs; the new one comes to the front.
+            window.middle_mainwindow.tabifyDockWidget(shown[-1], dock)
+            dock.show()
+            dock.raise_()
+        window.dock_widgets.append(dock)
+        update = getattr(window, "update_placeholder_visibility", None)
+        if callable(update):
+            update()
 
     def create_button(self, label: str, callback: Callable[..., Any]) -> QPushButton:
         """Create a standardized action button for script items.
@@ -510,12 +680,7 @@ class TreePanelWidget(QWidget):
         
         # Setup dock widget
         instance.setup_dock_widget(content)
-        if instance.dock_widget:
-            self.helab_main_window.middle_mainwindow.addDockWidget(
-                Qt.DockWidgetArea.LeftDockWidgetArea,
-                instance.dock_widget
-            )
-            self.helab_main_window.dock_widgets.append(instance.dock_widget)
+        self._add_dock(instance)
         
         # Create parameter tab
         params = [
@@ -537,30 +702,16 @@ class TreePanelWidget(QWidget):
 
     def add_example_groups_and_items(self) -> None:
         """Add example groups and items to the tree widget."""
-        # Clean up any existing groups and items
-        self.tree_widget.clear()
-        self.group_mapping.clear()
-        
-        # Remove any example groups from tracking
-        example_groups = [name for name, data in self.groups.items() if data.type == "example"]
-        for group_name in example_groups:
-            del self.groups[group_name]
-            
-        # Register example groups
+        # Register example groups, listed after the loaded scripts' groups
         example_groups = ["Basic Analysis", "Advanced Analysis"]
         for group_name in example_groups:
             self._register_group(group_name, "example")
-            
-        # Update group selector and select first group
-        self.group_selector.clear()
-        self.group_selector.addItems(example_groups)
-        
-        # Select first group by default
-        if self.group_selector.count() > 0:
-            first_group = self.group_selector.itemText(0)
-            self.current_group = self.groups[first_group]
+
+        # Update group selector, keeping the selected group (else the first)
+        self._update_groups()
+        if self.group_selector.count() > 0 and self.current_group is None:
             self.group_selector.setCurrentIndex(0)
-            self._load_current_group()  # This will create items only for the selected group
+            self._load_current_group()
 
 class ParamTreeTabWidget(QTabWidget):
     """A widget that provides parameter tree functionality in a tabbed interface.
