@@ -9,7 +9,7 @@ from typing import Any, List, Mapping, Optional, cast
 import numpy as np
 import numpy.typing as npt
 import pyqtgraph as pg
-from PyQt6.QtCore import QRectF
+from PyQt6.QtCore import QRectF, pyqtSlot
 from PyQt6.QtWidgets import QWidget
 
 from helab.analysis.empty import empty_pane, empty_text
@@ -54,12 +54,33 @@ class DecadeLogAxis(pg.AxisItem):  # type: ignore[misc]
 
 
 class OverlayView(pg.ViewBox):  # type: ignore[misc]
-    """A view drawn over a plot that leaves the mouse to the plot below (its zoom, pan and menu):
-    it only follows the plot's ranges."""
+    """A view drawn over a plot (``source``, its ViewBox) that leaves the mouse to the plot below
+    (its zoom, pan and menu): it only follows the plot's geometry and ranges, its y range the
+    plot's divided by ``ratio`` (log Y: shifted by log10 of it). ``follow`` is a Qt slot, so
+    the plot's signals hold no Python reference to it and Qt ends the connections when either
+    is destroyed: nothing outlives the widget."""
 
-    def __init__(self) -> None:
+    def __init__(self, source: Any, ratio: float, log_y: bool) -> None:
         super().__init__(enableMenu=False)
         self.setMouseEnabled(x=False, y=False)  # Wheel events then pass to the plot below.
+        # (Not ``scale``: that is QGraphicsItem.scale(), which Qt and pyqtgraph call.)
+        self._source, self._ratio, self._log_y = source, ratio, log_y
+        self._shift = math.log10(ratio) if log_y and ratio > 0 else 0.0
+        source.sigResized.connect(self.follow)
+        source.sigYRangeChanged.connect(self.follow)
+
+    @pyqtSlot()
+    def follow(self) -> None:
+        source = self._source
+        # The plot's exact geometry (its scene bounding rect is half a pixel larger, which shifts
+        # the x link, mapped by pixel, by a pixel where rounding differs).
+        self.setGeometry(QRectF(source.scenePos(), source.size()))
+        self.linkedViewChanged(source, self.XAxis)  # The x link maps by pixel: again at the new size.
+        low, high = source.viewRange()[1]
+        if self._log_y:
+            self.setYRange(low - self._shift, high - self._shift, padding=0)
+        else:
+            self.setYRange(low / self._ratio, high / self._ratio, padding=0)
 
     def mouseDragEvent(self, ev: Any, axis: Any = None) -> None:
         ev.ignore()
@@ -74,7 +95,7 @@ def overlay_newest(plot: Any, edges: npt.NDArray[np.float64], counts: npt.NDArra
     right axis (in ``colour``) reading them. Its y range follows the plot's divided by ``scale``
     (the histogram's total over the shot's; with log Y, shifted by log10 of it), so the line sits
     where the shot's histogram scaled to the same total would."""
-    view = OverlayView()
+    view = OverlayView(plot.vb, scale, log_y)
     plot.scene().addItem(view)
     axis = plot.getAxis("right")
     plot.showAxis("right")
@@ -92,22 +113,7 @@ def overlay_newest(plot: Any, edges: npt.NDArray[np.float64], counts: npt.NDArra
     if log_y:
         curve.setLogMode(False, True)
     view.addItem(curve)
-    shift = math.log10(scale) if log_y and scale > 0 else 0.0
-
-    def follow() -> None:
-        # The plot's exact geometry (its scene bounding rect is half a pixel larger, which shifts
-        # the x link, mapped by pixel, by a pixel where rounding differs).
-        view.setGeometry(QRectF(plot.vb.scenePos(), plot.vb.size()))
-        view.linkedViewChanged(plot.vb, view.XAxis)  # The x link maps by pixel: again at the new size.
-        low, high = plot.vb.viewRange()[1]
-        if log_y:
-            view.setYRange(low - shift, high - shift, padding=0)
-        else:
-            view.setYRange(low / scale, high / scale, padding=0)
-
-    plot.vb.sigResized.connect(follow)
-    plot.vb.sigYRangeChanged.connect(follow)
-    follow()
+    view.follow()
     return view
 
 

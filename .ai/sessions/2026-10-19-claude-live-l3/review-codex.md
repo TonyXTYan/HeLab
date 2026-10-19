@@ -70,3 +70,24 @@ These are code review findings; the three new edge cases above were not added to
 - `venv/bin/mypy helab/ --strict` (79 files), `venv/bin/mypy tests --strict` (61), and `venv/bin/mypy helab/ tests --strict --platform win32` (140): passed.
 - `venv/bin/pyright helab tests` and `venv/bin/pyright helab tests --pythonplatform Windows`: 0 errors each.
 - `git diff --check d0b8fbe..HEAD`: clean. The review section is left uncommitted.
+
+## Recheck at 69c2ced
+
+**Verdict: changes requested for one new P2 finding.** I reviewed `4492385..69c2ced` at head `69c2ced`. The two prior Dash findings are resolved; the new histogram right axis has a lifetime issue.
+
+### Finding
+
+1. **P2 — A highlighted histogram rerun retains its old overlay and data after the plot widget is deleted.** `overlay_newest` connects the local `follow` closure to both `plot.vb.sigResized` and `plot.vb.sigYRangeChanged` (`helab/scripts/standard/basic_plots.py:97-110`). That closure captures the plot and the overlay. In an offscreen Qt reproduction, after `GraphicsLayoutWidget.deleteLater()`, deferred-delete delivery and `gc.collect()`, Qt has deleted the widget, plot and overlay, but weak references to the plot wrapper, overlay wrapper, overlay curve and its NumPy `yData` are all still alive. The same reproduction without the overlay collects the plot, and disconnecting these two callbacks before deletion collects all five objects. A Live plot that replaces its widget on each revision therefore retains old histogram arrays and Qt wrappers. Disconnect the callbacks on widget/plot teardown or bind their lifetime to a QObject that Qt destroys with the widget, and add a close/replacement test using weak references.
+
+### Rechecked behavior
+
+- **Dash P1 fixed:** `PlotSnapshot(revision, figure)` is replaced and read as one value under `_plots_lock`. The forced interleaving test lands an update after the snapshot read for both a poll and an initial page: the old figure keeps its old revision and the next poll receives the new figure. The HTTP poll test verifies figure and revision together.
+- **Dash P2 fixed:** after `remove_plot`, an existing page's HTTP poll clears and hides the graph, displays the closed text, and disables its interval. The server no longer retains that plot's snapshot.
+- **Histogram right axis:** the overlay curve holds real bin counts. Its view divides the main Y range by `sum(all bins)/sum(newest bins)` in linear mode and subtracts `log10` of that scale in log mode; both place the curve at the intended relative height. The right axis is linked to the overlay view, the X ranges match, and Y zoom follows. Both axes use decade ticks in log mode. The overlay ignores drag, click and wheel events so the main plot handles them. I inspected the linear and log renders. Qt destroys the overlay graphics object with the widget; the Python retention above remains.
+
+### Checks
+
+- Full suite outside sandbox with `venv/bin` on `PATH`, `venv/bin/pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`: **1139 passed, 2 skipped, 2 xfailed; no RERUN**.
+- `venv/bin/mypy helab/ --strict` (79 files), `venv/bin/mypy tests --strict` (61), `venv/bin/mypy helab/ tests --strict --platform win32` (140): passed.
+- `venv/bin/pyright helab tests` and `venv/bin/pyright helab tests --pythonplatform Windows`: 0 errors each.
+- `git diff --check d0b8fbe..HEAD`: clean. This review section is left uncommitted.

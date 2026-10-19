@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import json
 import os
+import gc
 import threading
 import time
+import weakref
 from pathlib import Path
 from typing import Any, Iterator, List, Optional, cast
 
@@ -16,7 +18,8 @@ import pyqtgraph as pg
 import pytest
 from PyQt6 import sip
 from PyQt6.QtGui import QCloseEvent
-from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QTabWidget, QWidget
+from PyQt6.QtCore import QEvent
+from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QTabWidget, QWidget
 from pytestqt.qtbot import QtBot
 
 from helab.analysis.dataset_view import DatasetView, build_view, revise, view_of
@@ -514,6 +517,58 @@ def test_the_newest_shot_has_its_own_axis_on_the_right(qtbot: QtBot, log_y: bool
         event = Event()
         getattr(widget.newest_views[0], handler)(event)
         assert event.ignored, handler  # Left to the plot below (its zoom, pan and menu).
+
+
+def histogram_refs(widget: Any) -> list[weakref.ref[Any]]:
+    """Weak references to what one highlighted histogram keeps in Python: the plot, its overlay
+    view, the overlay's curve and that curve's counts."""
+    plot, overlay = widget.ci.getItem(1, 0), widget.newest_views[0]
+    curve = next(child for child in overlay.addedItems if isinstance(child, pg.PlotDataItem))
+    return [weakref.ref(item) for item in (plot, overlay, curve, curve.yData)]
+
+
+def freed(refs: list[weakref.ref[Any]]) -> bool:
+    """One pass of deferred deletes, then one collection: all gone (nothing held them by a
+    connection that outlives the widget)."""
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    gc.collect()
+    return all(ref() is None for ref in refs)
+
+
+@pytest.mark.parametrize("log_y", [False, True], ids=["linear", "log Y"])
+def test_a_highlighted_histogram_is_freed_with_its_widget(qtbot: QtBot, log_y: bool) -> None:
+    """The overlay keeps step with its plot through Qt connections that end with either: once
+    the widget is deleted, its plot, overlay, curve and counts are freed."""
+    rng = np.random.default_rng(3)
+    data = {shot: rng.normal(size=(300, 3)) for shot in (1, 2, 3)}
+    view = view_of(Dataset(PATH, "sig-free", data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
+    script = basic_plots.TxyHistograms()
+    widget = cast(Any, script.render(run_now(script, view, {"highlight_newest": True, "log_y": log_y})))
+    widget.resize(800, 600)
+    widget.show()
+    qtbot.wait(20)
+    refs = histogram_refs(widget)
+    widget.deleteLater()
+    del widget
+    assert freed(refs)
+
+
+def test_a_following_histograms_old_drawing_is_freed_when_redrawn(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """Live's next revision draws the histograms anew; the old drawing's plot, overlay and
+    counts go with the widget it replaced."""
+    window.view = window.live_feed.publish(revision([1, 2]))
+    instance = plot(window, qtbot, basic_plots.TxyHistograms())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    assert instance.parameter_root is not None
+    parameter_of(instance.parameter_root, basic_plots.HIGHLIGHT).setValue(True)
+    instance.run()
+    qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
+    refs = histogram_refs(instance._content)
+    window.live_feed.publish(revision([1, 2, 3]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2 and instance.shown is not None
+                    and instance.shown.data.newest_shot == 3, timeout=10_000)
+    assert freed(refs)
 
 
 def test_a_following_plot_highlights_lives_newest_shot(
