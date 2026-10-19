@@ -43,10 +43,15 @@ the Shots settings, results as dataclasses of NumPy arrays (counted by the RAM b
    bins (the dock line says when a limit applies, with the events per bin); set widths are
    used exactly (the old GUI's came out about 2× wider, legacy bug 5), widened only past
    100,000 bins (a warning). Minimum events per bin: 10 (≥ 2, for an SD).
-5. **Whole bins only (both plots).** Bins of exactly the width from the range's start; a
-   remainder shorter than a bin past the last whole one is left out, and the plot and record
-   say how many events were in it (its rate would read low and its sample would be off the
-   even spacing). Automatic widths divide the range exactly, so nothing is left out then.
+5. **Bins of exactly the width from the range's start; the remainder:**
+   - D6: whole bins only. A remainder shorter than a bin is left out, and the plot and record
+     say how many events were in it (its rate would read low and its sample would be off the
+     even spacing).
+   - D5: a last, partial bin keeps its events in the mean/SD traces, centred on its own
+     extent; only the spectrum's evenly spaced stretch leaves it out (said). A 30 ms width on
+     a 50 ms range keeps every event (it dropped 39 % before the re-review).
+   - Automatic widths divide the range exactly. A set width wider than the range is the range
+     (one bin; a warning), so D6's rate isn't read low.
 6. **D5 spectrum gaps:** the traces from the first kept bin to the last, gaps **filled by
    straight lines while they are at most 20 %** of it (`MAX_FILLED`). Past that, the longest
    stretch without gaps is used when it has at least 8 bins, else no spectrum; the note says
@@ -85,16 +90,21 @@ the Shots settings, results as dataclasses of NumPy arrays (counted by the RAM b
       noise, 20 profiles × 50 peaks asked list none, in amplitude and in power mode.
     - At least the window's main-lobe half-width apart (none 1, Hann/Hamming 2, Blackman 3,
       flat top 5 bins).
-    - A peak no more than twice the stronger peaks' sidelobe envelope at its distance (the
-      window's own leakage, measured once per window) is taken for a sidelobe and left out:
-      Hamming's flat −43 dB sidelobes otherwise list as peaks beside a strong line. A weak
-      line 60 bins from one 50× stronger still lists (tested with Hann).
+    - A peak whose unpadded bin holds no more than 1.25 × a stronger line's leakage into that
+      bin (the window's transform at the bin's distance from the line's refined frequency,
+      measured once per window) is taken for its sidelobe and left out: Hamming's −43 dB
+      sidelobes otherwise list as peaks beside a strong line. (The first version compared with
+      the sidelobe envelope's maximum and dropped real resolved lines; re-review A.) Tested:
+      a second line at a tenth or 3 % of the first, 3–10 bins away, the first on or off a bin,
+      every window: listed exactly as without the test; a tenth is listed from 4 bins (Hann,
+      Hamming, Blackman), 5 (none) or 6 (flat top). A line 60 bins from one 50× stronger lists.
     - Ranked by prominence, the top N (D5: 3, D6: 5), marked and listed (plot and record).
     - Each placed on the padded spectrum's highest sample near it and refined by a parabola
       through the **logarithms** (a Gaussian fit to the top; a straight parabola where a value
-      is 0). Frequency error without padding, offsets 0–0.5 bin (tested): Hann and Hamming
-      < 0.03 bin, Blackman < 0.02, flat top and none < 0.2 (flat top's top is flat, the
-      rectangular window's a sinc; flat top is for amplitudes).
+      is 0). Flat top is refined on the unpadded bins (its top is flat: padded samples on it
+      only add noise; ×16 padding made it 0.27 bin). Frequency error, offsets 0–0.5 bin
+      (tested): Hann and Hamming < 0.03 bin, Blackman < 0.02, flat top < 0.15 at any padding,
+      none < 0.2 (its peak is a sinc; flat top is for amplitudes).
 14. **Log axis on by default** for both spectra (noise floor and weak peaks visible).
 15. **Zero padding** ×1–16 (default 1), lowered so the transform stays ≤ 2²² samples (said).
 16. A range with no T extent (equal T) is widened by 0.5 ms each way, as the density images.
@@ -141,6 +151,14 @@ the Shots settings, results as dataclasses of NumPy arrays (counted by the RAM b
 9. Tests: the always-true `startswith("")`, the circular SE check, the D5 amplitude tolerance
    (25 % → 3 %), Nyquist/DC tests.
 10. `describe_result` for completed results only; `result_record` as on `agent/dld-d1` (1).
+
+## Re-review (Coordinator, 2c1929e) and what changed
+
+- A. The sidelobe test compared with the envelope's maximum and dropped real lines: now the
+  line's leakage into the peak's own bin, margin 1.25; two-line tests (13).
+- B. D5 dropped a partial last bin's events: kept for the traces, out of the spectrum (5).
+- C. Flat top with padding placed peaks worse: refined on the unpadded bins (13).
+- D. A set width wider than the range: the range, with a warning (5).
 
 ## Not done (for later)
 

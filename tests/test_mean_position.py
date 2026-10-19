@@ -171,11 +171,19 @@ def test_whole_bins_only_and_the_automatic_widths_limits() -> None:
     many = run(sloshing(shots=1, per_shot=200_000), FULL)
     assert len(many.data.counts) == 1000 and "(auto: at most 1,000 bins, ~200 events per bin)" in \
         SCRIPT.describe_result("Plot", many)
-    # A set width that doesn't divide the range: whole bins only, the rest left out and said.
-    partial = run(sloshing(shots=1, per_shot=5_000), {**FULL, "t_bin": 3e-3}).data
-    assert len(partial.counts) == 16 and partial.edges[-1] == pytest.approx(T0 + 0.048)
-    assert partial.events + int(partial.notes[0].split()[0].replace(",", "")) == 5_000
-    assert partial.notes[0].endswith("events in the last 2 ms, past the last whole bin, left out")
+    # A set width that doesn't divide the range: a last, partial bin, centred on its own extent,
+    # keeps its events in the traces; the spectrum's even samples leave it out.
+    partial = run(sloshing(shots=1, per_shot=5_000), {**FULL, "t_bin": 3e-3, "spectrum": True}).data
+    assert len(partial.counts) == 17 and partial.counts.sum() == partial.events == 5_000
+    assert partial.edges[-2] == pytest.approx(T0 + 0.048) and partial.edges[-1] == pytest.approx(T0 + SPAN)
+    assert partial.centres[-1] == pytest.approx(T0 + 0.049) and np.isfinite(partial.traces[0].mean[-1])
+    assert "the last bin is 2 ms wide (partial): in the traces, not in the spectrum" in partial.notes
+    assert partial.spectra[0].samples == 16
+    wide = run(sloshing(shots=1, per_shot=5_000), {**FULL, "t_bin": 30e-3}).data
+    assert wide.counts.sum() == 5_000 and len(wide.counts) == 2  # 30 ms + 20 ms: no event dropped
+    wider = run(sloshing(shots=1, per_shot=5_000), {**FULL, "t_bin": 0.08}).data
+    assert len(wider.counts) == 1 and wider.width == pytest.approx(SPAN)
+    assert "T bin width 80 ms is wider than the range (50 ms): using one bin of the range" in wider.warnings
     odd = run(sloshing(shots=1, per_shot=5_000), {**FULL, "t_bin": SPAN / 37, "spectrum": True}).data
     assert len(odd.counts) == 37 and len(odd.spectra) == 2  # odd lengths work (the old GUI's FFT crashed)
     tiny = run(sloshing(shots=1, per_shot=5_000), {**FULL, "t_bin": 1e-9}).data

@@ -24,8 +24,8 @@ same in both) of the unpadded bins, where a window's sidelobes don't show as sep
 ``scipy.signal.find_peaks`` above the lowest frequency asked, at least the window's main-lobe
 half-width apart, with a prominence of at least ``threshold`` times the median amplitude there
 (a noise-floor estimate), the most prominent first; a peak no more than twice as tall as a
-stronger one's sidelobes there (the window's leakage envelope) is taken for one and left out
-(a rectangular window's sidelobes hide weak peaks near strong ones). Each is then placed on the padded
+stronger one's leakage at its exact (fractional) distance from it is taken for that line's
+sidelobe and left out; a real line between sidelobes, where the leakage is low, stays. Each is then placed on the padded
 spectrum's highest sample near it and refined by a parabola through the logarithms of it and
 its neighbours (a Gaussian fit to the peak's top: little bias for the tapered windows; a
 straight parabola where a value is 0).
@@ -160,27 +160,25 @@ def refine(values: Array, index: int) -> tuple[float, float]:
     return offset, math.exp(top) if logarithmic else top
 
 
-SIDELOBE_MARGIN = 2.0  # a peak must stand this many times above a stronger peak's sidelobes
+SIDELOBE_MARGIN = 1.25  # a peak's bin must hold this many times a stronger line's leakage into it
 _LEAKAGE: dict[str, Array] = {}
 LEAKAGE_PADDING = 64
 
 
 def leakage(window: str, distance: float) -> float:
-    """The window's sidelobe envelope: the highest its transform reaches at ``distance`` bins or
-    further from its centre, over its peak (1 within the main lobe). Measured once per window,
-    on 256 samples padded ×64 (the shape in bins hardly depends on the length)."""
-    envelope = _LEAKAGE.get(window)
-    if envelope is None:
+    """How much of a line the window leaks ``distance`` bins (fractional) from it: its
+    transform's magnitude there over its peak (1 within the main lobe). Measured once per
+    window, on 256 samples padded ×64 (the shape in bins hardly depends on the length)."""
+    response = _LEAKAGE.get(window)
+    if response is None:
         samples = 256
         weights = window_values(window, samples)
         response = np.abs(np.fft.rfft(weights, n=samples * LEAKAGE_PADDING))
         response /= response[0]
-        envelope = np.maximum.accumulate(response[::-1])[::-1]  # the highest from here on
-        lobe = MAIN_LOBE.get(window, 2) * LEAKAGE_PADDING
-        envelope[:lobe] = 1.0
-        _LEAKAGE[window] = envelope
+        response[:MAIN_LOBE.get(window, 2) * LEAKAGE_PADDING] = 1.0
+        _LEAKAGE[window] = response
     position = int(round(distance * LEAKAGE_PADDING))
-    return float(envelope[min(position, len(envelope) - 1)])
+    return float(response[min(position, len(response) - 1)])
 
 
 def find_spectrum_peaks(spectrum: Spectrum, count: int, above: float = 0.0,
@@ -206,22 +204,31 @@ def find_spectrum_peaks(spectrum: Spectrum, count: int, above: float = 0.0,
     least = threshold * floor if floor > 0 else float(searched.max()) * 1e-9
     least = least if least > 0 else math.ulp(0.0)
     found, properties = find_peaks(searched, prominence=least, distance=MAIN_LOBE.get(spectrum.window, 2))
-    candidates: list[tuple[float, float, float]] = []  # (frequency, amplitude before correction, prominence)
+    # (frequency, amplitude before correction, prominence, the unpadded bin's frequency and amplitude)
+    candidates: list[tuple[float, float, float, float, float]] = []
     for position in range(len(found)):
-        centre = (int(found[position]) + start) * padding
-        low, high = max(1, centre - padding + 1), min(len(amplitude), centre + padding)
-        index = low + int(np.argmax(amplitude[low:high]))  # the padded spectrum's top near it
-        offset, top = refine(amplitude, index)
-        candidates.append((float(frequencies[index]) + offset * spectrum.grid_spacing, top,
-                           float(properties["prominences"][position])))
-    # A peak no taller than a stronger one's sidelobes there (with a margin) is one of them.
-    real: list[tuple[float, float, float]] = []
+        bin_index = int(found[position]) + start
+        if spectrum.window == FLAT_TOP:
+            # Its top is flat: the padded samples on it only add noise to where the top is.
+            offset, top = refine(coarse, bin_index)
+            frequency = float(frequencies[bin_index * padding]) + offset * spectrum.bin_spacing
+        else:
+            centre = bin_index * padding
+            low, high = max(1, centre - padding + 1), min(len(amplitude), centre + padding)
+            index = low + int(np.argmax(amplitude[low:high]))  # the padded spectrum's top near it
+            offset, top = refine(amplitude, index)
+            frequency = float(frequencies[index]) + offset * spectrum.grid_spacing
+        candidates.append((frequency, top, float(properties["prominences"][position]),
+                           float(frequencies[bin_index * padding]), float(coarse[bin_index])))
+    # A peak whose bin holds no more than a stronger line's leakage into that bin (from the
+    # line's refined frequency; with a margin for noise) is that line's sidelobe.
+    real: list[tuple[float, float, float, float, float]] = []
     for candidate in sorted(candidates, key=lambda item: -item[1]):
-        if all(candidate[1] > SIDELOBE_MARGIN * other[1] * leakage(spectrum.window, abs(candidate[0] - other[0])
+        if all(candidate[4] > SIDELOBE_MARGIN * other[1] * leakage(spectrum.window, abs(candidate[3] - other[0])
                                                                    / spectrum.bin_spacing) for other in real):
             real.append(candidate)
     peaks = []
-    for frequency, top, prominence in sorted(real, key=lambda item: -item[2])[:count]:
+    for frequency, top, prominence, _, _ in sorted(real, key=lambda item: -item[2])[:count]:
         value = top / float(np.sinc(frequency * spectrum.step)) if spectrum.binned else top
         peaks.append(Peak(frequency, value ** 2 if spectrum.power else value, prominence))
     return Spectrum(spectrum.values, spectrum.step, spectrum.samples, padding, spectrum.window, spectrum.power,

@@ -4,8 +4,8 @@ in mm, with their standard errors, over the chosen shots; optionally the spectru
 mean-position trace (atom-laser pointing and breathing, sloshing).
 
 The events are those inside the plot's view range (auto-crop or manual, over T, X and Y), and
-the T bins are whole bins from the range's start (events past the last whole bin are left out,
-said so). A bin with fewer events than the minimum is left out: a gap in the traces, counted
+the T bins start at the range's start; a remainder shorter than a bin is a last, partial bin
+(in the traces, centred on its own extent, but not in the evenly spaced spectrum). A bin with fewer events than the minimum is left out: a gap in the traces, counted
 in the plot's note. Standard errors: SD/√n for a mean and SD/√(2(n−1)) for an SD (normal
 data). For the spectrum, the trace runs from its first kept bin to its last, gaps inside
 filled by straight lines (said so) while they are at most ``MAX_FILLED`` (20 %) of it; past
@@ -38,7 +38,7 @@ from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
                                       range_warnings, select_shots, selection_text, shots_brief, shots_text)
-from helab.analysis.spectrum import (Spectrum, amplitude_spectrum, dropped_text, find_spectrum_peaks, peak_specs,
+from helab.analysis.spectrum import (Spectrum, amplitude_spectrum, find_spectrum_peaks, peak_specs,
                                      spectrum_text, whole_bins, window_spec)
 from helab.analysis.stats import CropBox, crop_box
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
@@ -124,6 +124,9 @@ def bin_width(events: int, span: float, given: float) -> tuple[float, bool, str,
     bins); widened to stay within ``MAX_BINS``. (width, automatic, the automatic limit reached:
     "at least", "at most" or "", what it says when widened)."""
     if given > 0:
+        if given > span:
+            return span, False, "", (f"T bin width {time_text(given)} is wider than the range "
+                                     f"({time_text(span)}): using one bin of the range")
         if span / given > MAX_BINS:
             wider = span / MAX_BINS
             return wider, False, "", (f"T bin width {time_text(given)} gives over {MAX_BINS:,} bins: using "
@@ -424,16 +427,22 @@ class MeanPositionVsT(DatasetAnalysis):
         if not upper > lower:
             lower, upper = lower - POINT_SPAN, upper + POINT_SPAN
         width, automatic, clamp, widened = bin_width(len(inside), upper - lower, float(values[BIN_WIDTH.name]))
-        binned = whole_bins(inside[:, 0], lower, upper, width)
-        inside, index, bins = inside[binned.kept], binned.index, binned.bins
-        edges = (lower + width * np.arange(bins + 1)).astype(np.float64)
+        whole = whole_bins(inside[:, 0], lower, upper, width)
+        # A partial last bin (the range's remainder past the last whole one) is kept for the
+        # traces, centred on its own extent; the spectrum's evenly spaced samples leave it out.
+        partial = whole.remainder > 0
+        bins = whole.bins + int(partial)
+        index = np.clip(np.floor((inside[:, 0] - lower) / width).astype(np.intp), 0, bins - 1)
+        edges = (lower + width * np.arange(whole.bins + 1)).astype(np.float64)
+        if partial:
+            edges = np.append(edges, upper)
         counts = np.bincount(index, minlength=bins).astype(np.int64)
         kept = counts >= minimum
         traces = []
         for column, axis in ((1, "X"), (2, "Y")):
             context.check()
             traces.append(bin_statistics(inside[:, column] * LENGTH_SCALE, index, counts, kept, axis))
-        notes: list[str] = [dropped_text(binned)] if binned.dropped else []
+        notes: list[str] = []
         left_out = int(bins - np.count_nonzero(kept))
         if left_out and kept.any():
             notes.append(f"{left_out:,} of {bins:,} bins with fewer than {minimum:,} events left out")
@@ -445,7 +454,12 @@ class MeanPositionVsT(DatasetAnalysis):
             return data
         context.check()
         centres = data.centres
-        part = stretch(kept, centres, data.time_unit)  # X's and Y's gaps are the same bins
+        evenly = kept.copy()
+        if partial:
+            evenly[-1] = False  # not evenly spaced
+            notes.append(f"the last bin is {time_text(whole.remainder)} wide (partial): in the traces, not in "
+                         f"the spectrum")
+        part = stretch(evenly, centres, data.time_unit)  # X's and Y's gaps are the same bins
         if part.note:
             notes.append(part.note)
         if part.stop == part.start:

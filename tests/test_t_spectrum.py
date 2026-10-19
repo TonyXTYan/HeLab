@@ -10,11 +10,12 @@ import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6.QtWidgets import QLabel
 
+from helab.analysis import spectrum as spectrum_module
 from helab.analysis.dataset_view import DatasetView, build_view
 from helab.analysis.display_units import frequency_text, si_text, time_text, time_unit
 from helab.analysis.parameters import effective
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled
-from helab.analysis.spectrum import (FLAT_TOP, MAX_PADDED, WINDOWS, amplitude_spectrum, find_spectrum_peaks,
+from helab.analysis.spectrum import (FLAT_TOP, MAX_PADDED, WINDOWS, Peak, amplitude_spectrum, find_spectrum_peaks,
                                      padding_for, refine)
 from helab.scripts.standard import t_spectrum
 from helab.utils.folder_cache import Dataset
@@ -168,6 +169,13 @@ def test_automatic_bins_follow_the_data_rate_within_their_limits() -> None:
     assert len(tiny.counts) == t_spectrum.MAX_BINS and any("over 1,048,576 bins" in w for w in tiny.warnings)
 
 
+def test_a_set_width_wider_than_the_range_is_the_range() -> None:
+    data = run(modulated(shots=1, per_shot=5_000), {**FULL, "t_bin": 0.08}).data
+    assert data.width == pytest.approx(SPAN) and len(data.counts) == 1 and data.counts.sum() == 5_000
+    assert data.profile[0] == pytest.approx(5_000 / SPAN / 1e3)  # the true rate, not 62.5 % of it
+    assert "T bin width 80 ms is wider than the range (50 ms): using one bin of the range" in data.warnings
+
+
 def test_a_set_width_uses_whole_bins_only() -> None:
     data = run(modulated(shots=1, per_shot=5_000), {**FULL, "t_bin": 3e-3}).data
     assert len(data.counts) == 16 and data.counts.sum() == data.events < 5_000
@@ -255,7 +263,7 @@ def test_normalisation_dc_and_nyquist() -> None:
 
 # Frequency error bounds of the log parabola without padding, in bins, by window (flat top's
 # top is flat and the rectangular window's peak is a sinc: placed less well).
-BOUNDS = {"Hann": 0.03, "Hamming": 0.03, "Blackman": 0.02, "flat top": 0.2, "none": 0.2}
+BOUNDS = {"Hann": 0.03, "Hamming": 0.03, "Blackman": 0.02, "flat top": 0.15, "none": 0.2}
 
 
 @pytest.mark.parametrize("window", list(WINDOWS))
@@ -267,6 +275,54 @@ def test_peak_frequency_error_bounds(window: str) -> None:
         assert abs(found.frequency - frequency) < BOUNDS[window], offset
         power = find_spectrum_peaks(amplitude_spectrum(trace, STEP, window, power=True), 1).peaks[0]
         assert power.frequency == pytest.approx(found.frequency) and power.value == pytest.approx(found.value ** 2)
+
+
+def test_flat_top_is_placed_on_the_unpadded_bins() -> None:
+    """Padding doesn't worsen it (the padded samples on its flat top only add noise)."""
+    for padding in (1, 4, 16):
+        for offset in np.linspace(0.0, 0.5, 11):
+            trace = np.sin(2 * np.pi * (100 + offset) * TIMES)
+            found = find_spectrum_peaks(amplitude_spectrum(trace, STEP, FLAT_TOP, padding), 1).peaks[0]
+            assert abs(found.frequency - 100 - offset) < BOUNDS[FLAT_TOP], (padding, offset)
+
+
+# The closest a second line at a tenth of the first is resolved, in bins, by window.
+RESOLVED = {"Hann": 4, "Hamming": 4, "Blackman": 4, "flat top": 6, "none": 5}
+
+
+@pytest.mark.parametrize("window", list(WINDOWS))
+def test_a_weaker_line_3_to_10_bins_away_is_listed(window: str) -> None:
+    """Two lines, the second a tenth (and 3 %) of the first, 3–10 bins apart, the first on a bin
+    or off it: the sidelobe test never drops the weaker line (listed as without the test),
+    and a tenth is listed from ``RESOLVED`` bins on (the reviewer's cases)."""
+    step, samples = 1e-5, 5000
+    times = np.arange(samples) * step
+    spacing = 1 / (samples * step)
+    margin = spectrum_module.SIDELOBE_MARGIN
+    try:
+        for ratio in (0.1, 0.03):
+            for distance in range(3, 11):
+                for offset in (0.0, 0.25, 0.5):
+                    rng = np.random.default_rng(distance)
+                    trace = (80 * np.cos(2 * np.pi * (300 + offset) * spacing * times)
+                             + 80 * ratio * np.cos(2 * np.pi * (300 + offset + distance) * spacing * times + 1.0)
+                             + rng.normal(0, 4, samples))
+                    spectrum = amplitude_spectrum(trace, step, window)
+                    target = 300 + offset + distance
+
+                    def listed(peaks: tuple[Peak, ...]) -> bool:
+                        return any(abs(peak.frequency / spacing - target) < 1 for peak in peaks)
+                    spectrum_module.SIDELOBE_MARGIN = margin
+                    peaks = find_spectrum_peaks(spectrum, 5).peaks
+                    found = listed(peaks)
+                    spectrum_module.SIDELOBE_MARGIN = 0.0
+                    # The rule drops only sidelobes (it may drop those): never the weaker line.
+                    assert found == listed(find_spectrum_peaks(spectrum, 5).peaks) or (
+                        window == FLAT_TOP and distance < RESOLVED[FLAT_TOP]), (ratio, distance, offset)
+                    if ratio == 0.1 and distance >= RESOLVED[window]:
+                        assert found, (distance, offset)
+    finally:
+        spectrum_module.SIDELOBE_MARGIN = margin
 
 
 @pytest.mark.parametrize("window", list(WINDOWS))

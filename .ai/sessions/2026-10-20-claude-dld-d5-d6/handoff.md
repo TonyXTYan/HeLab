@@ -2,11 +2,13 @@
 
 Branch `agent/dld-d5-d6` from `1231025`, not pushed or merged. Choices proposed for Tony:
 [notes.md](notes.md#choices-proposed-for-tony); the Coordinator's review of `645c8cb` and
-what changed: [notes.md](notes.md#review-coordinator-645c8cb-and-what-changed).
+what changed: [notes.md](notes.md#review-coordinator-645c8cb-and-what-changed), and the
+re-review of `2c1929e`: [notes.md](notes.md#re-review-coordinator-2c1929e-and-what-changed).
 
 ## Done
 
-- **Mean X, Y against T** (D5, `helab/scripts/standard/mean_position.py`): per whole T bin,
+- **Mean X, Y against T** (D5, `helab/scripts/standard/mean_position.py`): per T bin (a last
+  partial one kept for the traces),
   the mean and SD of X and Y in mm with standard errors over the chosen shots; bins under the
   minimum events are gaps, counted; optional spectrum of the mean-position traces (gaps filled
   up to 20 %, else the longest stretch without gaps, else none) with a peak list.
@@ -25,12 +27,14 @@ what changed: [notes.md](notes.md#review-coordinator-645c8cb-and-what-changed).
 
 ## Checks
 
-- After the review fixes: `tests/test_mean_position.py` (13) and `tests/test_t_spectrum.py`
-  (32) with `test_analysis.py`, `test_live_plots.py`, `test_script_system.py`
-  (`-n 2 --reruns 5 --reruns-delay 1`): `168 passed in 13.28s`, no RERUN; `test_typing.py` with
-  the venv first on PATH: `6 passed`.
+- After the re-review fixes: `tests/test_mean_position.py` (13) and `tests/test_t_spectrum.py`
+  (39) with `test_analysis.py`, `test_live_plots.py`, `test_script_system.py`
+  (`-n 2 --reruns 5 --reruns-delay 1`): `175 passed in 13.86s`, no RERUN. (After the first
+  review: 168 passed, no RERUN; `test_typing.py` with the venv first on PATH: 6 passed.)
 - `mypy helab tests --strict` (the venv's): clean, 151 files. `pyright helab tests`: 0 errors.
   `git diff --check`: clean.
+- The Coordinator's full suite on `2c1929e`: clean except the root-only pair, one rerun of
+  `test_scatter_from_the_panel`.
 - Full suite on `645c8cb` (before the review fixes; `-n 2 --reruns 5 --reruns-delay 1`, venv
   on PATH): `2 failed, 1314 passed, 7 skipped, 2 xfailed, 10 rerun in 182.83s`. The 2
   failures (and all 10 RERUNs, 5 each) are the known root-only tests
@@ -79,5 +83,7 @@ what changed: [notes.md](notes.md#review-coordinator-645c8cb-and-what-changed).
   record." And mention `display_units` (mm, T ms/s).
 - `roadmaps/dld-front-panel-port.md` / `_readme.md`: D5 and D6 built (pending Tony's review).
 - At merge with `agent/dld-d3`: `density_images.time_unit` can import
-  `display_units.time_unit` (identical rule); with `agent/dld-d1`: keep one `result_record`;
+  `display_units.time_unit` (identical rule); with `agent/dld-d1`: `result_record` in
+  `base.py` and its three lines in `ScriptTreeSelector._show_content` duplicate D1's, so keep a
+  single copy;
   MODULES and the shared test lists conflict trivially (keep every plot).

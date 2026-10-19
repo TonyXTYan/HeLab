@@ -123,6 +123,9 @@ def bin_width(events: int, span: float, given: float) -> tuple[float, bool, str,
     to stay within ``MAX_BINS``. (width, automatic, the automatic limit reached: "at least",
     "at most" or "", what it says when widened)."""
     if given > 0:
+        if given > span:
+            return span, False, "", (f"T bin width {time_text(given)} is wider than the range "
+                                     f"({time_text(span)}): using one bin of the range")
         if span / given > MAX_BINS:
             wider = span / MAX_BINS
             return wider, False, "", (f"T bin width {time_text(given)} gives over {MAX_BINS:,} bins: using "
