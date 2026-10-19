@@ -1361,10 +1361,20 @@ class FolderExplorer(QWidget):
             return f"{name}'s cached data doesn't match the folder: Review… it first"
         if (self.loading and self._load_path == path) or (self.load_waiting and self._dwell_path == path):
             return f"Wait for {name} to finish loading"
-        if (self.folder_opened_path != path or self.folder_opened_data is None or dataset is None
-                or dataset.path != path or "fingerprint" not in dataset.metadata):
-            return "Select a folder with loaded data to watch it for new shots"
+        if ((self.folder_opened_path != path or self.folder_opened_data is None or dataset is None
+                or dataset.path != path or "fingerprint" not in dataset.metadata) and not self._no_shots_yet(path)):
+            return "Select a folder with loaded data, or with no shots yet, to watch it for new shots"
         return ""
+
+    def _no_shots_yet(self, path: str) -> bool:
+        """Whether Live can watch ``path`` before its first shot: a run folder, as this session's
+        listing found it, with no TXY files and no subfolders (not a drive's top or a parent of
+        runs), and none of its data shown, held or cached."""
+        node = self.model.nodes.get(path)
+        cache = self.model.cache
+        return (node is not None and node.report is not None and not node.cached_report and not node.error
+                and node.loaded and not node.children and node.txy_count == 0
+                and cache.latest_dataset(path) is None and not cache.disk_cached(path))
 
     def live_state(self) -> tuple[bool, str]:
         """Whether the toolbar's Live can be used now (to turn Live on or off), and its tooltip."""
@@ -1381,12 +1391,18 @@ class FolderExplorer(QWidget):
                       "while Live is on; switching tabs turns it off.")
 
     def start_live(self) -> bool:
-        """Turn Live on for the selected folder, whose data is shown. Whether it started."""
+        """Turn Live on for the selected folder, whose data is shown, or which has no shots yet
+        (shown as data with none). Whether it started."""
         path = self.selected_path_globally
         if self.live is not None or self.live_unavailable(path):
             return False
         dataset = self.displayed_dataset
-        assert dataset is not None
+        if dataset is None or dataset.path != path or self.folder_opened_path != path:
+            # Before the first shot: Live starts from no data; its first check lists the folder.
+            dataset = self.model.cache.empty_dataset(path)
+            self.load_source, self.load_cache_reason, self._load_cache_pending = "", "", False
+            self.load_counts = {}
+            self._display(path, dataset, {"verified": True})
         session = self._live_sessions.get(path)
         if session is None:
             session = self._live_sessions[path] = LiveSession(path, time.time(), set(dataset.data), dataset)
@@ -1668,7 +1684,7 @@ class FolderExplorer(QWidget):
                                   "saving…" if session.request == "save" else
                                   f"checked {relative_age(now - session.checked_at)}" if session.checked_at
                                   else "starting…"),
-                     plural(session.new, "new shot")]
+                     plural(session.new, "new shot") if session.shots else "waiting for the first shot"]
             if session.unsettled:
                 parts.append(f"{session.unsettled:,} still being written")
             if not session.request:

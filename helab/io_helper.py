@@ -1548,7 +1548,8 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     """One check of a folder watched live: new settled TXY files are read and sent like a load's.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for the shots the caller holds; TXY files are
-    written once, so they are trusted once the folder is shown to be the same one. ``known``
+    written once, so they are trusted once the folder is shown to be the same one. An empty
+    list is Live started before the folder's first shot: every TXY file found is new. ``known``
     lists shots the caller knows but couldn't read: read again only if they changed. ``since``
     is the folder's mtime (ns) the previous check said is safe to compare: while the folder
     still has it, nothing was added or removed, and one stat is the whole check.
@@ -1567,7 +1568,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     Live stops.
     """
     started = time.monotonic()
-    if not memory:
+    if memory is None:
         raise ValueError("Live needs the folder's loaded data — Retry")
     try:
         folder = os.stat(path)

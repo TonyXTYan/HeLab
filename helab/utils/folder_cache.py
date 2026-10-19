@@ -772,6 +772,14 @@ class FolderCache(QObject):
         self.pins[owner] = dataset
         self._evict()
 
+    def empty_dataset(self, path: str) -> Dataset:
+        """No shots yet: Live started before the folder's first shot. Not kept here; the tab that
+        shows it pins it (``retain``), which makes it the base of the folder's Live checks, so
+        the first check lists the folder and every TXY file it finds is new."""
+        metadata = {"fingerprint": [], "problematic": [], "files": 0, "rows": 0, "bytes": 0,
+                    "loaded_at": time.time(), "checked_at": time.monotonic(), "verified": True}
+        return Dataset(path, "", {}, metadata, self._epochs.get(path, 0))
+
     def release(self, owner: str) -> None:
         self.pins.pop(owner, None)
         self._evict()

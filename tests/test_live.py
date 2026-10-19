@@ -362,6 +362,98 @@ def test_live_needs_shown_data_and_locks_navigation(
     explorer.close_cleanup()
 
 
+def test_live_starts_on_a_folder_with_no_shots_yet(qtbot: QtBot, service: IOService, tmp_path: Path) -> None:
+    """Start Live, then run the experiment: a listed folder without TXY files is watched from no
+    data, and its first shot arrives as the next data shown (a revision), then saved on stop."""
+    folder = tmp_path / "run"
+    folder.mkdir()
+    age_folder(folder, 120)
+    path = str(folder)
+    explorer = FolderExplorer(path, path, path, [0, 4, 5])
+    qtbot.addWidget(explorer)
+    cache = explorer.model.cache
+    cache.live_interval = 0.02
+    # Not listed yet: whether it has shots is unknown.
+    assert not explorer.live_state()[0] and not explorer.start_live()
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    replay(cache, path, tmp_path, "list")
+    qtbot.waitUntil(lambda: explorer.model.nodes[path].report is not None)
+    assert explorer.displayed_dataset is None and explorer.live_state()[0]
+    loaded: list[str] = []
+    explorer.dataLoaded.connect(loaded.append)
+    assert explorer.start_live()
+    shown = explorer.displayed_dataset
+    assert shown is not None and shown.path == path and shown.data == {} and explorer.folder_opened_path == path
+    session = explorer.live
+    assert session is not None and session.dataset is shown and loaded == [path]
+
+    # The first check holds no shots and lists the folder: nothing yet.
+    check = next_request(qtbot, explorer, path)
+    assert check.payload["live"] and check.payload["memory"] == [] and check.payload["live_since"] is None
+    assert replay(cache, path, tmp_path)[0]["kind"] == "live_unchanged"
+    explorer._update_activity()
+    assert "waiting for the first shot" in explorer.folder_freshness_label.text()
+
+    # The first shot: seen by one check, read by the next, shown as the folder's data.
+    write_shot(folder, 1)
+    age_folder(folder, 60)
+    checks(qtbot, explorer, path, tmp_path)
+    assert sorted(explorer.folder_opened_data or {}) == [1] and session.new == 1 and session.unsaved == {1}
+    dataset = explorer.displayed_dataset
+    assert dataset is not None and dataset is session.dataset and dataset.metadata["source"] == "updated"
+    assert dataset.signature and len(loaded) == 2
+    explorer._update_activity()
+    assert "1 new shot" in explorer.folder_freshness_label.text()
+
+    # A second shot is a further revision; Live off saves both.
+    write_shot(folder, 2)
+    age_folder(folder, 50)
+    checks(qtbot, explorer, path, tmp_path)
+    assert sorted(explorer.folder_opened_data or {}) == [1, 2] and len(loaded) == 3
+    explorer.stop_live()
+    save = next_request(qtbot, explorer, path)
+    assert save.payload.get("save")
+    replay(cache, path, tmp_path)
+    qtbot.waitUntil(lambda: not explorer._live_sessions)
+    assert cached_shots(path, tmp_path) == [1, 2]
+    explorer.close_cleanup()
+
+
+def test_a_folder_with_shots_not_yet_loaded_cant_be_watched(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path,
+) -> None:
+    """Only a folder with no shots yet starts from no data; one with shots is loaded first."""
+    path = str(run)
+    explorer = FolderExplorer(path, path, path, [0, 4, 5])
+    qtbot.addWidget(explorer)
+    cache = explorer.model.cache
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    replay(cache, path, tmp_path, "list")
+    qtbot.waitUntil(lambda: explorer.model.nodes[path].report is not None)
+    assert explorer.model.nodes[path].txy_count == 2 and explorer.displayed_dataset is None
+    enabled, tooltip = explorer.live_state()
+    assert not enabled and "loaded data, or with no shots yet" in tooltip and not explorer.start_live()
+    explorer.close_cleanup()
+
+
+def test_a_folder_of_runs_isnt_watched_as_an_empty_run(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path,
+) -> None:
+    """A folder with subfolders and no TXY files of its own (a drive's top, a day's folder of runs)
+    isn't a run before its first shot: Live doesn't offer to watch it."""
+    path = str(tmp_path)
+    explorer = FolderExplorer(path, path, path, [0, 4, 5])
+    qtbot.addWidget(explorer)
+    cache = explorer.model.cache
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    replay(cache, path, tmp_path, "list")
+    qtbot.waitUntil(lambda: explorer.model.nodes[path].report is not None)
+    node = explorer.model.nodes[path]
+    assert node.txy_count == 0 and node.children and explorer.displayed_dataset is None
+    assert not explorer.live_state()[0] and not explorer.start_live()
+    explorer.close_cleanup()
+
+
 def test_rules_that_stop_saving_show_on_the_line(
     qtbot: QtBot, service: IOService, run: Path, tmp_path: Path,
 ) -> None:

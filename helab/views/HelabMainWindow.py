@@ -706,7 +706,8 @@ class HelabMainWindow(QMainWindow):
         self.action_tab_folder_up.setToolTip("Navigate up one directory")
         self.action_tab_rescan.setToolTip(self.FOLDER_STATUS_TOOLTIP)
         self.action_tab_cancel.setToolTip("Cancel loading in this tab (Esc)")
-        self.action_tab_live.setToolTip("Live\nSelect a folder with loaded data to watch it for new shots.")
+        self.action_tab_live.setToolTip(
+            "Live\nSelect a folder with loaded data, or with no shots yet, to watch it for new shots.")
 
         # action_tab_new.triggered.connect(self.add_new_folder_explorer_tab)
         # action_tab_folder_up.triggered.connect(self.on_back_button_clicked)
@@ -1228,7 +1229,8 @@ class HelabMainWindow(QMainWindow):
         if explorer.live is not None:
             live = explorer.live
             return ((f"Live stopped: {name} — Retry in the folder summary", live.error) if live.error else
-                    (f"Live: watching {name} · {live.new:,} new shot{'' if live.new == 1 else 's'}", ""))
+                    (f"Live: watching {name} · " + (f"{live.new:,} new shot{'' if live.new == 1 else 's'}"
+                                                     if live.shots else "waiting for the first shot"), ""))
         if explorer.load_error:
             verb = "check" if explorer.shows_unchecked(path) else "load"
             return f"Could not {verb} {name} — see Folder details", explorer.load_error
