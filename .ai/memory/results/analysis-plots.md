@@ -30,3 +30,4 @@ First plots (2026-10-19, `.ai/sessions/2026-10-19-claude-dataset-view-plots/`). 
 ## Open
 
 - 99 % of all events keeps part of a flat background tail; Tony checks the crop on real data before choosing a rule.
+- Floating plot settings (Tony, 2026-10-19/20): a floating plot's settings move into its window on the right, collapsed by default, with a draggable splitter; "Settings are in this plot's window" with Show plot window (which also opens the section); the page moves only when a drag ends.

@@ -136,6 +136,7 @@ still to choose (Tony, with the coordinator's proposal).
   version on Ground, hardening pending: check detection on real Bragg/magnetic
   data, draggable windows on the T histogram, the averaged-vs-detuning view,
   Live updates with L3 (Tony, 2026-10-19).
+- [x] Floating plot settings: a floating plot's settings travel with its window (collapsible, on the right, draggable splitter) (Tony, 2026-10-19; landed 2026-10-20).
 - [ ] Show the analysis worker beside I/O: status-bar counts and Folder
   details' activity, each job with script, input, revision, time and Cancel;
   later remote/CLI workers in the same list (Tony, 2026-10-19).

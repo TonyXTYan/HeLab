@@ -137,6 +137,15 @@ real experiment data without deciding where its top should be.
   8. Typing: "5" in an ms box, "5 m", "5 k", "-5", empty, "abc", beyond the
      limits (red while typing, nearest limit on Enter); on a lab PC, the decimal
      mark shown and typed.
+- [ ] Floating plot settings (Mac, then a lab PC), from
+  `.ai/sessions/2026-10-19-claude-floating-plot-settings/handoff.md` (11 steps): the
+  strip is readable and clickable; opening widens the window, the plot keeps its size,
+  edits survive close/open; splitter width and open state kept across dock/float; stays
+  on screen at the right edge; docking returns the page with edits; float/dock/close
+  while following Live; tab groups and × buttons; several floating plots with the chooser
+  and Show plot window (opens a closed section); dragging out and back moves nothing,
+  letting go moves the page once (Windows: drag by the title bar too); minimising the
+  shown plot falls back; Windows title bars, scaling, Tab + Space on the strip.
 - [ ] Plots on screen: the 3D scatter in the dock (QtWebEngine) and via Open in
   browser, on the Mac and a lab PC (black pane: the browser path must work);
   counts and histograms; closing and tabbing docks; the Dash page says "Plot not
