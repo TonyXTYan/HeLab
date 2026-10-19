@@ -1,7 +1,8 @@
 # Handoff: SMB I/O audit
 
 Branch `agent/smb-io-audit` (base 486cf56). **Part 2 (fixes) is done** and comes first below; Part 1
-(the study, the "before") follows unchanged in substance. Codex's review of Part 1: `review-codex.md`.
+(the study, the "before") follows unchanged in substance. Codex's reviews of Part 1 and of Part 2
+(at e3802af, with two corrections, now done): `review-codex.md`.
 
 ## Part 2 summary
 
@@ -146,8 +147,13 @@ Sources:
   `helab/views/FolderExplorer.py`, `helab/models/SnapshotFileSystemModel.py`, and their tests
   (`tests/test_io_trace.py`, plus small updates in `test_root_discovery.py`, `test_cache_first.py`,
   `test_folder_cache.py`, `test_live_check.py`, `test_gui_responsiveness.py`).
-- Live L3 runs in parallel: `memory=[]` stays a valid Live start (I left the `if not memory` line to L3);
-  a Live save only runs with new shots, and a growing dataset saves (tested).
+- Live L3 runs in parallel. `live_check(memory=[])` still raises on this branch by design: L3's
+  672a96b changes that guard to `memory is None` and merges on top. A save of an empty Live dataset is
+  skipped (nothing to save); a growing one saves (tested). Checked by cherry-picking 672a96b onto this
+  branch's head (e04dfa5) on a scratch branch: it applied cleanly; `tests/test_live*.py` and
+  `test_io_trace.py` passed (68), the full suite passed (1018, 2 skipped, 2 xfailed; one RERUN of
+  `test_window_resize.py::test_label_keeps_painting_after_resize[single]`, a paint-timing test), mypy
+  --strict and pyright clean. The scratch branch was deleted; nothing of L3 is on this branch.
 
 ### Checks (Part 2)
 
