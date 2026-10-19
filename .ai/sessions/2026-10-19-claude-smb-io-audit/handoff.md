@@ -13,11 +13,13 @@ with trace tests, following Codex's constraints and Maestro's notes:
 | cff8df3 | Trace caveats | `.helab-root` reads traced as `marker_open`, `marker_fstat`, `marker_read` (real bytes); each listing counts its `is_dir` checks; reads record the bytes actually read; no `is_symlink` probe while tracing; marker hiding's stat and chflags traced; `HELAB_IO_TRACE` on a network drive or share refused with a warning; the no-change test compares full events and the exact calls on the folder. |
 | 7b9b7e8 | 1. roots_verify loop | Only a listing reporting a mount table not yet asked about asks for a check (`_verify_asked`); a check that saw another table than listings reported never re-queues itself; a table reported while a check runs gets one follow-up; a failed check waits for the next listing; the marker check follows the local volume check and reuses its IDs (no second diskutil); marker checks at most every 5 s as a backstop. |
 | 0e9c0ad | 4. Load stats | The fingerprint comes from the load's own listing (free on Windows); the before- and after-read stats stay; the cache-save verify pass runs only if files were read after the load's own verify; a changed cached leaf folder takes the load's status instead of a relisting and details scan. |
-| 2b55d59 | 6. Half-written files | A load reads a file in one go and drops it (not shown, not cached, unsettled, read again next check) if it was modified in the last 10 min and doesn't end with a newline. Live reads a ready file once and checks its last row on those bytes (one open instead of tail-then-file). |
+| 2b55d59, 8079252 | 6. Half-written files | A load reads a file in one go and drops it (not shown, not cached, unsettled, read again next check) if it was modified in the last 10 min and its last row isn't whole (a newline and three non-empty fields: Live's rule, one shared function since 8079252, after Codex found 2b55d59's newline-only check too weak). Live reads a ready file once and checks its last row on those bytes (one open instead of tail-then-file). |
 | c53a058 | 5. RAM-only quick check | Data in RAM without a disk cache gets the quick check from its own load's listing time, names and identity: same location (mount table), same data root (one marker read), folder unmodified since, nothing unsettled then, the sample unchanged; never for Retry/Refresh. |
 | 1e83f20 | 3. Live checks | While the folder's mtime is the one its last listing saw, a check stats only the files still being written; once one is ready, it lists as before (identity, sample, read). The identity check reads only the marker the first listing found, on every listing check (not once a minute); a missing or different marker there is looked for again or stops Live (remount). |
 | 65a06b3 | 2. Live saves | A dedicated save: the RAM dataset's arrays go to the helper (written to its private local folder by IOService's reader thread, off the GUI thread); the helper lists the folder once, checks every held file's size and mtime from that listing (no sampling), the identity, missing and changed files, then saves the full dataset under a load's guard, budget and pending-save rules (`_write_dataset`, shared with `_load`). No TXY file is read. |
 | b71a698 | 5 and 4, follow-up | The rerun showed a duplicate: selecting a RAM-held leaf folder relisted it and rescanned its details. Now it's checked by its load (as disk-cached folders already were), whose listing updates the row on a change; a load's listing marks a leaf folder's snapshot as just checked, so other tabs don't relist it. |
+| 6eb6a9c | Windows test | The read_marker trace test expects no steps for a folder-named `.helab-root` on Windows (can't be opened as a file there). |
+| d59f6a9 | Trace destination | `HELAB_IO_TRACE` is resolved (realpath) before the network check, so a local link to a share is refused; UNC prefixes refused given or resolved. |
 
 ### Before and after (the same scenarios, rerun)
 
@@ -69,53 +71,67 @@ Projected for a real run (N = 1,000 TXY files, a new shot every ~10 s, macOS):
 
 What HeLab does now (trace, `trace-session1-after.md` "Files touched while the fake writer was writing them"):
 - **Stats:** still made of files being written (Live's new and pending files, a load's fingerprint, a
-  details scan). They don't disturb the writer (below), and they're how HeLab learns a file is young.
-- **Opens and reads:** only of files settled by age (unchanged for 5 s). A load now drops a recent file
-  that doesn't end with a newline; Live drops one whose last row isn't whole. In the rerun the stalled
-  file was read and dropped, and the disk cache holds `run_stall` without it (unsettled 1); before, the
-  half file was shown and cached. Live opens a ready file once instead of twice.
+  details scan). They are how HeLab learns a file is young; on servers that follow Windows' oplock rules
+  they shouldn't change the writer's caching (1 below).
+- **Opens and reads:** only of files settled by age (unchanged for 5 s), and for a file modified in the
+  last 10 minutes, kept only if its last row is whole: a newline and three non-empty fields (one rule
+  for loads and Live since 8079252; 2b55d59 had checked the newline alone for loads). In the rerun the
+  stalled file was read and dropped, and the disk cache holds `run_stall` without it (unsettled 1);
+  before, the half file was shown and cached. Live opens a ready file once instead of twice.
 
-Research (sources at the end of this section):
-1. **A stat doesn't break the writer's caching.** Opening with only FILE_READ_ATTRIBUTES,
-   FILE_WRITE_ATTRIBUTES or SYNCHRONIZE "does not break" any oplock [1]. macOS's SMB client stats with a
-   compound CREATE/QUERY_INFO/CLOSE asking for SMB2_FILE_READ_ATTRIBUTES | SMB2_SYNCHRONIZE and share
-   access ALL [2].
-2. **A data open from another computer does.** It breaks the writer's Read-Write-Handle oplock or lease
-   to Read-Handle (to Read-Write if the share modes would conflict), and "an acknowledgment must be
-   received before the operation continues" [1]: the converter's client flushes its cached writes and
-   stops caching writes to that file. That costs the converter speed, not correctness.
-3. **The server's size and mtime can lag the writer.** A write-caching lease "allows caching writes and is
-   exclusive to only one client"; under it writes need no network packets [3]. So a file can look
-   unchanged on the server for more than 5 s while its writer is still writing into its own cache; a
-   reader's open forces the flush. This is why age alone can't prove a file is finished.
-4. **Client caches make stats stale too.** macOS caches a file's attributes for (now − mtime)/10, between
-   2 and 30 s [4]: a young file's attributes are re-fetched after 2 s. Windows caches file information
-   for 10 s, directory listings for 10 s and "not found" for 5 s (FileInfoCacheLifetime,
-   DirectoryCacheLifetime, FileNotFoundCacheLifetime), with only 64 files' information by default
-   (FileInfoCacheEntriesMax) [5].
-5. **Sharing modes.** macOS opens files for reading with share access ALL [2]: it never blocks the writer.
-   Python's `open()` on Windows goes through the C runtime's `_wopen`, which shares read and write but not
-   delete (`_SH_DENYNO` → FILE_SHARE_READ | FILE_SHARE_WRITE) [6][7]: while a Windows HeLab reads a file,
-   its writer can keep writing but can't delete or rename that file.
+Research (sources at the end of this section). These are statements of the protocols and the client
+code; no SMB packet capture or native Windows run was made, and servers (Windows, Samba, NAS firmware)
+and client versions differ.
+1. **A stat shouldn't break the writer's oplock or lease, where the server follows Windows' rules.**
+   Windows' file system rule is that an open asking only for FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES
+   or SYNCHRONIZE "does not break" an oplock [1]. Apple's SMB client source stats with a compound
+   CREATE/QUERY_INFO/CLOSE asking for SMB2_FILE_READ_ATTRIBUTES | SMB2_SYNCHRONIZE, share access ALL [2]
+   (its `main` branch, not pinned to a macOS release). This covers caching state only: a stat still
+   costs a round trip, and a server that breaks oplocks on any open would behave otherwise.
+2. **A data open from another computer can break the writer's write caching.** Under those rules, an
+   open for data from another client breaks a Read-Write-Handle oplock to Read-Handle (to Read-Write if
+   the share modes would conflict), and "an acknowledgment must be received before the operation
+   continues" [1]; a client whose lease loses write caching "MUST flush any cached data associated with
+   this file" [3]. So if the converter's client holds such a lease, HeLab's read makes it flush and stop
+   caching writes to that file: expected to slow it, not to fail it, provided the share modes allow both
+   opens (5). Whether the converter holds a lease at all depends on its client, the server and the share.
+3. **The server's size and mtime can lag the writer.** A client holding write caching can keep writes it
+   hasn't sent; they reach the server when it flushes (on close, a lease break [3], or its own schedule).
+   So a file can look unchanged on the server for longer than the settle age while its writer is still
+   writing into its cache, and a reader's open can force the flush. This is why age alone can't prove a
+   file is finished.
+4. **Client caches can make stats stale.** Apple's client caches a file's attributes for (now − mtime)/10,
+   between 2 and 30 s [4]: a young file's attributes are fetched again after 2 s. Windows' default
+   lifetimes are 10 s for file information, 10 s for directory listings (without directory leases) and
+   5 s for "not found" (FileInfoCacheLifetime, DirectoryCacheLifetime, FileNotFoundCacheLifetime), with
+   64 files' information cached by default (FileInfoCacheEntriesMax) [5]. These are upper bounds on how
+   old a cached answer can be, not a statement that every lookup is that stale.
+5. **Sharing modes.** Apple's client source opens files for reading with share access ALL [2], which
+   doesn't deny the writer's access. Python's `open()` on Windows goes through the C runtime's `_wopen`,
+   which shares read and write but not delete [6]; the exact mask (`_SH_DENYNO` → FILE_SHARE_READ |
+   FILE_SHARE_WRITE) is from the UCRT source as carried in ReactOS, secondary evidence [7]. So while a
+   Windows HeLab reads a file, its writer can keep writing but likely can't delete or rename that file.
+   If the converter itself opened files denying read sharing, HeLab's open would fail instead (and be
+   retried by the next check).
 
 Decision taken (implemented): stats of young files allowed; opens and reads only of files settled by age
-and, now for loads too, with a whole last row; one data open per new file in Live.
+and, for recent files, with a whole last row; one data open per new file in Live.
 
 Proposed, not done (Tony's call):
 - **Windows clients and Live's "unchanged since the last check" rule:** two stats 3 s apart can both come
-  from the 10 s file-information cache [5], so on Windows the rule is weaker than on macOS. A fix would be
-  to require the two looks to be at least 10 s apart on Windows.
+  from the 10 s file-information cache [5], so on Windows the rule can be weaker than on macOS. A fix would
+  be to require the two looks to be at least 10 s apart on Windows.
 - **The real fix stays the converter's temporary-name rename** (on the roadmap): write `…tmp`, close, then
   rename to `d_txy_forc<N>.txt`. Age and a whole last row can't prove the writer finished: a writer paused
   exactly at a row's end, or caching writes as in 3, still looks finished. And a converter that replaced a
-  finished file by renaming over it would fail while a Windows HeLab reads it (5); writing new names
+  finished file by renaming over it could fail while a Windows HeLab reads it (5); writing new names
   doesn't.
 
 Sources:
 [1] Microsoft, "Checking the Oplock State of an IRP_MJ_CREATE Operation", https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/irp-mj-create2
-[2] Apple SMBClient source, `kernel/smbfs/smbfs_smb_2.c` (`smb2fs_smb_cmpd_query`, `smb2fs_smb_cmpd_create_read`), https://github.com/apple-oss-distributions/SMBClient
-[3] Microsoft Open Specifications blog, "Client caching features: Oplock vs. Lease", https://learn.microsoft.com/en-us/archive/blogs/openspecification/client-caching-features-oplock-vs-lease
-[4] Apple SMBClient source, `kernel/smbfs/smbfs_node.h` (`SMB_CACHE_TIME`, `SMB_MINATTRTIMO` 2, `SMB_MAXATTRTIMO` 30), https://github.com/apple-oss-distributions/SMBClient
+[2] Apple SMBClient source, `kernel/smbfs/smbfs_smb_2.c` (`smb2fs_smb_cmpd_query`, `smb2fs_smb_cmpd_create_read`), `main` branch, https://github.com/apple-oss-distributions/SMBClient
+[3] Microsoft, [MS-SMB2] "Receiving a Lease Break Notification" (client flushes cached data when write caching is removed), https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/4f35576a-6f3b-40f0-a832-1c30b0afccb3
+[4] Apple SMBClient source, `kernel/smbfs/smbfs_node.h` (`SMB_CACHE_TIME`, `SMB_MINATTRTIMO` 2, `SMB_MAXATTRTIMO` 30), `main` branch, https://github.com/apple-oss-distributions/SMBClient
 [5] Microsoft, "Performance tuning for file servers" (client registry defaults), https://learn.microsoft.com/en-us/windows-server/administration/performance-tuning/role/file-server
 [6] Microsoft, "_sopen, _wsopen" (`_SH_DENYNO` "Permits read and write access"), https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/sopen-wsopen
 [7] UCRT `lowio/open.cpp` as carried in ReactOS (`_wopen` → `_SH_DENYNO`; `_SH_DENYNO` → FILE_SHARE_READ | FILE_SHARE_WRITE), https://doxygen.reactos.org/d2/dce/open_8cpp_source.html
