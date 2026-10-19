@@ -16,7 +16,8 @@ with stray events far out. Every other awkward case gets a note on an amber line
 the title. Manual windows wider than half the spacing are clipped, and the plot says so.
 A run in flight no longer overwrites a centre typed meanwhile. From shot says why it
 chose nothing. A Python reference of `fraction_calc.m` matches HeLab's counts per shot
-exactly; the intended differences are tested. Analysis version: 1 → 4.
+exactly; the intended differences are tested. A Search T with both ends set is taken as
+where order 0 is. Analysis version: 1 → 5.
 
 ## Commits
 
@@ -69,20 +70,25 @@ exactly; the intended differences are tested. Analysis version: 1 → 4.
    "⚠ order 0 moved by +1 order" shows on every rerun and manual starts from the earlier
    order 0. A folder whose first run is already over ~2/3 transfer shows +1 as order 0 with
    no note: the known limit.
-3. A run with +1 about as tall as 0 (transfer ~40–65 %): the plot says "order 0 unsure". Set Search T around
-   the real order 0: the note goes and the orders are right.
-4. Search T with only To set (From 0), then only From: each searches from the first or
+3. A run with +1 about as tall as 0 (transfer ~40–65 %): the plot says "order 0 unsure".
+   Set both ends of Search T around the real order 0: the ⚠ goes, the orders are right,
+   and a plain line says "order +1 (outside Search T) holds …" or "… is taller than order
+   0". An open-ended Search T (one end 0) keeps the ⚠.
+4. Such a narrow Search T, leaving out a taller +1, usually holds no side peak: the note
+   says "no side peak found … spacing as set", and the spacing is the hidden (last) one.
+   Run once without Search T at a low transfer first, so that spacing is a detection.
+5. Search T with only To set (From 0), then only From: each searches from the first or
    to the last event. From > To: the warning shows in the dock line and the settings tab.
-5. Manual, Window ± 10 ms with a 12.5 ms spacing: the windows touch (6.25 ms), and the
+6. Manual, Window ± 10 ms with a 12.5 ms spacing: the windows touch (6.25 ms), and the
    note and the warning say so. Centre at 5 s: the message says where the events are.
-6. Magnetic run (mj states): same checks; "unsure" will be common when the populations
+7. Magnetic run (mj states): same checks; "unsure" will be common when the populations
    are similar. Manual orders fix it.
-7. Live, auto: centre and spacing follow each rerun (switch to manual to see them). With
+8. Live, auto: centre and spacing follow each rerun (switch to manual to see them). With
    a rerun running, switch to manual and type a centre: it stays after the rerun ends.
-8. Shots: From shot past the last shot → "none of N shots (From shot … is past the last,
+9. Shots: From shot past the last shot → "none of N shots (From shot … is past the last,
    …)". As Live adds shots it starts plotting. A range with To below From → "no shots:
    To shot … is below From shot …".
-9. Compare with `monitor_momentum.m` on the same shots, keeping the XY rotation
+10. Compare with `monitor_momentum.m` on the same shots, keeping the XY rotation
    difference in mind.
 
 ## Checks
@@ -119,8 +125,9 @@ shot N, then all / last N / up to a shot) and View range …"):
 > Window ± over half the spacing clipped to it). Its order 0 checks catch comparable peaks
 > (another order with ≥ half its events: "⚠ order 0 unsure") and jumps between runs (a
 > whole number of orders from the last detection, which the hidden centre then keeps:
-> "⚠ order 0 moved"). A first run with a transfer over about 2/3 can still take +1 for
-> order 0. The plot's notes say what else it left out or couldn't find. `tests/test_transfer_fractions_matlab.py` checks the
+> "⚠ order 0 moved"). A Search T with both ends set is the user's word on order 0: no
+> warning for orders outside it, and a last detection outside it is replaced. A first run
+> with a transfer over about 2/3 can still take +1 for order 0. The plot's notes say what else it left out or couldn't find. `tests/test_transfer_fractions_matlab.py` checks the
 > counts against a Python `fraction_calc` and lists the intended differences, among them
 > no X/Y rotation. A script's `detected_parameters` fills its settings from a run (here
 > the manual centre and spacing), except a setting changed since the run started.
@@ -148,16 +155,36 @@ one gap (F1). Fixes, each in its own commit:
 |---|---|---|
 | `966ecfa` | F1 | "⚠ order 0 moved by ±n orders from the last detection": the found order 0 is a whole number n of spacings (1 ≤ \|n\| ≤ orders each side + 1, ±0.3) from the hidden centre. The default centre is no detection. While it stands moved, runs fill in only the spacing, so the warning repeats on every rerun and manual starts from the last order 0. A first run over ~2/3 transfer is pinned as a known limit. Claims reworded in the module docstring, the Orders tip, this handoff and the proposed AGENTS.md line. Version 4. |
 | `20e76a9` | F3 | The MATLAB test's header also lists the open vs closed XY box, MATLAB's T 0–4 s import limit and the `dld_aquire` last-event check. |
-| this commit | F3 | The handoff line on the per-setting `_show_detected` rule (above, Decisions), with the review. |
+| `1462b39` | F3 | The handoff line on the per-setting `_show_detected` rule (above, Decisions), with the review. |
+| `d0255ca` | — | The "moved" warning says how to clear it (sticky behaviour confirmed by the Coordinator). |
 
 - **F1 choice beyond the brief:** keeping the hidden centre while order 0 stands moved.
   Without it, the next Live rerun compares with the jumped centre and the warning vanishes
   after one run. The cost: if the *earlier* detection was the wrong one (a first run over
   2/3 transfer, then the transfer falls), the warning stays until order 0 is set by hand
-  (manual, type it, Rerun; back to auto then compares with it).
+  (manual, type it, Rerun, then back to Auto, which then compares with it), or a Search T
+  with both ends set around the real order 0 (after the recheck, below).
 - **Option (a), "Order 0 near":** not built; Tony decides.
 - **F2, XY rotation:** unchanged, Tony's decision (numbers in review.md).
 - Checks after the fixes: full suite `pytest -n 6 --reruns 5 --reruns-delay 1
   --basetemp=.ai/temp/pytest`: **1201 passed, 2 skipped, 2 xfailed, no RERUN**; `mypy --strict`
+  on helab and tests, also `--platform win32`: clean; `pyright helab tests`, also
+  `--pythonplatform Windows`: 0 errors; `git diff --check`: clean.
+
+### After the recheck
+
+[review.md](review.md), "Recheck at 1462b39 (head d0255ca)": F1 and F3 fixed, no false jump
+warnings; one medium finding (R1) and a nit.
+
+| Commit | Finding | What |
+|---|---|---|
+| `cf79d22` | — | The recheck, committed. |
+| `c3f6b5b` | R1 | A Search T with **both ends set** is the user's word on order 0. An order outside it holding ≥ half of order 0's events gets a plain line ("order +1 (outside Search T) is taller than order 0", or "… holds 70% as many events as order 0"), not "⚠ order 0 unsure". A last detection outside it is replaced by the new one, with no "moved" warning. An open end keeps the earlier rules. The unsure advice is now "set both ends of Search T around order 0, or the orders by hand", which clears it; checklist steps 3 and 4 updated. Version 5. |
+| `f54a937` | nit | The "moved" advice ends "… set Order 0 at <c> s in manual mode, Rerun, then back to Auto". |
+
+- Trade-off of R1 (a): a Search T with both ends set that leaves the real order 0 out is no
+  longer a ⚠, only the plain line naming the taller order outside it.
+- Checks after these fixes: full suite `pytest -n 6 --reruns 5 --reruns-delay 1
+  --basetemp=.ai/temp/pytest`: **1204 passed, 2 skipped, 2 xfailed, no RERUN**; `mypy --strict`
   on helab and tests, also `--platform win32`: clean; `pyright helab tests`, also
   `--pythonplatform Windows`: 0 errors; `git diff --check`: clean.
