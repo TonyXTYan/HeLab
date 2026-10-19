@@ -133,3 +133,37 @@ Windows has no named pipes in the filesystem. `os.mkfifo` stays inside
 | `git diff --check c8e3a2c` | clean |
 | Live test alone | passed 3 times |
 | Live test beside the GUI and lane tests under `-n 6` | passed 8 times |
+
+## Review fixes (round 1)
+
+From Codex's review ([review-codex.md](review-codex.md)), as Maestro asked:
+
+1. **Reversed manual bounds (`acecb0a`).**
+   - An axis with min > max still uses its full extent, but the plot now says
+     "X: min > max, using full extent" in every place it is read: the scatter
+     figure, its note and tooltip, that axis's histogram title, the dock's
+     source line, the record ("Warning: …") and the settings tab's status line.
+   - `selection.reversed_axes` and `range_warnings` compute it, and
+     `DatasetAnalysis.parameter_warnings` passes it to the dock.
+   - The tree still accepts the pair. Rejecting it would fight the user
+     mid-edit, for example while they type the max before the min. The bound's
+     tooltip says what a reversed pair does.
+   - Tests: `test_reversed_manual_bounds_use_the_full_extent_and_say_so` and
+     the GUI test
+     `test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab`.
+2. **FIFO writer (`b1383c1`).**
+   - `release()` opens with `O_WRONLY | O_NONBLOCK`. It retries ENXIO every
+     20 ms until a 10 s deadline, then fails the test. A reader that has exited
+     can no longer hang it.
+   - A direct check: releasing a FIFO that no one opens failed after its 0.5 s
+     timeout.
+   - Round 2 replaces both FIFO tests with a cross-platform read gate.
+
+Checks after both fixes:
+
+| Check | Result |
+|---|---|
+| Full suite | 967 passed, 2 skipped, 2 xfailed, no RERUNs |
+| `mypy --strict` helab and tests, also `--platform win32` | clean |
+| `pyright helab tests`, also tests on Windows | clean |
+| `git diff --check c8e3a2c` | clean |
