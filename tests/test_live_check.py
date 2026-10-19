@@ -192,25 +192,70 @@ def test_a_file_still_growing_with_an_old_stable_mtime_is_not_read_half_written(
     np.testing.assert_array_equal(np.load(shots[0]["artifact"]), [[3, 2, 3], [3, 4, 5]])
 
 
-def test_a_file_ending_mid_row_with_an_old_stable_mtime_waits(folder: Path, tmp_path: Path) -> None:
-    """The converter ends every row with a newline: a file ending mid-row (or with an empty row)
-    is still being written, even when its size and old mtime stay the same a check apart."""
+def test_a_file_ending_mid_row_is_read_once_unchanged_a_check_apart(folder: Path, tmp_path: Path) -> None:
+    """Settle age and "unchanged since the previous check" only (metadata), by Tony's decision: a TXY
+    write never takes longer than the settle age, so the file's content isn't checked. A file left
+    mid-row longer is read as it is, its partial row dropped as unreadable (problematic)."""
     memory = held(folder, tmp_path)
     partial = folder / "d_txy_forc3.txt"
     old = time.time() - 60
-    for text in ("3,2,3\n3,4", "3,2,3\n\n", ""):
-        partial.write_text(text)
-        os.utime(partial, (old, old))
-        age_folder(folder, 30)
-        first = last(check(folder, tmp_path, memory), "live_unchanged")
-        second = check(folder, tmp_path, memory, seen=first["live_seen"])
-        assert not any(event["kind"] == "shot" for event in second), text
-        assert last(second, "live_unchanged")["unsettled_files"] == 1
-    partial.write_text("3,2,3\n3,4,5\n")
+    partial.write_text("3,2,3\n3,4")
     os.utime(partial, (old, old))
+    age_folder(folder, 30)
     first = last(check(folder, tmp_path, memory), "live_unchanged")
-    shots = [event for event in check(folder, tmp_path, memory, seen=first["live_seen"]) if event["kind"] == "shot"]
-    assert [event["shot"] for event in shots] == [3]
+    assert first["unsettled_files"] == 1  # Seen once: read only if unchanged a check later.
+    second = check(folder, tmp_path, memory, seen=first["live_seen"])
+    shots = [event for event in second if event["kind"] == "shot"]
+    assert [event["shot"] for event in shots] == [3] and shots[0]["problematic"]
+    np.testing.assert_array_equal(np.load(shots[0]["artifact"]), [[3, 2, 3]])
+
+
+def test_a_shot_live_read_recently_that_changes_is_read_again(folder: Path, tmp_path: Path) -> None:
+    """By Tony's decision: a held shot Live itself read recently (``recent``) that changes (its writer
+    paused longer than the settle age, so Live read it unfinished) is read again as a new file is,
+    once settled and unchanged a check apart, and replaces the held one; the check goes on."""
+    partial = folder / "d_txy_forc3.txt"
+    partial.write_text("3,2,3\n3,4")
+    old = time.time() - 60
+    os.utime(partial, (old, old))
+    memory = held(folder, tmp_path)  # (Shot 3 held as Live read it: unfinished.)
+    before = next(entry for entry in memory if entry[0] == 3)
+    partial.write_text("3,2,3\n3,4,5\n")  # The writer finishes it.
+    os.utime(partial, (old + 10, old + 10))
+    age_folder(folder, 30)
+    first = check(folder, tmp_path, memory, recent=[3])
+    assert not [event for event in first if event["kind"] in ("shots_missing", "shot", "loaded")]
+    waiting = last(first, "live_unchanged")
+    assert waiting["unsettled_files"] == 1 and waiting["live_since"] is None
+    after = [3, partial.stat().st_size, partial.stat().st_mtime_ns]
+    assert waiting["live_seen"] == [after]
+    events = check(folder, tmp_path, memory, recent=[3], seen=waiting["live_seen"])
+    shots = [event for event in events if event["kind"] == "shot"]
+    assert [event["shot"] for event in shots] == [3] and not shots[0]["problematic"]
+    np.testing.assert_array_equal(np.load(shots[0]["artifact"]), [[3, 2, 3], [3, 4, 5]])
+    loaded = last(events, "loaded")
+    assert loaded["memory_shots"] == [1, 2] and after in loaded["fingerprint"] and before not in loaded["fingerprint"]
+    assert loaded["live_reread"] == [{"shot": 3, "path": str(partial), "old": before[1:], "new": after[1:],
+                                      "read": True}]
+    assert loaded["load_counts"]["modified"] == loaded["load_counts"]["modified_loaded"] == 1
+    assert loaded["load_counts"]["new_loaded"] == 0 and loaded["files"] == 3 and loaded["problematic"] == []
+    assert loaded["unsettled_files"] == 0 and "read again" in loaded["cache_reason"]
+
+
+def test_an_older_held_shot_that_changes_still_stops_the_check(folder: Path, tmp_path: Path) -> None:
+    """Not read by Live recently (only shot 1 is ``recent``): a change long after reading suggests a
+    remount or a copy, so the check stops as mismatched, as before."""
+    memory = held(folder, tmp_path)
+    file = folder / "d_txy_forc2.txt"
+    file.write_text("2,9,9\n2,9,9\n2,9,9\n")
+    old = time.time() - 30
+    os.utime(file, (old, old))
+    age_folder(folder, 30)
+    for recent in (None, [1]):
+        events = check(folder, tmp_path, memory, recent=recent)
+        stopped = last(events, "shots_missing")
+        assert stopped["reason"] == "changed" and stopped["missing"] == [2]
+        assert not [event for event in events if event["kind"] in ("shot", "loaded")]
 
 
 def check_load(folder: Path, tmp_path: Path) -> list[dict[str, Any]]:
@@ -257,14 +302,13 @@ def test_unreadable_new_files_are_kept_known_and_not_read_again(
     loaded = last(check_twice(folder, tmp_path, memory), "loaded")
     assert loaded["failed_files"] == 1 and 3 in loaded["problematic"] and loaded["memory_shots"] == [1, 2]
     known = [entry for entry in loaded["fingerprint"] if entry[0] == 3]
-    import pandas as pd
     reads: list[str] = []
-    real = pd.read_csv
+    real = io_helper._read_txy_file
 
-    def read_csv(*args: Any, **kwargs: Any) -> Any:
-        reads.append(str(args[0]))
-        return real(*args, **kwargs)
-    monkeypatch.setattr(pd, "read_csv", read_csv)
+    def read_file(filename: str, reason: str) -> Any:
+        reads.append(filename)
+        return real(filename, reason)
+    monkeypatch.setattr(io_helper, "_read_txy_file", read_file)
     again = check(folder, tmp_path, memory, known=known)
     assert last(again, "live_unchanged")["total_files"] == 3 and not reads
 

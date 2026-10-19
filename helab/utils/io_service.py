@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+import itertools
 import json
 import logging
 import math
@@ -54,6 +55,64 @@ class IORequest:
     paused: bool = False
     slow_stop_logged: bool = False
     control: threading.Lock = field(default_factory=threading.Lock)
+    # The I/O trace's recording folder and whom the helper works for, sent only while the trace is
+    # on (``IOService.trace_dir``).
+    trace: dict[str, Any] | None = None
+    # Arrays the helper needs from this process (Live's save: the data in RAM), by shot: written to
+    # its private folder before it starts (``held_dir``), off the GUI thread.
+    arrays: dict[int, Any] | None = None
+
+
+# Help › Record I/O trace (this session): every helper's operations on source folders, one JSON line
+# each, in this folder of HeLab's temp folder (Settings → General). Off at every start, never saved.
+# Each recording is a folder (``io-trace-<date>-<time>``) holding one file per helper (``<pid>.jsonl``):
+# Windows' C runtime emulates O_APPEND with a seek and a write, so helpers sharing one file could
+# overwrite each other's lines.
+IO_TRACE_FOLDER = "io-traces"
+
+
+def io_trace_folder(temps: str) -> str:
+    return os.path.join(temps, IO_TRACE_FOLDER)
+
+
+def io_trace_refused(temps: str, problem: str) -> str:
+    """Why the trace isn't recorded: the temp folder ``temps`` is ``problem`` (on a network or synced
+    folder, where it would add traffic; ``io_helper.trace_check`` finds out)."""
+    return f"HeLab's temp folder {temps} is {problem}: choose a local one in Settings → General and restart HeLab."
+
+
+def delete_io_traces(recordings: list[dict[str, Any]]) -> list[str]:
+    """Delete these earlier recordings (``io_helper.trace_check``'s ``earlier``: their trace files, then
+    each emptied folder); the files that couldn't be deleted and were kept (Windows refuses one a
+    running helper still has open). Only in the temp folder, once the check found it local."""
+    kept = []
+    for recording in recordings:
+        for file in recording["files"]:
+            try:
+                os.remove(file)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                kept.append(file)
+        if os.path.isdir(recording["path"]):
+            try:
+                os.rmdir(recording["path"])
+            except OSError:
+                pass  # (Kept files, or something that isn't a trace: left as it is.)
+    return kept
+
+
+def _new_recording(folder: str, stamp: str) -> str:
+    """A new recording folder ``io-trace-<stamp>`` in ``folder`` (``-2``, ``-3``… when taken), made with
+    an exclusive mkdir: never an earlier recording's folder."""
+    for n in itertools.count(1):
+        recording = os.path.join(folder, f"io-trace-{stamp}{f'-{n}' if n > 1 else ''}")
+        try:
+            os.mkdir(recording)
+            return recording
+        except FileExistsError:
+            continue
+    raise AssertionError("unreachable")
 
 
 FOREGROUND = "foreground"
@@ -89,7 +148,8 @@ class IOService(QObject):
     LISTINGS = ("list", "resolve")
     # Operations in the local lane: they never wait for or pause with source-folder I/O.
     # (``volumes_verify`` reads mounted volumes' IDs, never source folders.)
-    LOCAL_OPERATIONS = ("cached", "subtree_save", "cache_admin", "cache_move", "volumes_verify")
+    # (``trace_check`` reads HeLab's temp folder and the mount table, before the I/O trace starts.)
+    LOCAL_OPERATIONS = ("cached", "subtree_save", "cache_admin", "cache_move", "volumes_verify", "trace_check")
     # Operations that open the disk cache whatever their payload says.
     CACHE_OPERATIONS = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify",
                         "volumes_verify")
@@ -106,14 +166,16 @@ class IOService(QObject):
               "subtree_save": "Save subfolder status", "cache_admin": "Clean up disk cache",
               "cache_move": "Move disk cache", "roots_verify": "Verify data roots",
               "volumes_verify": "Verify volumes", "root_create": "Enable disk cache",
-              "root_reassign": "Make a copy's data root", "root_remove": "Remove .helab-root"}
+              "root_reassign": "Make a copy's data root", "root_remove": "Remove .helab-root",
+              "trace_check": "Check I/O trace folder"}
     NOUNS = {"load": "load", "cached": "cached data read", "list": "folder listing", "details": "folder details scan",
              "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup",
              "subtree_save": "subfolder-status save", "cache_admin": "disk cache cleanup",
              "cache_move": "disk cache move", "roots_verify": "data-root verification",
              "volumes_verify": "volume verification", "root_create": "disk cache enabling",
-             "root_reassign": "data-root reassignment", "root_remove": ".helab-root removal"}
+             "root_reassign": "data-root reassignment", "root_remove": ".helab-root removal",
+             "trace_check": "I/O trace folder check"}
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -135,6 +197,12 @@ class IOService(QObject):
         self.mismatch_hold = False
         # Set by the main window: a running request's tab, progress and time, for the I/O tooltip.
         self.request_note: Callable[[IORequest], str] | None = None
+        # Set by FolderCache: the owners (tabs) a request's helper works for, for the I/O trace.
+        self.owners_of: Callable[[IORequest], list[str]] = lambda request: [request.owner]
+        # Set by FolderCache: last changes to a request's payload as its helper starts.
+        self.before_start: Callable[[IORequest], None] | None = None
+        # The I/O trace's recording folder while it's on (``start_io_trace``), sent with each request.
+        self.trace_dir: str | None = None
         self._foreground_busy_at = -math.inf
         self._listing_busy_at = -math.inf
         self.timer = QTimer(self)
@@ -144,10 +212,30 @@ class IOService(QObject):
         if app is not None:
             app.aboutToQuit.connect(self.shutdown)
 
+    def start_io_trace(self, temps: str) -> str:
+        """Record every helper's operations on source folders from now on, in a new recording folder
+        in the temp folder ``temps`` (``io_trace_folder``), one file per helper; its path. The caller
+        checks ``temps`` first, off the GUI thread (``io_helper.trace_check``): it must not be on a
+        network or synced folder."""
+        folder = io_trace_folder(temps)
+        os.makedirs(folder, exist_ok=True)
+        recording = _new_recording(folder, time.strftime("%Y%m%d-%H%M%S"))
+        self.trace_dir = recording
+        logging.info("I/O trace on: %s", recording)
+        return recording
+
+    def stop_io_trace(self) -> None:
+        """No new helper is traced from now on; one already running keeps tracing into its
+        recording's folder until it exits."""
+        if self.trace_dir is not None:
+            logging.info("I/O trace off: %s", self.trace_dir)
+        self.trace_dir = None
+
     def submit(self, owner: str, generation: int, path: str, operation: str,
                payload: dict[str, Any] | None = None, *, priority: bool = False,
-               timeout: float | None = None) -> bool:
-        """Queue a helper; ``timeout`` is seconds without progress (``math.inf``: none)."""
+               timeout: float | None = None, arrays: dict[int, Any] | None = None) -> bool:
+        """Queue a helper; ``timeout`` is seconds without progress (``math.inf``: none). ``arrays``: data
+        from this process the helper reads from its private folder (``IORequest.arrays``)."""
         if self.closed:
             return False
         if any((r.owner, r.generation, r.path, r.operation) == (owner, generation, path, operation)
@@ -160,7 +248,7 @@ class IOService(QObject):
             return False
         request = IORequest(owner, generation, path, operation, payload or {},
                             self.NO_PROGRESS_TIMEOUT if timeout is None else timeout,
-                            priority=priority or operation == "load")
+                            priority=priority or operation == "load", arrays=arrays)
         # Navigation and loads precede bulk scans, which precede maintenance; FIFO within each group.
         if request.priority:
             index = next((i for i, r in enumerate(self.pending) if not r.priority), len(self.pending))
@@ -275,7 +363,7 @@ class IOService(QObject):
                           dict(request.payload),
                           request.timeout if math.isinf(request.timeout) else self.NO_PROGRESS_TIMEOUT,
                           attempt=request.attempt, file_attempts=dict(request.file_attempts),
-                          priority=request.priority)
+                          priority=request.priority, arrays=request.arrays)
         self.pending.appendleft(again)
         self.resultReady.emit(again, {"kind": "queued", "retry": True, "requeued": True,
                                       "attempt": again.attempt})
@@ -328,10 +416,16 @@ class IOService(QObject):
             # Queued before a cache move: it opens the cache where it is now, or none if the disk
             # cache is off now (a cache-only job then fails; a source job runs without the cache).
             request.payload["cache"] = self.cache_options()
+        if self.before_start is not None:
+            self.before_start(request)
         self.pending.remove(request)
         request.lane = lane
         request.started = time.monotonic()
         request.last_activity = request.started
+        # (Each attempt: a retry after the trace was turned off isn't traced.)
+        request.trace = None if self.trace_dir is None else {
+            "dir": self.trace_dir, "owner": request.owner, "tabs": self.owners_of(request), "lane": lane,
+            "attempt": request.attempt}
         self.active.append(request)
         self.resultReady.emit(request, {"kind": "started", "attempt": request.attempt})
         threading.Thread(target=self._run, args=(request,), daemon=True,
@@ -501,7 +595,8 @@ class IOService(QObject):
                   "subtree_save": "Saving subfolder status", "cache_admin": "Cleaning up disk cache",
                   "drives": "Listing drives", "roots_verify": "Verifying data roots",
                   "volumes_verify": "Verifying volumes", "root_create": "Enabling disk cache",
-                  "root_reassign": "Giving a copy its own data root", "root_remove": "Removing .helab-root"}
+                  "root_reassign": "Giving a copy its own data root", "root_remove": "Removing .helab-root",
+                  "trace_check": "Checking the I/O trace folder"}
 
     def activity_summary(self) -> str:
         """App-wide status-bar phrase from memory; zero counts are left out."""
@@ -620,6 +715,8 @@ class IOService(QObject):
             if request.cancelled.is_set():
                 return
             payload = {**request.payload, "operation": request.operation, "path": request.path}
+            if request.trace is not None:
+                payload["trace"] = request.trace
             # Every helper gets a private folder: load artifacts, the frozen app's
             # request/response files, and the pause flag.
             with request.control:
@@ -628,6 +725,15 @@ class IOService(QObject):
                 if request.pause_requested:
                     self._write_pause(request.output, True)
             payload["output"] = payload["control"] = request.output
+            if request.arrays is not None:
+                import numpy as np
+                held = os.path.join(request.output, "held")
+                os.mkdir(held)
+                for shot, array in request.arrays.items():
+                    if request.cancelled.is_set():
+                        return
+                    np.save(os.path.join(held, f"{shot}.npy"), array, allow_pickle=False)
+                payload["held_dir"] = held
             response_file: str | None = None
             if getattr(sys, "frozen", False):
                 input_file = os.path.join(request.output, "request.json")
@@ -836,7 +942,7 @@ class IOService(QObject):
                 retry = IORequest(request.owner, request.generation, request.path,
                                   request.operation, dict(request.payload), self.NO_PROGRESS_TIMEOUT,
                                   attempt=request.attempt + 1, file_attempts=file_attempts,
-                                  priority=request.priority)
+                                  priority=request.priority, arrays=request.arrays)
                 self.pending.appendleft(retry)
                 self.resultReady.emit(retry, {"kind": "queued", "retry": True,
                                              "attempt": retry.attempt})
@@ -865,6 +971,7 @@ class IOService(QObject):
     def shutdown(self) -> None:
         if self.closed:
             return
+        self.stop_io_trace()  # (Quitting with it on says so too.)
         if self.folder_cache is not None:
             self.folder_cache.shutdown()
         for owner in {r.owner for r in (*self.pending, *self.active)}:

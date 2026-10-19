@@ -889,11 +889,10 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
     original = service.submit
 
     def record(owner: str, generation: int, path: str, operation: str,
-               payload: dict[str, Any] | None = None, *, priority: bool = False,
-               timeout: float = 15.0) -> bool:
+               payload: dict[str, Any] | None = None, **kwargs: Any) -> bool:
         if operation not in ("roots_verify", "volumes_verify"):
             operations.append(operation)
-        return original(owner, generation, path, operation, payload, priority=priority, timeout=timeout)
+        return original(owner, generation, path, operation, payload, **kwargs)
 
     monkeypatch.setattr(service, "submit", record)
     (tmp_path / "d1.txt").write_text("")
@@ -1017,14 +1016,14 @@ def test_changed_folder_reads_only_new_or_modified_txy_files(
     (source / "d_txy_forc2.txt").write_text("20,20,20\n")
     (source / "d_txy_forc3.txt").unlink()
     (source / "d_txy_forc5.txt").write_text("50,50,50\n")
-    original_read_csv = pd.read_csv
+    original_read = io_helper._read_txy_file
     read: list[str] = []
 
-    def record_read_csv(filename: str, *args: Any, **kwargs: Any) -> Any:
+    def record_read(filename: str, reason: str) -> Any:
         read.append(os.path.basename(filename))
-        return original_read_csv(filename, *args, **kwargs)
+        return original_read(filename, reason)
 
-    monkeypatch.setattr(pd, "read_csv", record_read_csv)
+    monkeypatch.setattr(io_helper, "_read_txy_file", record_read)
     # Shot 3 is gone, which never happens to write-once TXY files: nothing is read until the user
     # says to load the folder as it is now.
     (tmp_path / "asked").mkdir()
@@ -1073,17 +1072,17 @@ def test_load_skips_shots_already_in_memory_and_completes_disk_cache(
     memory = [[shot, info.st_size, info.st_mtime_ns] for shot in (1, 2, 3)
               for info in ((source / f"d_txy_forc{shot}.txt").stat(),)]
     (source / "d_txy_forc3.txt").write_text("30,30,30\n")
-    original_read_csv = pd.read_csv
+    original_read = io_helper._read_txy_file
     read: list[str] = []
     events: list[dict[str, Any]] = []
 
-    def record_read_csv(filename: str, *args: Any, **kwargs: Any) -> Any:
+    def record_read(filename: str, reason: str) -> Any:
         # Before ``loaded`` only changed files are read; afterwards the disk
         # cache (empty here) is completed in the background.
         read.append(os.path.basename(filename) + ("" if any(e["kind"] == "loaded" for e in events) else "*"))
-        return original_read_csv(filename, *args, **kwargs)
+        return original_read(filename, reason)
 
-    monkeypatch.setattr(pd, "read_csv", record_read_csv)
+    monkeypatch.setattr(io_helper, "_read_txy_file", record_read)
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     load(str(source), str(output), events.append, options, memory)
     assert read == ["d_txy_forc3.txt*", "d_txy_forc1.txt", "d_txy_forc2.txt"]

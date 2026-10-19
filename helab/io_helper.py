@@ -14,18 +14,21 @@ import os
 import random
 import sys
 import time
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal
 
 from helab.utils import file_kinds, large_folder
 
 if TYPE_CHECKING:
     from helab.utils.cache_paths import Mount
     from helab.utils.cache_store import CacheStore, SaveGuard
-    from helab.utils.data_roots import LocalVolumes
+    from helab.utils.data_roots import LocalVolumes, Marker
 
 Emit = Callable[[dict[str, Any]], None]
 # Another computer may still be writing a file modified this recently; it is
 # left for the next load rather than read half-written. Tests set it to 0.
+# Settle age only, by Tony's decision (2026-10-19): a TXY write never takes longer, so an older
+# file is read as it is; its content isn't checked. The converter writing to a temporary name and
+# renaming it remains the real fix.
 SETTLE_SECONDS = float(os.environ.get("HELAB_SETTLE_SECONDS", "5"))
 # Test seam: with HELAB_TEST_READ_GATE=<dir>, reading a TXY file <name> first waits until
 # <dir>/<name>.go exists (``_read_gate``). Unset in production: nothing is checked.
@@ -42,6 +45,227 @@ def _read_gate(filename: str) -> None:
     go = os.path.join(READ_GATE, os.path.basename(filename) + ".go")
     while not os.path.exists(go):
         time.sleep(READ_GATE_POLL)
+
+
+# The I/O trace (Help › Record I/O trace, this session): every operation a helper makes on a source
+# folder is appended to its own file in the recording's folder as one JSON line (``_trace``), with the
+# request it serves. The app sends the folder with each request while the trace is on
+# (``IOService.trace_dir``); test seam: HELAB_TEST_IO_TRACE=<folder> traces every helper. Off: nothing
+# is written, and the wrappers below make the same calls as untraced code.
+
+
+def _trace_path(folder: str | None) -> str | None:
+    """This helper's file in a recording's ``folder``: one writer per file (Windows' C runtime emulates
+    O_APPEND with a seek and a write, so helpers sharing a file could overwrite each other's lines). A
+    PID reused later appends after the earlier helper's lines; it has exited by then."""
+    return os.path.join(folder, f"{os.getpid()}.jsonl") if folder else None
+
+
+TRACE = _trace_path(os.environ.get("HELAB_TEST_IO_TRACE"))
+# This helper's request, on every line (``main``): its operation, owner and tabs, lane, flags.
+_trace_request: dict[str, Any] = {}
+_trace_fd: int | None = None
+
+
+def _trace(op: str, path: str, reason: str, **fields: Any) -> None:
+    """Append one line to this helper's trace file (``TRACE``), in one write; a line that can't be
+    written is skipped."""
+    global _trace_fd
+    if TRACE is None:
+        return
+    line = json.dumps({"t": time.time(), "pid": os.getpid(), "op": op, "path": path, "reason": reason,
+                       **_trace_request, **fields}, ensure_ascii=True, default=str) + "\n"
+    try:
+        if _trace_fd is None:
+            _trace_fd = os.open(TRACE, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o644)
+        os.write(_trace_fd, line.encode("ascii"))
+    except OSError:
+        pass
+
+
+def _start_trace(request: dict[str, Any]) -> None:
+    """Trace into the recording folder the app sent, if any; note the request every trace line serves,
+    and that this helper started."""
+    global TRACE
+    note = request.get("trace")
+    if isinstance(note, dict) and note.get("dir"):
+        TRACE = _trace_path(str(note["dir"]))
+    if TRACE is None:
+        return
+    operation = str(request.get("operation", ""))
+    flags = [key for key in TRACE_FLAGS if request.get(key)]
+    _trace_request.update(request="live" if operation == "load" and request.get("live") else operation,
+                          target=request.get("path", ""), flags=flags)
+    if isinstance(note, dict):
+        _trace_request.update({key: value for key, value in note.items() if key != "dir"})
+    if request.get("memory"):
+        _trace_request["held"] = len(request["memory"])
+    _trace("request", str(request.get("path", "")), operation)
+
+
+def _end_trace(started: float, error: str = "") -> None:
+    """Note that this helper's request ended (``error``: why it failed)."""
+    if TRACE is not None:
+        _trace("request_end", str(_trace_request.get("target", "")), str(_trace_request.get("request", "")),
+               seconds=round(time.monotonic() - started, 6), **({"error": error} if error else {}))
+
+
+# Request fields that say why it was asked for (the app's payload), copied to every trace line.
+TRACE_FLAGS = ("automatic", "scan_manual", "metadata_only", "listing_only", "revalidate", "refresh_sequence",
+               "save", "cache_base", "full_check", "allow_missing", "deliberate", "no_cache", "live_since")
+
+
+def _traced_error(op: str, path: str, reason: str, exc: BaseException) -> None:
+    _trace(op, path, reason, error=type(exc).__name__)
+
+
+def _stat(path: str, reason: str, *, follow_symlinks: bool = True) -> os.stat_result:
+    """``os.stat`` of a source path, traced."""
+    if TRACE is None:
+        return os.stat(path) if follow_symlinks else os.stat(path, follow_symlinks=False)
+    op = "stat" if follow_symlinks else "lstat"
+    try:
+        info = os.stat(path) if follow_symlinks else os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        _traced_error(op, path, reason, exc)
+        raise
+    _trace(op, path, reason, size=info.st_size, mtime_ns=info.st_mtime_ns)
+    return info
+
+
+def _lstat(path: str, reason: str) -> os.stat_result:
+    """``os.lstat`` of a source path, traced."""
+    if TRACE is None:
+        return os.lstat(path)
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        _traced_error("lstat", path, reason, exc)
+        raise
+    _trace("lstat", path, reason, size=info.st_size, mtime_ns=info.st_mtime_ns)
+    return info
+
+
+def _isdir(path: str, reason: str) -> bool:
+    """``os.path.isdir`` of a source path (one stat), traced."""
+    found = os.path.isdir(path)
+    if TRACE is not None:
+        _trace("stat", path, reason, isdir=found)
+    return found
+
+
+def _entry_stat(entry: os.DirEntry[str], reason: str) -> os.stat_result:
+    """A listed entry's ``stat()``, traced. One more call on macOS and Linux; on Windows the
+    listing already has it (``syscall`` False), unless the entry is a link (not probed: asking
+    would be a call the untraced helper doesn't make)."""
+    if TRACE is None:
+        return entry.stat()
+    syscall = sys.platform != "win32"
+    try:
+        info = entry.stat()
+    except OSError as exc:
+        _trace("entry_stat", entry.path, reason, error=type(exc).__name__, syscall=syscall)
+        raise
+    _trace("entry_stat", entry.path, reason, size=info.st_size, mtime_ns=info.st_mtime_ns, syscall=syscall)
+    return info
+
+
+class _TracedListing:
+    """``os.scandir`` of a source folder, traced: one line when it ends, with its entry count and
+    how many entries were asked ``is_dir`` (``_is_dir``)."""
+    current: _TracedListing | None = None
+
+    def __init__(self, path: str, reason: str) -> None:
+        self.path, self.reason, self.count, self.dir_checks = path, reason, 0, 0
+        self.started = time.monotonic()
+        try:
+            self.directory = os.scandir(path)
+        except OSError as exc:
+            _traced_error("scandir", path, reason, exc)
+            raise
+
+    def __enter__(self) -> Iterator[os.DirEntry[str]]:
+        _TracedListing.current = self
+        return self._entries()
+
+    def _entries(self) -> Iterator[os.DirEntry[str]]:
+        for entry in self.directory:
+            self.count += 1
+            yield entry
+
+    def __exit__(self, kind: type[BaseException] | None, *_: object) -> None:
+        self.directory.close()
+        _TracedListing.current = None
+        _trace("scandir", self.path, self.reason, entries=self.count, is_dir=self.dir_checks,
+               seconds=round(time.monotonic() - self.started, 6),
+               **({"error": kind.__name__} if kind is not None and issubclass(kind, OSError) else {}))
+
+
+def _scandir(path: str, reason: str) -> contextlib.AbstractContextManager[Iterator[os.DirEntry[str]]]:
+    """``os.scandir`` of a source folder, traced."""
+    return os.scandir(path) if TRACE is None else _TracedListing(path, reason)
+
+
+def _is_dir(entry: os.DirEntry[str]) -> bool:
+    """A listed entry's ``is_dir(follow_symlinks=False)``, counted on its listing's trace line. The
+    listing's file type answers it (macOS, Linux, Windows); a call only where the file system
+    doesn't report types."""
+    if TRACE is not None and _TracedListing.current is not None:
+        _TracedListing.current.dir_checks += 1
+    return entry.is_dir(follow_symlinks=False)
+
+
+def _read_marker(folder: str, reason: str) -> Marker:
+    """``data_roots.read_marker`` of the folder's ``.helab-root``, traced step by step:
+    ``marker_open``, ``marker_fstat``, ``marker_read`` (bytes); a failure after a step is
+    ``marker_error`` (``after`` it), and a failed open is ``marker_open`` with its error."""
+    from helab.utils import data_roots
+    if TRACE is None:
+        return data_roots.read_marker(folder)
+    path = os.path.join(folder, data_roots.MARKER_NAME)
+    steps: list[str] = []
+
+    def step(name: str, fields: dict[str, object]) -> None:
+        steps.append(name)
+        _trace(f"marker_{name}", path, reason, **fields)
+    try:
+        return data_roots.read_marker(folder, trace=step)
+    except (OSError, ValueError) as exc:
+        if steps:
+            _trace("marker_error", path, reason, error=type(exc).__name__, after=steps[-1])
+        else:
+            _traced_error("marker_open", path, reason, exc)
+        raise
+
+
+def _read_txy_file(filename: str, reason: str) -> Any:
+    """A whole TXY file, parsed: read in one go, then ``pandas.read_csv`` of its bytes. Traced with the
+    bytes actually read (``read``). (Its content isn't checked for a writer still at work: settled by
+    age, it's read as it is, by Tony's decision; see ``SETTLE_SECONDS``.)"""
+    import io
+    import numpy as np
+    import pandas as pd
+    try:
+        with open(filename, "rb") as stream:
+            raw = stream.read()
+    except OSError as exc:
+        _traced_error("read", filename, reason, exc)
+        raise
+    _trace("read", filename, reason, bytes=len(raw))
+    return pd.read_csv(io.BytesIO(raw), sep=",", names=["t", "x", "y"], dtype=np.float64)
+
+
+def _mounts(reason: str) -> list[Mount]:
+    """The mount table (``cache_paths.current_mounts``): the OS's list of mounts, which asks no
+    source folder or server (psutil's getfsstat without waiting; Windows' drive types and mapped
+    drives). Traced for completeness."""
+    from helab.utils import cache_paths
+    mounts = cache_paths.current_mounts()
+    if TRACE is not None:
+        _trace("mounts", "", reason, count=len(mounts))
+    return mounts
+
+
 # One helper handles one request. Reusing a volume ID within that request avoids
 # repeated diskutil calls during discovery and listing without persisting stale IDs.
 _volume_id_cache: dict[tuple[str, str], str | None] = {}
@@ -52,6 +276,8 @@ def _cached_volume_id(mount: Any) -> str | None:
     key = (str(mount.path), str(mount.source))
     if key not in _volume_id_cache:
         _volume_id_cache[key] = _volume_id(mount)
+        # (Local volumes only: shares are keyed by server and share, never by a volume ID.)
+        _trace("volume_id", str(mount.path), "location key")
     return _volume_id_cache[key]
 
 
@@ -191,14 +417,14 @@ def _cache_store(root: str, source_paths: list[str] | None = None,
     mount path and device would otherwise inherit the previous disk's ID, and its cached data.
     A source path on another hinted mount raises ``VolumeUnverified``.
     """
-    from helab.utils.cache_paths import CachePaths, UnresolvedRemotePath, _inside, _normal, current_mounts
+    from helab.utils.cache_paths import CachePaths, UnresolvedRemotePath, _inside, _normal
     from helab.utils.cache_store import CacheStore, StoreError
     from helab.utils.data_roots import (DataRoots, LocalVolumes, NoDataRoot, RootLocation, VolumeUnverified,
                                         current_local_volumes, fixed_mount)
     store: CacheStore | None = None
     held: list[str] = []
     try:
-        mounts = current_mounts()
+        mounts = _mounts("disk cache keys")
         paths = CachePaths(mounts)
         store = CacheStore(root, root_mode=True)
         if local_lane:
@@ -255,7 +481,7 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
         return False
     from helab.utils.cache_paths import UnresolvedRemotePath
     from helab.utils.cache_store import KINDS, StoreError
-    from helab.utils.data_roots import NoDataRoot, read_marker
+    from helab.utils.data_roots import NoDataRoot
     try:
         with _cache_store(cache_options["directory"], [path], allow_unrooted=True) as store:
             location = store._location_key(path)
@@ -267,7 +493,7 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                           "reason": "marker removed"})
                 return old is not None
             try:
-                marker = read_marker(path)
+                marker = _read_marker(path, "root discovery")
             except OSError as exc:
                 send({"kind": "cache_warning", "message": f"Cannot read {path}/.helab-root: {exc}"})
                 return False
@@ -320,9 +546,8 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
 
 
 def _mount_fingerprint() -> list[list[str]] | None:
-    from helab.utils.cache_paths import current_mounts
     try:
-        return sorted([[mount.path, mount.source] for mount in current_mounts()])
+        return sorted([[mount.path, mount.source] for mount in _mounts("mounts seen")])
     except (OSError, RuntimeError):
         return None
 
@@ -335,16 +560,16 @@ def verify_volumes(cache_options: dict[str, Any], send: Emit = emit,
     Reads only mounted volumes' IDs (diskutil, GetVolumeInformationW), never source folders,
     so it runs on the local lane at startup and after a mount change (``volumes_verify``).
     """
-    from helab.utils.cache_paths import current_mounts
     from helab.utils.cache_store import CacheStore
     from helab.utils.data_roots import current_local_volumes
-    mounts = current_mounts() if mounts is None else mounts
+    mounts = _mounts("volumes_verify") if mounts is None else mounts
     with CacheStore(cache_options["directory"], root_mode=True) as store:
         known_mounts = {(path, source) for path, source, _ in store.volume_locations()}
     local = current_local_volumes(mounts, paths=[mount.path for mount in mounts
                                                  if (mount.path, mount.source) in known_mounts],
                                   id_reader=_cached_volume_id)
     verified: list[list[str]] = []
+    ids: list[list[str]] = []
     if local.volumes:
         with CacheStore(cache_options["directory"], root_mode=True) as store:
             known = {(path, source): identifier for path, source, identifier in store.volume_locations()}
@@ -354,33 +579,44 @@ def verify_volumes(cache_options: dict[str, Any], send: Emit = emit,
                     known[(mount.path, mount.source)] = identifier
                 if known.get((mount.path, mount.source)) == identifier:
                     verified.append([mount.path, mount.source])
-    send({"kind": "volumes_verified", "volumes": sorted(verified)})
+                    ids.append([mount.path, mount.source, identifier])
+    # ``ids``: for the marker check that follows (``verify_known_roots``), so it needn't ask again.
+    send({"kind": "volumes_verified", "volumes": sorted(verified), "ids": sorted(ids)})
     return local
 
 
-def verify_known_roots(cache_options: dict[str, Any], send: Emit = emit) -> None:
+def verify_known_roots(cache_options: dict[str, Any], send: Emit = emit,
+                       volume_ids: list[list[str]] | None = None) -> None:
     """Check remembered marker locations in a background source helper.
 
     Only the recorded marker folders are visited. Missing mounts are left alone;
     a mounted folder whose marker changed is reconciled like a listing.
+    ``volume_ids`` ([path, device, ID]): the volume check just made (``volumes_verify``), used
+    instead of checking the volumes again; local volumes it didn't check are left alone.
     """
-    from helab.utils.cache_paths import CachePaths, current_mounts
+    from helab.utils.cache_paths import CachePaths
     from helab.utils.cache_store import CacheStore
-    from helab.utils.data_roots import MARKER_NAME
-    mounts = current_mounts()
+    from helab.utils.data_roots import MARKER_NAME, LocalVolumes
+    mounts = _mounts("roots_verify")
     with CacheStore(cache_options["directory"], root_mode=True) as store:
         roots = store.root_locations()
-    local = verify_volumes(cache_options, send, mounts)
+    if volume_ids is None:
+        local = verify_volumes(cache_options, send, mounts)
+    else:
+        checked = {(str(path), str(source)): str(identifier) for path, source, identifier in volume_ids}
+        _volume_id_cache.update(checked)  # (So reconciling a root doesn't ask for its volume's ID.)
+        local = LocalVolumes((mount, checked[(mount.path, mount.source)]) for mount in mounts
+                             if (mount.path, mount.source) in checked)
     locations = CachePaths(mounts)
     beat = Heartbeat(send, "verifying data roots")
     for location, _, _ in roots:
         beat()
         source = (locations.source(location) if location.startswith("smb://")
                   else local.source(location))
-        if source == location or not os.path.isdir(source):
+        if source == location or not _isdir(source, "roots_verify: root folder"):
             continue
         try:
-            os.lstat(os.path.join(source, MARKER_NAME))
+            _lstat(os.path.join(source, MARKER_NAME), "roots_verify: marker")
             present = True
         except FileNotFoundError:
             present = False
@@ -540,7 +776,7 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
         marker_before = False  # Absent, or unknown: decided by the scandir below.
         if cache_options:
             try:
-                os.lstat(os.path.join(path, MARKER_NAME))
+                _lstat(os.path.join(path, MARKER_NAME), "listing: marker")
                 marker_before = True
             except OSError:
                 pass
@@ -579,7 +815,7 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
         marker_present = False
         listed_at = time.time()
         beat = Heartbeat(send, "listing")
-        with os.scandir(path) as directory:
+        with _scandir(path, "listing") as directory:
             for entry in directory:
                 beat()
                 if entry.name == MARKER_NAME:
@@ -590,7 +826,7 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                 empty = False
                 if matched := file_kinds.match(entry.name):
                     found.setdefault(matched[0].name, set()).add(matched[1])
-                elif entry.is_dir(follow_symlinks=False):
+                elif _is_dir(entry):
                     has_dirs = True
                     batch.append({"path": entry.path, "name": entry.name})
                     if len(batch) >= 128:
@@ -727,7 +963,7 @@ def _valid_summary(info: object) -> dict[str, Any]:
 def _summary(path: str, found: dict[str, set[int]], sizes: dict[str, int], has_dirs: bool, empty: bool,
              fingerprint: list[tuple[int, int, int]], scanned_at: float) -> dict[str, Any]:
     """A complete status for this folder, as a scan or load computes it."""
-    folder_stat = os.stat(path)
+    folder_stat = _stat(path, "folder mtime")
     raw, txy = _shots(found)
     status, count = _classify(raw, txy, has_dirs)
     return {"kind": "status", "details": True, "status": status, "count": count, "empty": empty,
@@ -838,7 +1074,7 @@ def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | No
 
     beat = Heartbeat(send, "listing")
     # Do not traverse directory symlinks or recursively probe children.
-    with os.scandir(path) as directory:
+    with _scandir(path, "listing") as directory:
         for entry in directory:
             beat()
             if entry.name == ".helab-root" or _marker_temporary(entry.name):
@@ -850,13 +1086,13 @@ def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | No
                 if kind is file_kinds.TXY:
                     # Match load()'s fingerprint of the actual converted file,
                     # including when the file itself is a symlink.
-                    info = entry.stat()
+                    info = _entry_stat(entry, "fingerprint")
                     fingerprint.append((shot, info.st_size, info.st_mtime_ns))
                     txy_bytes += info.st_size
-            if entry.is_dir(follow_symlinks=False):
+            if _is_dir(entry):
                 has_dirs = True
                 try:
-                    stat = os.stat(entry.path, follow_symlinks=False)
+                    stat = _stat(entry.path, "subfolder date", follow_symlinks=False)
                     modified: float | None = stat.st_mtime
                 except OSError:
                     modified = None
@@ -951,7 +1187,8 @@ def _sample_indices(count: int, level: str) -> list[int] | None:
     return sorted(ends | set(random.sample(rest, min(extra, len(rest)))))
 
 
-def _samples_unchanged(path: str, fingerprint: list[list[int]], names: object, level: str) -> bool:
+def _samples_unchanged(path: str, fingerprint: list[list[int]], names: object, level: str,
+                       reason: str = "cached check: sample") -> bool:
     """Whether a sample of the cached TXY files still has the cached size and mtime_ns.
 
     Another folder moved into this path keeps its own, older mtime, so the folder stat alone
@@ -964,7 +1201,7 @@ def _samples_unchanged(path: str, fingerprint: list[list[int]], names: object, l
         return False
     try:
         for index in indices:
-            info = os.stat(os.path.join(path, str(names[index])))
+            info = _stat(os.path.join(path, str(names[index])), reason)
             if (info.st_size, info.st_mtime_ns) != tuple(fingerprint[index][1:]):
                 return False
     except (OSError, TypeError, ValueError):
@@ -1062,23 +1299,24 @@ def read_cached(path: str, output: str, send: Emit = emit,
 
 
 def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
-                           base_signature: str, memory: list[list[int]], check_level: str) -> bool:
+                           base_signature: str, memory: list[list[int]], check_level: str) -> bool | None:
     """One folder stat instead of listing and checking every file.
 
     When the caller holds the cached dataset (``base_signature``), the cache has
     no files that were still being written, and the folder has not been modified
     since the dataset's file list was taken, nothing can have been added or
-    removed: ``loaded`` names the caller's shots and True is returned.
+    removed: ``loaded`` names the caller's shots and True is returned. None: the
+    check doesn't apply (no such cached dataset), and the folder wasn't looked at.
     """
     found = store.read_dataset_row(path)
     if found.value is None:
-        return False
+        return None
     row = found.value
     info = _with_sizes(_cache_info(row["info"]), row)
     as_of = _as_of(info)
     if info.get("signature") != base_signature or info.get("unsettled") or as_of is None:
-        return False
-    modified = os.stat(path).st_mtime
+        return None
+    modified = _stat(path, "cached check: folder").st_mtime
     fingerprint = [list(entry) for entry in _saved_fingerprint(row)]
     if modified > as_of or not _samples_unchanged(path, fingerprint, info.get("names"), check_level):
         return False
@@ -1099,12 +1337,55 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
     return True
 
 
+def _unchanged_since_memory(path: str, send: Emit, store: CacheStore | None, base_signature: str,
+                            memory: list[list[int]], check: dict[str, Any], check_level: str) -> bool:
+    """The quick check of data held in RAM without a disk cache (no .helab-root, Don't cache, or one
+    not saved yet), as ``_unchanged_since_cache`` from the dataset's own load: its listing time,
+    file names and identity (``memory_check``). The folder must be at the same location (and under
+    the same data root, whose marker is read), not modified since that listing, with no file then
+    still being written, and a sample of its files unchanged; else the load checks every file."""
+    fingerprint, names, listed_at = check.get("fingerprint"), check.get("names"), check.get("listed_at")
+    if (check.get("signature") != base_signature or check.get("unsettled")
+            or not isinstance(listed_at, (int, float)) or not isinstance(fingerprint, list)
+            or not isinstance(names, list) or len(names) != len(fingerprint)):
+        return False
+    identity = check.get("identity")
+    if not identity or _location_identity(path, "memory check: identity") != identity:
+        return False
+    root = check.get("data_root")
+    if isinstance(root, dict) and root.get("path"):
+        try:
+            if _read_marker(str(root["path"]), "memory check: root").uuid != root.get("uuid"):
+                return False
+        except (OSError, ValueError):
+            return False
+    modified = _stat(path, "memory check: folder").st_mtime
+    if modified > listed_at or not _samples_unchanged(path, fingerprint, names, check_level, "memory check: sample"):
+        return False
+    held = sorted({int(entry[0]) for entry in memory} & {int(entry[0]) for entry in fingerprint})
+    problematic = [value for value in check.get("problematic") or () if isinstance(value, int) and value in held]
+    send({"kind": "load_source", "source": "memory", "cache_reason": ""})
+    send({"kind": "loaded", "rows": 0, "bytes": 0, "files": len(held), "loaded_at": time.time(),
+          "total_files": len(fingerprint), "failed_files": len(fingerprint) - len(held), "unsettled_files": 0,
+          "problematic": problematic, "source": "memory", "cached": True, **_data_root(store, path),
+          "disk_cache_pending": False, "cache_info": {}, "unchanged": True, "modified": modified,
+          "modified_observed_at": time.time(),
+          "load_counts": {"reused_memory": len(held), "reused_disk": 0, "new": 0, "modified": 0,
+                          "removed": 0, "read": 0, "new_loaded": 0, "modified_loaded": 0},
+          "cache_reason": "Folder not modified since loaded", "fingerprint": fingerprint,
+          "memory_shots": held, "base_signature": base_signature, "signature": base_signature,
+          # Still the folder as of that listing, for the next quick check.
+          "listed_at": listed_at, "names": names, "identity": identity})
+    return True
+
+
 def load(path: str, output: str, send: Emit = emit,
          cache_options: dict[str, Any] | None = None,
          memory: list[list[int]] | None = None, base_signature: str = "",
          expected: str = "", *, limits: dict[str, Any] | None = None, allow_large: bool = False,
          no_cache: bool = False, full_check: bool = False, cache_base: bool = False,
-         check_level: str = DEFAULT_CHECK_LEVEL, allow_missing: bool = False) -> None:
+         check_level: str = DEFAULT_CHECK_LEVEL, allow_missing: bool = False,
+         memory_check: dict[str, Any] | None = None) -> None:
     """Load converted TXY files, reusing unchanged shots from RAM and disk cache.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for shots the caller already holds
@@ -1117,7 +1398,8 @@ def load(path: str, output: str, send: Emit = emit,
     ``cached`` request), so the cached shots count as held: ``memory_shots`` then names
     shots of that dataset (``base_signature``), which the caller takes from it.
     Shots cached or held that the folder no longer lists stop the load with ``shots_missing``
-    before any file is read, unless ``allow_missing``.
+    before any file is read, unless ``allow_missing``. ``memory_check``: what the held data's own
+    load saw (listing time, names, identity), for its quick check when no cached dataset has one.
     After its scan phase (saved as the folder's summary), a load whose new data is large
     (``limits``) stops with ``too_large`` before reading anything, unless ``allow_large``.
     A folder the user chose not to cache (``no_cache``, or its saved flag) is read into RAM
@@ -1148,7 +1430,7 @@ def load(path: str, output: str, send: Emit = emit,
               (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
               limits=limits, allow_large=allow_large, no_cache=no_cache, no_cache_reason=no_cache_reason,
               full_check=full_check, cache_base=cache_base, check_level=check_level,
-              allow_missing=allow_missing)
+              allow_missing=allow_missing, memory_check=memory_check)
     finally:
         if store is not None:
             store.close()
@@ -1159,7 +1441,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           budget_set_at: float | None = None, *, limits: dict[str, Any] | None = None,
           allow_large: bool = False, no_cache: bool = False, no_cache_reason: str = "",
           full_check: bool = False, cache_base: bool = False, check_level: str = DEFAULT_CHECK_LEVEL,
-          allow_missing: bool = False) -> None:
+          allow_missing: bool = False, memory_check: dict[str, Any] | None = None) -> None:
     from helab.utils.cache_store import StoreError
     held_from = "memory"  # Where the shots counted as held are: the caller's RAM, or its cached read.
     if cache_base and not memory and not no_cache and store is not None:
@@ -1169,8 +1451,15 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             memory = [list(entry) for entry in _saved_fingerprint(cached_row)]
             base_signature = _cached_signature(cached_row)
             held_from = "the disk cache"
-    if (not no_cache and not full_check and base_signature and store is not None and memory and expected in ("", base_signature)
-            and _unchanged_since_cache(path, send, store, base_signature, memory, check_level)):
+    quick: bool | None = None
+    if (not no_cache and not full_check and base_signature and store is not None and memory
+            and expected in ("", base_signature)):
+        quick = _unchanged_since_cache(path, send, store, base_signature, memory, check_level)
+        if quick:
+            return
+    if (quick is None and memory_check and not full_check and base_signature and memory
+            and expected in ("", base_signature)
+            and _unchanged_since_memory(path, send, store, base_signature, memory, memory_check, check_level)):
         return
     # These imports are deliberately local: scanning does not initialize numpy,
     # pandas, any HeLab caches, or a QApplication.
@@ -1183,7 +1472,10 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # Files added after this listing are not in the dataset; freshness compares against it.
     listed_at = time.time()
     beat = Heartbeat(send, "listing")
-    with os.scandir(path) as directory:
+    # The fingerprint comes with the listing: each TXY entry's stat (free on Windows, where the
+    # listing has it; one call on macOS and Linux, as a separate stat would be).
+    listed_stats: dict[int, tuple[int, int]] = {}
+    with _scandir(path, "load: listing") as directory:
         for entry in directory:
             beat()
             if matched := file_kinds.match(entry.name):
@@ -1191,22 +1483,24 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                 found.setdefault(kind.name, set()).add(shot)
                 if kind.loaded:
                     files.append((shot, entry.path))
-            elif not has_dirs and entry.is_dir(follow_symlinks=False):
+                    entry_info = _entry_stat(entry, "load: checking")
+                    listed_stats[shot] = (entry_info.st_size, entry_info.st_mtime_ns)
+            elif not has_dirs and _is_dir(entry):
                 has_dirs = True
     if not files:
         raise ValueError("No converted TXY files in this folder")
     files.sort()
 
-    def stat_files(phase: str) -> list[tuple[int, int, int]]:
+    def stat_files(phase: str, reason: str) -> list[tuple[int, int, int]]:
         beat = Heartbeat(send, phase)
         result: list[tuple[int, int, int]] = []
         for shot, filename in files:
-            info = os.stat(filename)
+            info = _stat(filename, reason)
             result.append((shot, info.st_size, info.st_mtime_ns))
             beat()
         return result
 
-    fingerprint = stat_files("checking")
+    fingerprint = [(shot, *listed_stats[shot]) for shot, _ in files]
     txy_bytes = sum(size for _, size, _ in fingerprint)
     # Files another computer may still be writing are left out entirely (not in
     # the fingerprint), so the next load sees them as new and reads them whole.
@@ -1351,13 +1645,13 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # load reads them again; their data is not kept.
     late: set[int] = set()
 
-    def unchanged(index: int, filename: str) -> bool:
-        info = os.stat(filename)
+    def unchanged(index: int, filename: str, reason: str) -> bool:
+        info = _stat(filename, reason)
         return (info.st_size, info.st_mtime_ns) == fingerprint[index][1:]
 
-    def read_txy(shot: int, filename: str) -> Any:
+    def read_txy(shot: int, filename: str, reason: str = "load: read") -> Any:
         _read_gate(filename)
-        frame = pd.read_csv(filename, sep=",", names=["t", "x", "y"], dtype=np.float64)
+        frame = _read_txy_file(filename, reason)
         if frame.isna().any().any():
             problematic.append(shot)
         array = np.asarray(frame.dropna(), dtype=np.float64)
@@ -1377,9 +1671,9 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             elif not cached:
                 load_counts["read"] += 1
                 read_bytes += fingerprint[i][1]
-                if unchanged(i, filename):
+                if unchanged(i, filename, "load: before read"):
                     array = read_txy(shot, filename)
-                    if not unchanged(i, filename):
+                    if not unchanged(i, filename, "load: after read"):
                         data.pop(shot, None)
                         array = None
                 if array is None:
@@ -1417,10 +1711,12 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         # Only the loaded files must be unchanged. Shots added during a live run
         # are left for the next load (their scan signature shows the change).
         settled = [item for item in fingerprint if item[0] not in late]
-        return settled != [item for item in stat_files("verifying") if item[0] not in late]
+        return settled != [item for item in stat_files("verifying", verify_reason) if item[0] not in late]
 
+    verify_reason = "load: verifying"  # (The trace's only: the second check is the cache save's.)
     if changed():
         raise ValueError("Folder changed while loading — Retry")
+    names = [os.path.basename(filename) for _, filename in files]
     send({"kind": "loaded", "rows": rows, "bytes": size, "files": loaded,
           "loaded_at": time.time(),
           "total_files": len(files) + len(young), "failed_files": len(files) - loaded - len(late),
@@ -1433,10 +1729,11 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           "cache_info": cache_info, "load_counts": load_counts,
           "cache_reason": cache_reason,
           "fingerprint": fingerprint, "memory_shots": sorted(in_memory), "base_signature": base_signature,
-          "signature": hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest()})
+          "signature": hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest(),
+          # For a quick check of this data held in RAM (``_unchanged_since_memory``).
+          "listed_at": listed_at, "names": names, "identity": _location_identity(path, "load: identity")})
     if store is not None and (cached or reused):
         _touch(store, path)
-    names = [os.path.basename(filename) for _, filename in files]
     if cached and not young and store is not None and guard is not None and not no_cache:
         # This listing found the cache complete: it dates from now (a later non-TXY change no longer
         # rules out the quick check), and older caches get their file names for its samples.
@@ -1450,46 +1747,65 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # The caller already has its data; updating the disk cache no longer
     # delays it. Shots only the caller holds are read again for completeness.
     try:
-        from helab.utils.cache_store import DATASET_FORMAT, pack_dataset
+        reread = False
         for shot, filename in files:
             if shot in in_memory and shot not in data:
                 Pause.checkpoint(send)
                 send({"kind": "file_started", "filename": filename})
+                reread = True
                 try:
-                    read_txy(shot, filename)
+                    read_txy(shot, filename, "cache save: read")
                 except (OSError, ValueError, pd.errors.ParserError):
                     raise ValueError(f"Could not cache previously loaded shot {shot}") from None
                 send({"kind": "file_finished", "filename": filename})
-        if changed():
+        verify_reason = "cache save: verifying"
+        # Checked again only if files were read since the check above (else nothing came between).
+        if reread and changed():
             raise ValueError("Folder changed before cache could be saved")
-        file = store.write_dataset_file(pack_dataset(data))
-        info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(
-            json.dumps(fingerprint).encode()).hexdigest(), "action": "updated" if had_dataset else "created",
-            "counts": load_counts, "unsettled": unsettled, "kind": file_kinds.TXY.name, "format": DATASET_FORMAT,
-            # Its TXY files' names, in fingerprint order, for the quick check's samples.
-            "names": names,
-            # For the large-folder check before a later cached read.
-            "txy_bytes": large_folder.estimate(fingerprint),
-            "ram_bytes": sum(int(array.nbytes) for array in data.values()),
-            "disk_bytes": os.path.getsize(os.path.join(store.datasets_dir, file))}
-        result = store.save_dataset(path, file, {
-            "ram_bytes": sum(int(array.nbytes) for array in data.values()),
-            "rows": sum(len(array) for array in data.values()), "shots": len(data),
-            "fingerprint": [list(entry) for entry in fingerprint], "problematic": sorted(set(problematic)),
-            "info": info}, guard, budget=budget, budget_set_at=budget_set_at)
-        if not result.saved:
-            # Held for the user's answer (Make room / Save update); nothing waits for it.
-            send(_pending_event(store, path, result))
-            return
-        # The replaced file was retired: the next cleanup deadline may be new.
-        send({"kind": "cache_saved", "cache_info": info, "superseded": list(result.superseded), "job_seq": result.job_seq,
-              "next_deadline": _deadline(store),
-              "usage": result.usage, "usage_seq": [store.store_id, result.usage_seq]})
-        send({"kind": "disk_cached", "disk_cached": True})
+        _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, load_counts,
+                       unsettled, bool(had_dataset), budget, budget_set_at, send)
     except Exception as exc:
-        # A rejected save retired its file: the next cleanup deadline may be new.
-        send({"kind": "cache_save_failed", "message": str(exc), "next_deadline": _deadline(store)})
-        send({"kind": "cache_warning", "message": str(exc)})
+        _save_failed(store, exc, send)
+
+
+def _write_dataset(store: CacheStore, path: str, guard: SaveGuard, data: dict[int, Any],
+                   fingerprint: list[tuple[int, int, int]], problematic: list[int], names: list[str],
+                   listed_at: float, counts: dict[str, int], unsettled: int, had_dataset: bool,
+                   budget: int | None, budget_set_at: float | None, send: Emit) -> None:
+    """Save a folder's dataset to the disk cache within the budget (a pending save that doesn't fit),
+    under the guard its job took when it started; ``cache_saved`` and ``disk_cached``, or the pending
+    event. Raises on failure (``_save_failed``)."""
+    from helab.utils.cache_store import DATASET_FORMAT, pack_dataset
+    file = store.write_dataset_file(pack_dataset(data))
+    info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(
+        json.dumps(fingerprint).encode()).hexdigest(), "action": "updated" if had_dataset else "created",
+        "counts": counts, "unsettled": unsettled, "kind": file_kinds.TXY.name, "format": DATASET_FORMAT,
+        # Its TXY files' names, in fingerprint order, for the quick check's samples.
+        "names": names,
+        # For the large-folder check before a later cached read.
+        "txy_bytes": large_folder.estimate(fingerprint),
+        "ram_bytes": sum(int(array.nbytes) for array in data.values()),
+        "disk_bytes": os.path.getsize(os.path.join(store.datasets_dir, file))}
+    result = store.save_dataset(path, file, {
+        "ram_bytes": sum(int(array.nbytes) for array in data.values()),
+        "rows": sum(len(array) for array in data.values()), "shots": len(data),
+        "fingerprint": [list(entry) for entry in fingerprint], "problematic": sorted(set(problematic)),
+        "info": info}, guard, budget=budget, budget_set_at=budget_set_at)
+    if not result.saved:
+        # Held for the user's answer (Make room / Save update); nothing waits for it.
+        send(_pending_event(store, path, result))
+        return
+    # The replaced file was retired: the next cleanup deadline may be new.
+    send({"kind": "cache_saved", "cache_info": info, "superseded": list(result.superseded), "job_seq": result.job_seq,
+          "next_deadline": _deadline(store),
+          "usage": result.usage, "usage_seq": [store.store_id, result.usage_seq]})
+    send({"kind": "disk_cached", "disk_cached": True})
+
+
+def _save_failed(store: CacheStore, exc: Exception, send: Emit) -> None:
+    # A rejected save retired its file: the next cleanup deadline may be new.
+    send({"kind": "cache_save_failed", "message": str(exc), "next_deadline": _deadline(store)})
+    send({"kind": "cache_warning", "message": str(exc)})
 
 
 # A folder modified this close to a check (or later: another computer's clock) may change again
@@ -1497,27 +1813,46 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
 RACY_SECONDS = 2.0
 
 
-def _folder_identity(path: str) -> str:
+def _folder_identity(path: str, root: str | None = None, reason: str = "live: identity") -> tuple[str, str]:
     """Which folder ``path`` is, beyond its spelling: the nearest data root's UUID, else its
-    location (an SMB share's server and share, or a local mount's device) and relative path.
-    "" if a marker is there but unreadable."""
-    from helab.utils.cache_paths import _inside, _normal, _smb_source, current_mounts
-    from helab.utils.data_roots import read_marker
+    location (an SMB share's server and share, or a local mount's device) and relative path; and
+    the folder whose .helab-root names it ("" for a location). "" if a marker is there but unreadable.
+
+    ``root``: what an earlier call found. Then only that folder's marker is read (one open instead
+    of one per level up to it), or none for "" (the location, from the mount table): another drive
+    or share at this path has another marker there, or none, or another location. A marker gone or
+    invalid is looked for again from ``path``."""
+    if root:
+        try:
+            return "root:" + _read_marker(root, reason).uuid, root
+        except (FileNotFoundError, ValueError):
+            pass
+        except OSError:
+            return "", root
+    elif root == "":
+        return _location_identity(path, reason), ""
     folder = path
     while True:
         try:
-            return "root:" + read_marker(folder).uuid
+            return "root:" + _read_marker(folder, reason).uuid, folder
         except FileNotFoundError:
             pass
         except ValueError:
             pass  # An invalid marker is no data root.
         except OSError:
-            return ""
+            return "", ""
         parent = os.path.dirname(folder)
         if parent == folder:
             break
         folder = parent
-    mounts = [mount for mount in current_mounts() if _inside(_normal(path), _normal(mount.path))]
+    return _location_identity(path, reason), ""
+
+
+def _location_identity(path: str, reason: str) -> str:
+    """Where ``path`` is, from the mount table alone (no source I/O): its SMB share's server and share,
+    or its local mount's device, and the path below it."""
+    from helab.utils.cache_paths import _inside, _normal, _smb_source
+    mounts = [mount for mount in _mounts(reason) if _inside(_normal(path), _normal(mount.path))]
     if not mounts:
         return "location:" + path
     mount = max(mounts, key=lambda item: len(_normal(item.path)))
@@ -1525,26 +1860,175 @@ def _folder_identity(path: str) -> str:
     return f"location:{source}|{path[len(mount.path):]}"
 
 
-def _txy_complete(filename: str) -> bool:
-    """Whether a TXY file ends with a whole row: its last byte is a newline and its last row has
-    three fields (the converter's dlmwrite ends every row with one). A file still being written
-    usually ends mid-row; one paused exactly at a row's end can't be told apart."""
-    with open(filename, "rb") as stream:
-        stream.seek(0, os.SEEK_END)
-        size = stream.tell()
-        stream.seek(max(0, size - 4096))
-        tail = stream.read()
-    if not tail.endswith(b"\n"):
-        return False
-    # Three non-empty fields (a malformed but whole row is the read's to report as unreadable).
-    parts = tail[:-1].rsplit(b"\n", 1)[-1].rstrip(b"\r").split(b",")
-    return len(parts) == 3 and all(part.strip() for part in parts)
+def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held: list[list[int]],
+              problematic: list[int], held_dir: str, *, identity: str = "", identity_root: str | None = None,
+              no_cache: bool = False, recent: list[int] | None = None, output: str | None = None) -> None:
+    """Live's save: the folder's data the app holds in RAM written to the disk cache, without reading
+    TXY files again. ``held`` is that data's fingerprint (unreadable shots included), its arrays
+    are in ``held_dir`` (local files the app wrote), ``problematic`` its problematic shots.
+
+    The folder is listed once. Every held file must still be there with the size and mtime it had
+    when it was read (else ``shots_missing``: missing or changed; TXY files are written once), and
+    the folder must be the session's (``identity``, checked as Live does: reason root), before
+    ``loaded`` names the held shots and the dataset is saved under a load's guard, budget and
+    pending-save rules. Files the folder has and the data doesn't (Live hasn't read them yet) count
+    as unsettled, so the next quick check of the cache is a full one.
+
+    Except, by Tony's decision, the shots Live itself read recently (``recent``, as for
+    ``live_check``): one of those that changed is read again before the save, if settled by age and
+    unchanged while read (its new data sent as a ``shot`` artifact in ``output``; ``live_reread``),
+    else saved as held and counted as unsettled; it isn't a mismatch."""
+    import numpy as np
+    import pandas as pd
+    from helab.utils.cache_store import StoreError
+    store = _open_store(cache_options, send, path)
+    try:
+        guard: SaveGuard | None = None
+        if store is not None:
+            try:
+                guard = store.start_dataset_job(path, ("summaries",))
+            except StoreError as exc:
+                send({"kind": "cache_warning", "message": f"Disk cache can't be updated: {exc}"})
+            prefs = store.read_prefs([path])[path]
+            if prefs.failed:
+                send({"kind": "cache_warning", "message": f"Disk cache not used: the folder's settings couldn't be "
+                                                         f"read ({prefs.error})"})
+            no_cache = no_cache or prefs.failed or bool(prefs.value and prefs.value.get("no_cache"))
+        fingerprint = sorted((int(shot), int(size), int(modified)) for shot, size, modified in held)
+        known = {shot for shot, _, _ in fingerprint}
+        listed: dict[int, tuple[int, int]] = {}
+        file_names: dict[int, str] = {}
+        found: dict[str, set[int]] = {}  # (For the summary of a save that reads shots again.)
+        has_dirs = False
+        listed_at = time.time()
+        beat = Heartbeat(send, "listing")
+        with _scandir(path, "save: listing") as directory:
+            for entry in directory:
+                beat()
+                if matched := file_kinds.match(entry.name):
+                    found.setdefault(matched[0].name, set()).add(matched[1])
+                    if matched[0].loaded:
+                        info = _entry_stat(entry, "save: checking")
+                        listed[matched[1]] = (info.st_size, info.st_mtime_ns)
+                        file_names[matched[1]] = entry.name
+                elif not has_dirs and _is_dir(entry):
+                    has_dirs = True
+
+        def mismatch(reason: str, shots: list[int]) -> None:
+            send({"kind": "shots_missing", "reason": reason, "missing": shots[:20], "missing_count": len(shots),
+                  "known_count": len(known), "listed_count": len(listed)})
+        if missing := sorted(known - set(listed)):
+            mismatch("missing", missing)
+            return
+        if identity:
+            current, _ = _folder_identity(path, identity_root, "save: identity")
+            if current and current != identity:
+                mismatch("root", sorted(known))
+                return
+        changed = [shot for shot, size, modified in fingerprint if listed[shot] != (size, modified)]
+        rereadable = {int(shot) for shot in recent or ()} if output else set()
+        if stale := [shot for shot in changed if shot not in rereadable]:
+            mismatch("changed", stale)
+            return
+        data = {shot: np.load(os.path.join(held_dir, f"{shot}.npy"), allow_pickle=False)
+                for shot in sorted(known) if os.path.exists(os.path.join(held_dir, f"{shot}.npy"))}
+        unsettled = len(set(listed) - known)
+        problematic = sorted(set(problematic) & known)
+        # Recently read by Live and changed since: read again, once settled (else saved as held).
+        was = {shot: (size, modified) for shot, size, modified in fingerprint}
+        items = [(shot, *listed[shot]) for shot in changed]
+        settled = {item[0] for item in _settled(items)}
+        replaced: dict[int, tuple[int, int, int]] = {}
+        reread: list[dict[str, Any]] = []
+
+        def now(filename: str, reason: str) -> tuple[int, int]:
+            info = _stat(filename, reason)
+            return info.st_size, info.st_mtime_ns
+        for item in items:
+            shot = item[0]
+            filename = os.path.join(path, file_names[shot])
+            if shot not in settled:
+                unsettled += 1
+                continue
+            Pause.checkpoint(send)
+            try:
+                array, invalid = None, False
+                if now(filename, "save: before read again") == item[1:]:
+                    _read_gate(filename)
+                    frame = _read_txy_file(filename, "save: read again")
+                    invalid = bool(frame.isna().any().any())
+                    array = np.asarray(frame.dropna(), dtype=np.float64)
+                    if now(filename, "save: after read again") != item[1:]:
+                        array = None
+                if array is None:
+                    unsettled += 1  # Changed while read: saved as held.
+                    continue
+                assert output is not None
+                artifact = os.path.join(output, f"{shot}.npy")
+                np.save(artifact, array, allow_pickle=False)
+                data[shot] = array
+                problematic = sorted((set(problematic) - {shot}) | ({shot} if invalid else set()))
+                send({"kind": "shot", "shot": shot, "artifact": artifact, "fingerprint": list(item),
+                      "problematic": invalid})
+            except (OSError, ValueError, pd.errors.ParserError):
+                data.pop(shot, None)  # Unreadable now: known by its new fingerprint, as a load keeps it.
+                problematic = sorted(set(problematic) | {shot})
+            replaced[shot] = item
+            reread.append({"shot": shot, "path": filename, "old": list(was[shot]), "new": list(item[1:]),
+                           "read": shot in data})
+        fingerprint = sorted(replaced.get(entry[0], entry) for entry in fingerprint)
+        names = [file_names[shot] for shot, _, _ in fingerprint]
+        saving = store is not None and guard is not None and not no_cache and bool(data)
+        had_dataset = False
+        if saving:
+            assert store is not None
+            row = store.read_dataset_row(path)
+            had_dataset = row.value is not None
+        kept = sorted(set(data) - set(replaced))
+        again = [entry for entry in reread if entry["read"]]
+        counts = {"reused_memory": len(kept), "reused_disk": 0, "new": 0, "modified": len(replaced), "removed": 0,
+                  "read": len(replaced), "new_loaded": 0, "modified_loaded": len(again)}
+        signature = _fingerprint_signature([list(entry) for entry in fingerprint])
+        if replaced:
+            # A new fingerprint: the folder's summary as of this listing, before ``loaded``, as a Live
+            # check sends it (the app adopts it as Live's, so the folder's status matches the data).
+            summary = _summary(path, found, {file_kinds.TXY.name: sum(entry[1] for entry in fingerprint)}, has_dirs,
+                               False, fingerprint, listed_at)
+            summary["unsettled"] = unsettled
+            send({"kind": "scan_summary", "status": summary})
+        send({"kind": "load_source", "source": "updated", "cache_reason": ""})
+        send({"kind": "loaded", "rows": sum(len(data[entry["shot"]]) for entry in again),
+              "bytes": sum(data[entry["shot"]].nbytes for entry in again), "files": len(data),
+              "loaded_at": time.time(),
+              "total_files": len(listed), "failed_files": len(known) - len(data), "unsettled_files": unsettled,
+              "problematic": problematic, "source": "updated", "cached": False, **_data_root(store, path),
+              "disk_cache_pending": saving, "cache_info": {}, "load_counts": counts,
+              "cache_reason": f"Saved {len(kept)} shots from memory; " + (
+                  f"read {len(replaced):,} that changed after Live read them again" if replaced else "no TXY file read"),
+              "live_reread": reread,
+              "fingerprint": [list(entry) for entry in fingerprint], "memory_shots": kept,
+              "base_signature": signature, "signature": signature,
+              "listed_at": listed_at, "names": names, "identity": _location_identity(path, "save: identity")})
+        if not saving:
+            return
+        assert store is not None and guard is not None
+        try:
+            _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, counts, unsettled,
+                           had_dataset, (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
+                           send)
+        except Exception as exc:
+            _save_failed(store, exc, send)
+    finally:
+        if store is not None:
+            store.close()
 
 
 def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]] | None = None,
                known: list[list[int]] | None = None, since: int | None = None, *,
                identity: str = "", seen: list[list[int]] | None = None,
-               check_level: str = DEFAULT_CHECK_LEVEL) -> None:
+               check_level: str = DEFAULT_CHECK_LEVEL, listed_mtime: int | None = None,
+               seen_names: list[str] | None = None, identity_root: str | None = None,
+               recent: list[int] | None = None) -> None:
     """One check of a folder watched live: new settled TXY files are read and sent like a load's.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for the shots the caller holds; TXY files are
@@ -1561,48 +2045,85 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     (``reason``: missing, changed or root). Only files the caller doesn't hold are stat'ed. A new
     file is read only once it is settled by age and has shown the same size and mtime on the
     previous check too (``seen``): stale or coarse metadata can't make a file being written look
-    finished twice a check apart. It is stat'ed again just before and after it is read. Files
-    not read yet are counted as still being written and sent back (``live_seen``). Nothing new:
-    ``live_unchanged``; else ``loaded`` with ``memory_shots`` (source ``updated``). The disk cache
-    is neither read nor written: the app saves with an ordinary load, every N new shots and when
-    Live stops.
+    finished twice a check apart. (Metadata only: its content isn't checked.) It is stat'ed again
+    just before and after it is read. Files not read yet are counted as still being written and
+    sent back (``live_seen``). Nothing new: ``live_unchanged``; else ``loaded`` with
+    ``memory_shots`` (source ``updated``). The disk cache is neither read nor written: the app
+    saves the data from RAM (``save_held``), every N new shots and when Live stops.
+
+    While files are still being written the folder isn't listed every check: when its mtime is
+    still the one the last listing saw (``listed_mtime``, sent back as ``live_listed_mtime``),
+    nothing was added or removed, and only the files that listing saw being written
+    (``seen_names``, sent back as ``live_seen_names``) are stat'ed. Once one of them is ready to
+    read, the check lists the folder as above. The identity check reads only the marker the first
+    listing found (``identity_root``, sent back as ``live_identity_root``; "": none, the location).
+
+    ``recent`` names the held shots Live itself read recently (``FolderExplorer.LIVE_REREAD_SECONDS``,
+    by Tony's decision): one of those that changed (its writer paused longer than the settle age, so
+    Live read it unfinished) is read again like a new file, once settled and unchanged a check apart,
+    and replaces the held one (``live_reread``: its old and new size and mtime) instead of stopping
+    the check. Until then it is waiting (``live_seen``), and listings look at it besides the sample.
+    Other held shots that changed still stop it (a change long after reading suggests a remount or a
+    copy).
     """
     started = time.monotonic()
     if memory is None:
         raise ValueError("Live needs the folder's loaded data — Retry")
     try:
-        folder = os.stat(path)
+        folder = _stat(path, "live: folder")
     except FileNotFoundError:
         raise OSError("Folder not found — is its drive connected?") from None
     racy = abs(time.time() - folder.st_mtime) < RACY_SECONDS
     held = {int(shot): (int(size), int(modified)) for shot, size, modified in memory}
-
-    def _complete(filename: str) -> bool:
-        import stat as stat_mode
-        try:
-            # (Not a regular file, or unreadable: the read itself reports it.)
-            return not stat_mode.S_ISREG(os.stat(filename).st_mode) or _txy_complete(filename)
-        except OSError:
-            return True
+    rereadable = {int(shot) for shot in recent or ()} & set(held)
 
     current_identity = ""
+    current_root: str | None = identity_root
     waiting: list[list[int]] = []  # New files not read yet, as stat'ed now (the next ``seen``).
+    file_names: dict[int, str] = {}  # Their names.
 
     def state(listed: bool, unsettled: int, safe: bool) -> dict[str, Any]:
         # ``live_since``: what the next check may compare the folder's mtime with (None: list it).
         return {"live_since": folder.st_mtime_ns if safe and not racy and not unsettled else None,
                 "live_listed": listed, "live_seconds": time.monotonic() - started,
-                "unsettled_files": unsettled, "live_identity": current_identity, "live_seen": waiting}
+                "unsettled_files": unsettled, "live_identity": current_identity, "live_seen": waiting,
+                "live_seen_names": [file_names[int(entry[0])] for entry in waiting],
+                # The folder's mtime as of this check's listing (or the last one's), unless racy.
+                "live_listed_mtime": None if racy else folder.st_mtime_ns,
+                "live_identity_root": current_root}
 
     if since is not None and since == folder.st_mtime_ns:
         send({"kind": "live_unchanged", **state(False, 0, True), "total_files": len(held)})
         return
+    previous = {int(shot): (int(size), int(modified)) for shot, size, modified in seen or ()}
+    if (listed_mtime is not None and listed_mtime == folder.st_mtime_ns and not racy and seen
+            and seen_names is not None and len(seen_names) == len(seen)):
+        # Nothing added or removed since the last listing: the files it saw being written are looked at.
+        pending: list[tuple[int, int, int]] | None = []
+        for (shot, _, _), name in zip(seen, seen_names):
+            try:
+                info = _stat(os.path.join(path, name), "live: pending file")
+            except FileNotFoundError:
+                pending = None  # (Gone: the listing says what's there now.)
+                break
+            assert pending is not None
+            pending.append((int(shot), info.st_size, info.st_mtime_ns))
+            file_names[int(shot)] = name
+        if pending is not None:
+            aged = {item[0] for item in _settled(pending)}
+            if not any(item[0] in aged and previous.get(item[0]) == item[1:] for item in pending):
+                waiting[:] = [list(item) for item in pending]
+                send({"kind": "live_unchanged", **state(False, len(pending), False),
+                      "total_files": len(set(held) | {int(entry[0]) for entry in known or ()}
+                                         | {item[0] for item in pending})})
+                return
+        file_names.clear()
     found: dict[str, set[int]] = {}
     names: dict[int, str] = {}
     has_dirs = False
     listed_at = time.time()
     beat = Heartbeat(send, "listing")
-    with os.scandir(path) as directory:
+    with _scandir(path, "live: listing") as directory:
         for entry in directory:
             beat()
             if matched := file_kinds.match(entry.name):
@@ -1610,7 +2131,8 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                 found.setdefault(kind.name, set()).add(shot)
                 if kind.loaded:
                     names[shot] = entry.path
-            elif not has_dirs and entry.is_dir(follow_symlinks=False):
+                    file_names[shot] = entry.name
+            elif not has_dirs and _is_dir(entry):
                 has_dirs = True
 
     def mismatch(reason: str, shots: list[int]) -> None:
@@ -1621,7 +2143,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     if missing:
         mismatch("missing", missing)
         return
-    current_identity = _folder_identity(path)
+    current_identity, current_root = _folder_identity(path, identity_root)
     if identity and current_identity and current_identity != identity:
         # Another folder at this path (a remount, another drive): nothing held is its.
         mismatch("root", sorted(held))
@@ -1629,39 +2151,44 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     beat = Heartbeat(send, "verifying")
     ordered = sorted(held)
     indices = _sample_indices(len(ordered), check_level)
+    sampled = [ordered[index] for index in (range(len(ordered)) if indices is None else indices)]
+    # Held shots the previous check saw changed (to read again once unchanged): looked at again.
+    sampled += sorted((set(previous) & set(held)) - set(sampled))
     changed: list[int] = []
-    for index in range(len(ordered)) if indices is None else indices:
-        shot = ordered[index]
+    rereads: list[tuple[int, int, int]] = []  # Recently read held shots that changed, as stat'ed now.
+    for shot in sampled:
         try:
-            info = os.stat(names[shot])
+            info = _stat(names[shot], "live: sample")
         except FileNotFoundError:
             changed.append(shot)
             continue
         if (info.st_size, info.st_mtime_ns) != held[shot]:
-            changed.append(shot)
+            if shot in rereadable:
+                rereads.append((shot, info.st_size, info.st_mtime_ns))
+            else:
+                changed.append(shot)
         beat()
     if changed:
         mismatch("changed", changed)
         return
     failed = {int(shot): (int(size), int(modified)) for shot, size, modified in known or ()}
-    previous = {int(shot): (int(size), int(modified)) for shot, size, modified in seen or ()}
     beat = Heartbeat(send, "checking")
     candidates: list[tuple[int, int, int]] = []
     for shot in sorted(set(names) - set(held)):
         try:
-            info = os.stat(names[shot])
+            info = _stat(names[shot], "live: new file")
         except FileNotFoundError:
             continue  # Gone since the listing (e.g. renamed by its writer).
         candidates.append((shot, info.st_size, info.st_mtime_ns))
         beat()
-    aged = {item[0] for item in _settled(candidates)}
     # Known unreadable and unchanged since: still unreadable, not read again.
     still_failed = [item for item in candidates if failed.get(item[0]) == item[1:]]
+    # Changed held shots Live read recently are read again as new files are.
+    candidates += rereads
+    aged = {item[0] for item in _settled(candidates)}
     # Settled by age, and the same size and mtime as the previous check saw.
     to_read = [item for item in candidates if failed.get(item[0]) != item[1:]
                and item[0] in aged and previous.get(item[0]) == item[1:]]
-    # Ending mid-row (or with an empty row): still being written, whatever its metadata says.
-    to_read = [item for item in to_read if _complete(names[item[0]])]
     waiting[:] = [list(item) for item in candidates
                   if failed.get(item[0]) != item[1:] and item not in to_read]
     young = len(waiting)
@@ -1671,29 +2198,34 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     import numpy as np
     import pandas as pd
 
-    fingerprint = [(shot, *held[shot]) for shot in held] + still_failed
+    replacing = {item[0] for item in to_read} & set(held)
+    fingerprint = [(shot, *held[shot]) for shot in held if shot not in replacing] + still_failed
     # Unreadable shots stay in the fingerprint but not in the data, as a load keeps them.
     unreadable = {shot for shot, _, _ in still_failed}
     problematic = sorted(unreadable)
     late: set[int] = set()
+    replaced: set[int] = set()  # Held shots read again: their new data, or now unreadable.
+    reread: list[dict[str, Any]] = []
     rows = size = loaded = read = read_bytes = 0
     total_read_bytes = sum(item[1] for item in to_read)
     last_progress = 0.0
 
     def progress(done: int) -> dict[str, Any]:
-        checked = len(held) + len(still_failed) + young + done
+        checked = len(held) - len(replacing) + len(still_failed) + young + done
         return {"kind": "progress", "progress": checked / max(1, len(names)), "checked_files": checked,
-                "loaded_files": len(held) + loaded, "total_files": len(names),
+                "loaded_files": len(held) - len(replacing) + loaded, "total_files": len(names),
                 "failed_files": len(unreadable), "unsettled_files": young + len(late),
                 "read_bytes": read_bytes, "read_files": read, "total_read_bytes": total_read_bytes}
 
-    def unchanged(filename: str, item: tuple[int, int, int]) -> bool:
-        info = os.stat(filename)
+    def unchanged(filename: str, item: tuple[int, int, int], reason: str) -> bool:
+        info = _stat(filename, reason)
         return (info.st_size, info.st_mtime_ns) == item[1:]
 
     send(progress(0))
     for i, item in enumerate(to_read):
         shot = item[0]
+        again = shot in replacing
+        what = "read again" if again else "read"
         filename = names[shot]
         Pause.checkpoint(send)
         send({"kind": "file_started", "filename": filename})
@@ -1701,25 +2233,30 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
         read_bytes += item[1]
         try:
             array = None
-            if unchanged(filename, item):
+            if unchanged(filename, item, f"live: before {what}"):
                 _read_gate(filename)
-                frame = pd.read_csv(filename, sep=",", names=["t", "x", "y"], dtype=np.float64)
+                frame = _read_txy_file(filename, f"live: {what}")
                 if frame.isna().any().any():
                     problematic.append(shot)
                 array = np.asarray(frame.dropna(), dtype=np.float64)
-                if not unchanged(filename, item):
+                if not unchanged(filename, item, f"live: after {what}"):
                     array = None
             if array is None:
                 # Changed while read: still being written; the next check reads it again.
                 late.add(shot)
                 waiting.append(list(item))
                 problematic[:] = [value for value in problematic if value != shot]
+                if again:
+                    fingerprint.append((shot, *held[shot]))  # (Held as it was until then.)
             else:
                 artifact = os.path.join(output, f"{shot}.npy")
                 np.save(artifact, array, allow_pickle=False)
                 rows += len(array)
                 size += array.nbytes
-                loaded += 1
+                if again:
+                    replaced.add(shot)
+                else:
+                    loaded += 1
                 fingerprint.append(item)
                 send({"kind": "shot", "shot": shot, "artifact": artifact, "fingerprint": list(item),
                       "problematic": shot in problematic})
@@ -1728,13 +2265,18 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
             unreadable.add(shot)
             problematic.append(shot)
             fingerprint.append(item)
+            if again:
+                replaced.add(shot)
+        if again and shot in replaced:
+            reread.append({"shot": shot, "path": filename, "old": list(held[shot]), "new": list(item[1:]),
+                           "read": shot not in unreadable})
         send({"kind": "file_finished", "filename": filename})
         now = time.monotonic()
         if now - last_progress >= 0.1 or i + 1 == len(to_read):
             send(progress(i + 1))
             last_progress = now
     unsettled = young + len(late)
-    if not loaded and unreadable == {shot for shot, _, _ in still_failed}:
+    if not loaded and not replaced and unreadable == {shot for shot, _, _ in still_failed}:
         # Everything new was still being written.
         send({"kind": "live_unchanged", **state(True, unsettled, False), "total_files": len(names)})
         return
@@ -1743,14 +2285,20 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     summary = _summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, False, fingerprint, listed_at)
     summary["unsettled"] = unsettled
     send({"kind": "scan_summary", "status": summary})
-    send({"kind": "loaded", "rows": rows, "bytes": size, "files": len(held) + loaded, "loaded_at": time.time(),
+    kept = sorted(set(held) - replaced)
+    again_note = (f" ({len(replaced):,} changed after Live read {'it' if len(replaced) == 1 else 'them'}, read "
+                  "again)" if replaced else "")
+    send({"kind": "loaded", "rows": rows, "bytes": size,
+          "files": len(kept) + loaded + len(replaced - unreadable), "loaded_at": time.time(),
           "total_files": len(names), "failed_files": len(unreadable), "unsettled_files": unsettled,
           "problematic": sorted(set(problematic)), "source": "updated", "cached": False,
           "disk_cache_pending": False, "load_counts": {
-              "reused_memory": len(held), "reused_disk": 0, "new": len(to_read), "modified": 0, "removed": 0,
-              "read": read, "new_loaded": loaded, "modified_loaded": 0},
-          "cache_reason": f"Live: reused {len(held)} shots from memory; read {read} new TXY files",
-          "fingerprint": [list(item) for item in fingerprint], "memory_shots": sorted(held),
+              "reused_memory": len(kept), "reused_disk": 0, "new": len(to_read) - len(replacing),
+              "modified": len(replacing), "removed": 0, "read": read, "new_loaded": loaded,
+              "modified_loaded": len(replaced - unreadable)},
+          "cache_reason": f"Live: reused {len(kept)} shots from memory; read {read} TXY files{again_note}",
+          "live_reread": reread,
+          "fingerprint": [list(item) for item in fingerprint], "memory_shots": kept,
           "base_signature": "", "modified": summary["modified"], "modified_observed_at": time.time(),
           "signature": _fingerprint_signature(fingerprint), **state(True, unsettled, True)})
 
@@ -1770,6 +2318,8 @@ def folder_icons(paths: list[str], send: Emit = emit) -> None:
     for path in paths[:64]:
         Pause.checkpoint(send)
         encoded = ""
+        # (The OS looks the folder and its custom icon up: calls Python can't see, so one line.)
+        _trace("icon", path, "folder icon")
         try:
             pixmap = provider.icon(QFileInfo(path)).pixmap(32, 32)
             data = QByteArray()
@@ -1861,7 +2411,7 @@ def _marker_hint(folder: str) -> dict[str, Any] | None:
     folder. (The device number differs for every mount, even of one share, so it is left out.)"""
     from helab.utils.data_roots import MARKER_NAME
     try:
-        found = os.lstat(os.path.join(folder, MARKER_NAME))
+        found = _lstat(os.path.join(folder, MARKER_NAME), "root duplicate: hint")
     except OSError:
         return None
     return {"size": found.st_size, "mtime": found.st_mtime, "ino": found.st_ino}
@@ -1876,8 +2426,8 @@ def reassign_root(path: str, cache_options: dict[str, Any], old_uuid: str, keep:
     Without write permission nothing changes and ``root_manual`` hands out the new contents.
     """
     import uuid as uuids
-    from helab.utils.data_roots import MARKER_NAME, new_marker, read_marker
-    current = read_marker(path)
+    from helab.utils.data_roots import MARKER_NAME, new_marker
+    current = _read_marker(path, "root_reassign")
     if current.uuid != old_uuid:
         raise ValueError(f"The {MARKER_NAME} in {path} changed since HeLab found it. "
                          "Retry / Refresh the folder, then answer again.")
@@ -1892,11 +2442,13 @@ def reassign_root(path: str, cache_options: dict[str, Any], old_uuid: str, keep:
             os.fsync(stream.fileno())
         os.replace(temporary, file)
     except OSError as exc:
+        _traced_error("marker_write", file, "root_reassign", exc)
         with contextlib.suppress(OSError):
             os.remove(temporary)
         send({"kind": "root_manual", "path": path, "name": MARKER_NAME,
               "contents": contents.decode("utf-8"), "reason": str(exc), "replace": True})
         return
+    _trace("marker_write", file, "root_reassign", bytes=len(contents))
     _hide(file)
     with _cache_store(cache_options["directory"], [path], allow_unrooted=True) as store:
         location = store._location_key(path)
@@ -1954,15 +2506,17 @@ def create_root(path: str, cache_options: dict[str, Any] | None, send: Emit = em
     Without write permission nothing is left behind and ``root_manual`` hands the app the exact
     file name and contents to place by hand.
     """
-    from helab.utils.data_roots import MARKER_NAME, new_marker, read_marker
+    from helab.utils.data_roots import MARKER_NAME, new_marker
     marker, contents = new_marker(path)
     file = os.path.join(path, MARKER_NAME)
     created = False
     try:
         descriptor = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o644)
     except FileExistsError:
-        pass  # Another PC (or an earlier click) was first: adopt it.
+        # Another PC (or an earlier click) was first: adopt it.
+        _trace("marker_write", file, "root_create", error="FileExistsError")
     except OSError as exc:
+        _traced_error("marker_write", file, "root_create", exc)
         send({"kind": "root_manual", "path": path, "name": MARKER_NAME,
               "contents": contents.decode("utf-8"), "reason": str(exc)})
         return
@@ -1979,9 +2533,10 @@ def create_root(path: str, cache_options: dict[str, Any] | None, send: Emit = em
             send({"kind": "root_manual", "path": path, "name": MARKER_NAME,
                   "contents": contents.decode("utf-8"), "reason": str(exc)})
             return
+        _trace("marker_write", file, "root_create", bytes=len(contents))
         _hide(file)
     try:
-        found = read_marker(path)
+        found = _read_marker(path, "root_create")
     except ValueError as exc:  # Never overwritten: the user decides what it should be.
         raise ValueError(f"A {MARKER_NAME} already exists here but can't be used: {exc}. "
                          "Fix or remove it, then try again.") from None
@@ -1997,16 +2552,16 @@ def remove_root(path: str, cache_options: dict[str, Any], expected: str, locatio
     location, and those below it with the same UUID, in the roots table. Cached data stays, keyed
     by the UUID. Without permission the file stays and ``root_remove_refused`` names it."""
     import stat
-    from helab.utils.data_roots import MARKER_NAME, read_marker
+    from helab.utils.data_roots import MARKER_NAME
     file = os.path.join(path, MARKER_NAME)
     try:
-        found = os.lstat(file)
+        found = _lstat(file, "root_remove")
     except FileNotFoundError:
         raise ValueError(f"There is no {MARKER_NAME} in {path} now. Refresh the list.") from None
     if not stat.S_ISREG(found.st_mode):
         raise ValueError(f"{file} isn't a file: HeLab leaves it alone.")
     try:
-        marker = read_marker(path)
+        marker = _read_marker(path, "root_remove")
     except ValueError as exc:
         raise ValueError(f"{file} can't be read as a .helab-root ({exc}): HeLab never deletes it.") from None
     if marker.uuid != expected:
@@ -2016,8 +2571,10 @@ def remove_root(path: str, cache_options: dict[str, Any], expected: str, locatio
             os.chmod(file, stat.S_IWRITE)  # Read-only blocks deleting on Windows (hidden doesn't).
         os.remove(file)
     except OSError as exc:
+        _traced_error("marker_remove", file, "root_remove", exc)
         send({"kind": "root_remove_refused", "path": path, "file": file, "reason": exc.strerror or str(exc)})
         return
+    _trace("marker_remove", file, "root_remove")
     with _cache_store(cache_options["directory"], [path], allow_unrooted=True) as store:
         here = store._location_key(path)
         forgotten = store.forget_root_tree([top for top in (location, here) if top], expected)
@@ -2033,14 +2590,18 @@ def _hide(file: str) -> None:
     if sys.platform == "darwin":
         import stat
         with contextlib.suppress(OSError, AttributeError):
-            os.chflags(file, os.stat(file).st_flags | stat.UF_HIDDEN)
+            flags = _stat(file, "hide").st_flags
+            _trace("chflags", file, "hide")
+            os.chflags(file, flags | stat.UF_HIDDEN)
         return
     if sys.platform != "win32":
         return
     import ctypes
     kernel32 = getattr(ctypes, "windll").kernel32
+    _trace("get_attributes", file, "hide")
     attributes = kernel32.GetFileAttributesW(file)
     if attributes != -1 and attributes != 0xFFFFFFFF:
+        _trace("set_attributes", file, "hide")
         kernel32.SetFileAttributesW(file, attributes | 0x2)  # FILE_ATTRIBUTE_HIDDEN
 
 
@@ -2252,16 +2813,61 @@ def _cache_move_step(mover: Any, action: str, app_dir: str, move: dict[str, Any]
         raise ValueError(f"Unknown cache move action: {action}")
 
 
+def trace_check(temps: str, folder: str, send: Callable[[dict[str, Any]], None]) -> None:
+    """Before Help › Record I/O trace starts, in a local-lane helper (the mount table can stall on a
+    disconnected network drive, never on the GUI thread): whether HeLab's temp folder ``temps`` is on a
+    network or synced folder (``problem``), and the recordings already in its io-traces ``folder``,
+    sorted by name, each with its trace files and their size (``earlier``): a recording's folder
+    (``io-trace-*``, its ``*.jsonl`` files) or a single-file trace of an earlier build
+    (``io-trace-*.jsonl``). Not traced: the temp folder is no source folder."""
+    from helab.utils.cache_location import cache_location_problem
+    problem = cache_location_problem(temps)
+    earlier: list[dict[str, Any]] = []
+    if problem:
+        send({"kind": "trace_folder", "problem": problem, "earlier": earlier})
+        return
+    try:
+        with os.scandir(folder) as entries:
+            found = sorted((entry.path, entry.is_dir(follow_symlinks=False)) for entry in entries
+                           if entry.name.startswith("io-trace-"))
+    except OSError:
+        found = []
+
+    def size(path: str) -> int | None:
+        try:
+            return os.stat(path, follow_symlinks=False).st_size
+        except OSError:
+            return None
+    for path, is_dir in found:
+        if is_dir:
+            try:
+                with os.scandir(path) as entries:
+                    names = sorted(entry.path for entry in entries
+                                   if entry.name.endswith(".jsonl") and entry.is_file(follow_symlinks=False))
+            except OSError:
+                names = []
+        elif path.endswith(".jsonl") and os.path.isfile(path):
+            names = [path]
+        else:
+            continue
+        sizes = {name: size(name) for name in names}
+        files = [name for name, value in sizes.items() if value is not None]
+        earlier.append({"path": path, "files": files, "size": sum(sizes[name] or 0 for name in files)})
+    send({"kind": "trace_folder", "problem": problem, "earlier": earlier})
+
+
 # Operations that need the disk cache on.
 CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "volumes_verify",
               "root_reassign", "root_remove")
 
 
 def main() -> None:
+    started = time.monotonic()
     try:
         request = json.loads(sys.stdin.readline())
         operation = request["operation"]
         Pause.configure(request.get("control"))
+        _start_trace(request)
         if operation in CACHE_ONLY and not request.get("cache"):
             raise ValueError("The disk cache is off for this session")
         if operation == "drives":
@@ -2273,7 +2879,7 @@ def main() -> None:
                 raise OSError("Drive enumeration is only supported on Windows")
         elif operation == "resolve":
             for path in request["candidates"]:
-                if path and os.path.isdir(path):
+                if path and _isdir(path, "resolve"):
                     emit({"kind": "resolved", "path": path})
                     break
             else:
@@ -2296,7 +2902,15 @@ def main() -> None:
             live_check(request["path"], request["output"], memory=request.get("memory"),
                        known=request.get("known"), since=request.get("live_since"),
                        identity=str(request.get("identity") or ""), seen=request.get("seen"),
-                       check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL))
+                       check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL),
+                       listed_mtime=request.get("listed_mtime"), seen_names=request.get("seen_names"),
+                       identity_root=request.get("identity_root"), recent=request.get("recent"))
+        elif operation == "load" and request.get("save_memory") and request.get("held_dir"):
+            save_held(request["path"], emit, request.get("cache"), request.get("held") or [],
+                      request.get("held_problematic") or [], request["held_dir"],
+                      identity=str(request.get("identity") or ""), identity_root=request.get("identity_root"),
+                      no_cache=bool(request.get("no_cache")), recent=request.get("recent"),
+                      output=request.get("output"))
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),
@@ -2304,7 +2918,7 @@ def main() -> None:
                  allow_large=bool(request.get("allow_large")), no_cache=bool(request.get("no_cache")),
                  full_check=bool(request.get("full_check")), cache_base=bool(request.get("cache_base")),
                  check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL),
-                 allow_missing=bool(request.get("allow_missing")))
+                 allow_missing=bool(request.get("allow_missing")), memory_check=request.get("memory_check"))
         elif operation == "cached":
             read_cached(request["path"], request["output"], cache_options=request.get("cache"),
                         limits=request.get("limits"), allow_large=bool(request.get("allow_large")),
@@ -2320,9 +2934,11 @@ def main() -> None:
         elif operation == "cache_admin":
             cache_admin(request["cache"], request["action"], **request.get("params", {}))
         elif operation == "roots_verify":
-            verify_known_roots(request["cache"])
+            verify_known_roots(request["cache"], volume_ids=request.get("volume_ids"))
         elif operation == "volumes_verify":
             verify_volumes(request["cache"])
+        elif operation == "trace_check":
+            trace_check(request["temps"], request["folder"], emit)
         elif operation == "root_create":
             create_root(request["path"], request.get("cache"))
         elif operation == "root_reassign":
@@ -2332,7 +2948,9 @@ def main() -> None:
         else:
             raise ValueError(f"Unknown operation: {operation}")
         emit({"kind": "done"})
+        _end_trace(started)
     except Exception as exc:
+        _end_trace(started, str(exc))
         from helab.utils.data_roots import VolumeUnverified
         emit({"kind": "error", "message": str(exc), **({"unverified": True}
                                                         if isinstance(exc, VolumeUnverified) else {})})

@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import QDialog
 from pytestqt.qtbot import QtBot
 
 from helab import io_helper
-from helab.io_helper import list_folder, live_check, load, read_cached
+from helab.io_helper import list_folder, live_check, load, read_cached, save_held, scan
 from helab.utils.constants import (
     DEFAULT_LIVE_AUTOSAVE, DEFAULT_LIVE_INTERVAL, LIVE_AUTOSAVE_SETTING, LIVE_INTERVAL_SETTING, read_live_autosave,
     read_live_interval,
@@ -59,7 +59,14 @@ def producer(cache: FolderCache, path: str, operation: str = "load") -> IOReques
 
 def replay(cache: FolderCache, path: str, tmp_path: Path, operation: str = "load") -> list[dict[str, Any]]:
     """Run the real helper for the queued request in-process and deliver its events, as the
-    service's reader thread would (shots' artifacts become arrays)."""
+    service's reader thread would (shots' artifacts become arrays; a Live save's data in RAM is
+    handed over as ``IOService._run`` writes it, for ``save_held``)."""
+    return deliver(cache, *run_helper(cache, path, tmp_path, operation))
+
+
+def run_helper(cache: FolderCache, path: str, tmp_path: Path,
+               operation: str = "load") -> tuple[IORequest, list[dict[str, Any]]]:
+    """``replay``'s first half: the queued request taken off the queue and run; its events, not delivered."""
     request = producer(cache, path, operation)
     payload = request.payload
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
@@ -68,10 +75,22 @@ def replay(cache: FolderCache, path: str, tmp_path: Path, operation: str = "load
     try:
         if operation == "list":
             list_folder(path, events.append, payload.get("cache"))
+        elif operation in ("scan", "details"):
+            scan(path, events.append, payload.get("cache"), manual=payload.get("scan_manual", False),
+                 operation_id=payload.get("scan_operation_id", ""), revision=payload.get("scan_revision", 0))
+        elif payload.get("save_memory") and request.arrays is not None:
+            held = output / "held"
+            held.mkdir()
+            for shot, array in request.arrays.items():
+                np.save(held / f"{shot}.npy", array, allow_pickle=False)
+            save_held(path, events.append, payload.get("cache"), payload.get("held") or [],
+                      payload.get("held_problematic") or [], str(held), identity=payload.get("identity", ""),
+                      identity_root=payload.get("identity_root"), no_cache=bool(payload.get("no_cache")),
+                      recent=payload.get("recent"), output=str(output))
         elif payload.get("live"):
             live_check(path, str(output), events.append, payload.get("memory"), payload.get("known"),
                        payload.get("live_since"), identity=payload.get("identity", ""), seen=payload.get("seen"),
-                       check_level=payload.get("check_level", "medium"))
+                       check_level=payload.get("check_level", "medium"), recent=payload.get("recent"))
         else:
             load(path, str(output), events.append, payload.get("cache"), payload.get("memory"),
                  payload.get("base_signature", ""), payload.get("signature", ""), limits=payload.get("limits"),
@@ -80,6 +99,11 @@ def replay(cache: FolderCache, path: str, tmp_path: Path, operation: str = "load
     except Exception as exc:
         events.append({"kind": "error", "message": str(exc)})
     cache.service.pending.remove(request)
+    return request, events
+
+
+def deliver(cache: FolderCache, request: IORequest, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``replay``'s second half: the events, as the service's reader thread delivers them."""
     for event in events:
         if event["kind"] == "shot":
             event = {**event, "array": np.load(event.pop("artifact"))}
@@ -287,6 +311,186 @@ def test_an_error_stops_checking_keeps_the_data_and_retry_resumes(
     assert replay(cache, path, tmp_path)[0]["kind"] == "live_unchanged"
     assert not session.error and explorer.retry_button.isHidden()
     explorer.stop_live(save=False)
+    explorer.close_cleanup()
+
+
+def test_a_shot_live_read_recently_that_changes_is_read_again_and_said(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """By Tony's decision: a shot Live itself read in the last LIVE_REREAD_SECONDS that changes (its
+    writer paused longer than the settle age) is read again, Live goes on, the Live line and Folder
+    details say so for a minute, and one WARNING names the file, its old and new size and mtime and
+    how long after Live read it. An older one that changes still stops Live as mismatched."""
+    import logging
+    from helab.views.FolderDetailsPanel import FolderDetailsPanel
+    path = str(run)
+    explorer = open_loaded(qtbot, service, run, tmp_path)
+    cache = explorer.model.cache
+    cache.live_autosave_shots = 100  # (Checks only, no save between them.)
+    assert explorer.start_live()
+    session = explorer.live
+    assert session is not None
+    # The writer pauses mid-row longer than the settle age: Live reads shot 3 unfinished.
+    partial = run / "d_txy_forc3.txt"
+    partial.write_bytes(b"3,2,3\n3,4")  # (Bytes: text mode writes "\r\n" on Windows.)
+    old = time.time() - 60
+    os.utime(partial, (old, old))
+    age_folder(run, 50)
+    checks(qtbot, explorer, path, tmp_path)
+    assert 3 in session.shots and 3 in session.read_at and 1 not in session.read_at  # (Shot 1: the load's.)
+    request = next_request(qtbot, explorer, path)
+    assert request.payload["recent"] == [3]
+    # It finishes, and the next shot comes (the folder changes: the check lists it).
+    partial.write_bytes(b"3,2,3\n3,4,5\n")
+    os.utime(partial, (old + 5, old + 5))
+    write_shot(run, 4)
+    age_folder(run, 40)
+    replay(cache, path, tmp_path)  # Both seen: shot 3 changed, shot 4 new.
+    assert not session.error and path not in cache.mismatched
+    with caplog.at_level(logging.WARNING):
+        checks(qtbot, explorer, path, tmp_path, count=1)
+    assert not session.error and path not in cache.mismatched and session.shots == {1, 2, 3, 4}
+    np.testing.assert_array_equal((explorer.folder_opened_data or {})[3], [[3, 2, 3], [3, 4, 5]])
+    note = "Shot 3 changed after it was read (writer paused > 5 s?): read again"
+    text, tooltip, stopped = explorer.live_line(session)
+    assert note in text and not stopped and "old and new size and mtime" in tooltip
+    panel = FolderDetailsPanel(explorer)
+    panel.show_explorer(explorer, service)
+    assert note in panel.text("state")
+    [warning] = [record for record in caplog.records if record.levelname == "WARNING" and "Live: shot" in record.getMessage()]
+    message = warning.getMessage()
+    assert f"shot 3 changed" in message and str(partial) in message and "read again" in message
+    assert f"size 9 → {partial.stat().st_size:,} bytes" in message
+    assert {3, 4} <= session.unsaved  # (Its new data is saved with the next save.)
+    # The note lasts a minute.
+    text, at = explorer._reread_notes[path]
+    explorer._reread_notes[path] = (text, at - explorer.LIVE_REREAD_NOTE_SECONDS)
+    assert explorer.live_reread_note(path) == "" and note not in explorer.live_line(session)[0]
+    # Shot 4, read by Live but longer ago than the window, changes: Live stops as mismatched.
+    session.read_at[4] = time.time() - explorer.LIVE_REREAD_SECONDS - 1
+    (run / "d_txy_forc4.txt").write_text("4,9,9\n")
+    os.utime(run / "d_txy_forc4.txt", (old, old))
+    write_shot(run, 5)
+    age_folder(run, 30)
+    next_request(qtbot, explorer, path)
+    replay(cache, path, tmp_path)
+    halted = explorer.live  # (Read again: the asserts above narrowed ``session.error``.)
+    assert halted is not None and halted.error == "1 shot changed in the folder" and path in cache.mismatched
+    explorer.stop_live(save=False)
+    explorer.close_cleanup()
+
+
+def test_the_save_at_live_off_reads_a_recently_read_shot_again_and_saves_it(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The reviewer's repro (recheck at 660ba9c): Live reads shot 3 mid-row, the writer finishes, and
+    Live is turned off before another check. Its save (the real ``save_held``) is the first to read
+    shot 3 again: it sends the folder's new summary first, so FolderCache keeps the save (no cancel),
+    the tab shows and the disk cache holds the whole shot, and the note and WARNING follow."""
+    import logging
+    from helab.views.FolderDetailsPanel import FolderDetailsPanel
+    path = str(run)
+    explorer = open_loaded(qtbot, service, run, tmp_path)
+    cache = explorer.model.cache
+    cache.live_autosave_shots = 100  # (No save until Live off.)
+    assert explorer.start_live()
+    session = explorer.live
+    assert session is not None
+    partial = run / "d_txy_forc3.txt"
+    partial.write_bytes(b"3,2,3\n3,4")
+    old = time.time() - 60
+    os.utime(partial, (old, old))
+    age_folder(run, 50)
+    checks(qtbot, explorer, path, tmp_path)
+    assert 3 in session.shots and 3 in session.read_at
+    np.testing.assert_array_equal((explorer.folder_opened_data or {})[3], [[3, 2, 3]])
+    partial.write_bytes(b"3,2,3\n3,4,5\n")  # The writer finishes it; no check sees that.
+    os.utime(partial, (old + 5, old + 5))
+    age_folder(run, 40)
+    explorer.stop_live()
+    request = next_request(qtbot, explorer, path)
+    assert request.payload.get("save_memory") and request.payload["recent"] == [3] and request.arrays is not None
+    with caplog.at_level(logging.WARNING):
+        events = replay(cache, path, tmp_path)
+    kinds = [event["kind"] for event in events]
+    assert kinds.index("shot") < kinds.index("scan_summary") < kinds.index("loaded") < kinds.index("disk_cached")
+    assert not any(event["kind"] == "cancelled" for event in events)
+    np.testing.assert_array_equal((explorer.folder_opened_data or {})[3], [[3, 2, 3], [3, 4, 5]])
+    dataset = cache.current_dataset(path)
+    assert dataset is not None and sorted(dataset.data) == [1, 2, 3]
+    np.testing.assert_array_equal(dataset.data[3], [[3, 2, 3], [3, 4, 5]])
+    snapshot = cache.snapshot(path)
+    assert snapshot is not None and snapshot.status["signature"] == dataset.signature
+    assert cached_shots(path, tmp_path) == [1, 2, 3]
+    output = tmp_path / f"cached-{time.monotonic_ns()}"
+    output.mkdir()
+    found: list[dict[str, Any]] = []
+    read_cached(path, str(output), found.append, store_options())
+    shot = next(event for event in found if event["kind"] == "shot" and event["shot"] == 3)
+    np.testing.assert_array_equal(np.load(shot["artifact"]), [[3, 2, 3], [3, 4, 5]])
+    note = "Shot 3 changed after it was read (writer paused > 5 s?): read again"
+    qtbot.waitUntil(lambda: not explorer._live_sessions)  # (Its save ended: the session is done.)
+    assert explorer.live_reread_note(path) == note
+    panel = FolderDetailsPanel(explorer)
+    panel.show_explorer(explorer, service)
+    assert note in panel.text("state")
+    explorer._update_folder_summary()
+    assert note in explorer.folder_freshness_label.text()
+    [warning] = [record.getMessage() for record in caplog.records if "Live: shot" in record.getMessage()]
+    assert "shot 3 changed" in warning and str(partial) in warning
+    assert f"size 9 → {partial.stat().st_size:,} bytes" in warning
+    explorer.close_cleanup()
+
+
+def test_a_save_older_than_the_folders_listing_keeps_the_listing_and_still_saves(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path,
+) -> None:
+    """The reviewer's probe (recheck at 65a15a2): Live off saves (and reads shot 3 again) while a newer
+    check of the folder (Refresh, another tab) sees shot 4. The save's older summary isn't adopted:
+    the snapshot keeps the newer status, [1, 2, 3, 4]; the save still completes (not cancelled for
+    the newer signature) without counting its data as checked."""
+    path = str(run)
+    explorer = open_loaded(qtbot, service, run, tmp_path)
+    cache = explorer.model.cache
+    cache.live_autosave_shots = 100
+    assert explorer.start_live()
+    partial = run / "d_txy_forc3.txt"
+    partial.write_bytes(b"3,2,3\n3,4")
+    old = time.time() - 60
+    os.utime(partial, (old, old))
+    age_folder(run, 50)
+    checks(qtbot, explorer, path, tmp_path)
+    partial.write_bytes(b"3,2,3\n3,4,5\n")
+    os.utime(partial, (old + 5, old + 5))
+    age_folder(run, 40)
+    explorer.stop_live()
+    next_request(qtbot, explorer, path)
+    save, save_events = run_helper(cache, path, tmp_path)  # The save lists the folder, reads shot 3 again…
+    assert [event["kind"] for event in save_events].count("scan_summary") == 1
+    write_shot(run, 4)  # …shot 4 comes, and another tab lists the folder (foreground)…
+    age_folder(run, 30)
+    assert cache.submit("other-tab", 0, path, "list", {"cache": store_options()}, force=True)
+    replay(cache, path, tmp_path, "list")
+    snapshot = cache.snapshot(path)
+    assert snapshot is not None and snapshot.status["txy"] == [1, 2, 3, 4]
+    # …and its load of the folder, also in the foreground, adopts its newer signature (no data
+    # dropped, unlike a status check's, which runs in the background lane after the save).
+    snapshot.status["signature"] = "another tab's load"
+    newer = dict(snapshot.status)
+    events = deliver(cache, save, save_events)  # …then the save's events arrive.
+    loaded = next(event for event in events if event["kind"] == "loaded")
+    assert loaded["signature"] != newer["signature"] and float(newer["scanned_at"]) > float(
+        next(event for event in events if event["kind"] == "scan_summary")["status"]["scanned_at"])
+    snapshot = cache.snapshot(path)
+    assert snapshot is not None and snapshot.status == newer  # Not rolled back to [1, 2, 3].
+    # Kept (the folder's newest data, though not its current state: shot 4 is still to load).
+    dataset = cache.latest_dataset(path)
+    assert dataset is not None and dataset.signature == loaded["signature"] and sorted(dataset.data) == [1, 2, 3]
+    np.testing.assert_array_equal(dataset.data[3], [[3, 2, 3], [3, 4, 5]])
+    assert "checked_at" not in dataset.metadata and not cache.counts_as_checked(dataset)
+    np.testing.assert_array_equal((explorer.folder_opened_data or {})[3], [[3, 2, 3], [3, 4, 5]])
+    assert cached_shots(path, tmp_path) == [1, 2, 3]
+    qtbot.waitUntil(lambda: not explorer._live_sessions)  # (The save ended: not cancelled.)
     explorer.close_cleanup()
 
 

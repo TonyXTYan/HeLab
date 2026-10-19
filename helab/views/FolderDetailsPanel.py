@@ -274,6 +274,12 @@ class FolderDetailsPanel(QScrollArea):
             rows["state"] = (f"{rows['state'][0]} · {LARGE_MARK}{large_text(*large)}"
                              + ("" if large[1] else " · Load anyway…"),
                              REFUSED_TOOLTIP if large[1] else LARGE_TOOLTIP)
+        if reread := explorer.live_reread_note(path):
+            # Live read shots again that changed after it read them (for a minute).
+            state, tip = rows.get("state", ("", ""))
+            rows["state"] = (f"{state} · {reread}" if state else reread, "\n".join(filter(None, (
+                tip, f"{reread}: their writer was likely paused longer than the settle age, so Live read "
+                     "them unfinished. The log names each one's old and new size and mtime."))))
         cache = explorer.model.cache
         # Which .helab-root the folder uses, or RAM only (the tab's own folder when none is selected).
         rows["cache"] = data_root_row(cache, path)

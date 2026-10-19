@@ -91,11 +91,17 @@ class LiveSession:
     listed: bool = False  # Whether the last check listed the folder (else one stat).
     listed_at: float = -math.inf  # Monotonic: when a check last listed it.
     # The folder's identity (data root, else location) as Live's first listing found it: a later
-    # listing finding another folder at this path stops Live.
+    # listing finding another folder at this path stops Live. The folder whose .helab-root names it
+    # ("" for a location; None until found): later listings read only that marker.
     identity: str = ""
-    # New files the last check saw but didn't read ([shot, size, mtime_ns]): read once they show
-    # the same size and mtime again, a check later.
+    identity_root: str | None = None
+    # New files the last check saw but didn't read ([shot, size, mtime_ns]) and their names: read
+    # once they show the same size and mtime again, a check later.
     seen: list[list[int]] = field(default_factory=list)
+    seen_names: list[str] = field(default_factory=list)
+    # The folder's mtime as of the last listing: while it stays, a check stats only the files in
+    # ``seen`` instead of listing the folder.
+    listed_mtime: int | None = None
     next_at: float = 0.0  # Monotonic.
     new: int = 0  # New shots since Live started.
     unsettled: int = 0  # Files still being written at the last check.
@@ -108,6 +114,9 @@ class LiveSession:
     blocked: str = ""
     note: str = ""
     saved_at: float | None = None  # Wall time.
+    # When Live itself read each shot (wall time; read again: when that was). A shot it read
+    # recently that changes is read again, not a mismatch (``FolderExplorer.LIVE_REREAD_SECONDS``).
+    read_at: dict[int, float] = field(default_factory=dict)
 
 
 def large_text(estimate: int, refused: bool) -> str:
@@ -226,6 +235,13 @@ class FolderExplorer(QWidget):
     # A Live check lists the folder at least this often, even if its mtime is unchanged: a network
     # drive may report a folder's mtime late (SMB clients cache it for seconds).
     LIVE_LIST_SECONDS = 60.0
+    # A held shot Live itself read less than this long ago that changes (its writer paused longer
+    # than the settle age, so it was read unfinished) is read again and replaces the held one, by
+    # Tony's decision; an older one that changes still stops Live as mismatched (a remount or a copy).
+    # Five minutes covers the next listing (the next new shot, or once a minute) and the next save.
+    LIVE_REREAD_SECONDS = 300.0
+    # How long the tab's Live line and Folder details say that shots were read again.
+    LIVE_REREAD_NOTE_SECONDS = 60.0
     DWELL_MS = 3000
     # Finish and Cancel modes: while loads are busy (running, queued or stopping, or one started
     # moments ago), an automatic load waits until the selection has stayed this long, plus
@@ -277,6 +293,9 @@ class FolderExplorer(QWidget):
         # Folders whose next load compares every file with the cache (Retry / Refresh), not
         # just the folder's mtime: a file rewritten in place doesn't change the folder's mtime.
         self._full_check_paths: set[str] = set()
+        # Folders whose selection wasn't listed (``_check_replaces_listing``): their load's result
+        # updates the row.
+        self._listing_replaced: set[str] = set()
         # The disk cache is read at most once per selection of a folder, or once more after its
         # volume is verified if the first read waited for that (``_volumes_verified``).
         self._cache_read_path: str | None = None
@@ -326,6 +345,9 @@ class FolderExplorer(QWidget):
         # The folder watched while Live is on, and every folder whose Live work isn't finished.
         self.live: LiveSession | None = None
         self._live_sessions: dict[str, LiveSession] = {}
+        # Shots Live read again, by folder: the note and when (monotonic), shown for a minute
+        # (``live_reread_note``), also after Live stops and its session ends.
+        self._reread_notes: dict[str, tuple[str, float]] = {}
         self._live_timer = QTimer(self)
         self._live_timer.setSingleShot(True)
         self._live_timer.timeout.connect(self._live_tick)
@@ -521,6 +543,7 @@ class FolderExplorer(QWidget):
         self.stop_live()
         self._deep.clear()
         self._deep_depth.clear()
+        self._listing_replaced.clear()
         self._basic_active = False
         self._basic_result = ""
         self._visible_seen.clear()
@@ -593,7 +616,9 @@ class FolderExplorer(QWidget):
                         and not self.model.cache.counts_as_checked(dataset, node.signature if node else "")):
                     # Back at the folder still shown: its data is checked again, as from memory.
                     self._unchecked_path = path
-            if not self._check_replaces_listing(path):
+            if self._check_replaces_listing(path):
+                self._listing_replaced.add(path)
+            else:
                 self.model.request_scan(path, priority=True)
             self.selectionPathChanged.emit(path)
 
@@ -615,10 +640,20 @@ class FolderExplorer(QWidget):
     def _check_replaces_listing(self, path: str) -> bool:
         """Selecting a folder with saved counts and a disk cache does not list it:
         the cached data is shown, and loading checks the folder (one stat when
-        unmodified). Expanding a folder still lists it."""
+        unmodified). Nor does selecting a folder without subfolders whose checked
+        data is in RAM: its load's quick check covers it (``memory_check``). If the
+        check finds changes, the load's own listing updates the row. Expanding a
+        folder still lists it."""
         node = self.model.nodes.get(path)
-        return (self.auto_load_ram and node is not None and node.report is not None
-                and self.model.cache.disk_cached(path))
+        cache = self.model.cache
+        if not (self.auto_load_ram and node is not None and node.report is not None):
+            return False
+        if cache.disk_cached(path):
+            return True
+        dataset = cache.latest_dataset(path)
+        return (node.has_dirs is False and dataset is not None and cache.verified(dataset)
+                and bool(dataset.metadata.get("listed_at")) and path not in cache.mismatched
+                and not cache.folder_prefs(path)["no_auto_load"])
 
     def _status_ready(self, path: str) -> None:
         if path == self.selected_path_globally and not (
@@ -1324,14 +1359,25 @@ class FolderExplorer(QWidget):
             self._set_large(request.path, None)
             self._display(request.path, dataset, event)
             node = self.model.nodes.get(request.path)
-            if node and node.cached_report and not event.get("unchanged"):
-                # The folder changed since its saved counts; list it for the tree.
-                self.model.request_scan(request.path, priority=True)
+            replaced = request.path in self._listing_replaced
+            self._listing_replaced.discard(request.path)
+            if node and (node.cached_report or replaced) and not event.get("unchanged"):
+                # The folder changed since its saved counts, or since the row's status when its
+                # selection didn't list it. This load's own listing and fingerprint are its status
+                # (unless it has subfolders, whose names a listing brings).
+                summary = self.model.cache.scan_summaries.get(request.path)
+                if not (summary and summary.get("signature") == event.get("signature")
+                        and self.model.adopt_load_status(request.path, summary)):
+                    self.model.request_scan(request.path, priority=True)
         elif kind in ("error", "cancelled"):
             self.loading = self.load_paused = False
             self._loading_data.clear()
             self.load_error = event.get("message", "Cancelled — Retry")
             self.model.set_load_state(request.path, "")
+            if request.path in self._listing_replaced:
+                self._listing_replaced.discard(request.path)
+                if kind == "error":
+                    self.model.request_scan(request.path, priority=True)  # The row shows what's there.
         elif kind == "too_large":
             # Stopped before reading anything (S8).
             self.loading = self.load_paused = False
@@ -1445,7 +1491,7 @@ class FolderExplorer(QWidget):
         session = self.live
         if session is None or not session.error:
             return
-        session.error, session.since = "", None
+        session.error, session.since, session.listed_mtime = "", None, None
         if not session.request:
             self._live_next(0.0)
         self._live_changed()
@@ -1486,9 +1532,12 @@ class FolderExplorer(QWidget):
         dataset = session.dataset
         # Shots it couldn't read: read again only if they change.
         known = [list(entry) for entry in dataset.metadata.get("fingerprint", ()) if int(entry[0]) not in dataset.data]
-        since = session.since if time.monotonic() - session.listed_at < self.LIVE_LIST_SECONDS else None
-        payload = {"live": True, "live_since": since, "known": known, "prefer_base": dataset.signature,
-                   "identity": session.identity, "seen": session.seen, "check_level": cache.check_level}
+        recent = time.monotonic() - session.listed_at < self.LIVE_LIST_SECONDS
+        payload = {"live": True, "live_since": session.since if recent else None, "known": known,
+                   "prefer_base": dataset.signature, "identity": session.identity,
+                   "identity_root": session.identity_root, "seen": session.seen, "seen_names": session.seen_names,
+                   "listed_mtime": session.listed_mtime if recent else None, "check_level": cache.check_level,
+                   "recent": self._live_recent(session)}
         if not cache.submit(self.live_owner, 0, session.path, "load", payload, priority=True):
             self._live_halt(session, "Live check couldn't be queued — Retry")
             return
@@ -1518,9 +1567,12 @@ class FolderExplorer(QWidget):
         if not session.unsaved or session.request or self._live_save_blocked(session):
             return False
         cache = self.model.cache
+        # Saved from RAM: the folder is listed and its files checked, none read (``io_helper.save_held``).
         payload = {"cache": store_options(), "signature": "", "no_cache": False, "check_level": cache.check_level,
                    "limits": cache.large_limits(), "deliberate": False, "allow_large": False,
-                   "prefer_base": session.dataset.signature}
+                   "prefer_base": session.dataset.signature, "save_memory": True,
+                   "identity": session.identity, "identity_root": session.identity_root,
+                   "recent": self._live_recent(session)}
         if not cache.save(self.live_save_owner, session.path, payload):
             session.note = "Save queue full"
             return False
@@ -1528,6 +1580,46 @@ class FolderExplorer(QWidget):
         session.unsaved = set()
         session.request, session.reading = "save", False
         return True
+
+    def _live_recent(self, session: LiveSession) -> list[int]:
+        """The shots Live itself read within ``LIVE_REREAD_SECONDS``: read again if they change."""
+        oldest = time.time() - self.LIVE_REREAD_SECONDS
+        for shot in [shot for shot, at in session.read_at.items() if at < oldest]:
+            del session.read_at[shot]
+        return sorted(session.read_at)
+
+    def _live_reread(self, session: LiveSession, entries: list[dict[str, Any]]) -> None:
+        """Shots Live read recently that changed since and were read again: one WARNING each (for
+        Tony to report: the converter writing to a temporary name and renaming it avoids this), and
+        a note on the Live line and in Folder details for ``LIVE_REREAD_NOTE_SECONDS``."""
+        now = time.time()
+
+        def when(nanoseconds: int) -> str:
+            return datetime.fromtimestamp(nanoseconds / 1e9).astimezone().isoformat(timespec="milliseconds")
+        for entry in entries:
+            shot = int(entry["shot"])
+            (old_size, old_mtime), (new_size, new_mtime) = entry["old"], entry["new"]
+            read_at = session.read_at.get(shot)
+            logging.warning(
+                "Live: shot %s changed %s after Live read it, read again%s: %s (size %s → %s bytes, mtime %s → %s). "
+                "The converter writing to a temporary name and renaming it avoids this.", shot,
+                f"{now - read_at:.0f} s" if read_at is not None else "some time", "" if entry.get("read") else
+                " (now unreadable)", entry.get("path", ""), f"{old_size:,}", f"{new_size:,}", when(old_mtime),
+                when(new_mtime))
+            session.read_at[shot] = now
+        shots = sorted(int(entry["shot"]) for entry in entries)
+        note = (f"Shot {shots[0]} changed after it was read (writer paused > 5 s?): read again" if len(shots) == 1
+                else f"Shots {', '.join(map(str, shots[:5]))}{' …' if len(shots) > 5 else ''} changed after they "
+                     "were read (writer paused > 5 s?): read again")
+        self._reread_notes[session.path] = (note, time.monotonic())
+
+    def live_reread_note(self, path: str) -> str:
+        """Shots of ``path`` that Live read again in the last ``LIVE_REREAD_NOTE_SECONDS`` ("" if none)."""
+        note, at = self._reread_notes.get(path, ("", -math.inf))
+        if time.monotonic() - at >= self.LIVE_REREAD_NOTE_SECONDS:
+            self._reread_notes.pop(path, None)
+            return ""
+        return note
 
     def _live_forget(self, session: LiveSession) -> None:
         """A session that is off with no save left to run or finish is done."""
@@ -1600,6 +1692,14 @@ class FolderExplorer(QWidget):
         assert isinstance(dataset, Dataset)
         what, session.request = session.request, ""
         new = set(dataset.data) - session.shots
+        if what == "check":
+            now = time.time()
+            session.read_at.update(dict.fromkeys(new, now))
+        reread = [entry for entry in event.get("live_reread") or () if isinstance(entry, dict)]
+        if reread:
+            self._live_reread(session, reread)
+        # Read again: their new data is saved too (a save's own result saves it with this one).
+        changed = {int(entry["shot"]) for entry in reread}
         session.dataset, session.shots = dataset, set(dataset.data)
         session.new += len(new)
         session.checks += 1
@@ -1619,7 +1719,7 @@ class FolderExplorer(QWidget):
                 session.unsaved |= session.saving | new
             session.saving = set()
         else:
-            session.unsaved |= new
+            session.unsaved |= new | changed
         if self.selected_path_globally == session.path and (session.on or self.folder_opened_path == session.path):
             self._live_display(session.path, event)
         if session.on and not session.error:
@@ -1637,7 +1737,7 @@ class FolderExplorer(QWidget):
         session.listed = bool(event.get("live_listed"))
         if session.listed:
             session.listed_at = time.monotonic()
-            self._live_observed(session, event)
+        self._live_observed(session, event)
         if session.listed and self._unchecked_path == session.path:
             # Listed: no shot is missing and none is new, so the shown data is the folder's.
             self._unchecked_path = None
@@ -1646,12 +1746,18 @@ class FolderExplorer(QWidget):
 
     @staticmethod
     def _live_observed(session: LiveSession, event: dict[str, Any]) -> None:
-        """What a listing check found besides shots: the folder's identity (the first one is the
-        session's), and the new files it saw but didn't read. (A save's load reports neither.)"""
+        """What a check found besides shots: the folder's identity and its marker's folder (the first
+        listing's are the session's), the new files it saw but didn't read, and the folder's mtime
+        as of its listing. (A save's load reports none of these.)"""
         if "live_seen" in event:
             session.seen = [list(entry) for entry in event["live_seen"]]
+            session.seen_names = [str(name) for name in event.get("live_seen_names") or ()]
+        if "live_listed_mtime" in event:
+            session.listed_mtime = event["live_listed_mtime"]
         if not session.identity and event.get("live_identity"):
             session.identity = str(event["live_identity"])
+            root = event.get("live_identity_root")
+            session.identity_root = str(root) if isinstance(root, str) else None
 
     def _live_save_ended(self, path: str, outcome: str) -> None:
         """A save of the folder ended (``FolderCache.saveEnded``)."""
@@ -1691,6 +1797,8 @@ class FolderExplorer(QWidget):
                 parts.append(f"next check in {max(0, math.ceil(session.next_at - time.monotonic()))} s")
         else:
             parts = ["Live updates off"]
+        if reread := self.live_reread_note(session.path):
+            parts.append(reread)
         blocked = self._live_save_blocked(session)
         if session.saving:
             parts.append(f"saving {plural(len(session.saving), 'shot')}")
@@ -1712,6 +1820,12 @@ class FolderExplorer(QWidget):
             lines.append(f"Not saved: {LIVE_BLOCKED.get(blocked, blocked)}")
         if session.saved_at is not None:
             lines.append(f"Last saved: {datetime.fromtimestamp(session.saved_at).astimezone():%H:%M:%S}")
+        if reread:
+            ago = relative_age(time.monotonic() - self._reread_notes[session.path][1])
+            lines.append(f"{reread} {ago} (the log names its old and new size and mtime). A shot Live read in the last "
+                         f"{self.LIVE_REREAD_SECONDS / 60:g} minutes that changes is read again; an older one "
+                         "that changes stops Live. The converter writing to a temporary name and renaming it "
+                         "would avoid this.")
         if session.note:
             lines.append(session.note)
         if session.error:
@@ -2142,6 +2256,9 @@ class FolderExplorer(QWidget):
             text, tooltip, stopped = self.live_line(live)
             self.folder_freshness_label.setText(text)
             self.folder_freshness_label.setToolTip(tooltip)
+        elif reread := self.live_reread_note(path):
+            # Live has stopped, and its last save read shots again: said for a minute here too.
+            self.folder_freshness_label.setText(f"{self.folder_freshness_label.text()} · {reread}")
         style = f"color: {AMBER};" if stopped else ""
         if self.folder_freshness_label.styleSheet() != style:
             self.folder_freshness_label.setStyleSheet(style)
