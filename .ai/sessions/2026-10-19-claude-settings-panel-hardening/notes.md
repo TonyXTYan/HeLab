@@ -103,3 +103,17 @@ activates the area's layout first so Qt has made its tab bars.
 or showing a hidden one get close buttons.
 
 `sip.unwrapinstance` is typed `-> None` in PyQt6's stub: `address_of` casts it.
+
+## 5. The RHI surface
+
+`_start_with_rhi_surface` made a hidden `QQuickWidget` whenever `sys.platform == "darwin"`,
+offscreen tests included (macOS CI and local runs made one in every `HelabMainWindow`), and
+`PyQt6.QtQuickWidgets` was imported at module level on every OS. Now
+`HelabMainWindow.needs_rhi_surface(system, qpa)` is true only for darwin with Qt's
+`cocoa` platform: Windows, Linux (xcb, wayland), `minimal` and `offscreen` make nothing, so
+offscreen tests on any OS never create a Quick scene graph. QtQuickWidgets is imported
+inside the branch (PyInstaller still sees the import statically). Tests: the platform
+table; an offscreen `HelabMainWindow` has no `QQuickWidget` child; on macOS (forced on) the
+surface is a hidden child that stays hidden when the window shows. The window-recreation
+effect itself can't be seen offscreen: Tony's checklist keeps the Mac check and the
+lab-PC question (MANUAL_TODO).

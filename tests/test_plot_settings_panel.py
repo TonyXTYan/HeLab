@@ -3,6 +3,7 @@ window, tab activation): no Python runs per event, the connections end with the 
 plots deleted without closing leave nothing behind."""
 from __future__ import annotations
 
+import sys
 from typing import Iterator, List, Optional, cast
 
 import pytest
@@ -244,3 +245,39 @@ def test_tab_bars_made_later_get_close_buttons(plots: Plots, qtbot: QtBot) -> No
     four.show()
     qtbot.waitUntil(lambda: bool(closable_bars(plots.area, 3)))
     assert all(bar.tabsClosable() for bar in plots.area.findChildren(QTabBar) if bar.count() > 1)
+
+
+@pytest.mark.parametrize(("system", "qpa", "made"), [
+    ("darwin", "cocoa", True), ("darwin", "offscreen", False), ("darwin", "minimal", False),
+    ("win32", "windows", False), ("win32", "offscreen", False), ("linux", "xcb", False),
+    ("linux", "wayland", False), ("linux", "offscreen", False)])
+def test_rhi_surface_only_on_macos_own_windows(system: str, qpa: str, made: bool) -> None:
+    from helab.views.HelabMainWindow import HelabMainWindow
+    assert HelabMainWindow.needs_rhi_surface(system, qpa) is made
+
+
+def test_no_rhi_surface_offscreen(qtbot: QtBot) -> None:
+    """Tests run offscreen on every OS: the main window makes no QQuickWidget there."""
+    from PyQt6.QtQuickWidgets import QQuickWidget
+    from helab.views.HelabMainWindow import HelabMainWindow
+    if QApplication.platformName() != "offscreen":
+        pytest.skip("HELAB_SHOW_GUI=1: on screen")
+    assert not HelabMainWindow.needs_rhi_surface()
+    window = HelabMainWindow()
+    qtbot.addWidget(window)
+    assert window.findChildren(QQuickWidget) == [] and not hasattr(window, "_rhi_surface")
+    window.close()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="the surface is made on macOS only")
+def test_rhi_surface_is_a_hidden_child(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PyQt6.QtQuickWidgets import QQuickWidget
+    from helab.views.HelabMainWindow import HelabMainWindow
+    monkeypatch.setattr(HelabMainWindow, "needs_rhi_surface", staticmethod(lambda: True))
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    HelabMainWindow._start_with_rhi_surface(window)  # type: ignore[arg-type]
+    surfaces = window.findChildren(QQuickWidget)
+    assert len(surfaces) == 1 and surfaces[0].isHidden() and surfaces[0].parent() is window
+    window.show()
+    assert surfaces[0].isHidden()
