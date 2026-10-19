@@ -21,6 +21,7 @@ from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import FolderCache
 from helab.utils.io_service import IORequest, IOService
+from helab.views.CentralHint import CentralHint
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.HelabMainWindow import HelabMainWindow
 
@@ -91,6 +92,8 @@ class Window(HelabMainWindow):
     def __init__(self, explorer: FolderExplorer) -> None:
         QMainWindow.__init__(self)
         self.middle_mainwindow = QMainWindow()
+        self.central_placeholder = CentralHint("Select a data folder to begin")
+        self.middle_mainwindow.setCentralWidget(self.central_placeholder)
         self.dock_widgets: List[QDockWidget] = []
         self.tab_widget = QTabWidget()  # type: ignore[assignment]
         self.tab_widget.addTab(explorer, "tab")
@@ -99,9 +102,6 @@ class Window(HelabMainWindow):
 
     def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
         self.notices.append(text)
-
-    def update_placeholder_visibility(self) -> None:
-        pass
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         QMainWindow.closeEvent(self, a0)
@@ -228,6 +228,33 @@ def test_closing_a_dock_mid_run_delivers_nothing(
     assert ended[0].state == "cancelled" and ended[0].data is None
     assert script.renders == 0 and instance.result is None
     assert instance.runner.results.get(job_id) is None
+
+
+def test_centre_hint_hides_while_a_plot_dock_is_open(
+        window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path) -> None:
+    """The hint goes as soon as the first dock is added (its show is queued, so visibility
+    can't tell) and comes back only when the last open dock closes."""
+    run = folder(tmp_path, "run_H", 1)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3})
+    window.show()
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = Blocking()
+    metadata = script.get_metadata()
+    hint = window.central_placeholder
+    assert not hint.isHidden()
+    first = panel.run_analysis(metadata, script, "Plot")
+    assert first is not None and first.dock_widget is not None
+    assert hint.isHidden()
+    second = panel.run_analysis(metadata, script, "Plot")
+    assert second is not None and second.dock_widget is not None
+    script.release.set()
+    qtbot.waitUntil(lambda: first.result is not None and second.result is not None, timeout=10_000)
+    first.dock_widget.close()
+    assert hint.isHidden() and window.dock_widgets == [second.dock_widget]
+    second.dock_widget.close()
+    assert not hint.isHidden() and not window.dock_widgets
 
 
 def test_run_without_data_says_so(window: Window, qtbot: QtBot) -> None:

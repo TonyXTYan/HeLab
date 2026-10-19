@@ -872,13 +872,13 @@ class HelabMainWindow(QMainWindow):
         self.update_placeholder_visibility()
 
     def update_placeholder_visibility(self) -> None:
-        # Check if any dock widgets are visible
-        logging.debug(f"update_placeholder_visibility: called")
-        any_visible = any(dock_widget.isVisible() for dock_widget in self.dock_widgets)
-        if any_visible:
-            self.central_placeholder.hide()
-        else:
-            self.central_placeholder.show()
+        """The plot area's hint shows while no plot dock is open, and hides while any is.
+
+        Open docks are those in ``dock_widgets`` (closing removes them), not the visible
+        ones: ``addDockWidget`` shows a new dock through a queued event, so the first dock
+        isn't visible yet when it is added, and a dock behind another tabbed one isn't
+        visible either but is still open."""
+        self.central_placeholder.setVisible(not self.dock_widgets)
 
     def _set_plot_source(self, dock: QDockWidget, explorer: FolderExplorer) -> None:
         """Attach provenance to a plot at creation, before the selection changes."""
