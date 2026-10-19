@@ -1060,6 +1060,11 @@ class AnalysisInstance(LinkedAnalysisInstance):
         found, self._reload_found = self._reload_found, None
         if self.released is None or self.shown is None:
             return
+        if self.job_id:
+            # A run started meanwhile (Live's next revision): it draws the plot, not this reload.
+            self._reload_values = self._reload_shots = None
+            self.released.set_state("", busy=True)
+            return
         view = self._shown_view or self.follow.ran
         read = restore(view, dataset, self._reload_shots) if kind == "loaded" and isinstance(dataset, Dataset) else None
         if read is not None and (found is None or len(read.kept) >= len(found.kept)):

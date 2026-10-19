@@ -542,6 +542,29 @@ def test_a_reload_reads_only_the_disk_cache_never_the_folder(
     assert all(request.operation == "cached" for request in service.pending if id(request) not in before)
 
 
+def test_a_disk_reload_ending_during_a_live_run_leaves_that_run(
+        window: Window, cache: FolderCache, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live started on the folder while a released plot read the disk cache: its revision's run
+    draws the plot; the read, ending first, doesn't replace that run."""
+    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {"directory": "store"})
+    script = Copy()
+    instance = open_plot(window, qtbot, dataset("live", range(1, 3)), script)
+    open_plot(window, qtbot, dataset("other", range(1, 2)))
+    assert instance.release()
+    cast(ReleasedPlot, instance.released).reload_button.click()
+    request = next(iter(cache.jobs[("cached", instance.path)].subscribers.values()))
+    script.go.clear()
+    window.live_feed.publish(dataset("live", range(1, 5)))  # Live: a revision with 4 shots
+    live_job = instance.job_id
+    assert live_job
+    cache.resultReady.emit(request, {"kind": "loaded", "dataset": dataset("live", range(1, 3))})
+    assert instance.job_id == live_job
+    script.go.set()
+    qtbot.waitUntil(lambda: drawn(instance), timeout=10_000)
+    assert cast(AnalysisResult, instance.shown).job_id == live_job
+    assert instance.view.shot_numbers == (1, 2, 3, 4) and error_line(instance) == ""
+
+
 def test_with_no_data_anywhere_the_plot_says_so_and_keeps_its_picture(
         window: Window, cache: FolderCache, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     instance = open_plot(window, qtbot, dataset("nowhere", range(1, 3)))
