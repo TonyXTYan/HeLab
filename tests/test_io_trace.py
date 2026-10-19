@@ -852,3 +852,15 @@ def test_the_trace_goes_to_the_temp_folder_and_says_so_once_each_way(
         assert service.trace_file is None and not caplog.records
     finally:
         service.shutdown()
+
+
+def test_quitting_with_the_trace_on_says_it_is_off(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+    service = IOService()
+    path = service.start_io_trace(str(tmp_path))
+    with caplog.at_level(logging.INFO):
+        service.shutdown()  # (As quitting does: QApplication.aboutToQuit.)
+        service.shutdown()
+    assert [record.getMessage() for record in caplog.records if "I/O trace" in record.getMessage()] == [
+        f"I/O trace off: {path}"]
+    assert service.trace_file is None

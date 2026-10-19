@@ -945,6 +945,7 @@ class IOService(QObject):
     def shutdown(self) -> None:
         if self.closed:
             return
+        self.stop_io_trace()  # (Quitting with it on says so too.)
         if self.folder_cache is not None:
             self.folder_cache.shutdown()
         for owner in {r.owner for r in (*self.pending, *self.active)}:
