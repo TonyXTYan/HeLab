@@ -286,11 +286,12 @@ def test_parameter_tree_shows_only_what_applies(qtbot: QtBot) -> None:
     def visible(spec: ParameterSpec) -> bool:
         options: dict[str, Any] = parameter_of(root, spec).opts
         return bool(options.get("visible", True))
-    assert visible(selection.SHOTS) and not visible(selection.LAST_SHOTS) and not visible(selection.FIRST_SHOT)
+    assert visible(selection.SHOTS) and visible(selection.FIRST_SHOT) and not visible(selection.LAST_SHOTS)
+    assert not visible(selection.LAST_SHOT)
     assert visible(scatter_3d.KEEP) and not visible(selection.BOUNDS[0][0])
     parameter_of(root, selection.SHOTS).setValue(selection.LAST_N)
     parameter_of(root, selection.RANGE_MODE).setValue(selection.MANUAL)
-    assert visible(selection.LAST_SHOTS) and not visible(selection.FIRST_SHOT)
+    assert visible(selection.LAST_SHOTS) and visible(selection.FIRST_SHOT) and not visible(selection.LAST_SHOT)
     assert not visible(scatter_3d.KEEP) and all(visible(spec) for pair in selection.BOUNDS for spec in pair)
     values = tree_values(root, specs)
     assert values["shots"] == "last N" and values["range_mode"] == "manual" and values["display_cap"] == 100_000
@@ -359,6 +360,11 @@ def test_select_shots() -> None:
     assert selection.select_shots(view, {"shots": "range", "first_shot": 2, "last_shot": 8}) == (2, 5, 8)
     assert selection.select_shots(view, {"shots": "range", "first_shot": 6, "last_shot": 0}) == (8, 9)
     assert selection.select_shots(view, {"shots": "range", "first_shot": 10, "last_shot": 0}) == ()
+    # From shot applies whichever Shots is chosen.
+    assert selection.select_shots(view, {"first_shot": 3}) == (5, 8, 9)
+    assert selection.select_shots(view, {"shots": "last N", "last_shots": 50, "first_shot": 3}) == (5, 8, 9)
+    assert selection.select_shots(view, {"shots": "last N", "last_shots": 1, "first_shot": 3}) == (9,)
+    assert selection.select_shots(view, {"shots": "range", "last_shot": 5}) == (1, 2, 5)
     assert selection.shots_text((1, 2, 5, 8, 9), 5) == "5 shots"
     assert selection.shots_text((8, 9), 5) == "shots 8–9 (2 of 5)"
     assert selection.shots_text((), 5) == "none of 5 shots"
@@ -369,6 +375,9 @@ def test_short_settings_for_the_dock() -> None:
     assert selection.shots_brief({"shots": "last N", "last_shots": 1}) == "last 1 shot"
     assert selection.shots_brief({"shots": "range", "first_shot": 20, "last_shot": 45}) == "shots 20–45"
     assert selection.shots_brief({"shots": "range", "first_shot": 20, "last_shot": 0}) == "shots 20–last"
+    assert selection.shots_brief({"shots": "range", "last_shot": 45}) == "shots up to 45"
+    assert selection.shots_brief({"first_shot": 20}) == "shots 20–last"
+    assert selection.shots_brief({"shots": "last N", "last_shots": 10, "first_shot": 20}) == "last 10 shots from shot 20"
     assert selection.range_brief({"range_mode": "auto-crop", "keep_percent": 99.5}) == "auto-crop 99.5 %"
     manual = {"range_mode": "manual", "t_min": 3.84, "t_max": 3.87, "x_min": -0.002, "x_max": 0.0035,
               "y_min": 1.0, "y_max": 1.0}

@@ -20,37 +20,41 @@ SHOTS = ParameterSpec("shots", "Shots", "choice", ALL, choices=(ALL, LAST_N, RAN
                           "number, or a range of shot numbers.")
 LAST_SHOTS = ParameterSpec("last_shots", "Last N", "int", 50, (1, 1_000_000), group=SHOTS_GROUP,
                            when=(SHOTS.name, LAST_N), tip="The N highest shot numbers loaded.")
-FIRST_SHOT = ParameterSpec("first_shot", "From shot", "int", 1, (0, 1_000_000_000), group=SHOTS_GROUP,
-                           when=(SHOTS.name, RANGE), tip="The first shot number to include.")
+FIRST_SHOT = ParameterSpec("first_shot", "From shot (0 = first)", "int", 0, (0, 1_000_000_000), group=SHOTS_GROUP,
+                           tip="Shots numbered below this are left out, whichever Shots is chosen: all shots "
+                               "from here, the last N of them, or a range starting here.")
 LAST_SHOT = ParameterSpec("last_shot", "To shot (0 = last)", "int", 0, (0, 1_000_000_000), group=SHOTS_GROUP,
                           when=(SHOTS.name, RANGE), tip="The last shot number to include; 0 means up to the last one.")
-SHOT_SPECS: tuple[ParameterSpec, ...] = (SHOTS, LAST_SHOTS, FIRST_SHOT, LAST_SHOT)
+SHOT_SPECS: tuple[ParameterSpec, ...] = (SHOTS, FIRST_SHOT, LAST_SHOTS, LAST_SHOT)
 
 
 def select_shots(view: DatasetView, values: Mapping[str, Any]) -> tuple[int, ...]:
-    """The view's shot numbers the Shots parameters choose, ascending."""
-    numbers = view.shot_numbers
+    """The view's shot numbers the Shots parameters choose, ascending: those from the first
+    shot on, then all of them, the last N or those up to the last shot."""
+    first = int(values.get(FIRST_SHOT.name, FIRST_SHOT.default))
+    numbers = tuple(shot for shot in view.shot_numbers if shot >= first)
     mode = values.get(SHOTS.name, ALL)
     if mode == LAST_N:
         count = int(values.get(LAST_SHOTS.name, LAST_SHOTS.default))
         return numbers[-count:] if count else ()
     if mode == RANGE:
-        first = int(values.get(FIRST_SHOT.name, FIRST_SHOT.default))
         last = int(values.get(LAST_SHOT.name, LAST_SHOT.default))
-        return tuple(shot for shot in numbers if shot >= first and (last == 0 or shot <= last))
+        return tuple(shot for shot in numbers if last == 0 or shot <= last)
     return numbers
 
 
 def shots_brief(values: Mapping[str, Any]) -> str:
     """The Shots setting in a few words for the dock's settings line; "" for all shots."""
     mode = values.get(SHOTS.name, ALL)
+    first = int(values.get(FIRST_SHOT.name, FIRST_SHOT.default))
+    start = f" from shot {first}" if first else ""
     if mode == LAST_N:
         count = int(values.get(LAST_SHOTS.name, LAST_SHOTS.default))
-        return f"last {count:,} shot{'' if count == 1 else 's'}"
-    if mode == RANGE:
-        last = int(values.get(LAST_SHOT.name, LAST_SHOT.default))
-        return f"shots {int(values.get(FIRST_SHOT.name, FIRST_SHOT.default))}–{last if last else 'last'}"
-    return ""
+        return f"last {count:,} shot{'' if count == 1 else 's'}{start}"
+    last = int(values.get(LAST_SHOT.name, LAST_SHOT.default)) if mode == RANGE else 0
+    if last:
+        return f"shots {first}–{last}" if first else f"shots up to {last}"
+    return f"shots {first}–last" if first else ""
 
 
 def selection_text(view: DatasetView, values: Mapping[str, Any]) -> str:

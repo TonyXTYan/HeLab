@@ -379,7 +379,7 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     assert not label.wordWrap() and label.contentsMargins().top() == 0
     assert metadata.file_hash[:12] in label.toolTip()
     # The record lists every parameter, those not in use included.
-    assert "Parameters: Shots all, Last N 50, From shot 1, To shot (0 = last) 0, Range auto-crop, " \
+    assert "Parameters: Shots all, From shot (0 = first) 0, Last N 50, To shot (0 = last) 0, Range auto-crop, " \
            "Auto-crop: keep 99 %, T min 0 s, T max 0 s," in label.toolTip()
     plot_id = pane.plot_id
     instance.dock_widget.close()
