@@ -1053,6 +1053,16 @@ class FolderCache(QObject):
                 payload["memory_check"] = {key: base.metadata.get(key) for key in (
                     "listed_at", "names", "identity", "fingerprint", "problematic", "data_root")} | {
                     "signature": base.signature, "unsettled": base.metadata.get("unsettled_files", 0)}
+        arrays: dict[int, npt.NDArray[np.float64]] | None = None
+        if operation == "load" and payload.get("save_memory"):
+            if base is not None and base.data:
+                # Live's save: the data in RAM is saved as it is (``io_helper.save_held``), its arrays
+                # handed to the helper; its files are checked, not read.
+                arrays = dict(base.data)
+                payload = {**payload, "held": [list(entry) for entry in base.metadata["fingerprint"]],
+                           "held_problematic": list(base.metadata.get("problematic", ()))}
+            else:
+                payload = {key: value for key, value in payload.items() if key != "save_memory"}
         job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload, base=base, live=live)
         if operation in SCANS:
             job.payload = payload = {**payload, "scan_operation_id": job.owner,
@@ -1060,7 +1070,8 @@ class FolderCache(QObject):
         job.subscribers[(owner, generation)] = request
         self.jobs[job_key] = job
         self._producers[job.owner] = job
-        if not self.service.submit(job.owner, 0, path, operation, payload, priority=priority, timeout=timeout):
+        if not self.service.submit(job.owner, 0, path, operation, payload, priority=priority, timeout=timeout,
+                                   arrays=arrays):
             self.jobs.pop(job_key)
             self._producers.pop(job.owner)
             return False

@@ -653,3 +653,113 @@ def test_live_reads_only_the_known_root_marker_and_still_sees_another_root(tmp_p
     os.utime(run)
     stopped = live.check(run, output)
     assert stopped["kind"] == "shots_missing" and stopped["reason"] == "root"
+
+
+def held_arrays(run: Path, folder: Path, shots: range) -> list[list[int]]:
+    """Live's data for ``shots``: their arrays as the app hands them over, and their fingerprint."""
+    folder.mkdir(exist_ok=True)
+    for shot in shots:
+        np.save(folder / f"{shot}.npy", np.array([[shot, 2.0, 3.0], [shot, 4.0, 5.0]]), allow_pickle=False)
+    return [[shot, (info := (run / f"d_txy_forc{shot}.txt").stat()).st_size, info.st_mtime_ns] for shot in shots]
+
+
+def test_a_live_save_checks_every_held_file_once_and_reads_none(tmp_path: Path, trace: Path) -> None:
+    """The save lists the folder once (its listing's stats check every held file), reads no TXY
+    file, and saves the data it was handed, guarded and budgeted like a load's save."""
+    from helab.utils.cache_store import unpack_dataset
+    run = tmp_path / "run"
+    write_shots(run, range(1, 11))
+    held = held_arrays(run, tmp_path / "held", range(1, 10))  # Shot 10: not read by Live yet.
+    cache = store_options()
+    events: list[dict[str, Any]] = []
+    identity, root = io_helper._folder_identity(str(run))
+    before = len(lines(trace))
+    io_helper.save_held(str(run), events.append, cache, held, [3], str(tmp_path / "held"),
+                        identity=identity, identity_root=root)
+    kinds = [event["kind"] for event in events]
+    assert "cache_saved" in kinds and "disk_cached" in kinds and "shots_missing" not in kinds
+    loaded = next(event for event in events if event["kind"] == "loaded")
+    assert loaded["memory_shots"] == list(range(1, 10)) and loaded["disk_cache_pending"]
+    assert loaded["unsettled_files"] == 1 and loaded["problematic"] == [3]
+    found = counts(lines(trace)[before:])
+    assert found[("scandir", "save: listing")] == 1 and found[("entry_stat", "save: checking")] == 10
+    assert not any(op in ("read", "stat") for op, _ in found)
+    assert found[("marker_read", "save: identity")] == 1
+    with io_helper._cache_store(cache["directory"], [str(run)]) as store:
+        value = store.read_dataset(str(run)).value
+        assert value is not None
+        row, packed = value
+        data = unpack_dataset(packed)
+        assert data is not None and sorted(data) == list(range(1, 10))
+        np.testing.assert_array_equal(data[4], [[4, 2, 3], [4, 4, 5]])
+        assert row["info"]["unsettled"] == 1 and row["problematic"] == [3]
+
+
+def test_a_live_save_saves_nothing_for_a_missing_changed_or_other_folder(tmp_path: Path) -> None:
+    from helab.utils import data_roots
+    run = tmp_path / "run"
+    write_shots(run, range(1, 4))
+    held = held_arrays(run, tmp_path / "held", range(1, 4))
+    cache = store_options()
+
+    def save(**kwargs: Any) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        io_helper.save_held(str(run), events.append, cache, held, [], str(tmp_path / "held"), **kwargs)
+        return events
+
+    def stopped(events: list[dict[str, Any]], reason: str) -> bool:
+        return (any(event["kind"] == "shots_missing" and event["reason"] == reason for event in events)
+                and not any(event["kind"] in ("loaded", "cache_saved") for event in events))
+    identity, root = io_helper._folder_identity(str(run))
+    other = {"helab": "root", "version": 1, "uuid": str(uuid.uuid4()), "label": "x", "created_at": "2026-10-19T00:00:00Z"}
+    marker = tmp_path / data_roots.MARKER_NAME
+    original = marker.read_text()
+    marker.write_text(json.dumps(other))
+    assert stopped(save(identity=identity, identity_root=root), "root")
+    marker.write_text(original)
+    (run / "d_txy_forc2.txt").write_text("2,9,9\n")  # Rewritten in place (TXY files are written once).
+    assert stopped(save(identity=identity, identity_root=root), "changed")
+    (run / "d_txy_forc2.txt").unlink()
+    assert stopped(save(), "missing")
+    with io_helper._cache_store(cache["directory"], [str(run)]) as store:
+        assert store.read_dataset_row(str(run)).value is None
+
+
+def test_a_live_save_keeps_dont_cache_and_the_budget(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    write_shots(run, range(1, 4))
+    held = held_arrays(run, tmp_path / "held", range(1, 4))
+    events: list[dict[str, Any]] = []
+    io_helper.save_held(str(run), events.append, store_options(), held, [], str(tmp_path / "held"), no_cache=True)
+    loaded = next(event for event in events if event["kind"] == "loaded")
+    assert not loaded["disk_cache_pending"] and not any(event["kind"] == "cache_saved" for event in events)
+    events = []
+    io_helper.save_held(str(run), events.append, {**store_options(), "budget": 1, "budget_set_at": time.time()},
+                        held, [], str(tmp_path / "held"))
+    assert any(event["kind"] == "cache_full" for event in events)
+    assert not any(event["kind"] == "cache_saved" for event in events)
+
+
+def test_folder_cache_hands_live_s_data_to_its_save(qtbot: QtBot, tmp_path: Path, trace: Path) -> None:
+    """``FolderCache.save`` with ``save_memory``: the data in RAM goes to the helper, which reads no
+    TXY file; without data in RAM it is an ordinary load's save."""
+    from helab.utils.folder_cache import FolderCache
+    run = tmp_path / "run"
+    write_shots(run, range(1, 6))
+    service = IOService()
+    cache = FolderCache(service)
+    payload = {"cache": store_options(), "signature": "", "no_cache": False, "save_memory": True}
+    try:
+        assert cache.submit("tab", 0, str(run), "load", {"cache": {}})  # Into RAM only.
+        qtbot.waitUntil(lambda: cache.current_dataset(str(run)) is not None and not cache.jobs, timeout=20000)
+        saved: list[tuple[str, str]] = []
+        cache.saveEnded.connect(lambda path, outcome: saved.append((path, outcome)))
+        before = len(lines(trace))
+        assert cache.save("tab:live-save", str(run), payload)
+        qtbot.waitUntil(lambda: bool(saved), timeout=20000)
+        assert saved == [(str(run), "saved")]
+        records = [record for record in lines(trace)[before:] if record["pid"] != os.getpid()]
+        assert any(record["op"] == "request" and "save" in record["flags"] for record in records)
+        assert not any(record["op"] == "read" for record in records)
+    finally:
+        service.shutdown()

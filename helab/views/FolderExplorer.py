@@ -1514,9 +1514,11 @@ class FolderExplorer(QWidget):
         if not session.unsaved or session.request or self._live_save_blocked(session):
             return False
         cache = self.model.cache
+        # Saved from RAM: the folder is listed and its files checked, none read (``io_helper.save_held``).
         payload = {"cache": store_options(), "signature": "", "no_cache": False, "check_level": cache.check_level,
                    "limits": cache.large_limits(), "deliberate": False, "allow_large": False,
-                   "prefer_base": session.dataset.signature}
+                   "prefer_base": session.dataset.signature, "save_memory": True,
+                   "identity": session.identity, "identity_root": session.identity_root}
         if not cache.save(self.live_save_owner, session.path, payload):
             session.note = "Save queue full"
             return False

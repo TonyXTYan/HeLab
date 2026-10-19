@@ -889,11 +889,10 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
     original = service.submit
 
     def record(owner: str, generation: int, path: str, operation: str,
-               payload: dict[str, Any] | None = None, *, priority: bool = False,
-               timeout: float = 15.0) -> bool:
+               payload: dict[str, Any] | None = None, **kwargs: Any) -> bool:
         if operation not in ("roots_verify", "volumes_verify"):
             operations.append(operation)
-        return original(owner, generation, path, operation, payload, priority=priority, timeout=timeout)
+        return original(owner, generation, path, operation, payload, **kwargs)
 
     monkeypatch.setattr(service, "submit", record)
     (tmp_path / "d1.txt").write_text("")

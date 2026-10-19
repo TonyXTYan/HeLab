@@ -1763,7 +1763,6 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # The caller already has its data; updating the disk cache no longer
     # delays it. Shots only the caller holds are read again for completeness.
     try:
-        from helab.utils.cache_store import DATASET_FORMAT, pack_dataset
         reread = False
         for i, (shot, filename) in enumerate(files):
             if shot in in_memory and shot not in data:
@@ -1780,34 +1779,50 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         # Checked again only if files were read since the check above (else nothing came between).
         if reread and changed():
             raise ValueError("Folder changed before cache could be saved")
-        file = store.write_dataset_file(pack_dataset(data))
-        info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(
-            json.dumps(fingerprint).encode()).hexdigest(), "action": "updated" if had_dataset else "created",
-            "counts": load_counts, "unsettled": unsettled, "kind": file_kinds.TXY.name, "format": DATASET_FORMAT,
-            # Its TXY files' names, in fingerprint order, for the quick check's samples.
-            "names": names,
-            # For the large-folder check before a later cached read.
-            "txy_bytes": large_folder.estimate(fingerprint),
-            "ram_bytes": sum(int(array.nbytes) for array in data.values()),
-            "disk_bytes": os.path.getsize(os.path.join(store.datasets_dir, file))}
-        result = store.save_dataset(path, file, {
-            "ram_bytes": sum(int(array.nbytes) for array in data.values()),
-            "rows": sum(len(array) for array in data.values()), "shots": len(data),
-            "fingerprint": [list(entry) for entry in fingerprint], "problematic": sorted(set(problematic)),
-            "info": info}, guard, budget=budget, budget_set_at=budget_set_at)
-        if not result.saved:
-            # Held for the user's answer (Make room / Save update); nothing waits for it.
-            send(_pending_event(store, path, result))
-            return
-        # The replaced file was retired: the next cleanup deadline may be new.
-        send({"kind": "cache_saved", "cache_info": info, "superseded": list(result.superseded), "job_seq": result.job_seq,
-              "next_deadline": _deadline(store),
-              "usage": result.usage, "usage_seq": [store.store_id, result.usage_seq]})
-        send({"kind": "disk_cached", "disk_cached": True})
+        _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, load_counts,
+                       unsettled, bool(had_dataset), budget, budget_set_at, send)
     except Exception as exc:
-        # A rejected save retired its file: the next cleanup deadline may be new.
-        send({"kind": "cache_save_failed", "message": str(exc), "next_deadline": _deadline(store)})
-        send({"kind": "cache_warning", "message": str(exc)})
+        _save_failed(store, exc, send)
+
+
+def _write_dataset(store: CacheStore, path: str, guard: SaveGuard, data: dict[int, Any],
+                   fingerprint: list[tuple[int, int, int]], problematic: list[int], names: list[str],
+                   listed_at: float, counts: dict[str, int], unsettled: int, had_dataset: bool,
+                   budget: int | None, budget_set_at: float | None, send: Emit) -> None:
+    """Save a folder's dataset to the disk cache within the budget (a pending save that doesn't fit),
+    under the guard its job took when it started; ``cache_saved`` and ``disk_cached``, or the pending
+    event. Raises on failure (``_save_failed``)."""
+    from helab.utils.cache_store import DATASET_FORMAT, pack_dataset
+    file = store.write_dataset_file(pack_dataset(data))
+    info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(
+        json.dumps(fingerprint).encode()).hexdigest(), "action": "updated" if had_dataset else "created",
+        "counts": counts, "unsettled": unsettled, "kind": file_kinds.TXY.name, "format": DATASET_FORMAT,
+        # Its TXY files' names, in fingerprint order, for the quick check's samples.
+        "names": names,
+        # For the large-folder check before a later cached read.
+        "txy_bytes": large_folder.estimate(fingerprint),
+        "ram_bytes": sum(int(array.nbytes) for array in data.values()),
+        "disk_bytes": os.path.getsize(os.path.join(store.datasets_dir, file))}
+    result = store.save_dataset(path, file, {
+        "ram_bytes": sum(int(array.nbytes) for array in data.values()),
+        "rows": sum(len(array) for array in data.values()), "shots": len(data),
+        "fingerprint": [list(entry) for entry in fingerprint], "problematic": sorted(set(problematic)),
+        "info": info}, guard, budget=budget, budget_set_at=budget_set_at)
+    if not result.saved:
+        # Held for the user's answer (Make room / Save update); nothing waits for it.
+        send(_pending_event(store, path, result))
+        return
+    # The replaced file was retired: the next cleanup deadline may be new.
+    send({"kind": "cache_saved", "cache_info": info, "superseded": list(result.superseded), "job_seq": result.job_seq,
+          "next_deadline": _deadline(store),
+          "usage": result.usage, "usage_seq": [store.store_id, result.usage_seq]})
+    send({"kind": "disk_cached", "disk_cached": True})
+
+
+def _save_failed(store: CacheStore, exc: Exception, send: Emit) -> None:
+    # A rejected save retired its file: the next cleanup deadline may be new.
+    send({"kind": "cache_save_failed", "message": str(exc), "next_deadline": _deadline(store)})
+    send({"kind": "cache_warning", "message": str(exc)})
 
 
 # A folder modified this close to a check (or later: another computer's clock) may change again
@@ -1815,7 +1830,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
 RACY_SECONDS = 2.0
 
 
-def _folder_identity(path: str, root: str | None = None) -> tuple[str, str]:
+def _folder_identity(path: str, root: str | None = None, reason: str = "live: identity") -> tuple[str, str]:
     """Which folder ``path`` is, beyond its spelling: the nearest data root's UUID, else its
     location (an SMB share's server and share, or a local mount's device) and relative path; and
     the folder whose .helab-root names it ("" for a location). "" if a marker is there but unreadable.
@@ -1826,17 +1841,17 @@ def _folder_identity(path: str, root: str | None = None) -> tuple[str, str]:
     invalid is looked for again from ``path``."""
     if root:
         try:
-            return "root:" + _read_marker(root, "live: identity").uuid, root
+            return "root:" + _read_marker(root, reason).uuid, root
         except (FileNotFoundError, ValueError):
             pass
         except OSError:
             return "", root
     elif root == "":
-        return _location_identity(path, "live: identity"), ""
+        return _location_identity(path, reason), ""
     folder = path
     while True:
         try:
-            return "root:" + _read_marker(folder, "live: identity").uuid, folder
+            return "root:" + _read_marker(folder, reason).uuid, folder
         except FileNotFoundError:
             pass
         except ValueError:
@@ -1847,7 +1862,7 @@ def _folder_identity(path: str, root: str | None = None) -> tuple[str, str]:
         if parent == folder:
             break
         folder = parent
-    return _location_identity(path, "live: identity"), ""
+    return _location_identity(path, reason), ""
 
 
 def _location_identity(path: str, reason: str) -> str:
@@ -1860,6 +1875,99 @@ def _location_identity(path: str, reason: str) -> str:
     mount = max(mounts, key=lambda item: len(_normal(item.path)))
     source = _smb_source(mount.source, mount.fstype) or f"{mount.fstype}:{mount.source}"
     return f"location:{source}|{path[len(mount.path):]}"
+
+
+def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held: list[list[int]],
+              problematic: list[int], held_dir: str, *, identity: str = "", identity_root: str | None = None,
+              no_cache: bool = False) -> None:
+    """Live's save: the folder's data the app holds in RAM written to the disk cache, without reading
+    TXY files again. ``held`` is that data's fingerprint (unreadable shots included), its arrays
+    are in ``held_dir`` (local files the app wrote), ``problematic`` its problematic shots.
+
+    The folder is listed once. Every held file must still be there with the size and mtime it had
+    when it was read (else ``shots_missing``: missing or changed; TXY files are written once), and
+    the folder must be the session's (``identity``, checked as Live does: reason root), before
+    ``loaded`` names the held shots and the dataset is saved under a load's guard, budget and
+    pending-save rules. Files the folder has and the data doesn't (Live hasn't read them yet) count
+    as unsettled, so the next quick check of the cache is a full one."""
+    import numpy as np
+    from helab.utils.cache_store import StoreError
+    store = _open_store(cache_options, send, path)
+    try:
+        guard: SaveGuard | None = None
+        if store is not None:
+            try:
+                guard = store.start_dataset_job(path, ("summaries",))
+            except StoreError as exc:
+                send({"kind": "cache_warning", "message": f"Disk cache can't be updated: {exc}"})
+            prefs = store.read_prefs([path])[path]
+            if prefs.failed:
+                send({"kind": "cache_warning", "message": f"Disk cache not used: the folder's settings couldn't be "
+                                                         f"read ({prefs.error})"})
+            no_cache = no_cache or prefs.failed or bool(prefs.value and prefs.value.get("no_cache"))
+        fingerprint = sorted((int(shot), int(size), int(modified)) for shot, size, modified in held)
+        known = {shot for shot, _, _ in fingerprint}
+        listed: dict[int, tuple[int, int]] = {}
+        file_names: dict[int, str] = {}
+        listed_at = time.time()
+        beat = Heartbeat(send, "listing")
+        with _scandir(path, "save: listing") as directory:
+            for entry in directory:
+                beat()
+                if (matched := file_kinds.match(entry.name)) and matched[0].loaded:
+                    info = _entry_stat(entry, "save: checking")
+                    listed[matched[1]] = (info.st_size, info.st_mtime_ns)
+                    file_names[matched[1]] = entry.name
+
+        def mismatch(reason: str, shots: list[int]) -> None:
+            send({"kind": "shots_missing", "reason": reason, "missing": shots[:20], "missing_count": len(shots),
+                  "known_count": len(known), "listed_count": len(listed)})
+        if missing := sorted(known - set(listed)):
+            mismatch("missing", missing)
+            return
+        if identity:
+            current, _ = _folder_identity(path, identity_root, "save: identity")
+            if current and current != identity:
+                mismatch("root", sorted(known))
+                return
+        if changed := [shot for shot, size, modified in fingerprint if listed[shot] != (size, modified)]:
+            mismatch("changed", changed)
+            return
+        data = {shot: np.load(os.path.join(held_dir, f"{shot}.npy"), allow_pickle=False)
+                for shot in sorted(known) if os.path.exists(os.path.join(held_dir, f"{shot}.npy"))}
+        unsettled = len(set(listed) - known)
+        names = [file_names[shot] for shot, _, _ in fingerprint]
+        problematic = sorted(set(problematic) & known)
+        saving = store is not None and guard is not None and not no_cache and bool(data)
+        had_dataset = False
+        if saving:
+            assert store is not None
+            row = store.read_dataset_row(path)
+            had_dataset = row.value is not None
+        counts = {"reused_memory": len(data), "reused_disk": 0, "new": 0, "modified": 0, "removed": 0,
+                  "read": 0, "new_loaded": 0, "modified_loaded": 0}
+        signature = _fingerprint_signature([list(entry) for entry in fingerprint])
+        send({"kind": "load_source", "source": "updated", "cache_reason": ""})
+        send({"kind": "loaded", "rows": 0, "bytes": 0, "files": len(data), "loaded_at": time.time(),
+              "total_files": len(listed), "failed_files": len(known) - len(data), "unsettled_files": unsettled,
+              "problematic": problematic, "source": "updated", "cached": False, **_data_root(store, path),
+              "disk_cache_pending": saving, "cache_info": {}, "load_counts": counts,
+              "cache_reason": f"Saved {len(data)} shots from memory; no TXY file read",
+              "fingerprint": [list(entry) for entry in fingerprint], "memory_shots": sorted(data),
+              "base_signature": signature, "signature": signature,
+              "listed_at": listed_at, "names": names, "identity": _location_identity(path, "save: identity")})
+        if not saving:
+            return
+        assert store is not None and guard is not None
+        try:
+            _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, counts, unsettled,
+                           had_dataset, (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
+                           send)
+        except Exception as exc:
+            _save_failed(store, exc, send)
+    finally:
+        if store is not None:
+            store.close()
 
 
 def _whole_last_row(tail: bytes) -> bool:
@@ -2675,6 +2783,11 @@ def main() -> None:
                        check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL),
                        listed_mtime=request.get("listed_mtime"), seen_names=request.get("seen_names"),
                        identity_root=request.get("identity_root"))
+        elif operation == "load" and request.get("save_memory") and request.get("held_dir"):
+            save_held(request["path"], emit, request.get("cache"), request.get("held") or [],
+                      request.get("held_problematic") or [], request["held_dir"],
+                      identity=str(request.get("identity") or ""), identity_root=request.get("identity_root"),
+                      no_cache=bool(request.get("no_cache")))
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),

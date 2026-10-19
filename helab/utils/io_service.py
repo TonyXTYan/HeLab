@@ -57,6 +57,9 @@ class IORequest:
     control: threading.Lock = field(default_factory=threading.Lock)
     # Whom the helper works for, sent to it only for the I/O trace (``io_helper.TRACE``).
     trace: dict[str, Any] | None = None
+    # Arrays the helper needs from this process (Live's save: the data in RAM), by shot: written to
+    # its private folder before it starts (``held_dir``), off the GUI thread.
+    arrays: dict[int, Any] | None = None
 
 
 FOREGROUND = "foreground"
@@ -153,8 +156,9 @@ class IOService(QObject):
 
     def submit(self, owner: str, generation: int, path: str, operation: str,
                payload: dict[str, Any] | None = None, *, priority: bool = False,
-               timeout: float | None = None) -> bool:
-        """Queue a helper; ``timeout`` is seconds without progress (``math.inf``: none)."""
+               timeout: float | None = None, arrays: dict[int, Any] | None = None) -> bool:
+        """Queue a helper; ``timeout`` is seconds without progress (``math.inf``: none). ``arrays``: data
+        from this process the helper reads from its private folder (``IORequest.arrays``)."""
         if self.closed:
             return False
         if any((r.owner, r.generation, r.path, r.operation) == (owner, generation, path, operation)
@@ -167,7 +171,7 @@ class IOService(QObject):
             return False
         request = IORequest(owner, generation, path, operation, payload or {},
                             self.NO_PROGRESS_TIMEOUT if timeout is None else timeout,
-                            priority=priority or operation == "load")
+                            priority=priority or operation == "load", arrays=arrays)
         # Navigation and loads precede bulk scans, which precede maintenance; FIFO within each group.
         if request.priority:
             index = next((i for i, r in enumerate(self.pending) if not r.priority), len(self.pending))
@@ -282,7 +286,7 @@ class IOService(QObject):
                           dict(request.payload),
                           request.timeout if math.isinf(request.timeout) else self.NO_PROGRESS_TIMEOUT,
                           attempt=request.attempt, file_attempts=dict(request.file_attempts),
-                          priority=request.priority)
+                          priority=request.priority, arrays=request.arrays)
         self.pending.appendleft(again)
         self.resultReady.emit(again, {"kind": "queued", "retry": True, "requeued": True,
                                       "attempt": again.attempt})
@@ -642,6 +646,15 @@ class IOService(QObject):
                 if request.pause_requested:
                     self._write_pause(request.output, True)
             payload["output"] = payload["control"] = request.output
+            if request.arrays is not None:
+                import numpy as np
+                held = os.path.join(request.output, "held")
+                os.mkdir(held)
+                for shot, array in request.arrays.items():
+                    if request.cancelled.is_set():
+                        return
+                    np.save(os.path.join(held, f"{shot}.npy"), array, allow_pickle=False)
+                payload["held_dir"] = held
             response_file: str | None = None
             if getattr(sys, "frozen", False):
                 input_file = os.path.join(request.output, "request.json")
@@ -850,7 +863,7 @@ class IOService(QObject):
                 retry = IORequest(request.owner, request.generation, request.path,
                                   request.operation, dict(request.payload), self.NO_PROGRESS_TIMEOUT,
                                   attempt=request.attempt + 1, file_attempts=file_attempts,
-                                  priority=request.priority)
+                                  priority=request.priority, arrays=request.arrays)
                 self.pending.appendleft(retry)
                 self.resultReady.emit(retry, {"kind": "queued", "retry": True,
                                              "attempt": retry.attempt})
