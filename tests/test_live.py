@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import QDialog
 from pytestqt.qtbot import QtBot
 
 from helab import io_helper
-from helab.io_helper import list_folder, live_check, load, read_cached, save_held
+from helab.io_helper import list_folder, live_check, load, read_cached, save_held, scan
 from helab.utils.constants import (
     DEFAULT_LIVE_AUTOSAVE, DEFAULT_LIVE_INTERVAL, LIVE_AUTOSAVE_SETTING, LIVE_INTERVAL_SETTING, read_live_autosave,
     read_live_interval,
@@ -61,6 +61,12 @@ def replay(cache: FolderCache, path: str, tmp_path: Path, operation: str = "load
     """Run the real helper for the queued request in-process and deliver its events, as the
     service's reader thread would (shots' artifacts become arrays; a Live save's data in RAM is
     handed over as ``IOService._run`` writes it, for ``save_held``)."""
+    return deliver(cache, *run_helper(cache, path, tmp_path, operation))
+
+
+def run_helper(cache: FolderCache, path: str, tmp_path: Path,
+               operation: str = "load") -> tuple[IORequest, list[dict[str, Any]]]:
+    """``replay``'s first half: the queued request taken off the queue and run; its events, not delivered."""
     request = producer(cache, path, operation)
     payload = request.payload
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
@@ -69,6 +75,9 @@ def replay(cache: FolderCache, path: str, tmp_path: Path, operation: str = "load
     try:
         if operation == "list":
             list_folder(path, events.append, payload.get("cache"))
+        elif operation in ("scan", "details"):
+            scan(path, events.append, payload.get("cache"), manual=payload.get("scan_manual", False),
+                 operation_id=payload.get("scan_operation_id", ""), revision=payload.get("scan_revision", 0))
         elif payload.get("save_memory") and request.arrays is not None:
             held = output / "held"
             held.mkdir()
@@ -90,6 +99,11 @@ def replay(cache: FolderCache, path: str, tmp_path: Path, operation: str = "load
     except Exception as exc:
         events.append({"kind": "error", "message": str(exc)})
     cache.service.pending.remove(request)
+    return request, events
+
+
+def deliver(cache: FolderCache, request: IORequest, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``replay``'s second half: the events, as the service's reader thread delivers them."""
     for event in events:
         if event["kind"] == "shot":
             event = {**event, "array": np.load(event.pop("artifact"))}
@@ -425,6 +439,58 @@ def test_the_save_at_live_off_reads_a_recently_read_shot_again_and_saves_it(
     [warning] = [record.getMessage() for record in caplog.records if "Live: shot" in record.getMessage()]
     assert "shot 3 changed" in warning and str(partial) in warning
     assert f"size 9 → {partial.stat().st_size:,} bytes" in warning
+    explorer.close_cleanup()
+
+
+def test_a_save_older_than_the_folders_listing_keeps_the_listing_and_still_saves(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path,
+) -> None:
+    """The reviewer's probe (recheck at 65a15a2): Live off saves (and reads shot 3 again) while a newer
+    check of the folder (Refresh, another tab) sees shot 4. The save's older summary isn't adopted:
+    the snapshot keeps the newer status, [1, 2, 3, 4]; the save still completes (not cancelled for
+    the newer signature) without counting its data as checked."""
+    path = str(run)
+    explorer = open_loaded(qtbot, service, run, tmp_path)
+    cache = explorer.model.cache
+    cache.live_autosave_shots = 100
+    assert explorer.start_live()
+    partial = run / "d_txy_forc3.txt"
+    partial.write_bytes(b"3,2,3\n3,4")
+    old = time.time() - 60
+    os.utime(partial, (old, old))
+    age_folder(run, 50)
+    checks(qtbot, explorer, path, tmp_path)
+    partial.write_bytes(b"3,2,3\n3,4,5\n")
+    os.utime(partial, (old + 5, old + 5))
+    age_folder(run, 40)
+    explorer.stop_live()
+    next_request(qtbot, explorer, path)
+    save, save_events = run_helper(cache, path, tmp_path)  # The save lists the folder, reads shot 3 again…
+    assert [event["kind"] for event in save_events].count("scan_summary") == 1
+    write_shot(run, 4)  # …shot 4 comes, and another tab lists the folder (foreground)…
+    age_folder(run, 30)
+    assert cache.submit("other-tab", 0, path, "list", {"cache": store_options()}, force=True)
+    replay(cache, path, tmp_path, "list")
+    snapshot = cache.snapshot(path)
+    assert snapshot is not None and snapshot.status["txy"] == [1, 2, 3, 4]
+    # …and its load of the folder, also in the foreground, adopts its newer signature (no data
+    # dropped, unlike a status check's, which runs in the background lane after the save).
+    snapshot.status["signature"] = "another tab's load"
+    newer = dict(snapshot.status)
+    events = deliver(cache, save, save_events)  # …then the save's events arrive.
+    loaded = next(event for event in events if event["kind"] == "loaded")
+    assert loaded["signature"] != newer["signature"] and float(newer["scanned_at"]) > float(
+        next(event for event in events if event["kind"] == "scan_summary")["status"]["scanned_at"])
+    snapshot = cache.snapshot(path)
+    assert snapshot is not None and snapshot.status == newer  # Not rolled back to [1, 2, 3].
+    # Kept (the folder's newest data, though not its current state: shot 4 is still to load).
+    dataset = cache.latest_dataset(path)
+    assert dataset is not None and dataset.signature == loaded["signature"] and sorted(dataset.data) == [1, 2, 3]
+    np.testing.assert_array_equal(dataset.data[3], [[3, 2, 3], [3, 4, 5]])
+    assert "checked_at" not in dataset.metadata and not cache.counts_as_checked(dataset)
+    np.testing.assert_array_equal((explorer.folder_opened_data or {})[3], [[3, 2, 3], [3, 4, 5]])
+    assert cached_shots(path, tmp_path) == [1, 2, 3]
+    qtbot.waitUntil(lambda: not explorer._live_sessions)  # (The save ended: not cancelled.)
     explorer.close_cleanup()
 
 

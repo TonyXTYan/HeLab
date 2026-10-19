@@ -99,6 +99,9 @@ class SharedJob:
     # A Live check (``io_helper.live_check``): keyed apart from ordinary loads of the folder, so
     # neither joins the other (their results differ).
     live: bool = False
+    # A Live save's summary older than the folder's snapshot (a newer listing ran meanwhile): not
+    # adopted, and its data is kept without the signature check, not counted as checked.
+    behind_listing: bool = False
 
     @property
     def key(self) -> tuple[str, str]:
@@ -2229,6 +2232,13 @@ class FolderCache(QObject):
                     job.load_status = None
             if kind == "scan_summary":
                 # A Live check's, or a Live save's that read shots again (``io_helper.save_held``).
+                listed = self.snapshots.get(job.path)
+                if (job.payload.get("save_memory") and listed is not None
+                        and float(event["status"].get("scanned_at") or 0)
+                        < float(listed.status.get("scanned_at") or 0)):
+                    # A listing newer than the save's (Refresh, another tab) is the folder's status.
+                    job.behind_listing = True
+                    return
                 self._adopt_load_summary(job.path, event["status"],
                                          live=bool(job.payload.get("live") or job.payload.get("save_memory")))
                 return
@@ -2245,8 +2255,10 @@ class FolderCache(QObject):
                 job.clock.stop()
                 event = {"loaded_at": time.time(), **event}
                 if job.operation == "load":
-                    # When this data was last checked against its folder (a cached read isn't a check).
-                    event["checked_at"] = time.monotonic()
+                    # When this data was last checked against its folder (a cached read isn't a check;
+                    # nor is a Live save's listing older than the folder's).
+                    if not job.behind_listing:
+                        event["checked_at"] = time.monotonic()
                     self._matched(job.path)
                 if job.operation == "load" and job.clock.total_bytes:
                     # Only a load that read TXY files has a load time; a check
@@ -2256,7 +2268,8 @@ class FolderCache(QObject):
                 expected = source_snapshot.status.get("signature") if source_snapshot else None
                 # Cached data is shown unchecked, even if the folder has changed since.
                 if job.epoch != self._epochs.get(job.path, 0) or (
-                        job.operation == "load" and expected and event.get("signature") != expected):
+                        job.operation == "load" and expected and event.get("signature") != expected
+                        and not job.behind_listing):
                     self._cancel_job(job)
                     if source_snapshot:
                         source_snapshot.checked_at = 0

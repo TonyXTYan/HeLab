@@ -92,7 +92,14 @@ with trace tests, following Codex's constraints and Maestro's notes:
   was chosen over exempting saves from the signature check because it keeps the folder's status (tree
   row, counts, signature) matching the data the save writes, as Live checks do; an exemption would
   have left the snapshot with the partial shot's signature. Tests of the tab now run saves through the
-  real `save_held` (`tests/test_live.py`'s `replay`).
+  real `save_held` (`tests/test_live.py`'s `replay`). After the recheck at 65a15a2: that summary is
+  adopted only if it isn't older (`scanned_at`) than the folder's snapshot. A newer listing seen while
+  the save ran (another tab browsing, Refresh, another tab's load: the foreground work that can run
+  beside a background save) stays the folder's status, and the save's data is kept without the
+  signature check and not counted as checked (`SharedJob.behind_listing`), so the next selection checks
+  the folder and loads the newer shot. A status check that finds a new signature still drops the
+  folder's data in RAM (epoch), as before this branch, and would cancel a save; with the default single
+  background lane it can't run beside one.
 - **Telling the user.** The tab's Live line and Folder details' state row say "Shot 1009 changed after
   it was read (writer paused > 5 s?): read again" (several: "Shots …") for **one minute** after the
   re-read (`LIVE_REREAD_NOTE_SECONDS`; new shots don't clear it, so it stays long enough to be seen at a
