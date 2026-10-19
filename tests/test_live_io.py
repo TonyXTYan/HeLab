@@ -93,7 +93,8 @@ def test_a_stuck_read_is_retried_only_after_the_previous_helper_has_exited(
     watched.mkdir()
     write_files(watched, range(1, 3))
     stuck = watched / "d_txy_forc3.txt"
-    os.mkfifo(stuck)
+    if sys.platform != "win32":  # Always true (skipif); type checkers see os.mkfifo as POSIX only.
+        os.mkfifo(stuck)
     old = time.time() - 60
     os.utime(stuck, (old, old))
     info = stuck.stat()
