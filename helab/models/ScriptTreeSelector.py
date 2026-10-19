@@ -6,8 +6,8 @@ import time
 from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal
 
 from PyQt6 import sip
-from PyQt6.QtCore import QObject, QRect, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QCloseEvent, QFocusEvent, QPainter, QPaintEvent, QWindow
+from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QCloseEvent, QFocusEvent, QGuiApplication, QPainter, QPaintEvent, QWindow
 # from uuid import uuid4
 
 # Import QWidget types first to avoid forward references
@@ -1089,6 +1089,50 @@ class TreePanelWidget(QWidget):
         button.clicked.connect(callback)
         return button
 
+def mouse_held() -> bool:
+    """Whether a mouse button is down (as of the last mouse event Qt had)."""
+    return QGuiApplication.mouseButtons() != Qt.MouseButton.NoButton
+
+
+class DragEnd(QObject):
+    """Says when the user lets go of plot docks being dragged (``ended``). Qt floats a dock as
+    a drag of it starts and docks it at the drop, so whether it floats is settled only then.
+    While waiting for a dock it filters that dock's events, and only its own: the first mouse
+    event it gets with no button down (the release, or a move, hover, enter or leave after a
+    release it didn't see, as when a system move of its window ended) ends the wait and the
+    filter. Nothing runs between drags."""
+
+    ended = pyqtSignal(QDockWidget)
+    MOUSE = {QEvent.Type.MouseButtonRelease, QEvent.Type.NonClientAreaMouseButtonRelease,
+             QEvent.Type.MouseMove, QEvent.Type.NonClientAreaMouseMove, QEvent.Type.HoverMove,
+             QEvent.Type.Enter, QEvent.Type.Leave}
+
+    def __init__(self, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._waiting: List[QDockWidget] = []
+
+    def wait(self, dock: QDockWidget) -> None:
+        if dock not in self._waiting:
+            self._waiting.append(dock)
+            dock.installEventFilter(self)
+
+    def waiting(self, dock: QDockWidget) -> bool:
+        return dock in self._waiting
+
+    def stop(self, dock: QDockWidget) -> None:
+        if dock in self._waiting:
+            self._waiting.remove(dock)
+            if not sip.isdeleted(dock):
+                dock.removeEventFilter(self)
+
+    def eventFilter(self, a0: Optional[QObject], a1: Optional[QEvent]) -> bool:
+        if (isinstance(a0, QDockWidget) and a1 is not None and a1.type() in self.MOUSE
+                and a0 in self._waiting and not mouse_held()):
+            self.stop(a0)
+            self.ended.emit(a0)
+        return False
+
+
 class PlotSettingsPanel(QWidget):
     """The settings of the active plot: one page per open plot, showing the page of the plot
     last clicked, focused or brought to the front among tabbed docks, floating ones included.
@@ -1099,13 +1143,15 @@ class PlotSettingsPanel(QWidget):
     (a click anywhere in a plot focuses it, as its dock takes click focus), the active window
     (a floating plot), the plot area's tab activations and the plots' visibility (the shown
     plot hidden: the most recently shown plot still visible shows, as when it closes). No
-    Python runs per event (no event filter), and the connections end with the panel or
-    ``detach()``. Whenever a plot shows, focus left in another plot moves to it, so focus is
+    Python runs per event (no event filter, but on a plot being dragged, until it is let go:
+    ``DragEnd``), and the connections end with the panel or ``detach()``. Whenever a plot shows, focus left in another plot moves to it, so focus is
     never in a plot other than the shown one, and a click in any other plot changes focus.
 
     A floating plot's page moves into its window (``AnalysisDock.settings``: the same
     editors, with their edits and Rerun) and back when it docks again; while it is the shown
-    plot, the panel says so, with a button that raises its window."""
+    plot, the panel says so, with a button that raises its window. A plot being dragged
+    (out, and maybe back) keeps its page where it is until the user lets go (``DragEnd``):
+    then it moves once, or not at all if the plot is docked again."""
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
@@ -1151,6 +1197,14 @@ class PlotSettingsPanel(QWidget):
         self._check_shown.setSingleShot(True)
         self._check_shown.setInterval(0)
         self._check_shown.timeout.connect(self._shown_still_visible)
+        # Floated or docked: the page moves a pass of the event loop later, or after a drag.
+        self._unplaced: List[QDockWidget] = []
+        self._place_soon = QTimer(self)
+        self._place_soon.setSingleShot(True)
+        self._place_soon.setInterval(0)
+        self._place_soon.timeout.connect(self._place_moved)
+        self._drag_end = DragEnd(self)
+        self._drag_end.ended.connect(self._drag_ended)
         self._update_chooser()
         app = QApplication.instance()
         self._app = app if isinstance(app, QApplication) else None
@@ -1181,7 +1235,8 @@ class PlotSettingsPanel(QWidget):
         dock.visibilityChanged.connect(self._visibility_changed)
         if isinstance(dock, AnalysisDock):
             dock.settings.toggle.set_text(name=title)
-            dock.topLevelChanged.connect(self._floating_changed)
+            dock.topLevelChanged.connect(self._dock_moved)
+            dock.dockLocationChanged.connect(self._dock_moved)
             self._place(dock)
         self.show_plot(dock)
 
@@ -1195,6 +1250,9 @@ class PlotSettingsPanel(QWidget):
         self.chooser.removeItem(index)
         if dock in self._recent:
             self._recent.remove(dock)
+        self._drag_end.stop(dock)
+        if dock in self._unplaced:
+            self._unplaced.remove(dock)
         if isinstance(dock, AnalysisDock) and not sip.isdeleted(dock):
             dock.settings.release()
         if not sip.isdeleted(page) and self.stack.indexOf(page) >= 0:
@@ -1282,11 +1340,29 @@ class PlotSettingsPanel(QWidget):
         if dock is self.current_plot():
             self.stack.setCurrentWidget(page if self.stack.indexOf(page) >= 0 else self.away)
 
-    @pyqtSlot(bool)
-    def _floating_changed(self, floating: bool) -> None:
+    @pyqtSlot()
+    def _dock_moved(self) -> None:
+        """A plot floated, docked or moved: its page follows once the user lets go of it (a
+        drag floats it as it starts), else a pass of the event loop later."""
         dock = self.sender()
-        if isinstance(dock, AnalysisDock):
-            self._place(dock)
+        if not isinstance(dock, AnalysisDock):
+            return
+        if mouse_held():
+            self._drag_end.wait(dock)
+        else:
+            self._drag_ended(dock)
+
+    @pyqtSlot(QDockWidget)
+    def _drag_ended(self, dock: QDockWidget) -> None:
+        if isinstance(dock, AnalysisDock) and dock not in self._unplaced:
+            self._unplaced.append(dock)
+        self._place_soon.start()
+
+    def _place_moved(self) -> None:
+        moved, self._unplaced = self._unplaced, []
+        for dock in moved:
+            if isinstance(dock, AnalysisDock) and not sip.isdeleted(dock) and not self._drag_end.waiting(dock):
+                self._place(dock)
 
     def _update_chooser(self) -> None:
         self.chooser_row.setVisible(bool(self._order))

@@ -437,6 +437,7 @@ def test_a_floating_plot_takes_its_page_and_gives_it_back(plots: Plots, qtbot: Q
     assert not side.is_open  # The chooser only raises it.
     plots.area.activateWindow()
     qtbot.waitUntil(lambda: QApplication.activeWindow() is plots.area)
+    panel.show_plot(two)  # The main window active, its focus back in plot one: two again.
     width = two.width()
     panel.away_button.click()  # Show plot window: raised, with its settings open.
     qtbot.waitUntil(lambda: QApplication.activeWindow() is two)
@@ -574,3 +575,105 @@ def test_many_floating_plots_each_hold_their_own_page(plots: Plots, qtbot: QtBot
     for dock in docks[:3]:
         docked(cast(AnalysisDock, dock), qtbot)
     assert plots.panel.stack.count() == 5
+
+
+def counted_moves(dock: AnalysisDock, monkeypatch: pytest.MonkeyPatch) -> List[str]:
+    """Each time the page moves into ``dock``'s window ("in") or out of it ("out")."""
+    moves: List[str] = []
+    hold, release = dock.hold_settings, dock.settings.release
+
+    def holding(page: QWidget) -> None:
+        moves.append("in")
+        hold(page)
+
+    def releasing() -> Optional[QWidget]:
+        if dock.settings.page is not None:
+            moves.append("out")
+        return release()
+
+    monkeypatch.setattr(dock, "hold_settings", holding)
+    monkeypatch.setattr(dock.settings, "release", releasing)
+    return moves
+
+
+@pytest.fixture
+def let_go(plots: Plots, qtbot: QtBot) -> Iterator[None]:
+    """A drag test that fails mid-drag leaves no button down for the tests after it."""
+    yield
+    if QApplication.mouseButtons() != Qt.MouseButton.NoButton:
+        qtbot.mouseRelease(plots.area, Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
+
+
+def press_title(dock: QDockWidget, qtbot: QtBot) -> None:
+    qtbot.mousePress(dock, Qt.MouseButton.LeftButton, pos=QPoint(20, 5))  # type: ignore[no-untyped-call]
+    assert QApplication.mouseButtons() == Qt.MouseButton.LeftButton
+
+
+def test_a_dragged_plot_takes_its_page_once_let_go(
+        plots: Plots, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, let_go: None) -> None:
+    """Qt floats a plot as a drag of it starts: its page stays in the panel until the user
+    lets go, then moves once. Between drags nothing watches the dock."""
+    page = QLineEdit()
+    dock = cast(AnalysisDock, plots.add(page=page))
+    plots.show(qtbot)
+    moves = counted_moves(dock, monkeypatch)
+    panel = plots.panel
+    press_title(dock, qtbot)
+    for x in range(20, 300, 20):  # Dragged out of the plot area.
+        qtbot.mouseMove(dock, QPoint(x, 5 + x))  # type: ignore[no-untyped-call]
+    assert dock.isFloating() and panel._drag_end.waiting(dock)
+    qtbot.wait(100)
+    assert moves == [] and panel.stack.currentWidget() is page
+    qtbot.mouseRelease(dock, Qt.MouseButton.LeftButton, pos=QPoint(300, 305))  # type: ignore[no-untyped-call]
+    qtbot.waitUntil(lambda: moves == ["in"])
+    assert dock.settings.page is page and panel.stack.currentWidget() is panel.away
+    assert not panel._drag_end.waiting(dock)
+    qtbot.wait(50)
+    assert moves == ["in"]
+
+
+def test_a_plot_dragged_out_and_back_keeps_its_page(
+        plots: Plots, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, let_go: None) -> None:
+    """Out and back in one drag (Qt floats it, then docks it at the drop): nothing moves."""
+    page = QLineEdit()
+    dock = cast(AnalysisDock, plots.add(page=page))
+    plots.show(qtbot)
+    moves = counted_moves(dock, monkeypatch)
+    press_title(dock, qtbot)
+    dock.setFloating(True)  # As the drag starts.
+    qtbot.wait(50)
+    dock.setFloating(False)  # Dropped back in the plot area.
+    qtbot.wait(50)
+    qtbot.mouseRelease(dock, Qt.MouseButton.LeftButton, pos=QPoint(20, 5))  # type: ignore[no-untyped-call]
+    qtbot.wait(50)
+    assert moves == [] and not dock.isFloating() and plots.panel.stack.currentWidget() is page
+    assert not plots.panel._drag_end.waiting(dock)
+    # A floating plot dragged back in moves its page out once, at the drop.
+    dock.setFloating(True)
+    qtbot.waitUntil(lambda: moves == ["in"])
+    press_title(dock, qtbot)
+    dock.setFloating(False)
+    qtbot.wait(50)
+    assert moves == ["in"] and dock.settings.page is page
+    qtbot.mouseRelease(dock, Qt.MouseButton.LeftButton, pos=QPoint(20, 5))  # type: ignore[no-untyped-call]
+    qtbot.waitUntil(lambda: moves == ["in", "out"])
+    assert plots.panel.stack.currentWidget() is page
+
+
+def test_a_release_the_dock_never_saw_ends_the_drag_at_its_next_mouse_event(
+        plots: Plots, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, let_go: None) -> None:
+    """A drag whose release went elsewhere (a system move of the window): the next mouse event
+    the dock gets, with no button down, ends it."""
+    dock = cast(AnalysisDock, plots.add(page=QLineEdit()))
+    plots.show(qtbot)
+    moves = counted_moves(dock, monkeypatch)
+    press_title(dock, qtbot)
+    dock.setFloating(True)
+    qtbot.wait(50)  # Events of its window coming up, the button still down: still waiting.
+    assert moves == [] and plots.panel._drag_end.waiting(dock)
+    # Let go where the dock gets no event: Qt knows no button is down.
+    monkeypatch.setattr("helab.models.ScriptTreeSelector.mouse_held", lambda: False)
+    qtbot.mouseMove(dock, QPoint(30, 30))  # type: ignore[no-untyped-call]
+    qtbot.waitUntil(lambda: moves == ["in"])
+    assert not plots.panel._drag_end.waiting(dock)
+    qtbot.mouseRelease(dock, Qt.MouseButton.LeftButton, pos=QPoint(30, 30))  # type: ignore[no-untyped-call]

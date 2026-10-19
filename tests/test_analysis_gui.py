@@ -308,9 +308,9 @@ def test_settings_panel_follows_the_active_plot(
     two.setFloating(True)
     two.show()
     two.activateWindow()
-    qtbot.waitUntil(lambda: settings.current_plot() is two)
+    qtbot.waitUntil(lambda: settings.current_plot() is two and settings.settings_away(two))
     # Its page is in its window now; the panel says so.
-    assert settings.stack.currentWidget() is settings.away and settings.settings_away(two)
+    assert settings.stack.currentWidget() is settings.away
     assert cast(AnalysisDock, two).settings.page is second.param_tab
     # A page keeps its edits while another plot's page shows.
     assert first.parameter_root is not None and second.parameter_root is not None
@@ -484,8 +484,9 @@ def test_twenty_plots_tabbed_and_floating(
     assert len({dock.windowTitle() for dock in docks}) == 20
     # Opened at once, before any dock showed: still one tab group.
     assert set(window.middle_mainwindow.tabifiedDockWidgets(docks[0])) == set(docks[1:])
-    for dock in docks[::4]:  # Five float.
+    for dock in docks[::4]:  # Five float; their pages follow a pass of the event loop later.
         dock.setFloating(True)
+    qtbot.waitUntil(lambda: all(settings.settings_away(dock) for dock in docks[::4]))
     # Each plot's page is its own: edits and the page (tab) shown stay with it.
     def tabs_of(instance: AnalysisInstance) -> QTabWidget:
         tabs = cast(QWidget, instance.param_tab).findChild(QTabWidget)
@@ -516,7 +517,9 @@ def test_twenty_plots_tabbed_and_floating(
     docks[4].close()
     assert settings.current_plot() is docks[3]
     docks[3].close()
-    assert settings.current_plot() is docks[18]  # Then the newest of those never shown.
+    # Then the most recently shown: floating plot 16, whose window was activated as it came up
+    # while the pages moved.
+    assert settings.current_plot() is docks[16]
     assert settings.chooser.count() == 15
     # Memory: once all are closed, nothing of them is left.
     pages = [cast(QWidget, instance.param_tab) for instance in instances]
