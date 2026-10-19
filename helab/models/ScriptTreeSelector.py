@@ -632,12 +632,14 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.released.set_state("")  # A reload's run ended; a failure shows in the amber line.
         if result.state == "cancelled":
             self.status_label.setText("Cancelled")
+            self._still_released()
             self._show_follow()
             return
         if not self.follow.on and view is not None and view.key != self.follow.ran.key:
             # A Live rerun that started before Follow Live went off: the plot stays pinned.
             self.status_label.setText(f"Pinned at rev {self.follow.ran.revision}: "
                                       f"the run on rev {view.revision} isn't shown")
+            self._still_released()
             self._show_follow()
             return
         self.result = result
@@ -661,6 +663,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             if self.shown is not None:
                 # The last plot stays; the error shows above it until a run succeeds.
                 self.error = f"rev {result.input.revision} failed: {error} · showing rev {self.shown.input.revision}"
+                self._still_released()
                 self._show_follow()
                 self._follow_next()
                 return
@@ -678,6 +681,15 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.released = None  # Drawn again: its picture goes.
         self._show_content(content, result, specs, warnings)
         self._follow_next()
+
+    def _still_released(self) -> None:
+        """A run ended without drawing while the plot is released (a reload failed or was
+        cancelled): it keeps no data, so the data that run had goes (it couldn't be freed
+        otherwise: a released plot isn't released again)."""
+        if self.released is not None and self.follow.ran.event_count:
+            self.follow.ran = hollow(self.follow.ran)
+            if self.budget is not None:
+                self.budget.schedule()
 
     def _updated(self, result: AnalysisResult) -> Optional[QWidget]:
         """The plot drawn, showing ``result`` in place (the script's ``update``), or None."""

@@ -510,6 +510,46 @@ def test_with_no_data_anywhere_the_plot_says_so_and_keeps_its_picture(
     assert instance.released is picture and "none of its 2 shots" in picture.state.text()
 
 
+class Fails(Copy):
+    fail = False
+
+    def compute(self, action_name: str, context: AnalysisContext) -> Any:
+        if self.fail:
+            raise RuntimeError("boom")
+        return super().compute(action_name, context)
+
+
+@pytest.mark.parametrize("ending", ["failed", "cancelled"])
+def test_a_reload_that_draws_nothing_keeps_no_data(window: Window, cache: FolderCache, runner: AnalysisRunner,
+                                                    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+                                                    ending: str) -> None:
+    """The reviewer's probe: a reload whose run fails (or is cancelled) leaves the plot released,
+    holding nothing (its picture aside), so nothing is counted that can't be freed."""
+    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {})
+    entry = hold(cache, dataset("f", range(1, 4)))
+    script = Fails()
+    instance = open_plot(window, qtbot, entry, script)
+    open_plot(window, qtbot, dataset("other", range(1, 2)))
+    assert instance.release()
+    released = instance.released
+    assert released is not None
+    script.fail = ending == "failed"
+    if ending == "cancelled":
+        script.go.clear()
+    released.reload_button.click()
+    assert instance.job_id
+    if ending == "cancelled":
+        runner.cancel(instance.job_id)
+        script.go.set()
+    qtbot.waitUntil(lambda: not instance.job_id, timeout=10_000)
+    del cache.datasets[(entry.path, entry.signature, 0)]
+    assert instance.released is released and instance.view.event_count == 0
+    assert instance.ram_buffers() == {}
+    assert released.reload_button.isEnabled()
+    if ending == "failed":
+        assert "boom" in error_line(instance)
+
+
 def test_rerun_on_a_released_plot_reloads_with_the_settings_shown(
         window: Window, cache: FolderCache, qtbot: QtBot) -> None:
     hold(cache, dataset("rerun", range(1, 3)))
