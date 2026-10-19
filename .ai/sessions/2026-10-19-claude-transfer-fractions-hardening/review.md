@@ -136,3 +136,79 @@ in the tip. Tony's choice. The doc's description of the difference is accurate.
 - `mypy helab/ --strict`, `mypy tests --strict`, both also `--platform win32`: no issues (79 / 62 files).
 - `pyright helab tests`, also `--pythonplatform Windows`: 0 errors, 0 warnings.
 - `git diff --check 9f6ee5a..HEAD`: clean.
+
+## Recheck at 1462b39 (head d0255ca)
+
+Reviewed `git diff eea6576..d0255ca`: `966ecfa` (F1 jump warning), `20e76a9` (F3 differences),
+`1462b39` (review + handoff), `d0255ca` (jump note's wording only). New probe:
+`/private/tmp/claude-501/-Users-tonyyan-GitHub--maestri-floors-HeLab--agenttransfer-fractions-hardening--maestri-roles-48acbf34-5a62-4718-ba82-c2ca0dd11786/2fda92ed-5ee3-4e04-a45c-00214d538025/scratchpad/probe/jump.py`.
+It runs plots in sequence and writes each run's `detected_parameters` back the way `_show_detected` does.
+
+**Verdict: F1 and F3 are fixed, with one new medium finding (R1).** It errs loud, not silent, so it
+doesn't block landing, but the advice the plot and handoff give for "unsure" doesn't do what they
+say. F2 (XY rotation) is still Tony's decision.
+
+### Jump warning: works as intended
+
+- **My 70–97 % cases on a second run:** the warning fires every time. Live, last 5 shots, an
+  amplitude scan 5 → 100 → 5 %: every run is right, warns, or both. None is silently wrong.
+  At 80 % (pool still mostly low) it is right with "unsure". From 90 % up to 35 % on the way back
+  down it shows "moved by +1" (some runs with "unsure" too). It settles silently once the pool is
+  low again. Last 1 shot, 10 → 95 → 10 %: warns on both 95 % shots, then is quiet.
+- **Scans by shot choice:** From shot 11 (the 90 % half) warns "moved"; back to all shots, it doesn't.
+- **No false warnings:** none when transfer wanders between 0 and 45 % (15 Live runs). None when
+  order 0 drifts slowly by 0.05 spacing per run (0.55 spacing in total), because each run refills
+  the centre. None from the default centre, from half a spacing, or in manual mode (also tested).
+- **d0255ca's "accept" advice works:** after a wrong first run at 90 % and then 30 %, typing the
+  note's centre in manual, Rerun, then Auto clears the warning. That holds for the default
+  centre and for an offset one (the 6-digit value is within `JUMP_SLACK`). Small wording nit: the
+  note should also say "then back to Auto". Otherwise the plot stays in manual and stops following
+  Live's order 0.
+- **Known cost (documented in the handoff):** after a wrong first run (> 2/3 transfer), the
+  "moved by −1" warning stays on every later run until order 0 is set by hand, even though those
+  runs are right. That is loud, not silent, so acceptable.
+
+### R1 (medium): "Set Search T around order 0" never clears "unsure", and after a wrong pick it makes "moved" stick
+
+`transfer_fractions.py:259-271` (`unsure`) counts rivals over every window regardless of Search T.
+Search T only adds "(outside Search T)" to the note. So with a correct Search T around the real
+order 0, the note stays whenever +1 holds ≥ half of order 0's events: 45 % transfer gives
+"+1 (outside Search T) holds 72 %", 60 % gives 132 %. That is every case the handoff's checklist
+step 3 covers ("transfer ~40–65 % … Set Search T around the real order 0: the note goes"), which
+is false (and was in step 2 at eea6576 too: I missed it). The note's own advice ("set Search T
+around order 0, or the orders by hand") likewise never clears it.
+
+And if the first run picked +1 (60 % transfer, "unsure"), fixing it with Search T makes the
+detection right, but the hidden centre is still the wrong +1. So "⚠ order 0 moved by −1" shows on
+every rerun, and manual would start from +1. Options:
+- (a) treat a Search T with both ends set as the user's statement of where order 0 is: no
+  "unsure" for rivals outside it, and no "moved" when the last centre lies outside it. The
+  original reason for counting rivals outside Search T (a range that leaves the real order 0 out)
+  would then go unflagged, so maybe keep a softer "order +1 outside Search T is taller"
+  information line.
+- (b) keep the logic and fix the words: step 3 and the note's advice should say the note stays
+  while another order is that tall, and point to manual orders as the way to silence it.
+
+Also, a Search T narrow enough to leave out a taller +1 usually holds no side peak, so the spacing
+falls back to the hidden one ("no side peak found … spacing as set"). That's fine, but worth a
+line in the checklist.
+
+### Claims now true?
+
+- **Module docstring (:16-22):** true, including the first-run > 2/3 limit (pinned by
+  `test_a_first_run_over_two_thirds_transfer_takes_plus_1_for_order_0`, 75/90/97 %).
+- **Orders tip:** true.
+- **Handoff summary, proposed AGENTS.md sentence and `_readme.md` line:** true.
+- **Handoff checklist:** step 2 is true; step 3 is not (R1).
+- **The per-setting `_show_detected` line:** true.
+- **F3 header in `test_transfer_fractions_matlab.py`:** right; matches `masktxy_square.m`,
+  `txylim` and `dld_aquire` in `monitor_momentum.m`.
+- **Version 3 → 4 for the jump note:** right (output changes).
+
+### Checks at d0255ca (rerun by me, floor root, venv + floor-env)
+
+- `pytest -n 6 --reruns 5 --reruns-delay 1 -rR --basetemp=.ai/temp/pytest-review`: **1201 passed,
+  2 skipped, 2 xfailed, no RERUN** (also at 1462b39: same).
+- `mypy --strict` on helab and tests, also `--platform win32`: no issues.
+- `pyright helab tests`, also `--pythonplatform Windows`: 0 errors.
+- `git diff --check 9f6ee5a..d0255ca`: clean.
