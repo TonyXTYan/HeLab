@@ -4,11 +4,14 @@ in mm, with their standard errors, over the chosen shots; optionally the spectru
 mean-position trace (atom-laser pointing and breathing, sloshing).
 
 The events are those inside the plot's view range (auto-crop or manual, over T, X and Y), and
-the T bins start at the range's start. A bin with fewer events than the minimum is left out:
-a gap in the traces, counted in the plot's note. Standard errors: SD/√n for a mean and
-SD/√(2(n−1)) for an SD (normal data). For the spectrum, the trace runs from its first kept bin
-to its last, gaps inside filled by straight lines (said so); its mean is subtracted and it is
-windowed (``helab.analysis.spectrum``).
+the T bins are whole bins from the range's start (events past the last whole bin are left out,
+said so). A bin with fewer events than the minimum is left out: a gap in the traces, counted
+in the plot's note. Standard errors: SD/√n for a mean and SD/√(2(n−1)) for an SD (normal
+data). For the spectrum, the trace runs from its first kept bin to its last, gaps inside
+filled by straight lines (said so) while they are at most ``MAX_FILLED`` (20 %) of it; past
+that, the longest stretch without gaps is used if it has ``MIN_SPECTRUM_BINS`` bins, else there
+is no spectrum, and the plot says which. Its mean is subtracted, it is windowed, and the bins'
+averaging is corrected for (``helab.analysis.spectrum``, ``binned``).
 
 Unlike the old GUI (its legacy bugs 4–6): the bins are exactly the width asked (it made them
 about twice as wide), the width is in seconds, empty bins are gaps rather than NaN spectra,
@@ -35,7 +38,8 @@ from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
                                       range_warnings, select_shots, selection_text, shots_brief, shots_text)
-from helab.analysis.spectrum import Spectrum, amplitude_spectrum, find_spectrum_peaks, peak_specs, window_spec
+from helab.analysis.spectrum import (Spectrum, amplitude_spectrum, dropped_text, find_spectrum_peaks, peak_specs,
+                                     spectrum_text, whole_bins, window_spec)
 from helab.analysis.stats import CropBox, crop_box
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
@@ -67,6 +71,7 @@ AUTO_EVENTS = 100  # automatic bins: about this many events per bin on average �
 AUTO_BINS = (10, 1000)  # … and at least / at most this many bins
 MAX_BINS = 100_000
 MIN_SPECTRUM_BINS = 8  # a trace this long, first kept bin to last, at least
+MAX_FILLED = 0.2  # gaps filled by straight lines for the spectrum: at most this share of the trace
 POINT_SPAN = 5e-4  # a range with no T extent (one event, equal T) is widened by this each way
 COLOURS = {"X": (40, 90, 170), "Y": (214, 95, 20)}
 
@@ -92,6 +97,7 @@ class PositionProfile:
     traces: tuple[Trace, ...] = ()  # X and Y
     width: float = math.nan  # the T bin width (s)
     automatic: bool = True
+    clamp: str = ""  # automatic, and at a bin limit: "at least" or "at most" (else "")
     minimum: int = 10  # bins with fewer events are left out
     time_unit: str = "ms"
     box: CropBox | None = None
@@ -113,17 +119,28 @@ class PositionProfile:
         return int(len(self.counts) - np.count_nonzero(self.kept))
 
 
-def bin_width(events: int, span: float, given: float) -> tuple[float, bool, str]:
+def bin_width(events: int, span: float, given: float) -> tuple[float, bool, str, str]:
     """The T bin width: as given, else automatic (about ``AUTO_EVENTS`` per bin, ``AUTO_BINS``
-    bins); widened to stay within ``MAX_BINS``. (width, automatic, what it says when widened)."""
+    bins); widened to stay within ``MAX_BINS``. (width, automatic, the automatic limit reached:
+    "at least", "at most" or "", what it says when widened)."""
     if given > 0:
         if span / given > MAX_BINS:
             wider = span / MAX_BINS
-            return wider, False, (f"T bin width {time_text(given)} gives over {MAX_BINS:,} bins: using "
-                                  f"{time_text(wider)}")
-        return given, False, ""
+            return wider, False, "", (f"T bin width {time_text(given)} gives over {MAX_BINS:,} bins: using "
+                                      f"{time_text(wider)}")
+        return given, False, "", ""
     low, high = AUTO_BINS
-    return span / min(max(events // AUTO_EVENTS, low), high), True, ""
+    wanted = events // AUTO_EVENTS
+    clamp = "at least" if wanted < low else "at most" if wanted > high else ""
+    return span / min(max(wanted, low), high), True, clamp, ""
+
+
+def auto_text(data: PositionProfile) -> str:
+    """Why the automatic width: ``~100 events per bin``, or the limit reached and the events per bin."""
+    if not data.clamp:
+        return f"~{AUTO_EVENTS} events per bin"
+    limit = AUTO_BINS[0] if data.clamp == "at least" else AUTO_BINS[1]
+    return f"{data.clamp} {limit:,} bins, ~{data.events / max(len(data.counts), 1):.3g} events per bin"
 
 
 def bin_statistics(values: npt.NDArray[np.float64], index: npt.NDArray[np.intp], counts: npt.NDArray[np.int64],
@@ -149,19 +166,62 @@ def bin_statistics(values: npt.NDArray[np.float64], index: npt.NDArray[np.intp],
     return Trace(axis, *arrays)
 
 
-def filled(centres: npt.NDArray[np.float64], trace: npt.NDArray[np.float64]) -> tuple[npt.NDArray[np.float64], int]:
-    """The trace from its first finite value to its last, the gaps inside filled by straight
-    lines, and how many were filled."""
-    finite = np.flatnonzero(np.isfinite(trace))
-    if not len(finite):
-        return np.empty(0), 0
-    span = slice(int(finite[0]), int(finite[-1]) + 1)
-    part, where = trace[span], centres[span]
-    good = np.isfinite(part)
-    gaps = int(len(part) - np.count_nonzero(good))
-    if gaps:
-        part = np.interp(where, where[good], part[good])
-    return cast(npt.NDArray[np.float64], np.asarray(part, dtype=np.float64)), gaps
+@dataclass(frozen=True)
+class Stretch:
+    """The bins a spectrum uses (``start`` to ``stop``, exclusive) and how many of them are
+    gaps filled by straight lines; ``note`` says what was done ("" for a whole trace without
+    gaps), and an empty stretch (start = stop) means no spectrum."""
+    start: int
+    stop: int
+    filled: int
+    note: str
+
+
+def longest_run(kept: npt.NDArray[np.bool_]) -> tuple[int, int]:
+    """The longest stretch of consecutive kept bins: (start, stop)."""
+    padded = np.concatenate([[False], kept, [False]]).astype(np.int8)
+    changes = np.flatnonzero(np.diff(padded))
+    starts, stops = changes[::2], changes[1::2]
+    if not len(starts):
+        return 0, 0
+    longest = int(np.argmax(stops - starts))
+    return int(starts[longest]), int(stops[longest])
+
+
+def stretch(kept: npt.NDArray[np.bool_], centres: npt.NDArray[np.float64], unit: str) -> Stretch:
+    """Which bins the spectrum uses (module docstring): from the first kept bin to the last with
+    the gaps filled while they are at most ``MAX_FILLED`` of it, else the longest stretch
+    without gaps when it is long enough, else none."""
+    where = np.flatnonzero(kept)
+    if not len(where):
+        return Stretch(0, 0, 0, "no spectrum: no bin kept")
+    start, stop = int(where[0]), int(where[-1]) + 1
+    gaps = (stop - start) - len(where)
+    if stop - start < MIN_SPECTRUM_BINS:
+        return Stretch(0, 0, 0, f"no spectrum: the traces have {stop - start:,} bins from the first kept to the "
+                                f"last, under {MIN_SPECTRUM_BINS}")
+    share = gaps / (stop - start)
+    if share <= MAX_FILLED:
+        note = f"{gaps:,} gap bin{'' if gaps == 1 else 's'} filled by straight lines for the spectrum" if gaps else ""
+        return Stretch(start, stop, gaps, note)
+    low, high = longest_run(kept)
+    scale = 1e3 if unit == "ms" else 1.0
+    if high - low >= MIN_SPECTRUM_BINS:
+        return Stretch(low, high, 0, f"gaps are {share * 100:.0f} % of the traces (over {MAX_FILLED * 100:.0f} %): spectrum of the "
+                                     f"longest stretch without gaps, T {centres[low] * scale:.4g}–"
+                                     f"{centres[high - 1] * scale:.4g} {unit} ({high - low:,} bins)")
+    return Stretch(0, 0, 0, f"no spectrum: gaps are {share * 100:.0f} % of the traces (over {MAX_FILLED * 100:.0f} %) and the "
+                            f"longest stretch without gaps has {high - low:,} bins, under {MIN_SPECTRUM_BINS}")
+
+
+def filled(centres: npt.NDArray[np.float64], trace: npt.NDArray[np.float64], part: Stretch
+           ) -> npt.NDArray[np.float64]:
+    """The trace over the stretch, its gaps filled by straight lines."""
+    values, where = trace[part.start:part.stop], centres[part.start:part.stop]
+    good = np.isfinite(values)
+    if not good.all():
+        values = np.interp(where, where[good], values[good])
+    return cast(npt.NDArray[np.float64], np.asarray(values, dtype=np.float64))
 
 
 def empty_reason(data: PositionProfile) -> str:
@@ -318,13 +378,28 @@ class MeanPositionVsT(DatasetAnalysis):
         data = result.data
         if not isinstance(data, PositionProfile) or not len(data.counts):
             return ""
-        parts = [f"T bins {time_text(data.width)} (auto)" if data.automatic else ""]
+        parts = [f"T bins {time_text(data.width)} (auto: {auto_text(data)})" if data.automatic else ""]
         if data.left_out:
             parts.append(f"{data.left_out:,} of {len(data.counts):,} bins left out")
         if data.spectra:
-            parts.append(f"Δf {frequency_text(data.spectra[0].resolution)}, Nyquist "
-                         f"{frequency_text(data.spectra[0].nyquist)}")
+            parts.append(spectrum_text(data.spectra[0]))
         return " · ".join(part for part in parts if part)
+
+    def result_record(self, action_name: str, result: AnalysisResult) -> List[str]:
+        """The bins (left out, filled), the spectrum's frequencies and its peaks, for the dock's record."""
+        data = result.data
+        if not isinstance(data, PositionProfile) or not len(data.counts):
+            return []
+        how = f"auto: {auto_text(data)}" if data.automatic else "set"
+        lines = [f"T bins: {len(data.counts):,} of {time_text(data.width)} ({how}), {data.events:,} events; "
+                 f"{data.left_out:,} with fewer than {data.minimum:,} events left out", *data.notes]
+        if data.spectra:
+            first = data.spectra[0]
+            lines.append(f"Spectrum: {first.window} window, {spectrum_text(first)}, corrected for the bins' "
+                         f"averaging (÷ sinc(f · bin width))")
+            for axis, spectrum in zip(COLOURS, data.spectra):
+                lines.append(f"Peaks, {peak_text(spectrum, axis)}")
+        return lines
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
         return list(range_warnings(values))
@@ -348,41 +423,39 @@ class MeanPositionVsT(DatasetAnalysis):
         lower, upper = box.lower[0], box.upper[0]
         if not upper > lower:
             lower, upper = lower - POINT_SPAN, upper + POINT_SPAN
-        width, automatic, widened = bin_width(len(inside), upper - lower, float(values[BIN_WIDTH.name]))
-        bins = max(1, math.ceil((upper - lower) / width * (1 - 1e-12)))
+        width, automatic, clamp, widened = bin_width(len(inside), upper - lower, float(values[BIN_WIDTH.name]))
+        binned = whole_bins(inside[:, 0], lower, upper, width)
+        inside, index, bins = inside[binned.kept], binned.index, binned.bins
         edges = (lower + width * np.arange(bins + 1)).astype(np.float64)
-        index = np.minimum(((inside[:, 0] - lower) / width).astype(np.intp), bins - 1)
         counts = np.bincount(index, minlength=bins).astype(np.int64)
         kept = counts >= minimum
         traces = []
         for column, axis in ((1, "X"), (2, "Y")):
             context.check()
             traces.append(bin_statistics(inside[:, column] * LENGTH_SCALE, index, counts, kept, axis))
-        notes: list[str] = []
+        notes: list[str] = [dropped_text(binned)] if binned.dropped else []
         left_out = int(bins - np.count_nonzero(kept))
         if left_out and kept.any():
             notes.append(f"{left_out:,} of {bins:,} bins with fewer than {minimum:,} events left out")
         data = PositionProfile(shots, len(view.shots), len(events), len(inside), edges, counts, tuple(traces), width,
-                               automatic, minimum, time_unit(lower, upper)[0], box,
+                               automatic, clamp, minimum, time_unit(lower, upper)[0], box,
                                range_warnings(values) + ((widened,) if widened else ()), tuple(notes),
                                spectrum_asked=bool(values[SPECTRUM.name]))
         if not values[SPECTRUM.name] or not kept.any():
             return data
         context.check()
         centres = data.centres
-        spectra, gaps = [], 0
+        part = stretch(kept, centres, data.time_unit)  # X's and Y's gaps are the same bins
+        if part.note:
+            notes.append(part.note)
+        if part.stop == part.start:
+            return replace(data, notes=tuple(notes))
+        spectra = []
         for trace in traces:
-            part, filled_here = filled(centres, trace.mean)
-            if len(part) < MIN_SPECTRUM_BINS:
-                notes.append(f"no spectrum: the traces have {len(part):,} bins from the first kept to the last, "
-                             f"under {MIN_SPECTRUM_BINS}")
-                return replace(data, notes=tuple(notes))
-            gaps = max(gaps, filled_here)
-            spectrum = amplitude_spectrum(part, width, str(values[WINDOW.name]))
+            spectrum = amplitude_spectrum(filled(centres, trace.mean, part), width, str(values[WINDOW.name]),
+                                          binned=True)
             spectra.append(find_spectrum_peaks(spectrum, int(values[PEAKS.name]), float(values[PEAKS_ABOVE.name]),
                                                float(values[THRESHOLD.name])))
-        if gaps:
-            notes.append(f"{gaps:,} gap bin{'' if gaps == 1 else 's'} filled by straight lines for the spectrum")
         return replace(data, notes=tuple(notes), spectra=tuple(spectra))
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:

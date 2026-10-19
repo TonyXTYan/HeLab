@@ -3,15 +3,18 @@
 and trap frequencies in summed arrival times.
 
 The events inside the plot's view range (auto-crop or manual, over T, X and Y) are histogrammed
-finely in T, from the range's start, in bins of exactly the width set; automatic: from the
-data rate, about ``AUTO_EVENTS`` (10) events per bin on average, so a bin's shot noise is
-about a third of it and Nyquist is a twentieth of the summed events' mean rate, between 256 and
-16,384 bins (narrow the range or set the width for higher frequencies). The profile is the rate per shot (kHz per shot, the front panel's
-"kHz/File") or the summed counts. Its mean is subtracted, it is windowed (Hann by default)
-and transformed (``helab.analysis.spectrum``: amplitudes normalised as ``fft_tx``, optional
-zero padding), and the most prominent peaks are listed with their frequency, amplitude and
-prominence, in the plot and in the result. The frequency resolution (1 over the profile's
-length) and Nyquist frequency (half the bins' rate) are in the dock's settings line.
+finely in T, from the range's start, in whole bins of exactly the width set (events past the
+last whole bin are left out, said so); automatic: from the data rate, about ``AUTO_EVENTS``
+(10) events per bin on average, so a bin's shot noise is about a third of it and Nyquist is a
+twentieth of the summed events' mean rate, between 256 and 16,384 bins (narrow the range or
+set the width for higher frequencies; the dock line says when a limit applies). The profile is
+the rate per shot (kHz per shot, the front panel's "kHz/File") or the summed counts. Its mean
+is subtracted, it is windowed (Hann by default) and transformed (``helab.analysis.spectrum``:
+amplitudes normalised as ``fft_tx``, corrected for the bins' averaging, optional zero padding),
+and the most prominent peaks are listed with their frequency, amplitude and prominence, in the
+plot, the dock's record and the result. The bin spacing Δf (1 over the profile's length), the
+resolution (≈ the window's ENBW · Δf) and Nyquist (half the bins' rate) are in the dock's
+settings line.
 
 Not done yet (see the session notes): a Welch PSD, and Lomb–Scargle for uneven samples (the
 T profile's are even).
@@ -36,8 +39,9 @@ from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
                                       range_warnings, select_shots, selection_text, shots_brief, shots_text)
-from helab.analysis.spectrum import (AMPLITUDE, MAX_PADDING, POWER, Spectrum, amplitude_spectrum,
-                                     find_spectrum_peaks, padding_for, peak_specs, window_spec)
+from helab.analysis.spectrum import (AMPLITUDE, MAX_PADDING, POWER, Spectrum, amplitude_spectrum, dropped_text,
+                                     find_spectrum_peaks, padding_for, peak_specs, spectrum_text, whole_bins,
+                                     window_spec)
 from helab.analysis.stats import CropBox, crop_box
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
@@ -87,7 +91,7 @@ class ProfileSpectrum:
     lower: float = math.nan  # the profile's start (s)
     width: float = math.nan  # its bin width (s)
     automatic: bool = True
-    capped: bool = False  # automatic, and at the most bins
+    clamp: str = ""  # automatic, and at a bin limit: "at least" or "at most" (else "")
     counts: npt.NDArray[np.int64] = field(default_factory=lambda: np.empty(0, dtype=np.int64))
     per_shot: bool = True
     time_unit: str = "ms"
@@ -95,6 +99,7 @@ class ProfileSpectrum:
     spectrum: Spectrum | None = None
     warnings: tuple[str, ...] = ()  # settings not followed as given
     short: str = ""  # why there is no spectrum (too few events or bins)
+    notes: tuple[str, ...] = ()  # what else the plot says (events past the last whole bin)
 
     @property
     def profile(self) -> npt.NDArray[np.float64]:
@@ -113,18 +118,29 @@ class ProfileSpectrum:
         return "kHz/shot" if self.per_shot else "events"
 
 
-def bin_width(events: int, span: float, given: float) -> tuple[float, bool, bool, str]:
+def bin_width(events: int, span: float, given: float) -> tuple[float, bool, str, str]:
     """The T bin width: as given, else automatic (``AUTO_EVENTS`` per bin, ``AUTO_BINS``); widened
-    to stay within ``MAX_BINS``. (width, automatic, capped, what it says when widened)."""
+    to stay within ``MAX_BINS``. (width, automatic, the automatic limit reached: "at least",
+    "at most" or "", what it says when widened)."""
     if given > 0:
         if span / given > MAX_BINS:
             wider = span / MAX_BINS
-            return wider, False, False, (f"T bin width {time_text(given)} gives over {MAX_BINS:,} bins: using "
-                                         f"{time_text(wider)}")
-        return given, False, False, ""
+            return wider, False, "", (f"T bin width {time_text(given)} gives over {MAX_BINS:,} bins: using "
+                                      f"{time_text(wider)}")
+        return given, False, "", ""
     low, high = AUTO_BINS
     wanted = events // AUTO_EVENTS
-    return span / min(max(wanted, low), high), True, wanted > high, ""
+    clamp = "at least" if wanted < low else "at most" if wanted > high else ""
+    return span / min(max(wanted, low), high), True, clamp, ""
+
+
+def auto_text(data: ProfileSpectrum) -> str:
+    """Why the automatic width: ``~10 events per bin``, or the limit reached and the events per bin."""
+    if not data.clamp:
+        return f"~{AUTO_EVENTS} events per bin"
+    limit = AUTO_BINS[0] if data.clamp == "at least" else AUTO_BINS[1]
+    per_bin = data.events / max(len(data.counts), 1)
+    return f"{data.clamp} {limit:,} bins, ~{per_bin:.3g} events per bin"
 
 
 def empty_reason(data: ProfileSpectrum) -> str:
@@ -150,7 +166,7 @@ def peak_lines(data: ProfileSpectrum) -> list[str]:
         return []
     unit = value_unit(data)
     return [f"{rank}. {frequency_text(peak.frequency)} · {peak.value:.3g} {unit} · prominence "
-            f"{peak.prominence:.3g}" for rank, peak in enumerate(spectrum.peaks, start=1)]
+            f"{peak.prominence:.3g} {data.unit}" for rank, peak in enumerate(spectrum.peaks, start=1)]
 
 
 def titles(result: AnalysisResult, data: ProfileSpectrum) -> tuple[str, str]:
@@ -159,10 +175,10 @@ def titles(result: AnalysisResult, data: ProfileSpectrum) -> tuple[str, str]:
     second = [f"{len(data.counts):,} T bins of {time_text(data.width)} ({'auto' if data.automatic else 'set'})"]
     if data.spectrum is not None:
         spectrum = data.spectrum
-        second.append(f"Δf {frequency_text(spectrum.resolution)}, Nyquist {frequency_text(spectrum.nyquist)}")
+        second.append(spectrum_text(spectrum))
         second.append(f"{spectrum.window} window" + (f", zero padding ×{spectrum.padding}" if spectrum.padding > 1
                                                      else ""))
-    second += [f"⚠ {warning}" for warning in data.warnings]
+    second += [*data.notes, *(f"⚠ {warning}" for warning in data.warnings)]
     return first, " · ".join(second)
 
 
@@ -278,12 +294,31 @@ class TProfileSpectrum(DatasetAnalysis):
             return ""
         parts = []
         if data.automatic:
-            why = f"capped at {AUTO_BINS[1]:,} bins" if data.capped else f"~{AUTO_EVENTS} events per bin"
-            parts.append(f"T bins {time_text(data.width)} (auto: {why})")
+            parts.append(f"T bins {time_text(data.width)} (auto: {auto_text(data)})")
         if data.spectrum is not None:
-            parts.append(f"Δf {frequency_text(data.spectrum.resolution)} · Nyquist "
-                         f"{frequency_text(data.spectrum.nyquist)}")
+            parts.append(spectrum_text(data.spectrum))
         return " · ".join(parts)
+
+    def result_record(self, action_name: str, result: AnalysisResult) -> List[str]:
+        """The bins, the spectrum's frequencies and the peak list, for the dock's record."""
+        data = result.data
+        if not isinstance(data, ProfileSpectrum) or not len(data.counts):
+            return []
+        how = f"auto: {auto_text(data)}" if data.automatic else "set"
+        lines = [f"T profile: {len(data.counts):,} bins of {time_text(data.width)} ({how}), {data.events:,} events",
+                 *data.notes]
+        spectrum = data.spectrum
+        if spectrum is None:
+            return [*lines, data.short] if data.short else lines
+        lines.append(f"Spectrum: {spectrum.window} window, {spectrum_text(spectrum)}, corrected for the bins' "
+                     f"averaging (÷ sinc(f · bin width))")
+        peaks = peak_lines(data)
+        if peaks:
+            lines.append(f"Peaks (prominence ≥ {spectrum.threshold:.3g} {data.unit}):")
+            lines += [f"  {line}" for line in peaks]
+        elif spectrum.threshold:
+            lines.append(f"No peak with a prominence of {spectrum.threshold:.3g} {data.unit} or more")
+        return lines
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
         return list(range_warnings(values))
@@ -307,13 +342,16 @@ class TProfileSpectrum(DatasetAnalysis):
         lower, upper = box.lower[0], box.upper[0]
         if not upper > lower:
             lower, upper = lower - POINT_SPAN, upper + POINT_SPAN
-        width, automatic, capped, widened = bin_width(len(times), upper - lower, float(values[BIN_WIDTH.name]))
-        bins = max(1, math.ceil((upper - lower) / width * (1 - 1e-12)))
-        index = np.minimum(((times - lower) / width).astype(np.intp), bins - 1)
-        counts = np.bincount(index, minlength=bins).astype(np.int64)
+        width, automatic, clamp, widened = bin_width(len(times), upper - lower, float(values[BIN_WIDTH.name]))
+        binned = whole_bins(times, lower, upper, width)
+        bins = binned.bins
+        counts = np.bincount(binned.index, minlength=bins).astype(np.int64)
         warnings = range_warnings(values) + ((widened,) if widened else ())
-        data = ProfileSpectrum(shots, len(view.shots), len(events), len(times), lower, width, automatic, capped,
-                               counts, per_shot, time_unit(lower, upper)[0], box, warnings=warnings)
+        dropped = dropped_text(binned)
+        data = ProfileSpectrum(shots, len(view.shots), len(events), len(times) - binned.dropped, lower, width,
+                               automatic, clamp, counts, per_shot, time_unit(lower, upper)[0], box,
+                               warnings=warnings, notes=(dropped,) if dropped else ())
+        times = times[binned.kept]
         if len(times) < MIN_EVENTS:
             return replace(data, short=f"Only {len(times):,} event{'' if len(times) == 1 else 's'} in the view "
                                        f"range: a spectrum needs {MIN_EVENTS} or more")
@@ -325,7 +363,7 @@ class TProfileSpectrum(DatasetAnalysis):
         if lowered:
             warnings += (lowered,)
         spectrum = amplitude_spectrum(data.profile, width, str(values[WINDOW.name]), padding,
-                                      values[SCALE.name] == POWER)
+                                      values[SCALE.name] == POWER, binned=True)
         context.check()
         spectrum = find_spectrum_peaks(spectrum, int(values[PEAKS.name]), float(values[PEAKS_ABOVE.name]),
                                        float(values[THRESHOLD.name]))

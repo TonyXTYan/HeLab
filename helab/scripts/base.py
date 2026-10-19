@@ -104,8 +104,8 @@ class DatasetAnalysis(HelabAnalysisScript):
     def describe_result(self, action_name: str, result: AnalysisResult) -> str:
         """What a completed run found that the dock's settings line should add after
         ``describe_run``'s settings, in short form (e.g. a spectrum's resolution and Nyquist
-        frequency, or a bin width chosen from the data); "" for nothing. ``result.data`` may be
-        None (a released plot) or another run's state: say nothing then. Default: nothing."""
+        frequency, or a bin width chosen from the data); "" for nothing. Called for completed
+        results only (as ``result_record``). Default: nothing."""
         return ""
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
@@ -122,6 +122,12 @@ class DatasetAnalysis(HelabAnalysisScript):
         """The view's shots a run with ``values`` uses, recorded as its coverage: those the shared
         Shots parameters choose (``selection.SHOT_SPECS``) when it has them, else all."""
         return select_shots(view, values) if SHOTS.name in values else view.shot_numbers
+
+    def result_record(self, action_name: str, result: AnalysisResult) -> List[str]:
+        """Lines a completed run adds to the plot dock's record (its tooltip), after the
+        parameters: what the run found or used beyond them (fit results, the constants and
+        where each came from). Default: none."""
+        return []
 
     def detected_parameters(self, action_name: str, result: AnalysisResult) -> dict[str, Any]:
         """Parameter values a completed run found in the data (e.g. where peaks are), which the

@@ -766,8 +766,12 @@ class AnalysisInstance(LinkedAnalysisInstance):
         show = getattr(self.main_window, "set_plot_result", None)
         if callable(show):
             chosen, settings = self.script.describe_run(self.action, result.parameters, self.view)
-            settings = " · ".join(filter(None, (settings, self.script.describe_result(self.action, result))))
             record = describe(specs, result.parameters, every=True)
+            found = self.script.result_record(self.action, result) if result.state == "completed" else []
+            if found:
+                record = "\n".join((record, *found))
+            if result.state == "completed":
+                settings = " · ".join(filter(None, (settings, self.script.describe_result(self.action, result))))
             if warnings:
                 settings = " · ".join(filter(None, (settings, f"⚠ {warnings}")))
                 record = f"{record}\nWarning: {warnings}"
