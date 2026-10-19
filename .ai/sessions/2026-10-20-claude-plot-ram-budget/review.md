@@ -258,3 +258,76 @@ Alternatively, judge a group of candidates that share buffers together. Add both
 - `mypy --strict` on helab/ and tests, each native and with `--platform win32`: no issues.
 - `pyright helab tests`, native and `--pythonplatform Windows`: 0 errors.
 - `git diff --check 531ec41..HEAD`: clean.
+
+## Recheck at fa75cc9
+
+Reviewed `git diff e261905..fa75cc9` (1f3f340: `frees`; 2ce2e77: decoding the picture), plus
+`.ai/temp/review-probe/test_review_probe.py` with one new probe.
+
+**Verdict: the blocker is fixed. No blocker remains. One should-fix: a needless release when
+plots share buffers.** Tony or the coordinator can choose to land with it as a known
+limitation.
+
+### The blocker: fixed
+
+- `frees(plot, staying)` leaves out only buffers held by a dataset shown in a tab
+  (`FolderCache.shown_buffers`, the pins) or by a plot that stays. Those are the
+  non-candidates, plus candidates skipped or not released earlier in the same check.
+- Both of my probes pass, and they are now tests (`test_one_small_plot_of_a_held_unshown_folder`,
+  `test_two_small_plots_of_one_unloaded_folder`).
+- The shown-in-tab skip still holds (`test_a_release_must_free_more_than_its_picture_costs`).
+- My earlier probes pass too. The failed-reload probe still fails, but only on the released
+  picture's PNG in `ram_buffers`, which is by design.
+
+### Should-fix: a release that pays off only if a later candidate goes too
+
+`budget.py` `check()` / `frees`. Candidates later in the order don't count as staying, so the
+shots a plot shares with a later candidate count as freed. If the loop gets under 80 % before
+that later candidate, the shared shots are never freed, and the first plot was released for
+nothing.
+
+Probe `test_no_needless_release_on_a_shared_buffer`:
+- P1 and P2 are small plots of one folder no longer held (40 shots). P3 has its own data
+  (4 units). P4 is shown. The order is P1, P3, P2, and usage is 3 units over the limit.
+- Result: P1 is released, then P3, and P2 stays. Releasing P3 alone was enough.
+- P1's release freed 8 bytes and added a ~10 kB PNG. It lost interactivity and will rerun when
+  shown.
+
+This is plausible in practice: T and X histograms of a folder you've moved on from,
+interleaved with other plots in the order. The cost is mild: one extra plot shows a picture and
+reloads when shown, with no data at risk.
+
+Suggested fix, two passes:
+1. Release in the LRU order only plots whose release frees more than their picture *with every
+   other plot counted as staying*.
+2. Only if usage is still over 80 %, use the current rule, which lets candidates that share
+   buffers go one after another.
+
+Alternatively, treat candidates that share buffers as one group, released whole or not at all.
+
+### What was asked
+
+- **No new way to free a shown plot's data:** confirmed.
+  - `frees` only decides which candidates go.
+  - `order()` still leaves out the shown plot, and `releasable()` is unchanged (running,
+    reloading, pending and Live plots are exempt).
+  - `evict_to` drops only datasets no tab shows, and keeps one whose arrays plots hold.
+  - Releasing other plots never touches the shown plot's views.
+- **Folders first:** confirmed. `evict_to(limit)` runs before the loop and again after each
+  release.
+- **Exemptions:** confirmed; `test_release_order_and_exemptions` passes unchanged.
+- **Releases more than needed:** one case, the should-fix above.
+- **Picture decoding (2ce2e77):** fine. The PNG is decoded once while the picture shows, and the
+  decoded pixmap is dropped on `hideEvent` (Qt sends it to visible children when a dock tab is
+  hidden), so only the PNG stays behind tabs (tested). While it shows, the decoded pixmap isn't
+  counted. That is acceptable, since only plots on screen have one.
+- **Nit from the last recheck:** the duplicate `PLOT_AUTO_RELOAD_SETTING` is gone from
+  `budget.py`.
+
+### Checks at fa75cc9
+
+- `pytest -n 6 --reruns 5 --reruns-delay 1 -rR --basetemp=.ai/temp/pytest-review`: 1283
+  passed, 2 skipped, 2 xfailed, **no RERUN** (58 s).
+- `mypy --strict` on helab/ and tests, each native and with `--platform win32`: no issues.
+- `pyright helab tests`, native and `--pythonplatform Windows`: 0 errors.
+- `git diff --check 531ec41..HEAD`: clean.
