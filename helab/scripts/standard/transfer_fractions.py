@@ -9,6 +9,9 @@ and order k's window is ``centre + k·spacing ± half-width`` (+k arrives later)
 Orders to manual starts from the last detection, which can then be edited. Like
 ``fraction_calc``, a shot counts only events inside the XY box and only when it has more than
 the minimum counts there; each fraction is the order's count over the sum of all the orders'.
+Where this differs from ``fraction_calc`` on purpose (fractions over the orders' sum, not a
+wide window; shots left out by their counts in the counting box, not the import box;
+half-open windows; no X/Y rotation): ``tests/test_transfer_fractions_matlab.py``.
 
 Auto can't tell which order is 0 when another is nearly as tall (a strong transfer, or a Search
 T that leaves the real order 0 out): the plot then says order 0 is unsure. Under its title it
