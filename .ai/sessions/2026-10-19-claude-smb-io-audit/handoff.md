@@ -311,6 +311,14 @@ Sources:
   GUI-process call on the share, every phase's counts as in the round 3 tables except one Live check
   fewer in the 60 s writer phase (29 helpers, 16 listings, 195 stats, 20 marker opens; timing), so E
   adds no I/O. The committed tables are round 3's.
+- After the recheck's fixes (3e0b59b, a34707d, d6d6d24, c872478): full suite **1182 passed, 2 skipped,
+  2 xfailed, no RERUN**; typing clean in both modes; `git diff --check 486cf56..HEAD` clean. The full
+  suite run 10 times with `-n 6` and no reruns: the trace menu test passed all 10. Failures in those
+  runs were in tests this branch doesn't touch: `test_window_resize.py::test_label_keeps_painting_after_resize`
+  (paint timing, 3 runs) and `test_two_step_browse.py::test_refresh_cancels_only_automatic_subscriptions_and_suppresses_new_checks`
+  (1 run). The latter is flaky at the branch base too: 100 runs each, side by side under the same load,
+  failed 17 at 486cf56 and 14 on this branch (alone: 0 of 40 at the base, 1 of 60 here). Worth a look
+  outside this branch (its details request after Refresh's listing).
 
 ### Not done (outside the six; for Tony)
 
