@@ -31,7 +31,7 @@ Local macOS app (779 MB unpacked), largest parts:
 
 | Part | Size | Why it's there |
 |---|---|---|
-| QtWebEngine (Chromium) | ~284 MB (216 + 68) | Plot panes (`HelabMainWindow`, `plotly_3d_sactter`). Also pulls QtQuick/QML (`Qt6/qml` 16 MB, plus Quick frameworks). |
+| QtWebEngine (Chromium) | ~284 MB (216 + 68) | Plot panes (`HelabMainWindow`, `PlotlyPane` (`helab/analysis/panes.py`)). Also pulls QtQuick/QML (`Qt6/qml` 16 MB, plus Quick frameworks). |
 | pyarrow | 118 MB | In `requirements.txt`, never imported by HeLab; collected because plotly → narwhals can use it. |
 | dash + pydantic + mypy | ~42 MB | mypy via `pydantic.mypy`, imported by dash's `mcp` module. |
 | scipy, pandas, matplotlib, PIL | ~73 MB | Used by scripts and `io_helper`. |

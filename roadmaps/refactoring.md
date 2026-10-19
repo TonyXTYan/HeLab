@@ -52,7 +52,9 @@ otherwise edit the same code.
    shot map, provenance, read-only arrays) as the seam between browser/cache
    and analysis, while building the first analysis (the
    [3D scatter](analysis-workflow.md#first-analysis-3d-scatter-decided-2026-10-15)).
-   It adds code beside the browser rather than moving it.
+   It adds code beside the browser rather than moving it. **Done 2026-10-19**
+   (`helab/analysis/dataset_view.py`; contract in the plots floor's handoff,
+   `.ai/sessions/2026-10-19-claude-dataset-view-plots/handoff.md`).
 2. **Split where work collides.** When two planned tasks need the same state
    (`FolderCache`, `FolderExplorer`, `HelabMainWindow` wiring), extract the
    smallest boundary that lets them proceed separately: characterize the
@@ -60,7 +62,9 @@ otherwise edit the same code.
    then move ownership behind a typed contract.
 3. **Pilot.** Run two independent tasks in parallel with the
    [agent workflow](agent-workflow.md),
-   then revise boundaries and the workflow from what conflicted.
+   then revise boundaries and the workflow from what conflicted. **Done
+   2026-10-19** (Live L1 and dataset view plots): the two branches merged
+   without conflicts; the only shared file was `HelabMainWindow`.
 
 The [session notes](../.ai/sessions/2026-10-14-codex-planning-for-future/refactoring.md#candidate-implementation-slices)
 list candidate slices to draw from when a collision calls for one.

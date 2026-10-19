@@ -71,7 +71,31 @@ real experiment data without deciding where its top should be.
   subsequent verification and data/count agreement.
 - [ ] Observe new shots during writing: unsettled files are excluded, counted
   honestly and included on a later explicit check/load after settling. Live
-  updates remain deferred.
+  (L1/L2): see below.
+- [ ] Live on `/Volumes/dld_output` during an acquisition: turn Live on for the run
+  folder. New shots appear within a few seconds of their last write (5 s settling
+  + a check later); a shot being written shows as "still being written"; the
+  tree's counts follow; nothing else in that tab can be selected; switching tabs
+  turns Live off.
+- [ ] Note the line 3 tooltip's "The last check took … ms" for one stat and for a
+  listing of a large folder over SMB; a new shot is found within a minute even if
+  the SMB client reports the folder's mtime late.
+- [ ] After 10 new shots, line 3 says "saving 10 shots", then the cache line
+  updates; at 80 % of the disk budget the Save update question appears and
+  auto-saves wait for it.
+- [ ] Unmount the share during Live: amber "Live stopped: Folder not found — is its
+  drive connected?", data kept; Retry after remounting resumes; Live off saves.
+- [ ] Quit (File › Quit and Cmd+Q) during Live and during a large folder's
+  background save: the window names the folders and closes by itself; Quit now
+  quits at once; next launch the saved shots come from the cache.
+- [ ] Lab PCs (Windows): the same Live checks; a check's cost on the lab share.
+- [ ] Plots on screen: the 3D scatter in the dock (QtWebEngine) and via Open in
+  browser, on the Mac and a lab PC (black pane: the browser path must work);
+  counts and histograms; closing and tabbing docks; the Dash page says "Plot not
+  found" after closing.
+- [ ] Plots on real lab folders: are the crop bounds and histogram ranges sensible
+  (99 % of all events vs the cloud)? Time for a large folder (~2.75 s per 5 M
+  events for the crop); navigation stays responsive meanwhile.
 - [ ] On a disposable fixture, interrupt an original TXY write, then complete or
   repair it. Verify an explicit check/load detects the recovery and replaces any
   partial result. Record the actual required action; toolbar Refresh only

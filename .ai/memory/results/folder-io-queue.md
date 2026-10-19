@@ -240,3 +240,4 @@ folder and found it confusing. Now:
 - Per-scan timing log (planned io-lanes Phase 4): not added. Tony worried it
   would spam the log; if ever needed, make it opt-in or one summary line per
   slow scan.
+- Live checks (2026-10-19) are foreground loads that pause background work only while reading a file (measured: 15 % of a background load paused otherwise).

@@ -58,10 +58,20 @@ still to choose (Tony, with the coordinator's proposal).
   changed, but nothing uses it: helpers' private folders go to the system temp
   dir (`tempfile.mkdtemp` in `IOService`). Remove the setting, or move helper
   folders into it (2026-10-15).
-- [ ] Quitting cancels cache writes still running in the background (a finished
-  load's `disk_cache_pending` save), so the next check redoes them. Quit should
-  finish them first, with Quit now to skip, as planned for
-  [live monitoring](live-monitoring.md#dataset-cache-writes-while-monitoring) (2026-10-13).
+- [x] Quitting cancels cache writes still running in the background (a finished
+  load's `disk_cache_pending` save), so the next check redoes them. Fixed by the
+  quit window (`QuitSaveDialog`, with Quit now) in Live L1 (2026-10-19).
+- [ ] Ordinary loads read a file once its mtime is 5 s old (`SETTLE_SECONDS`); on
+  SMB with stale or coarse metadata a file still being written can pass. Live
+  reads a new file only once it is unchanged a check later and ends with a whole
+  row; use the same rules for loads. The real fix is the converter writing to a
+  temp name and renaming (below) (2026-10-19, Live review).
+- [ ] Main-window tests resolve the default data path, which is
+  `/Volumes/dld_output` when it is mounted: tests should never touch the real
+  volume (2026-10-19).
+- [ ] `tests/test_live_io.py`'s pause test assumes a 3000-file background load
+  is still running after setup; gate it so it can't race on a fast runner
+  (2026-10-19, Live review).
 - [ ] With the default of one background lane, folder details and status checks
   (including manual ones) wait for the selected load. As planned; revisit if
   it feels slow.
@@ -75,11 +85,15 @@ still to choose (Tony, with the coordinator's proposal).
 
 ## Near term: useful analysis from loaded data
 
+- [ ] TXY converter (`HeBECANU/tdc_autoconverter`, `lib/dld_raw_to_txy_counts.m`):
+  write each TXY to a temporary name and `movefile` it to the final name, so
+  HeLab never sees a partly written file (Tony, 2026-10-19).
 - [ ] Decouple browser/cache, dataset, analysis and UI responsibilities so
   agents can develop separate features in supervised, isolated worktrees
   without changing current behaviour. Feature-driven: the dataset view first,
   then splits where work collides ([plan](refactoring.md)) (2026-10-13;
-  revised 2026-10-15).
+  revised 2026-10-15). Milestone 1 (dataset view) and the two-floor pilot
+  done (2026-10-19).
 
 - [ ] Apply other tabs' finished status checks during Refresh without source
   I/O ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#cross-tab-status-results)) (2026-10-08).
@@ -93,16 +107,26 @@ still to choose (Tony, with the coordinator's proposal).
   results, validated reuse and optional versioned script bundles; plain files
   remain usable. Local runner first, open to remote later
   ([plan](analysis-job-runner.md)) (2026-10-13; revised 2026-10-15).
-- [ ] First analysis: interactive 3D scatter (Plotly via the Dash server),
-  default auto-crop to regions of interest
+- [x] First analysis: interactive 3D scatter (Plotly via the Dash server),
+  default auto-crop to regions of interest. v1 done 2026-10-19; the crop rule
+  awaits Tony's check on real data
   ([plan](analysis-workflow.md#first-analysis-3d-scatter-decided-2026-10-15)) (2026-10-15).
 - [ ] Complete the dataset → parameters → background script → results workflow,
   with folder-following views, pinning, progress, cancellation and errors
   ([plan](analysis-workflow.md)) (2026-10-08; revised 2026-10-14).
 - [ ] Analysis result caching: RAM results (R1), then disk-cached one-off
   results with exact-match reuse (R2); Live stages follow
-  ([plan](result-caching.md)) (2026-10-15).
-- [ ] Standard analyses: per-shot counts, T/X/Y distributions and shot selection
+  ([plan](result-caching.md)) (2026-10-15). R1 done (2026-10-19).
+- [ ] Open plots count toward the RAM budget and release their data when it is
+  exceeded, least recently used first; Rerun reloads it (Tony, 2026-10-19).
+- [ ] Show the analysis worker beside I/O: status-bar counts and Folder
+  details' activity, each job with script, input, revision, time and Cancel;
+  later remote/CLI workers in the same list (Tony, 2026-10-19).
+- [ ] Packaged builds: record bundled scripts' SHA-256 at build time (in
+  `_build_info.json`), since PyInstaller leaves no `.py` files to hash
+  (2026-10-19).
+- [ ] Standard analyses: per-shot counts, T/X/Y distributions (v1 done
+  2026-10-19, in s and m; units to confirm) and shot selection
   ([plan](analysis-workflow.md#standard-analyses)) (2026-10-08).
 - [ ] Export results and figures with their data source and analysis settings
   ([plan](analysis-workflow.md#export)) (2026-10-08).
@@ -119,6 +143,7 @@ still to choose (Tony, with the coordinator's proposal).
   staged 2026-10-15). New shots stay in RAM; the disk cache is written every
   N shots (configurable) and when monitoring stops or HeLab quits
   ([decided](live-monitoring.md#dataset-cache-writes-while-monitoring)) (2026-10-13).
+  L1 and L2 done (2026-10-19); L3 next with the dataset view.
 - [ ] QC script catalogue and safe derived-file repairs, kept in HeLab's cache
   folder; migrate the current status scan as its first provider
   ([plan](quality-control-and-repair.md)) (2026-10-14; revised 2026-10-15).

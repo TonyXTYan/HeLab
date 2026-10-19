@@ -13,14 +13,16 @@ before expanding the script catalogue.
 
 Script discovery and action buttons exist in `ScriptsManager` and
 `ScriptTreeSelector` (the right-hand panel). `helab/scripts/` is this analysis
-script system: `examples/` is loaded by default, `plotly_3d_sactter.py` is the
-panel's 3D plot, and `legacy_plotly/` holds the lab's older Plotly figures.
+script system: the panel lists the bundled analyses in `standard/` (group
+"Plots": 3D scatter, counts per shot, T/X/Y histograms, 2026-10-19) and any
+folder loaded with Load Scripts…; `legacy_plotly/` holds the lab's older Plotly figures.
 Plotting-library prototypes that read the old cache directly moved out to
 `dev/plotting-prototypes/` with the old browser's removal
-([plan](cache-storage-and-settings.md#old-browser-removal)). Dynamic buttons currently call `execute_action` directly
-without providing a selected dataset or parameter context. Bundled example
-scripts simulate actions through logging. Parameter-tree and docked-plot UI
-components exist, but a common data-to-result workflow still needs definition.
+([plan](cache-storage-and-settings.md#old-browser-removal)). Dataset analyses (`DatasetAnalysis`) get an immutable dataset view and
+validated parameters, run in one analysis worker thread and keep their results
+in RAM (see AGENTS.md › Script system); older `HelabAnalysisScript`s still get
+`execute_action`. Folder-following views, export and saved results are still to
+come.
 
 ## Scope
 
@@ -53,8 +55,8 @@ Tony's choice: an interactive **3D scatter** of the loaded T/X/Y events, built
 on Plotly and served by the existing Dash server (`helab/utils/dash_server.py`)
 so most interaction (rotate, zoom, hover, select) happens in Plotly itself. Its
 only default setting at first is **auto-crop to regions of interest**; more
-parameters come later. It builds on the current `plotly_3d_sactter.py` panel
-action and is the real consumer for the dataset view, the job contract and
+parameters come later. It replaced the old `plotly_3d_sactter.py` panel
+action (2026-10-19) and is the real consumer for the dataset view, the job contract and
 [result caching](result-caching.md) stage R1.
 
 - Show it in a browser tab as well as the plot area: lab PCs can't paint
@@ -65,6 +67,15 @@ action and is the real consumer for the dataset view, the job contract and
   the region holding 99 % of the events; the display cap is 100k points;
   histogram bins are automatic. Each analysis records a stable ID and version
   (plus its file's hash) with every result, since these first plots will change.
+- v1 (2026-10-19): auto-crop is a heuristic box (peel the sparsest extreme
+  events, then narrow each axis to its exact shortest window) keeping 99 % of
+  all events; its bounds and kept share are on the figure, and they are derived
+  results, not parameters (Keep % is). The display sample is a fixed-seed random
+  100,000 events, labelled. Axes are in s and m as stored.
+- Open (Tony to check on real data): 99 % of *all* events keeps part of a flat
+  background tail, so the box can be much wider than the cloud; a
+  background-subtracted "99 % of the signal" rule, presets, or a crop adjusted
+  on the plot are the options. Units (mm vs m) to confirm.
 - To decide while designing: how auto-crop finds the regions of interest (for
   example density or percentile bounds on T, X and Y), whether the crop is
   shown and adjustable, and whether crop limits count as parameters saved with

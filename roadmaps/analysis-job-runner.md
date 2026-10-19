@@ -138,6 +138,10 @@ the reuse key above and supplies missing shots to Live scripts.
 
 ## Staged delivery and acceptance
 
+Progress (2026-10-19): stage 1 partly done in-process (request, result and
+identity contract, no adapters); stage 2's worker, cancellation and "selection
+can't change input" done in-process (`helab/analysis/runner.py`).
+
 1. Define and test the language-neutral request, event, result and adapter
    contract around one real analysis and known TXY fixtures, including RAM-only
    and disk-retained result policies.

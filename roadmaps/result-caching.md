@@ -68,7 +68,7 @@ Each stage is one or more reviewable code slices.
 
 | Stage | Delivers | Needs |
 |---|---|---|
-| R1 | RAM-only results for the first analysis (3D scatter), bound to the dataset view; job record shows the policy | [Analysis workflow](analysis-workflow.md), dataset view ([refactoring](refactoring.md)) |
+| R1 (done 2026-10-19) | RAM-only results for the first analysis (3D scatter), bound to the dataset view; job record shows the policy | [Analysis workflow](analysis-workflow.md), dataset view ([refactoring](refactoring.md)) |
 | R2 | Disk-cached one-off results (`cache_supported`), reuse key, outdated indicator, result-cache budget and Settings → Cache section | R1 |
 | R3 | Live RAM updates (`live_supported`): coverage tracking and missing-shot updates, last completed revision shown | R1, [Live](live-monitoring.md#stages) L1 |
 | R4 | **Auto-update cache** (`live_cache_supported`): coalesced revision writes, save at Live stop, the final one-off save for other scripts | R2, R3 |
