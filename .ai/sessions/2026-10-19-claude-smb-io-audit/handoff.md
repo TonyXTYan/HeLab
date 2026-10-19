@@ -1,8 +1,9 @@
 # Handoff: SMB I/O audit
 
-Branch `agent/smb-io-audit` (base 486cf56). **Part 2 (fixes) is done** and comes first below; Part 1
-(the study, the "before") follows unchanged in substance. Codex's reviews of Part 1 and of Part 2
-(at e3802af, with two corrections, now done): `review-codex.md`.
+Branch `agent/smb-io-audit` (base 486cf56). **Part 2 (fixes) is done** and comes first below, with
+round 3 (Tony's decisions: settle age only; the trace as a per-session menu switch); Part 1 (the study,
+the "before") follows unchanged in substance. Codex's reviews of Part 1 and of Part 2 (at e3802af, with
+two corrections, now done): `review-codex.md`.
 
 ## Part 2 summary
 
@@ -11,7 +12,7 @@ with trace tests, following Codex's constraints and Maestro's notes:
 
 | Commit | Finding | What changed |
 |---|---|---|
-| cff8df3 | Trace caveats | `.helab-root` reads traced as `marker_open`, `marker_fstat`, `marker_read` (real bytes); each listing counts its `is_dir` checks; reads record the bytes actually read; no `is_symlink` probe while tracing; marker hiding's stat and chflags traced; `HELAB_IO_TRACE` on a network drive or share refused with a warning; the no-change test compares full events and the exact calls on the folder. |
+| cff8df3 | Trace caveats | `.helab-root` reads traced as `marker_open`, `marker_fstat`, `marker_read` (real bytes); each listing counts its `is_dir` checks; reads record the bytes actually read; no `is_symlink` probe while tracing; marker hiding's stat and chflags traced; `HELAB_IO_TRACE` on a network drive or share refused with a warning (round 3: the variable is gone, see below); the no-change test compares full events and the exact calls on the folder. |
 | 7b9b7e8 | 1. roots_verify loop | Only a listing reporting a mount table not yet asked about asks for a check (`_verify_asked`); a check that saw another table than listings reported never re-queues itself; a table reported while a check runs gets one follow-up; a failed check waits for the next listing; the marker check follows the local volume check and reuses its IDs (no second diskutil); marker checks at most every 5 s as a backstop. |
 | 0e9c0ad | 4. Load stats | The fingerprint comes from the load's own listing (free on Windows); the before- and after-read stats stay; the cache-save verify pass runs only if files were read after the load's own verify; a changed cached leaf folder takes the load's status instead of a relisting and details scan. |
 | 2b55d59, 8079252, then removed | 6. Half-written files | 2b55d59 and 8079252 dropped a recent file whose last row wasn't whole, in loads and Live. **Removed by Tony's decision** (round 3): settle age only. A TXY write never takes more than 5 s, a content check is an assumption about the file's format, and a writer paused at a row's end would pass it anyway. Kept: the 5 s settle age, Live's metadata-only "unchanged since the previous check", the before/after-read stats, and Live opening a ready file once (one open instead of tail-then-file). |
@@ -20,11 +21,31 @@ with trace tests, following Codex's constraints and Maestro's notes:
 | 65a06b3 | 2. Live saves | A dedicated save: the RAM dataset's arrays go to the helper (written to its private local folder by IOService's reader thread, off the GUI thread); the helper lists the folder once, checks every held file's size and mtime from that listing (no sampling), the identity, missing and changed files, then saves the full dataset under a load's guard, budget and pending-save rules (`_write_dataset`, shared with `_load`). No TXY file is read. |
 | b71a698 | 5 and 4, follow-up | The rerun showed a duplicate: selecting a RAM-held leaf folder relisted it and rescanned its details. Now it's checked by its load (as disk-cached folders already were), whose listing updates the row on a change; a load's listing marks a leaf folder's snapshot as just checked, so other tabs don't relist it. |
 | 6eb6a9c | Windows test | The read_marker trace test expects no steps for a folder-named `.helab-root` on Windows (can't be opened as a file there). |
-| d59f6a9 | Trace destination | `HELAB_IO_TRACE` is resolved (realpath) before the network check, so a local link to a share is refused; UNC prefixes refused given or resolved. |
+| d59f6a9 | Trace destination | `HELAB_IO_TRACE` is resolved (realpath) before the network check, so a local link to a share is refused; UNC prefixes refused given or resolved. Superseded in round 3: the trace always goes into the temp folder. |
+| 47d9def | Round 3: settle age only | Settle age only, by Tony's decision; the converter's temp-name rename remains the real fix. Loads and Live no longer look at a file's last row (`_whole_last_row`, `RECENT_SECONDS` and Live's `_txy_complete` removed); a file is read once it is 5 s old (`SETTLE_SECONDS`) and, in Live, unchanged in size and mtime since the previous check (`seen`, metadata only). The stalled-writer tests now document that a writer stalled for longer than the settle age is read as it is, by design. |
+| 9773b8a | Round 3: trace switch | **Help › Record I/O trace (this session)**, off at every start and never saved. Each recording is a new `io-trace-<date>-<time>.jsonl` in `<temp folder>/io-traces` (`IOService.start_io_trace`; a second one within the same second gets `-2`), never next to the data or at a path the user gives; helpers get the file with each request (`request.trace["file"]`). While on, the status bar shows "● I/O trace" (its tooltip names the file); **Help › Show I/O trace folder** opens the folder. The terminal gets one INFO line when it starts (`I/O trace on: <path>`) and one when it stops (`I/O trace off: <path>`), nothing else. Turning it on with earlier traces there asks once: "N earlier I/O traces (X MB) in <folder>." with **Keep** (default) or **Delete old traces** (only earlier `io-trace-*.jsonl` files there, never the new one); with none, no question. Nothing is deleted automatically. The test seam `HELAB_TEST_IO_TRACE=<file>` (helpers only) replaces the user-facing `HELAB_IO_TRACE`, and the network/realpath refusal of a given path is gone. |
+
+### Round 3 notes
+
+- **The temp folder is not refused at startup.** Only the cache folder is (`refuse_unsafe_cache_dir`);
+  `constants.py` takes `DIR_TEMPS` from the setting or the default without the network/synced check. So
+  the switch checks it itself (`io_trace_problem`, the cache folder's `cache_location_problem`): on a
+  network or synced temp folder it is refused, unticked, with a warning naming the folder and pointing to
+  Settings → General (a changed temp folder applies after a restart). Refusing the temp folder at startup,
+  as the cache folder is, would be a change in `constants.py` (not mine).
+- One wording change outside my owned paths: `data_roots.read_marker`'s docstring said ``HELAB_IO_TRACE``;
+  it now says "Help › Record I/O trace". No code change there beyond the approved `trace` keyword.
+- `HelabMainWindow`: only the Help menu items, the status-bar note and the Keep/Delete question
+  (`_toggle_io_trace`, `_ask_delete_old_traces`, `_show_io_trace_folder`); no plot-dock code touched.
+- Tests: `tests/test_io_trace.py` (the seam, a helper tracing to the file its request names, the folder,
+  the name, the two INFO lines, the refusal), `tests/test_helabMainWindow.py` (off at start; none, Keep and
+  Delete; refusal; Keep as the dialog's default).
 
 ### Before and after (the same scenarios, rerun)
 
-Same setup as Part 1 (offscreen HeLab, local APFS test share, real defaults, read timeouts 3/4/5 s).
+Same setup as Part 1 (offscreen HeLab, local APFS test share, real defaults, read timeouts 3/4/5 s),
+rerun after round 3 (with the trace on as the menu sets it); one scenario differs: Live's writer now
+pauses 4 s mid-file instead of stalling 8 s (Part 1), as a real write would.
 Counts are HeLab's calls on the share; marker reads are counted as opens in both runs. Only rows that
 changed, plus idle rows; full tables: `compare-session1.md`, `compare-session2.md`; per-phase detail:
 `trace-session{1,2}-before.md`, `trace-session{1,2}-after.md`.
@@ -36,16 +57,16 @@ changed, plus idle rows; full tables: `compare-session1.md`, `compare-session2.m
 | Select and load run_a (120 TXY) | 3 | 2 | 602 → **482** | 0 | 120 | 0 |
 | Select and load run_b (40 TXY) | 2 | 2 | 202 → **162** | 0 | 40 | 0 |
 | Select and load run_live (30 TXY) | 3 | 2 | 152 → **122** | 0 | 30 | 0 |
-| **Live, writer adds 12 shots in 64 s** | 30 → 31 | 20 → **18** | 313 → **213** | 95 → **22** | 21 → **11** | 11 → **0** |
+| **Live, writer adds 12 shots in 64 s** (pause 4 s, was a stall of 8 s) | 30 | 20 → **17** | 313 → **204** | 95 → **21** | 21 → **10** | 11 → **0** |
 | Live, files settling (15 s) | 5 → 6 | 2 | 21 → 25 | 10 → **2** | 1 → 2 | 1 → **0** |
 | Live, nothing new (60 s) | 20 | 1 | 25 | 5 → **1** | 0 | 0 |
 | **Live off: save** | 1 | 1 | 127 → **42** | 0 → 1 | 1 → **0** | 0 |
-| Load during a stalled write (11 TXY) | 4 → 2 | 2 | 59 → **45** | 1 → 0 | 11 | 0 |
+| Load during a stalled write (11 TXY) | 4 → 2 | 2 | 59 → **46** | 1 → 0 | 11 | 0 |
 | **Mount table reported changed (30 s)** | 803 → **2** | 0 | 828 → **2** | 414 → **1** | 0 | 0 |
 | **Cached folder with one new shot (41 TXY)** | 4 → 2 | 3 → **1** | 170 → **86** | 0 | 1 | 0 |
 | **RAM-only folder reselected, unchanged (120 TXY)** | 4 → 3 | 4 → **2** | 245 → **9** | 0 | 0 | 0 |
 | Startup, fresh store | 8 → 9 | 2 | 5 → 7 | 1 → 2 | 0 | 0 |
-| Toolbar Refresh | 11 → 13 | 10 | 22 → 24 | 1 → 2 | 0 | 0 |
+| Toolbar Refresh | 11 | 10 | 22 | 1 | 0 | 0 |
 
 - **Unchanged by design:** a first load of a RAM-only folder (485 stats on macOS: the fingerprint from
   the listing is still one stat per file there, free only on Windows), Retry/Refresh's full check, the
@@ -54,10 +75,14 @@ changed, plus idle rows; full tables: `compare-session1.md`, `compare-session2.m
 - **Startup +1 helper, +2 stats, +1 marker:** the marker check now follows the volume check, so on a
   fresh store it also checks the root the first listing just found; and the first listing's report
   during the startup volume check gets its one follow-up volume check (local lane, no share).
-- **Toolbar Refresh +2 helpers:** a real mount change (an iOS Simulator runtime image mounted on this Mac
-  during the run); the Refresh listing reported it, and it got exactly one verification.
+- **Toolbar Refresh:** unchanged in this rerun. (The Part 2 rerun had +2 helpers there: a real mount
+  change, an iOS Simulator runtime image mounted during the run, which the Refresh listing reported and
+  which got exactly one verification.)
+- **Files still being written (settle age only):** Live's writer pausing 4 s mid-file: its files were
+  only statted while being written, never opened. The load during an 8 s stall read shot 2001 half-written
+  (selected 6.5 s into the stall, so past the 5 s settle age): accepted by design (next section).
 - **Live, writer adding a file every 4 s:** each new file changes the folder's mtime, so most checks still
-  list (20 → 18); the savings there are the marker opens (5 → 1 per listing) and the tail reads (gone).
+  list (20 → 17); the savings there are the marker opens (5 → 1 per listing) and the tail reads (gone).
   The pending-file checks pay off when files are slow to finish or rare.
 
 Projected for a real run (N = 1,000 TXY files, a new shot every ~10 s, macOS):
@@ -163,13 +188,16 @@ Sources:
 
 ### Checks (Part 2)
 
-- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`: **1010 passed, 2 skipped,
-  2 xfailed, no RERUN** (the last full run). One earlier run had reruns: a strict-mypy failure in my own
-  new test helper, fixed before that commit.
+- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`: **1014 passed, 2 skipped,
+  2 xfailed, no RERUN** (after round 3; before it, 1010 with no RERUN). One earlier Part 2 run had reruns:
+  a strict-mypy failure in my own new test helper, fixed before that commit.
 - `mypy helab/ --strict`, `mypy tests --strict`, both with `--platform win32`; `pyright helab tests`, also
-  `--pythonplatform Windows`: clean.
-- `tests/test_io_trace.py`: 24 tests (the trace itself, and one or more per fix).
-- Scenario reruns: two sessions, no GUI-process call on the share.
+  `--pythonplatform Windows`: clean (after round 3).
+- `tests/test_io_trace.py`: 24 tests (the trace itself, and one or more per fix); the trace switch's
+  window tests in `tests/test_helabMainWindow.py` (4).
+- Scenario reruns after round 3: two sessions, no GUI-process call on the share (`compare-session{1,2}.md`,
+  `trace-session{1,2}-after.md`; `compare_traces.py` now matches a renamed phase by its name before " (",
+  marked †).
 
 ### Not done (outside the six; for Tony)
 
@@ -181,20 +209,30 @@ Sources:
 
 ### Proposed doc changes (for the coordinator)
 
-- AGENTS.md, Testing: the `HELAB_IO_TRACE=<file>` debug trace (io_helper only; refused on a network
-  drive), summarised by this folder's `trace_summary.py` and compared by `compare_traces.py` (to move to
-  `dev/`).
+- AGENTS.md, Testing: beside `HELAB_TEST_LOCAL_MOUNT`, `HELAB_TEST_VOLUME_ID` and `HELAB_TEST_READ_GATE`,
+  add "`HELAB_TEST_IO_TRACE=<file>` (`helab/io_helper.py` only: every helper appends each source-folder
+  operation to `<file>`, as Help › Record I/O trace does; `tests/test_io_trace.py`)".
+- AGENTS.md, Responsive I/O: "**I/O trace:** Help › Record I/O trace (this session), off at every start
+  and never saved, records every helper's source-folder operations as JSON lines in a new
+  `<temp folder>/io-traces/io-trace-<date>-<time>.jsonl` (`IOService.trace_file`, sent with each request);
+  refused when the temp folder is on a network or synced folder. A status-bar note while on; Help › Show
+  I/O trace folder; earlier traces are kept unless the user picks Delete old traces when asked." Summarise
+  with this folder's `trace_summary.py`, compare with `compare_traces.py` (both to move to `dev/`).
 - AGENTS.md, Responsive I/O: verification asked only by a listing's new mount table (one follow-up, never
   self-requeued, 5 s backstop); a load's fingerprint from its listing, the cache-save verify only after
-  rereads; a recent TXY file not ending with a newline is still being written (RECENT_SECONDS 600);
-  the RAM quick check (`memory_check`); selecting a RAM-held leaf folder doesn't list it.
+  rereads; files still being written: settle age only, by Tony's decision (the converter's temp-name
+  rename remains the real fix); the RAM quick check (`memory_check`); selecting a RAM-held leaf folder
+  doesn't list it.
 - AGENTS.md, Live: checks stat only pending files while the folder's mtime is the last listing's; the
   identity reads the known root's marker; saves are `save_held` from RAM (listing, every held file
   checked, no read), not an ordinary load.
 - `roadmaps/_readme.md`: mark the SMB audit's Part 2 done; add the Windows "seen twice" interval and the
   remaining Part 1 items (tests' default tab, details per visible row, icons across Refresh).
-- `.ai/MANUAL_TODO.md`: trace the real share before and after this branch (recipe in Part 1, section 7;
-  compare with `compare_traces.py`).
+- `.ai/MANUAL_TODO.md`: trace the real share with this branch (recipe in Part 1, section 7, now the menu
+  switch; compare with a trace of `main` if wanted, which needs Part 1's `HELAB_IO_TRACE` build, with
+  `compare_traces.py`).
+- Possibly `constants.py`: refuse a network or synced temp folder at startup, as the cache folder is
+  (round 3 notes).
 
 ---
 
@@ -231,6 +269,10 @@ added. **Part 2 (fixes) waits for Tony's go.**
 - **Real share:** not touched. A recipe below lets Tony run the trace himself.
 
 ### 1. The trace
+
+(Part 1's switch, as written here, was `HELAB_IO_TRACE`; since round 3 it is Help › Record I/O trace
+(this session), with the file in the temp folder, and the test seam `HELAB_TEST_IO_TRACE`; see section 7.
+Part 2 split `marker_read` into `marker_open`, `marker_fstat` and `marker_read`.)
 
 Set `HELAB_IO_TRACE` to a **local** file before starting HeLab. Helpers inherit it; it is read in
 `helab/io_helper.py` only (`io_helper.TRACE`). While tracing, the GUI adds whom each helper works for.
@@ -417,20 +459,25 @@ listing" (true today: worth pinning down first).
 
 ### 7. Recipe: trace the real share (Tony)
 
-macOS, from a checkout of this branch:
+(Updated in round 3: the trace is a menu switch now.) macOS, from a checkout of this branch:
 
 ```bash
 cd ~/GitHub/HeLab && git fetch && git switch agent/smb-io-audit   # or a worktree of it
 source venv/bin/activate
-export HELAB_IO_TRACE=~/Desktop/helab-trace-$(date +%Y%m%d-%H%M).jsonl   # a local file, never on the share
 python -m helab
 ```
 
-Use HeLab as when you saw the traffic: leave a tree open, browse, load, run Live during acquisition. Note
-the times of what you do. Then quit HeLab and summarise:
+In HeLab, **Help › Record I/O trace (this session)** (the status bar shows "● I/O trace"; the terminal
+prints `I/O trace on: <path>`). Use HeLab as when you saw the traffic: leave a tree open, browse, load,
+run Live during acquisition. Note the times of what you do. Then untick it (or quit HeLab): the terminal
+prints `I/O trace off: <path>`. **Help › Show I/O trace folder** opens the folder: by default
+`~/Library/Caches/HeLab/temps/io-traces` (Windows `%LOCALAPPDATA%\HeLab\temps\io-traces`; Settings →
+General shows the temp folder). Each recording is a new file; earlier ones stay unless you pick Delete old
+traces when asked. Summarise the newest:
 
 ```bash
-python .ai/sessions/2026-10-19-claude-smb-io-audit/trace_summary.py "$HELAB_IO_TRACE" \
+python .ai/sessions/2026-10-19-claude-smb-io-audit/trace_summary.py \
+  "$(ls -t ~/Library/Caches/HeLab/temps/io-traces/io-trace-*.jsonl | head -1)" \
   --under /Volumes/dld_output --minutes > ~/Desktop/helab-trace-summary.md
 ```
 
@@ -439,8 +486,8 @@ and operations on files modified under 5 s before. Look for `roots_verify` lines
 (finding 1). Without phase marks the whole trace is one phase; split it with your noted times if useful.
 Expect ~0.6 kB of trace per operation.
 
-Windows lab PC (PowerShell): `$env:HELAB_IO_TRACE = "$env:USERPROFILE\Desktop\helab-trace.jsonl"; py -m helab`
-(lines are appended without a lock there; the summary skips a garbled one, if any).
+Windows lab PC: `py -m helab`, then the same menu item (lines are appended without a lock there; the
+summary skips a garbled one, if any).
 
 Optional, to see what other programs do to the share (Finder, Spotlight, previews), not only HeLab:
 `sudo fs_usage -w -f filesys | grep dld_output` (Ctrl-C to stop). To count SMB requests on the wire:
@@ -459,6 +506,8 @@ Don't run `scenarios.py` against a real share: it builds and deletes its own tes
 - Scenario runs: `scenarios.py OUT --session 1` then `--session 2` (11 minutes), summaries in this folder.
 
 ### 9. Proposed doc changes (for the coordinator)
+
+(Superseded by Part 2's list above.)
 
 - AGENTS.md, Testing: add the debug trace beside the test seams: "`HELAB_IO_TRACE=<file>` (`helab/io_helper.py`
   only): every helper appends each source-folder operation to `<file>` as one JSON line; off by default.

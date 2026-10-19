@@ -2,7 +2,8 @@
 
     python compare_traces.py BEFORE.jsonl AFTER.jsonl [--under PREFIX] [--under-after PREFIX]
 
-Counts per phase (``op`` "phase" lines; phases match by name): helpers started, listings, stats
+Counts per phase (``op`` "phase" lines; phases match by name, else by the name before " (" when that
+is unique, marked † with the earlier name below the table): helpers started, listings, stats
 (stat, lstat, a listed entry's stat), .helab-root opens (Part 1 traced a marker read as one
 ``marker_read`` line, later traces as ``marker_open`` + ``marker_fstat`` + ``marker_read``: opens are
 counted in both), whole-file reads, tail reads and icon lookups. Standalone (no HeLab import).
@@ -71,15 +72,25 @@ def main() -> None:
     args = parser.parse_args()
     before = per_phase(args.before, args.under)
     after = per_phase(args.after, args.under if args.under_after is None else args.under_after)
+    short = Counter(name.partition(" (")[0] for name in before)
+    by_short = {name.partition(" (")[0]: name for name in before if short[name.partition(" (")[0]] == 1}
+    renamed: list[tuple[str, str]] = []
     print("| Phase | s | " + " | ".join(f"{column} (before → after)" for column in COLUMNS) + " |")
     print("|---|---|" + "|".join("---" for _ in COLUMNS) + "|")
     for name, counts in after.items():
-        old = before.get(name, Counter())
+        old_name = name if name in before else by_short.get(name.partition(" (")[0], "")
+        old = before.get(old_name, Counter())
+        label = name
+        if old_name and old_name != name:
+            renamed.append((name, old_name))
+            label = f"{name} †"
         cells = []
         for column in COLUMNS:
             a, b = old[column], counts[column]
             cells.append(f"{a:,}" if a == b else f"{a:,} → **{b:,}**")
-        print(f"| {name} | {counts['seconds']} | " + " | ".join(cells) + " |")
+        print(f"| {label} | {counts['seconds']} | " + " | ".join(cells) + " |")
+    for name, old_name in renamed:
+        print(f"\n† Before: “{old_name}”.")
 
 
 if __name__ == "__main__":

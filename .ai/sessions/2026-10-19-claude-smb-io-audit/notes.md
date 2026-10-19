@@ -75,3 +75,16 @@ Decisions worth recording:
 
 Test-tree note: the floor's `tests/__pycache__` was cloned from Ground, so tracebacks show Ground's
 paths (`../../../HeLab/tests/...`) for unchanged test files; the code run is the floor's.
+
+## Round 3 (2026-10-19, Tony's decisions via Maestro)
+
+- 47d9def: settle age only for files still being written (content checks removed from loads and Live).
+- Trace switch: Help › Record I/O trace (this session), file in `<DIR_TEMPS>/io-traces`, sent with each
+  request; `HELAB_TEST_IO_TRACE` is the test seam (the GUI process never reads it: tests that need tabs
+  and lanes set `IOService.trace_file`, as scenarios.py does). A second recording within the same second
+  gets a `-2` name, so Keep never appends to and Delete never removes the new file.
+- `DIR_TEMPS` isn't checked for network or synced folders at startup (only the cache folder is), so the
+  switch checks it with `cache_location_problem` and refuses.
+- A request's `trace` is set at each attempt, so a retry after the trace was turned off isn't traced.
+- Scenario session 2 ran in a copy of session 1's folder (`cp -R`), so its trace starts with session 1's
+  lines; its summary uses only the lines after them.

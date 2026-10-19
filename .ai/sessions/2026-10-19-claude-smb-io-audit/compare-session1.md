@@ -13,14 +13,14 @@
 | S1 tab switch 2 (to tab 2) after 15 s | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | S1 tab switch 3 (to tab 1) after 15 s | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | S1 tab switch 4 (to tab 2) after 15 s | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| S1 toolbar Refresh | 3 | 11 → **13** | 10 | 22 → **24** | 1 → **2** | 0 | 0 | 13 |
+| S1 toolbar Refresh | 2 | 11 | 10 | 22 | 1 | 0 | 0 | 13 |
 | S1 right-click Retry / Refresh on run_b (shown) | 2 | 2 | 2 | 82 | 0 | 0 | 0 | 0 |
 | S1 select and load run_live | 1 | 3 | 2 | 152 → **122** | 0 | 30 | 0 | 0 |
-| S1 Live on, writer adds 12 shots every 4 s (1004 written over 7.5 s, 1009 stalls 8 s mid-file) | 64 | 30 → **31** | 20 → **18** | 313 → **213** | 95 → **22** | 21 → **11** | 11 → **0** | 0 |
+| S1 Live on, writer adds 12 shots every 4 s (1004 written over 7.5 s, 1009 pauses 4 s mid-file) † | 60 | 30 | 20 → **17** | 313 → **204** | 95 → **21** | 21 → **10** | 11 → **0** | 0 |
 | S1 Live on, writer done: 15 s to settle | 15 | 5 → **6** | 2 | 21 → **25** | 10 → **2** | 1 → **2** | 1 → **0** | 0 |
 | S1 Live on, nothing new, 60 s | 60 | 20 | 1 | 25 | 5 → **1** | 0 | 0 | 0 |
 | S1 Live off (saves new shots) | 2 | 1 | 1 | 127 → **42** | 0 → **1** | 1 → **0** | 0 | 0 |
-| S1 load run_stall while its new shot 2001 stalls 8 s mid-file (selected 6.5 s in) | 10 | 4 → **2** | 2 | 59 → **45** | 1 → **0** | 11 | 0 | 0 |
+| S1 load run_stall while its new shot 2001 stalls 8 s mid-file (selected 6.5 s in) | 9 | 4 → **2** | 2 | 59 → **46** | 1 → **0** | 11 | 0 | 0 |
 | S1 simulated mount change (a listing reports another mount table), 30 s | 30 | 803 → **2** | 0 | 828 → **2** | 414 → **1** | 0 | 0 | 0 |
 | S1 a listing reports the real mount table again, 15 s | 16 | 4 → **2** | 2 | 9 → **7** | 1 → **0** | 0 | 0 | 0 |
 | S1 select a folder that can't be listed (permission), 20 s | 20 | 2 | 1 | 1 | 0 | 0 | 0 | 0 |
@@ -28,3 +28,5 @@
 | S1 idle 60 s at the end | 60 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | S1 quit | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | S1 end | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+† Before: “S1 Live on, writer adds 12 shots every 4 s (1004 written over 7.5 s, 1009 stalls 8 s mid-file)”.
