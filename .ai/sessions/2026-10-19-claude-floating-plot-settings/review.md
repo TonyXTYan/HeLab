@@ -62,3 +62,45 @@ The proposed AGENTS.md text and the removal of the duplicated "One Settings pane
 | `git diff --check 9f6ee5a..HEAD` | clean |
 
 Probe script (offscreen): `/private/tmp/claude-501/-Users-tonyyan-GitHub--maestri-floors-HeLab--agentfloating-plot-settings--maestri-roles-48acbf34-5a62-4718-ba82-c2ca0dd11786/c091775a-5ea2-4af1-9f6b-f3af55075a91/scratchpad/probe.py`.
+
+## Recheck at b93fbe5
+
+Range 0c734ec..b93fbe5 (pushed; local HEAD matches): 20224c8 (Show plot window opens the section), cbc617d (`DragEnd`), e55945a (my `setWidget` finding, plus the blank line), b93fbe5 (handoff and notes for round 2). The worker committed review.md in b93fbe5, so this section shows up as an uncommitted change to a tracked file.
+
+### Verdict
+
+**No blocker. Ready to land.** All three round-1 findings are fixed. Below are one doc nit and one note.
+
+### Checks
+
+1. **`setWidget` fix** (`ScriptTreeSelector.py:222-235`). The old plot is hidden only while it is still in `_body_holder`. A widget that wraps it keeps it shown. `test_a_plot_wrapped_in_place_stays_shown` covers both branches.
+2. **Show plot window** (`raise_current`). It opens a closed section only when the shown plot's page is in its window. A second click leaves an open section as it is. The chooser still only raises the window. Tested.
+3. **`DragEnd`: the filter is always removed.** It is installed only with `dock.installEventFilter(self)`, on a plot dock whose `topLevelChanged` or `dockLocationChanged` fired while a mouse button was down. There is no app-wide filter; `grep installEventFilter` in the module finds that one call only. My probe (`scratchpad/probe2.py`, offscreen, with a counting `eventFilter` and `mouse_held` controlled) checked each exit:
+   - **Release:** the filter sees no more events afterwards, and the page moves once.
+   - **Closed mid-drag** (the `LinkedAnalysisInstance.close` order): `remove_plot` calls `stop`. The waiting list is empty, the filter sees nothing more, and the dock is deleted.
+   - **Deleted unclosed mid-drag:** `_forget_deleted` → `remove_plot` → `stop`. The waiting list is empty, and `removeEventFilter` is skipped on the deleted dock.
+   - **Main window closes mid-drag:** `close_plots` → `remove_plot` → `stop`. If the panel goes first, `DragEnd` is its child and is deleted. Qt holds event filters as `QPointer`s, so the dock's later events are safe (probe: no crash).
+   - **Can it leak or stay installed?** `_waiting` holds only open plots, and every way a plot ends passes through `remove_plot`. While a drag waits, the cost is one Python call per event on that one dock.
+4. **The 0 ms coalescing can't place on a deleted or closed dock.**
+   - `_place_moved` skips deleted docks.
+   - `remove_plot` drops the dock from `_unplaced`.
+   - `_place` returns for a dock with no page.
+   - Probe: a dock deleted between the release and the timer gives no crash and leaves `_unplaced` empty.
+   - A float and re-dock within one pass is resolved once, from the final state.
+5. **The two changed existing tests are legitimate.** I checked both in scratch worktrees at 0c734ec and b93fbe5 (since removed).
+   - **Twenty plots, fallback now plot 16:** at 0c734ec, adding one event-loop pass after floating gives the same 16. In offscreen, each floating window activates as it comes up, so plot 16 (the last one floated) enters `_recent`. The expected value changed only because the test now waits for the pages to move. The fallback rule itself is unchanged.
+   - **Show plot window re-showing plot 2:** after the main window is reactivated, 0c734ec left focus outside any plot (plot 2 stayed shown). b93fbe5 restores focus into plot 1, so plot 1 shows. The reason is that the page now reaches the floating window a pass later, which changes where focus lands. Both outcomes follow the hardening rule "focus moved into a plot shows it". The test's added `show_plot(two)` sets up what it means to test (the button) and doesn't hide a regression. On screen: clicking back into the main window may now show the plot that last had focus there. That is consistent with the rule.
+
+### Nit and note
+
+- **Doc nit:** the `DragEnd` docstring, notes.md and the handoff all list a **mouse move** as ending a wait after a release the dock never saw. A plain move with no button down never reaches a `QDockWidget` without mouse tracking: Qt's `notify` passes it to the parent instead (probe: a synthetic `MouseMove` didn't reach the filter). In practice the wait ends on Enter, Leave, `NonClientAreaMouseMove`/`Release` or a release on the dock. That still covers the Windows native title-bar case: moving off the title bar into the window, or leaving it, ends the wait. The behaviour is fine; only the wording overstates it.
+- **Note:** the AGENTS.md wording the handoff proposes correctly names the one exception to "no event filter" (`DragEnd`, on that dock, during the drag). The panel's docstring now says the same. Its long line (`ScriptTreeSelector.py:1148`, 148 characters) could wrap like its neighbours.
+
+### Reruns (floor root, venv and floor-env, at b93fbe5)
+
+| Check | Result |
+|---|---|
+| `pytest -n 6 --reruns 5 --reruns-delay 1 -rR --basetemp=.ai/temp/pytest-review` | 1156 passed, 2 skipped, 2 xfailed in 38 s, **no RERUN** |
+| `mypy --strict` helab and tests, default and `--platform win32` | clean |
+| `pyright helab tests`, default and `--pythonplatform Windows` | 0 errors |
+| `git diff --check 9f6ee5a..HEAD` | clean |
