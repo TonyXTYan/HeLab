@@ -342,6 +342,15 @@ and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
    then `maestri ask` it the brief (objective, acceptance, base commit, owned
    paths and paths not to touch, checks, handoff). For review, recruit the
    other model on the same floor (`--preset "Codex" --role "Reviewer"`).
+
+   Before sending the brief, `maestri check` the new terminal: a recruit can
+   hang at start, showing only its typed `claude …` command and no Claude UI,
+   so a brief sent then never arrives (RAM Worker, 2026-10-20; Ctrl-C didn't
+   help). Restart it in place with
+   `maestri recruit "<Codename>" --preset "Claude Code" --replace "<Codename>"`
+   (same node, floor and role), check again, then send the brief. It happened
+   once with an explicit `--command`, which other recruits used without
+   trouble, so the flag isn't known to be the cause.
 3. **The worker**:
    - works from the floor's root: a worker recruited with `--role` starts in
      `.maestri/roles/<id>/`, so it runs `cd "$(git rev-parse --show-toplevel)"`
