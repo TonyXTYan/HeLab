@@ -208,6 +208,18 @@ def read_live_autosave(settings: QSettings) -> int:
     return max(1, min(MAX_LIVE_AUTOSAVE, value))
 
 
+# Settings → Cache: a plot released to free RAM reloads when it is shown again (on by default;
+# helab/analysis/budget.py).
+PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
+
+
+def read_plot_auto_reload(settings: QSettings) -> bool:
+    value = settings.value(PLOT_AUTO_RELOAD_SETTING, True)
+    if isinstance(value, str):
+        return value.strip().lower() not in ("false", "0", "no", "off", "")
+    return bool(value)
+
+
 
 OS_WORKING_DIRECTORY: str = os.getcwd()
 QDir_WORKING_DIRECTORY = QDir.current()

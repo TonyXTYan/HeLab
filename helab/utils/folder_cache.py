@@ -17,7 +17,7 @@ import numpy.typing as npt
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 
-from helab.analysis.budget import Buffers, dataset_buffers
+from helab.utils.ram_buffers import Buffers, dataset_buffers
 from helab.utils import large_folder
 from helab.utils.cache_store import APPROVAL_SHARE, KINDS, store_root
 from helab.utils.constants import (

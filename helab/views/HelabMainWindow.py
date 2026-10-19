@@ -30,7 +30,7 @@ from humanfriendly.terminal import message
 from pyqtgraph.parametertree import ParameterTree, Parameter
 from typing_extensions import no_type_check
 
-from helab.analysis.budget import DIALOG_SHARE, RELEASE_SHARE, WARN_SHARE, RamBudget, read_auto_reload
+from helab.analysis.budget import DIALOG_SHARE, RELEASE_SHARE, WARN_SHARE, RamBudget
 from helab.analysis.dataset_view import DatasetView, view_of
 from helab.analysis.follow import LiveFeed
 from helab.analysis.results import AnalysisResult
@@ -670,7 +670,7 @@ class HelabMainWindow(QMainWindow):
             self.show_status_notice(f"RAM budget lowered: dropped {len(dropped)} loaded "
                                     f"folder{'' if len(dropped) == 1 else 's'} ({byte_size(size)}) not shown in tabs")
         if (budget := getattr(self, "ram_budget", None)) is not None:
-            budget.auto_reload = read_auto_reload(settings)
+            budget.auto_reload = read_plot_auto_reload(settings)
             budget.check()  # The plots' share of a new budget.
         self.apply_auto_scan_visible(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
 
@@ -688,7 +688,7 @@ class HelabMainWindow(QMainWindow):
         """Plots count toward the RAM budget: from 50 % the status bar's button (``ram_button``),
         the 75 % window once per crossing, and plots released above 80 % (``RamBudget``)."""
         self.ram_budget = RamBudget(cache, self.panel_right_top_plot_settings, self)
-        self.ram_budget.auto_reload = read_auto_reload(settings)
+        self.ram_budget.auto_reload = read_plot_auto_reload(settings)
         self.ram_budget.changed.connect(self._update_ram_button)
         self.ram_budget.warning.connect(lambda: self.show_ram_report(warn=True))
         self.ram_budget.released.connect(self._plots_released)

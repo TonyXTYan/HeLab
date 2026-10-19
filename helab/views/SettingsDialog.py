@@ -10,7 +10,6 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QChe
     QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem, QDoubleSpinBox
 from PyQt6.QtCore import QSettings, QUrl
 
-from helab.analysis.budget import read_auto_reload
 from helab.utils.folder_cache import FolderCache, store_options
 from helab.utils.number_format import fnum
 from helab.utils.constants import *
@@ -342,5 +341,5 @@ class SettingsDialog(QDialog):
         self.cache_tab.disk_budget.setValue(read_disk_budget(settings) / (1 << 30))
         self.cache_tab.ram_budget.setValue(read_ram_budget_steps(settings, self.cache_tab.ram_budget.total))
         self.cache_tab.live_autosave.setValue(read_live_autosave(settings))
-        self.cache_tab.plot_auto_reload.setChecked(read_auto_reload(settings))
+        self.cache_tab.plot_auto_reload.setChecked(read_plot_auto_reload(settings))
         logging.debug("Settings reset to default")

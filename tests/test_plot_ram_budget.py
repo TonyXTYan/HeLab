@@ -21,8 +21,7 @@ from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QMessageBox, QTabWidget, QToolButton, QWidget
 from pytestqt.qtbot import QtBot
 
-from helab.analysis.budget import (PLOT_AUTO_RELOAD_SETTING, RamBudget, buffer_of, buffers, hollow, read_auto_reload,
-                                   restore, shots_list)
+from helab.analysis.budget import RamBudget, hollow, restore, shots_list
 from helab.analysis.dataset_view import DatasetView, read_only, view_of
 from helab.analysis.follow import LiveFeed
 from helab.analysis.panes import PlotlyPane
@@ -33,9 +32,11 @@ from helab.analysis.runner import AnalysisRunner
 from helab.models.ScriptTreeSelector import AnalysisInstance, PlotSettingsPanel, ReleasedPlot, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import scatter_3d
+from helab.utils.constants import PLOT_AUTO_RELOAD_SETTING, read_plot_auto_reload
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache
 from helab.utils.io_service import IOService
+from helab.utils.ram_buffers import buffer_of, buffers
 from helab.views.CacheTab import CacheTab
 from helab.views.CentralHint import CentralHint
 from helab.views.HelabMainWindow import HelabMainWindow
@@ -549,7 +550,7 @@ def test_a_plot_just_reloaded_goes_after_the_others(window: Window, cache: Folde
 
 def test_auto_reload_setting_saved_and_read(qtbot: QtBot, cache: FolderCache, tmp_path: Path) -> None:
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
-    assert read_auto_reload(settings) is True  # On by default.
+    assert read_plot_auto_reload(settings) is True  # On by default.
     tab = CacheTab(cache, settings)
     qtbot.addWidget(tab)
     assert tab.plot_auto_reload.isChecked()
@@ -557,7 +558,7 @@ def test_auto_reload_setting_saved_and_read(qtbot: QtBot, cache: FolderCache, tm
     tab.save(settings)
     settings.sync()
     again = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
-    assert read_auto_reload(again) is False and again.contains(PLOT_AUTO_RELOAD_SETTING)
+    assert read_plot_auto_reload(again) is False and again.contains(PLOT_AUTO_RELOAD_SETTING)
 
 
 def test_a_reload_leaves_out_and_names_changed_and_missing_shots(

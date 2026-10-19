@@ -25,12 +25,13 @@ import logging
 import weakref
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Iterable, Iterator, Mapping, Optional, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Optional, Protocol, Sequence
 
 import numpy as np
-from PyQt6.QtCore import QObject, QSettings, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from helab.analysis.dataset_view import DatasetView, Events, read_only
+from helab.analysis.dataset_view import DatasetView, Events, fingerprints_of, read_only
+from helab.utils.ram_buffers import Buffers, buffers
 
 if TYPE_CHECKING:
     from helab.utils.folder_cache import Dataset, FolderCache
@@ -45,61 +46,7 @@ RELOAD_GRACE = 10.0
 # Settings → Cache: a released plot reloads when it is shown again (on by default).
 PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
 
-# The memory a set of arrays uses: an identifier of each buffer → its size in bytes.
-Buffers = dict[int, int]
-
-
-def read_auto_reload(settings: QSettings) -> bool:
-    value = settings.value(PLOT_AUTO_RELOAD_SETTING, True)
-    if isinstance(value, str):
-        return value.strip().lower() not in ("false", "0", "no", "off", "")
-    return bool(value)
-
-
-def buffer_of(array: np.ndarray[Any, Any]) -> tuple[int, int]:
-    """The memory ``array`` uses, as (identifier, bytes): the array at the bottom of its
-    ``.base`` chain, or the buffer it was made from (``np.frombuffer``)."""
-    while isinstance(array.base, np.ndarray):
-        array = array.base
-    owner = array.base
-    if owner is None:
-        return id(array), int(array.nbytes)
-    while isinstance(owner, memoryview) and owner.obj is not None:
-        owner = owner.obj  # The object whose memory it is (``np.frombuffer`` keeps a memoryview of it).
-    try:
-        size = memoryview(owner).nbytes
-    except TypeError:
-        size = int(array.nbytes)
-    return id(owner), int(size)
-
-
-def buffers(arrays: Iterable[np.ndarray[Any, Any]]) -> Buffers:
-    """The memory ``arrays`` use (empty ones use none)."""
-    return dict(item for item in map(buffer_of, arrays) if item[1])
-
-
-def arrays_in(value: Any, depth: int = 0) -> Iterator[np.ndarray[Any, Any]]:
-    """The NumPy arrays in a result's data: in dataclasses, tuples, lists, sets and mappings,
-    a few levels down."""
-    if isinstance(value, np.ndarray):
-        if value.dtype != object:
-            yield value
-        return
-    if depth > 6 or value is None or isinstance(value, (str, bytes, int, float, complex, bool)):
-        return
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        for item in dataclasses.fields(value):
-            yield from arrays_in(getattr(value, item.name, None), depth + 1)
-    elif isinstance(value, Mapping):
-        for item in value.values():
-            yield from arrays_in(item, depth + 1)
-    elif isinstance(value, (list, tuple, set, frozenset)):
-        for item in value:
-            yield from arrays_in(item, depth + 1)
-
-
 _view_buffers: weakref.WeakKeyDictionary[DatasetView, Buffers] = weakref.WeakKeyDictionary()
-_dataset_buffers: weakref.WeakKeyDictionary[Dataset, tuple[int, Buffers]] = weakref.WeakKeyDictionary()
 
 
 def view_buffers(view: DatasetView) -> Buffers:
@@ -108,14 +55,6 @@ def view_buffers(view: DatasetView) -> Buffers:
     if known is None:
         known = _view_buffers[view] = buffers(view.shots.values())
     return known
-
-
-def dataset_buffers(dataset: Dataset) -> Buffers:
-    """The memory a held dataset's shots use (measured again if its shots change)."""
-    known = _dataset_buffers.get(dataset)
-    if known is None or known[0] != len(dataset.data):
-        known = _dataset_buffers[dataset] = (len(dataset.data), buffers(dataset.data.values()))
-    return known[1]
 
 
 # A released plot's view keeps its shot numbers with no events: one shared, empty array.
@@ -141,19 +80,11 @@ class Restored:
         return len(self.kept) + len(self.changed) + len(self.missing)
 
 
-def fingerprints_of(dataset: Dataset) -> dict[int, tuple[int, int, int]]:
-    prints: dict[int, tuple[int, int, int]] = {}
-    for entry in dataset.metadata.get("fingerprint") or ():
-        if len(entry) >= 3:
-            prints[int(entry[0])] = (int(entry[0]), int(entry[1]), int(entry[2]))
-    return prints
-
-
 def restore(view: DatasetView, dataset: Dataset, shots: Optional[Iterable[int]] = None) -> Restored:
     """``view`` (a released plot's hollow view) with each of its ``shots`` (default: all of
     them) that ``dataset`` holds with the same fingerprint, and no other shot. Shots with another
     fingerprint (rewritten since) and shots ``dataset`` lacks are left out and named."""
-    prints = fingerprints_of(dataset)
+    prints = fingerprints_of(dataset.metadata)
     wanted = view.shots if shots is None else sorted(set(shots) & set(view.shots))
     kept: dict[int, Events] = {}
     changed: list[int] = []

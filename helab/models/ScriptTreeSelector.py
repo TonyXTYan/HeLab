@@ -22,8 +22,7 @@ from PyQt6.QtWidgets import (
 )
 from pyqtgraph.parametertree import Parameter
 
-from helab.analysis.budget import (RELOAD_GRACE, Buffers, RamBudget, Restored, arrays_in, buffers, hollow, restore, shots_list,
-                                   view_buffers)
+from helab.analysis.budget import RELOAD_GRACE, RamBudget, Restored, hollow, restore, shots_list, view_buffers
 from helab.analysis.dataset_view import DatasetView, ViewKey
 from helab.analysis.follow import FOLLOW, Follow, LiveFeed, changes, live_specs, policy_of, shots_text
 from helab.analysis.parameter_tree import build_tree, parameter_of, settings_widget, tree_values
@@ -35,6 +34,7 @@ from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.utils.constants import QDOCKWIDGET_STYLESHEET
 from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache, store_options
 from helab.utils.io_service import IORequest, get_io_service
+from helab.utils.ram_buffers import Buffers, arrays_in, buffers
 from helab.scripts.scripts_manager import ScriptsManager
 if TYPE_CHECKING:
     from helab.views.FolderExplorer import FolderExplorer

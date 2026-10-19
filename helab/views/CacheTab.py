@@ -19,11 +19,11 @@ from PyQt6.QtWidgets import (
     QSpinBox, QVBoxLayout, QWidget,
 )
 
-from helab.analysis.budget import PLOT_AUTO_RELOAD_SETTING, RELEASE_SHARE, read_auto_reload
+from helab.analysis.budget import RELEASE_SHARE
 from helab.utils.cache_store import KINDS, purge_estimate, trim_estimate
 from helab.utils.constants import (
-    DISK_BUDGET_SETTING, LIVE_AUTOSAVE_SETTING, MAX_LIVE_AUTOSAVE, MIN_DISK_BUDGET, RAM_BUDGET_SETTING, RAM_STEPS,
-    read_disk_budget, cache_dir_refused, read_live_autosave, read_ram_budget_steps, ram_step_bytes, ram_step_range,
+    DISK_BUDGET_SETTING, LIVE_AUTOSAVE_SETTING, PLOT_AUTO_RELOAD_SETTING, MAX_LIVE_AUTOSAVE, MIN_DISK_BUDGET, RAM_BUDGET_SETTING, RAM_STEPS,
+    read_disk_budget, cache_dir_refused, read_live_autosave, read_plot_auto_reload, read_ram_budget_steps, ram_step_bytes, ram_step_range,
     total_ram,
 )
 from helab.utils.folder_cache import FolderCache, store_options
@@ -240,7 +240,7 @@ class CacheTab(QWidget):
         memory.addWidget(self.memory_label, 1)
         layout.addLayout(memory)
         self.plot_auto_reload = QCheckBox("Reload a released plot when it is shown again")
-        self.plot_auto_reload.setChecked(read_auto_reload(settings))
+        self.plot_auto_reload.setChecked(read_plot_auto_reload(settings))
         self.plot_auto_reload.setToolTip(
             "A plot released to free RAM keeps a picture of itself. On: showing it again (its tab, its window or "
             "its settings) draws it again from RAM or the disk cache, never from its folder. Off: only its "
