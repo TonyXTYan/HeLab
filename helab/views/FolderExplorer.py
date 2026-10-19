@@ -1325,8 +1325,12 @@ class FolderExplorer(QWidget):
             self._display(request.path, dataset, event)
             node = self.model.nodes.get(request.path)
             if node and node.cached_report and not event.get("unchanged"):
-                # The folder changed since its saved counts; list it for the tree.
-                self.model.request_scan(request.path, priority=True)
+                # The folder changed since its saved counts. This load's own listing and fingerprint
+                # are its status (unless it has subfolders, whose names a listing brings).
+                summary = self.model.cache.scan_summaries.get(request.path)
+                if not (summary and summary.get("signature") == event.get("signature")
+                        and self.model.adopt_load_status(request.path, summary)):
+                    self.model.request_scan(request.path, priority=True)
         elif kind in ("error", "cancelled"):
             self.loading = self.load_paused = False
             self._loading_data.clear()

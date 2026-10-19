@@ -844,22 +844,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 node.has_dirs = event.get("has_dirs", node.has_dirs)
                 self.changed(node)
                 return
-            node.cached_report = False
-            node.saved_modified = metadata_date(event.get("modified"))
-            node.raw_count, node.txy_count = len(event["raw"]), len(event["txy"])
-            extras = list(node.report.extra_icons) if node.report else []
-            node.checked_at = event.get("checked_at", time.monotonic())
-            node.report = StatusReport(node.path, event["status"], event["count"], extras,
-                                       list(event["raw"]), list(event["txy"]),
-                                       datetime.fromtimestamp(time.time() - max(0, time.monotonic() - node.checked_at)))
-            node.scanned_at = metadata_date(event.get("scanned_at"))
-            if "modified" in event:
-                self._observe_modified(node, event["modified"], node.scanned_at)
-            # Unknown ("") after a names-only listing until details or a load supply it.
-            node.signature = event.get("signature", "")
-            node.empty = event.get("empty")
-            node.has_dirs = event.get("has_dirs", node.has_dirs)
-            self._update_ancestors(node)
+            self._apply_status(node, event)
             if not event.get("metadata_only"):
                 self.statusReady.emit(node.path)
         elif kind == "done":
@@ -895,6 +880,37 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             node.state = "error" if kind == "error" else "cancelled"
             node.error = event.get("message", "Cancelled — Retry")
         self.changed(node)
+
+    def _apply_status(self, node: FolderNode, event: dict[str, Any]) -> None:
+        """A check's status of the folder (a listing's, a scan's or a load's) on its row."""
+        node.cached_report = False
+        node.saved_modified = metadata_date(event.get("modified"))
+        node.raw_count, node.txy_count = len(event["raw"]), len(event["txy"])
+        extras = list(node.report.extra_icons) if node.report else []
+        node.checked_at = event.get("checked_at", time.monotonic())
+        node.report = StatusReport(node.path, event["status"], event["count"], extras,
+                                   list(event["raw"]), list(event["txy"]),
+                                   datetime.fromtimestamp(time.time() - max(0, time.monotonic() - node.checked_at)))
+        node.scanned_at = metadata_date(event.get("scanned_at"))
+        if "modified" in event:
+            self._observe_modified(node, event["modified"], node.scanned_at)
+        # Unknown ("") after a names-only listing until details or a load supply it.
+        node.signature = event.get("signature", "")
+        node.empty = event.get("empty")
+        node.has_dirs = event.get("has_dirs", node.has_dirs)
+        self._update_ancestors(node)
+
+    def adopt_load_status(self, path: str, status: dict[str, Any]) -> bool:
+        """A load's listing and fingerprint of a folder without subfolders (its ``scan_summary``)
+        on the row, instead of listing the folder again: it is that folder's full status. Whether
+        it was used (a folder with subfolders is listed for their names)."""
+        node = self.nodes.get(path)
+        if self.closed or node is None or status.get("has_dirs") is not False or not status.get("details"):
+            return False
+        self._apply_status(node, status)
+        node.loaded = True  # (No subfolders to list.)
+        self.changed(node)
+        return True
 
     def _release_row(self, node: FolderNode) -> None:
         """The row's request ended: the newest of this tab's other active requests

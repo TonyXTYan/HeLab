@@ -40,8 +40,12 @@ def lines(trace: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in trace.read_text().splitlines()] if trace.exists() else []
 
 
+# Bookkeeping lines, not operations on a source folder.
+BOOKKEEPING = ("request", "request_end", "mounts", "volume_id")
+
+
 def counts(records: list[dict[str, Any]]) -> Counter[tuple[str, str]]:
-    return Counter((record["op"], record["reason"]) for record in records)
+    return Counter((record["op"], record["reason"]) for record in records if record["op"] not in BOOKKEEPING)
 
 
 @pytest.fixture
@@ -127,7 +131,7 @@ def test_a_listing_scan_and_load_trace_each_source_operation(tmp_path: Path, tra
     load(str(run), str(output), lambda _: None)
     records = lines(trace)[before:]
     assert counts(records) == {
-        ("scandir", "load: listing"): 1, ("stat", "load: checking"): 3, ("stat", "folder mtime"): 1,
+        ("scandir", "load: listing"): 1, ("entry_stat", "load: checking"): 3, ("stat", "folder mtime"): 1,
         ("stat", "load: before read"): 3, ("read", "load: read"): 3, ("stat", "load: after read"): 3,
         ("stat", "load: verifying"): 3}
     listing = next(record for record in records if record["op"] == "scandir")
@@ -368,3 +372,69 @@ def test_a_changed_mount_table_makes_at_most_one_verification_until_a_listing_re
         assert (started("volumes_verify"), started("roots_verify")) == (2, 2)
     finally:
         service.shutdown()
+
+
+def test_a_saved_load_stats_each_file_read_four_times_and_once_more_only_after_rereads(
+    tmp_path: Path, trace: Path,
+) -> None:
+    """The fingerprint comes with the listing; each file read is statted before and after the read,
+    and all once more at the end. The cache save checks them again only after reading files for it."""
+    run = tmp_path / "run"
+    write_shots(run, range(1, 4))
+    cache = store_options()
+    output = tmp_path / "out"
+    output.mkdir()
+    load(str(run), str(output), lambda _: None, cache)
+    assert counts(lines(trace)) == {
+        ("scandir", "load: listing"): 1, ("entry_stat", "load: checking"): 3, ("stat", "folder mtime"): 1,
+        ("stat", "load: before read"): 3, ("read", "load: read"): 3, ("stat", "load: after read"): 3,
+        ("stat", "load: verifying"): 3}
+    # Shot 4 is new and shots 1-3 are held in RAM but aren't in this new cache: they're read for
+    # the cache after ``loaded``, and the files are checked again before saving.
+    write_shots(run, range(4, 5))
+    (tmp_path / "cache-b").mkdir()
+    memory = [[shot, (info := (run / f"d_txy_forc{shot}.txt").stat()).st_size, info.st_mtime_ns] for shot in (1, 2, 3)]
+    before = len(lines(trace))
+    load(str(run), str(output), lambda _: None, {**cache, "directory": str(tmp_path / "cache-b")}, memory)
+    found = counts(lines(trace)[before:])
+    assert found[("read", "load: read")] == 1 and found[("read", "cache save: read")] == 3
+    assert found[("stat", "load: verifying")] == 4 and found[("stat", "cache save: verifying")] == 4
+
+
+def test_a_changed_cached_folder_is_listed_once_by_its_load(
+    qtbot: QtBot, tmp_path: Path, trace: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Selecting a cached folder whose files changed: its load lists and fingerprints it, and the row
+    takes that status. It used to be listed again for the tree, and then scanned for details."""
+    share = tmp_path / "share"
+    run = share / "run"
+    write_shots(run, range(1, 4))
+    cache = store_options()
+    output = tmp_path / "out"
+    output.mkdir()
+    list_folder(str(share), lambda _: None, cache)
+    scan(str(run), lambda _: None, cache)
+    load(str(run), str(output), lambda _: None, cache)
+    write_shots(run, range(4, 5))
+    os.utime(run)  # A new file changes the folder's mtime (``write_shots`` ages it).
+    service = IOService()
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    explorer = FolderExplorer(str(share), str(share), str(share), [0, 4, 5])
+    qtbot.addWidget(explorer)
+    model = explorer.model
+    qtbot.waitUntil(lambda: str(run) in model.nodes and model.nodes[str(run)].cached_report, timeout=20000)
+    wait_idle(qtbot, service)
+    before = len(lines(trace))
+    explorer.tree.setCurrentIndex(model.path_index(str(run)))
+    explorer.load_to_ram_cache(str(run))
+    qtbot.waitUntil(lambda: explorer.folder_opened_path == str(run) and len(explorer.folder_opened_data or {}) == 4,
+                    timeout=20000)
+    wait_idle(qtbot, service)
+    qtbot.wait(300)
+    wait_idle(qtbot, service)
+    listings = [record for record in lines(trace)[before:] if record["op"] == "scandir" and record["path"] == str(run)]
+    assert [record["request"] for record in listings] == ["load"]
+    node = model.nodes[str(run)]
+    assert not node.cached_report and node.txy_count == 4 and node.signature and node.loaded
+    explorer.close_cleanup()
+    service.shutdown()

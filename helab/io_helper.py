@@ -1420,6 +1420,9 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # Files added after this listing are not in the dataset; freshness compares against it.
     listed_at = time.time()
     beat = Heartbeat(send, "listing")
+    # The fingerprint comes with the listing: each TXY entry's stat (free on Windows, where the
+    # listing has it; one call on macOS and Linux, as a separate stat would be).
+    listed_stats: dict[int, tuple[int, int]] = {}
     with _scandir(path, "load: listing") as directory:
         for entry in directory:
             beat()
@@ -1428,6 +1431,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                 found.setdefault(kind.name, set()).add(shot)
                 if kind.loaded:
                     files.append((shot, entry.path))
+                    entry_info = _entry_stat(entry, "load: checking")
+                    listed_stats[shot] = (entry_info.st_size, entry_info.st_mtime_ns)
             elif not has_dirs and _is_dir(entry):
                 has_dirs = True
     if not files:
@@ -1443,7 +1448,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             beat()
         return result
 
-    fingerprint = stat_files("checking", "load: checking")
+    fingerprint = [(shot, *listed_stats[shot]) for shot, _ in files]
     txy_bytes = sum(size for _, size, _ in fingerprint)
     # Files another computer may still be writing are left out entirely (not in
     # the fingerprint), so the next load sees them as new and reads them whole.
@@ -1689,17 +1694,20 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # delays it. Shots only the caller holds are read again for completeness.
     try:
         from helab.utils.cache_store import DATASET_FORMAT, pack_dataset
+        reread = False
         for shot, filename in files:
             if shot in in_memory and shot not in data:
                 Pause.checkpoint(send)
                 send({"kind": "file_started", "filename": filename})
+                reread = True
                 try:
                     read_txy(shot, filename, "cache save: read")
                 except (OSError, ValueError, pd.errors.ParserError):
                     raise ValueError(f"Could not cache previously loaded shot {shot}") from None
                 send({"kind": "file_finished", "filename": filename})
         verify_reason = "cache save: verifying"
-        if changed():
+        # Checked again only if files were read since the check above (else nothing came between).
+        if reread and changed():
             raise ValueError("Folder changed before cache could be saved")
         file = store.write_dataset_file(pack_dataset(data))
         info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(

@@ -192,10 +192,11 @@ def test_helpers_send_heartbeats_while_listing_and_checking_files(
     output.mkdir()
     load(str(source), str(output), events.append)
     beats = [(e["phase"], e["entries"]) for e in events if e["kind"] == "heartbeat"]
-    assert beats == [(phase, count) for phase in ("listing", "checking", "verifying") for count in (1, 2, 3)]
-    # Listing and stat heartbeats arrive before the first file's read timer starts.
+    # The fingerprint comes with the listing; the files are checked again after they are read.
+    assert beats == [(phase, count) for phase in ("listing", "verifying") for count in (1, 2, 3)]
+    # Listing heartbeats arrive before the first file's read timer starts.
     kinds = [e.get("phase", e["kind"]) for e in events]
-    assert kinds.index("file_started") > max(i for i, k in enumerate(kinds) if k == "checking")
+    assert kinds.index("file_started") > max(i for i, k in enumerate(kinds) if k == "listing")
 
 
 def test_stalled_process_keeps_heartbeat_and_shutdown_responsive(
