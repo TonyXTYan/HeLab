@@ -2259,7 +2259,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     read, the check lists the folder as above. The identity check reads only the marker the first
     listing found (``identity_root``, sent back as ``live_identity_root``; "": none, the location).
 
-    ``recent`` names the held shots Live itself read recently (``FolderExplorer.LIVE_REREAD_SECONDS``,
+    ``recent`` names the held shots Live itself read recently (``LiveController.LIVE_REREAD_SECONDS``,
     by Tony's decision): one of those that changed (its writer paused longer than the settle age, so
     Live read it unfinished) is read again like a new file, once settled and unchanged a check apart,
     and replaces the held one (``live_reread``: its old and new size and mtime) instead of stopping

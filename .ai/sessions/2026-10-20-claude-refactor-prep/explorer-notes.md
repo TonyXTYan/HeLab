@@ -144,3 +144,20 @@ functions of a load-state record, rather than a rename of the fields first.
   a trivial import conflict is possible when merging.
 - `tests/test_shot_trends.py` line 34's import changed (to `LiveController`);
   the plot-UI track may change line 28's import of `ScriptTreeSelector` nearby.
+
+## Review (coordinator, 2026-10-20)
+
+An independent reviewer subagent read `1429d43..b031ada` and found no behavioural
+regression:
+- The 25 methods, `LiveSession` and the constants are AST-identical after mapping
+  `self.` to the controller or the tab, and every controller write goes to a
+  controller member.
+- The weakref can't fail in practice: the timer is the tab's child, `saveEnded`
+  stays connected to the tab, and events arrive only through the tab's guarded
+  `_io_event`.
+- Routing, locking, the main window and Folder details all go through the
+  delegates, and no test assertion was weakened.
+
+Two stale code comments (`io_helper.py` naming `FolderExplorer.LIVE_REREAD_SECONDS`,
+`utils/events.py` naming `FolderExplorer._live_halt`) were fixed by the
+coordinator.
