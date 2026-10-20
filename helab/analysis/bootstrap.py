@@ -200,10 +200,11 @@ class ShotMeans:
     """Per element: the weighted mean over shots of a per-shot value ± its SE over shots
     (``estimates.sewm``), and how many shots it used (finite value, finite weight > 0).
     Read-only arrays of the statistic's shape; SE nan with fewer than 2 shots, both nan with
-    none."""
+    none. ``notes``: elements with fewer than ``MIN_SHOTS`` shots, whose SE is rough."""
     value: Array
     se: Array
     shots: npt.NDArray[np.int64]
+    notes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for array in (self.value, self.se, self.shots):
@@ -236,4 +237,7 @@ def shot_means(per_shot: npt.ArrayLike, weights: npt.ArrayLike | None = None) ->
         estimate = sewm(flat_values[chosen, index], flat_weights[chosen, index])
         mean[index], se[index] = estimate.value, estimate.se
     shots = np.asarray(usable.sum(axis=0), dtype=np.int64).reshape(shape)
-    return ShotMeans(mean.reshape(shape), se.reshape(shape), shots)
+    few = int(np.count_nonzero((shots >= 2) & (shots < MIN_SHOTS)))
+    which = "every element has" if few == shots.size else f"{few:,} element{'s have' if few > 1 else ' has'}"
+    notes = (f"{which} fewer than {MIN_SHOTS} shots: the SE over shots is rough there",) if few else ()
+    return ShotMeans(mean.reshape(shape), se.reshape(shape), shots, notes)

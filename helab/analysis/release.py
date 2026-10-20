@@ -27,7 +27,11 @@ fall-distance candidates 0.848 and 0.8529 m).
 
 The XY origin: given the events' X and Y (``positions``, or TXY shots for the bootstrap),
 the same cloud, at rest, also marks the point below the trap: the mean X and Y of its events
-within ``ORIGIN_SIGMAS`` σ_t of its arrival, ± s/√n (within run), recorded as ``origin``.
+within ``ORIGIN_SIGMAS`` σ_t of its arrival and within an XY window about their median
+(``ORIGIN_WINDOW`` robust σ, found twice), ± s/√n (within run), recorded as ``origin`` with
+the background's estimated share (noted above 5 %). The window keeps a uniform background and
+a horizontal Bragg order in the same T slice out; one inside the window (a cloud less than
+~3σ away, or a background as dense as the cloud) still pulls the mean towards itself.
 ``velocity_origin`` picks what ``velocity.txy_to_velocity`` uses: an origin set by hand,
 else the detected one, else (0, 0), the trap assumed above X = Y = 0.
 
@@ -62,7 +66,7 @@ Source = Literal["detected", "manual"]
 # What the SE covers: the fit of the summed events, within run (events independent, no shot
 # jitter), or the spread over resampled shots (bootstrap_release_time).
 ErrorKind = Literal["within run", "shot bootstrap", "none"]
-OriginSource = Literal["manual", "detected", "assumed"]
+OriginSource = Literal["manual", "detected", "detected (unsure)", "assumed"]
 RELEASE_N_BOOT = 200  # each resample is a detection; 200 is plenty for an SE (≈ 5 % its own error)
 MIN_EVENTS = 50  # fewer events in the search range: too few to find a cloud
 STANDS_OUT = 3.0  # the cloud's peak below this many times the histogram's median bin: "unsure"
@@ -71,6 +75,8 @@ FIT_FWHMS = 1.5  # the fit window's half-width, in the peak's full widths (≈ �
 FIT_BINS_PER_FWHM = 8
 MIN_FIT_BINS = 15
 ORIGIN_SIGMAS = 2.0  # the XY origin: events within this many σ_t of the cloud's arrival
+ORIGIN_WINDOW = 3.0  # … and within this many robust σ (1.4826 MAD) of their median in X and Y
+ORIGIN_BACKGROUND_NOTE = 0.05  # a background share of the origin's events above this: noted
 NO_ORIGIN = (Estimate(math.nan), Estimate(math.nan))
 
 
@@ -95,6 +101,7 @@ class ReleaseTime:
     bootstrap: BootstrapResult | None = field(default=None, repr=False, compare=False)
     origin: tuple[Estimate, Estimate] = NO_ORIGIN  # the rest cloud's (X, Y) centre (m)
     origin_events: int = 0  # events the origin came from
+    origin_background: float = math.nan  # the background's estimated share of them
 
     @property
     def ok(self) -> bool:
@@ -121,7 +128,7 @@ class ReleaseTime:
                 "within_run_se": finite_or_none(self.within_run_se),
                 "bootstrap": self.bootstrap.as_record() if self.bootstrap is not None else None,
                 "origin": {"x": self.origin[0].as_record(), "y": self.origin[1].as_record(),
-                           "events": self.origin_events}}
+                           "events": self.origin_events, "background": finite_or_none(self.origin_background)}}
 
 
 def manual_release_time(release_time: float, constants: ResolvedConstants) -> ReleaseTime:
@@ -136,12 +143,14 @@ def manual_release_time(release_time: float, constants: ResolvedConstants) -> Re
 def velocity_origin(release: ReleaseTime | None, manual: tuple[float, float] | None = None
                     ) -> tuple[tuple[float, float], OriginSource]:
     """The XY origin for ``velocity.txy_to_velocity`` and where it came from: ``manual`` when
-    set (finite), else the release's detected ``origin``, else (0, 0), "assumed": the trap
+    set (finite), else the release's detected ``origin`` ("detected (unsure)" when the release
+    is ``unsure``: another cloud may be the one at rest), else (0, 0), "assumed": the trap
     taken to be above X = Y = 0 on the detector (say so beside the velocities)."""
     if manual is not None and all(math.isfinite(float(axis)) for axis in manual):
         return (float(manual[0]), float(manual[1])), "manual"
     if release is not None and release.ok and release.origin_found:
-        return (release.origin[0].value, release.origin[1].value), "detected"
+        return ((release.origin[0].value, release.origin[1].value),
+                "detected (unsure)" if release.unsure else "detected")
     return (0.0, 0.0), "assumed"
 
 
@@ -209,12 +218,12 @@ def detect_release_time(times: npt.ArrayLike, constants: ResolvedConstants, lowe
     if not exact and math.isfinite(skew) and not skew <= arrival.se:
         notes.append(f"the cloud is wide (σ_t {width.value * 1e3:.3g} ms): its arrival is skewed, so the "
                      f"centre may be off by up to {skew * 1e6:.3g} µs")
-    origin, origin_events = NO_ORIGIN, 0
+    origin, origin_events, background = NO_ORIGIN, 0, math.nan
     if xy is not None:
-        origin, origin_events = _origin(values, xy, arrival.value, width.value, reach, notes)
+        origin, origin_events, background = _origin(values, xy, arrival.value, width.value, reach, notes)
     return ReleaseTime(Estimate(arrival.value - t_f, arrival.se), "detected", t_f, arrival, width, "",
                        tuple(notes), len(values), search.peaks, fit, within_run_se=arrival.se, origin=origin,
-                       origin_events=origin_events)
+                       origin_events=origin_events, origin_background=background)
 
 
 def _split(shot: npt.ArrayLike) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64] | None]:
@@ -325,16 +334,43 @@ def _mean_arrival(near: npt.NDArray[np.float64], reach: float, reason: str, note
 
 
 def _origin(values: npt.NDArray[np.float64], xy: npt.NDArray[np.float64], arrival: float, width: float,
-            reach: float, notes: list[str]) -> tuple[tuple[Estimate, Estimate], int]:
-    """The rest cloud's (X, Y) centre ± s/√n (within run), from its events within
-    ``ORIGIN_SIGMAS`` σ_t of its arrival (and the fit window), finite X and Y only."""
+            reach: float, notes: list[str]) -> tuple[tuple[Estimate, Estimate], int, float]:
+    """(the rest cloud's (X, Y) centre ± s/√n (within run), its events, the background's
+    estimated share of them), from the events within ``ORIGIN_SIGMAS`` σ_t of its arrival
+    (and the fit window) with finite X and Y, kept to an XY window: ±``ORIGIN_WINDOW`` robust
+    σ (1.4826 MAD) of the median, then again about the kept events' median and spread. The
+    window keeps a uniform background and another cloud in the same T slice (a horizontal
+    Bragg order) out of the mean unless they fall inside it. The background's share is its
+    density in a frame around the window (out to twice its half-widths) times the window's
+    area, over the events kept."""
     half = min(ORIGIN_SIGMAS * width, reach) if math.isfinite(width) and width > 0 else reach
-    chosen = xy[(np.abs(values - arrival) <= half) & np.all(np.isfinite(xy), axis=1)]
+    near = xy[(np.abs(values - arrival) <= half) & np.all(np.isfinite(xy), axis=1)]
+
+    def window(points: npt.NDArray[np.float64]) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        centre = np.median(points, axis=0)
+        spread = 1.4826 * np.median(np.abs(points - centre), axis=0)
+        return centre - ORIGIN_WINDOW * spread, centre + ORIGIN_WINDOW * spread
+
+    chosen = near
+    low, high = np.full(2, -math.inf), np.full(2, math.inf)
+    for _ in range(2):  # the median's window, then once more about what it kept
+        if len(chosen) < 2:
+            break
+        low, high = window(chosen)
+        chosen = near[np.all((near >= low) & (near <= high), axis=1)]
     if len(chosen) < 2:
         notes.append(f"no XY origin: {len(chosen)} event{'' if len(chosen) == 1 else 's'} with finite X and Y "
                      "near the cloud's arrival")
-        return NO_ORIGIN, len(chosen)
+        return NO_ORIGIN, len(chosen), math.nan
     root = math.sqrt(len(chosen))
     x, y = (Estimate(float(chosen[:, axis].mean()), float(np.std(chosen[:, axis], ddof=1)) / root)
             for axis in (0, 1))
-    return (x, y), len(chosen)
+    # The background's density from a frame around the window, as wide again on each side
+    # (three times its area; the cloud's own tails there are ~0.5 % of it).
+    middle, reach_xy = (low + high) / 2, (high - low) / 2
+    frame = near[np.all(np.abs(near - middle) <= 2 * reach_xy, axis=1)]
+    share = min((len(frame) - len(chosen)) / 3 / len(chosen), 1.0) if np.all(reach_xy > 0) else 0.0
+    if share > ORIGIN_BACKGROUND_NOTE:
+        notes.append(f"XY origin: about {share:.0%} of its {len(chosen):,} events are background (the density "
+                     "outside its window), pulling it towards the background's centre")
+    return (x, y), len(chosen), share

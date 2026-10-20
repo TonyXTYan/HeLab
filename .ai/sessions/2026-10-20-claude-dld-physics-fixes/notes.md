@@ -111,3 +111,46 @@ with equal weights give mean ± s/√n.
 "within run (events independent)" on the release SE (module docstring, `ErrorKind`, the
 `error` field, `detect_release_time`, the origin's SE, the no-bootstrap note), each pointing
 to `bootstrap_release_time`. `peaks.py` needed no change.
+
+## Re-review of 986db18 (second commit)
+
+The Coordinator's re-review kept the floor (lower MSE than a free offset; fixing the offset
+at 0 biases σ by 2–3.5 SE once there is any background, so never by default:
+`rv-phys-probes/p7_offset.py`) and asked for four changes.
+
+1. **Floor flag.** `fit_histogram(…, nonnegative_offset=None)`: None = raw counts with count
+   weights (as before), True/False to ask for or refuse it. `profiles.fit_smoothed` passes
+   True (smoothed counts are counts), so the smoothed and raw fits agree again:
+   `test_fits_use_the_unsmoothed_counts_by_default` is back to 0.5 SE. Test:
+   `test_the_offset_floor_can_be_asked_for_or_refused`.
+2. **Bin means.** `fit_histogram(…, binned=True)` averages the model over each bin with
+   Simpson's rule (`fits.bin_means`, the bin's two ends and centre; `fits.bin_bounds` puts
+   edges halfway between centres, before bins are left out, the outer ones mirrored).
+   Simpson for every model rather than a Gaussian CDF: one code path, exact for cubics, and
+   its error for a Gaussian in bins of σ is ~10⁻³ of the peak (against ~4 % for the centre
+   value). The fitted bins, χ² and the Poisson reweighting all use the bin means; `curve` and
+   `evaluate` stay the model itself, for drawing. `binned=False` is for point samples (two
+   `test_fits.py` tests of exact function values pass it) and for `fit_smoothed`, whose
+   `smoothed_model` now bins before smoothing on its own bins (S·f̄), and whose sandwich
+   covariance and refit variances use the same bin means (`bin_means(model.function, …)`),
+   so prediction, Jacobian and variance agree. Measured, 60 seeds of 50 000 events in bins
+   of σ/5 (σ pull from the events' own standard deviation, which removes the seeds' own
+   scatter: that alone was −0.30 for seeds 0–59): centre values +0.5, bin means within 0.15
+   (test `test_the_model_is_averaged_over_each_bin`, 40 seeds; bins of σ: centre values 4 %
+   wide, bin means right). Coarse bins (σ/2.5 arrival-time, R/5 Thomas–Fermi) still recover
+   their parameters (`test_coarse_bins_keep_…`). The release-time probe is unchanged
+   (−3.3 µs, SE 12.8 µs).
+3. **Robust origin.** `_origin` keeps, within the T slice, an XY window of ±3 robust σ
+   (1.4826 MAD) about the median, found twice (the second about what the first kept), then
+   takes the mean ± s/√n. Chosen over Gaussian + offset fits of the X and Y histograms: no
+   fit to fail on few events, and it also drops a second cloud (a horizontal Bragg order),
+   which an offset would not absorb. The background's share is estimated from a frame
+   around the window (out to twice its half-widths: three times its area), recorded as
+   `origin_background` ("background" in the record) and noted above 5 %. Tests: 200 000
+   uniform background events, a 30 % order 20 mm away, and both, over 3 seeds: origin within
+   3 SE (a plain mean of the slice was pulled > 3 mm by the order), share < 5 %; a background
+   nearly as dense as the cloud inside the window is noted. `velocity_origin` returns
+   "detected (unsure)" for an unsure release. The module docstring says a cloud inside the
+   window (less than ~3σ away) or a background as dense as the cloud still pulls the mean.
+4. **`shot_means` notes** elements with 2 to `MIN_SHOTS` − 1 shots ("the SE over shots is
+   rough there").

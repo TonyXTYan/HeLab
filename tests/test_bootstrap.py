@@ -184,6 +184,10 @@ def test_shot_means_per_bin_match_the_bootstrap_of_the_pooled_mean() -> None:
     # Equal weights: the plain mean of per-shot values ± s/√n; one shot: no SE; none: nan.
     plain = shot_means(np.array([[1.0], [3.0]]))
     assert plain.value[0] == 2.0 and plain.se[0] == pytest.approx(1.0)
+    assert plain.notes and "fewer than 5 shots" in plain.notes[0]
+    assert not found.notes
+    partly = shot_means(np.array([[1.0, 1.0]] * 3 + [[2.0, math.nan]] * 3))
+    assert partly.notes == ("1 element has fewer than 5 shots: the SE over shots is rough there",)
     one = shot_means(np.array([[1.0, math.nan], [math.nan, math.nan]]))
     assert one.value[0] == 1.0 and math.isnan(one.se[0]) and math.isnan(one.value[1])
     with pytest.raises(ValueError):

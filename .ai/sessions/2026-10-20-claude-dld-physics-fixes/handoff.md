@@ -34,6 +34,21 @@ pull tolerance 0.3 → 0.4 and the flat-counts bound note; `test_histogram_fits.
 file, one tolerance line) smoothed-vs-raw width 0.5 → 0.75 SE. The skew-note test became the
 arrival-time test plus a fallback test.
 
+## Re-review fixes (second commit)
+
+1. `fit_histogram(nonnegative_offset=None|True|False)`; `profiles.fit_smoothed` passes True.
+   `test_histogram_fits` smoothed-vs-raw tolerance back to 0.5 SE.
+2. `fit_histogram(binned=True)`: the model averaged over each bin (Simpson,
+   `fits.bin_means` / `fits.bin_bounds`); `fit_smoothed` bins inside `smoothed_model` and
+   uses the bin means for its sandwich and variances (`binned=False` there). 50k events in
+   bins of σ/5: σ pull +0.5 → within 0.15.
+3. Robust XY origin: ±3 robust σ window about the median, twice; `origin_background`
+   recorded and noted > 5 %; `velocity_origin` "detected (unsure)".
+4. `ShotMeans.notes` below `MIN_SHOTS` shots.
+Details: notes.md, "Re-review of 986db18". `profiles.py` lines touched: the import, the
+`smoothed_model` docstring and function (bin means on its bins), and in `fit_smoothed` the
+bin bounds, two `bin_means` means and the `fit_histogram` flags.
+
 ## Checks
 
 - `mypy helab tests --strict`: no issues, 176 files. `pyright helab tests`: 0 errors.
@@ -51,7 +66,16 @@ arrival-time test plus a fallback test.
 1. The offset floor biases σ slightly low when the true background is 0 (mean pull −0.17 →
    −0.31 at 500 events, +0.03 → −0.16 at 5000; the exact constrained Poisson likelihood gives
    the same). Keep it (proposed), or keep −top.
-2. Floor the smoothed fit's offset too (`profiles.fit_smoothed`, another worker's file).
+2. ~~Floor the smoothed fit's offset too~~: done in the second commit.
 3. XY origin as the mean within 2 σ_t (background pulls it slightly); a per-folder "trap
    position" setting as the manual override's home.
 4. Always fit the arrival-time profile first (not only for wide clouds).
+
+## Checks (second commit)
+
+- Targeted (velocity, bootstrap, fits, histogram fits; `-n 2 --reruns 5 --reruns-delay 1`):
+  96 passed, no reruns. `mypy helab tests --strict`: clean, 176 files. `pyright helab tests`:
+  0 errors. The diff check: clean.
+- Full suite (`-n 4 --reruns 5 --reruns-delay 1 -rR`): `2 failed, 1664 passed, 7 skipped,
+  2 xfailed, 2 warnings, 10 rerun in 108.37s`: the two known root-only failures, and all 10
+  reruns are theirs.

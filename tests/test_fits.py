@@ -98,7 +98,7 @@ def test_unweighted_fit_scales_its_errors_by_the_residuals() -> None:
 def test_given_errors_replace_the_weights() -> None:
     x = np.linspace(-3, 3, 31)
     y = 50 * np.exp(-x ** 2 / 2) + 2
-    result = fit_histogram(x, y, sigma=0.01)
+    result = fit_histogram(x, y, sigma=0.01, binned=False)  # point samples, not bins
     assert result.ok
     assert result.values == pytest.approx([50, 0, 1, 2], abs=1e-6)
     assert result.chi2 == pytest.approx(0, abs=1e-6)
@@ -311,7 +311,7 @@ def test_registry() -> None:
 
 def test_evaluate_draws_the_fitted_model() -> None:
     x = np.linspace(-3, 3, 31)
-    result = fit_histogram(x, 50 * np.exp(-x ** 2 / 2) + 2, sigma=0.01)
+    result = fit_histogram(x, 50 * np.exp(-x ** 2 / 2) + 2, sigma=0.01, binned=False)
     assert result.evaluate([0.0]) == pytest.approx([52.0], abs=1e-4)
     assert result.derived(lambda values: float(values[0] + values[3])).value == pytest.approx(52.0, abs=1e-4)
 
@@ -363,3 +363,62 @@ def test_count_weights_keep_the_offset_at_or_above_zero() -> None:
     counts, edges = np.histogram(events, bins=80, range=(-8, 8))
     background = fit_histogram(bin_centres(edges), counts)
     assert abs(background["offset"].value - 20) < 3 * background["offset"].se
+
+
+def sigma_pull(seeds: int, count: int, binned: bool, width: float = 0.2) -> float:
+    """The fitted σ's mean pull from the events' own standard deviation (their unbinned
+    maximum-likelihood σ), which takes out the seeds' own scatter."""
+    pulls = []
+    for seed in range(seeds):
+        events = np.random.default_rng(seed).normal(0, 1, count)
+        counts, edges = np.histogram(events, bins=round(10 / width), range=(-5, 5))
+        result = fit_histogram(bin_centres(edges), counts, binned=binned)
+        assert result.ok, result.failure
+        pulls.append((result["sigma"].value - float(np.std(events))) / result["sigma"].se)
+    return float(np.mean(pulls))
+
+
+def test_the_model_is_averaged_over_each_bin() -> None:
+    """At a bin's centre a Gaussian is higher than its mean over the bin, so a fit of centre
+    values comes out wide by about w²/(24σ) (Sheppard): +0.5 SE at 50 000 events in bins of
+    σ/5. Averaged over the bins, it isn't."""
+    assert abs(sigma_pull(40, 50_000, binned=True)) < 0.15
+    assert sigma_pull(40, 50_000, binned=False) > 0.3
+    # Bins of σ: the centre values are 4 % wide; the bin means still get σ.
+    counts, edges = np.histogram(np.random.default_rng(1).normal(0, 1, 200_000), bins=10, range=(-5, 5))
+    coarse = fit_histogram(bin_centres(edges), counts)
+    assert abs(coarse["sigma"].value - 1) < 3 * coarse["sigma"].se
+    assert fit_histogram(bin_centres(edges), counts, binned=False)["sigma"].value > 1.03
+    # Edges halfway between centres, the outer bins as wide as their neighbours.
+    lower, upper = fits.bin_bounds([0.0, 1.0, 3.0])
+    assert list(lower) == [-0.5, 0.5, 2.0] and list(upper) == [0.5, 2.0, 4.0]
+    assert fits.bin_means(lambda x, a: a * x ** 3, np.array([0.0]), np.array([2.0]), [1.0]) == pytest.approx([2.0])
+
+
+def test_coarse_bins_keep_the_arrival_time_and_thomas_fermi_models_right() -> None:
+    g, h = 9.796, 0.848
+    model = fits.arrival_time_model(h, g)
+    rng = np.random.default_rng(5)
+    v = rng.normal(0, 0.05, 300_000)
+    times = 1.7 + (v + np.sqrt(v * v + 2 * g * h)) / g
+    t_f = math.sqrt(2 * h / g)
+    counts, edges = np.histogram(times, bins=30, range=(1.7 + t_f - 0.03, 1.7 + t_f + 0.03))  # bins of σ/2.5
+    result = fit_histogram(bin_centres(edges), counts, model)
+    assert result.ok, result.failure
+    assert abs(result["centre"].value - (1.7 + t_f)) < 3 * result["centre"].se
+    assert abs(result["sigma"].value - 0.05 / g) < 3 * result["sigma"].se
+    events = thomas_fermi_events(np.random.default_rng(6), 100_000, 1.0)
+    counts, edges = np.histogram(events, bins=16, range=(-1.6, 1.6))  # bins of R/5
+    tf = fit_histogram(bin_centres(edges), counts, "thomas_fermi_2")
+    assert tf.ok and abs(tf["radius"].value - 1) < 3 * tf["radius"].se
+
+
+def test_the_offset_floor_can_be_asked_for_or_refused() -> None:
+    asked_below, refused_below, given_below = 0, 0, 0
+    for seed in range(20):
+        counts, edges = np.histogram(np.random.default_rng(seed).normal(0, 1, 150), bins=80, range=(-8, 8))
+        x, rates, errors = bin_centres(edges), counts / 10, np.sqrt(np.maximum(counts, 1)) / 10
+        given_below += fit_histogram(x, rates, sigma=errors)["offset"].value < 0
+        asked_below += fit_histogram(x, rates, sigma=errors, nonnegative_offset=True)["offset"].value < 0
+        refused_below += fit_histogram(x, counts, nonnegative_offset=False)["offset"].value < 0
+    assert given_below > 2 and refused_below > 2 and asked_below == 0

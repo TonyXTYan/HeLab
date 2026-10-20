@@ -383,3 +383,58 @@ def test_the_shot_bootstrap_covers_the_trap_s_shot_to_shot_drift() -> None:
     # Times alone: no origin, as before.
     times = bootstrap_release_time([shot[:, 0] for shot in shots], DEFAULTS, n_boot=20)
     assert times.ok and not times.origin_found
+
+
+def rest_cloud_at_origin(rng: np.random.Generator, count: int) -> Array:
+    events = cloud(rng, count, 0.003)
+    events[:, 1:] += ORIGIN
+    return events
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_the_xy_origin_ignores_background_and_a_horizontal_order(seed: int) -> None:
+    rng = np.random.default_rng(seed)
+    rest = rest_cloud_at_origin(rng, 20_000)
+    # 200 000 background events, uniform over 0.5 s and the 80 mm detector.
+    background = np.column_stack([rng.uniform(1.9, 2.4, 200_000), rng.uniform(-0.04, 0.04, (200_000, 2))])
+    # A horizontal order with 30 % as many atoms, 20 mm away on the detector, in the same T slice.
+    order = cloud(rng, 6000, 0.003, drift=(0.0, 0.02 / DEFAULTS.fall_time, 0.0))
+    order[:, 1:] += ORIGIN
+    for extra in (background, order, np.concatenate([background, order])):
+        events = np.concatenate([rest, extra])
+        found = detect_release_time(events[:, 0], DEFAULTS, positions=events[:, 1:3])
+        assert found.ok and found.origin_found, found.failure
+        for axis, truth in zip(found.origin, ORIGIN):
+            assert abs(axis.value - truth) < 3 * axis.se, (axis, truth)
+        assert 0 <= found.origin_background < 0.05
+    # A plain mean of the T slice would have been pulled by the order: 30/130 of 20 mm.
+    events = np.concatenate([rest, order])
+    times = events[:, 0]
+    slice_ = np.abs(times - (RELEASE + DEFAULTS.fall_time)) < 2 * 0.003 / DEFAULTS.g
+    assert float(np.mean(events[slice_, 1])) - ORIGIN[0] > 3e-3
+
+
+def test_a_background_inside_the_window_is_noted() -> None:
+    rng = np.random.default_rng(4)
+    rest = rest_cloud_at_origin(rng, 10_000)
+    # A background nearly as dense near the cloud as the cloud itself, over a small detector.
+    spread = 0.003 * DEFAULTS.fall_time
+    arrival = RELEASE + DEFAULTS.fall_time
+    background = np.column_stack([rng.uniform(arrival - 0.015, arrival + 0.015, 100_000),
+                                  ORIGIN[0] + rng.uniform(-5 * spread, 5 * spread, 100_000),
+                                  ORIGIN[1] + rng.uniform(-5 * spread, 5 * spread, 100_000)])
+    events = np.concatenate([rest, background])
+    found = detect_release_time(events[:, 0], DEFAULTS, positions=events[:, 1:3])
+    assert found.ok and found.origin_background > 0.05
+    assert any("background" in note and "XY origin" in note for note in found.notes)
+    json.dumps(found.as_record(), allow_nan=False)
+
+
+def test_an_unsure_release_gives_an_unsure_origin() -> None:
+    rng = np.random.default_rng(5)
+    first, second = rest_cloud_at_origin(rng, 8000), cloud(rng, 6000, 0.003, drift=(0.1, 0, 0))
+    events = np.concatenate([first, second])
+    found = detect_release_time(events[:, 0], DEFAULTS, positions=events[:, 1:3])
+    assert found.unsure and found.origin_found
+    assert velocity_origin(found)[1] == "detected (unsure)"
+    assert velocity_origin(found, manual=(0.0, 0.0))[1] == "manual"

@@ -15,9 +15,16 @@ How a fit runs:
   settle: the Poisson maximum-likelihood fit (``_reweight`` says why: the first fit alone
   biases widths low). ``"counts"`` stops after the first fit. Either way the covariance is
   absolute (the SEs don't scale with χ²; a poor model shows as a large reduced χ², noted).
-  ``"none"`` fits unweighted and scales the covariance by the residuals instead. With count
-  weights a model's ``offset`` is at least 0 (a mean count can't be negative), and an offset
-  at 0 isn't noted as "at its bound"; with ``sigma=`` it keeps the model's bound.
+  ``"none"`` fits unweighted and scales the covariance by the residuals instead.
+- Offset: for counts (``nonnegative_offset``; by default raw counts with count weights) a
+  model's ``offset`` is at least 0 (a mean count can't be negative), and an offset at 0 isn't
+  noted as "at its bound"; otherwise (``sigma=`` rates, background-subtracted data) it keeps
+  the model's bound, −top.
+- Bins: by default (``binned``) the model is averaged over each bin (Simpson's rule on the
+  bin's ends and centre, ``bin_means``), not taken at its centre: a centre value biases a
+  width by about +w²/(24σ) for bins w wide (Sheppard's correction: +0.5 SE at 50 000 events
+  in bins of σ/5, several SE at 10⁵–10⁶). Bin edges are halfway between neighbouring
+  centres. The result's ``curve`` and ``evaluate`` are the model itself, for drawing.
 - Scaling: x and counts are mapped to order one before fitting (a T profile is ~0.4 s wide
   ~0.1 ms, counts ~10³), each parameter by its role (a position, a width, a height or a
   dimensionless shape), and mapped back with the covariance.
@@ -196,6 +203,32 @@ class FitResult:
                 "fixed": dict(self.model.fixed)}
 
 
+def bin_bounds(centres: npt.ArrayLike) -> tuple[Array, Array]:
+    """(lower, upper) edges of bins with these centres (any order): halfway to each
+    neighbour in x, the outermost ones as wide on their open side as on the other. A single
+    bin has zero width."""
+    x = np.asarray(centres, dtype=np.float64).ravel()
+    order = np.argsort(x, kind="stable")
+    ordered = x[order]
+    half = np.diff(ordered) / 2
+    left = np.concatenate([half[:1], half]) if len(half) else np.zeros(len(x))
+    right = np.concatenate([half, half[-1:]]) if len(half) else np.zeros(len(x))
+    lower, upper = np.empty(len(x)), np.empty(len(x))
+    lower[order], upper[order] = ordered - left, ordered + right
+    return lower, upper
+
+
+def bin_means(function: Callable[..., Array], lower: Array, upper: Array, values: Sequence[float] | Array) -> Array:
+    """``function(x, *values)`` averaged over each bin [lower, upper] by Simpson's rule (exact
+    for cubics; for a Gaussian in bins of σ its error is ~10⁻³ of the peak, against the
+    centre value's ~4 %)."""
+    middle = (lower + upper) / 2
+    points = np.concatenate([lower, middle, upper])
+    evaluated = function(points, *values)
+    count = len(lower)
+    return (evaluated[:count] + 4 * evaluated[count:2 * count] + evaluated[2 * count:]) / 6
+
+
 def bin_centres(edges: npt.ArrayLike) -> Array:
     edges = np.asarray(edges, dtype=np.float64)
     return cast(Array, (edges[:-1] + edges[1:]) / 2)
@@ -205,7 +238,8 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
                   weights: Weights = "poisson", sigma: npt.ArrayLike | None = None,
                   max_evaluations: int = MAX_EVALUATIONS,
                   max_radius_ratio: float = MAX_RADIUS_RATIO,
-                  covariance_of: Callable[[Array, Array, Array], Array] | None = None) -> FitResult:
+                  covariance_of: Callable[[Array, Array, Array], Array] | None = None,
+                  nonnegative_offset: bool | None = None, binned: bool = True) -> FitResult:
     """Fit ``model`` (a ``MODELS`` key or a ``FitModel``) to a histogram's bin centres and
     raw counts. ``sigma``, when given, is each bin's error (absolute) and replaces
     ``weights``: pass it for anything that isn't raw counts. Bins with a non-finite centre,
@@ -219,7 +253,12 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
     (data units, from the weights alone) before anything reads it: the SEs, the "consistent
     with 0" gating and its notes, the undetermined check and the extras. For data whose bins
     are correlated (a smoothed curve: ``profiles.fit_smoothed``), where only the caller knows
-    the real spread; ``x`` are the bins fitted."""
+    the real spread; ``x`` are the bins fitted.
+
+    ``nonnegative_offset``: the offset is at least 0 (counts); None means so for raw counts
+    with count weights (no ``sigma``, weights not "none"). ``binned``: the model is averaged
+    over each bin (edges halfway between the centres given, before any are left out); False
+    takes it at the centres (point samples, or a model that already integrates its bins)."""
     fit_model = MODELS[model] if isinstance(model, str) else model
     has_ratio = RATIO in fit_model.names
     if has_ratio and not max_radius_ratio > MIN_RADIUS_RATIO:
@@ -229,6 +268,10 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
     y = np.asarray(counts, dtype=np.float64).ravel()
     if len(x) != len(y):
         raise ValueError("centres and counts must have the same length")
+    finite_x = np.isfinite(x)
+    lower_x, upper_x = x.copy(), x.copy()
+    if binned and finite_x.any():
+        lower_x[finite_x], upper_x[finite_x] = bin_bounds(x[finite_x])
     absolute = sigma is not None or weights != "none"
     if sigma is not None:
         errors = np.broadcast_to(np.asarray(sigma, dtype=np.float64), y.shape).ravel()
@@ -245,6 +288,7 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
         notes.append(f"{int((~positive[finite]).sum()):,} bins with an error that isn't finite and > 0 left out")
     usable = finite & positive
     x, y, errors = x[usable], y[usable], errors[usable]
+    lower_x, upper_x = lower_x[usable], upper_x[usable]
     if sigma is None and weights != "none" and not np.all(y == np.round(y)):
         notes.append("the counts aren't whole numbers: Poisson weights assume raw counts "
                      "(give errors as sigma for rates or smoothed counts)")
@@ -269,6 +313,7 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
 
     order = np.argsort(x, kind="stable")
     x, y, errors = x[order], y[order], errors[order]
+    lower_x, upper_x = lower_x[order], upper_x[order]
     centre, span = (float(x[0]) + float(x[-1])) / 2, float(x[-1] - x[0]) or 1.0
     height = float(np.max(np.abs(y))) or 1.0
     scale = np.array([span if parameter.role in ("position", "width") else
@@ -279,13 +324,20 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
         return cast(Array, shift + scale * normalised)
 
     def normalised_model(u: Array, *normalised: float) -> Array:
-        return fit_model.function(centre + span * u, *to_data(np.asarray(normalised))) / height
+        """The model on the fitted bins (``u`` is always their centres, normalised)."""
+        parameters = to_data(np.asarray(normalised))
+        if binned:
+            return bin_means(fit_model.function, lower_x, upper_x, parameters) / height
+        return fit_model.function(centre + span * u, *parameters) / height
 
     lower, upper = (np.array(bound, dtype=np.float64) for bound in fit_model.bounds(x, y))
-    # Raw counts with count weights: an offset below 0 makes the model negative in the tails
-    # (117 of 200 sparse Poisson fits went there), an impossible mean count. Rates and other
-    # data given with sigma= keep the model's own bound (−top: background-subtracted data).
-    floored = sigma is None and weights != "none" and OFFSET in fit_model.names
+    # Counts: an offset below 0 makes the model negative in the tails (117 of 200 sparse
+    # Poisson fits went there), an impossible mean count. Rates and other data given with
+    # sigma= keep the model's own bound (−top: background-subtracted data), unless the caller
+    # says they are counts (profiles.fit_smoothed).
+    if nonnegative_offset is None:
+        nonnegative_offset = sigma is None and weights != "none"
+    floored = nonnegative_offset and OFFSET in fit_model.names
     if floored:
         lower[fit_model.names.index(OFFSET)] = max(float(lower[fit_model.names.index(OFFSET)]), 0.0)
     if has_ratio:

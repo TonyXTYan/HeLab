@@ -24,8 +24,8 @@ import numpy.typing as npt
 from scipy.sparse import csr_matrix
 
 from helab.analysis.estimates import Estimate, si_prefix
-from helab.analysis.fits import (MODELS, VARIANCE_FLOOR, FitModel, FitResult, arrival_time_model, bin_centres,
-                                 fit_histogram)
+from helab.analysis.fits import (MODELS, VARIANCE_FLOOR, FitModel, FitResult, arrival_time_model, bin_bounds,
+                                 bin_centres, bin_means, fit_histogram)
 from helab.analysis.physics import (TABLE, ResolvedConstants, sigma_v_from_arrival_width,
                                     sigma_v_from_transverse_width, temperature_estimate)
 
@@ -273,15 +273,17 @@ SMOOTHED_SETTLED = 0.05  # stop once no parameter moves more than this many SEs
 
 
 def smoothed_model(model: FitModel, smoothing: Smoothing, centres: Array) -> FitModel:
-    """``model`` with the smoothing applied to its prediction on the bins (``centres``):
-    S·f(x, θ). Anywhere else (a finer grid, as ``FitResult.evaluate`` draws) it is the
+    """``model`` with the smoothing applied to its prediction on the bins (``centres``), the
+    model averaged over each bin (``fits.bin_means``): S·f̄(θ). Anywhere else (a finer grid,
+    as ``FitResult.evaluate`` draws) it is the
     unsmoothed model: S belongs to those bins only."""
     step = float(np.min(np.diff(centres))) if len(centres) > 1 else 1.0
+    lower, upper = bin_bounds(centres)
 
     def function(x: Array, *values: float) -> Array:
-        profile = model.function(x, *values)
         on_bins = len(x) == smoothing.bins and bool(np.allclose(x, centres, rtol=0.0, atol=1e-6 * step))
-        return smoothing.apply(profile) if on_bins else profile
+        return smoothing.apply(bin_means(model.function, lower, upper, values)) if on_bins else \
+            model.function(x, *values)
 
     return replace(model, key=f"{model.key}+smoothing", title=f"{model.title} ⊗ smoothing", function=function)
 
@@ -303,12 +305,13 @@ def fit_smoothed(centres: Array, raw: Array, model: FitModel, sigma_bins: float)
     forward = smoothed_model(model, smoothing, centres)
     data = smoothing.apply(raw)
     floor = VARIANCE_FLOOR * smoothing.variance(np.ones_like(raw))
+    lower, upper = bin_bounds(centres)
 
     def fit_with(variance: Array, start: Array | None = None) -> FitResult:
         def sandwich(x: Array, values: Array, fitted: Array) -> Array:
             if len(x) != len(centres):  # bins left out: S doesn't apply (fit_histogram noted them)
                 return np.full_like(fitted, math.nan)
-            mean = np.clip(model.function(centres, *values), 0, None)
+            mean = np.clip(bin_means(model.function, lower, upper, values), 0, None)
             jacobian = np.empty((len(centres), len(values)))
             for index, value in enumerate(values):
                 spread = math.sqrt(fitted[index, index]) if fitted[index, index] > 0 else math.nan
@@ -325,13 +328,14 @@ def fit_smoothed(centres: Array, raw: Array, model: FitModel, sigma_bins: float)
         # A refit starts from the last fit only (not the model's several guesses: a bimodal
         # fit's four starts and its Gaussian seed fit would cost each round as much as the first).
         fitted = forward if start is None else replace(forward, guesses=lambda x, y, errors: [start])
-        return fit_histogram(centres, data, fitted, sigma=np.sqrt(variance), covariance_of=sandwich)
+        return fit_histogram(centres, data, fitted, sigma=np.sqrt(variance), covariance_of=sandwich,
+                             nonnegative_offset=True, binned=False)  # counts; the model bins itself
 
     fit = fit_with(np.maximum(smoothing.variance(raw), floor))
     for _ in range(SMOOTHED_ROUNDS):
         if not fit.ok:
             break
-        mean = np.clip(model.function(centres, *fit.values), 0, None)
+        mean = np.clip(bin_means(model.function, lower, upper, fit.values), 0, None)
         refit = fit_with(np.maximum(smoothing.variance(mean), floor), fit.values)
         if not refit.ok:
             break
