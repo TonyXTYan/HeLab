@@ -101,20 +101,8 @@ FIT_COLOUR = (0, 0, 0)
 NOTE_COLOUR = "#b06000"  # amber, as Transfer fractions' notes
 
 
-class DecadeLogAxis(pg.AxisItem):  # type: ignore[misc]
-    """A log axis that labels whole decades only, with unlabelled 2…9 ticks between them.
-    pyqtgraph labels the 2…9 ticks too when the axis spans under about two decades, and
-    those labels overlap. With no whole decade in view it keeps pyqtgraph's own ticks."""
-
-    def logTickValues(self, minVal: float, maxVal: float, size: float,
-                      stdTicks: list[tuple[float, list[float]]]) -> list[tuple[float | None, list[float]]]:
-        decades = [float(v) for v in range(math.ceil(minVal), math.floor(maxVal) + 1)]
-        if not decades:
-            return cast(list[tuple[float | None, list[float]]],
-                        super().logTickValues(minVal, maxVal, size, stdTicks))
-        minor = [v + math.log10(k) for v in range(math.floor(minVal), math.ceil(maxVal)) for k in range(2, 10)]
-        self.setStyle(maxTextLevel=0)
-        return [(1.0, decades), (None, [v for v in minor if minVal < v < maxVal])]
+class DecadeLogAxis(GroupedAxis):
+    """The histograms' log Y axis: ``GroupedAxis``'s decade-only log ticks."""
 
 
 class OverlayView(pg.ViewBox):  # type: ignore[misc]
@@ -457,7 +445,9 @@ class TxyHistograms(DatasetAnalysis):
                   if data.newest_shot is not None and data.newest else "")
         header = html.escape(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}{newest}"))
         if data.fitted() and data.constants is not None:
-            header += f"<br>Fits with {html.escape(describe_constants(data.constants, CONSTANT_KEYS, every=True))}"
+            # Only the values not at their defaults (the record has them all), so the header stays short.
+            used = describe_constants(data.constants, CONSTANT_KEYS)
+            header += f"<br>Fits with {html.escape(used)}" if used else "<br>Fits with the default constants"
             header += notes_html(data.constants.notes)
         widget.addLabel(header, row=0, col=0)
         overlays = []

@@ -3,7 +3,8 @@ whatever the locale and however large (``display_units.tick_strings``; pyqtgraph
 ``2.045e+04`` from 10,000)."""
 from __future__ import annotations
 
-from typing import Any
+import math
+from typing import Any, cast
 
 import pyqtgraph as pg
 
@@ -12,12 +13,24 @@ from helab.analysis.display_units import tick_strings
 
 class GroupedAxis(pg.AxisItem):  # type: ignore[misc]
     """An axis whose tick labels group thousands with "," and use "." for decimals, the decimals
-    from the tick spacing. In log mode it keeps pyqtgraph's own labels. Never rescaled by an SI
-    prefix of its own: the plots give their values in ms or mm already."""
+    from the tick spacing. Never rescaled by an SI prefix of its own (no "(x0.001)"): the plots give
+    their values in ms or mm already. In log mode it labels whole decades only, with unlabelled
+    2…9 ticks between them (pyqtgraph labels the 2…9 ticks too when the axis spans under about two
+    decades, and those labels overlap); with no whole decade in view it keeps pyqtgraph's ticks."""
 
     def __init__(self, orientation: str, **kwargs: Any) -> None:
         super().__init__(orientation, **kwargs)
         self.enableAutoSIPrefix(False)
+
+    def logTickValues(self, minVal: float, maxVal: float, size: float,
+                      stdTicks: list[tuple[float, list[float]]]) -> list[tuple[float | None, list[float]]]:
+        decades = [float(v) for v in range(math.ceil(minVal), math.floor(maxVal) + 1)]
+        if not decades:
+            return cast(list[tuple[float | None, list[float]]],
+                        super().logTickValues(minVal, maxVal, size, stdTicks))
+        minor = [v + math.log10(k) for v in range(math.floor(minVal), math.ceil(maxVal)) for k in range(2, 10)]
+        self.setStyle(maxTextLevel=0)
+        return [(1.0, decades), (None, [v for v in minor if minVal < v < maxVal])]
 
     def tickStrings(self, values: list[float], scale: float, spacing: float) -> list[str]:
         if self.logMode:

@@ -409,7 +409,7 @@ def test_histogram_fits_go_in_the_docks_record(window: Window, browser: FolderEx
     # The constants appear once, from the run (F0b's Constants line), with the fits' keys only;
     # all at their defaults, so the settings line names none.
     assert record.count("Constants: ") == 1 and "ħ =" not in record
-    assert ("\nConstants: h = 848 mm (default, unconfirmed), t_f = 416.091 ms (derived, unconfirmed), "
+    assert ("\nConstants: h = 848 mm (default, unconfirmed), t_f = 416.0908 ms (derived, unconfirmed), "
             "g = 9.79602 m/s² (default), m = ") in record
     assert "constants:" not in label.text()
     assert instance.result is not None and instance.result.reuse_key()["constants"]["values"]["fall_distance"] == 0.848

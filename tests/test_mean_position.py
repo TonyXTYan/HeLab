@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import QLabel
 
 from helab.analysis.dataset_view import DatasetView, build_view
 from helab.analysis.parameters import effective
+from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
 from helab.analysis.spectrum import FLAT_TOP, NO_WINDOW
 from helab.scripts.standard import mean_position
@@ -236,6 +237,11 @@ def test_drawn_in_mm_and_ms_and_updated_in_place(qtbot: QtBot) -> None:
     assert widget.means.getAxis("bottom").labelText == "T (ms)" and widget.means.getAxis("left").labelText == "Mean (mm)"
     xs, _ = widget.curves["X", "mean"].getData()
     assert xs[0] == pytest.approx(400.5, abs=0.1)  # ms
+    # The spectrum's log amplitude axis: no "(x0.001)" rescaling, whole decades labelled only.
+    amplitude = widget.spectrum.getAxis("left")
+    assert isinstance(amplitude, GroupedAxis) and not amplitude.autoSIPrefix
+    major, minor = amplitude.logTickValues(-3.5, -1.2, 300, [])
+    assert major == (1.0, [-3.0, -2.0]) and minor[0] is None and len(minor[1]) > 10
     assert "Peaks: mean X: 100" in widget.peaks_label.text
     widget.means.vb.setXRange(410, 420, padding=0)
     later = run(sloshing(shots=4, seed=6), values)

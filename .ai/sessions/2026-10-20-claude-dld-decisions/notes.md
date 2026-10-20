@@ -109,3 +109,26 @@ held, unchanged shots'. Tested (the test fails without the fix: `d1`, `d2` re-st
   factory that tests point at a tmp ini (as AGENTS.md asks). Outside this branch's scope.
 - Density images: a test with an asymmetric hot spot (late T, high X, low Y) checks the brightest
   pixel is drawn at the spot's ms/mm place on XY, XT and YT (catches a transpose).
+
+## UI review fixes (second commit)
+
+1. **Commas in fixed-prefix boxes** (high): "," is now only a thousands separator there, whatever
+   the locale, and "." the only decimal point (Tony). A comma must sit in valid grouping after a
+   first group of 1–3 digits not starting with 0; "20,5", "0,450", "1,23", "20,450,5" are invalid
+   (red outline, value comes back) in de_DE and en alike, so no comma can change a value 1,000×.
+   This replaces the earlier proposal (German "20,5" = 20.5). Plain boxes (no fixed prefix) keep
+   the old locale rule.
+2. The histograms' header names only constants not at their defaults ("Fits with the default
+   constants" otherwise); the record keeps all of them.
+3. `physics` notes in ms/mm ("t_f 500 ms … √(2h/g) is 416.0908 ms for h 848 mm"); constants' values
+   (`value_text`) in ms and mm like positions (≤ 4 decimals: `t_f 416.0908 ms`, trigger `20,500 ms`),
+   Hz with an SI prefix. Lab parameters and Folder constants editors, and F0b's Constants group, use
+   `fixedPrefix` "m" for s and m constants (fall distance `848 mm`).
+4. `GroupedAxis` in log mode labels whole decades only (the old `DecadeLogAxis`, which now just
+   subclasses it), auto SI prefix off: used for the mean position spectrum's and the T spectrum's
+   amplitude axes (no "(x0.001)", no overlapping 2…9 labels).
+5. Fixed-prefix boxes: exponent form outside 1e-6–1e12 in their unit ("1e−57 ms", "1e+63 ms"),
+   "−" (U+2212) for minus in the text, and "−" or "-" accepted when typed; up to 9 decimals shown.
+6. Small widths (call): kept in ms ("0.0005925 ms"); the box's tooltip adds a line with the value
+   in its own SI prefix ("0.0005925 ms = 592.5 ns") below 1 in the box's unit, after the tooltip the
+   box was given.

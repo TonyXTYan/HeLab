@@ -49,7 +49,9 @@ trigger still shown in s, D1 version 5 dropping saved fall overrides. Found, not
    one "Constants:" line. Change Settings › Lab parameters › g: amber "constants changed" only on
    plots with a fit on.
 4. View range › manual: T min shows `20,450 ms`-style; type `20,450.5` and `20450.5` (both
-   20,450.5 ms), `20.45 s` (20,450 ms). On a German-locale Windows PC, `20,5` → 20.5 ms.
+   20,450.5 ms), `20.45 s` (20,450 ms). `20,5` or `0,450` outline red and are refused, on a
+   German-locale Windows PC too (second commit: "," only groups thousands in these boxes).
+   Settings › Lab parameters: DLD trigger `20,500 ms`, fall distance `848 mm`.
 5. Density images XT/YT, Mean X, Y against T, T spectrum, Transfer fractions: T axes in ms,
    grouped; Transfer fractions' title `order 0 at 2,137.4758 ms, spacing 12.52 ms`.
 6. 3D scatter: axes X/Y (mm), T (ms); hover reads `T 20,450.1234 ms`; Open in browser the same.

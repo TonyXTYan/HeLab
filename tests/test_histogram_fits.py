@@ -414,7 +414,7 @@ def test_fits_are_drawn_titled_and_recorded_with_their_constants(qtbot: QtBot) -
     assert len(lines) == 3 and not any("Constants" in line for line in lines)
     record_text = result.describe()
     assert record_text.count("Constants: ") == 1
-    assert "h = 850 mm (this plot)" in record_text and "t_f = 416.581 ms (derived)" in record_text
+    assert "h = 850 mm (this plot)" in record_text and "t_f = 416.5812 ms (derived)" in record_text
     assert "ħ =" not in record_text  # only the constants the fits use
     default = run(view, {"fit_x": True})
     assert default.resolved_constants is not None and default.resolved_constants.origins["fall_distance"] == "default"
@@ -438,7 +438,8 @@ def test_fits_are_drawn_titled_and_recorded_with_their_constants(qtbot: QtBot) -
         factor = 1e3
         assert xs == pytest.approx(fit.x * factor) and ys == pytest.approx(fit.y)
     header = widget.getItem(0, 0).text
-    assert "Fits with h 850 mm (this plot)" in header and "t_f 416.581 ms (derived)" in header
+    assert "g 9.79602" not in header  # Only the values not at their defaults (the record has all).
+    assert "Fits with h 850 mm (this plot)" in header and "t_f 416.5812 ms (derived)" in header
 
 
 def test_a_lab_or_folder_layer_reaches_the_fits() -> None:

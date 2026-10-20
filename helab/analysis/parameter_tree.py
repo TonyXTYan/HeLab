@@ -23,9 +23,13 @@ NUMBER_TYPES = {"float": "helab_float", "int": "helab_int"}
 SI_PREFIX_LETTERS = "".join(prefix for prefix in fn.SI_PREFIX_EXPONENTS if prefix.strip())
 NUMBER = re.compile(r"(?P<number>[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:[eE][+-]?\d+)?)\s*"
                     r"(?P<prefix>[" + SI_PREFIX_LETTERS + r"]?)")
-# A number with thousands separators, as a fixed-prefix box shows it: "20,450.5", "-1,000".
-GROUPED = re.compile(r"(?P<number>[+-]?\d{1,3}(?:,\d{3})+(?:\.\d*)?)(?![\d,])")
-FIXED_DECIMALS = 6  # a fixed-prefix box shows up to this many decimals (trailing zeros dropped)
+# A number with thousands separators, as a fixed-prefix box shows it: "20,450.5", "-1,000". The
+# first group never starts with 0 ("0,450" is no grouping).
+GROUPED = re.compile(r"(?P<number>[+-]?[1-9]\d{0,2}(?:,\d{3})+(?:\.\d*)?)(?![\d,])")
+FIXED_DECIMALS = 9  # a fixed-prefix box shows up to this many decimals (trailing zeros dropped)
+# … and plain digits between these sizes (in its unit); beyond them, exponent form ("1e-57 ms").
+FIXED_RANGE = (1e-6, 1e12)
+MINUS = "−"  # U+2212, as the plots write negative numbers; "-" is read too
 
 
 class UnitSpinBox(SpinBox):  # type: ignore[misc]
@@ -44,10 +48,13 @@ class UnitSpinBox(SpinBox):  # type: ignore[misc]
 
     With the ``fixedPrefix`` option (an SI prefix, ``ParameterSpec.unit_prefix``) the value is
     always shown with that prefix, its digits grouped by thousands with "," and "." before the
-    decimals whatever the locale (Tony, 2026-10-20): 20.45 s shows as "20,450 ms". There a number
-    whose commas sit exactly between groups of three digits ("20,450.5") is read with them as
-    thousands separators; any other comma follows the rule above ("20,5" is 20.5 where the comma
-    is the decimal mark).
+    decimals whatever the locale (Tony, 2026-10-20): 20.45 s shows as "20,450 ms", −0.5 ms as
+    "−0.5 ms" (exponent form beyond ``FIXED_RANGE``). There "," is only ever a thousands separator,
+    whatever the locale, and "." the only decimal point: a comma must sit between groups of three
+    digits after a first group of 1–3 not starting with 0 ("20,450.5", "1,000"); any other comma
+    ("20,5", "0,450", "1,23") is invalid, so a comma never changes a value 1,000× silently.
+    "−" and "-" both mean minus. A value under 1 in the box's unit also shows in the SI prefix
+    that suits it in the box's tooltip ("0.0005925 ms = 592.5 ns").
     """
 
     def __init__(self, parent: Any = None, value: float = 0.0, **kwargs: Any) -> None:
@@ -62,21 +69,43 @@ class UnitSpinBox(SpinBox):  # type: ignore[misc]
         if letter is None or self.opts["int"]:
             return str(super().formatText())
         scaled = Decimal(self.val).scaleb(-fn.SI_PREFIX_EXPONENTS[letter or " "])
-        number = f"{scaled:,.{FIXED_DECIMALS}f}"
-        if "." in number:
-            number = number.rstrip("0").rstrip(".")
+        size = abs(scaled)
+        if size and not FIXED_RANGE[0] <= size < FIXED_RANGE[1]:
+            number = f"{scaled:.6g}"
+        else:
+            number = f"{scaled:,.{FIXED_DECIMALS}f}"
+            if "." in number:
+                number = number.rstrip("0").rstrip(".")
         if number in ("-0", ""):
             number = "0"
+        number = number.replace("-", MINUS)
         prefix = self.opts["prefix"]
         unit = f"{letter}{self.opts['suffix']}"
-        return f"{prefix}{' ' if prefix else ''}{number}{' ' if unit else ''}{unit}"
+        text = f"{prefix}{' ' if prefix else ''}{number}{' ' if unit else ''}{unit}"
+        self._small_hint(scaled, text)
+        return text
+
+    def _small_hint(self, scaled: Decimal, text: str) -> None:
+        """Below 1 in the box's unit, the tooltip also gives the value with its own SI prefix, on a
+        line after the tooltip the box was given."""
+        suffix = str(self.opts["suffix"])
+        hint = ""
+        if scaled and abs(scaled) < 1 and suffix:
+            from helab.analysis.display_units import si_text
+            hint = f"{text} = {si_text(float(self.val), suffix)}"
+        old = str(getattr(self, "_hint", ""))
+        base = self.toolTip()
+        if old and base.endswith(old):
+            base = base[:-len(old)].rstrip("\n")
+        self._hint = hint
+        self.setToolTip("\n".join(part for part in (base, hint) if part))
 
     def selectNumber(self) -> None:
         """Select the number (grouped digits too) for quick editing."""
         edit = self.lineEdit()
         if edit is None:
             return
-        match = re.search(r"[+-]?[\d.,]+", edit.text())
+        match = re.search(r"[+−-]?[\d.,]+(?:e[+−-]?\d+)?", edit.text())
         if match is not None:
             edit.setSelection(match.start(), match.end() - match.start())
 
@@ -113,12 +142,16 @@ class UnitSpinBox(SpinBox):  # type: ignore[misc]
     def _split(self, text: str) -> tuple[str, str, bool] | None:
         """(number, SI prefix, whether the unit was typed), or None if ``text`` isn't one."""
         opts = self.opts
-        text = text.strip().removeprefix(opts["prefix"]).strip()
+        text = text.strip().removeprefix(opts["prefix"]).strip().replace(MINUS, "-")
         suffix = opts["suffix"]
         with_unit = bool(suffix) and text.endswith(suffix)
         if with_unit:
             text = text[:-len(suffix)].rstrip()
-        if opts.get("fixedPrefix") is not None and (grouped := GROUPED.match(text)) is not None:
+        if opts.get("fixedPrefix") is not None and "," in text:
+            # Only a thousands separator here: valid grouping, or the text is no number.
+            grouped = GROUPED.match(text)
+            if grouped is None or "," in text[grouped.end():]:
+                return None
             text = grouped["number"].replace(",", "") + text[grouped.end():]
         match = NUMBER.fullmatch(text)
         if match is None:

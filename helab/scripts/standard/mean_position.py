@@ -323,7 +323,8 @@ class PositionPlot(QWidget):
         self.markers: list[Any] = []
         self.peaks_label: Any = None
         if spectrum:
-            self.spectrum = self.graphics.addPlot(row=3, col=0, title="Spectrum of the mean position")
+            self.spectrum = self.graphics.addPlot(row=3, col=0, title="Spectrum of the mean position",
+                                                  axisItems={"left": GroupedAxis("left")})
             self.spectrum.setLabel("bottom", "Frequency", units="Hz")
             self.spectrum.setLabel("left", f"Amplitude ({LENGTH_UNIT})")
             self.spectrum.showGrid(x=True, y=True, alpha=0.3)

@@ -19,6 +19,7 @@ from helab.analysis.plot_axes import GroupedAxis, grouped_axes
 from helab.scripts.standard import basic_plots, mean_position, t_spectrum, transfer_fractions
 
 GERMAN = QLocale(QLocale.Language.German, QLocale.Country.Germany)
+ENGLISH = QLocale(QLocale.Language.English, QLocale.Country.Australia)
 
 
 @pytest.mark.parametrize(("seconds", "text"), [
@@ -92,7 +93,7 @@ def spin(qtbot: QtBot, value: float, locale: QLocale | None = None, suffix: str 
 
 @pytest.mark.parametrize(("text", "value"), [
     ("20,450.5", 20.4505), ("20450.5", 20.4505), ("5", 0.005), ("-1,000", -1.0), ("5 s", 5.0),
-    ("1,000 ms", 1.0), ("2 µs", 2e-6), ("1,0000", None), ("12,34", None)])
+    ("1,000 ms", 1.0), ("2 µs", 2e-6), ("1,0000", None), ("12,34", None), ("0,450", None)])
 def test_a_fixed_prefix_box_reads_grouped_numbers(qtbot: QtBot, text: str, value: float | None) -> None:
     box = spin(qtbot, 20.4501234)
     assert box.text() == "20,450.1234 ms"
@@ -100,15 +101,39 @@ def test_a_fixed_prefix_box_reads_grouped_numbers(qtbot: QtBot, text: str, value
     assert (parsed is None) if value is None else float(parsed) == pytest.approx(value)
 
 
-def test_a_fixed_prefix_box_groups_the_same_where_the_comma_is_the_decimal_mark(qtbot: QtBot) -> None:
-    box = spin(qtbot, 20.4501234, GERMAN)
-    assert box.text() == "20,450.1234 ms"  # "," and "." whatever the locale (Tony)
-    assert float(box.parse("20,5")) == pytest.approx(0.0205)  # not grouped: the decimal comma
-    assert float(box.parse("20,450")) == pytest.approx(20.45)  # grouped
-    box.setValue(0.0)
+@pytest.mark.parametrize("locale", [GERMAN, ENGLISH], ids=["de_DE", "en"])
+@pytest.mark.parametrize(("text", "value"), [
+    ("20,5", None), ("20,500", 20.5), ("0,450", None), ("20,450.5", 20.4505), ("1,23", None),
+    ("−5", -0.005), ("-5", -0.005), ("20.5", 0.0205), ("1,000,000", 1000.0), ("20,450,5", None),
+    ("−1,000.5 ms", -1.0005)])
+def test_in_a_fixed_prefix_box_a_comma_only_ever_groups_thousands(qtbot: QtBot, locale: QLocale, text: str,
+                                                                  value: float | None) -> None:
+    """Whatever the locale (Tony): "," is only a thousands separator and "." the only decimal
+    point, so a comma can never change a value 1,000× silently: "20,5" and "0,450" are invalid."""
+    box = spin(qtbot, 20.4501234, locale)
+    assert box.text() == "20,450.1234 ms"
+    parsed = box.parse(text)
+    assert (parsed is None) if value is None else float(parsed) == pytest.approx(value)
+
+
+def test_a_fixed_prefix_box_shows_minus_and_extremes(qtbot: QtBot) -> None:
+    box = spin(qtbot, 0.0)
     assert box.text() == "0 ms"
     millimetres = spin(qtbot, -0.0025, suffix="m")
-    assert millimetres.text() == "-2.5 mm" and float(millimetres.parse("3")) == pytest.approx(0.003)
+    assert millimetres.text() == "−2.5 mm" and float(millimetres.parse("3")) == pytest.approx(0.003)
+    assert float(millimetres.parse(millimetres.text())) == pytest.approx(-0.0025)
+    box.setValue(1e-60)
+    assert box.text() == "1e−57 ms" and float(box.parse(box.text())) == pytest.approx(1e-60)
+    box.setValue(1e60)
+    assert box.text() == "1e+63 ms" and len(box.text()) < 20
+    box.setValue(5.925e-7)
+    assert box.text() == "0.0005925 ms"
+    assert box.toolTip().endswith("0.0005925 ms = 592.5 ns")  # a µs/ns hint for a tiny width
+    box.setToolTip("Its own tip")
+    box.setValue(2e-6)
+    assert box.toolTip() == "Its own tip\n0.002 ms = 2 µs"
+    box.setValue(2.0)
+    assert box.toolTip() == "Its own tip"
 
 
 def test_view_range_bounds_show_ms_and_mm_and_keep_si_values(qtbot: QtBot) -> None:
@@ -134,6 +159,15 @@ def test_view_range_bounds_show_ms_and_mm_and_keep_si_values(qtbot: QtBot) -> No
     assert plain.text(0.5) == "T 0.5 s" and "fixedPrefix" not in plain.tree_item()
 
 
+def test_constants_and_their_notes_read_in_ms_and_mm() -> None:
+    from helab.analysis import constant_layers, physics
+    assert physics.resolve(plot={"fall_time": 0.5}).notes == (
+        "fall time and distance disagree: t_f 500 ms (plot), but √(2h/g) is 416.0908 ms for h 848 mm "
+        "(default) and g 9.79602 m/s² (default)",)
+    assert constant_layers.value_text("dld_trigger", 20.5) == "20,500 ms"
+    assert constant_layers.value_text("trap_radial", 500.0) == "500 Hz"
+
+
 def test_every_t_and_xy_setting_of_the_plots_is_in_ms_or_mm() -> None:
     """Positions and widths along T, X and Y (bounds, bin widths, σ, orders' times, the XY box)."""
     names = {basic_plots.TxyHistograms(): ("t_min", "x_min", "y_max", "smooth_t", "smooth_xy", "const.fall_time"),
@@ -145,4 +179,4 @@ def test_every_t_and_xy_setting_of_the_plots_is_in_ms_or_mm() -> None:
         for name in wanted:
             assert specs[name].unit_prefix == "m", (script, name)
     fall = {spec.name: spec for spec in basic_plots.TxyHistograms().parameters("Plot")}["const.fall_distance"]
-    assert fall.unit_prefix is None  # a distance, not an X/Y position: SI prefixes
+    assert fall.unit_prefix == "m"  # lengths in mm, as the plots show them

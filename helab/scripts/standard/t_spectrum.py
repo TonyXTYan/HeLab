@@ -238,7 +238,8 @@ class SpectrumPlot(QWidget):
         self.profile: Any = self.profile_plot.plot([], [], pen=pg.mkPen(COLOUR))
         self.profile.setDownsampling(auto=True, method="peak")
         self.profile.setClipToView(True)
-        self.spectrum_plot: Any = self.graphics.addPlot(row=2, col=0, title="Spectrum")
+        self.spectrum_plot: Any = self.graphics.addPlot(row=2, col=0, title="Spectrum",
+                                                        axisItems={"left": GroupedAxis("left")})
         self.spectrum_plot.setLabel("bottom", "Frequency", units="Hz")
         quantity = "Power" if power else "Amplitude"
         self.spectrum_plot.setLabel("left", f"{quantity} ({'kHz/shot' if per_shot else 'events'}"

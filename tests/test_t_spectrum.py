@@ -14,6 +14,7 @@ from helab.analysis import spectrum as spectrum_module
 from helab.analysis.dataset_view import DatasetView, build_view
 from helab.analysis.display_units import frequency_text, si_text, time_text
 from helab.analysis.parameters import effective
+from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
 from helab.analysis.spectrum import (FLAT_TOP, MAX_PADDED, WINDOWS, SpectrumPeak, amplitude_spectrum, find_spectrum_peaks,
                                      padding_for, refine)
@@ -225,6 +226,7 @@ def test_drawn_with_its_peak_list_and_updated_in_place(qtbot: QtBot) -> None:
     assert widget.profile_plot.getAxis("bottom").labelText == "T (ms)"
     assert widget.spectrum_plot.getAxis("bottom").labelUnits == "Hz"
     assert widget.spectrum_plot.getAxis("left").labelText == "Amplitude (kHz/shot)"
+    assert isinstance(widget.spectrum_plot.getAxis("left"), GroupedAxis)
     assert "Peaks: 1. 2 kHz" in widget.peaks_label.text and len(widget.labels) == len(widget.markers.getData()[0])
     assert "bin spacing Δf 20 Hz, resolution ≈ 30 Hz (ENBW 1.5), Nyquist 50 kHz" in widget.title.text
     widget.spectrum_plot.vb.setXRange(1000, 3000, padding=0)

@@ -123,7 +123,7 @@ def test_runs_resolve_plot_over_folder_over_lab_with_origins() -> None:
     resolved = layers.resolve_for_run(values, lab={"g": 9.8}, folder={"fall_distance": 0.9})
     assert (resolved.fall_distance, resolved.origins["fall_distance"], resolved.g) == (0.7, "plot", 9.8)
     assert layers.describe_constants(resolved, KEYS) == ("g 9.8 m/s² (lab) · h 700 mm (this plot) · "
-                                                         "t_f 377.964 ms (derived)")
+                                                         "t_f 377.9645 ms (derived)")
     assert layers.describe_constants(DEFAULTS, KEYS) == ""  # All defaults: nothing to say on the line.
     assert "h = 848 mm (default, unconfirmed)" in layers.record_text(DEFAULTS)
     assert layers.record_text(DEFAULTS, ("g",)) == "g = 9.79602 m/s² (default)"
@@ -243,7 +243,7 @@ def test_a_plot_resolves_when_it_runs_and_marks_changes_until_rerun(
     assert title(instance, "fall_distance") == "Fall distance h: 900 mm (folder)"
     assert title(instance, "g") == "Gravitational acceleration g: 9.8 m/s² (lab)"
     line = label(instance, "plot_data_source")
-    assert "constants: g 9.8 m/s² (lab) · h 900 mm (folder) · t_f 428.571 ms (derived)" in line
+    assert "constants: g 9.8 m/s² (lab) · h 900 mm (folder) · t_f 428.5714 ms (derived)" in line
     assert "Fall distance" not in line.split("\n")[1].split("constants:")[0]  # Not as a parameter.
     assert label(instance, "plot_error") == ""
     # A lab value changes: the plot is marked, and keeps what it drew.
@@ -410,7 +410,7 @@ def test_the_histograms_fits_are_keyed_on_constants_and_marked_when_one_changes(
     assert fitted.resolved_constants.origins["g"] == "lab"
     record = cast(QDockWidget, instance.dock_widget).findChild(QLabel, "plot_data_source")
     assert record is not None and record.toolTip().count("Constants: ") == 1
-    assert "constants: t_f 416.219 ms (derived, unconfirmed) · g 9.79 m/s² (lab)" in label(instance, "plot_data_source")
+    assert "constants: t_f 416.2187 ms (derived, unconfirmed) · g 9.79 m/s² (lab)" in label(instance, "plot_data_source")
     assert label(instance, "plot_error") == ""
     cache.set_lab_constants({"g": 9.79, "mass": 6.6e-27})  # A constant only the fits use: marked.
     assert label(instance, "plot_error").startswith("⚠ constants changed (")
