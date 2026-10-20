@@ -21,6 +21,7 @@ from helab.models.StatusReport import StatusReport
 from helab.resources.icons import CHECK_COLOR, LOAD_COLOR, StatusIcons
 from helab.utils.io_service import IORequest
 from helab.utils import events, large_folder
+from helab.utils.colours import AMBER as AMBER  # Shared; the views import it from here too.
 from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, PENDING_ROOT_TOOLTIP, PENDING_SUMMARY, PLACE_ROOT_ACTION,
                                       PLACE_ROOT_TOOLTIP, REVIEW_ROOT_TOOLTIP, Dataset, pending_root_text,
                                       marker_path, store_options)
@@ -51,7 +52,6 @@ MISMATCH_RETRY_TOOLTIP = ("Check this folder again. If the wrong drive was mount
                           "its cached shots are then found and it loads as usual.")
 MISMATCH_REVIEW_TOOLTIP = ("Cached data doesn't match this folder: shots it had are missing now. Show it in the "
                            "list of mismatched folders, where you can load it as it is now.")
-AMBER = "#b26a00"
 LIVE_RETRY_TOOLTIP = "Check the folder again and go on watching it"
 # Why Live's new shots aren't saved to the disk cache: the summary line's words, and the tooltip's.
 LIVE_BLOCKED = {

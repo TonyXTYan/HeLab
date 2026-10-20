@@ -645,22 +645,64 @@ def test_a_highlighted_histogram_is_freed_with_its_widget(qtbot: QtBot, log_y: b
     assert freed(refs)
 
 
-def test_a_following_histograms_old_drawing_is_freed_when_redrawn(
+def test_a_following_histograms_plot_updates_in_place_keeping_its_zoom(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
-    """Live's next revision draws the histograms anew; the old drawing's plot, overlay and
-    counts go with the widget it replaced."""
-    window.view = window.live_feed.publish(revision([1, 2]))
+    """Live's next revision sets the histograms' data in the plots already drawn: a zoom stays,
+    and the newest shot's overlay follows the newest shot. Another log Y draws them anew, and
+    the old drawing's plot, overlay and counts go with the widget it replaced."""
+    window.view = window.live_feed.publish(spread([1, 2]))
     instance = plot(window, qtbot, basic_plots.TxyHistograms())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    set_live(instance, DELAY, 0.0)
     assert instance.parameter_root is not None
     parameter_of(instance.parameter_root, basic_plots.HIGHLIGHT).setValue(True)
     instance.run()
     qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
-    refs = histogram_refs(instance._content)
+    assert isinstance(instance._content, basic_plots.HistogramsWidget)
+    widget: Any = instance._content
+    x_plot = widget.plots[1]
+    x_plot.vb.setRange(xRange=(-0.5, 0.5), yRange=(0.0, 3.0), padding=0)  # The user zooms.
+    zoomed = x_plot.vb.viewRange()
+    window.live_feed.publish(spread([1, 2, 3]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2 and instance.shown is not None
+                    and instance.shown.data.newest_shot == 3, timeout=10_000)
+    assert instance._content is widget and widget.plots[1] is x_plot  # Updated, not drawn anew.
+    assert np.allclose(x_plot.vb.viewRange(), zoomed)
+    assert "3 shots" in widget.header.text and "shot 3 highlighted" in widget.header.text
+    newest = cast(AnalysisResult, instance.shown).data.newest
+    assert all(np.allclose(np.nan_to_num(overlay.curve.yData, nan=0.0), counts)
+               for overlay, counts in zip(widget.newest_views, newest))
+    assert x_plot.getAxis("right").labelText == "shot 3 events"
+    refs = histogram_refs(widget)
+    parameter_of(instance.parameter_root, basic_plots.LOG_Y).setValue(True)
+    instance.run()
+    qtbot.waitUntil(lambda: instance._content is not widget, timeout=10_000)
+    del widget, x_plot
+    assert freed(refs)
+
+
+def test_a_following_counts_plot_updates_in_place_keeping_its_zoom(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """Counts per shot: Live's next shot joins the plot already drawn, the user's zoom stays, and
+    the highlighted newest shot moves to it."""
+    window.view = window.live_feed.publish(revision([1, 2]))
+    instance = plot(window, qtbot, basic_plots.CountsPerShot())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    set_live(instance, DELAY, 0.0)
+    assert instance.parameter_root is not None
+    parameter_of(instance.parameter_root, basic_plots.COUNTS_HIGHLIGHT).setValue(True)
+    instance.run()
+    qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
+    assert isinstance(instance._content, basic_plots.CountsPlot)
+    widget: Any = instance._content
+    widget.getPlotItem().vb.setRange(xRange=(0.0, 10.0), yRange=(0.0, 5.0), padding=0)
+    zoomed = widget.getPlotItem().vb.viewRange()
     window.live_feed.publish(revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2 and instance.shown is not None
                     and instance.shown.data.newest_shot == 3, timeout=10_000)
-    assert freed(refs)
+    assert instance._content is widget and np.allclose(widget.getPlotItem().vb.viewRange(), zoomed)
+    assert list(widget.curve.xData) == [1, 2, 3] and list(widget.newest.xData) == [3]
+    assert "3 shots" in widget.title.text and "shot 3 highlighted" in widget.title.text
 
 
 def test_a_following_plot_highlights_lives_newest_shot(
@@ -680,8 +722,10 @@ def test_scatter_declares_a_live_policy_others_rerun_on_every_shot() -> None:
     assert scatter_3d.Scatter3D().live_policy("Plot") == LivePolicy(min_delay=5.0)
     for slower in (density_images.DensityImages(), mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum()):
         assert slower.live_policy("Plot") == LivePolicy(min_delay=2.0)
-    for script in (basic_plots.CountsPerShot(), basic_plots.TxyHistograms(), transfer_fractions.TransferFractions(),
-                   shot_times.ShotTimesPlot(), shot_trends.ShotTrends()):
+    # The histograms: at most one rerun a second (their fits take a while on a large folder).
+    assert basic_plots.TxyHistograms().live_policy("Plot") == LivePolicy(min_delay=1.0)
+    for script in (basic_plots.CountsPerShot(), transfer_fractions.TransferFractions(), shot_times.ShotTimesPlot(),
+                   shot_trends.ShotTrends()):
         assert script.live_policy("Plot") == LivePolicy()
 
 

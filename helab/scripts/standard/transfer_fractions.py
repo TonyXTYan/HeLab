@@ -30,7 +30,6 @@ which events were left out.
 """
 from __future__ import annotations
 
-import html
 import math
 from dataclasses import dataclass, field
 from typing import Any, List, Mapping, Optional, cast
@@ -46,6 +45,7 @@ from helab.analysis.display_units import T_SCALE, WIDTH_DIGITS, axis_label, leng
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.plot_axes import GroupedAxis
+from helab.analysis.plot_text import add_label, line_html, notes_html
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import SHOT_SPECS, select_shots, selection_text, shots_brief, shots_text
 from helab.analysis.stats import shortest_range
@@ -453,9 +453,7 @@ class TransferFractions(DatasetAnalysis):
         title = (f"{result.input.short()} · {shots_text(data.shots.tolist(), data.total_shots)} · order 0 at "
                  f"{time_text(orders.centre)}, spacing {time_text(orders.spacing, WIDTH_DIGITS)}, window ±{time_text(orders.half_width, WIDTH_DIGITS)} "
                  f"({found})")
-        notes = ' · '.join(data.notes)
-        notes = f'<br><span style="color: #b06000">{html.escape(notes)}</span>' if notes else ""
-        widget.addLabel(html.escape(title) + notes, row=0, col=0)
+        add_label(widget, line_html(title) + notes_html(data.notes), row=0, col=0)  # One note per line.
         colours = [pg.intColor(i, hues=len(orders.numbers), values=1, maxValue=200) for i in range(len(orders.numbers))]
         plot = widget.addPlot(row=1, col=0)
         plot.setLabel("bottom", "Shot number")

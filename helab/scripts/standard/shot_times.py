@@ -8,7 +8,7 @@ and the dock's first line.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, List, Mapping, Optional, cast
 
 import numpy as np
@@ -19,20 +19,23 @@ from PyQt6.QtWidgets import QWidget
 from helab.analysis.dataset_view import DatasetView
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.parameters import ParameterSpec
+from helab.analysis.plot_text import add_label, line_html
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.analysis.selection import SHOT_SPECS, select_shots, selection_text, shots_brief, shots_text
+from helab.analysis.selection import (SHOT_SPECS, newest_brief, newest_colour, newest_shot, newest_specs, select_shots,
+                                      selection_text, shots_brief, shots_text)
 from helab.analysis.stats import counts_per_shot
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
-from helab.scripts.standard.basic_plots import source_title
+from helab.scripts.standard.basic_plots import NEWEST_SIZE, source_title
 
 BOTH, COUNTS, GAPS = "counts and gaps", "counts", "gaps"
 PLOT_GROUP = "Plot"
 PANELS = ParameterSpec("panels", "Show", "choice", BOTH, choices=(BOTH, COUNTS, GAPS), group=PLOT_GROUP,
                        tip="Events per shot against its time, the time since the previous shot, or both "
                            "(stacked, sharing the time axis).")
-LOG_GAPS = ParameterSpec("log_gaps", "Log gaps", "bool", False, group=PLOT_GROUP,
+LOG_GAPS = ParameterSpec("log_gaps", "Log Y (gaps)", "bool", False, group=PLOT_GROUP,
                          tip="Logarithmic gap axis: seconds and hours on one plot.")
+HIGHLIGHT, NEWEST_COLOUR = newest_specs(PLOT_GROUP)
 COLOUR = (40, 90, 170)
 FALLBACK_COLOUR = (230, 140, 0)
 TOOLTIP = ("A shot's time is its raw d<N>.txt file's modification time; amber triangles have no raw "
@@ -51,6 +54,8 @@ class ShotTimes:
     total_shots: int  # the shots loaded
     chosen: int = 0  # the shots the Shots settings chose (some may have no time)
     unsettled_files: int = 0
+    newest_shot: int | None = None  # the highlighted newest shot (None: off)
+    colour: tuple[int, int, int] = (214, 39, 40)
 
     @property
     def fallbacks(self) -> int:
@@ -124,6 +129,17 @@ def title_text(data: ShotTimes) -> str:
     return " · ".join(parts)
 
 
+def key_html(data: ShotTimes, shown: bool) -> str:
+    """The plots' key, below the title (a legend inside a plot covered its latest points):
+    the raw-time points, the TXY-time triangles when any is drawn, and the newest shot."""
+    parts = [f'<span style="color: {pg.mkColor(COLOUR).name()}">●</span> raw file time']
+    if shown:
+        parts.append(f'<span style="color: {pg.mkColor(FALLBACK_COLOUR).name()}">▼</span> TXY file time (no raw file)')
+    if data.newest_shot is not None:
+        parts.append(f'<span style="color: {pg.mkColor(data.colour).name()}">●</span> shot {data.newest_shot} (newest)')
+    return " · ".join(parts)
+
+
 class ShotTimesWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
     """The plots and their items, so a rerun (Live) updates them in place, keeping zoom and pan."""
 
@@ -132,11 +148,13 @@ class ShotTimesWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
         self.panels, self.log_gaps = panels, log_gaps
         self.setBackground("w")
         layout: Any = self.ci  # (The widget passes addLabel and addPlot to it.)
-        self.title = layout.addLabel("", row=0, col=0)
+        self.title = add_label(layout, row=0, col=0)
+        self.key_label = add_label(layout, row=1, col=0)
         self.setToolTip(TOOLTIP)
         self.points: list[tuple[Any, Any]] = []  # (raw-time points, TXY-time points) per plot
+        self.newest: list[Any] = []  # the newest shot's point per plot (highlight)
         self.plots: list[Any] = []
-        row = 1
+        row = 2
         for kind in (COUNTS, GAPS):
             if panels not in (kind, BOTH):
                 continue
@@ -147,24 +165,27 @@ class ShotTimesWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
             plot.setLabel("bottom", "Shot time")
             if kind == GAPS and log_gaps:
                 plot.setLogMode(x=False, y=True)
-            plot.addLegend(offset=(-10, 10))
             # Points only (no line), as data items: they follow the plot's log mode (Log gaps), which
             # a ScatterPlotItem doesn't (it would draw seconds as exponents).
             measured = pg.PlotDataItem(pen=None, symbol="o", symbolSize=6, symbolPen=None,
                                        symbolBrush=pg.mkBrush(COLOUR))
             fallback = pg.PlotDataItem(pen=None, symbol="t", symbolSize=9, symbolPen=None,
                                        symbolBrush=pg.mkBrush(FALLBACK_COLOUR))
+            newest = pg.PlotDataItem(pen=None, symbol="o", symbolSize=NEWEST_SIZE, symbolPen=None)
             plot.addItem(measured)
             plot.addItem(fallback)
+            plot.addItem(newest)
             plot.kind = kind
             if self.plots:
                 plot.setXLink(self.plots[0])
             self.plots.append(plot)
             self.points.append((measured, fallback))
+            self.newest.append(newest)
 
     def show_data(self, result: AnalysisResult, data: ShotTimes) -> None:
-        self.title.setText(source_title(result, title_text(data)))
-        for plot, (measured, fallback) in zip(self.plots, self.points):
+        self.title.setText(line_html(source_title(result, title_text(data))))
+        any_fallback = False
+        for plot, (measured, fallback), newest in zip(self.plots, self.points, self.newest):
             if plot.kind == COUNTS:
                 values, flagged = data.counts.astype(np.float64), data.fallback
             else:
@@ -174,13 +195,14 @@ class ShotTimesWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
             shown = np.isfinite(values)
             measured.setData(data.times[shown & ~flagged], values[shown & ~flagged])
             fallback.setData(data.times[shown & flagged], values[shown & flagged])
-            # Legends list only what is drawn: the amber entry appears with a TXY time.
-            legend = plot.legend
-            if legend is not None:
-                legend.clear()
-                legend.addItem(measured, "raw file time")
-                if bool((shown & flagged).any()):
-                    legend.addItem(fallback, "TXY file time (no raw file)")
+            any_fallback = any_fallback or bool((shown & flagged).any())
+            lit = shown & (data.shots == data.newest_shot) if data.newest_shot is not None else np.zeros(0, bool)
+            if lit.any():
+                newest.setData(data.times[lit], values[lit], symbolBrush=pg.mkBrush(data.colour))
+            else:
+                newest.setData([], [])
+        # The key lists only what is drawn: the amber entry appears with a TXY time.
+        self.key_label.setText(key_html(data, any_fallback))
 
 
 class ShotTimesPlot(DatasetAnalysis):
@@ -192,14 +214,14 @@ class ShotTimesPlot(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.shot_times",
-            version="1",
+            version="2",
         )
 
     def get_actions(self) -> List[str]:
         return ["Plot"]
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
-        return [*SHOT_SPECS, PANELS, LOG_GAPS]
+        return [*SHOT_SPECS, PANELS, LOG_GAPS, HIGHLIGHT, NEWEST_COLOUR]
 
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
         chosen = select_shots(view, values)
@@ -207,12 +229,15 @@ class ShotTimesPlot(DatasetAnalysis):
         used = selection_text(view, values) + (f" · ⚠ {fallback_text(fallbacks)}" if fallbacks else "")
         panels = str(values.get(PANELS.name, BOTH))
         settings = (shots_brief(values), "" if panels == BOTH else panels,
-                    "log gaps" if values.get(LOG_GAPS.name) and panels != COUNTS else "")
+                    "log gaps" if values.get(LOG_GAPS.name) and panels != COUNTS else "", newest_brief(values))
         return used, " · ".join(part for part in settings if part)
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
-        chosen = select_shots(context.view, context.parameters)
-        return shot_times(context.view, chosen, context.view.provenance.unsettled_files)
+        values = context.parameters
+        chosen = select_shots(context.view, values)
+        times = shot_times(context.view, chosen, context.view.provenance.unsettled_files)
+        lit = newest_shot(values, chosen)
+        return replace(times, newest_shot=lit, colour=newest_colour(values)) if lit is not None else times
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: ShotTimes = result.data
