@@ -26,7 +26,7 @@ from helab.analysis.stats import (
 from helab.scripts import standard
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.scripts_manager import ScriptsManager
-from helab.scripts.standard import basic_plots, group, scatter_3d, transfer_fractions
+from helab.scripts.standard import basic_plots, group, scatter_3d, shot_trends, transfer_fractions
 from helab.utils.folder_cache import Dataset
 
 
@@ -456,7 +456,7 @@ def test_shots_brief_for_every_combination(values: dict[str, Any], brief: str) -
     assert selection.shots_brief(values) == brief
     # Every plot's settings line starts with it (Transfer fractions' too).
     view = build_view(dataset(shots={shot: np.ones((1, 3)) for shot in range(1, 61)}))
-    for script in (basic_plots.CountsPerShot(), transfer_fractions.TransferFractions()):
+    for script in (basic_plots.CountsPerShot(), transfer_fractions.TransferFractions(), shot_trends.ShotTrends()):
         _, settings = script.describe_run("Plot", effective(script.parameters("Plot"), values), view)
         assert settings.startswith(brief)
 
@@ -572,8 +572,8 @@ def scripts_manager() -> ScriptsManager:
 def test_bundled_analyses_declare_identity_and_file_hash() -> None:
     manager = scripts_manager()
     names = {metadata.name: metadata for metadata in manager.get_scripts_in_group(group.NAME)}
-    assert set(names) == {"3D scatter", "Counts per shot", "Density images", "Shot times", "T, X, Y histograms",
-                          "Mean X, Y against T", "T spectrum", "Transfer fractions"}
+    assert set(names) == {"3D scatter", "Counts per shot", "Density images", "Shot times", "Shot trends",
+                          "T, X, Y histograms", "Mean X, Y against T", "T spectrum", "Transfer fractions"}
     scatter = names["3D scatter"]
     expected = hashlib.sha256(open(scatter_3d.__file__, "rb").read()).hexdigest()
     assert (scatter.analysis_id, scatter.version, scatter.file_hash) == ("helab.scatter_3d", "3", expected)

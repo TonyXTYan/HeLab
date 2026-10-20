@@ -20,7 +20,7 @@ from helab.models.SnapshotFileSystemModel import FolderNode, SnapshotFileSystemM
 from helab.models.StatusReport import StatusReport
 from helab.resources.icons import CHECK_COLOR, LOAD_COLOR, StatusIcons
 from helab.utils.io_service import IORequest
-from helab.utils import large_folder
+from helab.utils import events, large_folder
 from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, PENDING_ROOT_TOOLTIP, PENDING_SUMMARY, PLACE_ROOT_ACTION,
                                       PLACE_ROOT_TOOLTIP, REVIEW_ROOT_TOOLTIP, Dataset, pending_root_text,
                                       marker_path, store_options)
@@ -1630,6 +1630,8 @@ class FolderExplorer(QWidget):
     def _live_halt(self, session: LiveSession, message: str) -> None:
         """Stop checking (Live stays on, data kept): Retry checks again, Live off saves."""
         logging.warning("Live stopped for %s: %s", session.path, message)
+        events.notify(events.LIVE_ERROR, f"Live stopped for {session.path}: {message}", path=session.path,
+                      error=message)  # For hooks (helab/utils/events.py); no desktop notification.
         session.error = message
         self._live_timer.stop()
         self._live_changed()

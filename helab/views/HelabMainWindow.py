@@ -15,6 +15,7 @@ from helab.utils.io_service import IORequest, delete_io_traces, get_io_service, 
 from helab.utils.folder_cache import FolderCache, get_folder_cache, set_disk_budget, store_options
 from helab.utils.gui_watchdog import GUIWatchdog
 from helab.utils.lab_parameters import read_lab_constants
+from helab.utils import events
 from datetime import datetime, timedelta
 from sys import getsizeof
 from typing import Any, Callable, List, Optional
@@ -1034,6 +1035,8 @@ class HelabMainWindow(QMainWindow):
         self.dock_widgets: List[QDockWidget] = []
         # The newest data of the folder Live watches, for the plots following it.
         self.live_feed = LiveFeed(self)
+        # Desktop notifications without a system tray (helab/utils/events.py) go to the status bar.
+        events.hub().desktop.set_status_sink(self.show_status_notice)
 
 
         self.central_placeholder_timer = QTimer(self)
