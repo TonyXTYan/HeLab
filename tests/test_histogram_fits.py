@@ -601,7 +601,8 @@ def test_the_smoothed_model_is_smoothed_on_its_own_bins_only() -> None:
     smoothing = Smoothing(41, 3.0)
     model = profiles.smoothed_model(MODELS["gaussian"], smoothing, centres)
     values = (1.0, 0.0, 0.2, 0.0)
-    plain = fits.gaussian(centres, *values)
+    lower, upper = fits.bin_bounds(centres)
+    plain = fits.bin_means(fits.gaussian, lower, upper, values)  # the model averaged over each bin
     assert model.function(centres, *values) == pytest.approx(smoothing.apply(plain))
     shifted = centres + 0.01  # same count, other positions: not the bins S belongs to
     assert model.function(shifted, *values) == pytest.approx(fits.gaussian(shifted, *values))
