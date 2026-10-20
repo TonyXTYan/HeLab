@@ -178,3 +178,7 @@ treats the counted N0 and R as independent: rough; N0 ∝ R⁵ makes it R-sensit
    second QE check `BecProperties.implied_qe_thermal` = QE · (counted thermal)/ζ(3)(k_BT/ħω̄)³
    (R-independent, with a condensate only; σ⁶-sensitive through T³) beside `saturated_thermal`;
    QE scalings in the QE note (N, N0 ∝ 1/QE, Tc ∝ QE^−1/3, μ and n0 ∝ QE^−2/5, R ∝ QE^−1/5).
+6. **Trap-axis drop-down: not done (not cheap).** Lab parameters and Folder constants keep their editors as
+   `UnitSpinBox`es (`editors` dicts, `number(box)`, `sigValueChanged`, `setValue` on Restore), so a combo
+   box needs a small adapter in both; the coded row stays a whole-number spin box (now width-fitted
+   like the others after the merge with the polish work), its legend in the source line.

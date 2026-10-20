@@ -271,6 +271,30 @@ def test_the_dialog_shows_each_values_source_and_saves_what_the_folder_sets(
         service.shutdown()
 
 
+def test_the_dialog_shows_whole_numbers_and_sizes_to_its_content(
+        qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A long value (the derived fall time, 416.09078 ms) fits its box whole, and the dialog
+    opens at least as large as its content needs (no clipped names or numbers)."""
+    service, cache = frozen(monkeypatch)
+    try:
+        dialog = FolderConstantsDialog(RUN, cache)
+        qtbot.addWidget(dialog)
+        dialog.show()
+        qtbot.wait(20)
+        for key, box in dialog.editors.items():
+            text = box.text()
+            assert box.width() >= box.fontMetrics().horizontalAdvance(text) + 20, (key, text, box.width())
+        assert "416.09" in dialog.editors["fall_time"].text()
+        layout = dialog.layout()
+        assert layout is not None
+        minimum = layout.totalMinimumSize()
+        assert dialog.width() >= minimum.width() and dialog.height() >= minimum.height()
+        dialog.resize(200, 100)  # Never smaller than its content.
+        assert dialog.width() >= minimum.width() and dialog.height() >= minimum.height()
+    finally:
+        service.shutdown()
+
+
 def test_session_only_values_are_saved_once_the_folder_has_a_data_root(monkeypatch: pytest.MonkeyPatch) -> None:
     service, cache = frozen(monkeypatch)
     try:
