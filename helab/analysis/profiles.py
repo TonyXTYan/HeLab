@@ -426,7 +426,14 @@ def fit_smoothed(centres: Array, raw: Array, model: FitModel, sigma_bins: float,
                 difference = forward.function(centres, *above) - forward.function(centres, *below)
                 jacobian[:, index] = difference / (2 * step)
             weighted = jacobian / variance[:, None]
-            inverse = np.linalg.pinv(jacobian.T @ weighted)
+            # Invert JᵀWJ with its parameters scaled to order one first: in data units its entries
+            # span many decades (a height ~10³, a centre ~10⁻³ m), and pinv's relative cutoff then
+            # dropped the directions of the largest variances (a bimodal's amplitudes came out
+            # ~5× too precise: D4, tests/test_bose_fits.py).
+            information = jacobian.T @ weighted
+            diagonal = np.sqrt(np.abs(np.diag(information)))
+            scale = np.where(diagonal > 0, 1.0 / np.where(diagonal > 0, diagonal, 1.0), 1.0)
+            inverse = scale[:, None] * np.linalg.pinv(scale[:, None] * information * scale[None, :]) * scale[None, :]
             return np.asarray(inverse @ (weighted.T @ smoothing.covariance_times(mean, weighted)) @ inverse,
                               dtype=np.float64)
         # A refit starts from the last fit only (not the model's several guesses: a bimodal

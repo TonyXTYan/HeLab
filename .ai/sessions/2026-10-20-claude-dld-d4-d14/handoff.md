@@ -37,7 +37,7 @@ Numbers are per shot (the histogram's events / shots / QE).
    histogram sums) so the μ/k_BT check runs. Slice models carry `fits.SLICE_NOTE`.
    **D2 (per-shot fits) should make the condensate decision per shot:** summed shots with jittered
    widths aren't one profile, and at millions of events the summed-shot decision often ends at
-   "possible condensate". Smoothed N0/N SEs look ~4.6× too small (notes.md): don't show them yet.
+   "possible condensate". (Smoothed fits' SEs were too small for bimodals: fixed in `fit_smoothed`, notes.md.)
 2. **Constants:** add `"trap_radial", "trap_axial", "trap_axial_axis", "detector_qe",
    "scattering_length", "hbar"` to `CONSTANT_KEYS` (so a change marks the plot) and the folder
    ones (`trap_radial`, `trap_axial`, `trap_axial_axis`) to the plot's `constants_specs` when a

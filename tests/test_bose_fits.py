@@ -307,7 +307,26 @@ def test_a_smoothed_fit_decides_on_the_unsmoothed_counts() -> None:
     mixture = np.random.default_rng(2).poisson(expected).astype(np.float64)
     found = fit_axis("X", edges, mixture, profiles.BIMODAL_BOSE, DEFAULTS, smoothing=2e-4)
     assert found.fit.model.key.startswith("bimodal_tf2_g2_5")
-    # Within the spread of N0/N over clouds (~0.005 here). The smoothed fit's own SE of N0/N is about
-    # 4.6× smaller than that spread (12 clouds; the unsmoothed SE matches it): a fit_smoothed issue,
-    # reported in the session notes, so it isn't the yardstick here.
-    assert condensate_fraction(found.fit).value == pytest.approx(0.3, abs=0.015)
+    assert abs(condensate_fraction(found.fit).value - 0.3) < 3 * condensate_fraction(found.fit).se
+
+
+@pytest.mark.parametrize("smoothed", [False, True])
+def test_the_n0_over_n_se_matches_its_spread_smoothed_or_not(smoothed: bool) -> None:
+    """Over 20 seeded clouds, N0/N's spread over its mean SE is 0.7–1.4, for the raw-count fit and
+    the smoothed-curve fit (whose sandwich covariance once came out ~5× too small: pinv's cutoff on
+    an unscaled JᵀWJ)."""
+    from helab.analysis.profiles import fit_smoothed
+    edges = np.linspace(-5e-3, 5e-3, 201)
+    centres = bin_centres(edges)
+    expected = tf_counts(edges, 1.2e5, 1.2e-3) + bose_counts(edges, 2.8e5, 1e-3, 1.0)
+    model = MODELS["bimodal_tf2_g2_5"]
+    values, ses = [], []
+    for seed in range(20):
+        raw = np.random.default_rng(seed).poisson(expected).astype(np.float64)
+        fit = fit_smoothed(centres, raw, model, 4.0, 3.0)[0] if smoothed else \
+            fit_histogram(centres, raw, model, max_radius_ratio=3.0)
+        assert fit.ok
+        found = condensate_fraction(fit)
+        values.append(found.value)
+        ses.append(found.se)
+    assert 0.7 < float(np.std(values, ddof=1)) / float(np.mean(ses)) < 1.4

@@ -205,9 +205,16 @@ treats the counted N0 and R as independent: rough; N0 ∝ R⁵ makes it R-sensit
    cap needs a higher cap.
 2. **Smoothed fits** decide on the unsmoothed counts (two more `fit_histogram` calls) and show the
    smoothed fit of the chosen model; the note ends "(decided on the unsmoothed counts)".
-   **Finding, outside this task:** a smoothed-curve bimodal fit's N0/N SE is ~4.6× smaller than its
-   spread over 12 clouds (0.0010 vs 0.0045; the unsmoothed SE, 0.0043, matches). D1 validated the
-   Gaussian width's SE in smoothed fits; the sandwich covariance (`profiles.fit_smoothed`) needs a
-   look for the bimodal's derived quantities before smoothed N0/N SEs are shown.
+   **Found and fixed:** a smoothed-curve bimodal fit's N0/N SE was ~4.6× smaller than its spread
+   over clouds (0.0010 vs 0.0045; the unsmoothed SE, 0.0043, matched). `condensate_fraction` and
+   `component_areas` did use the sandwich (`FitResult.derived` reads the covariance that
+   `covariance_of` returned); the sandwich itself was wrong: `fit_smoothed` inverted JᵀWJ in data
+   units with `np.linalg.pinv`, whose relative cutoff (1e-15 of the largest singular value) dropped
+   the weakly constrained directions when the entries span many decades (heights ~10³, a centre
+   ~10⁻³ m, six parameters). The amplitudes' SEs came out 4.3–4.9× too small and σ's 2×; the
+   Gaussian's four parameters (D1's validation) were spared. Now JᵀWJ is scaled to unit diagonal
+   before the pinv and scaled back. Spread/SE over 16 seeds, smoothed: amplitudes 1.13/1.08, σ 1.08,
+   N0/N 1.10 (raw 1.11). `test_the_n0_over_n_se_matches_its_spread_smoothed_or_not` checks both
+   over 20 seeds (0.7–1.4), and the smoothed-decision test checks N0/N within 3 SE again.
 3. `implied_qe_thermal` outside (0, 1] or off the set QE by more than ×2 adds "the trap
    frequencies, T or the QE disagree".
