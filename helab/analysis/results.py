@@ -16,8 +16,11 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import Any, Iterable, Literal, Mapping
 
+from helab.analysis.constant_layers import record_text
 from helab.analysis.dataset_view import DatasetView, Fingerprint, ViewKey
 from helab.analysis.identity import AnalysisIdentity
+from helab.analysis.masks import mask_key
+from helab.analysis.physics import ResolvedConstants
 
 State = Literal["completed", "failed", "cancelled"]
 # Where a result is kept (result caching rule 2). R1 has only RAM.
@@ -86,6 +89,30 @@ class AnalysisContext:
     cancel_event: threading.Event = field(default_factory=threading.Event, compare=False)
     # The shots the run uses (``DatasetAnalysis.covered_shots``); all of the view's by default.
     coverage: Coverage | None = None
+    # The lab and folder layers of the constants (``physics.resolve``), as {"lab": {key: value},
+    # "folder": {…}}, taken when the run starts (compute does no I/O); a plot adds its own
+    # overrides from its parameters. Empty until the Lab parameters and folder settings (F0b)
+    # exist: the table's defaults apply.
+    constants: Mapping[str, Mapping[str, float]] = field(default_factory=lambda: MappingProxyType({}))
+    # Those layers with the plot's own values, resolved when the run was submitted
+    # (``DatasetAnalysis.run_constants``), for an analysis that uses constants
+    # (``DatasetAnalysis.constant_keys``); None otherwise. ``compute`` may read them here.
+    resolved_constants: ResolvedConstants | None = None
+    # The constants the analysis uses (``DatasetAnalysis.constant_keys``), with ``resolved_constants``:
+    # the record names these.
+    constant_keys: tuple[str, ...] = ()
+    # The plot that asked for the run (``AnalysisInstance.instance_id``); "" for a run no plot asked
+    # for (tests, scripts). An analysis may keep per-plot state under it (dropped in
+    # ``DatasetAnalysis.plot_closed``); it is not part of the result's reuse key.
+    owner: str = ""
+    # A rerun following Live (the plot's newest revision while Live watches its folder), not one the
+    # user asked for: a costly analysis may do less then and say so (the Release time plot skips its
+    # bootstrap). Not part of the result's reuse key unless the script puts what it did in
+    # ``found["reuse"]``.
+    live: bool = False
+    # The parameters not in use under ``parameters`` (``parameters.unused_parameters``: rows the
+    # settings hide, e.g. a smoothing width with Smooth off): left out of the result's reuse key.
+    unused: frozenset[str] = frozenset()
 
     @property
     def covered(self) -> Coverage:
@@ -115,22 +142,58 @@ class AnalysisResult:
     policy: str = RAM_ONLY
     coverage: Coverage = field(default_factory=Coverage)
     input_signature: str = ""  # the input revision's own dataset signature (``DatasetView.signature``)
+    # The run's constant layers and what it resolved from them (``AnalysisContext``'s).
+    constant_layers: Mapping[str, Mapping[str, float]] = field(default_factory=lambda: MappingProxyType({}))
+    resolved_constants: ResolvedConstants | None = None
+    constant_keys: tuple[str, ...] = ()
+    # What the run found or used beyond its parameters, as JSON values (``DatasetAnalysis.result_found``:
+    # fit results, the constants used). Part of the record, kept when the plot is released.
+    # Read-only at the top level only (a MappingProxyType over a copy of the script's dict): the
+    # lists and dicts inside are shared, so readers must not change them.
+    found: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    owner: str = ""  # the plot that asked for the run (``AnalysisContext.owner``)
+    # The parameters the run didn't use (``AnalysisContext.unused``): not in ``reuse_key``.
+    unused: frozenset[str] = frozenset()
 
     @classmethod
     def of(cls, context: AnalysisContext, state: State, data: Any = None, error: str = "",
-           started_at: float = 0.0) -> AnalysisResult:
+           started_at: float = 0.0, found: Mapping[str, Any] | None = None) -> AnalysisResult:
         return cls(context.job_id, context.action, context.analysis, context.view.key,
                    MappingProxyType(dict(context.parameters)), state, data, error,
-                   started_at, time.time(), coverage=context.covered, input_signature=context.view.signature)
+                   started_at, time.time(), coverage=context.covered, input_signature=context.view.signature,
+                   constant_layers=context.constants, resolved_constants=context.resolved_constants,
+                   constant_keys=context.constant_keys if context.resolved_constants is not None else (),
+                   found=MappingProxyType(dict(found or {})), owner=context.owner, unused=context.unused)
+
+    @property
+    def constants_record(self) -> dict[str, Any] | None:
+        """The constants the run used, as JSON values: for an analysis that declares constants
+        (``DatasetAnalysis.constant_keys``), its lab and folder layers and what it resolved
+        (``ResolvedConstants.as_record``), of its ``constant_keys`` only (all without); None for one
+        that doesn't, so a lab or folder change of a value it doesn't use never makes its results
+        look different. A layer with none of those keys is left out."""
+        if self.resolved_constants is None:
+            return None
+        keys = set(self.constant_keys) or None
+        layers = {name: kept for name, values in self.constant_layers.items()
+                  if (kept := {key: value for key, value in values.items() if keys is None or key in keys})}
+        return {"layers": layers, **self.resolved_constants.as_record(self.constant_keys or None)}
 
     def reuse_key(self) -> dict[str, Any]:
         """What a later reuse of this result must match (result caching rule 5), as JSON values:
-        not used yet (R2 and R3 will)."""
+        not used yet (R2 and R3 will). What the run decided beyond its parameters and input, which a
+        reuse must match too, comes from ``found["reuse"]`` when the script gives it
+        (``DatasetAnalysis.result_found``; e.g. a box kept from an earlier run of the plot). The
+        parameters are those in use (not ``unused``: a hidden setting never changes the key)."""
         identity = self.input.identity
         return {"analysis_id": self.analysis.analysis_id, "version": self.analysis.version,
                 "file_hash": self.analysis.file_hash, "action": self.action, "root_key": identity.root_key,
                 "signature": identity.signature, "input_signature": self.input_signature,
-                "parameters": dict(self.parameters), "coverage": self.coverage.to_json()}
+                "parameters": {name: value for name, value in self.parameters.items() if name not in self.unused},
+                "coverage": self.coverage.to_json(),
+                **({"constants": record} if (record := self.constants_record) is not None else {}),
+                **({"found": self.found["reuse"]} if "reuse" in self.found else {}),
+                **mask_key(self.parameters)}
 
     def describe(self, parameters_text: str = "") -> str:
         """The record, one item per line, for a plot dock's tooltip."""
@@ -143,6 +206,8 @@ class AnalysisResult:
                     if self.input_signature and self.input_signature != identity.signature else ""),
                  f"Covers: {self.coverage.text()}",
                  f"Parameters: {parameters_text or _plain(self.parameters) or 'none'}"]
+        if self.resolved_constants is not None:
+            lines.append(f"Constants: {record_text(self.resolved_constants, self.constant_keys or None)}")
         when = datetime.fromtimestamp(self.finished_at).strftime("%H:%M:%S") if self.finished_at else ""
         took = f" in {self.finished_at - self.started_at:.1f} s" if self.started_at and self.finished_at else ""
         lines.append(f"Job {self.job_id} · {self.state} {when}{took} · kept in RAM only")

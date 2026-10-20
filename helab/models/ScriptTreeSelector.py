@@ -4,7 +4,7 @@ import math
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal
+from typing import Any, Callable, Dict, Optional, cast, no_type_check, TYPE_CHECKING, List, Tuple, Union, Literal, Mapping
 from uuid import uuid4
 
 from PyQt6 import sip
@@ -23,14 +23,17 @@ from PyQt6.QtWidgets import (
 from pyqtgraph.parametertree import Parameter
 
 from helab.analysis.backends import BACKEND, backend_specs
+from helab.analysis.constant_layers import (changed_keys, describe_constants, source_name, value_and_origin,
+                                           without_constants)
+from helab.analysis.physics import TABLE, ResolvedConstants
 from helab.analysis.budget import RELOAD_GRACE, RamBudget, Restored, hollow, restore, shots_list, view_buffers
 from helab.analysis.dataset_view import DatasetView, ViewKey
 from helab.analysis.follow import FOLLOW, Follow, LiveFeed, changes, live_specs, policy_of, shots_text
-from helab.analysis.parameter_tree import build_tree, parameter_of, settings_widget, tree_values
+from helab.analysis.parameter_tree import build_tree, commit_pending_text, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import describe
 from helab.analysis.results import AnalysisResult
 from helab.analysis.runner import AnalysisRunner, get_analysis_runner
-from helab.scripts import standard
+from helab.scripts import dld, standard
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.utils.constants import QDOCKWIDGET_STYLESHEET
 from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache, store_options
@@ -561,8 +564,10 @@ class AnalysisInstance(LinkedAnalysisInstance):
 
     def __init__(self, metadata: ScriptMetadata, script: DatasetAnalysis, action: str, view: DatasetView,
                  instance_id: str, main_window: Optional['HelabMainWindow'],
-                 runner: Optional[AnalysisRunner] = None) -> None:
+                 runner: Optional[AnalysisRunner] = None, cache: Optional[FolderCache] = None) -> None:
         super().__init__(metadata.name, instance_id, main_window)
+        # The app's FolderCache unless given (tests); its lab and folder constants feed each run.
+        self._given_cache = cache
         self.metadata, self.script, self.action = metadata, script, action
         self.runner = runner or get_analysis_runner()
         self.job_id = ""
@@ -606,6 +611,14 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.reloaded_at = -math.inf  # Monotonic: when a reload last drew it.
         # Its runs, whose completed results RamResults may keep (counted as the plot's RAM).
         self._runs: List[str] = []
+        # The constants its settings let it override (helab/analysis/constant_layers.py): each run
+        # resolves them (lab, folder, this plot) when it is submitted. A lab or folder value that
+        # changes afterwards marks the plot (open decision 5, proposed); the next run uses it.
+        self.constant_keys = script.constant_keys(action)
+        self._constants_note = ""
+        self._reload_constants: Optional[Mapping[str, Mapping[str, float]]] = None
+        if self.constant_keys:
+            self._cache().constantsChanged.connect(self._constants_changed)
 
     @property
     def view(self) -> DatasetView:
@@ -671,6 +684,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         it follows Live, else its own); a run in flight is cancelled, its settings are old."""
         if self.is_closed:
             return
+        commit_pending_text()  # Text being typed (e.g. mask circles) counts for a deliberate run.
         if self.released is not None and not self.job_id:
             # Its data was released: drawn again from RAM or the disk cache, with these settings.
             if self._reload_owner:
@@ -682,13 +696,17 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.runner.cancel(self.job_id)
         self._submit(self.follow.latest)
 
-    def _submit(self, view: DatasetView, values: Optional[Dict[str, Any]] = None, *, reloading: bool = False) -> None:
+    def _submit(self, view: DatasetView, values: Optional[Dict[str, Any]] = None, *, reloading: bool = False,
+                constants: Optional[Mapping[str, Mapping[str, float]]] = None, live: bool = False) -> None:
         self._follow_timer.stop()
         if not reloading:
             self._reload_note = ""
+        values = self.values() if values is None else values
+        if constants is None:
+            constants = self.constant_layers(view.identity.source_path)
         try:
-            context = self.runner.submit(self.script, self.metadata, self.action, view,
-                                         self.values() if values is None else values)
+            context = self.runner.submit(self.script, self.metadata, self.action, view, values, constants,
+                                         owner=self.instance_id, live=live)
         except RuntimeError as error:  # The runner is stopping: HeLab is closing.
             self.status_label.setText(str(error))
             return
@@ -696,6 +714,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._runs.append(context.job_id)
         self.follow.start(view)
         self.status_label.setText(f"Running ({context.job_id})…")
+        self._show_constant_titles(context.resolved_constants)
         self._show_follow()
 
     @pyqtSlot(object)
@@ -722,7 +741,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         self.result = result
         specs = self.script.parameters(self.action)
-        warnings = "; ".join(self.script.parameter_warnings(self.action, result.parameters))
+        warnings = "; ".join(self._hook("parameter_warnings", [], result.parameters))
         content: Optional[QWidget] = None
         error = result.error if result.state == "failed" else ""
         if result.state == "completed":
@@ -760,6 +779,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 self.reloaded_at = time.monotonic()
             self.released = None  # Drawn again: its picture goes.
             self._nowhere = False
+        self._check_constants()
         self._show_content(content, result, specs, warnings)
         self._follow_next()
 
@@ -794,7 +814,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if self.is_closed or result is None or self.released is not None or self._drawn_with == self.backend():
             return
         specs = self.script.parameters(self.action)
-        warnings = "; ".join(self.script.parameter_warnings(self.action, result.parameters))
+        warnings = "; ".join(self._hook("parameter_warnings", [], result.parameters))
         try:
             content = self._draw(result)
         except Exception as exc:
@@ -810,10 +830,20 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         show = getattr(self.main_window, "set_plot_result", None)
         if callable(show):
-            chosen, settings = self.script.describe_run(self.action, result.parameters, self.view)
-            record = describe(specs, result.parameters, every=True)
+            chosen, settings = self._hook("describe_run", ("", ""), result.parameters, self.view)
+            record = describe(without_constants(specs), result.parameters, every=True)
+            if (constants := result.resolved_constants) is not None:
+                # The constants not at their defaults (all of them, with origins, are in the record).
+                used = describe_constants(constants, result.constant_keys)
+                settings = " · ".join(filter(None, (settings, used and f"constants: {used}",
+                                                    *(f"⚠ {note}" for note in constants.notes))))
+            found = self._hook("result_record", [], result) if result.state == "completed" else []
+            if found:
+                record = "\n".join((record, *found))
             if self._drawn_with:
                 record = f"{record}\nDrawn with {self._drawn_with}"
+            if result.state == "completed":
+                settings = " · ".join(filter(None, (settings, self._hook("describe_result", "", result))))
             if warnings:
                 settings = " · ".join(filter(None, (settings, f"⚠ {warnings}")))
                 record = f"{record}\nWarning: {warnings}"
@@ -825,6 +855,15 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 old.deleteLater()
         self._show_follow()
 
+    def _hook(self, name: str, fallback: Any, *args: Any) -> Any:
+        """The script's ``name`` hook for this action, or ``fallback`` if it raises (logged): these run
+        in Qt slots, where an exception from a user's script would abort the app."""
+        try:
+            return getattr(self.script, name)(self.action, *args)
+        except Exception:
+            logging.exception("%s of %s failed", name, self.name)
+            return fallback
+
     def _show_detected(self, result: AnalysisResult) -> None:
         """Put what the run found into the settings (they don't rerun it), except a setting changed
         since the run started (what was typed meanwhile stays) or already holding the value."""
@@ -832,11 +871,73 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if root is None:
             return
         specs = {spec.name: spec for spec in self.script.parameters(self.action)}
-        for name, value in self.script.detected_parameters(self.action, result).items():
+        for name, value in self._hook("detected_parameters", {}, result).items():
             if name in specs:
                 parameter, value = parameter_of(root, specs[name]), specs[name].coerce(value)
                 if parameter.value() == result.parameters.get(name) and parameter.value() != value:
                     parameter.setValue(value)
+
+    # Constants (F0b)
+
+    def constant_layers(self, path: Optional[str] = None) -> Dict[str, Dict[str, float]]:
+        """The lab and folder layers a run on ``path`` (default: the plot's folder) takes now, from
+        memory (``AnalysisContext.constants``): Settings → Lab parameters, and the folder's own or
+        inherited values (``FolderCache.effective_folder_constants``)."""
+        cache = self._cache()
+        return {"lab": dict(cache.lab_constants), "folder": cache.effective_folder_constants(path or self.path)}
+
+    def resolve_constants(self, values: Dict[str, Any], path: Optional[str] = None) -> Optional[ResolvedConstants]:
+        """What a run with ``values`` on ``path`` would resolve now (the script's ``run_constants``
+        on ``constant_layers``); None if the plot uses no constants."""
+        if not self.constant_keys:
+            return None
+        return self.script.run_constants(self.action, values, self.constant_layers(path))
+
+    @pyqtSlot(str)
+    def _constants_changed(self, path: str) -> None:
+        """A lab value ("") or a folder's own values changed: this plot's, if it is that folder or below."""
+        mine = self.path
+        if self.is_closed or (path and path != mine and not mine.startswith(path.rstrip(os.sep) + os.sep)):
+            return
+        self._check_constants()
+        self._show_follow()
+
+    def _check_constants(self) -> None:
+        """Mark the plot when the constants it would use now differ from those its plot was drawn
+        with (open decision 5, proposed): it keeps its plot until Rerun or the next Live update."""
+        shown = self.shown
+        if shown is None or shown.resolved_constants is None:
+            self._constants_note = ""
+            return
+        try:
+            now = self.resolve_constants(dict(shown.parameters))
+        except Exception:
+            logging.exception("Constants of %s: not compared", self.name)
+            now = None
+        if now is None:
+            self._constants_note = ""
+            return
+        # The keys the shown run used (``run_constant_keys``): another one changing doesn't concern it.
+        changed = changed_keys(shown.resolved_constants, now, shown.constant_keys)
+        self._constants_note = (f"constants changed ({', '.join(TABLE[key].title for key in changed)}): "
+                                "Rerun to use them") if changed else ""
+        self._show_constant_titles(now)
+
+    def _show_constant_titles(self, constants: Optional[ResolvedConstants]) -> None:
+        """Each constant's choice in the settings names the value a run takes and where it comes
+        from: "Fall distance h: 0.848 m (folder)"."""
+        root = self.parameter_root
+        if constants is None or root is None:
+            return
+        specs = {spec.name: spec for spec in self.script.parameters(self.action)}
+        for key in self.constant_keys:
+            spec = specs.get(source_name(key))
+            if spec is None:
+                continue
+            parameter = parameter_of(root, spec)
+            title = f"{TABLE[key].title}: {value_and_origin(constants, key)}"
+            if parameter.opts.get("title") != title:
+                parameter.setOpts(title=title)
 
     # Following Live
 
@@ -869,7 +970,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         view, wait = self.follow.due(time.monotonic())
         if view is not None:
-            self._submit(view)
+            # While Live watches the folder (not the catch-up once it stops: the feed has dropped it).
+            self._submit(view, live=self.live() is not None)
             return
         if wait > 0:
             self._follow_timer.start(max(1, math.ceil(wait * 1000)))
@@ -926,7 +1028,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         dock.setProperty("plotFollow", self.follow_text())
         dock.setProperty("plotFollowing", following)
-        dock.setProperty("plotError", self.error or self._reload_note)
+        dock.setProperty("plotError", " · ".join(filter(None, (self.error or self._reload_note,
+                                                               self._constants_note))))
         update = getattr(window, "update_plot_source", None)
         if callable(update):
             update(dock)
@@ -1059,6 +1162,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self._nowhere = False
 
     def _cache(self) -> FolderCache:
+        if self._given_cache is not None:
+            return self._given_cache
         return self.budget.cache if self.budget is not None else get_folder_cache(get_io_service())
 
     def reload(self, values: Optional[Dict[str, Any]] = None) -> None:
@@ -1070,6 +1175,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if self.is_closed or self.released is None or self.shown is None or self.job_id:
             return
         self._reload_values = dict(self.shown.parameters) if values is None else values
+        # Drawn again as it was: with the constants it was drawn with (new settings resolve anew).
+        self._reload_constants = self.shown.constant_layers if values is None else None
         self._reload_shots = tuple(self.shown.coverage.shots) if values is None else None
         if self._reload_owner:
             return  # Reading the disk cache already.
@@ -1167,8 +1274,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._reload_note = (f"Reloaded from {where} without {len(changed) + len(missing):,} of its "
                              f"{asked:,} shots: {'; '.join(lost)}") if lost else ""
         values, self._reload_values = self._reload_values, None
+        constants, self._reload_constants = self._reload_constants, None
         self.released.set_state(f"reloading from {where}…", busy=True)
-        self._submit(found.view, values, reloading=True)
+        self._submit(found.view, values, reloading=True, constants=constants)
         self.status_label.setText(f"Reloading from {where}…")
 
     def _reload_failed(self, why: str) -> None:
@@ -1217,8 +1325,17 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 signal.disconnect(slot)
             except TypeError:
                 pass
+        if self.constant_keys:
+            try:
+                self._cache().constantsChanged.disconnect(self._constants_changed)
+            except TypeError:
+                pass
         if self.budget is not None:
             self.budget.remove(self)
+        try:
+            self.script.plot_closed(self.action, self.instance_id, self.path)
+        except Exception:  # A script's cleanup never stops a plot from closing.
+            logging.exception("%s: plot_closed failed", self.name)
         super().close()
 
 
@@ -1257,7 +1374,7 @@ class TreePanelWidget(QWidget):
     - Action buttons for each script
     
     Key concepts:
-    - Groups: HeLab's bundled analyses ("Basic plots v1", `helab.scripts.standard.group`) and those of scripts loaded from a folder
+    - Groups: HeLab's bundled analyses ("Basic plots v1", `helab.scripts.standard.group`; "DLD Front Panel Port", `helab.scripts.dld.group`) and those of scripts loaded from a folder
     - Actions: Each script can have up to 2 executable actions
     """
     
@@ -1339,8 +1456,8 @@ class TreePanelWidget(QWidget):
             logging.debug(f"Registered group: {name} (type: {group_type})")
 
     def _load_default_scripts(self) -> None:
-        """Register HeLab's bundled analyses (``helab.scripts.standard``) and show the first group."""
-        for module in standard.MODULES:
+        """Register HeLab's bundled analyses (``helab.scripts.standard``, then the DLD front panel port, ``helab.scripts.dld``) and show the first group."""
+        for module in (*standard.MODULES, *dld.MODULES):
             try:
                 self.script_manager.load_module(module)
             except Exception as e:

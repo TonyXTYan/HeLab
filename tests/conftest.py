@@ -192,6 +192,21 @@ def default_budget_is_newest(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def default_constants() -> None:
+    """Plots that use constants start from the table's defaults: the app-wide FolderCache keeps
+    lab and folder values for the worker's whole run, and a test building a real
+    ``HelabMainWindow`` fills the lab's from the machine's own saved Lab parameters (its native
+    QSettings). Only an existing app-wide cache is reset (none is created here)."""
+    from helab.utils import io_service
+    service = io_service._service
+    cache = service.folder_cache if service is not None else None
+    if cache is not None:
+        cache.lab_constants = {}
+        cache.folder_constant_records.clear()
+        cache.constants_unsaved.clear()
+
+
+@pytest.fixture(autouse=True)
 def no_selection_settle(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests select folders back to back and expect their loads at once; the wait for the
     selection to settle (Finish, Cancel) has its own tests, which set ``SETTLE_MAX`` again."""

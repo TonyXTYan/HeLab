@@ -1,7 +1,7 @@
 """Quitting waits for disk cache saves still running (roadmaps/live-monitoring.md).
 
-Live's new shots and a finished load's background save (``disk_cache_pending``) are saved
-before HeLab quits. This window names the folders, closes by itself when the saves end (each
+Live's new shots, a finished load's background save (``disk_cache_pending``) and a folder's
+flags or constants still being written are saved before HeLab quits. This window names the folders, closes by itself when the saves end (each
 stops itself after the usual no-progress timeout), and offers Quit now, which skips them.
 Nothing is lost either way: the source files remain, and the next check reads what wasn't saved.
 """
@@ -60,6 +60,8 @@ class QuitSaveDialog(QDialog):
             return "writing the disk cache"
         if ("load", self.cache.key(path)) in self.cache.jobs:
             return "reading its new shots"
+        if self.cache.folder_settings_saving(path):
+            return "saving its flags or constants"
         return "waiting for its previous save"
 
     def refresh(self) -> None:

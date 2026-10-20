@@ -218,6 +218,102 @@ real experiment data without deciding where its top should be.
   On a disposable NFS/AFP/WebDAV mount, confirm one short Disk cache off line
   with the mount type and full tooltip detail, while browsing still works.
 
+## DLD front panel port (added 2026-10-20)
+
+Built and tested offscreen only, on `agent/dld-front-panel-port`
+([plan](../roadmaps/dld-front-panel-port.md#built-2026-10-20)). Each session's
+`handoff.md` in `.ai/sessions/2026-10-20-claude-dld-<id>/` has the step-by-step
+on-screen list; the items below gather them. Record results in `.ai/sessions/`.
+
+**On macOS (look and behaviour):**
+- [ ] Settings → Lab parameters: units in ms/mm/nm, sources, amber "unconfirmed",
+  CODATA read-only, Restore; change g, Save, reopen, restart: kept; Reset all
+  settings clears it ([f0b](sessions/2026-10-20-claude-dld-f0b/handoff.md#on-screen-checklist-for-tony)).
+- [ ] Right-click › Folder constants…: "this folder", "inherited from …", "derived,
+  √(2h/g)", "from the data"; a subfolder inherits; values survive a restart; a folder
+  without `.helab-root` says "RAM only · kept for this session only"; Save waits
+  while a row set here has no value; a hand-set fall time far from √(2h/g) gets the
+  amber note ([f0b](sessions/2026-10-20-claude-dld-f0b/handoff.md#on-screen-checklist-for-tony),
+  [d8-release](sessions/2026-10-20-claude-dld-d8-release/handoff.md#on-screen-checklist-for-tony)).
+- [ ] A plot with constants: change a lab value → amber "constants changed … Rerun
+  to use them" only on plots that use it (a Gaussian-only histogram ignores the QE;
+  a bimodal one doesn't); Rerun or the next Live shot clears it
+  ([decisions](sessions/2026-10-20-claude-dld-decisions/handoff.md#on-screen-checklist),
+  [d4-wiring](sessions/2026-10-20-claude-dld-d4-wiring/handoff.md)).
+- [ ] ms/mm everywhere: T axes like `20,450` (no `2.045e+04`), fit titles
+  `(20,916.12 ± 0.12) ms`, the 3D scatter's axes and hover; typing `20,450.5`,
+  `20450.5` and `20.45 s` in a T box; `20,5` refused, also on a German-locale PC
+  ([decisions](sessions/2026-10-20-claude-dld-decisions/handoff.md#on-screen-checklist)).
+- [ ] Every new plot in a 560 px dock: titles wrap, nothing clipped, warnings amber;
+  zoom kept through Live reruns (histograms, density images, mean position,
+  T spectrum, shot times, trends, velocity distributions)
+  ([polish](sessions/2026-10-20-claude-dld-polish/handoff.md)).
+- [ ] Density images: projections, blur, rate per shot, sqrt/log/power reaching the
+  faintest bins with the bar in real values, a manual T window, the newest shot's
+  contour ([d3](sessions/2026-10-20-claude-dld-d3/handoff.md#on-screen-for-tony-macos)).
+- [ ] Masks: the Mask group on each event plot, the 2020 preset drawn dashed on XY,
+  custom circles counting only when the edit ends, a bad circle failing the run with
+  the last plot kept; Find hot spots → Copy circles → paste into another plot
+  ([d9-d15](sessions/2026-10-20-claude-dld-d9-d15/handoff.md#on-screen-checklist-native-ui)).
+- [ ] Shot trends: panels zoom together, shot-time axis, amber low shots; Notify
+  during Live gives one system notification for a low shot (block the beam), none
+  more within a minute, none outside Live; is the tray/menu-bar icon acceptable
+  ([d2](sessions/2026-10-20-claude-dld-d2/handoff.md#on-screen-checklist-tony)).
+- [ ] The ħ glyph ("ħk/m", "2ħk/m") in the native fonts on macOS and Windows: the
+  offscreen renders drew "h" ([d8-velocity](sessions/2026-10-20-claude-dld-d8-velocity/notes.md#review-round-coordinator-on-04d69bf)).
+
+**On a lab PC:**
+- [ ] Every new plot paints on the Lab Side PC (PyQtGraph, no QtWebEngine): T, X, Y
+  histograms with fits and BEC properties, Density images, Mean X, Y, T spectrum,
+  Shot times, Shot trends, Release time, Velocity distributions, Correlations.
+- [ ] Live with heavy plots open (bimodal fits, Release time, Velocity distributions)
+  keeps up on a real run: reruns 2–5 s apart, the GUI responsive.
+
+**On the lab share (SMB timing, D7):**
+- [ ] Help › Record I/O trace on an uncached load: one `load: shot time` per raw file
+  of a shot read; none on a reload from the cache or an unchanged Live check; one
+  `live: shot time` per new shot; `syscall: false` on Windows. Time the first load of
+  a ~10k-shot uncached folder with and without D7 (one extra stat per shot)
+  ([d7](sessions/2026-10-20-claude-dld-d7/handoff.md#for-tony-real-volume-smb-checks)).
+- [ ] Shot times match the `d<N>.txt` mtimes in Finder/Explorer, not the TXY
+  conversion times; a folder without raw files shows amber triangles and the count;
+  a folder cached before D7 is amber until Refresh ([d7](sessions/2026-10-20-claude-dld-d7/handoff.md#for-tony-on-screen-checks)).
+
+**On real data (physics):**
+- [ ] Temperatures on a real thermal cloud and a BEC: Gaussian vs arrival-time on T
+  (agree cold, arrival a little higher hot); smoothed-curve fits close to the
+  unsmoothed ([d1](sessions/2026-10-20-claude-dld-d1/handoff.md#on-screen-checklist-for-tony)).
+- [ ] Bimodal TF² + Bose on a condensate: `N0/N`; on a thermal folder "no
+  condensate (z = …)"; a borderline one "possible condensate, not reported"; BEC
+  properties' numbers sensible, and do "QE from R" and "QE from thermal" agree with
+  the lab's QE ([d4-wiring](sessions/2026-10-20-claude-dld-d4-wiring/handoff.md)).
+- [ ] Density images' XY orientation against the old front panel's 2D Plot
+  (`legacy/DLD_front_panel`) ([d3](sessions/2026-10-20-claude-dld-d3/handoff.md#on-screen-for-tony-macos)).
+- [ ] Mean X, Y and T spectrum: do the listed peaks match the pulse rate and the
+  50 Hz harmonics; is the noise floor's rise towards Nyquist acceptable; a large
+  folder's 16,384-bin profile ([d5-d6](sessions/2026-10-20-claude-dld-d5-d6/handoff.md#on-screen-checks-for-tony)).
+- [ ] Release time on a BEC folder: value, origin and notes; Use for this folder…
+  then Folder constants… shows t_a and the origin; Velocity distributions has the
+  cloud at rest at v = 0 and σ_v giving the expected T. Measure the fall distance
+  from a cloud released at rest ([d8-release](sessions/2026-10-20-claude-dld-d8-release/handoff.md#on-screen-checklist-for-tony),
+  [d8-velocity](sessions/2026-10-20-claude-dld-d8-velocity/notes.md)).
+- [ ] Calibrate the detector QE (0.1 proposed) and confirm the trap frequencies and
+  the trap's axial axis (BEC properties' QE checks).
+- [ ] Hot spots on the current detector: Find hot spots on a flat field or an
+  atom-free T window, and a real run without hot spots (none offered); the circles
+  become the "current detector" preset ([d9-d15](sessions/2026-10-20-claude-dld-d9-d15/handoff.md#on-screen-checklist-native-ui)).
+- [ ] g² on real data (Correlations): a thermal cloud just above T_c (radial g²(0)
+  near 2, less with detector resolution and the window; σ against ħ/(m·σ_x)); a BEC
+  (≈ 1); a halo back-to-back along each axis with re-centring (the peak at 0 and its
+  width; set the folder's origin from a BEC run, since a halo's is "unsure"); speed on
+  a few hundred shots (try neighbouring shots if all-pairs is slow); are the per-mode
+  defaults right ([d12-plot](../.ai/sessions/2026-10-20-claude-dld-d12-plot/handoff.md#real-data-checks-proposed)).
+- [ ] Correlations on screen: the title lines, points with bars, red fit and dashed
+  baseline, pairs panel, in a 560 px dock; ħk units; Live reruns ≥ 5 s with
+  "N shots held, 1 counted" and jackknife bars, one bootstrap rerun when Live stops;
+  a 1 s time budget stopping and Rerun continuing
+  ([d12-plot](../.ai/sessions/2026-10-20-claude-dld-d12-plot/handoff.md#on-screen-checklist-for-tony)).
+
 ## v0.0.5a: cache rebuild (native checks, added 2026-10-11)
 
 Built in S6–S10 of the [cache plan](../roadmaps/cache-storage-and-settings.md#sessions) and

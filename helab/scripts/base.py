@@ -3,6 +3,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Any, Mapping, Optional, Sequence
 
+from helab.analysis.constant_layers import constant_keys, resolve_for_run, without_constants
+from helab.analysis.physics import ResolvedConstants
 from helab.analysis.follow import LivePolicy
 from helab.analysis.identity import AnalysisIdentity, file_name
 from helab.analysis.dataset_view import DatasetView
@@ -92,6 +94,13 @@ class DatasetAnalysis(HelabAnalysisScript):
 
     Metadata must give ``analysis_id`` and ``version``. Parameter values are plain JSON values
     (numbers, booleans, strings).
+
+    An analysis that uses physical constants adds ``constant_layers.constants_specs(keys)`` to its
+    parameters: the plot's settings then show each constant's value and source, and can set it
+    for that plot. Each run gets the lab and folder layers in ``context.constants`` and, resolved
+    with the plot's own values when it was submitted, ``context.resolved_constants``, which its
+    result records; ``compute`` reads them there, never from the table's defaults. An analysis
+    with its own override parameters declares ``constant_keys`` and ``run_constants`` instead.
     """
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
@@ -103,8 +112,16 @@ class DatasetAnalysis(HelabAnalysisScript):
         (line 1, after the folder and revision, e.g. "shots 51–60 (10 of 60)"; "" for all of
         it) and its settings in short form (line 2, e.g. "last 10 shots · auto-crop 99 %").
         The dock's tooltip always holds the full record. By default: no selection, and every
-        parameter in use as ``title value``."""
-        return "", describe(self.parameters(action_name), values)
+        parameter in use as ``title value`` (the Constants group left out: the dock adds the
+        constants the run resolved)."""
+        return "", describe(without_constants(self.parameters(action_name)), values)
+
+    def describe_result(self, action_name: str, result: AnalysisResult) -> str:
+        """What a completed run found that the dock's settings line should add after
+        ``describe_run``'s settings, in short form (e.g. a spectrum's resolution and Nyquist
+        frequency, or a bin width chosen from the data); "" for nothing. Called for completed
+        results only (as ``result_record``). Default: nothing."""
+        return ""
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
         """Settings the run could not follow as given, and what it did instead (e.g. "X: min >
@@ -116,10 +133,52 @@ class DatasetAnalysis(HelabAnalysisScript):
         on every new shot unless a long analysis declares fewer reruns."""
         return LivePolicy()
 
+    def constant_keys(self, action_name: str) -> tuple[str, ...]:
+        """The physical constants the analysis uses (``physics.TABLE`` keys): its plots resolve them
+        when each run starts, name them in their settings and source line, and are marked when a
+        lab or folder value of one changes. Default: the keys of its Constants group
+        (``constant_layers.constants_specs``); none without one."""
+        return constant_keys(self.parameters(action_name))
+
+    def run_constant_keys(self, action_name: str, values: Mapping[str, Any]) -> tuple[str, ...]:
+        """Of ``constant_keys``, the ones a run with these parameter ``values`` uses (e.g. the trap's
+        only while a fit that needs them is on): its result records and names these, and only a
+        change of one marks its plot. Default: all of ``constant_keys``."""
+        return tuple(self.constant_keys(action_name))
+
+    def run_constants(self, action_name: str, values: Mapping[str, Any],
+                      layers: Mapping[str, Mapping[str, float]]) -> ResolvedConstants | None:
+        """The constants a run with these parameter ``values`` uses, from the lab and folder
+        ``layers`` (``AnalysisContext.constants``) and the plot's own values. Pure (it runs on the
+        GUI thread when the run is submitted). Default: the Constants group's choices
+        (``constant_layers.resolve_for_run``); an analysis with its own override parameters
+        returns its own resolution here, or None when this run uses no constants (it is then
+        neither keyed on them nor marked when one changes)."""
+        return resolve_for_run(values, layers.get("lab"), layers.get("folder"))
+
     def covered_shots(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> Sequence[int]:
         """The view's shots a run with ``values`` uses, recorded as its coverage: those the shared
         Shots parameters choose (``selection.SHOT_SPECS``) when it has them, else all."""
         return select_shots(view, values) if SHOTS.name in values else view.shot_numbers
+
+    def result_found(self, action_name: str, data: Any) -> dict[str, Any]:
+        """What a completed run found or used beyond its parameters, as JSON values (fit results,
+        the constants and where each came from), from ``compute``'s data, in the worker thread:
+        kept as the result's ``found``, in its record even after the plot is released. Its
+        ``"reuse"`` entry, when given, is what the run decided beyond its parameters and input
+        that a reuse must match too (e.g. a range kept from an earlier run of the plot): it goes
+        into ``AnalysisResult.reuse_key``. Default: nothing."""
+        return {}
+
+    def plot_closed(self, action_name: str, owner: str, path: str) -> None:
+        """A plot of this analysis closed (GUI thread): drop what the script kept for it, under
+        ``owner`` (``AnalysisContext.owner``), and for its folder ``path`` if no other plot needs
+        it. Default: nothing kept."""
+
+    def result_record(self, action_name: str, result: AnalysisResult) -> List[str]:
+        """Lines a completed run adds to the plot dock's record (its tooltip), after the
+        parameters, from the result's ``found``. Default: its ``record_lines``, if any."""
+        return [str(line) for line in result.found.get("record_lines", ())]
 
     def minimum_size(self, action_name: str) -> tuple[int, int]:
         """The least size (width, height; logical pixels) of the action's plot in its dock, with

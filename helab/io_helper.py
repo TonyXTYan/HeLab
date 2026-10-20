@@ -16,7 +16,7 @@ import os
 import random
 import sys
 import time
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Literal
 
 from helab.utils import file_kinds, large_folder
 
@@ -535,6 +535,7 @@ def _cache_store(root: str, source_paths: list[str] | None = None,
             store.close()
         raise StoreError(f"Mount information is unavailable: {exc}") from exc
     store._path_key = resolver.key
+    store._unverified_mounts = held
     store._source_path = resolver.source
     store._location_key = resolver.location
     store._location_source = lambda location: (paths.source(location) if location.startswith("smb://")
@@ -585,9 +586,17 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                     old_key = store._path_key(path)
                 except NoDataRoot:
                     pass
-            store.record_root(location, marker.uuid,
-                              "smb" if location.startswith("smb://") else "vol",
-                              marker.label, decision=decision)
+            new_key = f"root://{marker.uuid}"
+            moved: list[str] = []
+            # One transaction: a re-key that fails (a busy store, a table it can't read) leaves no
+            # root record either, so the next listing finds the marker new again and retries it;
+            # otherwise the rows below would stay under the outer root's key for good.
+            with store.transaction():
+                store.record_root(location, marker.uuid,
+                                  "smb" if location.startswith("smb://") else "vol",
+                                  marker.label, decision=decision)
+                if old_key and old_key != new_key:
+                    moved = store.rekey_subtree(old_key, new_key)
             changed = old is None or old[0] != marker.uuid or old[2] != decision
             if decision == "pending":
                 # Hints for the user's answer (D4): where else it is, and each marker file's details.
@@ -600,12 +609,10 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                       "uuid": marker.uuid, "label": marker.label, "other_locations": duplicates,
                       "marker": _marker_hint(path), "others": others})
                 return changed
-            if old_key and old_key != f"root://{marker.uuid}":
-                moved = store.rekey_subtree(old_key, f"root://{marker.uuid}")
-                if moved:
-                    sources = [store._source_path(key) for key in moved]
-                    send({"kind": "removed", "kinds": list(KINDS), "paths": sources})
-                    send({"kind": "root_rekeyed", "path": path, "count": len(moved)})
+            if moved:
+                sources = [store._source_path(key) for key in moved]
+                send({"kind": "removed", "kinds": list(KINDS), "paths": sources})
+                send({"kind": "root_rekeyed", "path": path, "count": len(moved)})
             send({"kind": "root_changed" if old and old[0] != marker.uuid else "root_found",
                   "path": path, "location": location, "uuid": marker.uuid, "label": marker.label})
             return changed
@@ -707,13 +714,13 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit) -> dict[str,
     Saved statuses are last-known results for their paths until those folders are checked.
     """
     from helab.utils.cache_paths import UnresolvedRemotePath
-    from helab.utils.scan_history import read_histories
     usable: list[str] = []
     refused: list[str] = []
     mounts: dict[str, dict[str, str]] = {}
+    keys: dict[str, str] = {}
     for path in paths:
         try:
-            store._path_key(path)
+            keys[path] = store._path_key(path)
         except UnresolvedRemotePath as exc:
             refused.append(path)
             mounts[exc.mount_path] = {"path": exc.mount_path, "type": exc.mount_type, "detail": str(exc)}
@@ -727,11 +734,24 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit) -> dict[str,
     paths = usable
     if not paths:
         return {}
+    # Each read below keys every path: they use these keys (the resolver is pure for this call).
+    resolve = store._path_key
+    store._path_key = lambda path: keys[path] if path in keys else resolve(path)
+    try:
+        return _read_saved(store, paths, send)
+    finally:
+        store._path_key = resolve
+
+
+def _read_saved(store: CacheStore, paths: list[str], send: Emit) -> dict[str, dict[str, Any]]:
+    """``_saved_folders``' reads, for paths that have keys."""
+    from helab.utils.scan_history import read_histories
     histories = read_histories(store, paths)
     summaries = store.read_records("summaries", paths)
     subtrees = store.read_records("subtrees", paths)
     datasets = store.read_dataset_infos(paths)
     prefs = store.read_prefs(paths)
+    constants = store.read_constants(paths)
     saved: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
     for path in paths:
@@ -751,6 +771,12 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit) -> dict[str,
         else:
             # The user's choices for this folder alone (never inherited).
             entry["prefs"] = prefs[path].value or {}
+        if constants[path].failed:
+            errors.append(constants[path].error)
+        elif constants[path].value is not None:
+            # The folder's own constants; its subfolders inherit them (the app decides). Only when
+            # set: with ``saved_read``, no key means none set (most folders: a smaller listing).
+            entry["constants"] = constants[path].value
         dataset = datasets[path]
         if dataset.failed:
             errors.append(dataset.error)
@@ -760,6 +786,7 @@ def _saved_folders(store: CacheStore, paths: list[str], send: Emit) -> dict[str,
                 _cache_info(dataset.value["info"]), dataset.value)
         entry["saved_read"] = (history is not None and not summaries[path].failed
                                and not subtrees[path].failed and not prefs[path].failed
+                               and not constants[path].failed
                                and not dataset.failed)
         saved[path] = entry
     if errors:
@@ -797,7 +824,27 @@ def _send_saved(store: CacheStore | None, path: str, send: Emit) -> tuple[Any, d
         send({"kind": "subtree_cached", "subtree": saved["subtree"]})
     if "prefs" in saved:
         send({"kind": "folder_prefs", "path": path, "prefs": saved["prefs"]})
+    _send_constants(store, path, saved, send)
     return saved["scan_history"], saved
+
+
+def _send_constants(store: CacheStore, path: str, saved: dict[str, Any], send: Emit) -> None:
+    """The folder's own constants and those of the folders above it (with keys in this store), which
+    it inherits: the app needs them even when it never listed those folders (a tab's top folder).
+    One read; only folders that set some (a folder whose record can't be read is left out too:
+    unknown, never "none set")."""
+    folders: dict[str, Any] = {path: saved["constants"]} if "constants" in saved else {}
+    above: list[str] = []
+    child, parent = path, os.path.dirname(path)
+    while parent and parent != child and len(above) < 64:
+        above.append(parent)
+        child, parent = parent, os.path.dirname(parent)
+    found = store.read_constants(above, keyed_only=True) if above else {}
+    folders.update({folder: read.value for folder, read in found.items() if read.value is not None})
+    if any(read.failed for read in found.values()):
+        send({"kind": "cache_warning", "message": next(read.error for read in found.values() if read.failed)})
+    if folders:
+        send({"kind": "folder_constants", "folders": folders})
 
 
 def _send_guard(store: CacheStore | None, path: str, send: Emit) -> SaveGuard | None:
@@ -1242,6 +1289,35 @@ def _saved_fingerprint(row: Any) -> list[tuple[int, int, int]]:
     return [(int(shot), int(size), int(modified)) for shot, size, modified in row["fingerprint"]]
 
 
+def _saved_raw_times(row: Any) -> dict[int, int]:
+    """A cached dataset's shot times: each shot's raw ``d<N>.txt`` mtime (ns), where one was found.
+    Datasets cached before shot times have none."""
+    return file_kinds.raw_times(row.get("raw_times"))
+
+
+def _raw_mtime(entry: os.DirEntry[str] | None, reason: str) -> int | None:
+    """A shot's time: its raw ``d<N>.txt`` file's mtime (ns), from the listing's entry (one stat on
+    macOS and Linux; none on Windows, where the listing has it). None without one, or if it's gone:
+    the shot's time is then its TXY file's (``DatasetView.shot_time``). The TXY file's mtime is
+    when it was converted, and a converter catching up gives many shots the same time (Tony,
+    2026-10-20). Raw files never affect a shot's fingerprint, so deleting one changes nothing else.
+    A raw file modified within ``SETTLE_SECONDS`` (or in the future) may still be written: no time
+    yet, so a later listing stats it again."""
+    if entry is None:
+        return None
+    try:
+        modified = _entry_stat(entry, reason).st_mtime_ns
+    except OSError:
+        return None
+    return modified if modified / 1e9 <= time.time() - SETTLE_SECONDS else None
+
+
+def _raw_list(times: dict[int, int], shots: Iterable[int]) -> list[list[int]]:
+    """``[shot, raw mtime_ns]`` for those of ``shots`` with a known time, by shot, as events and the
+    cache carry them."""
+    return [[shot, times[shot]] for shot in sorted(set(shots)) if shot in times]
+
+
 # helab.utils.constants.DEFAULT_CHECK_LEVEL; not imported, since constants resolves the app's
 # folders at import, which a helper must not do.
 DEFAULT_CHECK_LEVEL = "medium"
@@ -1367,6 +1443,7 @@ def read_cached(path: str, output: str, send: Emit = emit,
           "load_counts": {"reused_memory": 0, "reused_disk": len(shots), "new": 0, "modified": 0,
                           "removed": 0, "read": 0, "new_loaded": 0, "modified_loaded": 0},
           "cache_reason": "", "fingerprint": fingerprint, "memory_shots": [], "verified": False, **root,
+          "raw_times": _raw_list(_saved_raw_times(row), shots),
           "signature": info.get("signature") or _fingerprint_signature(fingerprint)})
 
 
@@ -1405,6 +1482,7 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
           "load_counts": {"reused_memory": len(held), "reused_disk": 0, "new": 0, "modified": 0,
                           "removed": 0, "read": 0, "new_loaded": 0, "modified_loaded": 0},
           "cache_reason": "Folder not modified since cached", "fingerprint": fingerprint,
+          "raw_times": _raw_list(_saved_raw_times(row), held),
           "memory_shots": held, "base_signature": base_signature, "signature": base_signature})
     return True
 
@@ -1457,7 +1535,7 @@ def load(path: str, output: str, send: Emit = emit,
          expected: str = "", *, limits: dict[str, Any] | None = None, allow_large: bool = False,
          no_cache: bool = False, full_check: bool = False, cache_base: bool = False,
          check_level: str = DEFAULT_CHECK_LEVEL, allow_missing: bool = False,
-         memory_check: dict[str, Any] | None = None) -> None:
+         memory_check: dict[str, Any] | None = None, memory_raw_times: list[list[int]] | None = None) -> None:
     """Load converted TXY files, reusing unchanged shots from RAM and disk cache.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for shots the caller already holds
@@ -1472,6 +1550,8 @@ def load(path: str, output: str, send: Emit = emit,
     Shots cached or held that the folder no longer lists stop the load with ``shots_missing``
     before any file is read, unless ``allow_missing``. ``memory_check``: what the held data's own
     load saw (listing time, names, identity), for its quick check when no cached dataset has one.
+    ``memory_raw_times``: the held shots' times (``[shot, raw mtime_ns]``), so a held shot whose TXY
+    file is unchanged never has its raw file stat'ed again (not even when the cache save reads it).
     After its scan phase (saved as the folder's summary), a load whose new data is large
     (``limits``) stops with ``too_large`` before reading anything, unless ``allow_large``.
     A folder the user chose not to cache (``no_cache``, or its saved flag) is read into RAM
@@ -1502,7 +1582,7 @@ def load(path: str, output: str, send: Emit = emit,
               (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
               limits=limits, allow_large=allow_large, no_cache=no_cache, no_cache_reason=no_cache_reason,
               full_check=full_check, cache_base=cache_base, check_level=check_level,
-              allow_missing=allow_missing, memory_check=memory_check)
+              allow_missing=allow_missing, memory_check=memory_check, memory_raw_times=memory_raw_times)
     finally:
         if store is not None:
             store.close()
@@ -1513,7 +1593,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           budget_set_at: float | None = None, *, limits: dict[str, Any] | None = None,
           allow_large: bool = False, no_cache: bool = False, no_cache_reason: str = "",
           full_check: bool = False, cache_base: bool = False, check_level: str = DEFAULT_CHECK_LEVEL,
-          allow_missing: bool = False, memory_check: dict[str, Any] | None = None) -> None:
+          allow_missing: bool = False, memory_check: dict[str, Any] | None = None,
+          memory_raw_times: list[list[int]] | None = None) -> None:
     from helab.utils.cache_store import StoreError
     held_from = "memory"  # Where the shots counted as held are: the caller's RAM, or its cached read.
     if cache_base and not memory and not no_cache and store is not None:
@@ -1547,6 +1628,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # The fingerprint comes with the listing: each TXY entry's stat (free on Windows, where the
     # listing has it; one call on macOS and Linux, as a separate stat would be).
     listed_stats: dict[int, tuple[int, int]] = {}
+    # Raw files, for shot times: stat'ed later, only for shots whose time isn't known (``raw_time``).
+    raw_entries: dict[int, os.DirEntry[str]] = {}
     with _scandir(path, "load: listing") as directory:
         for entry in directory:
             beat()
@@ -1557,6 +1640,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                     files.append((shot, entry.path))
                     entry_info = _entry_stat(entry, "load: checking")
                     listed_stats[shot] = (entry_info.st_size, entry_info.st_mtime_ns)
+                elif kind is file_kinds.RAW:
+                    raw_entries[shot] = entry
             elif not has_dirs and _is_dir(entry):
                 has_dirs = True
     if not files:
@@ -1612,6 +1697,21 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     listed = found.get(file_kinds.TXY.name, set())
     held = {int(entry[0]) for entry in memory or ()}
     missing_checked = False
+    # Shot times (raw files' mtimes): the caller's or the cache's, else stat'ed from the listing
+    # (``raw_time``). Raw d<N>.txt files are never rewritten (Tony, 2026-10-20): a shot's time is
+    # stat'ed once, and again only when its TXY fingerprint changed, which may be another run's
+    # shot of that number (a folder copied over this one). That check is free (the fingerprint
+    # comes with the listing) and covers the copy; a raw file is never re-stat'ed while its TXY
+    # file is unchanged.
+    raw_times: dict[int, int] = {}
+    saved_raw: dict[int, int] = {}
+    if held_from == "memory":  # The caller's times of the shots it holds unchanged.
+        raw_times.update({shot: value for shot, value in file_kinds.raw_times(memory_raw_times).items()
+                          if shot in in_memory})
+
+    def raw_time(shot: int) -> None:
+        if shot not in raw_times and (found_time := _raw_mtime(raw_entries.get(shot), "load: shot time")) is not None:
+            raw_times[shot] = found_time
 
     def stop_if_missing(known: set[int]) -> bool:
         missing = sorted(known - listed)
@@ -1647,6 +1747,13 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             cache_info = _with_sizes(_cache_info(row["info"]), row) if row is not None else {}
             if saved_fingerprint is not None:
                 baseline = {shot: (size, modified) for shot, size, modified in saved_fingerprint}
+            if row is not None:
+                # Only for shots whose TXY file is unchanged (raw files are never rewritten): a
+                # changed one may be another run's shot of that number (a folder copied over this
+                # one), so its raw file is stat'ed.
+                saved_raw = {shot: value for shot, value in _saved_raw_times(row).items()
+                             if shot in current and baseline.get(shot) == current[shot]}
+                raw_times.update(saved_raw)
 
             # Unpacking brings the whole cached dataset into RAM, more than the folder now holds if
             # it shrank: when that is too large, the cache isn't used and the files are read.
@@ -1736,7 +1843,11 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         try:
             array = None
             if shot in in_memory:
-                # Unchanged and already in the caller's RAM: nothing to read or send.
+                # Unchanged and already in the caller's RAM: nothing to read or send. Its time is the
+                # caller's or the cache's; one still missing (its raw file was still being written
+                # when it was read, or a cache saved before shot times) the listing can give, and
+                # only that one is stat'ed (``raw_time`` skips shots with a time).
+                raw_time(shot)
                 loaded += 1
             elif shot in reused:
                 array = data[shot]
@@ -1757,8 +1868,10 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                 rows += len(array)
                 size += array.nbytes
                 loaded += 1
+                raw_time(shot)
                 send({"kind": "shot", "shot": shot, "artifact": artifact,
-                      "fingerprint": fingerprint[i], "problematic": shot in problematic})
+                      "fingerprint": fingerprint[i], "problematic": shot in problematic,
+                      **({"raw_mtime": raw_times[shot]} if shot in raw_times else {})})
                 load_counts["new_loaded"] += int(shot in new_shots)
                 load_counts["modified_loaded"] += int(shot in modified_shots)
                 load_counts["reused_disk"] += int(shot in from_disk)
@@ -1799,7 +1912,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           **({} if had_dataset is None and not cached else {"disk_cached": cached or bool(had_dataset)}),
           "disk_cache_pending": guard is not None and not cached and not no_cache,
           "cache_info": cache_info, "load_counts": load_counts,
-          "cache_reason": cache_reason,
+          "cache_reason": cache_reason, "raw_times": _raw_list(raw_times, current),
           "fingerprint": fingerprint, "memory_shots": sorted(in_memory), "base_signature": base_signature,
           "signature": hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest(),
           # For a quick check of this data held in RAM (``_unchanged_since_memory``).
@@ -1810,8 +1923,10 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         # This listing found the cache complete: it dates from now (a later non-TXY change no longer
         # rules out the quick check), and older caches get their file names for its samples.
         from helab.utils.cache_store import SaveRejected
+        filled = _raw_list(raw_times, current)
         try:
-            store.confirm_dataset(path, fingerprint, names, listed_at, guard)
+            store.confirm_dataset(path, fingerprint, names, listed_at, guard,
+                                  filled if filled != _raw_list(saved_raw, current) else None)
         except (StoreError, SaveRejected):
             pass  # Best effort: the next full check tries again.
     if store is None or guard is None or cached or no_cache:
@@ -1829,13 +1944,14 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                     read_txy(shot, filename, "cache save: read")
                 except (OSError, ValueError, pd.errors.ParserError):
                     raise ValueError(f"Could not cache previously loaded shot {shot}") from None
+                raw_time(shot)
                 send({"kind": "file_finished", "filename": filename})
         verify_reason = "cache save: verifying"
         # Checked again only if files were read since the check above (else nothing came between).
         if reread and changed():
             raise ValueError("Folder changed before cache could be saved")
         _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, load_counts,
-                       unsettled, bool(had_dataset), budget, budget_set_at, send)
+                       unsettled, bool(had_dataset), budget, budget_set_at, send, raw_times)
     except Exception as exc:
         _save_failed(store, exc, send)
 
@@ -1843,10 +1959,11 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
 def _write_dataset(store: CacheStore, path: str, guard: SaveGuard, data: dict[int, Any],
                    fingerprint: list[tuple[int, int, int]], problematic: list[int], names: list[str],
                    listed_at: float, counts: dict[str, int], unsettled: int, had_dataset: bool,
-                   budget: int | None, budget_set_at: float | None, send: Emit) -> None:
+                   budget: int | None, budget_set_at: float | None, send: Emit,
+                   raw_times: dict[int, int] | None = None) -> None:
     """Save a folder's dataset to the disk cache within the budget (a pending save that doesn't fit),
     under the guard its job took when it started; ``cache_saved`` and ``disk_cached``, or the pending
-    event. Raises on failure (``_save_failed``)."""
+    event. ``raw_times``: its shots' times, where known. Raises on failure (``_save_failed``)."""
     from helab.utils.cache_store import DATASET_FORMAT, pack_dataset
     file = store.write_dataset_file(pack_dataset(data))
     info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(
@@ -1862,6 +1979,7 @@ def _write_dataset(store: CacheStore, path: str, guard: SaveGuard, data: dict[in
         "ram_bytes": sum(int(array.nbytes) for array in data.values()),
         "rows": sum(len(array) for array in data.values()), "shots": len(data),
         "fingerprint": [list(entry) for entry in fingerprint], "problematic": sorted(set(problematic)),
+        "raw_times": _raw_list(raw_times or {}, (entry[0] for entry in fingerprint)),
         "info": info}, guard, budget=budget, budget_set_at=budget_set_at)
     if not result.saved:
         # Held for the user's answer (Make room / Save update); nothing waits for it.
@@ -1934,10 +2052,13 @@ def _location_identity(path: str, reason: str) -> str:
 
 def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held: list[list[int]],
               problematic: list[int], held_dir: str, *, identity: str = "", identity_root: str | None = None,
-              no_cache: bool = False, recent: list[int] | None = None, output: str | None = None) -> None:
+              no_cache: bool = False, recent: list[int] | None = None, output: str | None = None,
+              raw_times: list[list[int]] | None = None) -> None:
     """Live's save: the folder's data the app holds in RAM written to the disk cache, without reading
     TXY files again. ``held`` is that data's fingerprint (unreadable shots included), its arrays
-    are in ``held_dir`` (local files the app wrote), ``problematic`` its problematic shots.
+    are in ``held_dir`` (local files the app wrote), ``problematic`` its problematic shots,
+    ``raw_times`` its shot times (``[shot, raw mtime_ns]``), saved as they are for the shots saved as
+    held: their raw files aren't stat'ed (a shot read again gets its time anew).
 
     The folder is listed once. Every held file must still be there with the size and mtime it had
     when it was read (else ``shots_missing``: missing or changed; TXY files are written once), and
@@ -1970,6 +2091,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         known = {shot for shot, _, _ in fingerprint}
         listed: dict[int, tuple[int, int]] = {}
         file_names: dict[int, str] = {}
+        raw_entries: dict[int, os.DirEntry[str]] = {}  # For the times of shots read again.
         found: dict[str, set[int]] = {}  # (For the summary of a save that reads shots again.)
         has_dirs = False
         listed_at = time.time()
@@ -1983,6 +2105,8 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
                         info = _entry_stat(entry, "save: checking")
                         listed[matched[1]] = (info.st_size, info.st_mtime_ns)
                         file_names[matched[1]] = entry.name
+                    elif matched[0] is file_kinds.RAW:
+                        raw_entries[matched[1]] = entry
                 elif not has_dirs and _is_dir(entry):
                     has_dirs = True
 
@@ -2012,6 +2136,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         settled = {item[0] for item in _settled(items)}
         replaced: dict[int, tuple[int, int, int]] = {}
         reread: list[dict[str, Any]] = []
+        times = file_kinds.raw_times(raw_times)
 
         def now(filename: str, reason: str) -> tuple[int, int]:
             info = _stat(filename, reason)
@@ -2040,11 +2165,15 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
                 np.save(artifact, array, allow_pickle=False)
                 data[shot] = array
                 problematic = sorted((set(problematic) - {shot}) | ({shot} if invalid else set()))
+                times.pop(shot, None)
+                if (found_time := _raw_mtime(raw_entries.get(shot), "save: shot time")) is not None:
+                    times[shot] = found_time
                 send({"kind": "shot", "shot": shot, "artifact": artifact, "fingerprint": list(item),
-                      "problematic": invalid})
+                      "problematic": invalid, **({"raw_mtime": times[shot]} if shot in times else {})})
             except (OSError, ValueError, pd.errors.ParserError):
                 data.pop(shot, None)  # Unreadable now: known by its new fingerprint, as a load keeps it.
                 problematic = sorted(set(problematic) | {shot})
+                times.pop(shot, None)  # (The held time was the old file's.)
             replaced[shot] = item
             reread.append({"shot": shot, "path": filename, "old": list(was[shot]), "new": list(item[1:]),
                            "read": shot in data})
@@ -2077,7 +2206,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
               "disk_cache_pending": saving, "cache_info": {}, "load_counts": counts,
               "cache_reason": f"Saved {len(kept)} shots from memory; " + (
                   f"read {len(replaced):,} that changed after Live read them again" if replaced else "no TXY file read"),
-              "live_reread": reread,
+              "live_reread": reread, "raw_times": _raw_list(times, replaced),
               "fingerprint": [list(entry) for entry in fingerprint], "memory_shots": kept,
               "base_signature": signature, "signature": signature,
               "listed_at": listed_at, "names": names, "identity": _location_identity(path, "save: identity")})
@@ -2087,7 +2216,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         try:
             _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, counts, unsettled,
                            had_dataset, (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
-                           send)
+                           send, times)
         except Exception as exc:
             _save_failed(store, exc, send)
     finally:
@@ -2192,6 +2321,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
         file_names.clear()
     found: dict[str, set[int]] = {}
     names: dict[int, str] = {}
+    raw_entries: dict[int, os.DirEntry[str]] = {}  # For new shots' times (``_raw_mtime``).
     has_dirs = False
     listed_at = time.time()
     beat = Heartbeat(send, "listing")
@@ -2204,6 +2334,8 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                 if kind.loaded:
                     names[shot] = entry.path
                     file_names[shot] = entry.name
+                elif kind is file_kinds.RAW:
+                    raw_entries[shot] = entry
             elif not has_dirs and _is_dir(entry):
                 has_dirs = True
 
@@ -2278,6 +2410,9 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     late: set[int] = set()
     replaced: set[int] = set()  # Held shots read again: their new data, or now unreadable.
     reread: list[dict[str, Any]] = []
+    # The times of the shots read (new, or held and read again: a changed TXY file gets its time
+    # anew, as a load's does; the app keeps held times only for unchanged shots).
+    raw_times: dict[int, int] = {}
     rows = size = loaded = read = read_bytes = 0
     total_read_bytes = sum(item[1] for item in to_read)
     last_progress = 0.0
@@ -2329,9 +2464,12 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                     replaced.add(shot)
                 else:
                     loaded += 1
+                if (found_time := _raw_mtime(raw_entries.get(shot), "live: shot time")) is not None:
+                    raw_times[shot] = found_time
                 fingerprint.append(item)
                 send({"kind": "shot", "shot": shot, "artifact": artifact, "fingerprint": list(item),
-                      "problematic": shot in problematic})
+                      "problematic": shot in problematic,
+                      **({"raw_mtime": raw_times[shot]} if shot in raw_times else {})})
         except (OSError, ValueError, pd.errors.ParserError):
             # Sent back with ``known`` next time: not read again unless it changes.
             unreadable.add(shot)
@@ -2369,7 +2507,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
               "modified": len(replacing), "removed": 0, "read": read, "new_loaded": loaded,
               "modified_loaded": len(replaced - unreadable)},
           "cache_reason": f"Live: reused {len(kept)} shots from memory; read {read} TXY files{again_note}",
-          "live_reread": reread,
+          "live_reread": reread, "raw_times": _raw_list(raw_times, raw_times),
           "fingerprint": [list(item) for item in fingerprint], "memory_shots": kept,
           "base_signature": "", "modified": summary["modified"], "modified_observed_at": time.time(),
           "signature": _fingerprint_signature(fingerprint), **state(True, unsettled, True)})
@@ -2469,8 +2607,14 @@ def _removed_event(removal: Any) -> dict[str, Any]:
             "datasets": removal.datasets, "bytes": removal.dataset_bytes}
 
 
+# Why a folder's constants weren't saved (``cache_admin`` "constants"; the app keeps them for the
+# session, and saves them again when a root is found or volumes are verified). FolderCache has
+# the same texts (it doesn't import this module).
+NO_ROOT_CONSTANTS = "no .helab-root found here or above"
+UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
+
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
-                 "forget_root", "root_same", "clear_root")
+                 "constants", "forget_root", "root_same", "clear_root")
 
 
 def _marker_temporary(name: str) -> bool:
@@ -2698,7 +2842,11 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     old: list[str] = []
     if action == "sweep":
         old = remove_old_caches(os.path.dirname(os.path.abspath(root)), Heartbeat(send, "cleaning up"))
-    with _cache_store(root, local_lane=True) as store:
+    # A constants write trusts only the volume hints this session verified, like the other local
+    # writes keyed by a source folder (scan history, subfolder status); the other actions name
+    # no source folder.
+    verified_volumes = params.get("verified_volumes") if action == "constants" else None
+    with _cache_store(root, local_lane=True, verified_volumes=verified_volumes) as store:
         if (budget is not None and budget_set_at is not None and not store.read_only
                 and action not in ("trim", "budget")):
             # Every job tells the store the app's budget, so running loads save within it.
@@ -2775,6 +2923,25 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             send({"kind": "folder_prefs", "path": path, "prefs": saved})
             if flag_removal is not None:
                 send(_removed_event(flag_removal))
+        elif action == "constants":
+            # A folder's own constants (Folder constants…): every value it sets, newest choice wins.
+            from helab.utils.cache_paths import UnresolvedRemotePath, _inside, _normal
+            from helab.utils.data_roots import NoDataRoot
+            path = str(params["path"])
+            try:
+                saved_constants = store.set_constants(path, dict(params.get("values") or {}),
+                                                      float(params.get("set_at") or time.time()))
+            except UnresolvedRemotePath as exc:
+                # No disk cache for this folder (no data root, an unsupported mount), or not yet
+                # (its volume not verified this session): the app keeps its values for the session
+                # only, and saves them again when roots are found or volumes verified.
+                unverified = isinstance(exc, NoDataRoot) and any(
+                    _inside(_normal(path), _normal(mount)) for mount in store._unverified_mounts)
+                reason = (UNVERIFIED_CONSTANTS if unverified
+                          else NO_ROOT_CONSTANTS if isinstance(exc, NoDataRoot) else str(exc))
+                send({"kind": "folder_constants", "folders": {}, "session_only": {path: reason}})
+            else:
+                send({"kind": "folder_constants", "folders": {path: saved_constants}})
         elif action == "clear_prefs":
             cleared_at = time.time()
             send({"kind": "prefs_cleared", "paths": store.clear_prefs(cleared_at), "set_at": cleared_at})
@@ -2991,7 +3158,7 @@ def main() -> None:
                       request.get("held_problematic") or [], request["held_dir"],
                       identity=str(request.get("identity") or ""), identity_root=request.get("identity_root"),
                       no_cache=bool(request.get("no_cache")), recent=request.get("recent"),
-                      output=request.get("output"))
+                      output=request.get("output"), raw_times=request.get("held_raw_times"))
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),
@@ -2999,7 +3166,8 @@ def main() -> None:
                  allow_large=bool(request.get("allow_large")), no_cache=bool(request.get("no_cache")),
                  full_check=bool(request.get("full_check")), cache_base=bool(request.get("cache_base")),
                  check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL),
-                 allow_missing=bool(request.get("allow_missing")), memory_check=request.get("memory_check"))
+                 allow_missing=bool(request.get("allow_missing")), memory_check=request.get("memory_check"),
+                 memory_raw_times=request.get("memory_raw_times"))
         elif operation == "cached":
             read_cached(request["path"], request["output"], cache_options=request.get("cache"),
                         limits=request.get("limits"), allow_large=bool(request.get("allow_large")),

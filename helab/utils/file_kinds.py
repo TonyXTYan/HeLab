@@ -53,3 +53,13 @@ def valid_files(value: Any) -> bool:
         isinstance(entry, dict) and type(entry.get("count")) is int and entry["count"] >= 0
         and ("bytes" not in entry or type(entry["bytes"]) is int and entry["bytes"] >= 0)
         for entry in value.values())
+
+
+def raw_times(entries: Any) -> dict[int, int]:
+    """Shot times as datasets carry them (``raw_times``: ``[shot, mtime_ns]`` of each shot's RAW
+    file, where one was found), by shot. Malformed entries are skipped; none: no times known."""
+    times: dict[int, int] = {}
+    for entry in entries if isinstance(entries, (list, tuple)) else ():
+        if isinstance(entry, (list, tuple)) and len(entry) == 2 and all(type(value) is int for value in entry):
+            times[entry[0]] = entry[1]
+    return times

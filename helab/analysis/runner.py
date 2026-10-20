@@ -13,12 +13,13 @@ import logging
 import queue
 import threading
 import time
+from types import MappingProxyType
 from typing import Any, Mapping, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from helab.analysis.dataset_view import DatasetView
-from helab.analysis.parameters import effective
+from helab.analysis.parameters import effective, unused_parameters
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, Coverage, RamResults, State
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 
@@ -42,9 +43,16 @@ class AnalysisRunner(QObject):
         self._ids = itertools.count(1)
 
     def submit(self, script: DatasetAnalysis, metadata: ScriptMetadata, action: str,
-               view: DatasetView, values: Optional[Mapping[str, Any]] = None) -> AnalysisContext:
-        """Queue ``action`` on ``view`` with ``values`` validated against its declared parameters.
+               view: DatasetView, values: Optional[Mapping[str, Any]] = None,
+               constants: Optional[Mapping[str, Mapping[str, float]]] = None, owner: str = "",
+               live: bool = False) -> AnalysisContext:
+        """Queue ``action`` on ``view`` with ``values`` validated against its declared parameters,
+        and the lab and folder layers of the constants taken now (``constants``: {"lab": …,
+        "folder": …}; GUI thread). An analysis that uses constants gets them resolved with its own
+        values now too (``DatasetAnalysis.run_constants``), in its context and its result.
         The run's coverage is the shots the script says it uses (all of them if it can't say).
+        ``owner``: the plot asking (``AnalysisContext.owner``); ``live``: a rerun following Live
+        (``AnalysisContext.live``).
         Raises ``RuntimeError`` while the runner is stopping (until its worker has exited)."""
         parameters = effective(script.parameters(action), values)
         try:
@@ -52,8 +60,24 @@ class AnalysisRunner(QObject):
         except Exception:
             logging.exception("Coverage of %s: all shots", metadata.name)
             coverage = Coverage.of(view)
+        layers = MappingProxyType({name: MappingProxyType(dict(values))
+                                  for name, values in (constants or {}).items()})
+        keys: tuple[str, ...] = ()
+        try:
+            keys = tuple(script.constant_keys(action))
+            resolved = script.run_constants(action, parameters, layers) if keys else None
+        except Exception:
+            logging.exception("Constants of %s: none resolved", metadata.name)
+            resolved = None
+        if resolved is not None:
+            try:  # The keys this run uses; all the analysis declares if it can't say.
+                keys = tuple(script.run_constant_keys(action, parameters))
+            except Exception:
+                logging.exception("Constant keys of %s: all of them", metadata.name)
         context = AnalysisContext(f"a{next(self._ids)}", action, view, parameters, metadata.identity(),
-                                  coverage=coverage)
+                                  unused=unused_parameters(script.parameters(action), parameters),
+                                  coverage=coverage, constants=layers, resolved_constants=resolved,
+                                  constant_keys=keys if resolved is not None else (), owner=owner, live=live)
         with self._lock:
             if self._stopping:
                 raise RuntimeError("The analysis runner is stopping")
@@ -105,6 +129,16 @@ class AnalysisRunner(QObject):
             # released to free RAM must free its input (``helab.analysis.budget``).
             del job
 
+    @staticmethod
+    def _found(script: DatasetAnalysis, context: AnalysisContext, data: Any) -> dict[str, Any]:
+        """The run's ``found`` record; a script whose record fails still has its result (the
+        plot draws, without those record lines), and the error is logged."""
+        try:
+            return script.result_found(context.action, data)
+        except Exception:
+            logging.exception("Analysis %s: its record of what the run found failed", context.analysis.short())
+            return {}
+
     def _run(self, script: DatasetAnalysis, context: AnalysisContext) -> None:
         started = time.time()
         if context.cancelled():
@@ -114,8 +148,9 @@ class AnalysisRunner(QObject):
             try:
                 data = script.compute(context.action, context)
                 state: State = "cancelled" if context.cancelled() else "completed"
+                found = self._found(script, context, data) if state == "completed" else {}
                 result = AnalysisResult.of(context, state, data if state == "completed" else None,
-                                           started_at=started)
+                                           started_at=started, found=found)
             except Cancelled:
                 result = AnalysisResult.of(context, "cancelled", started_at=started)
             except Exception as error:

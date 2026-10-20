@@ -20,7 +20,8 @@ from helab.models.SnapshotFileSystemModel import FolderNode, SnapshotFileSystemM
 from helab.models.StatusReport import StatusReport
 from helab.resources.icons import CHECK_COLOR, LOAD_COLOR, StatusIcons
 from helab.utils.io_service import IORequest
-from helab.utils import large_folder
+from helab.utils import events, large_folder
+from helab.utils.colours import AMBER as AMBER  # Shared; the views import it from here too.
 from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, PENDING_ROOT_TOOLTIP, PENDING_SUMMARY, PLACE_ROOT_ACTION,
                                       PLACE_ROOT_TOOLTIP, REVIEW_ROOT_TOOLTIP, Dataset, pending_root_text,
                                       marker_path, store_options)
@@ -51,7 +52,6 @@ MISMATCH_RETRY_TOOLTIP = ("Check this folder again. If the wrong drive was mount
                           "its cached shots are then found and it loads as usual.")
 MISMATCH_REVIEW_TOOLTIP = ("Cached data doesn't match this folder: shots it had are missing now. Show it in the "
                            "list of mismatched folders, where you can load it as it is now.")
-AMBER = "#b26a00"
 LIVE_RETRY_TOOLTIP = "Check the folder again and go on watching it"
 # Why Live's new shots aren't saved to the disk cache: the summary line's words, and the tooltip's.
 LIVE_BLOCKED = {
@@ -471,6 +471,7 @@ class FolderExplorer(QWidget):
         self.model.cache.autoLoadPauseChanged.connect(self._auto_load_pause_changed)
         self.model.cache.folderPrefsChanged.connect(self._folder_prefs_changed)
         self.model.cache.folderPrefsFailed.connect(self._folder_prefs_failed)
+        self.model.cache.folderConstantsFailed.connect(self._folder_constants_failed)
         self.model.cache.mountWarningChanged.connect(self._mount_warning_changed)
         self.model.cache.volumesVerified.connect(self._volumes_verified)
         self.model.cache.rootDecided.connect(self._root_decided)
@@ -1630,6 +1631,8 @@ class FolderExplorer(QWidget):
         """Stop checking (Live stays on, data kept): Retry checks again, Live off saves."""
         logging.warning("Live stopped for %s: %s", session.path, message)
         session.error = message
+        events.notify(events.LIVE_ERROR, f"Live stopped for {session.path}: {message}", path=session.path,
+                      error=message)  # For hooks (helab/utils/events.py); no desktop notification.
         self._live_timer.stop()
         self._live_changed()
 
@@ -2533,6 +2536,10 @@ class FolderExplorer(QWidget):
                 flag.setToolTip(NEEDS_ROOT_TOOLTIP if ram_only else "This folder only, never its subfolders")
                 flag.setEnabled(not ram_only)
                 flag.toggled.connect(lambda on, k=key: self.set_folder_flag(path, k, on))
+        constants = menu.addAction("Folder constants…", lambda: self.show_folder_constants(path))
+        if constants:
+            constants.setToolTip("Fall distance, fall time and trap frequencies for this folder and its "
+                                 "subfolders" + (" (RAM only: this session)" if ram_only else ""))
         clear = menu.addAction("Clear loaded data cache", lambda: self.clear_data_cache(path))
         if clear and ram_only:
             clear.setEnabled(False)
@@ -2632,6 +2639,25 @@ class FolderExplorer(QWidget):
         cache.set_folder_prefs(path, no_cache=prefs["no_cache"], no_auto_load=prefs["no_auto_load"],
                                remove_cached=remove, owner=self.model.owner)
         self.loadStateChanged.emit()
+
+    def show_folder_constants(self, path: str) -> None:
+        """Right-click › Folder constants… (window-modal; saved by a helper on Save)."""
+        from helab.views.FolderConstantsDialog import FolderConstantsDialog
+        dialog = FolderConstantsDialog(path, self.model.cache, owner=self.model.owner, parent=self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.open()
+
+    def _folder_constants_failed(self, path: str, message: str, owner: str) -> None:
+        """Constants this tab set couldn't be saved; FolderCache has put the saved ones back."""
+        if self.closed or owner != self.model.owner:
+            return
+        name = os.path.basename(path.rstrip(os.sep)) or path
+        text = f"HeLab couldn't save the constants for {name}: {message}. Try again."
+        if self.report_flag_failure is not None:
+            self.report_flag_failure(path, text)
+        else:
+            QMessageBox.warning(self, "Folder constants not saved", text)
 
     def _ask_remove_cached(self, path: str, size: int | None) -> bool:
         name = os.path.basename(path.rstrip(os.sep)) or path
@@ -2829,6 +2855,7 @@ class FolderExplorer(QWidget):
         self.model.cache.autoLoadPauseChanged.disconnect(self._auto_load_pause_changed)
         self.model.cache.folderPrefsChanged.disconnect(self._folder_prefs_changed)
         self.model.cache.folderPrefsFailed.disconnect(self._folder_prefs_failed)
+        self.model.cache.folderConstantsFailed.disconnect(self._folder_constants_failed)
         self.model.cache.mountWarningChanged.disconnect(self._mount_warning_changed)
         self.model.cache.volumesVerified.disconnect(self._volumes_verified)
         self.model.cache.rootDecided.disconnect(self._root_decided)

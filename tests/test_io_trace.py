@@ -164,10 +164,11 @@ def test_a_listing_scan_and_load_trace_each_source_operation(tmp_path: Path, tra
     before = len(lines(trace))
     load(str(run), str(output), lambda _: None)
     records = lines(trace)[before:]
+    # (Each shot's raw file once, for its time: "load: shot time".)
     assert counts(records) == {
         ("scandir", "load: listing"): 1, ("entry_stat", "load: checking"): 3, ("stat", "folder mtime"): 1,
         ("stat", "load: before read"): 3, ("read", "load: read"): 3, ("stat", "load: after read"): 3,
-        ("stat", "load: verifying"): 3}
+        ("stat", "load: verifying"): 3, ("entry_stat", "load: shot time"): 3}
     listing = next(record for record in records if record["op"] == "scandir")
     assert listing["path"] == str(run) and listing["entries"] == 7
     reads = [record for record in records if record["op"] == "read"]
@@ -408,7 +409,8 @@ def test_a_saved_load_stats_each_file_read_four_times_and_once_more_only_after_r
     tmp_path: Path, trace: Path,
 ) -> None:
     """The fingerprint comes with the listing; each file read is statted before and after the read,
-    and all once more at the end. The cache save checks them again only after reading files for it."""
+    and all once more at the end. The cache save checks them again only after reading files for it.
+    A shot's raw file is statted once, for its time, unless the cache or the caller has it."""
     run = tmp_path / "run"
     write_shots(run, range(1, 4))
     cache = store_options()
@@ -418,7 +420,7 @@ def test_a_saved_load_stats_each_file_read_four_times_and_once_more_only_after_r
     assert counts(lines(trace)) == {
         ("scandir", "load: listing"): 1, ("entry_stat", "load: checking"): 3, ("stat", "folder mtime"): 1,
         ("stat", "load: before read"): 3, ("read", "load: read"): 3, ("stat", "load: after read"): 3,
-        ("stat", "load: verifying"): 3}
+        ("stat", "load: verifying"): 3, ("entry_stat", "load: shot time"): 3}
     # Shot 4 is new and shots 1-3 are held in RAM but aren't in this new cache: they're read for
     # the cache after ``loaded``, and the files are checked again before saving.
     write_shots(run, range(4, 5))
@@ -429,6 +431,27 @@ def test_a_saved_load_stats_each_file_read_four_times_and_once_more_only_after_r
     found = counts(lines(trace)[before:])
     assert found[("read", "load: read")] == 1 and found[("read", "cache save: read")] == 3
     assert found[("stat", "load: verifying")] == 4 and found[("stat", "cache save: verifying")] == 4
+    # Shot 4's raw file for its time, and the held shots' for the cache (the caller has their times).
+    assert found[("entry_stat", "load: shot time")] == 4
+    # A load from that cache stats no raw file: the cache has their times.
+    before = len(lines(trace))
+    events: list[dict[str, Any]] = []
+    load(str(run), str(output), events.append, {**cache, "directory": str(tmp_path / "cache-b")})
+    assert ("entry_stat", "load: shot time") not in counts(lines(trace)[before:])
+    loaded = next(event for event in events if event["kind"] == "loaded")  # (It did load, from the cache.)
+    assert loaded["cached"] and loaded["source"] == "disk" and loaded["files"] == 4
+    assert [shot for shot, _ in loaded["raw_times"]] == [1, 2, 3, 4]
+    # Nor does one whose shots are all held by the caller with no disk cache: the caller sends their
+    # times (a held shot without one would be statted, for its time only).
+    memory = [[shot, (info := (run / f"d_txy_forc{shot}.txt").stat()).st_size, info.st_mtime_ns]
+              for shot in (1, 2, 3, 4)]
+    before = len(lines(trace))
+    events = []
+    load(str(run), str(output), events.append, None, memory, memory_raw_times=loaded["raw_times"])
+    found = counts(lines(trace)[before:])
+    assert ("entry_stat", "load: shot time") not in found and ("read", "load: read") not in found
+    loaded = next(event for event in events if event["kind"] == "loaded")
+    assert loaded["memory_shots"] == [1, 2, 3, 4] and loaded["files"] == 4
 
 
 def test_a_changed_cached_folder_is_listed_once_by_its_load(

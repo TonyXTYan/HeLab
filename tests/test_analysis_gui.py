@@ -27,6 +27,7 @@ from helab.analysis.runner import get_analysis_runner
 from helab.io_helper import list_folder, scan
 from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
+from helab.scripts.dld import basic_plots as dld_plots, density_images
 from helab.scripts.standard import basic_plots, group
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset, FolderCache
@@ -383,6 +384,90 @@ def test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab(
                             "manual range: full extent · bins auto · ⚠ X: min > max, using full extent")
     assert "Warning: X: min > max, using full extent" in label.toolTip()
     assert instance.status_label.text() == "⚠ X: min > max, using full extent"
+
+
+def test_a_mask_from_the_settings_tab_and_its_errors(window: Window, browser: FolderExplorer, qtbot: QtBot,
+                                                    tmp_path: Path) -> None:
+    """D9: custom circles typed in a plot's settings cut events (the dock says so); circles that
+    can't be read fail the run with the reason, keeping the last plot."""
+    run = folder(tmp_path, "run_K", 2)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3, 2: 4})  # shot N's events at T, X, Y = N (s, m)
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = dld_plots.CountsPerShot()
+    instance = panel.run_analysis(script.get_metadata(), script, "Plot")
+    assert instance is not None and instance.dock_widget is not None and instance.parameter_root is not None
+    qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
+    specs = {spec.name: spec for spec in script.parameters("Plot")}
+    parameter_of(instance.parameter_root, specs["mask_mode"]).setValue("custom")
+    parameter_of(instance.parameter_root, specs["mask_circles"]).setValue("1000, 1000, 1, cut")
+    first = instance.result
+    instance.rerun_button.click()
+    qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
+    assert instance.result is not None and instance.result.data.total == 4 and instance.result.data.masked == 3
+    label = source_label(instance.dock_widget)
+    assert label.text().endswith("helab.dld.counts_per_shot v1\nmask: 1 cut circle")
+    assert "Circles (mm) 1000, 1000, 1, cut" in label.toolTip()
+    parameter_of(instance.parameter_root, specs["mask_circles"]).setValue("1000, 1000")
+    shown = instance.result
+    instance.rerun_button.click()
+    qtbot.waitUntil(lambda: instance.status_label.text().startswith("Failed"), timeout=10_000)
+    assert "Mask circle “1000, 1000”: needs x, y and r" in instance.status_label.text()
+    assert instance.shown is shown  # the last plot stays
+
+
+def test_find_hot_spots_from_the_panel(window: Window, browser: FolderExplorer, qtbot: QtBot,
+                                       tmp_path: Path) -> None:
+    run = folder(tmp_path, "run_H", 2)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3, 2: 4})
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = density_images.DensityImages()
+    assert script.get_actions() == ["Plot", "Find hot spots"]
+    instance = panel.run_analysis(script.get_metadata(), script, "Find hot spots")
+    assert instance is not None and instance.dock_widget is not None
+    qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
+    assert instance.result is not None and instance.result.state == "completed", instance.status_label.text()
+    assert isinstance(instance.result.data, density_images.HotSpots)
+    assert "bins 0.5 mm · background σ 1 mm · 0.01 false spots per image · 0 hot spots found" in \
+        source_label(instance.dock_widget).text()
+
+
+def test_histogram_fits_go_in_the_docks_record(window: Window, browser: FolderExplorer, qtbot: QtBot,
+                                               tmp_path: Path) -> None:
+    """D1: each fit and the constants it used (where each came from, unconfirmed ones flagged)
+    are lines of the dock's record, after the parameters; the settings line names the fits."""
+    run = folder(tmp_path, "run_F", 2)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3, 2: 4})
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = dld_plots.TxyHistograms()
+    instance = panel.run_analysis(script.get_metadata(), script, "Plot")
+    assert instance is not None and instance.dock_widget is not None and instance.parameter_root is not None
+    qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
+    assert "\nFit T:" not in source_label(instance.dock_widget).toolTip()
+    specs = script.parameters("Plot")
+    parameter_of(instance.parameter_root, next(spec for spec in specs if spec.name == "fit_t")).setValue(True)
+    first = instance.result
+    instance.rerun_button.click()
+    qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
+    label = source_label(instance.dock_widget)
+    assert label.text().endswith("bins auto · fit T Gaussian")
+    record = label.toolTip()
+    assert "\nFit T: Gaussian" in record  # 7 events: a fit or why there is none
+    # The constants appear once, from the run (F0b's Constants line), with the fits' keys only;
+    # all at their defaults, so the settings line names none.
+    assert record.count("Constants: ") == 1 and "ħ =" not in record
+    assert ("\nConstants: h = 848 mm (default, unconfirmed), t_f = 416.0908 ms (derived, unconfirmed), "
+            "g = 9.79602 m/s² (default), m = ") in record
+    assert "constants:" not in label.text()
+    # The DLD port's plots draw with PyQtGraph only: no Drawing › Library choice, no "Drawn with".
+    assert instance.backend() == "" and "Drawn with" not in record
+    assert DRAWING_GROUP not in [child.name() for child in instance.parameter_root.children()]
+    assert instance.result is not None and instance.result.reuse_key()["constants"]["values"]["fall_distance"] == 0.848
 
 
 def test_run_without_data_says_so(window: Window, qtbot: QtBot) -> None:

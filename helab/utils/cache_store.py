@@ -21,7 +21,8 @@ import os
 import pathlib
 import sqlite3
 import time
-from typing import Any, Callable, Generator, Generic, Iterable, Literal, Mapping, Sequence, TypeVar, TypedDict, cast
+from typing import (Any, Callable, Generator, Generic, Iterable, Literal, Mapping, NotRequired, Sequence, TypeVar,
+                    TypedDict, cast)
 import uuid
 
 LAYOUT_VERSION = 3
@@ -65,6 +66,7 @@ CREATE INDEX IF NOT EXISTS subtrees_saved_at ON subtrees (saved_at);
 CREATE TABLE IF NOT EXISTS folder_prefs (
     path TEXT PRIMARY KEY, no_cache INTEGER NOT NULL DEFAULT 0, no_auto_load INTEGER NOT NULL DEFAULT 0,
     set_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS folder_constants (path TEXT PRIMARY KEY, record TEXT NOT NULL, set_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS pending_saves (
     pending_id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE,
     reason TEXT NOT NULL CHECK (reason IN ('over_budget', 'needs_approval')),
@@ -74,7 +76,8 @@ CREATE TABLE IF NOT EXISTS retired_files (file TEXT PRIMARY KEY, retired_at REAL
 CREATE TABLE IF NOT EXISTS datasets (
     path TEXT PRIMARY KEY, file TEXT NOT NULL, bytes INTEGER NOT NULL, ram_bytes INTEGER NOT NULL,
     rows INTEGER NOT NULL, shots INTEGER NOT NULL, fingerprint TEXT NOT NULL, problematic TEXT NOT NULL,
-    info TEXT NOT NULL, last_used REAL NOT NULL, job_seq INTEGER NOT NULL);
+    info TEXT NOT NULL, last_used REAL NOT NULL, job_seq INTEGER NOT NULL,
+    raw_times TEXT NOT NULL DEFAULT '[]');
 CREATE INDEX IF NOT EXISTS datasets_last_used ON datasets (last_used);
 """
 
@@ -158,13 +161,17 @@ class SaveGuard:
 
 class DatasetRecord(TypedDict):
     """What a load saves with its dataset file. ``info`` holds ``saved_at``,
-    ``snapshot_at``, ``signature``, ``counts``, ``unsettled``, ``kind``, ``format`` and ``names``."""
+    ``snapshot_at``, ``signature``, ``counts``, ``unsettled``, ``kind``, ``format`` and ``names``.
+    ``raw_times``: ``[shot, mtime_ns]`` of each shot's raw ``d<N>.txt`` file where one was found (the
+    shot's time). Kept out of ``info``, which listings read for every subfolder, and out of the
+    fingerprint, which raw files never affect. Rows saved before it have none (``[]``)."""
     ram_bytes: int
     rows: int
     shots: int
     fingerprint: list[list[int]]
     problematic: list[int]
     info: dict[str, Any]
+    raw_times: NotRequired[list[list[int]]]
 
 
 class DatasetRow(DatasetRecord):
@@ -313,6 +320,15 @@ def _dumps(value: object) -> str:
     return json.dumps(value, separators=(",", ":"))
 
 
+def _constant_values(values: object) -> dict[str, float]:
+    """A folder's constants as saved: names with finite numbers (which constants exist, and
+    their limits, is the app's business: ``helab.analysis.constant_layers.clean_layer``)."""
+    if not isinstance(values, Mapping):
+        return {}
+    return {str(key): float(value) for key, value in values.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)}
+
+
 def _record_bytes(record: Mapping[str, Any]) -> int:
     """About what a dataset row adds to the records database (its JSON columns)."""
     return len(_dumps(record))
@@ -338,9 +354,16 @@ class CacheStore:
         self.database = os.path.join(root, "records.sqlite")
         self.read_only = False
         self._depth = 0
+        # Mount paths whose volume hints the opener didn't trust (io_helper's local lane, with
+        # ``verified_volumes``): a folder there has no key until they are verified.
+        self._unverified_mounts: list[str] = []
         self._writing = False
         try:
             self._conn = self._open(busy_timeout)
+            # (A read-only store may lack the column or the table: it then has no raw times, and
+            # no folder sets constants.)
+            self._raw_times = "raw_times" if _has_raw_times(self._conn) else "'[]'"
+            self._constants_table = _has_table(self._conn, "folder_constants")
             meta = self._meta()
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be opened: {exc}") from exc
@@ -400,6 +423,7 @@ class CacheStore:
             version = _layout_version(conn)
             if version != self._expected_layout:
                 raise sqlite3.DatabaseError(f"unsupported layout version {version}")
+            _migrate(conn)
         except BaseException:
             conn.close()
             raise
@@ -529,14 +553,16 @@ class CacheStore:
         if not old.startswith("root://") or not new.startswith("root://") or old == new:
             return []
         tables = ("folder_epochs", "folder_summaries", "scan_histories", "subtrees",
-                  "folder_prefs", "pending_saves", "datasets")
+                  "folder_prefs", "folder_constants", "pending_saves", "datasets")
         timestamps = {"folder_summaries": "saved_at", "scan_histories": "saved_at",
-                      "subtrees": "saved_at", "folder_prefs": "set_at",
+                      "subtrees": "saved_at", "folder_prefs": "set_at", "folder_constants": "set_at",
                       "pending_saves": "created_at", "datasets": "last_used"}
         moved: set[str] = set()
         try:
             with self.transaction():
                 for table in tables:
+                    if not _has_table(self._conn, table):
+                        continue  # (A store this HeLab couldn't bring up to date: nothing to move.)
                     columns = [str(row[1]) for row in self._conn.execute(f"PRAGMA table_info({table})")]
                     rows = self._conn.execute(
                         f"SELECT * FROM {table} WHERE path=? OR (path>=? AND path<?)",
@@ -686,6 +712,58 @@ class CacheStore:
                                    (_dumps(now),))
                 return [self._source_path(path) for path in paths]
         except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+
+    # Folder constants (F0b): a folder's own values of the analyses' constants (fall distance, trap
+    # frequencies…), set by the user. Like the flags, never removed to make room, by Clear all,
+    # purges or a data root's Clear cached data; a nested root's re-key moves them.
+
+    def read_constants(self, paths: Sequence[str], *, keyed_only: bool = False) -> dict[str, Read[dict[str, Any]]]:
+        """Each folder's own constants, ``{"values": {key: number}, "set_at"}``; missing if never
+        set. With ``keyed_only``, a path without a key here (above every data root, on an
+        unsupported mount) is left out of the answer instead of raising."""
+        keys: dict[str, str] = {}
+        for path in dict.fromkeys(paths):
+            try:
+                keys[path] = self._path_key(path)
+            except Exception:
+                if not keyed_only:
+                    raise
+        stored = list(dict.fromkeys(keys.values()))
+        rows: dict[str, dict[str, Any]] = {}
+        if not self._constants_table:
+            # A read-only store (written by a newer HeLab) without the table: none set here.
+            return {path: _missing() for path in keys}
+        try:
+            with self.transaction(write=False):
+                for start in range(0, len(stored), 500):
+                    chunk = stored[start:start + 500]
+                    for key, record, set_at in self._conn.execute(
+                            f"SELECT path, record, set_at FROM folder_constants "
+                            f"WHERE path IN ({','.join('?' * len(chunk))})", chunk):
+                        rows[key] = {"values": _constant_values(json.loads(record)), "set_at": float(set_at)}
+        except (sqlite3.Error, StoreError, ValueError) as exc:
+            failure: Read[dict[str, Any]] = _error(f"Disk cache could not be read: {exc}")
+            return {path: failure for path in keys}
+        return {path: _found(rows[key]) if key in rows else _missing() for path, key in keys.items()}
+
+    def set_constants(self, path: str, values: Mapping[str, Any], set_at: float) -> dict[str, Any]:
+        """Set a folder's own constants (all of them: a key left out is restored), unless a later
+        choice (``set_at``, e.g. in another HeLab) is saved; returns what is saved now. Restoring
+        every value keeps the row (with its ``set_at``), so an older choice arriving late can't
+        bring them back."""
+        key = self._path_key(path)
+        chosen = _constant_values(values)
+        try:
+            with self.transaction():
+                row = self._conn.execute("SELECT record, set_at FROM folder_constants WHERE path = ?",
+                                         (key,)).fetchone()
+                if row is not None and float(row[1]) > set_at:
+                    return {"values": _constant_values(json.loads(row[0])), "set_at": float(row[1])}
+                self._conn.execute("INSERT OR REPLACE INTO folder_constants (path, record, set_at) VALUES (?, ?, ?)",
+                                   (key, _dumps(chosen), set_at))
+                return {"values": chosen, "set_at": set_at}
+        except (sqlite3.Error, ValueError) as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
 
     def _meta(self) -> dict[str, Any]:
@@ -930,9 +1008,10 @@ class CacheStore:
         info = {"format": DATASET_FORMAT, **record["info"]}
         self._conn.execute(
             "INSERT OR REPLACE INTO datasets (path, file, bytes, ram_bytes, rows, shots, fingerprint, problematic, "
-            "info, last_used, job_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "info, last_used, job_seq, raw_times) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (path, file, size, int(record["ram_bytes"]), int(record["rows"]), int(record["shots"]),
-             _dumps(record["fingerprint"]), _dumps(record["problematic"]), _dumps(info), now, job_seq))
+             _dumps(record["fingerprint"]), _dumps(record["problematic"]), _dumps(info), now, job_seq,
+             _dumps(record.get("raw_times", []))))
         if previous and previous[0] != file:
             self._retire(previous[0], now)
 
@@ -1115,7 +1194,7 @@ class CacheStore:
             with self.transaction(write=False):
                 row = self._conn.execute(
                     "SELECT path, file, bytes, ram_bytes, rows, shots, fingerprint, problematic, info, last_used, "
-                    "job_seq FROM datasets WHERE path = ?", (key,)).fetchone()
+                    f"job_seq, {self._raw_times} FROM datasets WHERE path = ?", (key,)).fetchone()
         except (sqlite3.Error, StoreError) as exc:
             return _error(f"Disk cache could not be read: {exc}")
         if row is None:
@@ -1125,7 +1204,8 @@ class CacheStore:
                 "path": self._source_path(str(row[0])), "file": row[1], "bytes": row[2],
                 "ram_bytes": row[3], "rows": row[4],
                 "shots": row[5], "fingerprint": json.loads(row[6]), "problematic": json.loads(row[7]),
-                "info": json.loads(row[8]), "last_used": row[9], "job_seq": row[10]}))
+                "info": json.loads(row[8]), "last_used": row[9], "job_seq": row[10],
+                "raw_times": json.loads(row[11])}))
         except ValueError as exc:
             return _error(f"Saved dataset record is unreadable: {exc}")
 
@@ -1195,12 +1275,14 @@ class CacheStore:
             return _error(f"Cached data file could not be read: {exc}")
 
     def confirm_dataset(self, path: str, fingerprint: Sequence[Sequence[int]], names: Sequence[str],
-                        snapshot_at: float, guard: SaveGuard) -> bool:
+                        snapshot_at: float, guard: SaveGuard,
+                        raw_times: Sequence[Sequence[int]] | None = None) -> bool:
         """Record that a full listing at ``snapshot_at`` found a cached dataset's TXY files all
         unchanged (none still being written), without rewriting it: its file list now dates from
         then (``snapshot_at``, so a later non-TXY change such as Finder's ``.DS_Store`` no longer
         rules out the quick check), nothing is unsettled, and its file names (for the quick check's
-        samples; older caches have none) are kept. Only while the row still has ``fingerprint``,
+        samples; older caches have none) are kept, and so are ``raw_times`` when given (shot times
+        the row lacked, which the listing found). Only while the row still has ``fingerprint``,
         under the job's save guard. Returns whether it was recorded."""
         path = self._path_key(path)
         try:
@@ -1217,6 +1299,9 @@ class CacheStore:
                     snapshot_at = max(snapshot_at, float(previous))
                 self._conn.execute("UPDATE datasets SET info = ? WHERE path = ?", (_dumps(
                     {**info, "names": list(names), "snapshot_at": snapshot_at, "unsettled": 0}), path))
+                if raw_times is not None:
+                    self._conn.execute("UPDATE datasets SET raw_times = ? WHERE path = ?",
+                                       (_dumps([list(entry) for entry in raw_times]), path))
                 return True
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
@@ -1594,6 +1679,40 @@ def trim_estimate(inventory: Mapping[str, Any], budget: int) -> dict[str, int]:
             break
         usage, count, freed = usage - int(size), count + 1, freed + int(size)
     return {"datasets": count, "bytes": freed}
+
+
+def _has_raw_times(conn: sqlite3.Connection) -> bool:
+    return any(row[1] == "raw_times" for row in conn.execute("PRAGMA table_info(datasets)"))
+
+
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone() is not None
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring a store made by an earlier HeLab of this layout up to date, on every writable open:
+    the ``folder_constants`` table (F0b) and ``datasets.raw_times`` (D7; ``[]``: no raw times
+    known). ``SCHEMA`` gives a new store both; a store created before either is never created
+    again, so without this it would lack them for good. Older HeLabs name the tables and columns
+    they use, so they keep working with these. Checked again under the write lock: several
+    helpers may open an old store at once, and only the first one changes it."""
+    def missing() -> tuple[bool, bool]:
+        return (not _has_table(conn, "folder_constants"),
+                _has_table(conn, "datasets") and not _has_raw_times(conn))
+    if not any(missing()):
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        constants, raw_times = missing()  # (Another helper may have added them meanwhile.)
+        if constants:
+            conn.execute("CREATE TABLE IF NOT EXISTS folder_constants "
+                         "(path TEXT PRIMARY KEY, record TEXT NOT NULL, set_at REAL NOT NULL)")
+        if raw_times:
+            conn.execute("ALTER TABLE datasets ADD COLUMN raw_times TEXT NOT NULL DEFAULT '[]'")
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def _layout_version(conn: sqlite3.Connection) -> int | None:

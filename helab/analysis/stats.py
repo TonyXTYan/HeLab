@@ -256,4 +256,6 @@ def histogram(values: npt.NDArray[np.float64], axis: str, keep: float = DEFAULT_
 
 
 def axis_text(index: int, lower: float, upper: float) -> str:
+    """``T 2.1…2.2 s``: one axis's range in s and m, as the "Basic plots v1" plots show it (the DLD
+    port's plots use ``display_units.range_text``, in ms and mm)."""
     return f"{AXES[index]} {lower:.6g}…{upper:.6g} {UNITS[index]}"

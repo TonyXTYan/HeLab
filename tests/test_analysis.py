@@ -16,16 +16,18 @@ from PyQt6.QtWidgets import QLabel, QTabWidget, QWidget
 from pyqtgraph.parametertree import ParameterTree
 
 from helab.analysis.dataset_view import DatasetView, ViewKey, build_view, root_key, view_of
-from helab.analysis import selection
+from helab.analysis import display_units, selection
 from helab.analysis.parameter_tree import UnitSpinBox, build_tree, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import ParameterSpec, describe, effective, tree_children
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
 from helab.analysis.runner import AnalysisRunner
 from helab.analysis.stats import (
     MAX_BINS, counts_per_shot, shortest_range, crop_box, display_sample, freedman_diaconis_bins, histogram)
-from helab.scripts import standard
+from helab.scripts import dld, standard
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.scripts_manager import ScriptsManager
+from helab.scripts.dld import basic_plots as dld_plots, group as dld_group, scatter_3d as dld_scatter, shot_trends
+from helab.scripts.dld import transfer_fractions as dld_fractions
 from helab.scripts.standard import basic_plots, group, scatter_3d, transfer_fractions
 from helab.utils.folder_cache import Dataset
 
@@ -397,6 +399,14 @@ def test_short_settings_for_the_dock() -> None:
     assert run_text(scatter, {"display_cap": 20_000, "point_size": 2}) == (
         "60 shots", "auto-crop 99 % · points 2 px, opacity 0.5, cap 20,000")
     assert run_text(counts, {}) == ("60 shots", "")
+    # The DLD port's plots: the same range in ms and mm (``fixed``), digits grouped.
+    assert selection.range_brief(manual, fixed=True) == "T 3,840–3,870 ms, X −2–3.5 mm"
+    assert display_units.range_text(1, -4e-6, 2e-6) == "X −0.004–0.002 mm" and display_units.range_text(0, 0.0, 0.0) == "T 0–0 ms"
+    assert display_units.range_text(0, 20.4501234, 20.55) == "T 20,450.1234–20,550 ms"
+    assert run_text(dld_plots.TxyHistograms(), {**manual, "bins": 80}) == (
+        "60 shots", "T 3,840–3,870 ms, X −2–3.5 mm · bins 80")
+    assert run_text(dld_plots.TxyHistograms(), {"shots": "last N", "last_shots": 10, "log_y": True}) == (
+        "shots 51–60 (10 of 60)", "last 10 shots · auto-crop 99 % · bins auto · log Y")
     assert run_text(counts, {"shots": "range", "first_shot": 20, "last_shot": 45}) == (
         "shots 20–45 (26 of 60)", "shots 20–45")
 
@@ -455,7 +465,8 @@ def test_shots_brief_for_every_combination(values: dict[str, Any], brief: str) -
     assert selection.shots_brief(values) == brief
     # Every plot's settings line starts with it (Transfer fractions' too).
     view = build_view(dataset(shots={shot: np.ones((1, 3)) for shot in range(1, 61)}))
-    for script in (basic_plots.CountsPerShot(), transfer_fractions.TransferFractions()):
+    for script in (basic_plots.CountsPerShot(), transfer_fractions.TransferFractions(), dld_plots.CountsPerShot(),
+                   dld_fractions.TransferFractions(), shot_trends.ShotTrends()):
         _, settings = script.describe_run("Plot", effective(script.parameters("Plot"), values), view)
         assert settings.startswith(brief)
 
@@ -533,6 +544,25 @@ def test_scatter_and_histograms_take_shots_and_manual_ranges() -> None:
     assert basic_plots.counts_title(shots) == "shots 3–4 (2 of 10) · 2,000 events"
 
 
+def test_dld_scatter_draws_in_ms_and_mm() -> None:
+    """The DLD port's 3D scatter: T in ms, X and Y in mm, ticks and hover text grouped."""
+    rng = np.random.default_rng(3)
+    view = build_view(dataset(shots={shot: rng.normal(size=(1000, 3)) for shot in range(1, 11)}))
+    scatter = dld_scatter.Scatter3D()
+    values = {"shots": "last N", "last_shots": 2, "range_mode": "manual", "t_min": -1.0, "t_max": 1.0,
+              "display_cap": 1000, "point_size": 3, "opacity": 0.2}
+    data = scatter.compute("Plot", context(view, scatter, values))
+    result = AnalysisResult.of(context(view, scatter, values), "completed", data)
+    fig: Any = dld_scatter.figure(result, data)
+    trace: Any = fig.data[0]
+    assert (trace.marker.size, trace.marker.opacity) == (3.0, 0.2) and len(trace.x) == 1000
+    assert tuple(fig.layout.scene.zaxis.range) == (-1000.0, 1000.0)  # T in ms
+    assert fig.layout.scene.zaxis.title.text == "T (ms)" and fig.layout.scene.xaxis.title.text == "X (mm)"
+    assert fig.layout.scene.zaxis.tickformat == ",~f" and "%{z:,.4f} ms" in trace.hovertemplate
+    assert list(trace.z) == pytest.approx(list(data.points[:, 0] * 1e3))
+    assert "shots 9–10 (2 of 10)" in fig.layout.title.text
+
+
 def test_histogram_log_y_renders_without_empty_bins(qtbot: QtBot) -> None:
     view = build_view(dataset(shots={1: np.array([[0.0, 0, 0], [0.0, 0, 0], [10.0, 0, 0]])}))
     script = basic_plots.TxyHistograms()
@@ -584,7 +614,7 @@ def test_long_titles_wrap_inside_a_narrow_plot(script: DatasetAnalysis, qtbot: Q
 
 def scripts_manager() -> ScriptsManager:
     manager = ScriptsManager()
-    for module in standard.MODULES:
+    for module in (*standard.MODULES, *dld.MODULES):
         manager.load_module(module)
     return manager
 
@@ -600,6 +630,19 @@ def test_bundled_analyses_declare_identity_and_file_hash() -> None:
     assert identity.file_name == "scatter_3d.py" and identity.text().startswith("helab.scatter_3d v3 · scatter_3d.py")
     assert all(metadata.analysis_id and metadata.version for metadata in names.values())
     assert group.NAME == f"Basic plots v{group.VERSION}" and group.VERSION == 1
+    # The DLD front panel port: its own versions of those four (their own ids), and the rest.
+    ported = {metadata.name: metadata for metadata in manager.get_scripts_in_group(dld_group.NAME)}
+    assert dld_group.NAME == "DLD Front Panel Port"
+    assert set(ported) == {"3D scatter", "Counts per shot", "Density images", "Shot times", "Shot trends",
+                           "T, X, Y histograms", "Mean X, Y against T", "T spectrum", "Transfer fractions",
+                           "Release time", "Velocity distributions", "Correlations"}
+    scatter = ported["3D scatter"]
+    expected = hashlib.sha256(open(dld_scatter.__file__, "rb").read()).hexdigest()
+    assert (scatter.analysis_id, scatter.version, scatter.file_hash) == ("helab.dld.scatter_3d", "1", expected)
+    assert {ported[name].analysis_id for name in ("Counts per shot", "T, X, Y histograms", "Transfer fractions")} == {
+        "helab.dld.counts_per_shot", "helab.dld.txy_histograms", "helab.dld.transfer_fractions"}
+    assert all(metadata.analysis_id and metadata.version for metadata in ported.values())
+    assert not {metadata.analysis_id for metadata in names.values()} & {m.analysis_id for m in ported.values()}
 
 
 def context(view: DatasetView, script: DatasetAnalysis, values: dict[str, Any] | None = None) -> AnalysisContext:
@@ -733,6 +776,36 @@ def test_runner_records_identity_input_and_parameters(qtbot: QtBot, harness: Har
     assert "tests.blocking v3" in record and "revision 1" in record and "root://" not in record
     assert "Parameters: Scale 10" in record and "kept in RAM only" in record
     assert runner.results.get(job.job_id) is result and runner.results.for_input(view.key) == [result]
+
+
+class Finding(Blocking):
+    """Records what it found; ``broken`` makes that record fail."""
+
+    def __init__(self, broken: bool) -> None:
+        super().__init__()
+        self.broken = broken
+        self.release.set()
+
+    def result_found(self, action_name: str, data: Any) -> dict[str, Any]:
+        if self.broken:
+            raise ValueError("no record")
+        return {"events": data, "record_lines": [f"Found {data} events"]}
+
+
+def test_runner_keeps_what_a_run_found_and_survives_a_failing_record(
+        qtbot: QtBot, harness: Harness, caplog: pytest.LogCaptureFixture) -> None:
+    view = build_view(dataset())
+    script = Finding(broken=False)
+    result = harness.finished(qtbot, harness.runner.submit(script, script.get_metadata(), "Plot", view).job_id)
+    assert dict(result.found) == {"events": 6, "record_lines": ["Found 6 events"]}
+    assert script.result_record("Plot", result) == ["Found 6 events"]
+    assert RamResults().released(result).found == result.found
+    broken = Finding(broken=True)
+    with caplog.at_level("ERROR"):
+        kept = harness.finished(qtbot, harness.runner.submit(broken, broken.get_metadata(), "Plot", view).job_id)
+    assert kept.state == "completed" and kept.data == 6 and dict(kept.found) == {}
+    assert broken.result_record("Plot", kept) == []
+    assert "its record of what the run found failed" in caplog.text
 
 
 def test_runner_reports_failure_and_cancellation(qtbot: QtBot, harness: Harness) -> None:

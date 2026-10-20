@@ -1,16 +1,21 @@
 """Parameters an analysis declares: defaults, limits and units, validated before a run.
 
-A ``choice`` parameter picks one of its ``choices``; another parameter can say it applies
-only under one of them (``when``), so the parameter tree shows it only then and the dock's
+A ``choice`` parameter picks one of its ``choices`` and a ``text`` one holds free text the
+analysis reads itself (e.g. mask circles, ``masks``); another parameter can say it applies
+only under one of them (``when``, and ``shown_with`` for a condition on several), so the parameter tree shows it only then and the dock's
 source line leaves it out otherwise. ``group`` names the tree section it sits in, and
 ``page`` the settings tab (a plot whose parameters name more than one page gets a tab each).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Literal, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Callable, Literal, Mapping, Sequence
 
-Kind = Literal["float", "int", "bool", "choice"]
+from helab.analysis.display_units import number_text
+
+Kind = Literal["float", "int", "bool", "choice", "text"]  # "text": free text (multi-line)
+# The prefixes ``unit_prefix`` may name, with their factors.
+SI_FACTORS = {"G": 1e9, "M": 1e6, "k": 1e3, "": 1.0, "m": 1e-3, "µ": 1e-6, "n": 1e-9}
 Value = float | int | bool | str
 
 
@@ -28,12 +33,21 @@ class ParameterSpec:
     when: tuple[str, str] | None = None  # (choice parameter, value) this applies under; None = always
     si: bool = False  # a float in a base unit (s, m): shown with SI prefixes (4 mm), stepped by decade
     page: str = ""  # the settings tab this is on ("" = the first); a group goes on its first parameter's page
+    # With ``si``: the one SI prefix the value is always shown with ("m": a T in s shown in ms, an X
+    # in m in mm), its digits grouped by thousands (``display_units``). The value stays in the base
+    # unit, so saved settings keep their meaning. None: the prefix follows the value.
+    unit_prefix: str | None = None
+    # A further condition on the values, beside ``when``, for what one choice can't say (e.g. "a fit
+    # with a bimodal model is on"): the parameter applies only while it holds too. Not compared.
+    shown_with: Callable[[Mapping[str, Any]], bool] | None = field(default=None, compare=False, repr=False)
 
     def coerce(self, value: Any) -> Value:
         """``value`` as this parameter's type, clamped to its limits (a choice outside
         ``choices`` becomes the default)."""
         if self.kind == "bool":
             return bool(value)
+        if self.kind == "text":
+            return str(value)
         if self.kind == "choice":
             text = str(value)
             return text if text in self.choices else str(self.default)
@@ -45,7 +59,9 @@ class ParameterSpec:
 
     def applies(self, values: Mapping[str, Any]) -> bool:
         """Whether this parameter is in use under ``values`` (its ``when`` holds, or it has none)."""
-        return self.when is None or str(values.get(self.when[0])) == self.when[1]
+        if self.when is not None and str(values.get(self.when[0])) != self.when[1]:
+            return False
+        return self.shown_with is None or bool(self.shown_with(values))
 
     def tree_item(self, value: Any = None) -> dict[str, Any]:
         """A pyqtgraph ``Parameter`` definition."""
@@ -62,6 +78,8 @@ class ParameterSpec:
         if self.si:
             # Steps of a tenth of the value's decade: 4 mm → 5 mm, 3.85 s → 3.95 s.
             item.update(siPrefix=True, dec=True, step=0.1, decimals=6)
+            if self.unit_prefix is not None:
+                item["fixedPrefix"] = self.unit_prefix  # UnitSpinBox's option
         if self.tip:
             item["tip"] = self.tip
         return item
@@ -70,6 +88,12 @@ class ParameterSpec:
         """``title value suffix`` for a source line."""
         if self.kind == "bool":
             shown = "on" if value else "off"
+        elif self.kind == "text":
+            lines = [line.strip() for line in str(value).splitlines() if line.strip()]
+            shown = "; ".join(lines) if lines else "(empty)"
+        elif isinstance(value, float) and self.si and self.unit_prefix is not None:
+            unit = f"{self.unit_prefix}{self.suffix.strip()}"
+            return f"{self.title} {number_text(value / SI_FACTORS[self.unit_prefix])} {unit}"
         elif isinstance(value, float):
             shown = f"{value:g}"
         elif isinstance(value, int):
@@ -107,3 +131,10 @@ def tree_children(specs: Sequence[ParameterSpec]) -> list[dict[str, Any]]:
             children.append(group)
         group["children"].append(item)
     return children
+
+
+def unused_parameters(specs: Sequence[ParameterSpec], values: Mapping[str, Any]) -> frozenset[str]:
+    """The names of the parameters not in use under ``values`` (``ParameterSpec.applies``: hidden by
+    their ``when`` or ``shown_with``), which a result's reuse key leaves out (a setting the run
+    didn't use never makes its result look different)."""
+    return frozenset(spec.name for spec in specs if not spec.applies(values))

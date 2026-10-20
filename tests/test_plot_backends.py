@@ -67,6 +67,21 @@ def test_the_drawing_choice_offers_every_library_the_script_names() -> None:
     assert basic_plots.TxyHistograms().backends("Plot")[0] == PYQTGRAPH
 
 
+def test_the_dld_port_plots_offer_no_choice_of_library() -> None:
+    """The DLD front panel port's plots draw with one library (``render``): their settings have no
+    Drawing group, so the tests of every library above cover "Basic plots v1" only."""
+    import inspect
+
+    from helab.scripts import dld
+
+    scripts = [member() for module in dld.MODULES for _, member in inspect.getmembers(module, inspect.isclass)
+               if issubclass(member, DatasetAnalysis) and member.__module__ == module.__name__]
+    assert len(scripts) == 12
+    for script in scripts:
+        for action in script.get_actions():
+            assert len(script.backends(action)) < 2 and backend_specs(script.backends(action)) == ()
+
+
 def expected(script: DatasetAnalysis, backend: str) -> type[QWidget]:
     if backend == PLOTLY:
         return PlotlyPane
