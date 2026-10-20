@@ -20,6 +20,8 @@ from helab.analysis.constant_layers import constants_specs, describe_constants, 
 from helab.analysis.display_units import WIDTH_DIGITS, axis_label, axis_scale, axis_text
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.follow import LivePolicy
+from helab.analysis.masks import (MASK_SPECS, all_masked_text, mask_brief, mask_from, mask_warnings,
+                                  masked_counts_per_shot, masked_text)
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.physics import ResolvedConstants
 from helab.analysis.plot_axes import GroupedAxis
@@ -206,6 +208,7 @@ class ShotCounts:
     total_shots: int = 0  # the shots loaded (``shots`` are the chosen ones)
     newest_shot: int | None = None  # the highlighted newest shot (None: off)
     colour: tuple[int, int, int] = (214, 39, 40)
+    masked: int = 0  # events the mask took out of the chosen shots
 
     @property
     def total(self) -> int:
@@ -233,6 +236,7 @@ class Histograms:
     bin_notes: tuple[tuple[str, ...], ...] = ()
     box: bool = False  # each histogram counts only the events inside the other axes' ranges
     constants: ResolvedConstants | None = field(default=None, compare=False)
+    masked: int = 0  # events the mask took out of the chosen shots
 
     def factor(self, index: int) -> float:
         return self.factors[index] if index < len(self.factors) else 1.0
@@ -272,7 +276,8 @@ class Histograms:
 
 
 def counts_title(data: ShotCounts) -> str:
-    title = f"{shots_text(data.shots.tolist(), data.total_shots or len(data.shots))} · {data.total:,} events"
+    title = (f"{shots_text(data.shots.tolist(), data.total_shots or len(data.shots))} · {data.total:,} events"
+             f"{masked_text(data.masked)}")
     if data.unsettled_files:
         title += f" · {data.unsettled_files} files still being written left out"
     if data.newest_shot is not None:
@@ -333,29 +338,38 @@ class CountsPerShot(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.counts_per_shot",
-            version="3",
+            version="4",
         )
 
     def get_actions(self) -> List[str]:
         return ["Plot"]
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
-        return [*SHOT_SPECS, COUNTS_HIGHLIGHT, COUNTS_NEWEST_COLOUR]
+        return [*SHOT_SPECS, *MASK_SPECS, COUNTS_HIGHLIGHT, COUNTS_NEWEST_COLOUR]
 
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
-        settings = (shots_brief(values), newest_brief(values))
+        settings = (shots_brief(values), mask_brief(values), newest_brief(values))
         return selection_text(view, values), " · ".join(part for part in settings if part)
+
+    def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
+        return list(mask_warnings(values))
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         chosen = select_shots(context.view, context.parameters)
-        shots, counts = counts_per_shot(context.view, chosen)
+        mask = mask_from(context.parameters)  # Circles that can't be read fail the run, saying which.
+        if mask.active:
+            shots, counts, masked = masked_counts_per_shot(context.view, chosen, mask)
+        else:
+            (shots, counts), masked = counts_per_shot(context.view, chosen), 0
         return ShotCounts(shots, counts, context.view.provenance.unsettled_files, len(context.view.shots),
-                          newest_shot(context.parameters, chosen), newest_colour(context.parameters))
+                          newest_shot(context.parameters, chosen), newest_colour(context.parameters), masked)
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: ShotCounts = result.data
         if not data.total:
             # No shots, none chosen, or chosen shots without events: say which, not a flat line.
+            if data.masked and len(data.shots):
+                return empty_pane(all_masked_text(data.masked), parent)
             return empty_pane(empty_text(data.total_shots, len(data.shots), 0), parent)
         widget = CountsPlot(parent)
         widget.show_data(result, data)
@@ -466,7 +480,8 @@ class HistogramsWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
         events = f"{items[0].total:,} events"
         newest = (f" · shot {data.newest_shot} highlighted ({int(data.newest[0].sum()):,} in range, right axis)"
                   if highlighted else "")
-        header = line_html(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}{newest}"))
+        header = line_html(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}"
+                                                f"{masked_text(data.masked)}{newest}"))
         if data.fitted() and data.constants is not None:
             # Only the values not at their defaults (the record has them all), so the header stays short.
             used = describe_constants(data.constants, CONSTANT_KEYS)
@@ -525,7 +540,7 @@ class TxyHistograms(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.txy_histograms",
-            version="5",
+            version="6",
         )
 
     def get_actions(self) -> List[str]:
@@ -533,7 +548,7 @@ class TxyHistograms(DatasetAnalysis):
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
         fits = [spec for pair in FIT_SPECS.values() for spec in pair]
-        return [*SHOT_SPECS, *RANGE, BINS, LOG_Y, VALUES, BOX, HIGHLIGHT, NEWEST_COLOUR, SMOOTH, SMOOTH_T, SMOOTH_XY,
+        return [*SHOT_SPECS, *RANGE, *MASK_SPECS, BINS, LOG_Y, VALUES, BOX, HIGHLIGHT, NEWEST_COLOUR, SMOOTH, SMOOTH_T, SMOOTH_XY,
                 *fits, FIT_DATA, *CONSTANTS]
 
     def constant_keys(self, action_name: str) -> tuple[str, ...]:
@@ -551,7 +566,7 @@ class TxyHistograms(DatasetAnalysis):
         bins = int(values[BINS.name])
         smoothing = bool(values.get(SMOOTH.name))
         fitted = fits_brief(values)
-        settings = (shots_brief(values), range_brief(values),
+        settings = (shots_brief(values), range_brief(values), mask_brief(values),
                     "" if smoothing else (f"bins {bins:,}" if bins else "bins auto"),
                     f"smoothed σ {axis_text('T', float(values[SMOOTH_T.name]), WIDTH_DIGITS)} / "
                     f"{axis_text('X', float(values[SMOOTH_XY.name]), WIDTH_DIGITS)}" if smoothing else "",
@@ -561,12 +576,13 @@ class TxyHistograms(DatasetAnalysis):
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
-        return list(range_warnings(values))
+        return [*range_warnings(values), *mask_warnings(values)]
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         values = context.parameters
         shots = select_shots(context.view, values)
-        events = context.view.events(shots)
+        mask = mask_from(values)  # Circles that can't be read fail the run, saying which.
+        events, masked = mask.apply(context.view.events(shots))
         keep = keep_fraction(values)
         bins = int(values[BINS.name])
         is_manual = manual(values)
@@ -576,7 +592,7 @@ class TxyHistograms(DatasetAnalysis):
         smoothing = bool(values.get(SMOOTH.name, False))
         on_smoothed = smoothing and values.get(FIT_DATA.name) == SMOOTHED
         newest = newest_shot(values, shots)
-        fresh = newest_events(context.view, newest)
+        fresh = mask.apply(newest_events(context.view, newest))[0]
         constants = context.resolved_constants
         if constants is None:  # Run without the runner (or no fit on): resolved here, the same way.
             constants = resolve_for_run(values, context.constants.get("lab"), context.constants.get("folder"))
@@ -621,7 +637,7 @@ class TxyHistograms(DatasetAnalysis):
                 fits.append(None)
         return Histograms(tuple(items), shots, len(context.view.shots), reversed_axes(values), newest,
                           tuple(newest_counts), newest_colour(values), units, tuple(factors), tuple(smoothed),
-                          tuple(sigmas), tuple(fits), tuple(bin_notes), box, constants)
+                          tuple(sigmas), tuple(fits), tuple(bin_notes), box, constants, masked)
 
     def result_found(self, action_name: str, data: Any) -> dict[str, Any]:
         """With any fit: ``Histograms.record()`` (each fit's record and the constants used),
@@ -636,6 +652,8 @@ class TxyHistograms(DatasetAnalysis):
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Histograms = result.data
         if histograms_empty(data):
+            if data.masked and data.shots:
+                return empty_pane(all_masked_text(data.masked), parent)
             return empty_pane(empty_text(data.total_shots, len(data.shots), 0), parent)
         widget = HistogramsWidget(histograms_key(result, data), tuple(item.axis for item in data.items), parent)
         widget.show_data(result, data)

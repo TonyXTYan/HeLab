@@ -576,9 +576,9 @@ def test_bundled_analyses_declare_identity_and_file_hash() -> None:
                           "Mean X, Y against T", "T spectrum", "Transfer fractions"}
     scatter = names["3D scatter"]
     expected = hashlib.sha256(open(scatter_3d.__file__, "rb").read()).hexdigest()
-    assert (scatter.analysis_id, scatter.version, scatter.file_hash) == ("helab.scatter_3d", "3", expected)
+    assert (scatter.analysis_id, scatter.version, scatter.file_hash) == ("helab.scatter_3d", "4", expected)
     identity = scatter.identity()
-    assert identity.file_name == "scatter_3d.py" and identity.text().startswith("helab.scatter_3d v3 · scatter_3d.py")
+    assert identity.file_name == "scatter_3d.py" and identity.text().startswith("helab.scatter_3d v4 · scatter_3d.py")
     assert all(metadata.analysis_id and metadata.version for metadata in names.values())
     assert group.NAME == f"Basic plots v{group.VERSION}" and group.VERSION == 1
 

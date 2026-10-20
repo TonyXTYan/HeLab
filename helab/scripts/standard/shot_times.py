@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import QWidget
 
 from helab.analysis.dataset_view import DatasetView
 from helab.analysis.empty import empty_pane, empty_text
+from helab.analysis.masks import MASK_SPECS, Mask, mask_brief, mask_from, mask_warnings, masked_counts_per_shot
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.plot_text import add_label, line_html
 from helab.analysis.results import AnalysisContext, AnalysisResult
@@ -56,6 +57,7 @@ class ShotTimes:
     unsettled_files: int = 0
     newest_shot: int | None = None  # the highlighted newest shot (None: off)
     colour: tuple[int, int, int] = (214, 39, 40)
+    masked: int = 0  # events the mask took out of these shots
 
     @property
     def fallbacks(self) -> int:
@@ -83,16 +85,22 @@ class ShotTimes:
         return int(self.shots[index]), float(gaps[index])
 
 
-def shot_times(view: DatasetView, shots: tuple[int, ...], unsettled_files: int = 0) -> ShotTimes:
-    """The chosen shots' times, events and gaps (``ShotTimes``)."""
+def shot_times(view: DatasetView, shots: tuple[int, ...], unsettled_files: int = 0, mask: Mask | None = None
+               ) -> ShotTimes:
+    """The chosen shots' times, events (those ``mask`` keeps) and gaps (``ShotTimes``)."""
     timed = view.shot_times(shots)
     numbers = np.fromiter(timed, dtype=np.int64, count=len(timed))
     times = np.fromiter(timed.values(), dtype=np.float64, count=len(timed))
     fallbacks = set(view.fallback_times(timed))
     fallback = np.fromiter((int(shot) in fallbacks for shot in numbers), dtype=np.bool_, count=len(numbers))
-    _, counts = counts_per_shot(view, numbers.tolist())
+    masked = 0
+    if mask is not None and mask.active:
+        _, counts, masked = masked_counts_per_shot(view, numbers.tolist(), mask)
+    else:
+        _, counts = counts_per_shot(view, numbers.tolist())
     gaps = np.concatenate(([np.nan], np.diff(times))) if len(times) else np.empty(0)
-    return ShotTimes(numbers, times, fallback, counts, gaps, len(view.shots), len(shots), unsettled_files)
+    return ShotTimes(numbers, times, fallback, counts, gaps, len(view.shots), len(shots), unsettled_files,
+                     masked=masked)
 
 
 def gap_text(seconds: float) -> str:
@@ -116,6 +124,8 @@ def fallback_text(count: int) -> str:
 
 def title_text(data: ShotTimes) -> str:
     parts = [shots_text(data.shots.tolist(), data.total_shots), f"{int(data.counts.sum()):,} events"]
+    if data.masked:
+        parts.append(f"{data.masked:,} masked out")
     longest = data.longest_gap()
     if longest is not None:
         parts.append(f"longest gap {gap_text(longest[1])} before shot {longest[0]}")
@@ -214,28 +224,32 @@ class ShotTimesPlot(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.shot_times",
-            version="2",
+            version="3",
         )
 
     def get_actions(self) -> List[str]:
         return ["Plot"]
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
-        return [*SHOT_SPECS, PANELS, LOG_GAPS, HIGHLIGHT, NEWEST_COLOUR]
+        return [*SHOT_SPECS, *MASK_SPECS, PANELS, LOG_GAPS, HIGHLIGHT, NEWEST_COLOUR]
 
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
         chosen = select_shots(view, values)
         fallbacks = len(view.fallback_times(chosen))
         used = selection_text(view, values) + (f" · ⚠ {fallback_text(fallbacks)}" if fallbacks else "")
         panels = str(values.get(PANELS.name, BOTH))
-        settings = (shots_brief(values), "" if panels == BOTH else panels,
+        settings = (shots_brief(values), mask_brief(values), "" if panels == BOTH else panels,
                     "log gaps" if values.get(LOG_GAPS.name) and panels != COUNTS else "", newest_brief(values))
         return used, " · ".join(part for part in settings if part)
+
+    def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
+        return list(mask_warnings(values))
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         values = context.parameters
         chosen = select_shots(context.view, values)
-        times = shot_times(context.view, chosen, context.view.provenance.unsettled_files)
+        mask = mask_from(values)  # Circles that can't be read fail the run, saying which.
+        times = shot_times(context.view, chosen, context.view.provenance.unsettled_files, mask)
         lit = newest_shot(values, chosen)
         return replace(times, newest_shot=lit, colour=newest_colour(values)) if lit is not None else times
 

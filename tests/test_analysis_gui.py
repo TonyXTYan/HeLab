@@ -25,7 +25,7 @@ from helab.analysis.runner import get_analysis_runner
 from helab.io_helper import list_folder, scan
 from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import basic_plots, group
+from helab.scripts.standard import basic_plots, density_images, group
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest, IOService
@@ -377,10 +377,58 @@ def test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab(
     instance.rerun_button.click()
     qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
     label = source_label(instance.dock_widget)
-    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v5\n"
+    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v6\n"
                             "manual range: full extent · bins auto · ⚠ X: min > max, using full extent")
     assert "Warning: X: min > max, using full extent" in label.toolTip()
     assert instance.status_label.text() == "⚠ X: min > max, using full extent"
+
+
+def test_a_mask_from_the_settings_tab_and_its_errors(window: Window, browser: FolderExplorer, qtbot: QtBot,
+                                                    tmp_path: Path) -> None:
+    """D9: custom circles typed in a plot's settings cut events (the dock says so); circles that
+    can't be read fail the run with the reason, keeping the last plot."""
+    run = folder(tmp_path, "run_K", 2)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3, 2: 4})  # shot N's events at T, X, Y = N (s, m)
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = basic_plots.CountsPerShot()
+    instance = panel.run_analysis(script.get_metadata(), script, "Plot")
+    assert instance is not None and instance.dock_widget is not None and instance.parameter_root is not None
+    qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
+    specs = {spec.name: spec for spec in script.parameters("Plot")}
+    parameter_of(instance.parameter_root, specs["mask_mode"]).setValue("custom")
+    parameter_of(instance.parameter_root, specs["mask_circles"]).setValue("1000, 1000, 1, cut")
+    first = instance.result
+    instance.rerun_button.click()
+    qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
+    assert instance.result is not None and instance.result.data.total == 4 and instance.result.data.masked == 3
+    label = source_label(instance.dock_widget)
+    assert label.text().endswith("helab.counts_per_shot v4\nmask: 1 cut circle")
+    assert "Circles (mm) 1000, 1000, 1, cut" in label.toolTip()
+    parameter_of(instance.parameter_root, specs["mask_circles"]).setValue("1000, 1000")
+    shown = instance.result
+    instance.rerun_button.click()
+    qtbot.waitUntil(lambda: instance.status_label.text().startswith("Failed"), timeout=10_000)
+    assert "Mask circle “1000, 1000”: needs x, y and r" in instance.status_label.text()
+    assert instance.shown is shown  # the last plot stays
+
+
+def test_find_hot_spots_from_the_panel(window: Window, browser: FolderExplorer, qtbot: QtBot,
+                                       tmp_path: Path) -> None:
+    run = folder(tmp_path, "run_H", 2)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3, 2: 4})
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = density_images.DensityImages()
+    assert script.get_actions() == ["Plot", "Find hot spots"]
+    instance = panel.run_analysis(script.get_metadata(), script, "Find hot spots")
+    assert instance is not None and instance.dock_widget is not None
+    qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
+    assert instance.result is not None and instance.result.state == "completed", instance.status_label.text()
+    assert isinstance(instance.result.data, density_images.HotSpots)
+    assert "bins 0.5 mm · above 5 × median" in source_label(instance.dock_widget).text()
 
 
 def test_histogram_fits_go_in_the_docks_record(window: Window, browser: FolderExplorer, qtbot: QtBot,
@@ -444,7 +492,7 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     assert pane.note.toolTip().startswith("Showing all 70 events in the range")
     label = source_label(instance.dock_widget)
     # Two lines: source (folder, revision, shots, analysis), then the settings in short form.
-    assert label.text() == ("Data source: run_D · rev 1 · 2 shots · helab.scatter_3d v3\n"
+    assert label.text() == ("Data source: run_D · rev 1 · 2 shots · helab.scatter_3d v4\n"
                             "auto-crop 99 % · points 1.5 px, opacity 0.5")
     assert not label.wordWrap() and label.contentsMargins().top() == 0
     assert metadata.file_hash[:12] in label.toolTip()
