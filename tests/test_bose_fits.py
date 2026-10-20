@@ -266,3 +266,48 @@ def test_choose_condensate_without_one_of_the_fits() -> None:
     assert only_thermal.fit is thermal and not only_thermal.condensate and "bimodal fit failed" in only_thermal.note
     neither = fits.choose_condensate(failed, fit_histogram([], [], "bose_g2_5"))
     assert not neither.condensate and not neither.fit.ok
+
+
+def jittered_counts(edges: Array, events: float, fugacity: float, fraction: float, seed: int) -> Array:
+    """50 shots summed, each cloud's σ (and R) jittered by 10 %: not one Bose profile."""
+    rng = np.random.default_rng(seed)
+    expected = sum(tf_counts(edges, fraction * events / 50, 0.8e-3 * scale)
+                   + bose_counts(edges, (1 - fraction) * events / 50, 1e-3 * scale, fugacity)
+                   for scale in rng.normal(1, 0.1, 50))
+    return rng.poisson(expected).astype(np.float64)
+
+
+@pytest.mark.parametrize("fugacity", [0.5, 0.9])
+def test_jittered_thermal_sums_get_no_condensate(fugacity: float) -> None:
+    """Summed shots with 10 % σ jitter at 4·10⁶ events: Δχ² favours the bimodal by up to ~240, but R/σ_th
+    sits near the cap and the bimodal fits no better than its gain allows: no condensate."""
+    edges = np.linspace(-4e-3, 4e-3, 201)
+    for seed in range(3):
+        decision = fits.fit_condensate(bin_centres(edges), jittered_counts(edges, 4e6, fugacity, 0.0, seed), 2.0)
+        assert not decision.condensate and decision.fit is decision.thermal, decision.note
+        assert decision.note.startswith(("no condensate", "possible condensate"))
+
+
+@pytest.mark.parametrize("fraction", [0.05, 0.3])
+def test_jittered_real_mixtures_are_still_found(fraction: float) -> None:
+    edges = np.linspace(-4e-3, 4e-3, 201)
+    decision = fits.fit_condensate(bin_centres(edges), jittered_counts(edges, 4e6, 1.0, fraction, 0), 2.0)
+    assert decision.condensate, decision.note
+    assert condensate_fraction(decision.fit).value == pytest.approx(fraction, abs=0.02)
+
+
+def test_a_smoothed_fit_decides_on_the_unsmoothed_counts() -> None:
+    edges = np.linspace(-5e-3, 5e-3, 201)
+    thermal = np.random.default_rng(1).poisson(bose_counts(edges, 4e5, 1e-3, 0.7)).astype(np.float64)
+    smoothed = fit_axis("X", edges, thermal, profiles.BIMODAL_BOSE, DEFAULTS, smoothing=2e-4)
+    assert smoothed.on_smoothed and smoothed.fit.model.key.startswith("bose_g2_5")
+    assert any(n.startswith("no condensate") and n.endswith("(decided on the unsmoothed counts)")
+               for n in smoothed.notes)
+    expected = tf_counts(edges, 1.2e5, 1.2e-3) + bose_counts(edges, 2.8e5, 1e-3, 1.0)
+    mixture = np.random.default_rng(2).poisson(expected).astype(np.float64)
+    found = fit_axis("X", edges, mixture, profiles.BIMODAL_BOSE, DEFAULTS, smoothing=2e-4)
+    assert found.fit.model.key.startswith("bimodal_tf2_g2_5")
+    # Within the spread of N0/N over clouds (~0.005 here). The smoothed fit's own SE of N0/N is about
+    # 4.6× smaller than that spread (12 clouds; the unsmoothed SE matches it): a fit_smoothed issue,
+    # reported in the session notes, so it isn't the yardstick here.
+    assert condensate_fraction(found.fit).value == pytest.approx(0.3, abs=0.015)

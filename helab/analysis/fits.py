@@ -940,9 +940,68 @@ def bose_order(power: float) -> float:
     return power + 0.5
 
 
-def choose_condensate(bimodal: FitResult, thermal: FitResult) -> CondensateChoice:
+# Unsaturated free-z fits need more (the re-review): summed shots whose widths jitter by ~10 % (T by
+# ~20 %) aren't one Bose profile, and the mismatch grows with N, so at 4·10⁶ events Δχ² reached
+# 140–230 with the free z at 0.98 and a "condensate" of 5–9 %. Those fits put R/σ_th at 1.8–2.0, up
+# against the cap, where real condensates sit near 0.8 of it or less, and neither fit described the
+# data. Jittered clouds near Tc (z 0.9–0.97) also drove the free z to 1, so the saturated branch was
+# fooled too (Δχ² 170–460 at 4·10⁶ events). So every condensate also needs (``_plausibility``):
+#   - R/σ_th ≤ UNSATURATED_CAP_SHARE (0.8) × the fit's cap (a cold cloud at the cap: raise the cap);
+#   - the bimodal fit acceptable by reduced χ² (χ²/dof ≤ 1 + ACCEPTABLE_SIGMAS √(2/dof), 3σ of the
+#     χ² distribution), or its gain over the thermal fit at least MISFIT_RATIO (10) times its own
+#     excess χ² − dof: summed real condensates fit no model to 3σ at 4·10⁶ events, but there the
+#     bimodal's gain was 40–500 times its misfit, against 2–3 times for the jittered thermal sums
+#     (both grow ∝ N, so the ratio holds at any N);
+#   - when the caller can check it (``consistency``: profiles.fit_axis with the run's constants and
+#     shots), μ/k_BT from the fitted R/σ_th agreeing within ×2 with μ/k_BT from N0 and T;
+# and without a saturated free z, Δχ² ≥ 25 and the free-z fit not acceptable. Otherwise: "possible
+# condensate (…, Δχ² …), not reported: why", and the thermal fit is the result. Measured (session
+# notes): σ-jittered sums (50 shots, 10 % σ jitter, 4·10⁶ events) at z 0.5/0.9/0.97 gave 1 false
+# condensate in 18 (z = 0.97, bimodal reduced χ² just acceptable); clean 5 % and 30 % mixtures were
+# all found, and jittered 5 % and 30 % mixtures at 4·10⁵ and 4·10⁶ events (N0/N 0.06 and 0.31: the
+# jitter biases them). Per-shot fits (D2) avoid the jitter and should make this decision per shot.
+UNSATURATED_CAP_SHARE = 0.8
+ACCEPTABLE_SIGMAS = 3.0
+MISFIT_RATIO = 10.0
+MU_AGREEMENT = 2.0  # μ/k_BT from R/σ and from N0, T agree within this factor
+# A check of a bimodal fit against the run's constants: (agrees, or None when it can't be checked,
+# and a note).
+Consistency = Callable[[FitResult], tuple[bool | None, str]]
+
+
+def acceptable(fit: FitResult) -> bool:
+    """Whether a fit's reduced χ² is within ``ACCEPTABLE_SIGMAS`` of 1 (χ²/dof ≤ 1 + 3√(2/dof))."""
+    return fit.ok and fit.dof > 0 and fit.reduced_chi2 <= 1 + ACCEPTABLE_SIGMAS * math.sqrt(2 / fit.dof)
+
+
+def _plausibility(bimodal: FitResult, thermal: FitResult, consistency: Consistency | None, saturated: bool
+                  ) -> list[str]:
+    """Why a condensate isn't credible ([] when it is); see the comment above
+    ``UNSATURATED_CAP_SHARE``."""
+    failed: list[str] = []
+    cap = bimodal.options.get("max_radius_ratio", MAX_RADIUS_RATIO)
+    ratio = bimodal[RATIO].value
+    if not ratio <= UNSATURATED_CAP_SHARE * cap:
+        failed.append(f"R/σ_th {ratio:.2f} near its cap {cap:.2f}")
+    misfit = bimodal.chi2 - bimodal.dof
+    gain = thermal.chi2 - bimodal.chi2
+    if not (acceptable(bimodal) or gain >= MISFIT_RATIO * misfit):
+        failed.append(f"the bimodal fit doesn't describe the data either (reduced χ² {bimodal.reduced_chi2:.3g}; "
+                      f"its gain Δχ² {gain:.3g} is under {MISFIT_RATIO:g}× its misfit {misfit:.3g})")
+    elif not saturated and acceptable(thermal):
+        failed.append(f"the thermal fit describes the data too (reduced χ² {thermal.reduced_chi2:.3g})")
+    if consistency is not None:
+        agrees, why = consistency(bimodal)
+        if agrees is False:
+            failed.append(why)
+    return failed
+
+
+def choose_condensate(bimodal: FitResult, thermal: FitResult, consistency: Consistency | None = None
+                      ) -> CondensateChoice:
     """Decide between a bimodal TF + Bose (z = 1) fit and a free-z Bose fit of the same bins (see
-    the comment above ``CONDENSATE_DELTA_CHI2``)."""
+    the comments above ``CONDENSATE_DELTA_CHI2`` and ``UNSATURATED_CAP_SHARE``). ``consistency``
+    checks a bimodal fit against the run's constants (μ/k_BT both ways); None skips it."""
     delta = thermal.chi2 - bimodal.chi2 if bimodal.ok and thermal.ok else math.nan
     if not thermal.ok:
         if bimodal.ok:
@@ -961,16 +1020,26 @@ def choose_condensate(bimodal: FitResult, thermal: FitResult) -> CondensateChoic
                                 f"no condensate (z = {z_text}: {where}; the bimodal fit is not better by "
                                 f"Δχ² ≥ {CONDENSATE_DELTA_CHI2 if saturated else CONDENSATE_STRONG_DELTA_CHI2:g}: "
                                 f"{delta:.3g})")
+    failed = _plausibility(bimodal, thermal, consistency, saturated)
+    if failed:
+        kind = "saturated thermal fit, z = 1" if saturated else f"unsaturated thermal fit, z = {z_text}"
+        return CondensateChoice(thermal, bimodal, thermal, False, delta,
+                                f"possible condensate ({kind}, Δχ² {delta:.3g}), not reported: {'; '.join(failed)}")
     if saturated:
-        why = f"the free-z thermal fit saturates (z = 1) and the bimodal fit is better by Δχ² {delta:.3g}"
+        why = (f"the free-z thermal fit saturates (z = 1) and the bimodal fit is better by Δχ² {delta:.3g} "
+               "and describes the data")
     else:
-        why = (f"the bimodal fit is better by Δχ² {delta:.3g}; the free-z thermal fit can't follow the "
-               f"condensate (its z = {z_text} means nothing here)")
+        why = (f"the bimodal fit is better by Δχ² {delta:.3g} and describes the data; the free-z thermal fit "
+               f"can't follow the condensate (its z = {z_text} means nothing here)")
+    if consistency is not None:
+        agrees, note = consistency(bimodal)
+        if agrees is None and note:
+            why += f" ({note})"
     return CondensateChoice(bimodal, bimodal, thermal, True, delta, f"condensate: {why}")
 
 
-def fit_condensate(centres: npt.ArrayLike, counts: npt.ArrayLike, power: float = 2.0, **options: Any
-                   ) -> CondensateChoice:
+def fit_condensate(centres: npt.ArrayLike, counts: npt.ArrayLike, power: float = 2.0, *,
+                   consistency: Consistency | None = None, **options: Any) -> CondensateChoice:
     """Fit the bimodal TF^p + Bose g_{p+1/2} (z = 1) and the free-z Bose g_{p+1/2} profile to the
     same histogram (``options`` go to both ``fit_histogram`` calls; ``max_radius_ratio`` to the
     bimodal only) and ``choose_condensate``."""
@@ -978,7 +1047,7 @@ def fit_condensate(centres: npt.ArrayLike, counts: npt.ArrayLike, power: float =
     thermal_options = {key: value for key, value in options.items() if key != "max_radius_ratio"}
     bimodal = fit_histogram(centres, counts, f"bimodal_tf{_power_text(power)}_g{_power_text(order)}", **options)
     thermal = fit_histogram(centres, counts, f"bose_g{_power_text(order)}", **thermal_options)
-    return choose_condensate(bimodal, thermal)
+    return choose_condensate(bimodal, thermal, consistency)
 
 
 # The arrival-time ("Yavin") thermal profile. With z up and the detector a distance h below

@@ -32,7 +32,12 @@ Numbers are per shot (the histogram's events / shots / QE).
    most" (default 2) can pass `bec.axis_caps(constants, mu)[axis]`.
    **Condensate check:** the TF + Bose choices fit the free-z Bose profile too and fall back to it
    with "no condensate (z = …)" in `AxisFit.notes` (`fits.choose_condensate`; rule in notes.md,
-   "Review fixes"). Show that note on the fit line. Slice models carry `fits.SLICE_NOTE`.
+   "Review fixes" and "Re-review fixes"). Show that note on the fit line ("no condensate",
+   "possible condensate … not reported: why" or "condensate: …"). **Pass `shots=`** (the shots the
+   histogram sums) so the μ/k_BT check runs. Slice models carry `fits.SLICE_NOTE`.
+   **D2 (per-shot fits) should make the condensate decision per shot:** summed shots with jittered
+   widths aren't one profile, and at millions of events the summed-shot decision often ends at
+   "possible condensate". Smoothed N0/N SEs look ~4.6× too small (notes.md): don't show them yet.
 2. **Constants:** add `"trap_radial", "trap_axial", "trap_axial_axis", "detector_qe",
    "scattering_length", "hbar"` to `CONSTANT_KEYS` (so a change marks the plot) and the folder
    ones (`trap_radial`, `trap_axial`, `trap_axial_axis`) to the plot's `constants_specs` when a

@@ -62,6 +62,7 @@ TC_IDEAL = ZETA3 ** (-1 / 3)  # 0.9405
 FINITE_SIZE = float(zeta(2.0)) / (2 * float(zeta(3.0)) ** (2 / 3))  # 0.7275
 INTERACTION = 1.326  # Giorgini, Pitaevskii & Stringari, PRA 54, R4633 (1996)
 TC_SHIFT_NOTE = 0.1  # a Tc shift beyond this share of Tc0 is noted: the first-order expansions are rough
+QE_AGREEMENT = 2.0  # an implied QE off the configured one by more than this factor is noted
 TF_REGIME = 10.0  # N0 a/a_ho below this: the Thomas–Fermi formulas are rough
 # The default μ/k_B T the cap allows: √(2·2) = 2 on a radial axis, fits.MAX_RADIUS_RATIO.
 DEFAULT_MU_OVER_KT = 2.0
@@ -360,6 +361,10 @@ def bec_properties(atoms: float, condensed: float, temperature: float, constants
         implied_thermal = Estimate(ratio.value * constants.detector_qe, ratio.se * constants.detector_qe)
         notes.append("QE from the thermal cloud: counted thermal atoms over ζ(3)(k_B T/ħω̄)³, the saturated "
                      "ideal gas's (interactions deplete it a little; T ∝ σ² and N_th ∝ T³ make it σ⁶-sensitive)")
+        qe = implied_thermal.value
+        if not 0 < qe <= 1 or not 1 / QE_AGREEMENT <= qe / constants.detector_qe <= QE_AGREEMENT:
+            notes.append(f"the thermal cloud implies a QE of {qe:.2g} against the {constants.detector_qe:g} set: "
+                         "the trap frequencies, T or the QE disagree")
     return BecProperties(
         atoms=Estimate(atoms, _se(matrix, 0)), condensed=Estimate(condensed, _se(matrix, 1)),
         fraction=estimate("fraction"), temperature=Estimate(temperature, _se(matrix, 2)),

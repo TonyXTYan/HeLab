@@ -23,12 +23,12 @@ import numpy as np
 import numpy.typing as npt
 from scipy.sparse import csr_matrix
 
-from helab.analysis.bec import Axis, axis_caps
+from helab.analysis.bec import Axis, axis_caps, axis_roles, from_fit, radius_ratio_cap
 from helab.analysis.display_units import WIDTH_DIGITS, axis_text, estimate_text
 from helab.analysis.estimates import Estimate
-from helab.analysis.fits import (FUGACITY, MAX_RADIUS_RATIO, MIN_RADIUS_RATIO, MODELS, VARIANCE_FLOOR, FitModel,
-                                 FitResult, arrival_time_model, bin_bounds, bin_centres, bin_means, choose_condensate,
-                                 condensate_fraction, fit_histogram)
+from helab.analysis.fits import (FUGACITY, MAX_RADIUS_RATIO, MIN_RADIUS_RATIO, MODELS, MU_AGREEMENT, RATIO,
+                                 VARIANCE_FLOOR, Consistency, FitModel, FitResult, arrival_time_model, bin_bounds,
+                                 bin_centres, bin_means, choose_condensate, condensate_fraction, fit_histogram)
 from helab.analysis.physics import (ResolvedConstants, sigma_v_from_arrival_width, sigma_v_from_transverse_width,
                                     temperature_estimate)
 from helab.analysis.velocity import effective_fall_distance
@@ -253,12 +253,41 @@ def axis_cap(axis: str, constants: ResolvedConstants) -> float:
     return cap if math.isfinite(cap) and cap > MIN_RADIUS_RATIO else MAX_RADIUS_RATIO
 
 
+def mu_consistency(axis: Axis, constants: ResolvedConstants, bin_width: float, shots: int | None
+                   ) -> Consistency:
+    """``fits.choose_condensate``'s check of a bimodal fit against the constants: μ/k_BT from its
+    R/σ_th (R/σ = √(2μ/k_BT) λ(t_f)/√(1 + ω²t_f²) on this axis's trap axis: ``bec.radius_ratio_cap``
+    at μ/k_BT = 1 is √2 times that factor) against ``bec.from_fit``'s μ/k_BT from N0 and T, within
+    ``fits.MU_AGREEMENT``. Can't check (None, with why): no shot count, an axis between the trap's
+    axes, or no μ from N0 (a slice, no condensate)."""
+    def check(bimodal: FitResult) -> tuple[bool | None, str]:
+        role = axis_roles(constants)[axis]
+        if role == "between":
+            return None, "μ/k_BT check skipped: this axis lies between the trap's axes"
+        if shots is None or not shots > 0 or not bin_width > 0:
+            return None, "μ/k_BT check skipped: no shot count"
+        try:
+            unit_cap = radius_ratio_cap(role, constants, mu_over_kt=1.0)
+            from_counts = from_fit(bimodal, axis, constants, bin_width, shots).mu_over_kt.value
+        except (ValueError, RuntimeError, ZeroDivisionError, OverflowError):
+            return None, "μ/k_BT check skipped: the constants give no value"
+        from_ratio = (bimodal[RATIO].value / unit_cap) ** 2
+        if not (math.isfinite(from_counts) and from_counts > 0 and math.isfinite(from_ratio) and from_ratio > 0):
+            return None, "μ/k_BT check skipped: no μ from N0 and T"
+        if 1 / MU_AGREEMENT <= from_ratio / from_counts <= MU_AGREEMENT:
+            return True, ""
+        return False, (f"μ/k_BT from R/σ_th ({from_ratio:.2g}) and from N0 and T ({from_counts:.2g}) disagree by "
+                       f"more than ×{MU_AGREEMENT:g}")
+    return check
+
+
 def _scaled(estimate: Estimate, factor: float) -> Estimate:
     return Estimate(estimate.value * factor, abs(estimate.se * factor))
 
 
 def fit_axis(axis: str, edges: npt.ArrayLike, counts: npt.ArrayLike, choice: str, constants: ResolvedConstants,
-             smoothing: float | None = None, max_radius_ratio: float | None = None) -> AxisFit:
+             smoothing: float | None = None, max_radius_ratio: float | None = None, shots: int | None = None
+             ) -> AxisFit:
     """Fit one histogram (``edges`` in s or m, raw ``counts``) with the model ``choice`` names.
 
     By default the raw counts, Poisson weighted (``fit_histogram``). ``smoothing`` (σ in the
@@ -273,7 +302,11 @@ def fit_axis(axis: str, edges: npt.ArrayLike, counts: npt.ArrayLike, choice: str
 
     The bimodal TF + Bose choices also fit the free-z Bose profile and report a condensate only
     when that one saturates and the bimodal fit is clearly better (``fits.choose_condensate``);
-    otherwise the result is the free-z fit, with "no condensate (z = …)" in the notes."""
+    otherwise the result is the free-z fit, with "no condensate (z = …)" in the notes. With
+    ``shots`` (the shots the histogram sums), an unsaturated case is also checked against the
+    constants (``mu_consistency``). A smoothed-curve fit makes that decision on the unsmoothed counts
+    (two more fits: correlated smoothed bins inflate Δχ² several times) and shows the smoothed fit
+    of the model it chose."""
     if max_radius_ratio is None:
         max_radius_ratio = axis_cap(axis, constants)
     edges = np.asarray(edges, dtype=np.float64)
@@ -302,11 +335,19 @@ def fit_axis(axis: str, edges: npt.ArrayLike, counts: npt.ArrayLike, choice: str
     if choice in BIMODAL_BOSES:
         thermal_model = MODELS[MODEL_KEYS[BIMODAL_BOSES[choice]]]
         thermal, thermal_curve = fitted(thermal_model)
-        decision = choose_condensate(fit, thermal)
-        if decision.fit is thermal:
+        consistency = mu_consistency(cast(Axis, axis), constants, width_bins, shots) if axis in ("T", "X", "Y") \
+            else None
+        if on_smoothed:
+            decision = choose_condensate(fit_histogram(centres, raw, model, max_radius_ratio=max_radius_ratio),
+                                         fit_histogram(centres, raw, thermal_model), consistency)
+            thermal_chosen = decision.fit is decision.thermal
+        else:
+            decision = choose_condensate(fit, thermal, consistency)
+            thermal_chosen = decision.fit is thermal
+        if thermal_chosen:
             fit, curve = thermal, thermal_curve
         if decision.note:
-            notes.append(decision.note)
+            notes.append(decision.note + (" (decided on the unsmoothed counts)" if on_smoothed else ""))
     if on_smoothed and fit.ok:
         notes.append("fitted to the smoothed curve with the smoothing in the model; SEs include the "
                      "smoothed bins' correlation")

@@ -9,10 +9,11 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import numpy.typing as npt
 import pytest
 import scipy.constants as codata
 
-from helab.analysis import bec, constant_layers, fits, physics
+from helab.analysis import bec, constant_layers, fits, physics, profiles
 from helab.analysis.estimates import Estimate
 from helab.analysis.fits import MODELS, bin_centres, fit_histogram
 from helab.analysis.physics import DEFAULTS, resolve
@@ -200,6 +201,54 @@ def test_the_new_rows_validate() -> None:
 
 
 # End to end
+
+def physical_condensate(constants: physics.ResolvedConstants, qe: float, shots: int, condensed: float,
+                        temperature: float) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], float, float]:
+    """(edges, counts, thermal atoms, R(0)) of a TF condensate of ``condensed`` atoms on a saturated
+    ideal thermal cloud at ``temperature``, along X (radial), detected at ``qe`` over ``shots``."""
+    trap = bec.Trap.from_constants(constants)
+    thermal = bec.ZETA3 * (constants.k_B * temperature / (constants.hbar * trap.mean)) ** 3
+    a_ho = trap.oscillator_length(constants)
+    mu = 0.5 * constants.hbar * trap.mean * (15 * condensed * constants.scattering_length / a_ho) ** 0.4
+    r0 = math.sqrt(2 * mu / (constants.mass * trap.radial ** 2))
+    r_detector = r0 * bec.scaling_factors(trap.omegas, constants.fall_time)[0]
+    sigma = math.sqrt(constants.k_B * temperature / constants.mass) * constants.fall_time
+    edges = np.linspace(-0.06, 0.06, 241)
+    expected = (tf_counts(edges, condensed * qe * shots, r_detector)
+                + bose_counts(edges, thermal * qe * shots, sigma, 1.0))
+    return edges, np.random.default_rng(12).poisson(expected).astype(np.float64), thermal, r0
+
+
+def test_the_condensate_check_compares_mu_both_ways() -> None:
+    """fit_axis with the shot count checks μ/k_BT from R/σ_th against μ/k_BT from N0 and T: with the
+    true QE they agree and the condensate stands; with a QE 10× too low N0 is 10× too high, μ from
+    it 2.5× too high, and the condensate is only "possible"."""
+    constants = resolve(folder={"trap_axial_axis": 3.0})
+    edges, counts, _, _ = physical_condensate(constants, 0.1, 20, 3e5, 0.6e-6)
+    right = profiles.fit_axis("X", edges, counts, profiles.BIMODAL_BOSE, constants, shots=20)
+    assert right.fit.model.key == "bimodal_tf2_g2_5" and any(n.startswith("condensate: ") for n in right.notes)
+    check = profiles.mu_consistency("X", constants, float(edges[1] - edges[0]), 20)
+    assert check(right.fit)[0] is True
+    wrong_qe = resolve(lab={"detector_qe": 0.01}, folder={"trap_axial_axis": 3.0})
+    wrong = profiles.fit_axis("X", edges, counts, profiles.BIMODAL_BOSE, wrong_qe, shots=20)
+    assert wrong.fit.model.key == "bose_g2_5"
+    assert any(n.startswith("possible condensate") and "disagree" in n for n in wrong.notes)
+    # Unknown shots, or an axis between the trap's axes: not checked, and said so.
+    assert profiles.mu_consistency("X", constants, 1e-3, None)(right.fit)[0] is None
+    assert profiles.mu_consistency("X", resolve(), 1e-3, 20)(right.fit)[0] is None
+    unchecked = profiles.fit_axis("X", edges, counts, profiles.BIMODAL_BOSE, constants)
+    assert any("check skipped: no shot count" in n for n in unchecked.notes)
+
+
+def test_a_thermal_qe_far_from_the_set_one_is_noted() -> None:
+    constants = resolve(folder={"trap_axial_axis": 3.0})
+    edges, counts, _, _ = physical_condensate(constants, 0.1, 20, 3e5, 0.6e-6)
+    fit = fit_histogram(bin_centres(edges), counts, "bimodal_tf2_g2_5")
+    width = float(edges[1] - edges[0])
+    assert not any("disagree" in n for n in bec.from_fit(fit, "X", constants, width, 20).notes)
+    off = bec.from_fit(fit, "X", resolve(lab={"detector_qe": 0.5}, folder={"trap_axial_axis": 3.0}), width, 20)
+    assert any("the trap frequencies, T or the QE disagree" in n for n in off.notes)
+
 
 def test_from_fit_recovers_the_condensate_and_the_qe() -> None:
     """A condensate of 3·10⁵ atoms on a thermal cloud at 0.6 µK, detected at QE 0.1 along X (a radial

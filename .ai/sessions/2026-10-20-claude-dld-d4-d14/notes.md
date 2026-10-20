@@ -182,3 +182,32 @@ treats the counted N0 and R as independent: rough; N0 ∝ R⁵ makes it R-sensit
    `UnitSpinBox`es (`editors` dicts, `number(box)`, `sigValueChanged`, `setValue` on Restore), so a combo
    box needs a small adapter in both; the coded row stays a whole-number spin box (now width-fitted
    like the others after the merge with the polish work), its legend in the source line.
+
+## Re-review fixes (Coordinator, on c64a8ce)
+
+1. **Jittered summed shots** (10 % σ jitter, 4·10⁶ events) made false condensates through the
+   Δχ² ≥ 25 route, and (found here) through the saturated branch too: near Tc (z 0.9–0.97) the
+   jitter drives the free z to 1 (Δχ² 170–460). Every condensate now also needs
+   (`fits._plausibility`): R/σ_th ≤ 0.8 × the cap; the bimodal fit acceptable
+   (χ²/dof ≤ 1 + 3√(2/dof)) **or** its gain Δχ² ≥ 10 × its own misfit χ² − dof; and, with
+   `fit_axis(shots=…)`, μ/k_BT from R/σ_th ((R/σ ÷ cap at μ/k_BT = 1)², the axis's own expansion
+   factor) within ×2 of `bec`'s μ/k_BT from N0 and T (skipped, with a note, without shots, on an
+   axis between the trap's axes, or without a μ). Unsaturated: also Δχ² ≥ 25 and the free-z fit not
+   acceptable. Failing: "possible condensate (…, Δχ² …), not reported: why", thermal fit kept.
+   **Deviation (proposed, for Tony):** the review asked for "the bimodal acceptable"; alone it
+   suppressed jittered real condensates at 4·10⁶ events (30 %: Δχ² 1.8·10⁵, bimodal reduced χ²
+   2.5–2.8), hence the gain-vs-misfit alternative: real condensates' gain was 40–500 × their
+   misfit, jittered thermal sums 2–3 × (both ∝ N). Measured (scratch p4/p5): jittered thermal sums
+   at z 0.5/0.9/0.97, 6 seeds each: 1 false condensate in 18 (z = 0.97, bimodal reduced χ² 1.25,
+   just acceptable; the μ check needs physical units and shots, which that probe lacks). Jittered
+   5 %/30 % mixtures at 4·10⁵ and 4·10⁶ events: all found (N0/N 0.063, 0.305: the jitter biases a
+   small fraction up). Clean mixtures unchanged. A deep condensate whose R/σ_th exceeds 0.8 × the
+   cap needs a higher cap.
+2. **Smoothed fits** decide on the unsmoothed counts (two more `fit_histogram` calls) and show the
+   smoothed fit of the chosen model; the note ends "(decided on the unsmoothed counts)".
+   **Finding, outside this task:** a smoothed-curve bimodal fit's N0/N SE is ~4.6× smaller than its
+   spread over 12 clouds (0.0010 vs 0.0045; the unsmoothed SE, 0.0043, matches). D1 validated the
+   Gaussian width's SE in smoothed fits; the sandwich covariance (`profiles.fit_smoothed`) needs a
+   look for the bimodal's derived quantities before smoothed N0/N SEs are shown.
+3. `implied_qe_thermal` outside (0, 1] or off the set QE by more than ×2 adds "the trap
+   frequencies, T or the QE disagree".
