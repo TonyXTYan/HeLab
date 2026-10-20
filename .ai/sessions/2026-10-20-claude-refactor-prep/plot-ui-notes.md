@@ -303,3 +303,36 @@ windows are deleted by qtbot. The fake windows had cycles of their own through t
 - Strict mypy `helab` (129 files) and `tests` (96 files), `pyright helab tests`: clean.
 - Full suite (`-n 2 --reruns 5 --reruns-delay 1 -rR`): **2191 passed, 9 skipped, 2 xfailed in
   5 min 49 s, no RERUN.**
+
+## Reviews (coordinator, 2026-10-20)
+
+Separate reviewer subagents read each slice's commits.
+
+- **B (`49b197c`):** no correctness findings. The bodies are identical apart
+  from two old comments among the imports. No mutable module state. Every patch
+  target is in the module that looks the name up. No cycles. QtWebEngine order
+  is fine: 14 test files no longer load it at collection, and they pass alone.
+  Two doc fixes, both folded into `01b3dc9`: a wrong note on where QtWebEngine
+  is loaded, and Package layout in AGENTS.md.
+- **C (`31358e1`):** verbatim. Signal order, thread and exception paths are
+  unchanged. One real lifetime regression: a runner↔core reference cycle meant
+  an idle runner was freed only by the cyclic GC, possibly on another thread.
+  Fixed in `c296d28` (weak callbacks while idle, strong references held by the
+  running thread), with tests that fail on `31358e1`.
+- **E (`01b3dc9`, `c296d28`, `ddc1c07`):** no high or medium findings. The
+  factory opens the same native store and the seam applies only when set.
+  The runner fix matches the old lifetime when idle, when running and across a
+  stop/restart. The moved workspace methods are identical by AST apart from
+  `host` and the callables. Parents, status-bar placement and closeEvent order
+  are unchanged, and no test assertion was weakened. Low notes, left as they
+  are:
+  - The Settings panel is created slightly earlier (in `_setup_middle_area`),
+    with no observable effect.
+  - The RAM budget's slots are bound to the workspace, so their lifetime
+    follows `RamBudget`, a window child.
+  - `AnalysisQueue` built directly with a bound method of a temporary object
+    would drop that callback silently. Only `AnalysisRunner` builds one today.
+  - The AST settings test misses aliased imports and `functools.partial`.
+
+  The reviewer's first targeted run showed one unnamed RERUN; four later runs
+  of the same files were clean.
