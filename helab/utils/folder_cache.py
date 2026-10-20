@@ -482,7 +482,10 @@ class FolderCache(QObject):
                    if folder == path or folder.startswith(path.rstrip("/\\") + os.sep)]
         for folder in cleared:
             del self.unrooted[folder]
-        if self.data_roots.get(path) != (identifier, label) or cleared:
+        known = self.data_roots.get(path)
+        if known is not None and known[0] != identifier:
+            self._root_constants_gone(path)  # Another root at this folder now (any event saying so).
+        if known != (identifier, label) or cleared:
             self.data_roots[path] = (identifier, label)
             self.dataRootsChanged.emit(path)
 
@@ -553,6 +556,8 @@ class FolderCache(QObject):
                            priority=True)
 
     def _root_gone(self, path: str) -> None:
+        if path in self.data_roots:
+            self._root_constants_gone(path)
         if self.data_roots.pop(path, None) is not None:
             self.dataRootsChanged.emit(path)
 
@@ -1061,12 +1066,18 @@ class FolderCache(QObject):
                 self._automatic_save_failed(folder, "HeLab's work queue is full")
 
     def _root_constants_gone(self, path: str) -> None:
-        """The data root at ``path`` changed identity or went (``root_changed``): what the old
-        root's store said about the folders at or below it no longer applies, so the next
-        listing's answer (none: no record) stands, whatever its ``set_at``. This session's
-        unsaved choices (RAM only, or a write still running) stay: they were the user's."""
+        """The data root at ``path`` changed identity or went (called before ``data_roots``
+        changes): what the old root's store said about the folders it holds no longer applies,
+        so the next listing's answer (none: no record) stands, whatever its ``set_at``. Folders
+        inside a nested root below ``path`` keep theirs (their root is unchanged), and so do
+        this session's unsaved choices (RAM only, or a write still running): the user's."""
+        prefix = path.rstrip("/\\") + os.sep
+
         def below(folder: str) -> bool:
-            return folder == path or folder.startswith(path.rstrip("/\\") + os.sep)
+            if folder != path and not folder.startswith(prefix):
+                return False
+            nearest = self.root_of(folder)
+            return nearest is None or not nearest[0].startswith(prefix)
         writing = {write[0] for write in self._constant_writes.values()}
         for folder in [folder for folder in self._confirmed_constants if below(folder)]:
             del self._confirmed_constants[folder]
@@ -2202,6 +2213,10 @@ class FolderCache(QObject):
         if event["kind"] in ("root_found", "root_created", "root_adopted"):
             self._root_seen(str(event["path"]), str(event["uuid"]), str(event["label"]))
         if event["kind"] == "root_changed":
+            if str(event["path"]) not in self.data_roots:
+                # A root this session hadn't seen at that folder: what RAM holds there came from
+                # whichever root was nearest, gone too. (A known one: ``_root_seen``/``_root_gone``.)
+                self._root_constants_gone(str(event["path"]))
             if event.get("location"):
                 self._duplicate_settled(str(event["location"]))  # Forgotten, removed or replaced.
             if "uuid" in event:
@@ -2213,7 +2228,6 @@ class FolderCache(QObject):
                       *self.scan_histories, *self.subtrees, *self._disk_cached_paths})
             affected = [path for path in known if path == root_path or path.startswith(root_path.rstrip("/\\") + os.sep)]
             self.removed(affected, list(KINDS))
-            self._root_constants_gone(root_path)
         if event["kind"] == "mounts_seen":
             self._mounts_observed = tuple(tuple(pair) for pair in event["mounts"])
             # A mount gone since may come back as another disk: verified again first.

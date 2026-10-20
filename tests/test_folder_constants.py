@@ -430,6 +430,40 @@ def test_a_replaced_root_drops_the_old_roots_constants_but_not_unsaved_choices(
         service.shutdown()
 
 
+@pytest.mark.parametrize("kind", ["root_found", "data_root"])
+def test_another_root_reported_at_a_folder_drops_the_old_roots_constants(
+        monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    service, cache = frozen(monkeypatch)
+    try:
+        cache._root_seen(ROOT, A, "old")
+        cache.remember_constants(ROOT, {"values": {"fall_distance": 0.91}, "set_at": 20.0})
+        new = {"path": ROOT, "uuid": B, "label": "new"}
+        # Another disk at the same path: a location with no row yet reports root_found; any
+        # listing, load or cached read reports its data_root.
+        event = ({"kind": "root_found", "location": "vol://other/data/root", **new}
+                 if kind == "root_found" else {"kind": "status", "data_root": new})
+        service.resultReady.emit(IORequest("probe", 0, RUN, "list", {}, 60), event)
+        root = cache.root_of(RUN)
+        assert root is not None and root[1] == B and cache.effective_folder_constants(RUN) == {}
+    finally:
+        service.shutdown()
+
+
+def test_removing_an_outer_root_keeps_a_nested_roots_constants(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, cache = frozen(monkeypatch)
+    try:
+        cache._root_seen(ROOT, A, "outer")
+        cache._root_seen(RUN, B, "inner")
+        cache.remember_constants(ROOT, {"values": {"trap_axial": 45.0}, "set_at": 1.0})
+        cache.remember_constants(RUN, {"values": {"fall_distance": 0.91}, "set_at": 20.0})
+        service.resultReady.emit(IORequest("probe", 0, ROOT, "list", {}, 60), {
+            "kind": "root_changed", "path": ROOT, "location": "vol://test/data/root", "reason": "marker removed"})
+        assert cache.folder_constants(ROOT) == {}
+        assert cache.effective_folder_constants(SHOT) == {"fall_distance": 0.91}
+    finally:
+        service.shutdown()
+
+
 def test_the_dialog_says_when_values_last_only_this_session(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     service, cache = frozen(monkeypatch)
     try:
