@@ -20,7 +20,6 @@ rotated (Tony, 2026-10-20).
 """
 from __future__ import annotations
 
-import html
 import math
 from dataclasses import dataclass, field, replace
 from typing import Any, List, Mapping, Optional, cast
@@ -37,6 +36,7 @@ from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.follow import LivePolicy
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.plot_axes import GroupedAxis
+from helab.analysis.plot_text import add_label, line_html, lines_html
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
                                       range_warnings, select_shots, selection_text, shots_brief, shots_text)
@@ -64,7 +64,7 @@ SPECTRUM = ParameterSpec(
         "windowed, gaps filled by straight lines.")
 WHEN_SPECTRUM = (SPECTRUM.name, "True")
 WINDOW = window_spec(SPECTRUM_GROUP, WHEN_SPECTRUM)
-LOG = ParameterSpec("spectrum_log", "Log amplitude", "bool", True, group=SPECTRUM_GROUP, when=WHEN_SPECTRUM,
+LOG = ParameterSpec("spectrum_log", "Log Y", "bool", True, group=SPECTRUM_GROUP, when=WHEN_SPECTRUM,
                     tip="Logarithmic amplitude axis.")
 PEAKS, THRESHOLD, PEAKS_ABOVE = peak_specs(SPECTRUM_GROUP, 3, WHEN_SPECTRUM)
 PARAMETERS = (*SHOT_SPECS, *RANGE, BIN_WIDTH, MIN_EVENTS, SPECTRUM, WINDOW, LOG, PEAKS, THRESHOLD, PEAKS_ABOVE)
@@ -227,6 +227,11 @@ def filled(centres: npt.NDArray[np.float64], trace: npt.NDArray[np.float64], par
     return cast(npt.NDArray[np.float64], np.asarray(values, dtype=np.float64))
 
 
+def left_out_note(left_out: int, bins: int, minimum: int) -> str:
+    """The plot's note on bins with too few events."""
+    return f"{left_out:,} of {bins:,} bins with fewer than {minimum:,} events left out"
+
+
 def empty_reason(data: PositionProfile) -> str:
     """Why there is nothing to draw ("" when there is)."""
     text = empty_text(data.total_shots, len(data.shots), data.total)
@@ -250,15 +255,14 @@ def peak_text(spectrum: Spectrum, axis: str) -> str:
     return f"mean {axis}: {peaks}"
 
 
-def titles(result: AnalysisResult, data: PositionProfile) -> tuple[str, str]:
-    """The figure's two title lines: what it shows, then its bins, notes and warnings."""
+def titles(result: AnalysisResult, data: PositionProfile) -> tuple[str, ...]:
+    """The figure's title lines: what it shows, its bins, then one line per note and warning."""
     bins = len(data.counts)
     how = "auto" if data.automatic else "set"
     first = (f"{result.input.short()} · {shots_text(data.shots, data.total_shots)} · {data.events:,} of "
              f"{data.total:,} events in range")
-    second = [f"{bins:,} T bins of {time_text(data.width, WIDTH_DIGITS)} ({how})", *data.notes]
-    second += [f"⚠ {warning}" for warning in data.warnings]
-    return first, " · ".join(second)
+    second = f"{bins:,} T bins of {time_text(data.width, WIDTH_DIGITS)} ({how})"
+    return (first, second, *data.notes, *(f"⚠ {warning}" for warning in data.warnings))
 
 
 def result_brief(data: PositionProfile) -> str:
@@ -274,8 +278,10 @@ def result_brief(data: PositionProfile) -> str:
 def record_lines(data: PositionProfile) -> list[str]:
     """The bins (left out, filled), the spectrum's frequencies and its peaks, for the dock's record."""
     how = f"auto: {auto_text(data)}" if data.automatic else "set"
+    # The bins left out once, here: not again from the plot's notes.
     lines = [f"T bins: {len(data.counts):,} of {time_text(data.width, WIDTH_DIGITS)} ({how}), {data.events:,} events; "
-             f"{data.left_out:,} with fewer than {data.minimum:,} events left out", *data.notes]
+             f"{data.left_out:,} with fewer than {data.minimum:,} events left out",
+             *(note for note in data.notes if note != left_out_note(data.left_out, len(data.counts), data.minimum))]
     if data.spectra:
         first = data.spectra[0]
         lines.append(f"Spectrum: {first.window} window, {spectrum_text(first)}, corrected for the bins' "
@@ -297,7 +303,7 @@ class PositionPlot(QWidget):
         self.graphics.setBackground("w")
         layout.addWidget(self.graphics)
         self.key = (spectrum, log)
-        self.title: Any = self.graphics.addLabel("", row=0, col=0)
+        self.title: Any = add_label(self.graphics, row=0, col=0)
         self.means: Any = self.graphics.addPlot(row=1, col=0, title="Mean position ± SE",
                                                 axisItems={"bottom": GroupedAxis("bottom"), "left": GroupedAxis("left")})
         self.widths: Any = self.graphics.addPlot(row=2, col=0, title="SD ± SE",
@@ -334,11 +340,10 @@ class PositionPlot(QWidget):
             for axis, colour in COLOURS.items():
                 self.spectrum_curves[axis] = self.spectrum.plot([], [], name=f"mean {axis}", connect="finite",
                                                                 pen=pg.mkPen(colour, width=1.2))
-            self.peaks_label = self.graphics.addLabel("", row=4, col=0)
+            self.peaks_label = add_label(self.graphics, row=4, col=0)
 
     def show_data(self, result: AnalysisResult, data: PositionProfile) -> None:
-        first, second = titles(result, data)
-        self.title.setText(f"{html.escape(first)}<br>{html.escape(second)}")
+        self.title.setText(lines_html(titles(result, data)))
         centres = data.centres * T_SCALE
         kept = data.kept
         for trace in data.traces:
@@ -367,7 +372,7 @@ class PositionPlot(QWidget):
             for curve in self.spectrum_curves.values():
                 curve.setData([], [])
         text = " · ".join(lines) if lines else next((note for note in data.notes if "spectrum" in note), "")
-        self.peaks_label.setText(html.escape(f"Peaks: {text}" if lines else text))
+        self.peaks_label.setText(line_html(f"Peaks: {text}" if lines else text))
 
 
 class MeanPositionVsT(DatasetAnalysis):
@@ -455,7 +460,7 @@ class MeanPositionVsT(DatasetAnalysis):
         notes: list[str] = []
         left_out = int(bins - np.count_nonzero(kept))
         if left_out and kept.any():
-            notes.append(f"{left_out:,} of {bins:,} bins with fewer than {minimum:,} events left out")
+            notes.append(left_out_note(left_out, bins, minimum))
         data = PositionProfile(shots, len(view.shots), len(events), len(inside), edges, counts, tuple(traces), width,
                                automatic, clamp, minimum, box,
                                range_warnings(values) + ((widened,) if widened else ()), tuple(notes),

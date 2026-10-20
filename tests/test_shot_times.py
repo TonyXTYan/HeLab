@@ -472,8 +472,9 @@ def test_the_plot_draws_raw_and_txy_times_apart_and_updates_in_place(qtbot: QtBo
     assert points(counts_raw) == ([100.0, 160.0], [1.0, 2.0])
     assert points(counts_txy) == ([900.0], [3.0])
     assert points(gaps_raw)[1] == [60.0] and points(gaps_txy)[1] == [740.0]
-    assert [label.text for _, label in widget.plots[0].legend.items] == ["raw file time",
-                                                                          "TXY file time (no raw file)"]
+    # The key sits under the title, outside the plots (a legend inside covered the latest points).
+    assert widget.plots[0].legend is None
+    assert "raw file time" in widget.key_label.text and "TXY file time (no raw file)" in widget.key_label.text
     # Live's next shot (with its raw time): the same widget, its points replaced.
     later = view.with_shots({4: np.ones((4, 3))}, {4: (4, 10, 950 * NS)}, raw_times={4: 800 * NS})
     assert script.update(widget, run_plot(later))

@@ -10,7 +10,6 @@ ms (``display_units``). Unlike the old GUI: no X/Y rotation, the bin
 area divides by the real bin count, and an empty range says so instead of crashing."""
 from __future__ import annotations
 
-import html
 import math
 from dataclasses import dataclass, field, replace
 from typing import Any, List, Mapping, Optional, cast
@@ -28,6 +27,7 @@ from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.follow import LivePolicy
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.plot_axes import GroupedAxis
+from helab.analysis.plot_text import add_label, lines_html
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, newest_brief, newest_colour,
                                       newest_events, newest_shot, newest_specs, range_brief, range_specs,
@@ -50,7 +50,7 @@ IMAGE_GROUP = "Image"
 MAX_IMAGE_BINS = 1000  # per axis: 1000 × 1000 float64 is 8 MB
 AUTO_BINS_CAP = 400  # automatic bins per axis stop here (Freedman–Diaconis grows with the events)
 BINS = ParameterSpec(
-    "bins", "Bins per axis", "int", 0, (0, MAX_IMAGE_BINS), group=IMAGE_GROUP,
+    "bins", "Bins per axis (0 = auto)", "int", 0, (0, MAX_IMAGE_BINS), group=IMAGE_GROUP,
     tip=f"Bins along each axis of the image. 0 = automatic, per axis (Freedman–Diaconis: width "
         f"2·IQR·n^-1/3, at most {AUTO_BINS_CAP}).")
 BLUR = ParameterSpec("blur", "Blur σ", "float", 0.0, (0.0, 50.0), " bins", group=IMAGE_GROUP,
@@ -170,6 +170,16 @@ class DensityImage:
         return f"Events / {area} / shot" + (" (blurred)" if self.blur else "")
 
 
+def colour_bar_label(data: DensityImage, scale: str, gamma: float = 0.5, decades: int = 3) -> str:
+    """The colour bar's label: the quantity, and with a compressed colour scale, that only the
+    colours are compressed (the bar's numbers are the real values, on a linear axis)."""
+    text = data.quantity_text()
+    if scale == LINEAR:
+        return text
+    how = {SQRT: "sqrt", LOG: f"log, {decades} decades", POWER: f"power γ {gamma:g}"}.get(scale, scale)
+    return f"{text} · colours {how}, values linear"
+
+
 def empty_density(view: DatasetView, projection: str, shots: tuple[int, ...], values: Mapping[str, Any],
                   box: CropBox | None = None) -> DensityImage:
     nan = (math.nan,) * len(AXES)
@@ -258,7 +268,7 @@ class DensityPlot(QWidget):
         self.graphics: Any = pg.GraphicsLayoutWidget(self)
         self.graphics.setBackground("w")
         layout.addWidget(self.graphics)
-        self.title: Any = self.graphics.addLabel("", row=0, col=0, colspan=2)
+        self.title: Any = add_label(self.graphics, row=0, col=0, colspan=2)
         self.plot: Any = self.graphics.addPlot(row=1, col=0, axisItems={"bottom": GroupedAxis("bottom"),
                                                                         "left": GroupedAxis("left")})
         self.image: Any = pg.ImageItem(axisOrder="col-major")
@@ -276,7 +286,7 @@ class DensityPlot(QWidget):
         h, v = data.axes
         self.projection = data.projection
         first, second = image_title(data)
-        self.title.setText(f"{html.escape(result.input.short())} · {html.escape(first)}<br>{html.escape(second)}")
+        self.title.setText(lines_html((f"{result.input.short()} · {first}", second)))
         self.plot.setLabel("bottom", axis_label(h))
         self.plot.setLabel("left", axis_label(v))
         self.plot.setAspectLocked(data.projection == "XY")  # X and Y both in mm: their true shape
@@ -290,13 +300,13 @@ class DensityPlot(QWidget):
         self.image.setRect(data.rect())
         if self.bar is None:
             self.bar = pg.ColorBarItem(values=levels, colorMap=colour_map(*key), interactive=False,
-                                       label=data.quantity_text())
+                                       label=colour_bar_label(data, *key))
             self.graphics.addItem(self.bar, row=1, col=1)
         else:
             if key != self.scale_key:
                 self.bar.setColorMap(colour_map(*key))
             self.bar.setLevels(levels)
-            self.bar.getAxis("left").setLabel(data.quantity_text())  # ColorBarItem labels its left axis.
+            self.bar.getAxis("left").setLabel(colour_bar_label(data, *key))  # ColorBarItem labels its left axis.
         self.scale_key = key
         if data.newest_shot is not None and data.newest.size and data.newest.max() > 0:
             self.contour.setPen(pg.mkPen(data.colour, width=2))

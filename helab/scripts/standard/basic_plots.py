@@ -6,7 +6,6 @@ a rate per shot, optionally smoothed, and can fit each axis (D1: off by default,
 stays fast) for its centre, width and temperature (``helab.analysis.profiles``)."""
 from __future__ import annotations
 
-import html
 import math
 from dataclasses import dataclass, field
 from typing import Any, List, Mapping, Optional, cast
@@ -20,9 +19,11 @@ from PyQt6.QtWidgets import QWidget
 from helab.analysis.constant_layers import constants_specs, describe_constants, resolve_for_run
 from helab.analysis.display_units import WIDTH_DIGITS, axis_label, axis_scale, axis_text
 from helab.analysis.empty import empty_pane, empty_text
+from helab.analysis.follow import LivePolicy
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.physics import ResolvedConstants
 from helab.analysis.plot_axes import GroupedAxis
+from helab.analysis.plot_text import add_label, line_html, notes_html, set_plot_title
 from helab.analysis.profiles import (COUNTS, RATE, SMOOTHED, T_MODELS, TF_EXPONENT_TIP, UNSMOOTHED, XY_MODELS,
                                      AxisFit, fit_axis, rate_factor, smooth, smoothing_bins, value_label)
 from helab.analysis.results import AnalysisContext, AnalysisResult
@@ -34,13 +35,14 @@ from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_
 from helab.analysis.stats import AXES, MAX_BINS, Histogram, counts_per_shot, histogram, shortest_range
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
+from helab.utils.colours import AMBER
 
 RANGE = range_specs(
     "Each histogram covers the exact shortest range holding this share of its axis's events. "
     "100 % covers every event.")
 BINS_GROUP = "Histogram"
 BINS = ParameterSpec(
-    "bins", "Bins", "int", 0, (0, MAX_BINS), "", group=BINS_GROUP,
+    "bins", "Bins (0 = auto)", "int", 0, (0, MAX_BINS), "", group=BINS_GROUP,
     tip="0 = automatic: the bin count comes from the data (Freedman–Diaconis: width 2·IQR·n^-1/3). "
         "Smoothing sets its own bins (σ/5).")
 LOG_Y = ParameterSpec("log_y", "Log Y", "bool", False, group=BINS_GROUP,
@@ -98,7 +100,8 @@ CONSTANT_KEYS = ("fall_distance", "fall_time", "g", "mass", "k_B")
 COLOUR = (40, 90, 170)
 SMOOTH_COLOUR = (20, 50, 120)  # the smoothed curve, darker than the bars behind it
 FIT_COLOUR = (0, 0, 0)
-NOTE_COLOUR = "#b06000"  # amber, as Transfer fractions' notes
+NOTE_COLOUR = AMBER  # notes and warnings: the app's amber
+NEWEST_SIZE = 9  # the newest shot's marker in Counts per shot
 
 
 class DecadeLogAxis(GroupedAxis):
@@ -116,10 +119,16 @@ class OverlayView(pg.ViewBox):  # type: ignore[misc]
         super().__init__(enableMenu=False)
         self.setMouseEnabled(x=False, y=False)  # Wheel events then pass to the plot below.
         # (Not ``scale``: that is QGraphicsItem.scale(), which Qt and pyqtgraph call.)
-        self._source, self._ratio, self._log_y = source, ratio, log_y
-        self._shift = math.log10(ratio) if log_y and ratio > 0 else 0.0
+        self._source, self._log_y = source, log_y
+        self.set_ratio(ratio)
+        self.curve: Any = None  # the shot's counts (``overlay_newest``)
         source.sigResized.connect(self.follow)
         source.sigYRangeChanged.connect(self.follow)
+
+    def set_ratio(self, ratio: float) -> None:
+        """The histogram's total over the shot's: a Live rerun's newest shot has its own."""
+        self._ratio = ratio
+        self._shift = math.log10(ratio) if self._log_y and ratio > 0 else 0.0
 
     @pyqtSlot()
     def follow(self) -> None:
@@ -157,16 +166,36 @@ def overlay_newest(plot: Any, edges: npt.NDArray[np.float64], counts: npt.NDArra
     axis.setPen(pg.mkPen(colour))
     axis.setTextPen(pg.mkPen(colour))
     plot.setLabel("right", f"{name} events", color=hex_colour)
-    values = counts.astype(np.float64)
-    if log_y:
-        values[values <= 0] = np.nan
-    curve = pg.PlotDataItem(edges, values, stepMode="center", connect="finite", pen=pg.mkPen(colour, width=2),
-                            name=name)
+    curve = pg.PlotDataItem(edges, newest_values(counts, log_y), stepMode="center", connect="finite",
+                            pen=pg.mkPen(colour, width=2), name=name)
     if log_y:
         curve.setLogMode(False, True)
     view.addItem(curve)
+    view.curve = curve
     view.follow()
     return view
+
+
+def newest_values(counts: npt.NDArray[np.int64], log_y: bool) -> npt.NDArray[np.float64]:
+    """The newest shot's counts as drawn: with log Y, empty bins left out."""
+    values = counts.astype(np.float64)
+    if log_y:
+        values[values <= 0] = np.nan
+    return values
+
+
+def update_newest(plot: Any, view: OverlayView, edges: npt.NDArray[np.float64], counts: npt.NDArray[np.int64],
+                  scale: float, colour: tuple[int, int, int], log_y: bool, name: str) -> None:
+    """A rerun's newest shot in the overlay already drawn (``overlay_newest``)."""
+    view.set_ratio(scale)
+    hex_colour = pg.mkColor(colour).name()
+    axis = plot.getAxis("right")
+    axis.setPen(pg.mkPen(colour))
+    axis.setTextPen(pg.mkPen(colour))
+    plot.setLabel("right", f"{name} events", color=hex_colour)
+    view.curve.setData(edges, newest_values(counts, log_y), stepMode="center", connect="finite",
+                       pen=pg.mkPen(colour, width=2), name=name)
+    view.follow()
 
 
 @dataclass(frozen=True)
@@ -175,6 +204,8 @@ class ShotCounts:
     counts: npt.NDArray[np.int64]
     unsettled_files: int
     total_shots: int = 0  # the shots loaded (``shots`` are the chosen ones)
+    newest_shot: int | None = None  # the highlighted newest shot (None: off)
+    colour: tuple[int, int, int] = (214, 39, 40)
 
     @property
     def total(self) -> int:
@@ -224,9 +255,13 @@ class Histograms:
         return record
 
     def record_lines(self) -> list[str]:
-        """For the dock's record: each fit (its numbers, reduced χ² and notes)."""
+        """For the dock's record: each fit (its numbers, reduced χ² and notes) and the notes on
+        its bins, whole (the plot's titles show them without their details)."""
         lines = []
-        for item, fit in zip(self.items, self.fits):
+        for index, (item, fit) in enumerate(zip(self.items, self.fits)):
+            bin_notes = self.bin_notes[index] if index < len(self.bin_notes) else ()
+            if bin_notes:
+                lines.append(f"{item.axis} bins: {'; '.join(bin_notes)}")
             if fit is None:
                 continue
             chi2 = fit.fit.reduced_chi2
@@ -240,14 +275,17 @@ def counts_title(data: ShotCounts) -> str:
     title = f"{shots_text(data.shots.tolist(), data.total_shots or len(data.shots))} · {data.total:,} events"
     if data.unsettled_files:
         title += f" · {data.unsettled_files} files still being written left out"
+    if data.newest_shot is not None:
+        title += f" · shot {data.newest_shot} highlighted"
     return title
 
 
 def histogram_title(item: Histogram, reversed_range: bool = False, how: str = "") -> str:
     """``T · 40 bins (set) · 1,000 of 1,020 events · 20 outside the range``; ``how`` says how the
-    bins were chosen when not by the Bins setting (smoothing's σ/5)."""
+    bins were chosen when not by the Bins setting (smoothing's σ/5). Automatic bins are "auto"
+    (Freedman–Diaconis, as the Bins setting's tip says)."""
     bins = len(item.counts)
-    how = how or ("automatic, Freedman–Diaconis" if item.automatic_bins else "set")
+    how = how or ("auto" if item.automatic_bins else "set")
     title = f"{item.axis} · {bins:,} bins ({how}) · {item.total - item.outside:,} of {item.total:,} events"
     title += f" · {item.outside:,} outside the range" if item.outside else ""
     return title + (" · ⚠ min > max, using full extent" if reversed_range else "")
@@ -255,6 +293,36 @@ def histogram_title(item: Histogram, reversed_range: bool = False, how: str = ""
 
 def source_title(result: AnalysisResult, text: str) -> str:
     return f"{result.input.short()} · {text}"
+
+
+COUNTS_HIGHLIGHT, COUNTS_NEWEST_COLOUR = newest_specs("Plot")
+
+
+class CountsPlot(pg.PlotWidget):  # type: ignore[misc]
+    """Counts per shot, with the newest shot marked when highlighted; ``show_data`` draws a
+    newer result in place (Live), keeping zoom and pan."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setBackground("w")
+        plot: Any = self.getPlotItem()
+        plot.setLabel("bottom", "Shot number")
+        plot.setLabel("left", "Events")
+        plot.showGrid(x=True, y=True, alpha=0.3)
+        self.curve: Any = plot.plot([], [], pen=pg.mkPen(COLOUR, width=1), symbol="o", symbolSize=4,
+                                    symbolBrush=COLOUR, symbolPen=None)
+        self.newest: Any = plot.plot([], [], pen=None, symbol="o", symbolSize=NEWEST_SIZE, symbolPen=None)
+        self.title: Any = set_plot_title(plot, "")
+
+    def show_data(self, result: AnalysisResult, data: ShotCounts) -> None:
+        set_plot_title(self.getPlotItem(), line_html(source_title(result, counts_title(data))))
+        self.curve.setData(data.shots, data.counts)
+        index = (np.flatnonzero(data.shots == data.newest_shot) if data.newest_shot is not None
+                 else np.empty(0, dtype=np.intp))
+        if len(index):
+            self.newest.setData(data.shots[index], data.counts[index], symbolBrush=pg.mkBrush(data.colour))
+        else:
+            self.newest.setData([], [])
 
 
 class CountsPerShot(DatasetAnalysis):
@@ -265,37 +333,41 @@ class CountsPerShot(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.counts_per_shot",
-            version="2",
+            version="3",
         )
 
     def get_actions(self) -> List[str]:
         return ["Plot"]
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
-        return [*SHOT_SPECS]
+        return [*SHOT_SPECS, COUNTS_HIGHLIGHT, COUNTS_NEWEST_COLOUR]
 
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
-        return selection_text(view, values), shots_brief(values)
+        settings = (shots_brief(values), newest_brief(values))
+        return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         chosen = select_shots(context.view, context.parameters)
         shots, counts = counts_per_shot(context.view, chosen)
-        return ShotCounts(shots, counts, context.view.provenance.unsettled_files, len(context.view.shots))
+        return ShotCounts(shots, counts, context.view.provenance.unsettled_files, len(context.view.shots),
+                          newest_shot(context.parameters, chosen), newest_colour(context.parameters))
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: ShotCounts = result.data
         if not data.total:
             # No shots, none chosen, or chosen shots without events: say which, not a flat line.
             return empty_pane(empty_text(data.total_shots, len(data.shots), 0), parent)
-        plot: Any = pg.PlotWidget(parent)
-        plot.setBackground("w")
-        plot.setTitle(source_title(result, counts_title(data)))
-        plot.setLabel("bottom", "Shot number")
-        plot.setLabel("left", "Events")
-        plot.showGrid(x=True, y=True, alpha=0.3)
-        plot.plot(data.shots, data.counts, pen=pg.mkPen(COLOUR, width=1),
-                  symbol="o", symbolSize=4, symbolBrush=COLOUR, symbolPen=None)
-        return cast(QWidget, plot)
+        widget = CountsPlot(parent)
+        widget.show_data(result, data)
+        return cast(QWidget, widget)
+
+    def update(self, widget: QWidget, result: AnalysisResult) -> bool:
+        """Live's next shots go into the plot already drawn: zoom and pan stay."""
+        data: ShotCounts = result.data
+        if not isinstance(widget, CountsPlot) or not data.total:
+            return False
+        widget.show_data(result, data)
+        return True
 
 
 def _inside_others(events: npt.NDArray[np.float64], ranges: list[tuple[float, float] | None],
@@ -315,10 +387,134 @@ def fits_brief(values: Mapping[str, Any]) -> str:
     return f"fit {', '.join(parts)}" if parts else ""
 
 
-def notes_html(notes: Any) -> str:
-    """Notes in amber, escaped, on a line of their own ("" for none)."""
-    text = " · ".join(str(note) for note in notes if note)
-    return f'<br><span style="color: {NOTE_COLOUR}">{html.escape(text)}</span>' if text else ""
+HistogramsKey = tuple[bool, bool, bool, tuple[bool, ...], str]
+
+
+def histograms_key(result: AnalysisResult, data: Histograms) -> HistogramsKey:
+    """What a drawing's items are: log Y, smoothing, the newest shot, which axes are fitted and
+    the units. A rerun with the same key draws in place; any other is drawn anew."""
+    return (bool(result.parameters.get(LOG_Y.name, False)), bool(data.smoothed),
+            data.newest_shot is not None and bool(data.newest), tuple(fit is not None for fit in data.fits),
+            data.units)
+
+
+def histograms_empty(data: Histograms) -> bool:
+    return not data.items or not data.items[0].total
+
+
+class HistogramsWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
+    """The header and one plot per axis, with their items, so a rerun (Live) sets their data in
+    place, keeping zoom and pan (``show_data``); ``key`` (``histograms_key``) says what they are."""
+
+    def __init__(self, key: HistogramsKey, axes: tuple[str, ...], parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setBackground("w")
+        self.key = key
+        log_y, smoothing, highlighted, fitted, _ = key
+        layout: Any = self.ci  # (The widget passes addLabel and addPlot to it.)
+        self.header = add_label(layout, row=0, col=0)
+        self.plots: list[Any] = []
+        self.bars: list[Any] = []
+        self.curves: list[Any] = []  # smoothed curves (with smoothing)
+        self.fit_lines: list[Any] = []  # fit lines (None where that axis isn't fitted)
+        self.scaled: list[Any] = []  # the newest shot at the histogram's scale, transparent (highlight)
+        self.newest_views: list[OverlayView] = []  # Kept with the widget (they live in its scene).
+        # With smoothing, the bars are faint behind the smoothed curve.
+        pen, brush = (pg.mkPen((*COLOUR, 45)), (*COLOUR, 30)) if smoothing else (pg.mkPen(COLOUR), (*COLOUR, 90))
+        for row, axis in enumerate(axes, start=1):
+            # A right axis only for the newest shot's counts (pyqtgraph shows any axis it is given).
+            items: dict[str, Any] = {"bottom": GroupedAxis("bottom")}
+            if log_y:
+                items.update({"left": DecadeLogAxis("left"), **({"right": DecadeLogAxis("right")} if highlighted else {})})
+            plot = layout.addPlot(row=row, col=0, axisItems=items)
+            set_plot_title(plot, "")
+            plot.setLabel("bottom", axis_label(axis))
+            if log_y:
+                # Empty bins have no logarithm: they are left out of the bars.
+                plot.setLogMode(x=False, y=True)
+                bars = pg.PlotDataItem([0.0, 1.0], [np.nan], stepMode="center", connect="finite", pen=pen)
+            else:
+                bars = pg.PlotDataItem([0.0, 1.0], [0.0], stepMode="center", fillLevel=0, pen=pen, brush=brush)
+            plot.addItem(bars)
+            self.bars.append(bars)
+            if smoothing:
+                curve = pg.PlotDataItem([], [], connect="finite", pen=pg.mkPen(SMOOTH_COLOUR, width=2))
+                plot.addItem(curve)
+                self.curves.append(curve)
+            line = None
+            if row - 1 < len(fitted) and fitted[row - 1]:
+                line = pg.PlotDataItem([], [], connect="finite", pen=pg.mkPen(FIT_COLOUR, width=2))
+                plot.addItem(line)
+            self.fit_lines.append(line)
+            if highlighted:
+                # One shot is a small share of all: drawn to the histogram's scale (its total over
+                # the shot's), its shape compares; its own axis on the right reads its real counts.
+                left = plot.getAxis("left")
+                left.setPen(pg.mkPen(COLOUR))
+                left.setTextPen(pg.mkPen(COLOUR))
+                # The scaled line, transparent (hidden items don't count), keeps the plot's own
+                # range (and its Auto) holding the overlay.
+                scaled = pg.PlotDataItem([0.0, 1.0], [np.nan], stepMode="center", connect="finite",
+                                         pen=pg.mkPen((0, 0, 0, 0)))
+                plot.addItem(scaled)
+                self.scaled.append(scaled)
+            self.plots.append(plot)
+
+    def show_data(self, result: AnalysisResult, data: Histograms) -> None:
+        log_y, smoothing, highlighted, _, _ = self.key
+        items = data.items
+        events = f"{items[0].total:,} events"
+        newest = (f" · shot {data.newest_shot} highlighted ({int(data.newest[0].sum()):,} in range, right axis)"
+                  if highlighted else "")
+        header = line_html(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}{newest}"))
+        if data.fitted() and data.constants is not None:
+            # Only the values not at their defaults (the record has them all), so the header stays short.
+            used = describe_constants(data.constants, CONSTANT_KEYS)
+            header += "<br>" + line_html(f"Fits with {used}" if used else "Fits with the default constants")
+            header += notes_html(data.constants.notes)
+        self.header.setText(header)
+        for index, (item, plot) in enumerate(zip(items, self.plots)):
+            x_factor = axis_scale(item.axis)
+            sigma = data.smoothing[index] if index < len(data.smoothing) else None
+            how = f"σ/5 for smoothing σ {axis_text(item.axis, sigma, WIDTH_DIGITS)}" if sigma is not None else ""
+            title = line_html(histogram_title(item, item.axis in data.reversed, how))
+            fit = data.fit(index)
+            notes: list[str] = list(data.bin_notes[index]) if index < len(data.bin_notes) else []
+            if fit is not None and fit.ok:
+                title += "<br>" + line_html(fit.text())
+                notes = [*fit.notes, *notes]
+            elif fit is not None:  # Why there is no fit, in amber.
+                notes = [fit.text(), *fit.notes, *notes]
+            # One note per line, without their details (the dock's record has them whole).
+            set_plot_title(plot, title + notes_html(notes, short=True))
+            plot.setLabel("left", value_label(item.axis, data.units))
+            edges = item.edges * x_factor
+            y_factor = data.factor(index)
+            shown = item.counts.astype(np.float64) * y_factor
+            self.bars[index].setData(edges, np.where(shown > 0, shown, np.nan) if log_y else shown)
+            centres = (edges[:-1] + edges[1:]) / 2
+            if smoothing and index < len(self.curves):
+                smoothed = data.smoothed[index] * y_factor
+                self.curves[index].setData(centres, np.where(smoothed > 0, smoothed, np.nan) if log_y else smoothed)
+            line = self.fit_lines[index]
+            if line is not None:
+                if fit is not None and fit.ok and len(fit.x):
+                    values = fit.y * y_factor
+                    line.setData(fit.x * x_factor, np.where(values > 0, values, np.nan) if log_y else values)
+                else:
+                    line.setData([], [])
+            if not highlighted or index >= len(data.newest):
+                continue
+            plot.setLabel("left", value_label(item.axis, data.units, every=True), color=pg.mkColor(COLOUR).name())
+            counts_new = data.newest[index]
+            scale = float(shown.sum()) / float(counts_new.sum()) if counts_new.sum() > 0 else 1.0
+            scaled = counts_new * scale
+            self.scaled[index].setData(edges, np.where(scaled > 0, scaled, np.nan) if log_y else scaled)
+            name = f"shot {data.newest_shot}"
+            if index < len(self.newest_views):
+                update_newest(plot, self.newest_views[index], edges, counts_new, scale, data.colour, log_y, name)
+            else:
+                self.newest_views.append(overlay_newest(plot, edges, counts_new, scale, data.colour, log_y, name))
 
 
 class TxyHistograms(DatasetAnalysis):
@@ -432,91 +628,25 @@ class TxyHistograms(DatasetAnalysis):
         whose ``record_lines`` the dock's record shows."""
         return data.record() if isinstance(data, Histograms) and data.fitted() else {}
 
+    def live_policy(self, action_name: str) -> LivePolicy:
+        # Fits take a fraction of a second per axis on a large folder, and a rerun while the user
+        # reads one is noise: at most one rerun a second (fits on or off: the policy is per plot).
+        return LivePolicy(min_delay=1.0)
+
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Histograms = result.data
-        items = data.items
-        if not items or not items[0].total:
+        if histograms_empty(data):
             return empty_pane(empty_text(data.total_shots, len(data.shots), 0), parent)
-        log_y = bool(result.parameters.get(LOG_Y.name, False))
-        widget: Any = pg.GraphicsLayoutWidget(parent)
-        widget.setBackground("w")
-        events = f"{items[0].total:,} events" if items else ""
-        newest = (f" · shot {data.newest_shot} highlighted ({int(data.newest[0].sum()):,} in range, right axis)"
-                  if data.newest_shot is not None and data.newest else "")
-        header = html.escape(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}{newest}"))
-        if data.fitted() and data.constants is not None:
-            # Only the values not at their defaults (the record has them all), so the header stays short.
-            used = describe_constants(data.constants, CONSTANT_KEYS)
-            header += f"<br>Fits with {html.escape(used)}" if used else "<br>Fits with the default constants"
-            header += notes_html(data.constants.notes)
-        widget.addLabel(header, row=0, col=0)
-        overlays = []
-        for row, item in enumerate(items, start=1):
-            index = row - 1
-            highlighted = data.newest_shot is not None and index < len(data.newest)
-            # A right axis only for the newest shot's counts (pyqtgraph shows any axis it is given).
-            axes: dict[str, Any] = {"bottom": GroupedAxis("bottom")}
-            if log_y:
-                axes.update({"left": DecadeLogAxis("left"), **({"right": DecadeLogAxis("right")} if highlighted else {})})
-            x_factor = axis_scale(item.axis)
-            sigma = data.smoothing[index] if index < len(data.smoothing) else None
-            how = (f"σ/5 for smoothing σ {axis_text(item.axis, sigma, WIDTH_DIGITS)}"
-                   if sigma is not None else "")
-            title = html.escape(histogram_title(item, item.axis in data.reversed, how))
-            fit = data.fit(index)
-            notes: list[str] = list(data.bin_notes[index]) if index < len(data.bin_notes) else []
-            if fit is not None and fit.ok:
-                title += "<br>" + html.escape(fit.text())
-                notes = [*fit.notes, *notes]
-            elif fit is not None:  # Why there is no fit, in amber.
-                notes = [fit.text(), *fit.notes, *notes]
-            title += notes_html(notes)
-            plot = widget.addPlot(row=row, col=0, title=title, axisItems=axes)
-            plot.setLabel("bottom", axis_label(item.axis))
-            label = value_label(item.axis, data.units)
-            plot.setLabel("left", label)
-            edges = item.edges * x_factor
-            y_factor = data.factor(index)
-            shown = item.counts.astype(np.float64) * y_factor
-            smoothed = data.smoothed[index] * y_factor if sigma is not None else None
-            # With smoothing, the bars are faint behind the smoothed curve.
-            pen, brush = (pg.mkPen((*COLOUR, 45)), (*COLOUR, 30)) if smoothed is not None else \
-                (pg.mkPen(COLOUR), (*COLOUR, 90))
-            if log_y:
-                # Empty bins have no logarithm: they are left out of the bars.
-                bars = np.where(shown > 0, shown, np.nan)
-                plot.setLogMode(x=False, y=True)
-                plot.addItem(pg.PlotDataItem(edges, bars, stepMode="center", connect="finite", pen=pen))
-            else:
-                plot.addItem(pg.PlotDataItem(edges, shown, stepMode="center", fillLevel=0, pen=pen, brush=brush))
-            centres = (edges[:-1] + edges[1:]) / 2
-            if smoothed is not None:
-                curve = np.where(smoothed > 0, smoothed, np.nan) if log_y else smoothed
-                plot.addItem(pg.PlotDataItem(centres, curve, connect="finite", pen=pg.mkPen(SMOOTH_COLOUR, width=2)))
-            if fit is not None and fit.ok and len(fit.x):
-                line = fit.y * y_factor
-                if log_y:
-                    line = np.where(line > 0, line, np.nan)
-                plot.addItem(pg.PlotDataItem(fit.x * x_factor, line, connect="finite",
-                                             pen=pg.mkPen(FIT_COLOUR, width=2)))
-            if highlighted:
-                # One shot is a small share of all: drawn to the histogram's scale (its total over
-                # the shot's), its shape compares; its own axis on the right reads its real counts.
-                left = plot.getAxis("left")
-                left.setPen(pg.mkPen(COLOUR))
-                left.setTextPen(pg.mkPen(COLOUR))
-                plot.setLabel("left", value_label(item.axis, data.units, every=True),
-                              color=pg.mkColor(COLOUR).name())
-                counts_new = data.newest[index]
-                scale = float(shown.sum()) / float(counts_new.sum()) if counts_new.sum() > 0 else 1.0
-                # The scaled line, transparent (hidden items don't count), keeps the plot's own range
-                # (and its Auto) holding the overlay.
-                scaled = counts_new * scale
-                if log_y:
-                    scaled = np.where(scaled > 0, scaled, np.nan)
-                plot.addItem(pg.PlotDataItem(edges, scaled, stepMode="center", connect="finite",
-                                             pen=pg.mkPen((0, 0, 0, 0))))
-                overlays.append(overlay_newest(plot, edges, counts_new, scale, data.colour, log_y,
-                                               f"shot {data.newest_shot}"))
-        widget.newest_views = overlays  # Kept with the widget (they live in its scene).
+        widget = HistogramsWidget(histograms_key(result, data), tuple(item.axis for item in data.items), parent)
+        widget.show_data(result, data)
         return cast(QWidget, widget)
+
+    def update(self, widget: QWidget, result: AnalysisResult) -> bool:
+        """A rerun (e.g. Live's next shots) sets the plots' data in place, keeping zoom and pan,
+        while log Y, smoothing, the newest shot, the fits and the units stay; otherwise anew."""
+        data: Histograms = result.data
+        if (not isinstance(widget, HistogramsWidget) or histograms_empty(data)
+                or widget.key != histograms_key(result, data) or len(widget.plots) != len(data.items)):
+            return False
+        widget.show_data(result, data)
+        return True
