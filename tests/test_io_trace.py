@@ -594,7 +594,7 @@ def test_folder_cache_sends_the_ram_quick_check_only_for_checked_data(
 
 
 class LiveState:
-    """What FolderExplorer keeps between Live checks (``LiveSession``) and sends with the next."""
+    """What a tab's Live keeps between checks (``LiveSession``, helab/views/explorer_live.py) and sends with the next."""
 
     def __init__(self, memory: list[list[int]]) -> None:
         self.memory = memory
