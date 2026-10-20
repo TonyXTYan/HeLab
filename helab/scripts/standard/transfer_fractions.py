@@ -47,13 +47,13 @@ from helab.analysis.backends import (FOLLOWER, MATPLOTLIB, PLOTLY, PYQTGRAPH, Ma
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.orders import (DEFAULT_CENTRE, REFERENCE_SLACK, Fractions, Orders, chosen_by_search, count_orders,
                                    detect, in_box, jump, order_label, unsure, window_half)
+from helab.analysis.overlay import overlay_newest
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, newest_brief, newest_colour, newest_shot, newest_specs, select_shots,
                                       selection_text, shots_brief, shots_text)
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard.basic_plots import overlay_newest
 from helab.scripts.standard import group
 
 AUTO, MANUAL = "auto", "manual"
