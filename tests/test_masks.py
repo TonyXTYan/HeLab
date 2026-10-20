@@ -19,8 +19,8 @@ from helab.analysis.parameter_tree import CommitTextEdit, build_tree, parameter_
 from helab.analysis.parameters import ParameterSpec, effective
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.scripts.base import DatasetAnalysis
-from helab.scripts.standard import (basic_plots, density_images, mean_position, scatter_3d, shot_times, t_spectrum,
-                                    transfer_fractions)
+from helab.scripts.standard import (basic_plots, density_images, mean_position, scatter_3d, shot_times, shot_trends,
+                                    t_spectrum, transfer_fractions)
 from helab.scripts.standard.density_images import FIND, PLOT, DensityImages, DensityPlot, HotSpots, HotSpotsPlot
 from helab.utils.folder_cache import Dataset
 
@@ -210,7 +210,7 @@ def total_of(data: Any) -> int:
         return data.items[0].total
     if isinstance(data, scatter_3d.ScatterData):
         return data.crop.total
-    if isinstance(data, transfer_fractions.Fractions):
+    if isinstance(data, (transfer_fractions.Fractions, shot_trends.Trends)):
         return int(data.counts.sum())
     return int(data.total)  # DensityImage, PositionProfile, ProfileSpectrum
 
@@ -218,18 +218,23 @@ def total_of(data: Any) -> int:
 WIRED: list[DatasetAnalysis] = [basic_plots.CountsPerShot(), shot_times.ShotTimesPlot(), basic_plots.TxyHistograms(),
                                 density_images.DensityImages(), mean_position.MeanPositionVsT(),
                                 t_spectrum.TProfileSpectrum(), scatter_3d.Scatter3D(),
-                                transfer_fractions.TransferFractions()]
+                                transfer_fractions.TransferFractions(), shot_trends.ShotTrends()]
 
 
 @pytest.mark.parametrize("script", WIRED, ids=lambda script: type(script).__name__)
 def test_every_wired_plot_leaves_out_the_masked_events(script: DatasetAnalysis) -> None:
     view, inside = spotted_view()
     assert inside > 4 * 150 * 0.9
-    values = {"orders_mode": "manual"} if isinstance(script, transfer_fractions.TransferFractions) else {}
+    values: dict[str, Any] = {}
+    if isinstance(script, transfer_fractions.TransferFractions):
+        values = {"orders_mode": "manual"}
+    if isinstance(script, shot_trends.ShotTrends):
+        values = {"keep_percent": 100.0}  # its box then holds every event, masked or not
     plain = run(script, view, values)
     masked = run(script, view, {**values, **MASK})
     assert total_of(plain.data) - total_of(masked.data) == inside
-    assert getattr(masked.data, "masked") == inside and getattr(plain.data, "masked") == 0
+    if not isinstance(script, shot_trends.ShotTrends):  # it counts what it masked only when nothing is left
+        assert getattr(masked.data, "masked") == inside and getattr(plain.data, "masked") == 0
     names = {spec.name for spec in script.parameters("Plot")}
     assert {"mask_mode", "mask_preset", "mask_circles"} <= names
     assert "mask: 1 cut circle" in script.describe_run("Plot", masked.parameters, view)[1]

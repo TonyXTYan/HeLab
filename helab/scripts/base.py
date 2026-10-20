@@ -153,9 +153,16 @@ class DatasetAnalysis(HelabAnalysisScript):
     def result_found(self, action_name: str, data: Any) -> dict[str, Any]:
         """What a completed run found or used beyond its parameters, as JSON values (fit results,
         the constants and where each came from), from ``compute``'s data, in the worker thread:
-        kept as the result's ``found``, in its record even after the plot is released. Default:
-        nothing."""
+        kept as the result's ``found``, in its record even after the plot is released. Its
+        ``"reuse"`` entry, when given, is what the run decided beyond its parameters and input
+        that a reuse must match too (e.g. a range kept from an earlier run of the plot): it goes
+        into ``AnalysisResult.reuse_key``. Default: nothing."""
         return {}
+
+    def plot_closed(self, action_name: str, owner: str, path: str) -> None:
+        """A plot of this analysis closed (GUI thread): drop what the script kept for it, under
+        ``owner`` (``AnalysisContext.owner``), and for its folder ``path`` if no other plot needs
+        it. Default: nothing kept."""
 
     def result_record(self, action_name: str, result: AnalysisResult) -> List[str]:
         """Lines a completed run adds to the plot dock's record (its tooltip), after the

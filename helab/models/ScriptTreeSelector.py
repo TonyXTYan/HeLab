@@ -684,7 +684,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if constants is None:
             constants = self.constant_layers(view.identity.source_path)
         try:
-            context = self.runner.submit(self.script, self.metadata, self.action, view, values, constants)
+            context = self.runner.submit(self.script, self.metadata, self.action, view, values, constants,
+                                         owner=self.instance_id)
         except RuntimeError as error:  # The runner is stopping: HeLab is closing.
             self.status_label.setText(str(error))
             return
@@ -1282,6 +1283,10 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 pass
         if self.budget is not None:
             self.budget.remove(self)
+        try:
+            self.script.plot_closed(self.action, self.instance_id, self.path)
+        except Exception:  # A script's cleanup never stops a plot from closing.
+            logging.exception("%s: plot_closed failed", self.name)
         super().close()
 
 

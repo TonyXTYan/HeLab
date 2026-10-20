@@ -26,9 +26,10 @@
   | T spectrum | 1 → 2 | before the view range |
   | 3D scatter | 3 → 4 | before the crop; the newest shot's points too |
   | Transfer fractions | 6 → 7 | per shot, before its XY box |
+  | Shot trends (after merging `52386ec`) | 1 → 2 | before its box and each shot's estimate; the mask's circles key its per-shot cache and kept ranges |
 
-  Shot trends (D2) is not merged: not wired. When it is, add `*MASK_SPECS` and apply
-  `mask_from(values).apply(...)` (or `masked_counts_per_shot`) as above.
+  Shot trends reports "masked out" only in its empty pane (its per-shot cache doesn't count what
+  the mask took).
 
 ## Rules (choices; proposed, for Tony where marked)
 
@@ -48,9 +49,17 @@
   and warns ("Mask preset “current detector” has no circles yet: nothing masked").
 - **Drawn circles** (XY only): keep white, cut red, found amber, all dashed, over the image.
 - **Mask in the reuse key:** it is part of the run's parameters (`mask_mode`, `mask_preset`,
-  `mask_circles`), so `reuse_key()["parameters"]` and the dock record carry it. A preset is
-  recorded by name, not by its circles: if a preset's circles ever change, bump the plots'
-  versions or add the circles to the record (proposed, for Tony).
+  `mask_circles`), so `reuse_key()["parameters"]` and the dock record carry it. A preset's circles
+  are in the reuse key too (`mask_preset_circles`, `masks.mask_key`), and the record lists them
+  after its name (`PresetSpec.text`), so a changed preset never matches an older result.
+- **Speed:** `Mask.keeps` uses a lookup grid over the circles' bounding box (0.1 mm cells, cached
+  per set of circles: dropped / kept / crossed by an edge, decided 1 nm clear of every edge) and
+  tests exactly only the events in edge cells and non-finite positions; it equals
+  `keeps_exactly` (tested with points on every rim, nan and inf). 10 M events with the preset:
+  ~0.45 s against ~1.8 s exactly here (the review measured 3.1 s), plus ~0.06 s once to build.
+- **Typed circles count when the edit ends** (focus out, Ctrl+Enter, or Rerun, which commits the
+  box being typed in: `parameter_tree.CommitTextEdit`, `commit_pending_text`), so a Live rerun
+  never reads half-typed text.
 
 ## Presets: source and transform
 
@@ -102,34 +111,49 @@ also cut to ±30 mm (a square in the rotated frame) before masking, so some neve
 - **Where:** a second action of Density images, **Find hot spots** (no new module, so the bundled
   plot list and `standard.MODULES` don't change while D2 adds its plot). Its own settings: Shots,
   View range (auto-crop default **100 %** here, so edge spots stay in), Mask, Bin width
-  (0.5 mm), Above (5 × median), colour scale.
-- **Rule** (roadmap's placeholder plus a noise floor; proposed, for Tony):
+  (0.5 mm), Background scale σ (1 mm), False spots per image (0.01), Minimum excess for a
+  one-bin spot (20 events), colour scale.
+- **Rule** (after the review: the first version's single k × median threshold offered 193 circles
+  on uneven gain and specks in a cloud's wings; proposed, for Tony):
   - image: XY counts in square bins of the set width over the view range (at most 1000 a side);
-  - background: the median of all bins, or of the non-empty ones when most are empty (noted);
-  - flagged: count > max(k × median, median + 5 √median, 1), so Poisson noise on a sparse image
-    isn't flagged (k alone flags noise when the median is ~1); **k = 5 proposed**;
-  - touching flagged bins (8-connected) make one spot: centre = excess-weighted mean of their
-    bin centres, radius = farthest flagged bin centre + half a bin's diagonal, rounded up to
-    0.01 mm; strongest (largest excess) first, at most 50 listed.
+  - filled area: bins whose occupancy (smoothed over 2 bins) is at least half the 90th
+    percentile's: the detector's disc, not the corners; only these are tested and used;
+  - local background λ: a Gaussian (σ = background scale) normalised convolution over the filled
+    area, leaving out spots found so far (dilated by a bin); three passes;
+  - significant: P(N ≥ n | λ) < α / bins tested (Poisson tail, look-elsewhere; α = 0.01 false
+    spots per image); a spot grows over touching bins with P < 0.001;
+  - a spot is kept with ≥ 2 bins or ≥ 20 events of excess; centre = excess-weighted mean of its
+    bin centres, radius = farthest bin centre + half a bin's diagonal, rounded up to 0.01 mm;
+    strongest first, at most 50 listed.
+  - Review probes (`d9.py`): cloud in, T window → the 3 planted spots; sparse, dense, uneven gain
+    with a bright rim → none. A very dense cloud (1.2 M events, σ 3 mm) still gives its core as a
+    spot: use a T window without atoms. Spots much wider than the background scale are found
+    only at their edges (raise the scale for them).
+- **Notes** (bins widened) are plain text in the finder's title, not amber warnings.
 - **Offer, never apply:** the found circles are drawn amber on the image, listed in the dock
   record (each spot, the rule, and the circles as mask text) and the settings line ("3 hot spots
   found"), and **Copy circles** puts them on the clipboard as cut circles in the custom-mask
   format. Nothing writes them into any setting: no `detected_parameters`, the mask mode stays as
   set. Proposed, for Tony: a "Use as this plot's mask" button could come later, still a click.
-- **Limits:** anything bright is a "spot" (an atom cloud too): set a T window without atoms.
-  The real finder (persistence across shots, a smoothed background, a saved detector preset) is
-  still to be designed on current-detector data, as the roadmap says.
+- **Limits:** anything much sharper than the background scale is a "spot" (a dense cloud's core
+  too): set a T window without atoms. The real finder (persistence across shots, a saved
+  detector preset) is still to be designed on current-detector data, as the roadmap says.
 
 ## Validation
 
-- `tests/test_masks.py` (new, 40 tests): keep/cut and the boundary, ANDed circles, parsing and
+- `tests/test_masks.py` (new; 53 tests after the review fixes): keep/cut and the boundary, ANDed circles, parsing and
   round trip, every invalid case with its message, a failing run and its warning, briefs and
   empty masks, the rotation round trip and the lab's matrix, a preset cutting a spot in HeLab's
   frame, every wired plot's total dropping by exactly the events inside the circle plus `masked`,
   the dock line and the reuse key, all-masked empty panes, the newest shot masked, density's
   dashed circles (and none on XT or without a mask), the text kind in the tree, the finder on
   three planted spots over a flat field, on dense and sparse noise (nothing found), its rule on a
-  hand-made image, and nothing auto-applied (copy button, then pasting cuts the spots).
+  hand-made image, and nothing auto-applied (copy button, then pasting cuts the spots). After the
+  review: the lookup grid against the exact test; uneven gain and a cloud's wings give no spots
+  (3 seeds); spots found on a cloud, at the edge and with uneven gain; the local rule (a gain
+  step isn't a spot, the minimum excess, plurals); plain notes; the preset's circles in the
+  record and reuse key; the density view staying the image's; the decimal-comma message;
+  commit-on-edit-end; Shot trends among the wired plots.
 - `tests/test_analysis_gui.py`: a mask typed in a plot's settings tab (dock line, record, then a
   bad circle failing with its reason and keeping the last plot); Find hot spots from the panel.
 - Version expectations updated in `test_analysis.py`, `test_analysis_gui.py`, `test_live_plots.py`,
@@ -150,5 +174,11 @@ also cut to ±30 mm (a square in the rotated frame) before masking, so some neve
 
 - AGENTS.md's Script system paragraph could name the Mask group next to Shots and View range
   (left to the Coordinator to avoid merge conflicts).
-- D2 shot trends: wire the Mask when merged.
 - A Mask in the 3D scatter could draw the circles too (Plotly cylinders); not done.
+
+## After the review and the merge of `52386ec`
+
+- Full suite (`-n 2 --reruns 5 --reruns-delay 1 -rR`, venv first on PATH): 2 failed, 1899 passed,
+  7 skipped, 2 xfailed, 10 reruns, all of them the two root-only failures (5 reruns each).
+- The only merge conflict was `AnalysisResult.reuse_key` (D12's `found["reuse"]` beside
+  `mask_key`): both kept.

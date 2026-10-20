@@ -101,6 +101,10 @@ class AnalysisContext:
     # The constants the analysis uses (``DatasetAnalysis.constant_keys``), with ``resolved_constants``:
     # the record names these.
     constant_keys: tuple[str, ...] = ()
+    # The plot that asked for the run (``AnalysisInstance.instance_id``); "" for a run no plot asked
+    # for (tests, scripts). An analysis may keep per-plot state under it (dropped in
+    # ``DatasetAnalysis.plot_closed``); it is not part of the result's reuse key.
+    owner: str = ""
 
     @property
     def covered(self) -> Coverage:
@@ -139,6 +143,7 @@ class AnalysisResult:
     # Read-only at the top level only (a MappingProxyType over a copy of the script's dict): the
     # lists and dicts inside are shared, so readers must not change them.
     found: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    owner: str = ""  # the plot that asked for the run (``AnalysisContext.owner``)
 
     @classmethod
     def of(cls, context: AnalysisContext, state: State, data: Any = None, error: str = "",
@@ -148,7 +153,7 @@ class AnalysisResult:
                    started_at, time.time(), coverage=context.covered, input_signature=context.view.signature,
                    constant_layers=context.constants, resolved_constants=context.resolved_constants,
                    constant_keys=context.constant_keys if context.resolved_constants is not None else (),
-                   found=MappingProxyType(dict(found or {})))
+                   found=MappingProxyType(dict(found or {})), owner=context.owner)
 
     @property
     def constants_record(self) -> dict[str, Any] | None:
@@ -163,13 +168,16 @@ class AnalysisResult:
 
     def reuse_key(self) -> dict[str, Any]:
         """What a later reuse of this result must match (result caching rule 5), as JSON values:
-        not used yet (R2 and R3 will)."""
+        not used yet (R2 and R3 will). What the run decided beyond its parameters and input, which a
+        reuse must match too, comes from ``found["reuse"]`` when the script gives it
+        (``DatasetAnalysis.result_found``; e.g. a box kept from an earlier run of the plot)."""
         identity = self.input.identity
         return {"analysis_id": self.analysis.analysis_id, "version": self.analysis.version,
                 "file_hash": self.analysis.file_hash, "action": self.action, "root_key": identity.root_key,
                 "signature": identity.signature, "input_signature": self.input_signature,
                 "parameters": dict(self.parameters), "coverage": self.coverage.to_json(),
                 **({"constants": record} if (record := self.constants_record) is not None else {}),
+                **({"found": self.found["reuse"]} if "reuse" in self.found else {}),
                 **mask_key(self.parameters)}
 
     def describe(self, parameters_text: str = "") -> str:
