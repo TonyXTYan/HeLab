@@ -21,7 +21,8 @@ import os
 import pathlib
 import sqlite3
 import time
-from typing import Any, Callable, Generator, Generic, Iterable, Literal, Mapping, Sequence, TypeVar, TypedDict, cast
+from typing import (Any, Callable, Generator, Generic, Iterable, Literal, Mapping, NotRequired, Sequence, TypeVar,
+                    TypedDict, cast)
 import uuid
 
 LAYOUT_VERSION = 3
@@ -75,7 +76,8 @@ CREATE TABLE IF NOT EXISTS retired_files (file TEXT PRIMARY KEY, retired_at REAL
 CREATE TABLE IF NOT EXISTS datasets (
     path TEXT PRIMARY KEY, file TEXT NOT NULL, bytes INTEGER NOT NULL, ram_bytes INTEGER NOT NULL,
     rows INTEGER NOT NULL, shots INTEGER NOT NULL, fingerprint TEXT NOT NULL, problematic TEXT NOT NULL,
-    info TEXT NOT NULL, last_used REAL NOT NULL, job_seq INTEGER NOT NULL);
+    info TEXT NOT NULL, last_used REAL NOT NULL, job_seq INTEGER NOT NULL,
+    raw_times TEXT NOT NULL DEFAULT '[]');
 CREATE INDEX IF NOT EXISTS datasets_last_used ON datasets (last_used);
 """
 
@@ -159,13 +161,17 @@ class SaveGuard:
 
 class DatasetRecord(TypedDict):
     """What a load saves with its dataset file. ``info`` holds ``saved_at``,
-    ``snapshot_at``, ``signature``, ``counts``, ``unsettled``, ``kind``, ``format`` and ``names``."""
+    ``snapshot_at``, ``signature``, ``counts``, ``unsettled``, ``kind``, ``format`` and ``names``.
+    ``raw_times``: ``[shot, mtime_ns]`` of each shot's raw ``d<N>.txt`` file where one was found (the
+    shot's time). Kept out of ``info``, which listings read for every subfolder, and out of the
+    fingerprint, which raw files never affect. Rows saved before it have none (``[]``)."""
     ram_bytes: int
     rows: int
     shots: int
     fingerprint: list[list[int]]
     problematic: list[int]
     info: dict[str, Any]
+    raw_times: NotRequired[list[list[int]]]
 
 
 class DatasetRow(DatasetRecord):
@@ -351,6 +357,8 @@ class CacheStore:
         self._writing = False
         try:
             self._conn = self._open(busy_timeout)
+            # (A read-only store may lack the column: it then has no raw times.)
+            self._raw_times = "raw_times" if _has_raw_times(self._conn) else "'[]'"
             meta = self._meta()
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be opened: {exc}") from exc
@@ -410,6 +418,7 @@ class CacheStore:
             version = _layout_version(conn)
             if version != self._expected_layout:
                 raise sqlite3.DatabaseError(f"unsupported layout version {version}")
+            _add_raw_times(conn)
         except BaseException:
             conn.close()
             raise
@@ -989,9 +998,10 @@ class CacheStore:
         info = {"format": DATASET_FORMAT, **record["info"]}
         self._conn.execute(
             "INSERT OR REPLACE INTO datasets (path, file, bytes, ram_bytes, rows, shots, fingerprint, problematic, "
-            "info, last_used, job_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "info, last_used, job_seq, raw_times) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (path, file, size, int(record["ram_bytes"]), int(record["rows"]), int(record["shots"]),
-             _dumps(record["fingerprint"]), _dumps(record["problematic"]), _dumps(info), now, job_seq))
+             _dumps(record["fingerprint"]), _dumps(record["problematic"]), _dumps(info), now, job_seq,
+             _dumps(record.get("raw_times", []))))
         if previous and previous[0] != file:
             self._retire(previous[0], now)
 
@@ -1174,7 +1184,7 @@ class CacheStore:
             with self.transaction(write=False):
                 row = self._conn.execute(
                     "SELECT path, file, bytes, ram_bytes, rows, shots, fingerprint, problematic, info, last_used, "
-                    "job_seq FROM datasets WHERE path = ?", (key,)).fetchone()
+                    f"job_seq, {self._raw_times} FROM datasets WHERE path = ?", (key,)).fetchone()
         except (sqlite3.Error, StoreError) as exc:
             return _error(f"Disk cache could not be read: {exc}")
         if row is None:
@@ -1184,7 +1194,8 @@ class CacheStore:
                 "path": self._source_path(str(row[0])), "file": row[1], "bytes": row[2],
                 "ram_bytes": row[3], "rows": row[4],
                 "shots": row[5], "fingerprint": json.loads(row[6]), "problematic": json.loads(row[7]),
-                "info": json.loads(row[8]), "last_used": row[9], "job_seq": row[10]}))
+                "info": json.loads(row[8]), "last_used": row[9], "job_seq": row[10],
+                "raw_times": json.loads(row[11])}))
         except ValueError as exc:
             return _error(f"Saved dataset record is unreadable: {exc}")
 
@@ -1254,12 +1265,14 @@ class CacheStore:
             return _error(f"Cached data file could not be read: {exc}")
 
     def confirm_dataset(self, path: str, fingerprint: Sequence[Sequence[int]], names: Sequence[str],
-                        snapshot_at: float, guard: SaveGuard) -> bool:
+                        snapshot_at: float, guard: SaveGuard,
+                        raw_times: Sequence[Sequence[int]] | None = None) -> bool:
         """Record that a full listing at ``snapshot_at`` found a cached dataset's TXY files all
         unchanged (none still being written), without rewriting it: its file list now dates from
         then (``snapshot_at``, so a later non-TXY change such as Finder's ``.DS_Store`` no longer
         rules out the quick check), nothing is unsettled, and its file names (for the quick check's
-        samples; older caches have none) are kept. Only while the row still has ``fingerprint``,
+        samples; older caches have none) are kept, and so are ``raw_times`` when given (shot times
+        the row lacked, which the listing found). Only while the row still has ``fingerprint``,
         under the job's save guard. Returns whether it was recorded."""
         path = self._path_key(path)
         try:
@@ -1276,6 +1289,9 @@ class CacheStore:
                     snapshot_at = max(snapshot_at, float(previous))
                 self._conn.execute("UPDATE datasets SET info = ? WHERE path = ?", (_dumps(
                     {**info, "names": list(names), "snapshot_at": snapshot_at, "unsettled": 0}), path))
+                if raw_times is not None:
+                    self._conn.execute("UPDATE datasets SET raw_times = ? WHERE path = ?",
+                                       (_dumps([list(entry) for entry in raw_times]), path))
                 return True
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
@@ -1653,6 +1669,27 @@ def trim_estimate(inventory: Mapping[str, Any], budget: int) -> dict[str, int]:
             break
         usage, count, freed = usage - int(size), count + 1, freed + int(size)
     return {"datasets": count, "bytes": freed}
+
+
+def _has_raw_times(conn: sqlite3.Connection) -> bool:
+    return any(row[1] == "raw_times" for row in conn.execute("PRAGMA table_info(datasets)"))
+
+
+def _add_raw_times(conn: sqlite3.Connection) -> None:
+    """Give a store made before shot times its ``datasets.raw_times`` column (``[]``: no raw times
+    known). Older HeLabs name the columns they read and write, so they keep working with it."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'datasets'").fetchone() is None:
+        return
+    if _has_raw_times(conn):
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if not _has_raw_times(conn):  # (Another helper may have added it meanwhile.)
+            conn.execute("ALTER TABLE datasets ADD COLUMN raw_times TEXT NOT NULL DEFAULT '[]'")
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def _layout_version(conn: sqlite3.Connection) -> int | None:

@@ -8,7 +8,7 @@ import logging
 import math
 import os
 import time
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from uuid import uuid4
 import weakref
 
@@ -19,7 +19,7 @@ from PyQt6.QtGui import QIcon, QPixmap
 
 from helab.analysis.constant_layers import clean_layer, folder_layer
 from helab.utils.ram_buffers import Buffers, dataset_buffers
-from helab.utils import large_folder
+from helab.utils import file_kinds, large_folder
 from helab.utils.cache_store import APPROVAL_SHARE, KINDS, store_root
 from helab.utils.constants import (
     DEFAULT_CHECK_LEVEL, DEFAULT_DISK_BUDGET, DEFAULT_LIVE_AUTOSAVE, DEFAULT_LIVE_INTERVAL, DEFAULT_RAM_STEPS,
@@ -83,6 +83,8 @@ class SharedJob:
     load_status: dict[str, Any] | None = None
     attempt: int = 1
     fingerprints: dict[int, tuple[int, int, int]] = field(default_factory=dict)
+    # Shot times (raw files' mtimes, ns) sent with the shots so far (``raw_mtime``).
+    raw_times: dict[int, int] = field(default_factory=dict)
     problematic: set[int] = field(default_factory=set)
     base: Dataset | None = None
     scan_mode: str = "scan"
@@ -1331,7 +1333,8 @@ class FolderCache(QObject):
                 # handed to the helper; its files are checked, not read.
                 arrays = dict(base.data)
                 payload = {**payload, "held": [list(entry) for entry in base.metadata["fingerprint"]],
-                           "held_problematic": list(base.metadata.get("problematic", ()))}
+                           "held_problematic": list(base.metadata.get("problematic", ())),
+                           "held_raw_times": list(base.metadata.get("raw_times") or ())}
             else:
                 payload = {key: value for key, value in payload.items() if key != "save_memory"}
         job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload, base=base, live=live)
@@ -1499,6 +1502,7 @@ class FolderCache(QObject):
             problematic.discard(shot)
         problematic.update(job.problematic)
         metadata = {"fingerprint": list(fingerprints.values()), "problematic": sorted(problematic)}
+        metadata["raw_times"] = dataset_raw_times(job.base, metadata, job.raw_times)
         job.base = Dataset(job.path, "", data, metadata, job.epoch)
         memory = [list(entry) for shot, entry in fingerprints.items() if shot in data]
         producer.payload["memory"] = memory
@@ -2531,6 +2535,8 @@ class FolderCache(QObject):
                 job.data[event["shot"]] = array
                 if "fingerprint" in event:
                     job.fingerprints[event["shot"]] = tuple(event["fingerprint"])
+                if isinstance(event.get("raw_mtime"), int):
+                    job.raw_times[event["shot"]] = event["raw_mtime"]
                 if event.get("problematic"):
                     job.problematic.add(event["shot"])
                 return
@@ -2585,6 +2591,7 @@ class FolderCache(QObject):
                     event = {**event, "problematic": sorted(problematic), "files": len(job.data),
                              "rows": sum(len(array) for array in job.data.values()),
                              "bytes": sum(array.nbytes for array in job.data.values())}
+                event = {**event, "raw_times": dataset_raw_times(job.base, event, job.raw_times)}
                 # The helper may still be updating the disk cache; the data is
                 # complete, so later shared loads must not wait for that.
                 self._forget_job(job)
@@ -2630,6 +2637,23 @@ class FolderCache(QObject):
             self.resultReady.emit(request, event)
         if job.operation == "invalidate" and kind == "done":
             self.snapshotChanged.emit(job.path)
+
+
+def dataset_raw_times(base: Dataset | None, metadata: Mapping[str, Any], sent: Mapping[int, int]) -> list[list[int]]:
+    """The shot times of a load's dataset (``metadata``: its ``loaded`` event): the base's for
+    shots whose fingerprint is unchanged (those it held: an update sends none for them), then the
+    helper's (``raw_times``), then those sent with its shots (``sent``); for the shots in its
+    fingerprint. A changed TXY file may be another run's shot of that number (a folder copied over
+    this one): it has only the time the helper found for it now."""
+    prints = {int(entry[0]): tuple(entry) for entry in metadata.get("fingerprint") or () if len(entry) >= 3}
+    times: dict[int, int] = {}
+    if base is not None:
+        held = {int(entry[0]): tuple(entry) for entry in base.metadata.get("fingerprint") or () if len(entry) >= 3}
+        times = {shot: value for shot, value in file_kinds.raw_times(base.metadata.get("raw_times")).items()
+                 if shot in prints and held.get(shot) == prints[shot]}
+    times.update(file_kinds.raw_times(metadata.get("raw_times")))
+    times.update(sent)
+    return [[shot, times[shot]] for shot in sorted(prints) if shot in times]
 
 
 def get_folder_cache(service: IOService) -> FolderCache:
