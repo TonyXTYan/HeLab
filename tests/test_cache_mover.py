@@ -414,7 +414,7 @@ def test_an_abort_that_cant_rename_back_resumes_where_the_store_is(
 
 
 def test_the_helper_reports_where_the_store_is_after_a_failed_move(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from helab.io_helper import cache_move_job
+    from helab.io_ops.admin import cache_move_job
     app, source, target = str(tmp_path / "app"), tmp_path / "caches", tmp_path / "moved"
     make_cache(source)
     set_step = cache_move.set_step
@@ -433,12 +433,12 @@ def test_the_helper_reports_where_the_store_is_after_a_failed_move(tmp_path: Pat
     monkeypatch.setattr(os, "rename", stuck)
     held = cache_locks.cache_lock(app)
     assert held.try_lock("m")
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     try:
         cache_move_job({"action": "move", "app_dir": app, "from": str(source), "to": str(target),
                         "method": cache_move.RENAME, "id": "m", "token": "m"}, events.append)
         # An abort asked for afterwards (e.g. after the move helper ended abruptly) says so too.
-        aborted: list[dict[str, Any]] = []
+        aborted: list[Any] = []
         cache_move_job({"action": "abort", "app_dir": app, "from": str(source), "to": str(target),
                         "method": cache_move.RENAME, "id": "m", "token": "m"}, aborted.append)
         assert aborted[-1]["store_at"] == str(target) and aborted[-1]["left"] == [str(target)]
@@ -495,7 +495,7 @@ def test_queued_requests_open_no_cache_once_it_is_off(monkeypatch: pytest.Monkey
 
 @pytest.mark.skipif(sys.platform != "win32" and os.geteuid() == 0, reason="root ignores read-only permissions")
 def test_recovery_isnt_usable_after_a_failed_settings_write(tmp_path: Path) -> None:
-    from helab.io_helper import cache_move_job
+    from helab.io_ops.admin import cache_move_job
     app, source, target = str(tmp_path / "app"), tmp_path / "caches", tmp_path / "moved"
     make_cache(source)
     record = cache_move.start(str(source), str(target), app, cache_move.RENAME)
@@ -507,7 +507,7 @@ def test_recovery_isnt_usable_after_a_failed_settings_write(tmp_path: Path) -> N
     settings.sync()
     os.chmod(folder / "settings.ini", 0o444)
     os.chmod(folder, 0o555)  # Saving the setting fails.
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     held = cache_locks.cache_lock(app)
     assert held.try_lock("startup-2")
     try:
@@ -561,7 +561,7 @@ def test_the_cache_path_is_saved_only_at_startup(tmp_path: Path, monkeypatch: py
 
 
 def test_cleanup_and_abort_touch_only_their_own_move(tmp_path: Path) -> None:
-    from helab.io_helper import cache_move_job
+    from helab.io_ops.admin import cache_move_job
     app = str(tmp_path / "app")
     newer = {"from": str(tmp_path / "b"), "to": str(tmp_path / "c"), "method": cache_move.RENAME,
              "step": "renamed", "store_id": "s", "id": "newer"}
@@ -570,7 +570,7 @@ def test_cleanup_and_abort_touch_only_their_own_move(tmp_path: Path) -> None:
     assert held.try_lock("older")  # The HeLab that asked holds the cache.
     try:
         for action in ("cleanup", "abort"):
-            events: list[dict[str, Any]] = []
+            events: list[Any] = []
             cache_move_job({"action": action, "app_dir": app, "from": str(tmp_path / "a"), "to": str(tmp_path / "b"),
                             "id": "older", "token": "older"}, events.append)
             assert events[-1]["left"] == [] and cache_move.read_record(app) == newer
@@ -591,7 +591,7 @@ def test_cleanup_and_abort_touch_only_their_own_move(tmp_path: Path) -> None:
 
 
 def test_startup_recovery_runs_in_a_helper_and_saves_the_setting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from helab.io_helper import cache_move_job
+    from helab.io_ops.admin import cache_move_job
     app, source, target = str(tmp_path / "app"), tmp_path / "caches", tmp_path / "moved"
     store_id = make_cache(source)
     monkeypatch.setattr(cache_move, "same_disk", lambda a, b: False)
@@ -600,7 +600,7 @@ def test_startup_recovery_runs_in_a_helper_and_saves_the_setting(tmp_path: Path,
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     settings.setValue("dir_caches", str(source))
     settings.sync()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     held = cache_locks.cache_lock(app)
     assert held.try_lock("startup-1")
     try:

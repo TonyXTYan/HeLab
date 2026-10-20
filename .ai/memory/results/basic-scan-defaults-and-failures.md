@@ -10,7 +10,7 @@ metadata:
 Rules for basic scans (metadata-only checks of folder contents, without
 reading the TXY files) in the active folder browser. Code:
 `helab/utils/scan_history.py`, `helab/utils/folder_cache.py`,
-`helab/io_helper.py`, `SnapshotFileSystemModel`, `FolderExplorer`.
+`helab/io_ops/scanning.py`, `SnapshotFileSystemModel`, `FolderExplorer`.
 
 ## Defaults (Tony, 2026-10-07)
 

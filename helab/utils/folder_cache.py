@@ -101,7 +101,7 @@ class SharedJob:
     clock: LoadClock = field(default_factory=LoadClock)
     # The TXY file a load is reading now ("" between files), for the I/O tooltip.
     current_file: str = ""
-    # A Live check (``io_helper.live_check``): keyed apart from ordinary loads of the folder, so
+    # A Live check (``io_ops.live.live_check``): keyed apart from ordinary loads of the folder, so
     # neither joins the other (their results differ).
     live: bool = False
     # A Live save's summary older than the folder's snapshot (a newer listing ran meanwhile): not
@@ -217,7 +217,7 @@ class FolderCache(QObject):
         # The app's cache mover (S9, ``helab.views.CacheMover.cache_mover``): kept here so a move
         # outlives the Settings dialog that started it.
         self.cache_mover: QObject | None = None
-        # Settings → General's check of cached data, sent with every load (``io_helper.load``).
+        # Settings → General's check of cached data, sent with every load (``io_ops.loading.load``).
         self.check_level = DEFAULT_CHECK_LEVEL
         # Live: seconds from the end of one check to the next (Settings → General), and how many
         # new shots wait in RAM before the folder is saved (Settings → Cache).
@@ -1369,14 +1369,14 @@ class FolderCache(QObject):
                                             if entry and entry[0] in base.data],
                        "base_signature": base.signature}
             if self.verified(base) and base.metadata.get("listed_at") and base.metadata.get("identity"):
-                # The quick check of the data in RAM when no cached dataset has one (``io_helper``).
+                # The quick check of the data in RAM when no cached dataset has one (``io_ops.loading``).
                 payload["memory_check"] = {key: base.metadata.get(key) for key in (
                     "listed_at", "names", "identity", "fingerprint", "problematic", "data_root")} | {
                     "signature": base.signature, "unsettled": base.metadata.get("unsettled_files", 0)}
         arrays: dict[int, npt.NDArray[np.float64]] | None = None
         if operation == "load" and payload.get("save_memory"):
             if base is not None and base.data:
-                # Live's save: the data in RAM is saved as it is (``io_helper.save_held``), its arrays
+                # Live's save: the data in RAM is saved as it is (``io_ops.save_held.save_held``), its arrays
                 # handed to the helper; its files are checked, not read.
                 arrays = dict(base.data)
                 payload = {**payload, "held": [list(entry) for entry in base.metadata["fingerprint"]],
@@ -2580,7 +2580,7 @@ class FolderCache(QObject):
                 if job.load_status is not None and job.load_status["kind"] == "heartbeat":
                     job.load_status = None
             if kind == "scan_summary":
-                # A Live check's, or a Live save's that read shots again (``io_helper.save_held``).
+                # A Live check's, or a Live save's that read shots again (``io_ops.save_held.save_held``).
                 listed = self.snapshots.get(job.path)
                 if (job.payload.get("save_memory") and listed is not None
                         and float(event["status"].get("scanned_at") or 0)
@@ -2734,7 +2734,7 @@ RAM_ONLY_TOOLTIP = ("No .helab-root at or above this folder, so its statuses, se
                     "RAM for this session.\nTo use the disk cache: right-click the top folder of this drive "
                     "or share › " + PLACE_ROOT_ACTION)
 # A helper's answer when saving a folder's constants finds no data root, or the folder on a volume
-# this session hasn't verified yet (``io_helper.cache_admin``; the same texts as io_helper's).
+# this session hasn't verified yet (``io_ops.admin.cache_admin``; the same texts as there).
 NO_ROOT_CONSTANTS = "no .helab-root found here or above"
 UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 # Why a folder's flags or constants chosen while HeLab quits aren't saved.

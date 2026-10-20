@@ -11,7 +11,8 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 
-from helab.io_helper import Pause, list_folder
+from helab.io_ops.browse import list_folder
+from helab.io_ops.infra import Pause
 from helab.utils.folder_cache import get_folder_cache
 from helab.utils.io_service import BACKGROUND, FOREGROUND, REQUEUED, IORequest, IOService
 

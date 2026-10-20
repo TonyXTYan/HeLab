@@ -44,7 +44,7 @@ os.environ["HELAB_APP_DIR_OVERRIDE"] = tempfile.mkdtemp(prefix=f"helab_test_app_
 os.environ["HELAB_TEST_VOLUME_ID"] = "test-volume"
 os.environ["HELAB_TEST_LOCAL_MOUNT"] = Path(tempfile.gettempdir()).anchor
 # Tests never touch real data (a mounted share, a developer's data folder): helpers, and
-# helab.io_helper's functions called here, refuse such source paths before touching them and note
+# helab.io_ops' functions called here, refuse such source paths before touching them and note
 # them in this folder, which fails the test (``no_real_data``). New tabs start in an empty folder
 # of their own, never the first of constants.DEV_POTENTIAL_DATA_PATHS that exists.
 os.environ["HELAB_TEST_SOURCE_GUARD"] = tempfile.mkdtemp(prefix=f"helab_test_refused_{_worker_id}_")
@@ -71,7 +71,7 @@ def pytest_configure(config: pytest.Config) -> None:
 @pytest.fixture(autouse=True)
 def no_real_data(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """New tabs start in an empty temp folder; a test whose helpers were refused a source path
-    that could be real data (``io_helper._guard``) fails, naming it. A refusal noted after its
+    that could be real data (``io_ops.infra._guard``) fails, naming it. A refusal noted after its
     test ended (a helper still running) fails the next test of this worker."""
     monkeypatch.setattr("helab.views.FolderTabWidget.DEFAULT_DATA_PATH", START_FOLDER)
     monkeypatch.setattr("helab.views.FolderTabWidget.DEV_POTENTIAL_DATA_PATHS", [START_FOLDER])
@@ -97,12 +97,12 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     shared store forgets the test's roots afterwards, so a later test's
     ``roots_verify`` checks only its own.
     """
-    from helab import io_helper
+    from helab.io_ops import infra, stores
     from helab.utils import cache_paths, data_roots
     from helab.utils.cache_store import CacheStore, store_root
 
     monkeypatch.setattr(data_roots, "_volume_id", lambda _: "test-volume")
-    monkeypatch.setattr(io_helper, "_volume_id_cache", {})
+    monkeypatch.setattr(infra, "_volume_id_cache", {})
     # (On Windows, HELAB_TEST_LOCAL_MOUNT above stands in for the drive list.)
     if request.node.get_closest_marker("no_auto_data_root"):
         yield
@@ -157,7 +157,7 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 
     ensure_marker(str(tmp_path))
     seed(main_store, str(tmp_path))
-    original = io_helper._cache_store
+    original = stores._cache_store
 
     def open_seeded(root: str, source_paths: list[str] | None = None, *,
                     local_lane: bool = False, allow_unrooted: bool = False,
@@ -167,7 +167,7 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
         return original(root, source_paths, local_lane=local_lane, allow_unrooted=allow_unrooted,
                         verified_volumes=verified_volumes)
 
-    monkeypatch.setattr(io_helper, "_cache_store", open_seeded)
+    monkeypatch.setattr(stores, "_cache_store", open_seeded)
     yield
     if not seeded:
         return

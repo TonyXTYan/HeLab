@@ -17,7 +17,9 @@ from typing import Any
 
 import pytest
 
-from helab import io_helper
+from helab.io_ops import stores
+from helab.io_ops.admin import NO_ROOT_CONSTANTS, UNVERIFIED_CONSTANTS, cache_admin
+from helab.io_ops.browse import list_folder
 from helab.utils import cache_paths, cache_store, data_roots, folder_cache
 from helab.utils.cache_paths import Mount
 from helab.utils.cache_store import CacheStore, DatasetRecord, StoreError, StoreReadOnly
@@ -170,8 +172,8 @@ def test_a_listing_with_an_old_store_reads_every_saved_record(tmp_path: Path,
                                                              monkeypatch: pytest.MonkeyPatch) -> None:
     top, cache = share(tmp_path, monkeypatch)
     for _ in range(2):  # Discovery, then the listing the app does next.
-        events: list[dict[str, Any]] = []
-        io_helper.list_folder(str(top), events.append, cache)
+        events: list[Any] = []
+        list_folder(str(top), events.append, cache)
         assert not any(event["kind"] == "cache_warning" for event in events), events
         entries = [entry for event in events if event["kind"] == "entries" for entry in event["entries"]]
         assert entries and all(entry["saved_read"] and "constants" not in entry for entry in entries)
@@ -181,8 +183,8 @@ def test_a_nested_root_rekeys_flags_datasets_summaries_and_constants(tmp_path: P
                                                                     monkeypatch: pytest.MonkeyPatch) -> None:
     top, cache = share(tmp_path, monkeypatch)
     inner, run = top / "data", top / "data" / "run"
-    io_helper.list_folder(str(top), lambda _: None, cache)
-    with io_helper._cache_store(cache["directory"], [str(run)]) as store:
+    list_folder(str(top), lambda _: None, cache)
+    with stores._cache_store(cache["directory"], [str(run)]) as store:
         store.set_prefs(str(run), True, False, 5.0)  # Don't cache this folder.
         store.set_constants(str(run), {"fall_distance": 0.85}, 6.0)
         store.save_record("summaries", str(run), {"owner": "outer"}, store.guard([str(run)], ["summaries"]))
@@ -202,17 +204,17 @@ def test_a_nested_root_rekeys_flags_datasets_summaries_and_constants(tmp_path: P
         return real(self, old, new)
 
     monkeypatch.setattr(CacheStore, "rekey_subtree", busy_once)
-    events: list[dict[str, Any]] = []
-    io_helper.list_folder(str(inner), events.append, cache)
+    events: list[Any] = []
+    list_folder(str(inner), events.append, cache)
     # The re-key failed: the root isn't recorded either, so the next listing tries again.
     assert any(event["kind"] == "cache_warning" for event in events)
     assert not any(event["kind"] in ("root_found", "root_rekeyed") for event in events)
-    with io_helper._cache_store(cache["directory"], allow_unrooted=True) as store:
+    with stores._cache_store(cache["directory"], allow_unrooted=True) as store:
         assert all(location != store._location_key(str(inner)) for location, _, _ in store.root_locations())
     events = []
-    io_helper.list_folder(str(inner), events.append, cache)
+    list_folder(str(inner), events.append, cache)
     assert any(event["kind"] == "root_rekeyed" for event in events)
-    with io_helper._cache_store(cache["directory"], [str(run)]) as store:
+    with stores._cache_store(cache["directory"], [str(run)]) as store:
         assert store._path_key(str(run)) == f"root://{inner_id}/run"
         assert store.read_prefs([str(run)])[str(run)].value == {"no_cache": True, "no_auto_load": False,
                                                                  "set_at": 5.0}
@@ -237,15 +239,15 @@ def test_constants_on_an_unverified_volume_wait_for_its_verification(tmp_path: P
     monkeypatch.setattr(cache_paths, "current_mounts", lambda: [mount])
     monkeypatch.setattr(data_roots, "_volume_id", lambda _: "disk-a")
     cache = {"directory": str(tmp_path / "cache" / "store-v3")}
-    io_helper.list_folder(str(disk), lambda _: None, cache)
-    events: list[dict[str, Any]] = []
-    io_helper.cache_admin(cache, "constants", events.append, path=str(run), values={"g": 9.8}, set_at=1.0,
-                          verified_volumes=[])
+    list_folder(str(disk), lambda _: None, cache)
+    events: list[Any] = []
+    cache_admin(cache, "constants", events.append, path=str(run), values={"g": 9.8}, set_at=1.0,
+                verified_volumes=[])
     assert events[0] == {"kind": "folder_constants", "folders": {},
-                         "session_only": {str(run): io_helper.UNVERIFIED_CONSTANTS}}
+                         "session_only": {str(run): UNVERIFIED_CONSTANTS}}
     events = []
-    io_helper.cache_admin(cache, "constants", events.append, path=str(run), values={"g": 9.8}, set_at=1.0,
-                          verified_volumes=[[mount.path, mount.source]])
+    cache_admin(cache, "constants", events.append, path=str(run), values={"g": 9.8}, set_at=1.0,
+                verified_volumes=[[mount.path, mount.source]])
     assert events[0] == {"kind": "folder_constants", "folders": {str(run): {"values": {"g": 9.8}, "set_at": 1.0}}}
 
 
@@ -264,8 +266,8 @@ RUN = os.path.join(os.sep, "data", "root", "run")
 
 
 def test_the_app_saves_them_again_once_volumes_are_verified(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert folder_cache.UNVERIFIED_CONSTANTS == io_helper.UNVERIFIED_CONSTANTS
-    assert folder_cache.NO_ROOT_CONSTANTS == io_helper.NO_ROOT_CONSTANTS
+    assert folder_cache.UNVERIFIED_CONSTANTS == UNVERIFIED_CONSTANTS
+    assert folder_cache.NO_ROOT_CONSTANTS == NO_ROOT_CONSTANTS
     service, cache = frozen(monkeypatch)
     try:
         assert store_options()
@@ -273,7 +275,7 @@ def test_the_app_saves_them_again_once_volumes_are_verified(monkeypatch: pytest.
         request = admin(service)
         assert request.payload["params"]["verified_volumes"] == []
         service.resultReady.emit(request, {"kind": "folder_constants", "folders": {},
-                                           "session_only": {RUN: io_helper.UNVERIFIED_CONSTANTS}})
+                                           "session_only": {RUN: UNVERIFIED_CONSTANTS}})
         service.resultReady.emit(request, {"kind": "done"})
         service.pending.remove(request)
         assert cache.constants_session_only(RUN) == folder_cache.UNVERIFIED_CONSTANTS

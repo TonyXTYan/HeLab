@@ -30,7 +30,9 @@ from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec, effective
 from helab.analysis.results import AnalysisContext, AnalysisResult, Coverage
 from helab.analysis.runner import AnalysisRunner
-from helab.io_helper import list_folder, live_check, load
+from helab.io_ops.browse import list_folder
+from helab.io_ops.live import live_check
+from helab.io_ops.loading import load
 from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import PLOT_MINIMUM_SIZE, DatasetAnalysis, ScriptMetadata
 from helab.scripts.dld import (correlations_plot, density_images, mean_position, release_time, shot_times,
@@ -1209,7 +1211,7 @@ def replay(cache: FolderCache, path: str, tmp_path: Path, operation: str) -> Non
     payload = request.payload
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     if operation == "list":
         list_folder(path, events.append, payload.get("cache"))
     else:
@@ -1379,7 +1381,7 @@ def test_an_error_stopping_live_checks_catches_plots_up(
     request = next(r for r in service.pending if r.owner == job.owner)
     output = tmp_path / "load"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(path, str(output), events.append, None)
     service.pending.remove(request)
     for event in [*events, {"kind": "done"}]:

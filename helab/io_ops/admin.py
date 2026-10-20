@@ -1,0 +1,254 @@
+"""Disk cache maintenance (``cache_admin``) and moving the cache (``cache_move``)."""
+from __future__ import annotations
+
+import contextlib
+import os
+import time
+from typing import Any, cast
+
+from helab.io_ops import stores
+from helab.io_ops.events import AdminResultFields, MoveCheckFields
+from helab.io_ops.infra import Emit, Heartbeat, emit
+from helab.io_ops.markers import _location_path, _root_rows
+from helab.io_ops.stores import _cache_info, _deadline, _removed_event, _usage
+
+
+# Why a folder's constants weren't saved (``cache_admin`` "constants"; the app keeps them for the
+# session, and saves them again when a root is found or volumes are verified). FolderCache has
+# the same texts (it doesn't import this module).
+NO_ROOT_CONSTANTS = "no .helab-root found here or above"
+UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
+
+ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
+                 "constants", "forget_root", "root_same", "clear_root")
+
+
+def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, **params: Any) -> None:
+    """Disk cache maintenance on the local lane; never touches source folders.
+
+    Every removal sends ``removed`` (kinds and paths), and every action ends with
+    ``admin_result`` carrying the store's next cleanup deadline. ``sweep`` also
+    deletes the old diskcache folders (at startup).
+    """
+    from dataclasses import asdict
+    from helab.utils.cache_store import (
+        KINDS, CacheStore, SaveRejected, StoreError, StoreReadOnly, remove_old_caches,
+    )
+    if action not in ADMIN_ACTIONS:
+        raise ValueError(f"Unknown cache action: {action}")
+    root = cache_options["directory"]
+    budget = params.get("budget", cache_options.get("budget"))
+    # When the app set it: a budget set later (e.g. lowered while this job waited) wins.
+    budget_set_at = params.get("budget_set_at", cache_options.get("budget_set_at"))
+    result: AdminResultFields = {}
+    old: list[str] = []
+    if action == "sweep":
+        old = remove_old_caches(os.path.dirname(os.path.abspath(root)), Heartbeat(send, "cleaning up"))
+    # A constants write trusts only the volume hints this session verified, like the other local
+    # writes keyed by a source folder (scan history, subfolder status); the other actions name
+    # no source folder.
+    verified_volumes = params.get("verified_volumes") if action == "constants" else None
+    with stores._cache_store(root, local_lane=True, verified_volumes=verified_volumes) as store:
+        if (budget is not None and budget_set_at is not None and not store.read_only
+                and action not in ("trim", "budget")):
+            # Every job tells the store the app's budget, so running loads save within it.
+            # (A trim or a budget job records it in its own transaction.)
+            with contextlib.suppress(StoreError):
+                budget = store.record_budget(int(budget), float(budget_set_at))
+        if action == "inventory":
+            inventory = store.inventory(budget)
+            if budget is not None and not store.read_only:
+                # What Make room would remove, as the save's own event said before a restart.
+                for entry in inventory["pending"]:
+                    if entry["reason"] == "over_budget":
+                        with contextlib.suppress(SaveRejected, StoreError):
+                            entry["room"] = asdict(store.room_plan(entry["pending_id"], int(budget)))
+            inventory["roots"] = _root_rows(store, send)
+            send({"kind": "inventory", "inventory": inventory})
+        elif action == "sweep":
+            try:
+                swept = store.sweep()
+            except StoreReadOnly:
+                send({"kind": "swept", "old_caches": old, "deleted_files": 0, "expired_pending": 0,
+                      "next_deadline": None, "read_only": True})
+                return
+            send({"kind": "swept", "old_caches": old, "deleted_files": swept.deleted_files,
+                  "expired_pending": swept.expired_pending, "expired_ids": swept.expired_ids,
+                  "still_open": len(swept.still_open), "next_deadline": swept.next_deadline, **_usage(store)})
+            return
+        elif action == "clear":
+            kinds = tuple(params.get("kinds") or KINDS)
+            unknown = set(kinds) - set(KINDS)
+            if unknown:
+                raise ValueError(f"Unknown cache kinds: {sorted(unknown)}")
+            send(_removed_event(store.remove(kinds)))
+        elif action == "purge":
+            cutoff = float(params["cutoff"])
+            if params["what"] == "datasets":
+                removals = [store.purge_datasets(cutoff)]
+            elif params["what"] == "records":
+                removals = store.purge_records(cutoff, bool(params.get("include_failures")))
+            else:
+                raise ValueError(f"Unknown purge: {params['what']}")
+            for removal in removals:
+                send(_removed_event(removal))
+            result["removed"] = {kind: len(removal.paths or ()) for removal in removals for kind in removal.kinds}
+            result["bytes"] = sum(removal.dataset_bytes for removal in removals)
+        elif action == "trim":
+            removal = store.trim(int(budget or params["budget"]), budget_set_at)
+            send(_removed_event(removal))
+            result.update({"datasets": removal.datasets, "bytes": removal.dataset_bytes})
+        elif action == "adopt":
+            try:
+                adopted = store.adopt_pending(params["pending_id"], budget=budget, budget_set_at=budget_set_at,
+                                              expected_room=params.get("room_paths"),
+                                              make_room=bool(params.get("make_room")))
+            except SaveRejected as rejection:
+                result.update({"adopted": False, "rejected": rejection.reason, "message": str(rejection)})
+            else:
+                if adopted.removal is not None:
+                    send(_removed_event(adopted.removal))
+                result.update({"adopted": adopted.adopted, "path": adopted.path, "bytes": adopted.bytes,
+                               "room": None if adopted.room is None else asdict(adopted.room)})
+                if adopted.adopted:
+                    row = store.read_dataset_row(adopted.path)
+                    result["cache_info"] = _cache_info(row.value["info"]) if row.value is not None else {}
+        elif action == "discard":
+            result["discarded"] = store.discard_pending(params["pending_id"])
+        elif action == "prefs":
+            # The user's flags for one folder; with ``remove_cached``, its cached data goes too
+            # (ticking "Don't cache this folder" and saying yes).
+            path = str(params["path"])
+            saved, flag_removal = store.set_prefs_removing(
+                path, bool(params.get("no_cache")), bool(params.get("no_auto_load")),
+                float(params.get("set_at") or time.time()), remove_cached=bool(params.get("remove_cached")))
+            send({"kind": "folder_prefs", "path": path, "prefs": saved})
+            if flag_removal is not None:
+                send(_removed_event(flag_removal))
+        elif action == "constants":
+            # A folder's own constants (Folder constants…): every value it sets, newest choice wins.
+            from helab.utils.cache_paths import UnresolvedRemotePath, _inside, _normal
+            from helab.utils.data_roots import NoDataRoot
+            path = str(params["path"])
+            try:
+                saved_constants = store.set_constants(path, dict(params.get("values") or {}),
+                                                      float(params.get("set_at") or time.time()))
+            except UnresolvedRemotePath as exc:
+                # No disk cache for this folder (no data root, an unsupported mount), or not yet
+                # (its volume not verified this session): the app keeps its values for the session
+                # only, and saves them again when roots are found or volumes verified.
+                unverified = isinstance(exc, NoDataRoot) and any(
+                    _inside(_normal(path), _normal(mount)) for mount in store._unverified_mounts)
+                reason = (UNVERIFIED_CONSTANTS if unverified
+                          else NO_ROOT_CONSTANTS if isinstance(exc, NoDataRoot) else str(exc))
+                send({"kind": "folder_constants", "folders": {}, "session_only": {path: reason}})
+            else:
+                send({"kind": "folder_constants", "folders": {path: saved_constants}})
+        elif action == "clear_prefs":
+            cleared_at = time.time()
+            send({"kind": "prefs_cleared", "paths": store.clear_prefs(cleared_at), "set_at": cleared_at})
+        elif action == "forget_root":
+            # Only where a marker was seen: data stays with its root, and the marker in place.
+            # A folder there is RAM-only until a listing finds its marker again.
+            location = str(params["location"])
+            path = _location_path(store, location)
+            store.forget_root(location)
+            result["forgotten"] = location
+            if path:
+                send({"kind": "root_changed", "path": path, "location": location, "reason": "forgotten"})
+        elif action == "clear_root":
+            # Everything cached below one data root on this computer; roots, flags and marker stay.
+            send(_removed_event(store.clear_root(str(params["uuid"]))))
+        elif action == "root_same":
+            # Same folder (D4): the pending location uses the root's cached data from now on.
+            location, identifier = str(params["location"]), str(params["uuid"])
+            result["confirmed"] = store.confirm_root(location, identifier)
+            if result["confirmed"]:
+                found = store.root_at(location)
+                send({"kind": "root_confirmed", "location": location, "uuid": identifier,
+                      "path": _location_path(store, location), "label": found[1] if found else ""})
+        elif action == "budget":
+            if budget is not None and budget_set_at is not None:
+                # Lowering it (``fit``): not recorded if the data cached by now doesn't fit.
+                active = store.lower_budget(int(budget), float(budget_set_at), fit=bool(params.get("fit")))
+                result.update({"budget": active if active is not None else budget, "recorded": active is not None})
+        send({"kind": "admin_result", "action": action, **result, "next_deadline": _deadline(store),
+              **_usage(store)})
+
+
+def cache_move_job(move: dict[str, Any], send: Emit = emit) -> None:
+    """A step of moving the cache folder (roadmap S9; the app holds every other cache user):
+    ``check`` the target, ``move`` (record, rename or checkpoint+copy+verify), ``cleanup`` the
+    old folder after the cutover, ``abort`` a move before it, or ``recover`` one a crash
+    interrupted (at startup). Every step but ``check`` holds ``move.lock`` while it runs, so a
+    HeLab starting meanwhile waits for it even if the HeLab that started it has ended."""
+    from helab.utils import cache_move as mover
+    from helab.utils.cache_locks import cache_lock, held_with, move_lock
+    action, app_dir = move["action"], move["app_dir"]
+    if action == "check":
+        send({"kind": "move_check", **cast(MoveCheckFields, mover.check_target(move["from"], move["to"], app_dir))})
+        return
+    lock = move_lock(app_dir)
+    if not lock.try_lock():
+        raise ValueError("Another cache move step is still running")
+    try:
+        # Only while the HeLab that asked still holds the cache (its token in cache.lock): a
+        # helper that outlived it must not touch anything a new HeLab is now using.
+        if not held_with(cache_lock(app_dir).path, str(move.get("token", ""))):
+            raise ValueError("The HeLab that asked for this cache move step is no longer moving the cache")
+        _cache_move_step(mover, action, app_dir, move, send)
+    finally:
+        lock.unlock()
+
+
+def _cache_move_step(mover: Any, action: str, app_dir: str, move: dict[str, Any], send: Emit) -> None:
+    def ours(record: dict[str, Any] | None) -> bool:
+        # Only this move's record: a later move's is never touched.
+        return record is not None and record.get("id") == move.get("id")
+    if action == "move":
+        record = mover.start(move["from"], move["to"], app_dir, move["method"], move.get("id", ""))
+        last = [0.0]
+
+        def progress(done: int, total: int) -> None:
+            now = time.monotonic()
+            if now - last[0] >= 0.2 or done == total:
+                last[0] = now
+                send({"kind": "move_progress", "done": done, "total": total})
+        try:
+            record = mover.move(record, app_dir, progress, lambda: False)
+        except (mover.MoveError, mover.MoveCancelled, OSError) as exc:
+            # Before the cutover: the source is intact (a rename is renamed back); a copy is discarded.
+            saved = mover.read_record(app_dir) or record
+            left = mover.abort(app_dir, saved)
+            message = str(exc) if isinstance(exc, mover.MoveError) else f"The move failed: {exc}"
+            # Where the store is now: the source, unless undoing a rename failed.
+            send({"kind": "move_failed", "message": message, "left": left, "store_at": mover.store_at(saved)})
+            return
+        send({"kind": "move_done", "record": record})
+    elif action == "cleanup":
+        saved = mover.read_record(app_dir)
+        left = mover.cleanup(app_dir, saved) if saved is not None and ours(saved) else []
+        send({"kind": "move_cleaned", "left": left})
+    elif action == "abort":
+        saved = mover.read_record(app_dir)
+        left = mover.abort(app_dir, saved, before_cutover=bool(move.get("before_cutover"))) if (
+            saved is not None and ours(saved)) else []
+        # Where the store is now: the source, unless undoing a rename failed.
+        send({"kind": "move_aborted", "left": left,
+              "store_at": mover.store_at(saved) if saved is not None and ours(saved) else ""})
+    elif action == "recover":
+        from helab.utils.cache_setting import open_settings, write_cache_setting
+        settings = open_settings(move["settings"])
+        unsaved: list[str] = []
+
+        def write(path: str) -> bool:
+            if write_cache_setting(settings, path):
+                return True
+            unsaved.append(path)  # The attempted value may linger in memory here, never on disk.
+            return False
+        message = mover.recover(app_dir, lambda: str(settings.value("dir_caches", "", type=str)), write)
+        # Usable only if the setting HeLab will read names the store: never after a failed write.
+        usable = not unsaved and mover.usable_after_recovery(app_dir, str(settings.value("dir_caches", "", type=str)))
+        send({"kind": "move_recovered", "message": message, "usable": usable})
+    else:
+        raise ValueError(f"Unknown cache move action: {action}")

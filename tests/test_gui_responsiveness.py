@@ -16,7 +16,8 @@ from pytestqt.qtbot import QtBot
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QTreeView
 
-from helab.io_helper import load, scan
+from helab.io_ops.loading import load
+from helab.io_ops.scanning import scan
 from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.utils.io_service import IORequest, IOService
 from helab.views.FolderExplorer import FolderExplorer
@@ -40,7 +41,7 @@ def test_scan_matches_shots_without_probing_children(tmp_path: Path) -> None:
     (tmp_path / "d1.txt").write_text("")
     (tmp_path / "d2.txt").write_text("")
     (tmp_path / "d_txy_forc1.txt").write_text("1,2,3\n")
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(tmp_path), events.append)
     assert events[-1]["status"] == "fixable"
     assert events[-1]["count"] == 1
@@ -55,7 +56,7 @@ def test_loader_preserves_shots_and_drops_nan_rows(tmp_path: Path) -> None:
     source.mkdir()
     output.mkdir()
     (source / "d_txy_forc7.txt").write_text("1,2,3\n4,,6\n")
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append)
     shot = next(event for event in events if event["kind"] == "shot")
     np.testing.assert_array_equal(np.load(shot["artifact"]), [[1, 2, 3]])
@@ -70,7 +71,7 @@ def test_compressed_cache_is_reused_and_validated(tmp_path: Path, monkeypatch: p
     output.mkdir()
     (source / "d_txy_forc7.txt").write_text("1,2,3\n")
     options = {"directory": str(tmp_path / "cache")}
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append, options)
 
     def forbidden(*args: Any, **kwargs: Any) -> Any:
@@ -177,13 +178,13 @@ def test_scope_and_stale_results(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, 
 def test_helpers_send_heartbeats_while_listing_and_checking_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from helab import io_helper
-    monkeypatch.setattr(io_helper.Heartbeat, "INTERVAL", 0.0)
+    from helab.io_ops import infra
+    monkeypatch.setattr(infra.Heartbeat, "INTERVAL", 0.0)
     source = tmp_path / "source"
     source.mkdir()
     for shot in (1, 2, 3):
         (source / f"d_txy_forc{shot}.txt").write_text("1,2,3\n")
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(source), events.append)
     assert [(e["phase"], e["entries"]) for e in events if e["kind"] == "heartbeat"] == [
         ("listing", 1), ("listing", 2), ("listing", 3)]
@@ -696,7 +697,7 @@ def test_load_progress_counts_cached_files_and_reports_unreadable_files(
         load(str(source), str(output), lambda event: None, options)
     info = good.stat()
     memory = [[1, info.st_size, info.st_mtime_ns]] if reuse == "memory" else None
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append, options if reuse == "disk" else None, memory)
     progress = [event for event in events if event["kind"] == "progress"]
     expected_files = [str(source / f"d_txy_forc{shot}.txt") for shot in (1, 2)]

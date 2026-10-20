@@ -15,7 +15,7 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
+from helab.io_ops.markers import create_root, remove_root
 from helab.utils import cache_paths, data_roots
 from helab.utils.cache_paths import Mount
 from helab.utils.cache_store import CacheStore
@@ -26,7 +26,7 @@ from helab.views.DataRootsTab import DELETE, NOT_MOUNTED_TOOLTIP, DataRootsTab
 
 pytestmark = pytest.mark.no_auto_data_root
 
-Events = list[dict[str, Any]]
+Events = list[Any]
 
 
 def options(tmp_path: Path) -> dict[str, Any]:
@@ -44,7 +44,7 @@ def share(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def placed(share: Path, tmp_path: Path) -> str:
     events: Events = []
-    io_helper.create_root(str(share), options(tmp_path), events.append)
+    create_root(str(share), options(tmp_path), events.append)
     return str(next(event for event in events if event["kind"] == "root_created")["uuid"])
 
 
@@ -63,7 +63,7 @@ def test_deleting_removes_the_marker_and_forgets_its_locations_but_not_other_sha
         store.record_root("smb://other/data", identifier, "smb", "share", decision="confirmed")
         store.record_root("smb://host/share-2", str(uuid.uuid4()), "smb", "share-2", decision="confirmed")
     events: Events = []
-    io_helper.remove_root(str(share), options(tmp_path), identifier, "smb://host/share", events.append)
+    remove_root(str(share), options(tmp_path), identifier, "smb://host/share", events.append)
     assert not (share / ".helab-root").exists()
     removed = next(event for event in events if event["kind"] == "root_removed")
     assert sorted(removed["forgotten"]) == ["smb://host/share", "smb://host/share/run"]
@@ -91,7 +91,7 @@ def test_deleting_refuses_a_marker_that_is_not_the_rows(share: Path, tmp_path: P
         marker.unlink()
     with pytest.raises(ValueError, match={"replaced": "changed since", "invalid": "never deletes it",
                                           "directory": "isn't a file", "missing": "no .helab-root"}[change]):
-        io_helper.remove_root(str(share), options(tmp_path), identifier, "smb://host/share", lambda _: None)
+        remove_root(str(share), options(tmp_path), identifier, "smb://host/share", lambda _: None)
     assert marker.exists() == (change != "missing")
     assert locations(tmp_path) == {"smb://host/share": identifier}
 
@@ -102,7 +102,7 @@ def test_without_permission_the_file_stays_and_is_named(share: Path, tmp_path: P
     share.chmod(stat.S_IRUSR | stat.S_IXUSR)
     try:
         events: Events = []
-        io_helper.remove_root(str(share), options(tmp_path), identifier, "smb://host/share", events.append)
+        remove_root(str(share), options(tmp_path), identifier, "smb://host/share", events.append)
     finally:
         share.chmod(stat.S_IRWXU)
     refused = next(event for event in events if event["kind"] == "root_remove_refused")

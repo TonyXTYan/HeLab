@@ -8,7 +8,7 @@ metadata:
   type: result
 ---
 Decided with Tony in Maestri chat (2026-10-16 and 2026-10-18). Code:
-`helab/utils/data_roots.py`, `helab/io_helper.py` (`_discover_root`,
+`helab/utils/data_roots.py`, `helab/io_ops/markers.py` (`_discover_root`,
 `create_root`, `reassign_root`, `verify_volumes`, `verify_known_roots`),
 `helab/utils/folder_cache.py`, `helab/views/DataRootDialogs.py`,
 `DataRootsTab.py` and `RootDuplicatesWindow.py`. Plan and stages:
