@@ -1,6 +1,7 @@
 """Parameters an analysis declares: defaults, limits and units, validated before a run.
 
-A ``choice`` parameter picks one of its ``choices``; another parameter can say it applies
+A ``choice`` parameter picks one of its ``choices`` and a ``text`` one holds free text the
+analysis reads itself (e.g. mask circles, ``masks``); another parameter can say it applies
 only under one of them (``when``), so the parameter tree shows it only then and the dock's
 source line leaves it out otherwise. ``group`` names the tree section it sits in, and
 ``page`` the settings tab (a plot whose parameters name more than one page gets a tab each).
@@ -12,7 +13,7 @@ from typing import Any, Literal, Mapping, Sequence
 
 from helab.analysis.display_units import number_text
 
-Kind = Literal["float", "int", "bool", "choice"]
+Kind = Literal["float", "int", "bool", "choice", "text"]  # "text": free text (multi-line)
 # The prefixes ``unit_prefix`` may name, with their factors.
 SI_FACTORS = {"G": 1e9, "M": 1e6, "k": 1e3, "": 1.0, "m": 1e-3, "µ": 1e-6, "n": 1e-9}
 Value = float | int | bool | str
@@ -42,6 +43,8 @@ class ParameterSpec:
         ``choices`` becomes the default)."""
         if self.kind == "bool":
             return bool(value)
+        if self.kind == "text":
+            return str(value)
         if self.kind == "choice":
             text = str(value)
             return text if text in self.choices else str(self.default)
@@ -80,6 +83,9 @@ class ParameterSpec:
         """``title value suffix`` for a source line."""
         if self.kind == "bool":
             shown = "on" if value else "off"
+        elif self.kind == "text":
+            lines = [line.strip() for line in str(value).splitlines() if line.strip()]
+            shown = "; ".join(lines) if lines else "(empty)"
         elif isinstance(value, float) and self.si and self.unit_prefix is not None:
             unit = f"{self.unit_prefix}{self.suffix.strip()}"
             return f"{self.title} {number_text(value / SI_FACTORS[self.unit_prefix])} {unit}"

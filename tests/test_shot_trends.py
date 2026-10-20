@@ -563,7 +563,7 @@ def test_registration_and_live_policy() -> None:
     from helab.scripts import standard
     assert shot_trends in standard.MODULES
     metadata = SCRIPT.get_metadata()
-    assert (metadata.name, metadata.analysis_id, metadata.version) == ("Shot trends", "helab.shot_trends", "1")
+    assert (metadata.name, metadata.analysis_id, metadata.version) == ("Shot trends", "helab.shot_trends", "2")
     assert SCRIPT.live_policy("Plot") == LivePolicy()
     assert SCRIPT.parameter_warnings("Plot", {"notify_low": True}) == [
         "Notify during Live is on but no low-count rule is: nothing is notified"]

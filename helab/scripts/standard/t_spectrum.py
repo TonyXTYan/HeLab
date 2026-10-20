@@ -31,9 +31,10 @@ import numpy.typing as npt
 import pyqtgraph as pg
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
-from helab.analysis.dataset_view import DatasetView
+from helab.analysis.dataset_view import DatasetView, Events
 from helab.analysis.display_units import T_SCALE, WIDTH_DIGITS, axis_label, frequency_text, time_text
 from helab.analysis.empty import empty_pane, empty_text
+from helab.analysis.masks import MASK_SPECS, all_masked_text, mask_brief, mask_from, mask_warnings, masked_text
 from helab.analysis.follow import LivePolicy
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.plot_axes import GroupedAxis
@@ -73,7 +74,8 @@ PADDING = ParameterSpec(
     tip="The transform is this many times the profile's length: the spectrum is drawn more finely, and peaks "
         "located better between bins, but its resolution stays 1 over the profile's length.")
 PEAKS, THRESHOLD, PEAKS_ABOVE = peak_specs(SPECTRUM_GROUP, 5)
-PARAMETERS = (*SHOT_SPECS, *RANGE, BIN_WIDTH, UNITS, WINDOW, SCALE, LOG, PADDING, PEAKS, THRESHOLD, PEAKS_ABOVE)
+PARAMETERS = (*SHOT_SPECS, *RANGE, *MASK_SPECS,
+              BIN_WIDTH, UNITS, WINDOW, SCALE, LOG, PADDING, PEAKS, THRESHOLD, PEAKS_ABOVE)
 
 AUTO_EVENTS = 10  # automatic bins: about this many events per bin on average …
 AUTO_BINS = (256, 16_384)  # … and at least / at most this many bins
@@ -102,6 +104,7 @@ class ProfileSpectrum:
     warnings: tuple[str, ...] = ()  # settings not followed as given
     short: str = ""  # why there is no spectrum (too few events or bins)
     notes: tuple[str, ...] = ()  # what else the plot says (events past the last whole bin)
+    masked: int = 0  # events the mask took out of the chosen shots (before the view range)
 
     @property
     def profile(self) -> npt.NDArray[np.float64]:
@@ -151,6 +154,8 @@ def auto_text(data: ProfileSpectrum) -> str:
 def empty_reason(data: ProfileSpectrum) -> str:
     """Why there is nothing to draw ("" when there is)."""
     text = empty_text(data.total_shots, len(data.shots), data.total)
+    if text and data.masked and data.shots:
+        return all_masked_text(data.masked)
     if text:
         return text
     warned = "".join(f" · ⚠ {warning}" for warning in data.warnings)
@@ -180,7 +185,7 @@ def titles(result: AnalysisResult, data: ProfileSpectrum) -> tuple[str, ...]:
     """The figure's title lines: what it shows, its bins and spectrum, then one line per note and
     warning."""
     first = (f"{result.input.short()} · {shots_text(data.shots, data.total_shots)} · {data.events:,} of "
-             f"{data.total:,} events in range")
+             f"{data.total:,} events in range{masked_text(data.masked)}")
     second = [f"{len(data.counts):,} T bins of {time_text(data.width, WIDTH_DIGITS)} "
               f"({'auto' if data.automatic else 'set'})"]
     if data.spectrum is not None:
@@ -304,7 +309,7 @@ class TProfileSpectrum(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.t_spectrum",
-            version="1",
+            version="2",
         )
 
     def get_actions(self) -> List[str]:
@@ -321,7 +326,7 @@ class TProfileSpectrum(DatasetAnalysis):
         width = float(values[BIN_WIDTH.name])
         padding = int(values[PADDING.name])
         spectrum = f"{values[WINDOW.name]} window" + (f", ×{padding} padding" if padding > 1 else "")
-        settings = (shots_brief(values), range_brief(values),
+        settings = (shots_brief(values), range_brief(values), mask_brief(values),
                     f"T bins {time_text(width, WIDTH_DIGITS)}" if width else "",
                     "counts" if values[UNITS.name] == COUNTS else "", spectrum,
                     "power" if values[SCALE.name] == POWER else "", "log" if values[LOG.name] else "",
@@ -340,12 +345,17 @@ class TProfileSpectrum(DatasetAnalysis):
         return {"brief": result_brief(data), "record_lines": record_lines(data)}
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
-        return list(range_warnings(values))
+        return [*range_warnings(values), *mask_warnings(values)]
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
+        values = context.parameters
+        shots = select_shots(context.view, values)
+        mask = mask_from(values)  # Circles that can't be read fail the run, saying which.
+        events, masked = mask.apply(context.view.events(shots))
+        return replace(self._compute(context, shots, events), masked=masked)
+
+    def _compute(self, context: AnalysisContext, shots: tuple[int, ...], events: Events) -> ProfileSpectrum:
         values, view = context.parameters, context.view
-        shots = select_shots(view, values)
-        events = view.events(shots)
         per_shot = values[UNITS.name] == RATE
         empty = ProfileSpectrum(shots, len(view.shots), len(events), per_shot=per_shot,
                                 warnings=range_warnings(values))

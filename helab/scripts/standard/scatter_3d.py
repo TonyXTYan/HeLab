@@ -19,6 +19,7 @@ from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_
                                       newest_shot, newest_specs, range_brief, range_specs, range_warnings,
                                       select_shots, selection_text, shots_brief, shots_text)
 from helab.analysis.display_units import axis_label, axis_scale, range_text
+from helab.analysis.masks import MASK_SPECS, all_masked_text, mask_brief, mask_from, mask_warnings, masked_text
 from helab.analysis.stats import AXES, DISPLAY_CAP, CropBox, crop_box, display_sample
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
@@ -54,6 +55,7 @@ class ScatterData:
     newest_shot: int | None = None
     newest: npt.NDArray[np.float64] = field(default_factory=lambda: np.empty((0, 3)))
     colour: tuple[int, int, int] = (214, 39, 40)
+    masked: int = 0  # events the mask took out of the chosen shots (before the crop)
 
     @property
     def analysed(self) -> int:
@@ -86,7 +88,8 @@ def note_text(data: ScatterData) -> str:
     shown = (f"All {data.analysed:,} events in range shown" if data.shown == data.analysed else
              f"Display sample: {data.shown:,} of {data.analysed:,} events in range")
     how = "manual range" if data.crop.manual else "crop"
-    text = f"{shown} · {how} keeps {data.crop.fraction:.1%} of {data.crop.total:,} · {shots_text(data.shots, data.total_shots)}"
+    text = (f"{shown} · {how} keeps {data.crop.fraction:.1%} of {data.crop.total:,}{masked_text(data.masked)} · "
+            f"{shots_text(data.shots, data.total_shots)}")
     if data.newest_shot is not None:
         text += f" · shot {data.newest_shot} highlighted ({len(data.newest):,} events)"
     return text + "".join(f" · ⚠ {warning}" for warning in data.warnings)
@@ -100,14 +103,14 @@ class Scatter3D(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.scatter_3d",
-            version="3",
+            version="4",
         )
 
     def get_actions(self) -> List[str]:
         return ["Plot"]
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
-        return [*SHOT_SPECS, *RANGE, POINT_SIZE, OPACITY, CAP, HIGHLIGHT, NEWEST_COLOUR]
+        return [*SHOT_SPECS, *RANGE, *MASK_SPECS, POINT_SIZE, OPACITY, CAP, HIGHLIGHT, NEWEST_COLOUR]
 
     def live_policy(self, action_name: str) -> LivePolicy:
         # Each rerun reloads the figure's page (up to the display cap's points) and the crop of a
@@ -118,16 +121,26 @@ class Scatter3D(DatasetAnalysis):
         points = f"points {float(values[POINT_SIZE.name]):g} px, opacity {float(values[OPACITY.name]):g}"
         if int(values[CAP.name]) != CAP.default:
             points += f", cap {int(values[CAP.name]):,}"
-        settings = (shots_brief(values), range_brief(values), points, newest_brief(values))
+        settings = (shots_brief(values), range_brief(values), mask_brief(values), points, newest_brief(values))
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
-        return list(range_warnings(values))
+        return [*range_warnings(values), *mask_warnings(values)]
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         values = context.parameters
         shots = select_shots(context.view, values)
+        xy_mask = mask_from(values)  # Circles that can't be read fail the run, saying which.
         events = context.view.events(shots)
+        newest = newest_shot(values, shots)
+        # The newest shot's events come last in ``events`` (shots ascending): drawn apart.
+        is_newest = np.zeros(len(events), dtype=bool)
+        if newest is not None:
+            is_newest[len(events) - len(txy(context.view.shots[newest])):] = True
+        kept = xy_mask.keeps(events)
+        masked = int(len(events) - np.count_nonzero(kept))
+        if masked:
+            events, is_newest = events[kept], is_newest[kept]
         context.check()
         if manual(values):
             crop = manual_box(events, values)
@@ -137,23 +150,23 @@ class Scatter3D(DatasetAnalysis):
         mask = crop.contains(events) if len(events) else np.zeros(0, dtype=bool)
         inside = events[mask]
         cap = int(values[CAP.name])
-        newest = newest_shot(values, shots)
         if newest is None:
             points = inside[display_sample(len(inside), cap)]
-            return ScatterData(crop, points, shots, len(context.view.shots), cap, range_warnings(values))
-        # The newest shot's events come last in ``events`` (shots ascending): drawn apart, all of
-        # them up to the cap, and the sample of the rest fills what the cap leaves.
-        is_newest = np.zeros(len(events), dtype=bool)
-        is_newest[len(events) - len(txy(context.view.shots[newest])):] = True
+            return ScatterData(crop, points, shots, len(context.view.shots), cap, range_warnings(values),
+                               masked=masked)
+        # The newest shot's events: all of them up to the cap, and the sample of the rest fills
+        # what the cap leaves.
         fresh, rest = inside[is_newest[mask]], inside[~is_newest[mask]]
         fresh = fresh[display_sample(len(fresh), cap)]
         points = rest[display_sample(len(rest), cap - len(fresh))]
         return ScatterData(crop, points, shots, len(context.view.shots), cap, range_warnings(values), newest,
-                           fresh, newest_colour(values))
+                           fresh, newest_colour(values), masked)
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: ScatterData = result.data
         if not data.crop.total:
+            if data.masked and data.shots:
+                return empty_pane(all_masked_text(data.masked), parent)
             return empty_pane(empty_text(data.total_shots, len(data.shots), 0), parent)
         pane = PlotlyPane(figure(result, data), note_text(data), parent)
         pane.note.setToolTip(f"{sample_text(data)}\n{crop_text(data.crop, data.warnings)}")

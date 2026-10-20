@@ -36,6 +36,7 @@ from helab.analysis.dataset_view import DatasetView, ViewIdentity, txy
 from helab.analysis.display_units import WIDTH_DIGITS, axis_scale, axis_text, axis_unit, number_text, range_text
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.estimates import Estimate
+from helab.analysis.masks import MASK_SPECS, Mask, all_masked_text, mask_brief, mask_from, mask_warnings
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.physics import (ResolvedConstants, sigma_v_from_arrival_width, sigma_v_from_transverse_width,
                                     temperature_estimate)
@@ -154,6 +155,7 @@ class Trends:
     notes: tuple[str, ...] = ()
     unsettled_files: int = 0
     constants: ResolvedConstants | None = field(default=None, compare=False)
+    masked: int = 0  # with no box: the events the mask took (all of them)
 
     @property
     def reused(self) -> int:
@@ -239,14 +241,15 @@ def low_rules(values: Mapping[str, Any]) -> tuple[Optional[int], Optional[float]
 
 
 def view_box(view: DatasetView, shots: tuple[int, ...], values: Mapping[str, Any],
-             cache: trends.ShotCache = trends.CACHE, owner: str = ""
+             cache: trends.ShotCache = trends.CACHE, owner: str = "", mask: Mask = Mask()
              ) -> tuple[tuple[tuple[float, float], ...], tuple[str, ...]]:
     """The box counts and estimates use, and notes on it: manual bounds as set; an axis without
     one (auto-crop, or a manual axis left at its full extent) from the chosen events, rounded out
     and, for a plot (``owner``), kept from an earlier run of this plot with the same range and
     Shots settings while the events stay inside it (``ShotCache.stable_range``). Without an
-    owner nothing is kept: the box comes from this run's input alone."""
-    events = view.events(shots)
+    owner nothing is kept: the box comes from this run's input alone. Only the events ``mask``
+    keeps count."""
+    events = mask.apply(view.events(shots))[0]
     if not len(events):
         return (), ()
     keep = keep_fraction(values)
@@ -264,7 +267,7 @@ def view_box(view: DatasetView, shots: tuple[int, ...], values: Mapping[str, Any
             if owner:
                 selection = tuple(values.get(spec.name, spec.default) for spec in SHOT_SPECS)
                 bounds, previous = cache.stable_range((owner, identity, axis, manual(values), round(keep, 9),
-                                                       selection), low, high)
+                                                       selection, mask.circles), low, high)
             else:
                 bounds, previous = trends.snapped(low, high), False
             found, kept = True, kept or previous
@@ -297,9 +300,12 @@ def compute_trends(context: AnalysisContext, cache: trends.ShotCache = trends.CA
     fraction = float(values.get(FRACTION.name, FRACTION.default)) / 100
     bins = int(values.get(BINS.name, BINS.default))
     min_events = int(values.get(MIN_EVENTS.name, MIN_EVENTS.default))
-    box, notes = view_box(view, shots, values, cache, context.owner)
+    mask = mask_from(values)  # Circles that can't be read fail the run, saying which.
+    box, notes = view_box(view, shots, values, cache, context.owner, mask)
     notes = (*range_warnings(values), *notes)
-    settings = (method, round(fraction, 9) if method == trends.EDGES else None, bins, min_events, box)
+    # The mask's circles key the per-shot estimates too: a changed mask never reuses one.
+    settings = (method, round(fraction, 9) if method == trends.EDGES else None, bins, min_events, box,
+                mask.circles)
     identity = view.identity.root_key or view.identity.source_path
     cache.note_owner(context.owner, identity)
     count = len(shots)
@@ -315,7 +321,8 @@ def compute_trends(context: AnalysisContext, cache: trends.ShotCache = trends.CA
         found = cache.get(key) if key is not None else None
         if found is None:
             if box:
-                found = trends.estimate_shot(txy(view.shots[shot]), box, method, bins, fraction, min_events)
+                found = trends.estimate_shot(mask.apply(txy(view.shots[shot]))[0], box, method, bins, fraction,
+                                             min_events)
             else:
                 found = trends.ShotEstimate(0, tuple(trends.AxisEstimate(failure="no events")
                                                      for _ in AXES))
@@ -354,12 +361,13 @@ def compute_trends(context: AnalysisContext, cache: trends.ShotCache = trends.CA
             notes = (*notes, "temperatures from the threshold widths' Gaussian-equivalent σ")
     counts_mean, counts_sd = trends.moving_stats(counts, window)
     newest = shots[-1] if shots else None
+    masked = sum(len(view.shots[shot]) for shot in shots) if not box and mask.active else 0
     return Trends(np.array(shots, dtype=np.int64), counts, times, fallback, low,
                   Series("Counts", counts.astype(np.float64), np.full(count, np.nan), counts_mean, counts_sd),
                   centres, widths, temperatures, tuple(failures), box, method, fraction, len(view.shots), computed,
                   tuple(view.added_shots), view.fingerprints.get(newest) if newest is not None else None,
                   bool(values.get(NOTIFY.name)), window, tuple(notes), view.provenance.unsettled_files,
-                  constants if temperatures else None)
+                  constants if temperatures else None, masked)
 
 
 # Notifications
@@ -592,14 +600,14 @@ class ShotTrends(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.shot_trends",
-            version="1",
+            version="2",
         )
 
     def get_actions(self) -> List[str]:
         return ["Plot"]
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
-        return [*SHOT_SPECS, *RANGE, X_AXIS, CENTRES, WIDTHS, TEMPERATURES, BAND, WINDOW, METHOD, FRACTION, BINS,
+        return [*SHOT_SPECS, *RANGE, *MASK_SPECS, X_AXIS, CENTRES, WIDTHS, TEMPERATURES, BAND, WINDOW, METHOD, FRACTION, BINS,
                 MIN_EVENTS, LOW_ABSOLUTE, LOW_COUNT, LOW_RELATIVE, LOW_PERCENT, NOTIFY, *CONSTANTS]
 
     def constant_keys(self, action_name: str) -> tuple[str, ...]:
@@ -622,7 +630,7 @@ class ShotTrends(DatasetAnalysis):
         rules = trends.LowFlags(np.empty(0, dtype=bool), np.empty(0, dtype=bool), np.empty(0, dtype=bool),
                                 np.empty(0), absolute, fraction,
                                 int(values.get(WINDOW.name, WINDOW.default))).rules_text()
-        settings = (shots_brief(values), range_brief(values),
+        settings = (shots_brief(values), range_brief(values), mask_brief(values),
                     method_text(method, float(values.get(FRACTION.name, FRACTION.default)) / 100),
                     "against shot time" if values.get(X_AXIS.name) == SHOT_TIME else "",
                     f"window {int(values.get(WINDOW.name, WINDOW.default)):,}",
@@ -631,7 +639,7 @@ class ShotTrends(DatasetAnalysis):
         return used, " · ".join(part for part in settings if part)
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
-        warnings = list(range_warnings(values))
+        warnings = [*range_warnings(values), *mask_warnings(values)]
         if values.get(NOTIFY.name) and not any(low_rules(values)):
             warnings.append("Notify during Live is on but no low-count rule is: nothing is notified")
         return warnings
@@ -651,6 +659,8 @@ class ShotTrends(DatasetAnalysis):
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Trends = result.data
         if not len(data.shots) or not data.box:
+            if data.masked and len(data.shots):
+                return empty_pane(all_masked_text(data.masked), parent)
             return empty_pane(empty_text(data.total_shots, len(data.shots), 0), parent)
         notify_low(result)
         widget = TrendsWidget(layout_key(result.parameters), data, parent)

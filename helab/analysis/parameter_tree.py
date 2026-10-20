@@ -5,10 +5,12 @@ import re
 from decimal import Decimal
 from typing import Any, Sequence, cast
 
-from PyQt6.QtWidgets import QTabWidget, QWidget
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QFocusEvent, QKeyEvent
+from PyQt6.QtWidgets import QApplication, QTabWidget, QTextEdit, QWidget
 import pyqtgraph.functions as fn
 from pyqtgraph.parametertree import Parameter, ParameterTree, registerParameterType
-from pyqtgraph.parametertree.parameterTypes.basetypes import SimpleParameter
+from pyqtgraph.parametertree.parameterTypes.basetypes import SimpleParameter, WidgetParameterItem
 from pyqtgraph.parametertree.parameterTypes.numeric import NumericParameterItem
 from pyqtgraph.widgets.SpinBox import SpinBox
 
@@ -197,9 +199,77 @@ for _name in NUMBER_TYPES.values():
     registerParameterType(_name, UnitNumberParameter, override=True)
 
 
+class CommitTextEdit(QTextEdit):
+    """A multi-line text box whose value is committed only when the edit ends: focus leaves it,
+    Ctrl+Enter, or ``commit`` (the plot's Rerun calls ``commit_pending_text``). So a Live rerun
+    never runs with half-typed text (e.g. mask circles), and every keystroke doesn't count."""
+
+    sigCommitted = pyqtSignal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setAcceptRichText(False)
+        self._committed = ""
+
+    def sizeHint(self) -> QSize:
+        return QSize(300, 90)
+
+    def value(self) -> str:
+        return self._committed
+
+    def setValue(self, text: str) -> None:
+        self._committed = str(text)
+        if self.toPlainText() != self._committed:
+            self.setPlainText(self._committed)
+
+    def commit(self) -> None:
+        text = self.toPlainText()
+        if text != self._committed:
+            self._committed = text
+            self.sigCommitted.emit()
+
+    def focusOutEvent(self, e: QFocusEvent | None) -> None:
+        self.commit()
+        super().focusOutEvent(e)
+
+    def keyPressEvent(self, e: QKeyEvent | None) -> None:
+        if (e is not None and e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and e.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            self.commit()
+            return
+        super().keyPressEvent(e)
+
+
+def commit_pending_text() -> None:
+    """Commit the text box being typed in, if any (before a deliberate run reads the settings)."""
+    focus = QApplication.focusWidget()
+    if isinstance(focus, CommitTextEdit):
+        focus.commit()
+
+
+class CommitTextItem(WidgetParameterItem):  # type: ignore[misc]
+    def makeWidget(self) -> CommitTextEdit:
+        self.hideWidget = False
+        self.asSubItem = True
+        widget = CommitTextEdit()
+        setattr(widget, "sigChanged", widget.sigCommitted)  # The name WidgetParameterItem connects.
+        return widget
+
+
+class CommitTextParameter(Parameter):  # type: ignore[misc]
+    @property
+    def itemClass(self) -> type:
+        return CommitTextItem
+
+
+TEXT_TYPE = "helab_text"
+registerParameterType(TEXT_TYPE, CommitTextParameter, override=True)
+TREE_TYPES = {**NUMBER_TYPES, "text": TEXT_TYPE}
+
+
 def _with_number_types(children: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for child in children:
-        child["type"] = NUMBER_TYPES.get(child["type"], child["type"])
+        child["type"] = TREE_TYPES.get(child["type"], child["type"])
         _with_number_types(child.get("children", []))
     return children
 

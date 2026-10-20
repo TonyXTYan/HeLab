@@ -29,10 +29,11 @@ import numpy.typing as npt
 import pyqtgraph as pg
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
-from helab.analysis.dataset_view import DatasetView
+from helab.analysis.dataset_view import DatasetView, Events
 from helab.analysis.display_units import (LENGTH_SCALE, LENGTH_UNIT, T_SCALE, WIDTH_DIGITS, axis_label, frequency_text,
                                           number_text, range_text, time_text)
 from helab.analysis.empty import empty_pane, empty_text
+from helab.analysis.masks import MASK_SPECS, all_masked_text, mask_brief, mask_from, mask_warnings, masked_text
 from helab.analysis.follow import LivePolicy
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.plot_axes import GroupedAxis
@@ -67,7 +68,8 @@ WINDOW = window_spec(SPECTRUM_GROUP, WHEN_SPECTRUM)
 LOG = ParameterSpec("spectrum_log", "Log Y", "bool", True, group=SPECTRUM_GROUP, when=WHEN_SPECTRUM,
                     tip="Logarithmic amplitude axis.")
 PEAKS, THRESHOLD, PEAKS_ABOVE = peak_specs(SPECTRUM_GROUP, 3, WHEN_SPECTRUM)
-PARAMETERS = (*SHOT_SPECS, *RANGE, BIN_WIDTH, MIN_EVENTS, SPECTRUM, WINDOW, LOG, PEAKS, THRESHOLD, PEAKS_ABOVE)
+PARAMETERS = (*SHOT_SPECS, *RANGE, *MASK_SPECS,
+              BIN_WIDTH, MIN_EVENTS, SPECTRUM, WINDOW, LOG, PEAKS, THRESHOLD, PEAKS_ABOVE)
 
 AUTO_EVENTS = 100  # automatic bins: about this many events per bin on average …
 AUTO_BINS = (10, 1000)  # … and at least / at most this many bins
@@ -106,6 +108,7 @@ class PositionProfile:
     notes: tuple[str, ...] = ()  # what else the plot should say (bins left out, gaps filled)
     spectra: tuple[Spectrum, ...] = ()  # of the mean X and Y traces (empty: off, or too short)
     spectrum_asked: bool = False
+    masked: int = 0  # events the mask took out of the chosen shots (before the view range)
 
     @property
     def kept(self) -> npt.NDArray[np.bool_]:
@@ -235,6 +238,8 @@ def left_out_note(left_out: int, bins: int, minimum: int) -> str:
 def empty_reason(data: PositionProfile) -> str:
     """Why there is nothing to draw ("" when there is)."""
     text = empty_text(data.total_shots, len(data.shots), data.total)
+    if text and data.masked and data.shots:
+        return all_masked_text(data.masked)
     if text:
         return text
     warned = "".join(f" · ⚠ {warning}" for warning in data.warnings)
@@ -260,7 +265,7 @@ def titles(result: AnalysisResult, data: PositionProfile) -> tuple[str, ...]:
     bins = len(data.counts)
     how = "auto" if data.automatic else "set"
     first = (f"{result.input.short()} · {shots_text(data.shots, data.total_shots)} · {data.events:,} of "
-             f"{data.total:,} events in range")
+             f"{data.total:,} events in range{masked_text(data.masked)}")
     second = f"{bins:,} T bins of {time_text(data.width, WIDTH_DIGITS)} ({how})"
     return (first, second, *data.notes, *(f"⚠ {warning}" for warning in data.warnings))
 
@@ -384,7 +389,7 @@ class MeanPositionVsT(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.mean_position_vs_t",
-            version="1",
+            version="2",
         )
 
     def get_actions(self) -> List[str]:
@@ -404,7 +409,8 @@ class MeanPositionVsT(DatasetAnalysis):
         if values[SPECTRUM.name]:
             spectrum = f"spectrum {values[WINDOW.name]}"
             spectrum += ", log" if values[LOG.name] else ""
-        settings = (shots_brief(values), range_brief(values), f"T bins {time_text(width, WIDTH_DIGITS)}" if width else "",
+        settings = (shots_brief(values), range_brief(values), mask_brief(values),
+                    f"T bins {time_text(width, WIDTH_DIGITS)}" if width else "",
                     f"≥ {int(values[MIN_EVENTS.name]):,} events per bin", spectrum)
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
@@ -420,12 +426,17 @@ class MeanPositionVsT(DatasetAnalysis):
         return {"brief": result_brief(data), "record_lines": record_lines(data)}
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
-        return list(range_warnings(values))
+        return [*range_warnings(values), *mask_warnings(values)]
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
+        values = context.parameters
+        shots = select_shots(context.view, values)
+        mask = mask_from(values)  # Circles that can't be read fail the run, saying which.
+        events, masked = mask.apply(context.view.events(shots))
+        return replace(self._compute(context, shots, events), masked=masked)
+
+    def _compute(self, context: AnalysisContext, shots: tuple[int, ...], events: Events) -> PositionProfile:
         values, view = context.parameters, context.view
-        shots = select_shots(view, values)
-        events = view.events(shots)
         minimum = int(values[MIN_EVENTS.name])
         empty = PositionProfile(shots, len(view.shots), len(events), minimum=minimum,
                                 warnings=range_warnings(values), spectrum_asked=bool(values[SPECTRUM.name]))
