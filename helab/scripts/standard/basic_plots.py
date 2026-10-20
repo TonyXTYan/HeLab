@@ -15,8 +15,8 @@ from plotly.subplots import make_subplots
 from PyQt6.QtCore import QRectF, pyqtSlot
 from PyQt6.QtWidgets import QWidget
 
-from helab.analysis.backends import (FOLLOWER, MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane, matplotlib_pane,
-                                     mpl_colour, mpl_figure, rgb)
+from helab.analysis.backends import (FOLLOWER, MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane, WrappingLabel,
+                                     matplotlib_pane, mpl_colour, mpl_figure, rgb, set_title)
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec
@@ -245,7 +245,7 @@ class CountsPerShot(DatasetAnalysis):
             return MatplotlibPane(counts_matplotlib(result), parent)
         plot: Any = pg.PlotWidget(parent)
         plot.setBackground("w")
-        plot.setTitle(source_title(result, counts_title(data)))
+        set_title(plot, source_title(result, counts_title(data)))
         plot.setLabel("bottom", "Shot number")
         plot.setLabel("left", "Events")
         plot.showGrid(x=True, y=True, alpha=0.3)
@@ -261,7 +261,7 @@ class CountsPerShot(DatasetAnalysis):
             return False
         if isinstance(widget, pg.PlotWidget) and hasattr(widget, "counts_curve"):
             plot = cast(Any, widget)
-            plot.setTitle(source_title(result, counts_title(data)))
+            set_title(plot, source_title(result, counts_title(data)))
             plot.counts_curve.setData(data.shots, data.counts)
             return True
         return (plotly_update(widget, counts_plotly(result))
@@ -374,7 +374,8 @@ class TxyHistograms(DatasetAnalysis):
         log_y = bool(result.parameters.get(LOG_Y.name, False))
         widget: Any = pg.GraphicsLayoutWidget(parent)
         widget.setBackground("w")
-        widget.title_label = widget.addLabel("", row=0, col=0)
+        widget.title_label = WrappingLabel("")
+        widget.addItem(widget.title_label, row=0, col=0)
         rows, overlays = [], []
         for row, (item, highlighted) in enumerate(zip(items, histogram_layout(result)[1]), start=1):
             # A right axis only for the newest shot's counts (pyqtgraph shows any axis it is given).
@@ -433,7 +434,7 @@ def fill_histograms(widget: Any, result: AnalysisResult) -> None:
     log_y = bool(result.parameters.get(LOG_Y.name, False))
     widget.title_label.setText(histograms_title(result))
     for row, (item, (plot, main, scaled, overlay)) in enumerate(zip(data.items, widget.histogram_rows)):
-        plot.setTitle(histogram_title(item, item.axis in data.reversed))
+        set_title(plot, histogram_title(item, item.axis in data.reversed))
         main.setData(item.edges, nan_empty(item.counts, log_y))
         if overlay is not None:
             fresh = data.newest[row]

@@ -44,8 +44,8 @@ from PyQt6.QtWidgets import QWidget
 from scipy.signal import find_peaks
 
 from helab.analysis.dataset_view import DatasetView, txy
-from helab.analysis.backends import (FOLLOWER, MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane, matplotlib_pane,
-                                     mpl_colour, mpl_figure, rgb)
+from helab.analysis.backends import (FOLLOWER, MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane, WrappingLabel,
+                                     matplotlib_pane, mpl_colour, mpl_figure, rgb, set_title)
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec
@@ -517,7 +517,8 @@ class TransferFractions(DatasetAnalysis):
             return MatplotlibPane(matplotlib_figure(result), parent)
         widget: Any = pg.GraphicsLayoutWidget(parent)
         widget.setBackground("w")
-        widget.title_label = widget.addLabel("", row=0, col=0)
+        widget.title_label = WrappingLabel("")
+        widget.addItem(widget.title_label, row=0, col=0)
         colours = [pg.mkColor(colour) for colour in order_colours(orders)]
         plot = widget.addPlot(row=1, col=0)
         plot.setLabel("bottom", "Shot number")
@@ -714,7 +715,7 @@ def fill_pyqtgraph(widget: Any, result: AnalysisResult) -> None:
     for column, curve in enumerate(widget.fraction_curves):
         curve.setData(data.shots, fractions[:, column])
     edges, counts = data.histogram
-    widget.times_plot.setTitle(times_title(data))
+    set_title(widget.times_plot, times_title(data))
     if len(counts):
         widget.times_curve.setData(edges, counts)
     else:

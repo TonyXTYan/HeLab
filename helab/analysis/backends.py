@@ -4,7 +4,8 @@ The choice is the plot's, not the analysis's: it is not a parameter (not in the 
 or its reuse key), and changing it draws the result already shown again, without a rerun.
 
 - **PyQtGraph**: native Qt drawing, fast to redraw while Live adds shots, and painted on lab PCs
-  that can't paint QtWebEngine. Its 3D view needs OpenGL (``opengl_available``).
+  that can't paint QtWebEngine. Its 3D view needs OpenGL (``opengl_available``). Titles are
+  ``WrappingLabel``s (``set_title`` for a plot's own), wrapped to the plot's width.
 - **Plotly**: an interactive page served by the Dash server (``PlotlyPane``), with Open in
   browser for PCs whose GPU can't paint QtWebEngine; a rerun updates the page in place.
 - **Matplotlib**: publication-style figures with Matplotlib's own toolbar (zoom, pan, save).
@@ -15,6 +16,8 @@ from __future__ import annotations
 import functools
 from typing import Any, Callable, Optional, Sequence
 
+import pyqtgraph as pg
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
 from helab.analysis.parameters import ParameterSpec
@@ -163,3 +166,50 @@ def opengl_available() -> bool:
         return surface.isValid() and context.makeCurrent(surface)
     finally:
         context.doneCurrent()
+
+
+class WrappingLabel(pg.LabelItem):  # type: ignore[misc]  # pyqtgraph is untyped
+    """A PyQtGraph label whose text wraps to the width the layout gives it. PyQtGraph's own
+    ``LabelItem`` makes its text's full width its minimum width, so a long title (a plot's notes,
+    the newest shot's line) holds the layout wider than its widget and the plot runs off its right
+    edge. This one's minimum width is 0, and its height is that of its lines at its width."""
+
+    def __init__(self, text: str = " ", parent: Any = None, **opts: Any) -> None:
+        super().__init__(text, parent, **opts)
+        document = self.item.document()
+        if document is not None:
+            option = document.defaultTextOption()
+            option.setAlignment(Qt.AlignmentFlag.AlignHCenter)  # Each wrapped line centred, as one line is.
+            document.setDefaultTextOption(option)
+
+    def resizeEvent(self, ev: Any) -> None:
+        width = float(self.size().width())
+        if width > 0 and self.item.textWidth() != width:
+            self.item.setTextWidth(width)
+        super().resizeEvent(ev)
+
+    def updateMin(self) -> None:
+        height = float(self.itemRect().height())
+        self.setMinimumWidth(0)
+        self.setMinimumHeight(height)
+        self.setMaximumHeight(height)
+        self._sizeHint = {Qt.SizeHint.MinimumSize: (0, height), Qt.SizeHint.PreferredSize: (0, height),
+                          Qt.SizeHint.MaximumSize: (-1, height), Qt.SizeHint.MinimumDescent: (0, 0)}
+        self.updateGeometry()
+
+
+def set_title(plot: Any, text: str) -> None:
+    """``plot``'s title (a PyQtGraph PlotItem or PlotWidget) set to ``text``, wrapped to the
+    plot's width (``WrappingLabel``) in place of PyQtGraph's one-line title of fixed height."""
+    item = plot.getPlotItem() if hasattr(plot, "getPlotItem") else plot
+    label = item.titleLabel
+    if not isinstance(label, WrappingLabel):
+        item.layout.removeItem(label)
+        if label.scene() is not None:
+            label.scene().removeItem(label)
+        label = WrappingLabel(" ", size="11pt", parent=item)
+        item.layout.addItem(label, 0, 1)
+        item.layout.setRowMinimumHeight(0, 0)
+        item.layout.setRowMaximumHeight(0, 16_777_215)  # QWIDGETSIZE_MAX: the label sets the height
+        item.titleLabel = label
+    label.setText(text)
