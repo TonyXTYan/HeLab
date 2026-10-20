@@ -79,4 +79,6 @@ merged in. Not pushed or merged. Design and the choices proposed for Tony: [note
 - Targeted tests after the merge (live plots, release time, constants, physics, folder constants,
   lab parameters, velocity, plot text, analysis, display units, script system, bec, fits) `-n 2
   --reruns 5`: 372 passed, no reruns.
-- Full suite: in the final report (the Coordinator's message).
+- Full suite `-n 2 --reruns 5 --reruns-delay 1 -rR` after the merge: **2 failed, 1966 passed, 7
+  skipped, 2 xfailed, 11 rerun in 209 s**: the two known root-only failures (5 reruns each) and one
+  rerun of `test_window_resize.py::test_label_keeps_painting_after_resize[repeated]`, which passed.
