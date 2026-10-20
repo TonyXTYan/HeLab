@@ -2,6 +2,18 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/legacy/DLD_front_panel" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/legacy/DLD_front_panel/lib/Core_BEC_Analysis" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/legacy/DLD_front_panel/lib/Core_BEC_Analysis/bin/MBeautifier" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/legacy/DLD_front_panel/lib/Core_BEC_Analysis/bin/ciecam02" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/legacy/DLD_front_panel/lib/Core_BEC_Analysis/bin/errorbarxy" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/legacy/DLD_front_panel/lib/Core_BEC_Analysis/bin/export_fig" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/legacy/DLD_front_panel/lib/Core_BEC_Analysis/lib/bootstrap_error" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/legacy/DLD_front_panel/lib/Core_BEC_Analysis/lib/fast_search_histogram" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/legacy/DLD_front_panel/lib/Core_BEC_Analysis/lib/fast_sorted_mask" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/legacy/DLD_front_panel/lib/Core_BEC_Analysis/lib/matlab_function_cache" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/legacy/DLD_front_panel/lib/Core_BEC_Analysis/lib/sewm" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/legacy/Momentum_Bells_test" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/legacy/tdc_autoconverter" vcs="Git" />
   </component>
 </project>

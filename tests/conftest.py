@@ -43,6 +43,12 @@ os.environ["HELAB_DIR_CACHES_OVERRIDE"] = tempfile.mkdtemp(prefix=f"helab_test_c
 os.environ["HELAB_APP_DIR_OVERRIDE"] = tempfile.mkdtemp(prefix=f"helab_test_app_{_worker_id}_")
 os.environ["HELAB_TEST_VOLUME_ID"] = "test-volume"
 os.environ["HELAB_TEST_LOCAL_MOUNT"] = Path(tempfile.gettempdir()).anchor
+# Tests never touch real data (a mounted share, a developer's data folder): helpers, and
+# helab.io_helper's functions called here, refuse such source paths before touching them and note
+# them in this folder, which fails the test (``no_real_data``). New tabs start in an empty folder
+# of their own, never the first of constants.DEV_POTENTIAL_DATA_PATHS that exists.
+os.environ["HELAB_TEST_SOURCE_GUARD"] = tempfile.mkdtemp(prefix=f"helab_test_refused_{_worker_id}_")
+START_FOLDER = tempfile.mkdtemp(prefix=f"helab_test_start_{_worker_id}_")
 # Tests write TXY files and load them at once; helpers would otherwise treat
 # them as still being written. Settling has its own tests.
 os.environ["HELAB_SETTLE_SECONDS"] = "0"
@@ -60,6 +66,24 @@ def pytest_configure(config: pytest.Config) -> None:
     if (constants.cache_dir(), constants.DIR_TEMPS, constants.app_folder()) != expected:
         raise pytest.UsageError(f"Tests would use HeLab's real folders ({constants.cache_dir()}, "
                                 f"{constants.DIR_TEMPS}, {constants.app_folder()}), not {expected}")
+
+
+@pytest.fixture(autouse=True)
+def no_real_data(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """New tabs start in an empty temp folder; a test whose helpers were refused a source path
+    that could be real data (``io_helper._guard``) fails, naming it. A refusal noted after its
+    test ended (a helper still running) fails the next test of this worker."""
+    monkeypatch.setattr("helab.views.FolderTabWidget.DEFAULT_DATA_PATH", START_FOLDER)
+    monkeypatch.setattr("helab.views.FolderTabWidget.DEV_POTENTIAL_DATA_PATHS", [START_FOLDER])
+    yield
+    notes = Path(os.environ["HELAB_TEST_SOURCE_GUARD"])
+    refused: list[str] = []
+    for note in sorted(notes.glob("*.txt")):
+        refused += note.read_text(encoding="utf-8").splitlines()
+        note.unlink()
+    if refused:
+        pytest.fail(f"Tests never touch real data, but this test's I/O asked for: {sorted(set(refused))}",
+                    pytrace=False)
 
 
 @pytest.fixture(autouse=True)
