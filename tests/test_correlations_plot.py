@@ -18,8 +18,10 @@ from pytestqt.qtbot import QtBot
 from helab.analysis import correlations
 from helab.analysis.constant_layers import resolve_for_run
 from helab.analysis.dataset_view import DatasetView, build_view
+from helab.analysis.estimates import Estimate
 from helab.analysis.parameters import effective
 from helab.analysis.physics import resolve
+from helab.analysis.release import ReleaseTime
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled
 from helab.analysis.velocity import arrival_time
 from helab.scripts import standard
@@ -146,7 +148,7 @@ def test_a_thermal_source_reads_g2_zero_of_two(thermal: DatasetView) -> None:
     line = correlations_plot.zero_line(data)
     assert line.startswith("g²(0) = ") and "over baseline" in line and line.endswith(" mm/s")
     assert correlations_plot.velocity_line(data) == "t_r 20,031.2 ms (folder) · origin (0.5, −0.4) mm (manual)"
-    record = json.loads(json.dumps(result.found, allow_nan=False))
+    record = json.loads(json.dumps(dict(result.found), allow_nan=False))
     assert record["correlation"]["g2_zero"]["value"] == pytest.approx(zero.value)
     assert record["velocity"]["release_time"] == T_R and record["velocity"]["origin_from"] == "manual"
     assert record["brief"].startswith("g²(0) ") and record["reuse"]["shots_used"] == list(range(1, 41))
@@ -174,7 +176,7 @@ def test_an_uncorrelated_source_has_no_peak_and_g2_near_one() -> None:
             assert correlations_plot.zero_line(data).startswith("no peak: g² near 0 is ")
 
 
-def test_back_to_back_pairs_peak_at_zero_with_the_trap_origin() -> None:
+def test_back_to_back_pairs_peak_at_zero_with_the_trap_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     values = {"corr_mode": "back-to-back", "corr_axis": "v_x", "corr_range": 0.1 * SCALE, "corr_bins": 40,
               "corr_window": 0.01 * SCALE, "keep_percent": 100.0, "n_boot": 100}
     events = pair_velocities(7)
@@ -185,18 +187,30 @@ def test_back_to_back_pairs_peak_at_zero_with_the_trap_origin() -> None:
     assert found.g2_zero.value - 1 > 5 * found.g2_zero.se
     assert abs(found.fit["centre"].value) < 0.003 * SCALE
     assert correlations_plot.separation_name(data.kind, data.source) == "v_x₁ + v_x₂"
-    # Without the origin, X is measured from 0: v_x is off by x₀/τ and the pairs sum to 2x₀/t_f.
-    unknown = data_of(run(view, values, folder={"release_time": T_R}))
+    # Without the folder's origin it is detected in the run (a halo is no cloud at rest: unsure, warned),
+    # close enough here for the peak to stay at 0.
+    detected = data_of(run(view, values, folder={"release_time": T_R}))
+    assert detected.origin_how.startswith("detected") and detected.release_how == "folder"
+    if detected.origin_how == "detected (unsure)":
+        assert any("origin's detection is unsure" in warning for warning in detected.warnings)
+    assert detected.result is not None and detected.result.fit is not None and detected.result.fit.ok
+    centre = detected.result.fit["centre"]
+    assert abs(centre.value) < max(0.003 * SCALE, 3 * centre.se)  # Far from the assumed origin's 2x₀/t_f.
+    # Nothing detected either: assumed (0, 0), in amber, X measured from 0: v_x is off by x₀/τ and the
+    # pairs sum to 2x₀/t_f (the trap above Y = 0 here, so the window on v_y keeps the pairs).
+    monkeypatch.setattr(correlations_plot, "detect_release_time",
+                        lambda *args, **kwargs: ReleaseTime(Estimate(math.nan), "detected", 0.4, failure="no peak"))
+    unknown = data_of(run(txy_view(events, (ORIGIN[0], 0.0)), values, folder={"release_time": T_R}))
     assert unknown.origin_how == "assumed" and "⚠ origin assumed (0, 0) mm" in correlations_plot.velocity_line(unknown)
     assert unknown.result is not None and unknown.result.fit is not None and unknown.result.fit.ok
     shift = 2 * ORIGIN[0] / CONSTANTS.fall_time
     assert abs(unknown.result.fit["centre"].value - shift) < 0.003 * SCALE
-    # A source moving at v₀ set here: the peak at 0 again.
-    moving = txy_view([v + np.array([0.0, 0.02, 0.0]) for v in events])
+    # A source moving at v₀ puts the peak at 2v₀; v₀ set here: at 0 again.
+    moving = txy_view([v + np.array([0.0, 0.0015, 0.0]) for v in events])
     off = data_of(run(moving, values))
     assert off.result is not None and off.result.fit is not None
-    assert abs(off.result.fit["centre"].value - 0.04) < 0.003 * SCALE
-    centred = data_of(run(moving, {**values, "bb_source": "set here", "bb_vx": 0.02}))
+    assert abs(off.result.fit["centre"].value - 0.003) < 0.003 * SCALE
+    centred = data_of(run(moving, {**values, "bb_source": "set here", "bb_vx": 0.0015}))
     assert centred.result is not None and centred.result.fit is not None
     assert abs(centred.result.fit["centre"].value) < 0.003 * SCALE
     assert correlations_plot.separation_name(centred.kind, centred.source) == "v_x₁ + v_x₂ − 2v₀"
@@ -257,6 +271,11 @@ def test_live_adds_a_shot_without_counting_the_old_ones_again(monkeypatch: pytes
     assert np.array_equal(second.result.in_counts, fresh.result.in_counts)
     assert np.array_equal(second.result.between_counts, fresh.result.between_counts)
     assert "12 shots held, 1 counted" in correlations_plot.counts_line(second)
+    # The Live rerun skipped the bootstrap (said so); a deliberate run keeps it.
+    assert second.live_skipped and correlations_plot.LIVE_NOTE in second.notes
+    assert second.result.se_method.startswith("pair counting")
+    assert not first.live_skipped and first.result is not None and first.result.se_method == "shot bootstrap"
+    assert fresh.result.se_method == "shot bootstrap"
     # A rerun of the same data counts nothing; a binning change counts every shot again.
     again = data_of(run(later, values, owner="live-1"))
     assert (again.reused, again.added) == (13, 0)

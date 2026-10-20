@@ -113,7 +113,7 @@ SOURCE = ParameterSpec("bb_source", "Back-to-back source v₀", "choice", AT_RES
                        tip="The velocity of the source the pairs fly apart from (a halo's centre). 0: at rest at "
                            "the trap. A source moving at v₀ puts the peak at 2v₀ unless v₀ is set here. With "
                            "re-centring, relative to each shot's centre.")
-SOURCE_V = tuple(ParameterSpec(f"bb_{name[2:]}", f"v₀ {name}", "float", 0.0, (-10.0, 10.0), " m/s", group=KIND_GROUP,
+SOURCE_V = tuple(ParameterSpec(f"bb_v{name[2:]}", f"v₀ {name}", "float", 0.0, (-10.0, 10.0), " m/s", group=KIND_GROUP,
                                page=G2_PAGE, si=True, unit_prefix="m", when=(SOURCE.name, SET_HERE),
                                tip=f"The back-to-back source's {name}, in mm/s.")
                  for name in VELOCITY_AXES)
@@ -171,6 +171,8 @@ REFERENCE_COLOUR = (120, 120, 120)
 CURVE_POINTS = 400
 CLOCK = time.monotonic  # the time budget's clock (tests replace it)
 CLOSED_LIMIT = 4096  # owners of closed plots remembered, so a late run doesn't bring their state back
+LIVE_NOTE = ("Live rerun: shot bootstrap skipped, so the bars are pair counting's (too small: pairs share events) "
+             "and g²(0)'s error the delete-one-shot jackknife's; Rerun (or Live's end) runs it")
 
 
 # ---- per-plot state (Live) ----
@@ -247,6 +249,7 @@ class CorrelationData:
     window: float = math.nan  # m/s (1D)
     source: tuple[float, float, float] | None = None  # the BB source v₀ (m/s), None for collinear
     recentred: bool = False
+    live_skipped: bool = False  # a Live rerun: the bootstrap was skipped (``LIVE_NOTE``)
 
     def all_notes(self) -> tuple[str, ...]:
         found = self.result.notes if self.result is not None else ()
@@ -520,16 +523,21 @@ def compute_correlations(context: AnalysisContext) -> CorrelationData:
     budget = float(values[BUDGET.name])
     started = time.monotonic()
     baseline: Baseline = "fixed" if values.get(BASELINE.name) == FIXED else "free"
+    boots = int(values[N_BOOT.name])
+    skipped = context.live and boots > 0  # Live reruns skip the costly bootstrap, as the Release time plot does.
     result = correlate(shot_events, spec, cache=state.cache, state=state.counts, cancelled=context.cancelled,
-                       budget=budget if budget > 0 else None, clock=CLOCK, n_boot=int(values[N_BOOT.name]), baseline=baseline)
+                       budget=budget if budget > 0 else None, clock=CLOCK, n_boot=0 if skipped else boots,
+                       baseline=baseline)
     notes = list(data.notes)
+    if skipped:
+        notes.append(LIVE_NOTE)
     if not result.complete:
         notes.append("Rerun or Live's next shots continue counting from the shots counted")
     if unit != MM_PER_S and RECOIL_WAVELENGTH_UNCONFIRMED:
         notes.append(f"{unit} from He* at {number_text(RECOIL_WAVELENGTH * 1e9, 6)} nm: unconfirmed which beams set "
                      "the recoil unit")
     return replace(data, result=result, reused=reused, added=len(result.shots_used) - reused,
-                   seconds=time.monotonic() - started, notes=tuple(notes))
+                   seconds=time.monotonic() - started, notes=tuple(notes), live_skipped=skipped)
 
 
 # ---- text ----
@@ -802,7 +810,7 @@ class Correlations(DatasetAnalysis):
                 "brief": brief(data), "record_lines": record_lines(data),
                 "constants": describe_constants(data.constants, CONSTANT_KEYS, every=True),
                 "reuse": {"release_time": velocity["release_time"], "origin": velocity["origin"],
-                          "view_range": velocity["view_range"],
+                          "view_range": velocity["view_range"], "bootstrap_skipped": data.live_skipped,
                           "shots_used": list(result.shots_used) if result is not None else []}}
 
     def plot_closed(self, action_name: str, owner: str, path: str) -> None:
