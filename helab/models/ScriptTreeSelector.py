@@ -793,6 +793,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
             found = self.script.result_record(self.action, result) if result.state == "completed" else []
             if found:
                 record = "\n".join((record, *found))
+            if result.state == "completed":
+                settings = " · ".join(filter(None, (settings, self.script.describe_result(self.action, result))))
             if warnings:
                 settings = " · ".join(filter(None, (settings, f"⚠ {warnings}")))
                 record = f"{record}\nWarning: {warnings}"

@@ -111,6 +111,13 @@ class DatasetAnalysis(HelabAnalysisScript):
         constants the run resolved)."""
         return "", describe(without_constants(self.parameters(action_name)), values)
 
+    def describe_result(self, action_name: str, result: AnalysisResult) -> str:
+        """What a completed run found that the dock's settings line should add after
+        ``describe_run``'s settings, in short form (e.g. a spectrum's resolution and Nyquist
+        frequency, or a bin width chosen from the data); "" for nothing. Called for completed
+        results only (as ``result_record``). Default: nothing."""
+        return ""
+
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
         """Settings the run could not follow as given, and what it did instead (e.g. "X: min >
         max, using full extent"), for the dock's source line, its record and the settings tab."""
