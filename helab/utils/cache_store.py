@@ -354,11 +354,16 @@ class CacheStore:
         self.database = os.path.join(root, "records.sqlite")
         self.read_only = False
         self._depth = 0
+        # Mount paths whose volume hints the opener didn't trust (io_helper's local lane, with
+        # ``verified_volumes``): a folder there has no key until they are verified.
+        self._unverified_mounts: list[str] = []
         self._writing = False
         try:
             self._conn = self._open(busy_timeout)
-            # (A read-only store may lack the column: it then has no raw times.)
+            # (A read-only store may lack the column or the table: it then has no raw times, and
+            # no folder sets constants.)
             self._raw_times = "raw_times" if _has_raw_times(self._conn) else "'[]'"
+            self._constants_table = _has_table(self._conn, "folder_constants")
             meta = self._meta()
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be opened: {exc}") from exc
@@ -418,7 +423,7 @@ class CacheStore:
             version = _layout_version(conn)
             if version != self._expected_layout:
                 raise sqlite3.DatabaseError(f"unsupported layout version {version}")
-            _add_raw_times(conn)
+            _migrate(conn)
         except BaseException:
             conn.close()
             raise
@@ -556,6 +561,8 @@ class CacheStore:
         try:
             with self.transaction():
                 for table in tables:
+                    if not _has_table(self._conn, table):
+                        continue  # (A store this HeLab couldn't bring up to date: nothing to move.)
                     columns = [str(row[1]) for row in self._conn.execute(f"PRAGMA table_info({table})")]
                     rows = self._conn.execute(
                         f"SELECT * FROM {table} WHERE path=? OR (path>=? AND path<?)",
@@ -724,6 +731,9 @@ class CacheStore:
                     raise
         stored = list(dict.fromkeys(keys.values()))
         rows: dict[str, dict[str, Any]] = {}
+        if not self._constants_table:
+            # A read-only store (written by a newer HeLab) without the table: none set here.
+            return {path: _missing() for path in keys}
         try:
             with self.transaction(write=False):
                 for start in range(0, len(stored), 500):
@@ -1675,16 +1685,29 @@ def _has_raw_times(conn: sqlite3.Connection) -> bool:
     return any(row[1] == "raw_times" for row in conn.execute("PRAGMA table_info(datasets)"))
 
 
-def _add_raw_times(conn: sqlite3.Connection) -> None:
-    """Give a store made before shot times its ``datasets.raw_times`` column (``[]``: no raw times
-    known). Older HeLabs name the columns they read and write, so they keep working with it."""
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'datasets'").fetchone() is None:
-        return
-    if _has_raw_times(conn):
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone() is not None
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring a store made by an earlier HeLab of this layout up to date, on every writable open:
+    the ``folder_constants`` table (F0b) and ``datasets.raw_times`` (D7; ``[]``: no raw times
+    known). ``SCHEMA`` gives a new store both; a store created before either is never created
+    again, so without this it would lack them for good. Older HeLabs name the tables and columns
+    they use, so they keep working with these. Checked again under the write lock: several
+    helpers may open an old store at once, and only the first one changes it."""
+    def missing() -> tuple[bool, bool]:
+        return (not _has_table(conn, "folder_constants"),
+                _has_table(conn, "datasets") and not _has_raw_times(conn))
+    if not any(missing()):
         return
     conn.execute("BEGIN IMMEDIATE")
     try:
-        if not _has_raw_times(conn):  # (Another helper may have added it meanwhile.)
+        constants, raw_times = missing()  # (Another helper may have added them meanwhile.)
+        if constants:
+            conn.execute("CREATE TABLE IF NOT EXISTS folder_constants "
+                         "(path TEXT PRIMARY KEY, record TEXT NOT NULL, set_at REAL NOT NULL)")
+        if raw_times:
             conn.execute("ALTER TABLE datasets ADD COLUMN raw_times TEXT NOT NULL DEFAULT '[]'")
         conn.execute("COMMIT")
     except BaseException:

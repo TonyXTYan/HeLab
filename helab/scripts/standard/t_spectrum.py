@@ -32,10 +32,11 @@ import pyqtgraph as pg
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
 from helab.analysis.dataset_view import DatasetView
-from helab.analysis.display_units import frequency_text, time_text, time_unit
+from helab.analysis.display_units import T_SCALE, WIDTH_DIGITS, axis_label, frequency_text, time_text
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.follow import LivePolicy
 from helab.analysis.parameters import ParameterSpec
+from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
                                       range_warnings, select_shots, selection_text, shots_brief, shots_text)
@@ -52,6 +53,7 @@ RANGE = range_specs(
 PROFILE_GROUP = "T profile"
 BIN_WIDTH = ParameterSpec(
     "t_bin", "T bin width (0 = auto)", "float", 0.0, (0.0, 10.0), " s", group=PROFILE_GROUP, si=True,
+    unit_prefix="m",
     tip="Each bin is exactly this wide, from the start of the range; the spectrum reaches half the bins' rate "
         "(Nyquist). 0 = automatic, from the data rate: about 10 events per bin on average, 256–16,384 bins.")
 RATE, COUNTS = "rate per shot", "counts"
@@ -94,7 +96,6 @@ class ProfileSpectrum:
     clamp: str = ""  # automatic, and at a bin limit: "at least" or "at most" (else "")
     counts: npt.NDArray[np.int64] = field(default_factory=lambda: np.empty(0, dtype=np.int64))
     per_shot: bool = True
-    time_unit: str = "ms"
     box: CropBox | None = None
     spectrum: Spectrum | None = None
     warnings: tuple[str, ...] = ()  # settings not followed as given
@@ -124,12 +125,12 @@ def bin_width(events: int, span: float, given: float) -> tuple[float, bool, str,
     "at most" or "", what it says when widened)."""
     if given > 0:
         if given > span:
-            return span, False, "", (f"T bin width {time_text(given)} is wider than the range "
-                                     f"({time_text(span)}): using one bin of the range")
+            return span, False, "", (f"T bin width {time_text(given, WIDTH_DIGITS)} is wider than the range "
+                                     f"({time_text(span, WIDTH_DIGITS)}): using one bin of the range")
         if span / given > MAX_BINS:
             wider = span / MAX_BINS
-            return wider, False, "", (f"T bin width {time_text(given)} gives over {MAX_BINS:,} bins: using "
-                                      f"{time_text(wider)}")
+            return wider, False, "", (f"T bin width {time_text(given, WIDTH_DIGITS)} gives over {MAX_BINS:,} bins: "
+                                      f"using {time_text(wider, WIDTH_DIGITS)}")
         return given, False, "", ""
     low, high = AUTO_BINS
     wanted = events // AUTO_EVENTS
@@ -175,7 +176,8 @@ def peak_lines(data: ProfileSpectrum) -> list[str]:
 def titles(result: AnalysisResult, data: ProfileSpectrum) -> tuple[str, str]:
     first = (f"{result.input.short()} · {shots_text(data.shots, data.total_shots)} · {data.events:,} of "
              f"{data.total:,} events in range")
-    second = [f"{len(data.counts):,} T bins of {time_text(data.width)} ({'auto' if data.automatic else 'set'})"]
+    second = [f"{len(data.counts):,} T bins of {time_text(data.width, WIDTH_DIGITS)} "
+              f"({'auto' if data.automatic else 'set'})"]
     if data.spectrum is not None:
         spectrum = data.spectrum
         second.append(spectrum_text(spectrum))
@@ -185,11 +187,40 @@ def titles(result: AnalysisResult, data: ProfileSpectrum) -> tuple[str, str]:
     return first, " · ".join(second)
 
 
+def result_brief(data: ProfileSpectrum) -> str:
+    """The automatic bins and the spectrum's frequencies, for the settings line."""
+    parts = []
+    if data.automatic:
+        parts.append(f"T bins {time_text(data.width, WIDTH_DIGITS)} (auto: {auto_text(data)})")
+    if data.spectrum is not None:
+        parts.append(spectrum_text(data.spectrum))
+    return " · ".join(parts)
+
+
+def record_lines(data: ProfileSpectrum) -> list[str]:
+    """The bins, the spectrum's frequencies and the peak list, for the dock's record."""
+    how = f"auto: {auto_text(data)}" if data.automatic else "set"
+    lines = [f"T profile: {len(data.counts):,} bins of {time_text(data.width, WIDTH_DIGITS)} ({how}), "
+             f"{data.events:,} events", *data.notes]
+    spectrum = data.spectrum
+    if spectrum is None:
+        return [*lines, data.short] if data.short else lines
+    lines.append(f"Spectrum: {spectrum.window} window, {spectrum_text(spectrum)}, corrected for the bins' "
+                 f"averaging (÷ sinc(f · bin width))")
+    peaks = peak_lines(data)
+    if peaks:
+        lines.append(f"Peaks (prominence ≥ {spectrum.threshold:.3g} {data.unit}):")
+        lines += [f"  {line}" for line in peaks]
+    elif spectrum.threshold:
+        lines.append(f"No peak with a prominence of {spectrum.threshold:.3g} {data.unit} or more")
+    return lines
+
+
 class SpectrumPlot(QWidget):
     """The summed T profile above its spectrum with the peaks marked, and the peak list
     (``graphics``, a PyQtGraph layout); ``show_data`` draws a newer result in place."""
 
-    def __init__(self, key: tuple[bool, bool, bool, str], parent: Optional[QWidget] = None) -> None:
+    def __init__(self, key: tuple[bool, bool, bool], parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -197,16 +228,18 @@ class SpectrumPlot(QWidget):
         self.graphics.setBackground("w")
         layout.addWidget(self.graphics)
         self.key = key
-        log, power, per_shot, unit = key
+        log, power, per_shot = key
         self.title: Any = self.graphics.addLabel("", row=0, col=0)
-        self.profile_plot: Any = self.graphics.addPlot(row=1, col=0, title="T profile, summed over the shots")
-        self.profile_plot.setLabel("bottom", f"T ({unit})")
+        self.profile_plot: Any = self.graphics.addPlot(row=1, col=0, title="T profile, summed over the shots",
+                                                       axisItems={"bottom": GroupedAxis("bottom")})
+        self.profile_plot.setLabel("bottom", axis_label("T"))
         self.profile_plot.setLabel("left", "Rate (kHz per shot)" if per_shot else "Events per bin")
         self.profile_plot.showGrid(x=True, y=True, alpha=0.3)
         self.profile: Any = self.profile_plot.plot([], [], pen=pg.mkPen(COLOUR))
         self.profile.setDownsampling(auto=True, method="peak")
         self.profile.setClipToView(True)
-        self.spectrum_plot: Any = self.graphics.addPlot(row=2, col=0, title="Spectrum")
+        self.spectrum_plot: Any = self.graphics.addPlot(row=2, col=0, title="Spectrum",
+                                                        axisItems={"left": GroupedAxis("left")})
         self.spectrum_plot.setLabel("bottom", "Frequency", units="Hz")
         quantity = "Power" if power else "Amplitude"
         self.spectrum_plot.setLabel("left", f"{quantity} ({'kHz/shot' if per_shot else 'events'}"
@@ -228,8 +261,7 @@ class SpectrumPlot(QWidget):
         log = self.key[0]
         first, second = titles(result, data)
         self.title.setText(f"{html.escape(first)}<br>{html.escape(second)}")
-        scale = 1e3 if data.time_unit == "ms" else 1.0
-        self.profile.setData(data.centres * scale, data.profile)
+        self.profile.setData(data.centres * T_SCALE, data.profile)
         for label in self.labels:
             self.spectrum_plot.removeItem(label)
         self.labels = []
@@ -285,43 +317,23 @@ class TProfileSpectrum(DatasetAnalysis):
         width = float(values[BIN_WIDTH.name])
         padding = int(values[PADDING.name])
         spectrum = f"{values[WINDOW.name]} window" + (f", ×{padding} padding" if padding > 1 else "")
-        settings = (shots_brief(values), range_brief(values), f"T bins {time_text(width)}" if width else "",
+        settings = (shots_brief(values), range_brief(values),
+                    f"T bins {time_text(width, WIDTH_DIGITS)}" if width else "",
                     "counts" if values[UNITS.name] == COUNTS else "", spectrum,
                     "power" if values[SCALE.name] == POWER else "", "log" if values[LOG.name] else "",
                     f"{int(values[PEAKS.name]):,} peaks")
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def describe_result(self, action_name: str, result: AnalysisResult) -> str:
-        data = result.data
-        if not isinstance(data, ProfileSpectrum) or not len(data.counts):
-            return ""
-        parts = []
-        if data.automatic:
-            parts.append(f"T bins {time_text(data.width)} (auto: {auto_text(data)})")
-        if data.spectrum is not None:
-            parts.append(spectrum_text(data.spectrum))
-        return " · ".join(parts)
+        """The run's ``brief`` (``result_found``): kept when the plot is released."""
+        return str(result.found.get("brief", ""))
 
-    def result_record(self, action_name: str, result: AnalysisResult) -> List[str]:
-        """The bins, the spectrum's frequencies and the peak list, for the dock's record."""
-        data = result.data
+    def result_found(self, action_name: str, data: Any) -> dict[str, Any]:
+        """For the dock: ``brief`` (the automatic bins, the spectrum's frequencies) and
+        ``record_lines`` (the bins, the spectrum's frequencies and the peak list)."""
         if not isinstance(data, ProfileSpectrum) or not len(data.counts):
-            return []
-        how = f"auto: {auto_text(data)}" if data.automatic else "set"
-        lines = [f"T profile: {len(data.counts):,} bins of {time_text(data.width)} ({how}), {data.events:,} events",
-                 *data.notes]
-        spectrum = data.spectrum
-        if spectrum is None:
-            return [*lines, data.short] if data.short else lines
-        lines.append(f"Spectrum: {spectrum.window} window, {spectrum_text(spectrum)}, corrected for the bins' "
-                     f"averaging (÷ sinc(f · bin width))")
-        peaks = peak_lines(data)
-        if peaks:
-            lines.append(f"Peaks (prominence ≥ {spectrum.threshold:.3g} {data.unit}):")
-            lines += [f"  {line}" for line in peaks]
-        elif spectrum.threshold:
-            lines.append(f"No peak with a prominence of {spectrum.threshold:.3g} {data.unit} or more")
-        return lines
+            return {}
+        return {"brief": result_brief(data), "record_lines": record_lines(data)}
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
         return list(range_warnings(values))
@@ -352,14 +364,15 @@ class TProfileSpectrum(DatasetAnalysis):
         warnings = range_warnings(values) + ((widened,) if widened else ())
         dropped = dropped_text(binned)
         data = ProfileSpectrum(shots, len(view.shots), len(events), len(times) - binned.dropped, lower, width,
-                               automatic, clamp, counts, per_shot, time_unit(lower, upper)[0], box,
+                               automatic, clamp, counts, per_shot, box,
                                warnings=warnings, notes=(dropped,) if dropped else ())
         times = times[binned.kept]
         if len(times) < MIN_EVENTS:
             return replace(data, short=f"Only {len(times):,} event{'' if len(times) == 1 else 's'} in the view "
                                        f"range: a spectrum needs {MIN_EVENTS} or more")
         if bins < MIN_BINS:
-            return replace(data, short=f"Only {bins:,} T bin{'' if bins == 1 else 's'} of {time_text(width)} in "
+            return replace(data, short=f"Only {bins:,} T bin{'' if bins == 1 else 's'} of "
+                                       f"{time_text(width, WIDTH_DIGITS)} in "
                                        f"the view range: a spectrum needs {MIN_BINS} or more (T bin width setting)")
         context.check()
         padding, lowered = padding_for(bins, int(values[PADDING.name]))
@@ -382,14 +395,14 @@ class TProfileSpectrum(DatasetAnalysis):
         return widget
 
     @staticmethod
-    def key(result: AnalysisResult, data: ProfileSpectrum) -> tuple[bool, bool, bool, str]:
-        """What the plot's axes are: log, power, per shot, T's unit."""
+    def key(result: AnalysisResult, data: ProfileSpectrum) -> tuple[bool, bool, bool]:
+        """What the plot's axes are: log, power, per shot."""
         return (bool(result.parameters.get(LOG.name, LOG.default)), result.parameters.get(SCALE.name) == POWER,
-                data.per_shot, data.time_unit)
+                data.per_shot)
 
     def update(self, widget: QWidget, result: AnalysisResult) -> bool:
         """A rerun (e.g. Live's next shots) draws in place, keeping zoom and pan, while the axes
-        (log, power, units, T's unit) stay; otherwise, or to or from an empty plot, anew."""
+        (log, power, units) stay; otherwise, or to or from an empty plot, anew."""
         data: ProfileSpectrum = result.data
         if not isinstance(widget, SpectrumPlot) or empty_reason(data) or widget.key != self.key(result, data):
             return False

@@ -166,6 +166,35 @@ def test_an_update_from_ram_stats_only_the_new_shots_raw_files(
     assert view.fallback_times() == (3,)
 
 
+def test_a_held_shots_raw_file_is_never_stat_again_while_its_txy_file_is_unchanged(
+        run: Path, tmp_path: Path, shot_time_stats: list[str]) -> None:
+    """Raw d<N>.txt files are never rewritten (Tony): with the caller's times sent along, an update
+    from RAM that also writes the disk cache (reading the held shots' TXY files again for it) stats
+    only the new shot's raw file, and the cache gets every time."""
+    first_events = run_load(run, tmp_path, no_cache=True)
+    first = loaded(first_events)
+    base = dataset(run, first, first_events)
+    write_shot(run, 4)
+    age_folder(run)
+    shot_time_stats.clear()
+    events = run_load(run, tmp_path, memory=first["fingerprint"], base_signature=first["signature"],
+                      memory_raw_times=base.metadata["raw_times"])
+    event = loaded(events)
+    assert event["source"] == "updated" and event["memory_shots"] == [1, 2, 3]
+    assert any(item["kind"] == "disk_cached" for item in events)  # the held shots were read for the cache
+    assert shot_time_stats == ["d4.txt"]
+    shot_time_stats.clear()
+    cached = loaded(run_cached(run, tmp_path))
+    assert times(cached) == {1: raw_at(1), 2: raw_at(2), 4: raw_at(4)} and not shot_time_stats
+    # A changed TXY file (another run's shot of that number) is stat'ed again, held or not.
+    write_shot(run, 2, converted_at=CONVERTED_AT + 10)
+    set_mtime(run / "d2.txt", raw_at(2) + 5)
+    age_folder(run)
+    again = loaded(run_load(run, tmp_path, memory=cached["fingerprint"], base_signature=cached["signature"],
+                            memory_raw_times=cached["raw_times"]))
+    assert shot_time_stats == ["d2.txt"] and times(again)[2] == raw_at(2) + 5
+
+
 def test_another_run_copied_over_the_folder_gets_its_own_times(
         run: Path, tmp_path: Path, shot_time_stats: list[str]) -> None:
     """A later run copied to the same path, with more shots of the same numbers: its changed shots
@@ -299,6 +328,7 @@ def test_the_apps_datasets_carry_the_times_through_an_update(
     monkeypatch.setattr(service, "_dispatch", lambda: None)
     cache = FolderCache(service)
     path = str(run)
+    payloads: list[dict[str, Any]] = []
 
     def replay() -> Dataset:
         """Run the queued load in-process and deliver its events, as the service's reader would."""
@@ -306,8 +336,10 @@ def test_the_apps_datasets_carry_the_times_through_an_update(
         request = next(item for item in service.pending if item.owner == job.owner)
         service.pending.remove(request)
         payload = request.payload
+        payloads.append(dict(payload))
         events = run_load(run, tmp_path, memory=payload.get("memory"),
-                          base_signature=payload.get("base_signature", ""), no_cache=True)
+                          base_signature=payload.get("base_signature", ""), no_cache=True,
+                          memory_raw_times=payload.get("memory_raw_times"))
         for event in events + [{"kind": "done"}]:
             if event["kind"] == "shot":
                 event = {**event, "array": np.load(event.pop("artifact"))}
@@ -326,6 +358,8 @@ def test_the_apps_datasets_carry_the_times_through_an_update(
         assert cache.submit("tab", 1, path, "load", force=True)
         update = replay()
         assert update.metadata["source"] == "updated" and update.metadata["memory_shots"] == [1, 2, 3]
+        # The held shots' times go with their fingerprints: the helper never stats them again.
+        assert payloads[-1]["memory_raw_times"] == [[1, raw_at(1) * NS], [2, raw_at(2) * NS]]
         assert build_view(update).shot_times() == {1: raw_at(1), 2: raw_at(2), 3: CONVERTED_AT, 4: raw_at(4)}
     finally:
         service.shutdown()

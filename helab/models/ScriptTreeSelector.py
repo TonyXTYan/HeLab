@@ -718,7 +718,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         self.result = result
         specs = self.script.parameters(self.action)
-        warnings = "; ".join(self.script.parameter_warnings(self.action, result.parameters))
+        warnings = "; ".join(self._hook("parameter_warnings", [], result.parameters))
         content: Optional[QWidget] = None
         error = result.error if result.state == "failed" else ""
         if result.state == "completed":
@@ -783,18 +783,18 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         show = getattr(self.main_window, "set_plot_result", None)
         if callable(show):
-            chosen, settings = self.script.describe_run(self.action, result.parameters, self.view)
+            chosen, settings = self._hook("describe_run", ("", ""), result.parameters, self.view)
             record = describe(without_constants(specs), result.parameters, every=True)
             if (constants := result.resolved_constants) is not None:
                 # The constants not at their defaults (all of them, with origins, are in the record).
                 used = describe_constants(constants, self.constant_keys)
                 settings = " · ".join(filter(None, (settings, used and f"constants: {used}",
                                                     *(f"⚠ {note}" for note in constants.notes))))
-            found = self.script.result_record(self.action, result) if result.state == "completed" else []
+            found = self._hook("result_record", [], result) if result.state == "completed" else []
             if found:
                 record = "\n".join((record, *found))
             if result.state == "completed":
-                settings = " · ".join(filter(None, (settings, self.script.describe_result(self.action, result))))
+                settings = " · ".join(filter(None, (settings, self._hook("describe_result", "", result))))
             if warnings:
                 settings = " · ".join(filter(None, (settings, f"⚠ {warnings}")))
                 record = f"{record}\nWarning: {warnings}"
@@ -806,6 +806,15 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 old.deleteLater()
         self._show_follow()
 
+    def _hook(self, name: str, fallback: Any, *args: Any) -> Any:
+        """The script's ``name`` hook for this action, or ``fallback`` if it raises (logged): these run
+        in Qt slots, where an exception from a user's script would abort the app."""
+        try:
+            return getattr(self.script, name)(self.action, *args)
+        except Exception:
+            logging.exception("%s of %s failed", name, self.name)
+            return fallback
+
     def _show_detected(self, result: AnalysisResult) -> None:
         """Put what the run found into the settings (they don't rerun it), except a setting changed
         since the run started (what was typed meanwhile stays) or already holding the value."""
@@ -813,7 +822,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if root is None:
             return
         specs = {spec.name: spec for spec in self.script.parameters(self.action)}
-        for name, value in self.script.detected_parameters(self.action, result).items():
+        for name, value in self._hook("detected_parameters", {}, result).items():
             if name in specs:
                 parameter, value = parameter_of(root, specs[name]), specs[name].coerce(value)
                 if parameter.value() == result.parameters.get(name) and parameter.value() != value:

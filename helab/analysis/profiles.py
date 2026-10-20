@@ -3,7 +3,7 @@ smoothing, and the fits with their temperatures.
 
 roadmaps/dld-front-panel-port.md (Decided) sets the units and the rate method, after the
 front panel's ``dld_plot_tof.m`` with its bug fixed:
-- **Axes:** X and Y in mm; T in ms or s, chosen from its range (``display_unit``).
+- **Axes:** X and Y in mm, T in ms (``display_units``: Tony, 2026-10-20).
 - **Rates:** counts / bin width / number of shots, after the view range (and, when chosen,
   the whole box) has picked the events: T in kHz per shot (per ms), X and Y per mm per shot
   (the front panel divided X and Y by the bin width only).
@@ -23,11 +23,13 @@ import numpy as np
 import numpy.typing as npt
 from scipy.sparse import csr_matrix
 
-from helab.analysis.estimates import Estimate, si_prefix
-from helab.analysis.fits import (MODELS, VARIANCE_FLOOR, FitModel, FitResult, arrival_time_model, bin_bounds,
-                                 bin_centres, bin_means, fit_histogram)
-from helab.analysis.physics import (TABLE, ResolvedConstants, sigma_v_from_arrival_width,
-                                    sigma_v_from_transverse_width, temperature_estimate)
+from helab.analysis.display_units import WIDTH_DIGITS, axis_text, estimate_text
+from helab.analysis.estimates import Estimate
+from helab.analysis.fits import (MAX_RADIUS_RATIO, MODELS, VARIANCE_FLOOR, FitModel, FitResult, arrival_time_model,
+                                 bin_bounds, bin_centres, bin_means, fit_histogram)
+from helab.analysis.physics import (ResolvedConstants, sigma_v_from_arrival_width, sigma_v_from_transverse_width,
+                                    temperature_estimate)
+from helab.analysis.velocity import effective_fall_distance
 
 Array = npt.NDArray[np.float64]
 
@@ -37,22 +39,6 @@ COUNTS, RATE = "counts", "rate per shot"
 # Bin widths, in the data's s and m, to the rate's ms and mm: T per ms is kHz.
 RATE_UNITS = {"T": "kHz per shot", "X": "per mm per shot", "Y": "per mm per shot"}
 RATE_SCALE = 1e3
-# T below this span (s) is shown in ms, else in s.
-T_SECONDS_FROM = 1.0
-
-
-def display_unit(axis: str, low: float, high: float) -> tuple[float, str]:
-    """(factor, unit) to show an axis's values (data in s and m): X and Y in mm, T in ms when
-    its range spans under ``T_SECONDS_FROM`` (1 s), else in s."""
-    if axis != "T":
-        return 1e3, "mm"
-    span = high - low
-    return (1e3, "ms") if math.isfinite(span) and span < T_SECONDS_FROM else (1.0, "s")
-
-
-def unit_of(axis: str) -> str:
-    """The data's unit of an axis: s for T, m for X and Y (``Estimate.text`` adds the prefix)."""
-    return "s" if axis == "T" else "m"
 
 
 def rate_factor(bin_width: float, shots: int) -> float:
@@ -78,21 +64,15 @@ SMOOTH_MAX_BINS = 5000  # more would be needed: the bins are widened to fit, and
 KERNEL_HALF_WIDTH = 4.0  # the kernel is cut at ±4 σ (and normalised)
 
 
-def si_text(value: float, unit: str) -> str:
-    """``0.1 ms``, ``200 µm``: a value with an SI prefix, 3 significant digits."""
-    exponent, prefix = si_prefix(value)
-    return f"{value / 10 ** exponent:.3g} {prefix}{unit}"
-
-
-def smoothing_bins(low: float, high: float, sigma: float, unit: str = "") -> tuple[int, str]:
+def smoothing_bins(low: float, high: float, sigma: float, axis: str = "T") -> tuple[int, str]:
     """The bin count giving bins of σ/5 over [low, high], at most ``SMOOTH_MAX_BINS``, and a
-    note when that cap widened them (``unit``: the data's, for the note)."""
+    note when that cap widened them (``axis``: whose unit the note uses)."""
     if not (high > low and sigma > 0):
         return 1, ""
     wanted = math.ceil((high - low) / (sigma / SMOOTH_BIN_FACTOR))
     if wanted <= SMOOTH_MAX_BINS:
         return max(wanted, 1), ""
-    return SMOOTH_MAX_BINS, (f"bins widened to {si_text((high - low) / SMOOTH_MAX_BINS, unit)} (σ/5 would "
+    return SMOOTH_MAX_BINS, (f"bins widened to {axis_text(axis, (high - low) / SMOOTH_MAX_BINS, WIDTH_DIGITS)} (σ/5 would "
                              f"need {wanted:,} bins; at most {SMOOTH_MAX_BINS:,})")
 
 
@@ -143,18 +123,37 @@ def smooth(counts: npt.ArrayLike, sigma_bins: float) -> Array:
 
 # Fits
 
-GAUSSIAN, ARRIVAL, BIMODAL = "Gaussian", "Arrival-time thermal", "Bimodal TF² + Gaussian"
-T_MODELS = (GAUSSIAN, ARRIVAL, BIMODAL)
-XY_MODELS = (GAUSSIAN, BIMODAL)
-MODEL_KEYS = {GAUSSIAN: "gaussian", ARRIVAL: "arrival_time", BIMODAL: "bimodal_tf2_gaussian"}
+GAUSSIAN, ARRIVAL = "Gaussian", "Arrival-time thermal"
+# The bimodal fits' Thomas–Fermi exponent follows how the histogram integrates the condensate
+# (fits.py, above ``thomas_fermi``): p = 2 for a full projection, p = 3/2 for a thin slice.
+BIMODAL, BIMODAL_SLICE = "Bimodal TF² + Gaussian", "Bimodal TF^3/2 + Gaussian"
+BIMODALS = (BIMODAL, BIMODAL_SLICE)
+T_MODELS = (GAUSSIAN, ARRIVAL, BIMODAL, BIMODAL_SLICE)
+XY_MODELS = (GAUSSIAN, BIMODAL, BIMODAL_SLICE)
+MODEL_KEYS = {GAUSSIAN: "gaussian", ARRIVAL: "arrival_time", BIMODAL: "bimodal_tf2_gaussian",
+              BIMODAL_SLICE: "bimodal_tf1_5_gaussian"}
+TF_EXPONENT_TIP = (
+    "The bimodal fits' Thomas–Fermi exponent p follows how the histogram integrates the condensate, not "
+    "the expansion: a Thomas–Fermi cloud keeps its inverted-parabola shape through time of flight (only "
+    "its radii grow), and integrating (1 − r²) over k other axes gives (1 − u²)^(1 + k/2). "
+    "p = 2: a full projection, the other two axes' ranges enclosing the condensate (any T, X or Y "
+    "histogram of all events; a crop to about 0.7 R still fits p = 2). "
+    "p = 3/2: a thin slice, one other axis windowed well inside R (an X histogram of a thin T window, or a "
+    "cut through a 2D image): the column density integrated over one axis only. p = 1 (both other axes "
+    "windowed) isn't offered. The wrong exponent biases R by about 8–9 % and the condensate fraction by "
+    "1–2 points. Windowing the other axes windows the thermal cloud too, so a fraction from a cropped box "
+    "isn't the whole cloud's. The Gaussian is the thermal part's Boltzmann limit (its Bose-enhanced form "
+    "is g_5/2 for p = 2, g_2 for p = 3/2).")
 UNSMOOTHED, SMOOTHED = "unsmoothed counts", "smoothed curve (model smoothed too)"
 CURVE_POINTS = 600  # the drawn fit's samples across the range
 
 
 def model_for(choice: str, constants: ResolvedConstants) -> FitModel:
-    """The fit model a choice names; the arrival-time profile with the run's fall distance and g."""
+    """The fit model a choice names; the arrival-time profile with the run's g and its effective
+    fall distance (``velocity.effective_fall_distance``: h, or ½ g t_f² when the fall time was set
+    by hand, so that a v = 0 atom arrives t_f after release, as D8's velocities have it)."""
     if choice == ARRIVAL:
-        return arrival_time_model(constants.fall_distance, constants.g)
+        return arrival_time_model(effective_fall_distance(constants), constants.g)
     return MODELS[MODEL_KEYS.get(choice, "gaussian")]
 
 
@@ -188,16 +187,16 @@ class AxisFit:
         return self.fit.failure
 
     def text(self) -> str:
-        """``Gaussian: centre (416.12 ± 0.12) ms · σ (4.65 ± 0.05) ms · T (1.00 ± 0.02) µK``, or
-        why there is no fit."""
+        """``Gaussian: centre (20,416.12 ± 0.12) ms · σ (4.65 ± 0.05) ms · T (1.00 ± 0.02) µK``:
+        positions and widths in ms (T) or mm (X, Y), grouped by thousands; or why there is no fit."""
         if not self.ok:
             return f"{self.choice} fit failed: {self.failure}"
-        unit = unit_of(self.axis)
-        width = "σ thermal" if self.choice == BIMODAL else ("σ_v/g" if self.choice == ARRIVAL else "σ")
-        parts = [f"centre {self.centre.text(unit=unit)}", f"{width} {self.width.text(unit=unit)}",
+        bimodal = self.choice in BIMODALS
+        width = "σ thermal" if bimodal else ("σ_v/g" if self.choice == ARRIVAL else "σ")
+        parts = [f"centre {estimate_text(self.axis, self.centre)}", f"{width} {estimate_text(self.axis, self.width)}",
                  f"T {self.temperature.text(unit='K')}"]
-        if self.choice == BIMODAL and "radius" in self.fit.estimates:
-            parts.insert(2, f"R {self.fit['radius'].text(unit=unit)}")
+        if bimodal and "radius" in self.fit.estimates:
+            parts.insert(2, f"R {estimate_text(self.axis, self.fit['radius'])}")
         return f"{self.choice}{' ⊗ smoothing' if self.on_smoothed else ''}: " + " · ".join(parts)
 
     def as_record(self) -> dict[str, Any]:
@@ -213,7 +212,7 @@ def _scaled(estimate: Estimate, factor: float) -> Estimate:
 
 
 def fit_axis(axis: str, edges: npt.ArrayLike, counts: npt.ArrayLike, choice: str, constants: ResolvedConstants,
-             smoothing: float | None = None) -> AxisFit:
+             smoothing: float | None = None, max_radius_ratio: float = MAX_RADIUS_RATIO) -> AxisFit:
     """Fit one histogram (``edges`` in s or m, raw ``counts``) with the model ``choice`` names.
 
     By default the raw counts, Poisson weighted (``fit_histogram``). ``smoothing`` (σ in the
@@ -221,7 +220,8 @@ def fit_axis(axis: str, edges: npt.ArrayLike, counts: npt.ArrayLike, choice: str
     (``fit_smoothed``): the parameters are the unsmoothed profile's, so the width (and a
     bimodal fit's R) needs no correction, and the SEs count the smoothed bins' correlation.
     Temperatures are the ideal-gas, pure-expansion ones (``physics``): along T σ_v = g σ, along
-    X and Y σ_v = σ / t_f, each with the run's constants."""
+    X and Y σ_v = σ / t_f, each with the run's constants. ``max_radius_ratio``: the bimodal
+    fits' cap on R/σ_thermal (``fit_histogram``)."""
     edges = np.asarray(edges, dtype=np.float64)
     raw = np.asarray(counts, dtype=np.float64)
     centres = bin_centres(edges)
@@ -235,19 +235,19 @@ def fit_axis(axis: str, edges: npt.ArrayLike, counts: npt.ArrayLike, choice: str
         # shape, and the SEs stop being reliable (checked: right at a fifth of the range, 2× too
         # large at half of it).
         fit = replace(fit_histogram([], [], model), failure=(
-            f"the smoothing (σ {si_text(smoothing, unit_of(axis))}) is too wide for this range to fit the "
+            f"the smoothing (σ {axis_text(axis, smoothing, WIDTH_DIGITS)}) is too wide for this range to fit the "
             f"smoothed curve (at most {MAX_SMOOTHING_SHARE:g} of it): fit the unsmoothed counts"))
         nan = Estimate(math.nan, math.nan)
         return AxisFit(axis, choice, fit, nan, nan, nan, nan, np.empty(0), np.empty(0), (), True)
     curve = np.empty(0)
     if on_smoothed:
         assert smoothing is not None
-        fit, curve = fit_smoothed(centres, raw, model, smoothing / width_bins)
+        fit, curve = fit_smoothed(centres, raw, model, smoothing / width_bins, max_radius_ratio)
         if fit.ok:
             notes.append("fitted to the smoothed curve with the smoothing in the model; SEs include the "
                          "smoothed bins' correlation")
     else:
-        fit = fit_histogram(centres, raw, model)
+        fit = fit_histogram(centres, raw, model, max_radius_ratio=max_radius_ratio)
     nan = Estimate(math.nan, math.nan)
     if not fit.ok:
         return AxisFit(axis, choice, fit, nan, nan, nan, nan, np.empty(0), np.empty(0), (*fit.notes, *notes),
@@ -288,7 +288,8 @@ def smoothed_model(model: FitModel, smoothing: Smoothing, centres: Array) -> Fit
     return replace(model, key=f"{model.key}+smoothing", title=f"{model.title} ⊗ smoothing", function=function)
 
 
-def fit_smoothed(centres: Array, raw: Array, model: FitModel, sigma_bins: float) -> tuple[FitResult, Array]:
+def fit_smoothed(centres: Array, raw: Array, model: FitModel, sigma_bins: float,
+                 max_radius_ratio: float = MAX_RADIUS_RATIO) -> tuple[FitResult, Array]:
     """Fit the smoothed counts s = S n with the smoothed model S f(θ) (``smoothed_model``), and
     the smoothed fit's curve on the bins.
 
@@ -329,7 +330,8 @@ def fit_smoothed(centres: Array, raw: Array, model: FitModel, sigma_bins: float)
         # fit's four starts and its Gaussian seed fit would cost each round as much as the first).
         fitted = forward if start is None else replace(forward, guesses=lambda x, y, errors: [start])
         return fit_histogram(centres, data, fitted, sigma=np.sqrt(variance), covariance_of=sandwich,
-                             nonnegative_offset=True, binned=False)  # counts; the model bins itself
+                             max_radius_ratio=max_radius_ratio, nonnegative_offset=True,
+                             binned=False)  # counts; the model bins itself
 
     fit = fit_with(np.maximum(smoothing.variance(raw), floor))
     for _ in range(SMOOTHED_ROUNDS):
@@ -347,20 +349,3 @@ def fit_smoothed(centres: Array, raw: Array, model: FitModel, sigma_bins: float)
     if not fit.ok:
         return fit, np.empty(0)
     return fit, forward.function(centres, *fit.values)
-
-
-CONSTANT_NAMES = {"fall_distance": "fall distance", "fall_time": "fall time", "g": "g", "mass": "mass"}
-ORIGIN_TEXT = {"default": "default", "lab": "lab", "folder": "folder", "plot": "this plot", "derived": "derived"}
-
-
-def constants_text(constants: ResolvedConstants, keys: tuple[str, ...] = ("fall_distance", "fall_time", "g")) -> str:
-    """``fall distance 0.848 m (default, unconfirmed) · fall time 0.416101 s (derived,
-    unconfirmed) · g 9.79602 m/s² (default)``: each value used, where it came from, and the
-    borrowed legacy values not yet confirmed on the current setup."""
-    unconfirmed = set(constants.unconfirmed)
-    parts = []
-    for key in keys:
-        flag = ", unconfirmed" if key in unconfirmed else ""
-        parts.append(f"{CONSTANT_NAMES.get(key, key)} {constants.value(key):.6g} {TABLE[key].unit} "
-                     f"({ORIGIN_TEXT[constants.origins[key]]}{flag})")
-    return " · ".join(parts)

@@ -74,8 +74,8 @@ def test_rate_per_shot_divides_by_shots_and_bin_area_in_display_units() -> None:
     view = cloud(shots=5)
     counts = run(view, {**MANUAL, "projection": "XT", "bins": 20}).data
     rate = run(view, {**MANUAL, "projection": "XT", "bins": 20, "quantity": density_images.PER_SHOT}).data
-    # T in ms (its range is under 10 s), X in mm.
-    assert rate.time_unit == "ms" and rate.unit(0) == "ms" and rate.unit(1) == "mm"
+    # T in ms, X in mm.
+    assert rate.unit(0) == "ms" and rate.unit(1) == "mm"
     area = (0.02 / 20 * 1e3) * (0.02 / 20 * 1e3)
     assert np.allclose(rate.image, counts.image / (5 * area))
     assert rate.quantity_text() == "Events / (mm·ms) / shot"
@@ -85,11 +85,12 @@ def test_rate_per_shot_divides_by_shots_and_bin_area_in_display_units() -> None:
     assert counts.quantity_text() == "Events per bin"
 
 
-def test_time_unit_is_chosen_from_the_range() -> None:
-    assert density_images.time_unit(0.41, 0.43) == ("ms", 1e3)
-    assert density_images.time_unit(3.84, 3.87) == ("ms", 1e3)
-    assert density_images.time_unit(0.0, 12.0) == ("s", 1.0)
-    assert density_images.time_unit(math.nan, math.nan) == ("s", 1.0)
+def test_t_is_always_in_ms() -> None:
+    rng = np.random.default_rng(5)
+    late = view_of({1: np.column_stack([rng.normal(20.45, 0.002, 500), rng.normal(0.0, 0.004, 500),
+                                        rng.normal(0.0, 0.003, 500)])})
+    data = run(late, {"projection": "XT"}).data
+    assert data.unit(0) == "ms" and data.scale(0) == 1e3 and data.rect().left() > 20_000
 
 
 @pytest.mark.parametrize("sigma", [0.5, 2.0, 30.0])
@@ -290,17 +291,45 @@ def test_counts_to_rate_per_shot_in_place_relabels_the_bar(qtbot: QtBot) -> None
     assert bar.levels() == (0.0, float(rate.data.image.max())) and rate.data.image.max() < counts.data.image.max()
 
 
-def test_a_t_unit_change_redraws_only_plots_showing_t(qtbot: QtBot) -> None:
-    near = cloud(shots=2)  # T about 0.42 s: ms
+def test_a_late_t_still_updates_in_place_in_ms(qtbot: QtBot) -> None:
+    near = cloud(shots=2)  # T about 0.42 s
     rng = np.random.default_rng(5)
     late = view_of({1: np.column_stack([rng.normal(12.0, 0.002, 500), rng.normal(0.0, 0.004, 500),
-                                        rng.normal(0.0, 0.003, 500)])})  # T about 12 s: s
-    for projection, redrawn in (("XY", False), ("XT", True)):
+                                        rng.normal(0.0, 0.003, 500)])})  # T about 12 s: still ms
+    for projection in ("XY", "XT"):
         widget = SCRIPT.render(run(near, {"projection": projection}))
         qtbot.addWidget(widget)
-        later = run(late, {"projection": projection})
-        assert later.data.time_unit == "s"
-        assert SCRIPT.update(widget, later) is not redrawn
+        assert isinstance(widget, DensityPlot)
+        assert SCRIPT.update(widget, run(late, {"projection": projection}))
+        if projection == "XT":
+            axis = widget.plot.getAxis("bottom")
+            assert axis.labelText == "T (ms)" and axis.tickStrings([12_000.0, 12_002.5], 1.0, 2.5) == [
+                "12,000.0", "12,002.5"]
+
+
+@pytest.mark.parametrize("projection", ["XY", "XT", "YT"])
+def test_a_hot_spot_is_drawn_where_it_is_not_transposed(qtbot: QtBot, projection: str) -> None:
+    """An asymmetric hot spot (late T, high X, low Y) on a faint uniform background: the brightest
+    pixel sits at the spot's place in the plot's mm and ms, on each projection."""
+    rng = np.random.default_rng(3)
+    background = np.column_stack([rng.uniform(0.41, 0.43, 3000), rng.uniform(-0.01, 0.01, 3000),
+                                  rng.uniform(-0.01, 0.012, 3000)])
+    spot = np.tile([0.4275, 0.008, -0.008], (500, 1))
+    result = run(view_of({1: np.vstack([background, spot])}), {**MANUAL, "projection": projection, "bins": 20})
+    widget = SCRIPT.render(result)
+    qtbot.addWidget(widget)
+    assert isinstance(widget, DensityPlot)
+    image = cast(Any, widget.image)
+    i, j = np.unravel_index(int(np.argmax(image.image)), image.image.shape)
+    centre = image.mapToParent(pg.QtCore.QPointF(i + 0.5, j + 0.5))
+    h, v = density_images.PROJECTIONS[projection]
+    where = np.array([427.5, 8.0, -8.0])  # ms, mm, mm
+    widths = np.array([1.0, 1.0, 1.1])  # one bin of each axis
+    assert abs(centre.x() - where[h]) <= widths[h] and abs(centre.y() - where[v]) <= widths[v]
+    # The rendered picture holds viridis's top colour at that pixel.
+    viridis: Any = pg.colormap.get("viridis")
+    top = tuple(int(c) for c in viridis.map(np.array([1.0]), mode="byte")[0][:3])
+    assert max(abs(a - b) for a, b in zip(pixel(widget, int(i), int(j)), top)) <= 2
 
 
 def test_the_newest_shot_is_contoured(qtbot: QtBot) -> None:
