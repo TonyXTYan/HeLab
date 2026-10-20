@@ -786,6 +786,41 @@ def test_a_following_dld_counts_plot_updates_in_place_keeping_its_zoom(
     assert "3 shots" in widget.title.text and "shot 3 highlighted" in widget.title.text
 
 
+def test_a_following_dld_transfer_fractions_plot_updates_in_place_keeping_its_zoom(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """The DLD port's Transfer fractions: Live's next shot joins the plots already drawn, the
+    user's zoom of either plot stays, and the highlighted newest shot moves to it, its real counts
+    on the right axis; switching the highlight off draws it anew."""
+    window.view = window.live_feed.publish(lab_revision([1, 2]))
+    instance = plot(window, qtbot, dld_fractions.TransferFractions())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    set_live(instance, DELAY, 0.0)
+    assert instance.parameter_root is not None
+    parameter_of(instance.parameter_root, dld_fractions.HIGHLIGHT).setValue(True)
+    instance.run()
+    qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
+    assert isinstance(instance._content, dld_fractions.FractionsPlot)
+    widget: Any = instance._content
+    widget.fractions_plot.vb.setRange(xRange=(0.0, 10.0), yRange=(0.0, 0.5), padding=0)  # The user zooms.
+    widget.times_plot.vb.setRange(xRange=(2_130.0, 2_145.0), padding=0)
+    fractions_zoom, times_zoom = widget.fractions_plot.vb.viewRange(), widget.times_plot.vb.viewRange()
+    window.live_feed.publish(lab_revision([1, 2, 3]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2 and instance.shown is not None
+                    and instance.shown.data.newest_shot == 3, timeout=10_000)
+    assert instance._content is widget  # Updated, not drawn anew.
+    assert np.allclose(widget.fractions_plot.vb.viewRange(), fractions_zoom)
+    assert np.allclose(widget.times_plot.vb.viewRange(), times_zoom)
+    assert list(widget.fraction_curves[0].xData) == [1, 2, 3]
+    data = cast(AnalysisResult, instance.shown).data
+    overlay = widget.newest_view
+    assert overlay is not None and np.allclose(overlay.curve.yData, data.newest)
+    assert widget.times_plot.getAxis("right").labelText == "shot 3 events"
+    assert "shot 3 highlighted" in widget.times_plot.titleLabel.text
+    parameter_of(instance.parameter_root, dld_fractions.HIGHLIGHT).setValue(False)
+    instance.run()
+    qtbot.waitUntil(lambda: instance._content is not widget, timeout=10_000)
+
+
 def test_a_following_plot_highlights_lives_newest_shot(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
     window.view = window.live_feed.publish(revision([1, 2]))

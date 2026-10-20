@@ -38,7 +38,7 @@ from helab.analysis.masks import MASK_SPECS, all_masked_text, mask_brief, mask_f
 from helab.analysis.follow import LivePolicy
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.plot_axes import GroupedAxis
-from helab.analysis.plot_text import add_label, lines_html
+from helab.analysis.plot_text import add_label, add_plot, lines_html
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
                                       range_warnings, select_shots, selection_text, shots_brief, shots_text)
@@ -239,16 +239,16 @@ class SpectrumPlot(QWidget):
         self.key = key
         log, power, per_shot = key
         self.title: Any = add_label(self.graphics, row=0, col=0)
-        self.profile_plot: Any = self.graphics.addPlot(row=1, col=0, title="T profile, summed over the shots",
-                                                       axisItems={"bottom": GroupedAxis("bottom")})
+        self.profile_plot: Any = add_plot(self.graphics, "T profile, summed over the shots",
+                                          row=1, col=0, axisItems={"bottom": GroupedAxis("bottom")})
         self.profile_plot.setLabel("bottom", axis_label("T"))
         self.profile_plot.setLabel("left", "Rate (kHz per shot)" if per_shot else "Events per bin")
         self.profile_plot.showGrid(x=True, y=True, alpha=0.3)
         self.profile: Any = self.profile_plot.plot([], [], pen=pg.mkPen(COLOUR))
         self.profile.setDownsampling(auto=True, method="peak")
         self.profile.setClipToView(True)
-        self.spectrum_plot: Any = self.graphics.addPlot(row=2, col=0, title="Spectrum",
-                                                        axisItems={"left": GroupedAxis("left")})
+        self.spectrum_plot: Any = add_plot(self.graphics, "Spectrum",
+                                           row=2, col=0, axisItems={"left": GroupedAxis("left")})
         self.spectrum_plot.setLabel("bottom", "Frequency", units="Hz")
         quantity = "Power" if power else "Amplitude"
         unit = ("kHz² per shot²" if power else "kHz per shot") if per_shot else ("events²" if power else "events")

@@ -50,7 +50,7 @@ from helab.analysis.follow import LivePolicy
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.physics import TABLE, ResolvedConstants, resolve
 from helab.analysis.plot_axes import grouped_axes
-from helab.analysis.plot_text import add_label, lines_html, short_note
+from helab.analysis.plot_text import add_label, add_plot, lines_html, short_note
 from helab.analysis.release import ReleaseTime, bootstrap_release_time, detect_release_time
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import SHOT_SPECS, select_shots, selection_text, shots_brief, shots_text
@@ -360,19 +360,19 @@ class ReleasePlot(QWidget):
         self.graphics.setBackground("w")
         layout.addWidget(self.graphics, 1)
         self.title: Any = add_label(self.graphics, row=0, col=0, colspan=2)
-        self.overview: Any = self.graphics.addPlot(row=1, col=0, colspan=2, title="T, the events searched",
-                                                   axisItems=grouped_axes("bottom", "left"))
+        self.overview: Any = add_plot(self.graphics, "T, the events searched",
+                                      row=1, col=0, colspan=2, axisItems=grouped_axes("bottom", "left"))
         self.overview.setLabel("bottom", axis_label("T"))
         self.overview.setLabel("left", "Events per bin")
-        self.zoom: Any = self.graphics.addPlot(row=2, col=0, colspan=2, title="The arrival, with the fitted profile",
-                                               axisItems=grouped_axes("bottom", "left"))
+        self.zoom: Any = add_plot(self.graphics, "The arrival, with the fitted profile",
+                                  row=2, col=0, colspan=2, axisItems=grouped_axes("bottom", "left"))
         self.zoom.setLabel("bottom", axis_label("T"))
         self.zoom.setLabel("left", "Events per bin")
-        self.x_plot: Any = self.graphics.addPlot(row=3, col=0, title="X at the arrival",
-                                                 axisItems=grouped_axes("bottom", "left"))
+        self.x_plot: Any = add_plot(self.graphics, "X at the arrival",
+                                    row=3, col=0, axisItems=grouped_axes("bottom", "left"))
         self.x_plot.setLabel("bottom", axis_label("X"))
-        self.y_plot: Any = self.graphics.addPlot(row=3, col=1, title="Y at the arrival",
-                                                 axisItems=grouped_axes("bottom", "left"))
+        self.y_plot: Any = add_plot(self.graphics, "Y at the arrival",
+                                    row=3, col=1, axisItems=grouped_axes("bottom", "left"))
         self.y_plot.setLabel("bottom", axis_label("Y"))
         for plot in (self.overview, self.zoom, self.x_plot, self.y_plot):
             plot.showGrid(x=True, y=True, alpha=0.3)

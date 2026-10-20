@@ -27,7 +27,11 @@ set both ends of Search T around order 0, or the orders by hand. A Search T with
 is the user's word on order 0: an order outside it gets a plain line, not the warning, and a
 last detection outside it is replaced without a "moved" warning (a plain line says so).
 Under its title the plot also says when the orders overlap or no side peak was found, and
-which events were left out.
+which events were left out. T histogram › Highlight the newest shot draws the newest chosen
+shot over the T histogram as in the T/X/Y histograms (to the histogram's total, its real counts
+on a right axis in its colour), even when Minimum counts left it out, which its title says. A
+Live rerun updates the plots in place, keeping zoom and pan, unless the orders shown or the
+highlight (on or off) change.
 """
 from __future__ import annotations
 
@@ -46,13 +50,15 @@ from helab.analysis.display_units import T_SCALE, WIDTH_DIGITS, axis_label, leng
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.masks import MASK_SPECS, mask_brief, mask_from, mask_warnings, masked_text
 from helab.analysis.parameters import ParameterSpec
-from helab.analysis.plot_axes import GroupedAxis
-from helab.analysis.plot_text import add_label, line_html, notes_html
+from helab.analysis.plot_axes import grouped_axes
+from helab.analysis.plot_text import add_label, add_plot, line_html, notes_html, set_plot_title
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.analysis.selection import SHOT_SPECS, select_shots, selection_text, shots_brief, shots_text
+from helab.analysis.selection import (SHOT_SPECS, newest_brief, newest_colour, newest_shot, newest_specs, select_shots,
+                                      selection_text, shots_brief, shots_text)
 from helab.analysis.stats import shortest_range
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.dld import group
+from helab.scripts.dld.basic_plots import OverlayView, overlay_newest, update_newest
 
 AUTO, MANUAL = "auto", "manual"
 ORDERS_GROUP = "Orders"
@@ -85,8 +91,9 @@ XY_HALF = ParameterSpec("xy_half", "XY box ±", "float", 0.03, (0.0, 1.0), " m",
                             "out of the counts.")
 MIN_COUNTS = ParameterSpec("min_counts", "Minimum counts", "int", 50, (0, 10_000_000), group=BOX_GROUP,
                            tip="Shots with no more events than this in the XY box are left out.")
+HIGHLIGHT, NEWEST_COLOUR = newest_specs("T histogram")
 PARAMETERS = (*SHOT_SPECS, MODE, EACH_SIDE, CENTRE, SPACING, HALF_WIDTH, SEARCH_MIN, SEARCH_MAX, XY_HALF,
-              MIN_COUNTS, *MASK_SPECS)
+              MIN_COUNTS, HIGHLIGHT, NEWEST_COLOUR, *MASK_SPECS)
 MAX_DETECTION_BINS = 20_000
 MIN_DETECTION_BINS = 50
 DENSEST_SHARE = 0.1  # the bin width is half the shortest T interval holding this share of the events
@@ -143,6 +150,12 @@ class Fractions:
     extent: tuple[float, float] = (math.nan, math.nan)  # T of the events counted, first to last
     jumped: int = 0  # auto's order 0 is this many orders from the last detection (``jump``)
     masked: int = 0  # events the mask took out of the chosen shots (before the XY box)
+    # The highlighted newest shot (None: off): the newest chosen shot's T (masked, in the XY box)
+    # in the histogram's bins, drawn over it; ``newest_left_out`` when Minimum counts left it out.
+    newest_shot: int | None = None
+    newest: npt.NDArray[np.float64] = field(default_factory=lambda: np.empty(0))
+    newest_left_out: bool = False
+    colour: tuple[int, int, int] = (214, 39, 40)
 
     @property
     def fractions(self) -> npt.NDArray[np.float64]:
@@ -325,7 +338,7 @@ class TransferFractions(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.dld.transfer_fractions",
-            version="1",
+            version="2",
         )
 
     def get_actions(self) -> List[str]:
@@ -340,7 +353,7 @@ class TransferFractions(DatasetAnalysis):
         half = float(values[XY_HALF.name])
         box = f"XY ±{length_text(half)}" if half > 0 else "no XY limit"
         settings = (shots_brief(values), f"{how} ±{each}", box, f"> {int(values[MIN_COUNTS.name]):,} counts",
-                    mask_brief(values))
+                    mask_brief(values), newest_brief(values))
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def detected_parameters(self, action_name: str, result: AnalysisResult) -> dict[str, Any]:
@@ -367,6 +380,9 @@ class TransferFractions(DatasetAnalysis):
         each_side = int(values[EACH_SIDE.name])
         mask = mask_from(values)  # Circles that can't be read fail the run, saying which.
         boxed: dict[int, npt.NDArray[np.float64]] = {}
+        # The newest chosen shot, even one Minimum counts left out (a bad shot is worth seeing).
+        newest = newest_shot(values, chosen)
+        newest_times = np.empty(0)
         events_total = not_finite = masked = 0
         for shot in chosen:
             context.check()
@@ -379,6 +395,8 @@ class TransferFractions(DatasetAnalysis):
             events, dropped = mask.apply(events)
             masked += dropped
             events = in_box(events, half)
+            if shot == newest:
+                newest_times = np.ascontiguousarray(events[:, 0])
             if len(events) > minimum:
                 boxed[shot] = np.ascontiguousarray(events[:, 0])
         notes: list[str] = []
@@ -435,61 +453,150 @@ class TransferFractions(DatasetAnalysis):
         span = (each_side + 1) * spacing
         around = times[np.abs(times - centre) <= span]
         histogram = np.histogram(around, bins=400, range=(centre - span, centre + span)) if len(times) else None
+        fresh = (np.histogram(newest_times, bins=histogram[1])[0].astype(np.float64) if histogram is not None
+                 else np.empty(0))
+        newest = newest if histogram is not None else None
         return Fractions(orders, np.fromiter(boxed, dtype=np.int64, count=len(boxed)), counts, len(chosen),
                          len(view.shots), auto, tuple(notes),
                          (histogram[1], histogram[0].astype(np.float64)) if histogram else (np.empty(0), np.empty(0)),
                          detected, minimum, events_total,
                          (float(times.min()), float(times.max())) if len(times) else (math.nan, math.nan),
-                         jumped, masked)
+                         jumped, masked, newest, fresh, newest is not None and newest not in boxed,
+                         newest_colour(values))
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Fractions = result.data
-        orders = data.orders
-        if not len(data.shots):
-            text = empty_text(data.total_shots, data.chosen, data.events)  # No events: nothing to add
-            said = () if text else data.notes
-            text = text or f"No shot has more than {data.minimum:,} counts in the XY box (Counting settings)"
-            return empty_pane(" · ".join((text, *said)), parent)
-        if not data.counts.any():
-            first, last = data.extent
-            text = (f"No events in the orders' windows: order 0 at {time_text(orders.centre)}, spacing "
-                    f"{time_text(orders.spacing, WIDTH_DIGITS)}, and the events counted are at {range_text('T', first, last)} "
-                    f"(Orders settings)")
-            return empty_pane(" · ".join((text, *data.notes)), parent)
-        widget: Any = pg.GraphicsLayoutWidget(parent)
-        widget.setBackground("w")
-        found = "found" if data.auto else "set"
-        title = (f"{result.input.short()} · {shots_text(data.shots.tolist(), data.total_shots)} · order 0 at "
-                 f"{time_text(orders.centre)}, spacing {time_text(orders.spacing, WIDTH_DIGITS)}, window ±{time_text(orders.half_width, WIDTH_DIGITS)} "
-                 f"({found}){masked_text(data.masked)}")
-        add_label(widget, line_html(title) + notes_html(data.notes), row=0, col=0)  # One note per line.
-        colours = [pg.intColor(i, hues=len(orders.numbers), values=1, maxValue=200) for i in range(len(orders.numbers))]
-        plot = widget.addPlot(row=1, col=0)
+        if text := empty_reason(data):
+            return empty_pane(text, parent)
+        widget = FractionsPlot(layout_key(data), parent)
+        widget.show_data(result, data)
+        return widget
+
+    def update(self, widget: QWidget, result: AnalysisResult) -> bool:
+        """A rerun (e.g. Live's next shots) sets the data in the plots already drawn, keeping zoom
+        and pan, while the orders shown and the highlight (on or off) stay; otherwise, or to or
+        from an empty plot, anew."""
+        data: Fractions = result.data
+        if not isinstance(widget, FractionsPlot) or empty_reason(data) or widget.key != layout_key(data):
+            return False
+        widget.show_data(result, data)
+        return True
+
+
+def empty_reason(data: Fractions) -> str:
+    """Why there is nothing to draw ("" when there is)."""
+    orders = data.orders
+    if not len(data.shots):
+        text = empty_text(data.total_shots, data.chosen, data.events)  # No events: nothing to add
+        said = () if text else data.notes
+        text = text or f"No shot has more than {data.minimum:,} counts in the XY box (Counting settings)"
+        return " · ".join((text, *said))
+    if not data.counts.any():
+        first, last = data.extent
+        text = (f"No events in the orders' windows: order 0 at {time_text(orders.centre)}, spacing "
+                f"{time_text(orders.spacing, WIDTH_DIGITS)}, and the events counted are at "
+                f"{range_text('T', first, last)} (Orders settings)")
+        return " · ".join((text, *data.notes))
+    return ""
+
+
+def layout_key(data: Fractions) -> tuple[Any, ...]:
+    """What a drawing is built for: a newer result with the same is shown in it."""
+    return data.orders.numbers, data.newest_shot is not None
+
+
+def newest_scale(counts: npt.NDArray[np.float64], fresh: npt.NDArray[np.float64]) -> float:
+    """The histogram's total over the newest shot's: drawn to the same total, its shape compares."""
+    return float(counts.sum()) / float(fresh.sum()) if fresh.sum() > 0 else 1.0
+
+
+def times_title(data: Fractions) -> str:
+    title = "T around the orders, with their windows"
+    if data.newest_shot is None:
+        return title
+    left_out = f"; left out: ≤ {data.minimum:,} counts" if data.newest_left_out else ""
+    return (f"{title} · shot {data.newest_shot} highlighted ({int(data.newest.sum()):,} in range, right axis"
+            f"{left_out})")
+
+
+class FractionsPlot(pg.GraphicsLayoutWidget):  # type: ignore[misc]
+    """Each order's share per shot over the T histogram around the orders with their windows
+    (and, highlighted, the newest shot: drawn to the histogram's total, its real counts on a right
+    axis in its colour, as in the T/X/Y histograms); ``show_data`` draws a newer result with the
+    same orders and highlight in place, keeping zoom and pan."""
+
+    def __init__(self, key: tuple[Any, ...], parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setBackground("w")
+        self.key = key
+        numbers, highlighted = key
+        self.title: Any = add_label(self, row=0, col=0)
+        self.colours = [pg.intColor(i, hues=len(numbers), values=1, maxValue=200) for i in range(len(numbers))]
+        layout: Any = self  # (pyqtgraph forwards addPlot and ci to its central item: untyped.)
+        plot: Any = layout.addPlot(row=1, col=0, axisItems=grouped_axes("bottom", "left"))
+        self.fractions_plot = plot
         plot.setLabel("bottom", "Shot number")
         plot.setLabel("left", "Transfer fraction")
         plot.showGrid(x=True, y=True, alpha=0.3)
         plot.addLegend(offset=(-10, 10))
-        fractions = data.fractions
-        for column, order in enumerate(orders.numbers):
-            colour = colours[column]
-            plot.plot(data.shots, fractions[:, column], name=f"order {order_label(order)}", connect="finite",
-                      pen=pg.mkPen(colour, width=1.5), symbol="o", symbolSize=4, symbolBrush=colour, symbolPen=None)
-        edges, counts = data.histogram
-        times = widget.addPlot(row=2, col=0, title="T around the orders, with their windows",
-                               axisItems={"bottom": GroupedAxis("bottom")})
+        self.fraction_curves = [
+            plot.plot([], [], name=f"order {order_label(order)}", connect="finite", pen=pg.mkPen(colour, width=1.5),
+                      symbol="o", symbolSize=4, symbolBrush=colour, symbolPen=None)
+            for order, colour in zip(numbers, self.colours)]
+        times: Any = add_plot(self, "T around the orders, with their windows", row=2, col=0,
+                              axisItems=grouped_axes("bottom", "left", *(("right",) if highlighted else ())))
+        self.times_plot = times
         times.setLabel("bottom", axis_label("T"))
-        times.setLabel("left", "Events")
-        if len(counts):
-            times.addItem(pg.PlotDataItem(edges * T_SCALE, counts, stepMode="center", fillLevel=0,
-                                          pen=pg.mkPen((60, 60, 60)), brush=(60, 60, 60, 60)))
-        for column, order in enumerate(orders.numbers):
-            low, high = orders.window(order)
-            region = pg.LinearRegionItem((low * T_SCALE, high * T_SCALE), movable=False,
-                                         brush=(*colours[column].getRgb()[:3], 50), pen=pg.mkPen(None))
+        times.setLabel("left", "Events (all)" if highlighted else "Events")
+        self.times_curve = pg.PlotDataItem(stepMode="center", fillLevel=0, pen=pg.mkPen((60, 60, 60)),
+                                           brush=(60, 60, 60, 60))
+        times.addItem(self.times_curve)
+        # The newest shot drawn to the histogram's total (a transparent line, so the plot's range
+        # holds it), its real counts in the overlay (``overlay_newest``, made with the first data).
+        self.newest_scaled: Any = None
+        self.newest_view: OverlayView | None = None
+        if highlighted:
+            self.newest_scaled = pg.PlotDataItem(stepMode="center", pen=pg.mkPen((0, 0, 0, 0)))
+            times.addItem(self.newest_scaled)
+        self.order_windows: list[tuple[Any, Any]] = []
+        for column, order in enumerate(numbers):
+            region = pg.LinearRegionItem((0.0, 1.0), movable=False, brush=(*self.colours[column].getRgb()[:3], 50),
+                                         pen=pg.mkPen(None))
             times.addItem(region)
-            label = pg.TextItem(order_label(order), color=colours[column], anchor=(0.5, 0))
-            label.setPos((orders.centre + order * orders.spacing) * T_SCALE, float(counts.max()) if len(counts) else 1.0)
+            label = pg.TextItem(order_label(order), color=self.colours[column], anchor=(0.5, 0))
             times.addItem(label)
-        widget.ci.layout.setRowStretchFactor(1, 3)
-        widget.ci.layout.setRowStretchFactor(2, 2)
-        return cast(QWidget, widget)
+            self.order_windows.append((region, label))
+        layout.ci.layout.setRowStretchFactor(1, 3)
+        layout.ci.layout.setRowStretchFactor(2, 2)
+
+    def show_data(self, result: AnalysisResult, data: Fractions) -> None:
+        orders = data.orders
+        found = "found" if data.auto else "set"
+        title = (f"{result.input.short()} · {shots_text(data.shots.tolist(), data.total_shots)} · order 0 at "
+                 f"{time_text(orders.centre)}, spacing {time_text(orders.spacing, WIDTH_DIGITS)}, window "
+                 f"±{time_text(orders.half_width, WIDTH_DIGITS)} ({found}){masked_text(data.masked)}")
+        self.title.setText(line_html(title) + notes_html(data.notes))  # One note per line.
+        fractions = data.fractions
+        for column, curve in enumerate(self.fraction_curves):
+            curve.setData(data.shots, fractions[:, column])
+        edges, counts = data.histogram
+        edges = edges * T_SCALE
+        set_plot_title(self.times_plot, line_html(times_title(data)))
+        if len(counts):
+            self.times_curve.setData(edges, counts)
+        else:
+            self.times_curve.clear()
+        if self.newest_scaled is not None and data.newest_shot is not None and len(counts):
+            scale = newest_scale(counts, data.newest)
+            self.newest_scaled.setData(edges, data.newest * scale)
+            name = f"shot {data.newest_shot}"
+            fresh = data.newest.astype(np.int64)
+            if self.newest_view is None:
+                self.newest_view = overlay_newest(self.times_plot, edges, fresh, scale, data.colour, False, name)
+            else:
+                update_newest(self.times_plot, self.newest_view, edges, fresh, scale, data.colour, False, name)
+        top = float(counts.max()) if len(counts) else 1.0
+        for order, (region, label) in zip(orders.numbers, self.order_windows):
+            low, high = orders.window(order)
+            region.setRegion((low * T_SCALE, high * T_SCALE))
+            label.setPos((orders.centre + order * orders.spacing) * T_SCALE, top)

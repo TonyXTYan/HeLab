@@ -23,7 +23,7 @@ MIN_TITLE_WIDTH = 60.0
 ALIGNMENTS = {"left": Qt.AlignmentFlag.AlignLeft, "center": Qt.AlignmentFlag.AlignHCenter,
               "right": Qt.AlignmentFlag.AlignRight}
 
-__all__ = ["AMBER", "WrapLabel", "add_label", "amber_html", "line_html", "lines_html", "notes_html",
+__all__ = ["AMBER", "WrapLabel", "add_label", "add_plot", "amber_html", "line_html", "lines_html", "notes_html",
            "set_plot_title"]
 
 
@@ -141,6 +141,15 @@ def add_label(layout: Any, text: str = "", **args: Any) -> WrapLabel:
     target = getattr(layout, "ci", layout)
     target.addItem(label, **place)
     return label
+
+
+def add_plot(layout: Any, title: str, **args: Any) -> Any:
+    """``layout.addPlot(**args)`` titled with a ``WrapLabel`` (``addPlot``'s ``title=`` makes a
+    ``LabelItem``, whose unwrapped width is the plot's minimum: with a wider font, as on Windows,
+    the column grew past a narrow dock)."""
+    plot = layout.addPlot(**args)
+    set_plot_title(plot, title)
+    return plot
 
 
 def set_plot_title(plot: Any, text: str, **args: Any) -> WrapLabel:

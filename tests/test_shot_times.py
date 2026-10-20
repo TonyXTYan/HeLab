@@ -157,10 +157,11 @@ def test_an_update_from_ram_stats_only_the_new_shots_raw_files(
     write_shot(run, 4)
     age_folder(run)
     shot_time_stats.clear()
-    events = run_load(run, tmp_path, memory=first["fingerprint"], base_signature=first["signature"], no_cache=True)
+    events = run_load(run, tmp_path, memory=first["fingerprint"], base_signature=first["signature"], no_cache=True,
+                      memory_raw_times=base.metadata["raw_times"])
     event = loaded(events)
     assert event["source"] == "updated" and event["memory_shots"] == [1, 2, 3]
-    assert shot_time_stats == ["d4.txt"] and times(event) == {4: raw_at(4)}
+    assert shot_time_stats == ["d4.txt"] and times(event) == {1: raw_at(1), 2: raw_at(2), 4: raw_at(4)}
     view = build_view(dataset(run, event, events, base))
     assert view.shot_times() == {1: raw_at(1), 2: raw_at(2), 3: CONVERTED_AT, 4: raw_at(4)}
     assert view.fallback_times() == (3,)
@@ -226,6 +227,36 @@ def test_a_raw_file_still_being_written_gets_its_time_later(
     assert times(first) == {1: raw_at(1)}
     set_mtime(run / "d2.txt", raw_at(2))
     assert times(loaded(run_load(run, tmp_path, no_cache=True))) == {1: raw_at(1), 2: raw_at(2)}
+
+
+def test_a_held_shot_without_a_time_gets_it_from_a_later_update_from_ram(
+        monkeypatch: pytest.MonkeyPatch, run: Path, tmp_path: Path, shot_time_stats: list[str]) -> None:
+    """A RAM-only load that saw a raw file still being written holds that shot without a time; a
+    later update from RAM (the shot unchanged, held, no disk cache) stats that raw file again,
+    and only it: a held shot with a time is never stat'ed again."""
+    set_mtime(run / "d2.txt", time.time())
+    monkeypatch.setattr(io_helper, "SETTLE_SECONDS", 30.0)
+    first_events = run_load(run, tmp_path, no_cache=True)
+    first = loaded(first_events)
+    base = dataset(run, first, first_events)
+    assert times(first) == {1: raw_at(1)} and base.metadata["raw_times"] == [[1, raw_at(1) * NS]]
+    set_mtime(run / "d2.txt", raw_at(2))  # Settled now.
+    write_shot(run, 4)
+    age_folder(run)
+    shot_time_stats.clear()
+    events = run_load(run, tmp_path, memory=first["fingerprint"], base_signature=first["signature"], no_cache=True,
+                      memory_raw_times=base.metadata["raw_times"])
+    event = loaded(events)
+    assert event["source"] == "updated" and event["memory_shots"] == [1, 2, 3]
+    assert sorted(shot_time_stats) == ["d2.txt", "d4.txt"]  # Not d1.txt: its time is known.
+    view = build_view(dataset(run, event, events, base))
+    assert view.shot_times() == {1: raw_at(1), 2: raw_at(2), 3: CONVERTED_AT, 4: raw_at(4)}
+    assert view.fallback_times() == (3,)
+    # Now that every held shot with a raw file has its time, the next update stats none of them.
+    shot_time_stats.clear()
+    again = loaded(run_load(run, tmp_path, memory=event["fingerprint"], base_signature=event["signature"],
+                            no_cache=True, memory_raw_times=event["raw_times"]))
+    assert again["memory_shots"] == [1, 2, 3, 4] and not shot_time_stats
 
 
 def test_a_deleted_raw_file_keeps_the_cached_shot_and_its_time(run: Path, tmp_path: Path) -> None:

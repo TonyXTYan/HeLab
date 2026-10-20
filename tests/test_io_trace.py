@@ -441,12 +441,13 @@ def test_a_saved_load_stats_each_file_read_four_times_and_once_more_only_after_r
     loaded = next(event for event in events if event["kind"] == "loaded")  # (It did load, from the cache.)
     assert loaded["cached"] and loaded["source"] == "disk" and loaded["files"] == 4
     assert [shot for shot, _ in loaded["raw_times"]] == [1, 2, 3, 4]
-    # Nor does one whose shots are all held by the caller with no disk cache: the caller has their times.
+    # Nor does one whose shots are all held by the caller with no disk cache: the caller sends their
+    # times (a held shot without one would be statted, for its time only).
     memory = [[shot, (info := (run / f"d_txy_forc{shot}.txt").stat()).st_size, info.st_mtime_ns]
               for shot in (1, 2, 3, 4)]
     before = len(lines(trace))
     events = []
-    load(str(run), str(output), events.append, None, memory)
+    load(str(run), str(output), events.append, None, memory, memory_raw_times=loaded["raw_times"])
     found = counts(lines(trace)[before:])
     assert ("entry_stat", "load: shot time") not in found and ("read", "load: read") not in found
     loaded = next(event for event in events if event["kind"] == "loaded")

@@ -1772,10 +1772,10 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             array = None
             if shot in in_memory:
                 # Unchanged and already in the caller's RAM: nothing to read or send. Its time is the
-                # caller's, unless the caller's shots are the cache's (or all of them are), whose
-                # missing times (a cache saved before shot times) the listing can give.
-                if cached or held_from != "memory":
-                    raw_time(shot)
+                # caller's or the cache's; one still missing (its raw file was still being written
+                # when it was read, or a cache saved before shot times) the listing can give, and
+                # only that one is stat'ed (``raw_time`` skips shots with a time).
+                raw_time(shot)
                 loaded += 1
             elif shot in reused:
                 array = data[shot]

@@ -37,7 +37,7 @@ from helab.analysis.masks import MASK_SPECS, all_masked_text, mask_brief, mask_f
 from helab.analysis.follow import LivePolicy
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.plot_axes import GroupedAxis
-from helab.analysis.plot_text import add_label, line_html, lines_html
+from helab.analysis.plot_text import add_label, add_plot, line_html, lines_html
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
                                       range_warnings, select_shots, selection_text, shots_brief, shots_text)
@@ -309,10 +309,10 @@ class PositionPlot(QWidget):
         layout.addWidget(self.graphics)
         self.key = (spectrum, log)
         self.title: Any = add_label(self.graphics, row=0, col=0)
-        self.means: Any = self.graphics.addPlot(row=1, col=0, title="Mean position ± SE",
-                                                axisItems={"bottom": GroupedAxis("bottom"), "left": GroupedAxis("left")})
-        self.widths: Any = self.graphics.addPlot(row=2, col=0, title="SD ± SE",
-                                                 axisItems={"bottom": GroupedAxis("bottom"), "left": GroupedAxis("left")})
+        self.means: Any = add_plot(self.graphics, "Mean position ± SE",
+                                   row=1, col=0, axisItems={"bottom": GroupedAxis("bottom"), "left": GroupedAxis("left")})
+        self.widths: Any = add_plot(self.graphics, "SD ± SE",
+                                    row=2, col=0, axisItems={"bottom": GroupedAxis("bottom"), "left": GroupedAxis("left")})
         self.widths.setXLink(self.means)
         self.curves: dict[tuple[str, str], Any] = {}
         self.bars: dict[tuple[str, str], Any] = {}
@@ -334,8 +334,8 @@ class PositionPlot(QWidget):
         self.markers: list[Any] = []
         self.peaks_label: Any = None
         if spectrum:
-            self.spectrum = self.graphics.addPlot(row=3, col=0, title="Spectrum of the mean position",
-                                                  axisItems={"left": GroupedAxis("left")})
+            self.spectrum = add_plot(self.graphics, "Spectrum of the mean position",
+                                     row=3, col=0, axisItems={"left": GroupedAxis("left")})
             self.spectrum.setLabel("bottom", "Frequency", units="Hz")
             self.spectrum.setLabel("left", f"Amplitude ({LENGTH_UNIT})")
             self.spectrum.showGrid(x=True, y=True, alpha=0.3)

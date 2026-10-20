@@ -129,6 +129,49 @@ def test_render_and_detected_values_fill_the_settings(run: DatasetView, qtbot: Q
     instance.close()
 
 
+def test_the_newest_shot_is_highlighted_even_when_minimum_counts_left_it_out(qtbot: QtBot) -> None:
+    """T histogram › Highlight the newest shot: the newest chosen shot's events (masked, in the XY
+    box) in the histogram's bins, drawn to its total with the real counts on a right axis in its
+    colour; shot 11, under Minimum counts, is still shown, and the title says it was left out.
+    The fractions' axis has no SI prefix of its own ("(x0.001)")."""
+    rng = np.random.default_rng(3)
+    shots = {shot: shot_events(rng, shot) for shot in range(1, 11)}
+    shots[11] = shot_events(rng, 11)[:30]
+    data = view(shots)
+    script = tf.TransferFractions()
+    values = {"highlight_newest": True, "newest_colour": "magenta", "mask_mode": "custom",
+              "mask_circles": "50, 0, 5, cut"}  # Cuts the hot spot at X = 50 mm.
+    result = AnalysisResult.of(context(data, values), "completed", script.compute("Plot", context(data, values)))
+    fractions = result.data
+    assert fractions.newest_shot == 11 and fractions.newest_left_out and 11 not in fractions.shots.tolist()
+    edges, counts = fractions.histogram
+    expected = np.histogram(shots[11][:, 0], bins=edges)[0]  # Shot 11 holds no hot-spot events.
+    assert np.array_equal(fractions.newest, expected) and fractions.colour == (200, 30, 180)
+    assert "newest shot in magenta" in script.describe_run("Plot", context(data, values).parameters, data)[1]
+    widget: Any = script.render(result)
+    qtbot.addWidget(widget)
+    widget.resize(560, 900)
+    widget.show()
+    times = widget.times_plot
+    right = times.getAxis("right")
+    assert right.isVisible() and right.labelText == "shot 11 events"
+    assert right.labelStyle.get("color") == pg.mkColor((200, 30, 180)).name()
+    assert np.allclose(widget.newest_view.curve.yData, expected)
+    scale = counts.sum() / expected.sum()
+    assert np.allclose(widget.newest_scaled.yData, expected * scale)
+    assert "shot 11 highlighted" in times.titleLabel.text and "left out: ≤ 50 counts" in times.titleLabel.text
+    assert times.getAxis("left").labelText == "Events (all)"
+    fraction_axis = widget.fractions_plot.getAxis("left")
+    assert not fraction_axis.autoSIPrefix and fraction_axis.labelString().count("x0.") == 0
+    # Off: no overlay, no right axis.
+    plain = AnalysisResult.of(context(data), "completed", script.compute("Plot", context(data)))
+    assert plain.data.newest_shot is None
+    widget = script.render(plain)
+    qtbot.addWidget(widget)
+    assert widget.newest_view is None and not widget.times_plot.getAxis("right").isVisible()
+    assert widget.times_plot.titleLabel.text == "T around the orders, with their windows"
+
+
 # Detection edge cases: each gives the right orders or says why not, never a crash or a silent
 # wrong order 0.
 

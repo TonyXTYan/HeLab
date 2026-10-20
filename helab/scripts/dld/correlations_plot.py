@@ -56,7 +56,7 @@ from helab.analysis.masks import (MASK_SPECS, Mask, all_masked_text, mask_brief,
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.physics import ResolvedConstants
 from helab.analysis.plot_axes import grouped_axes
-from helab.analysis.plot_text import add_label, lines_html, short_note
+from helab.analysis.plot_text import add_label, add_plot, lines_html, short_note
 from helab.analysis.release import ReleaseTime, detect_release_time, layer_release_time, run_velocity_source
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
@@ -732,12 +732,11 @@ class CorrelationPlot(QWidget):
         self.graphics.setBackground("w")
         layout.addWidget(self.graphics)
         self.title: Any = add_label(self.graphics, row=0, col=0)
-        self.g2: Any = self.graphics.addPlot(row=1, col=0, title="g² ± SE, with the fitted peak",
-                                             axisItems=grouped_axes("bottom", "left"))
+        self.g2: Any = add_plot(self.graphics, "g² ± SE, with the fitted peak",
+                                row=1, col=0, axisItems=grouped_axes("bottom", "left"))
         self.g2.setLabel("left", "g²")
-        self.pairs: Any = self.graphics.addPlot(row=2, col=0,
-                                                title="Pairs per bin: in-shot, and between shots × P_in/P_between",
-                                                axisItems=grouped_axes("bottom", "left"))
+        self.pairs: Any = add_plot(self.graphics, "Pairs per bin: in-shot, and between shots × P_in/P_between",
+                                   row=2, col=0, axisItems=grouped_axes("bottom", "left"))
         self.pairs.setLabel("left", "Pairs")
         self.pairs.setXLink(self.g2)
         self.graphics.ci.layout.setRowStretchFactor(1, 3)

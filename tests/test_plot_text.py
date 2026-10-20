@@ -83,7 +83,7 @@ PLOTS: list[tuple[str, DatasetAnalysis, dict[str, Any]]] = [
     ("mean position", mean_position.MeanPositionVsT(), {"spectrum": True}),
     ("T spectrum", t_spectrum.TProfileSpectrum(), {"spectrum_scale": "power", "padding": 4}),
     ("shot times", shot_times.ShotTimesPlot(), {"highlight_newest": True}),
-    ("transfer fractions", transfer_fractions.TransferFractions(), {}),
+    ("transfer fractions", transfer_fractions.TransferFractions(), {"highlight_newest": True}),
     ("release time", release_time.ReleaseTimePlot(), {"n_boot": 20}),
     ("velocity distributions", velocity_distributions.VelocityDistributions(),
      {"fit": True, "density": "v_x–v_z", "velocity_unit": "2ħk/m"}),
@@ -108,6 +108,10 @@ def test_every_plot_fits_a_560_px_dock(qtbot: QtBot, name: str, script: DatasetA
         assert rect.left() >= -1 and rect.right() <= width + 1, (name, label.text[:80], rect)
     plots = [item for item in view.scene().items() if isinstance(item, pg.PlotItem) and item.isVisible()]
     assert plots, name
+    # Each plot's own title wraps too: addPlot(title=…)'s LabelItem asks for its unwrapped width,
+    # which with Windows' wider font pushed three DLD plots past the dock.
+    titled = [item.titleLabel for item in plots if item.titleLabel.isVisible() and item.titleLabel.text.strip()]
+    assert all(isinstance(label, WrapLabel) for label in titled), (name, [label.text for label in titled])
     for item in plots:
         rect = item.sceneBoundingRect()
         assert rect.left() >= -1 and rect.right() <= width + 1, (name, rect)
