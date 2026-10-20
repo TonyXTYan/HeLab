@@ -74,6 +74,14 @@ still to choose (Tony, with the coordinator's proposal).
   (Windows caches attributes 10 s); details scans for visible rows only; icons kept
   across Refresh; the startup "database is locked" on a fresh store; refuse a
   network or synced temp folder at startup, as the cache folder is.
+- [ ] Tests that build a real `HelabMainWindow` read the developer's native
+  QSettings (budgets, check level, Live, Lab parameters), so they can fail on a
+  machine with saved settings: give the window a settings factory that tests
+  point at a tmp ini (DLD decisions, 2026-10-20).
+- [ ] `tests/test_cache_tab.py::test_saves_restored_from_the_store_ask_with_its_numbers`
+  fails when `tests/test_io_trace.py::test_a_live_save_keeps_dont_cache_and_the_budget`
+  ran earlier on the same xdist worker: a pending save left in the shared test
+  store ([register](../.ai/sessions/2026-10-20-claude-dld-coordinator/register.md)) (2026-10-20).
 - [ ] Main-window tests resolve the default data path, which is
   `/Volumes/dld_output` when it is mounted: tests should never touch the real
   volume (2026-10-19).
@@ -159,17 +167,22 @@ still to choose (Tony, with the coordinator's proposal).
   `_build_info.json`), since PyInstaller leaves no `.py` files to hash
   (2026-10-19).
 - [ ] Standard analyses: per-shot counts, T/X/Y distributions (v1 done
-  2026-10-19, in s and m; units to confirm) and shot selection
+  2026-10-19; T in ms and X/Y in mm since 2026-10-20) and shot selection
   ([plan](analysis-workflow.md#standard-analyses)) (2026-10-08).
-- [ ] Features from the old MATLAB DLD front panel (planning; nothing built yet).
-  First: constants at three levels (Settings → Lab parameters, folder settings,
-  plot overrides), then all the old fits and models on the T/X/Y histograms
-  (counts or per-shot rates), XY/XT/YT density images and shot times. Later: shot trends with an opt-in low-count
-  notification in Live, hot-spot masks with a placeholder finder, position
-  and spectrum plots, BEC properties, velocity axes (z up), bootstrap error bars,
-  then g² correlations; raw-pulse diagnostics after the TXY converter port. Defaults
-  borrowed from the legacy repos until confirmed; five open decisions
-  ([plan](dld-front-panel-port.md)) (2026-10-20).
+- [ ] Features from the old MATLAB DLD front panel. Built 2026-10-20 (F0, D1–D10,
+  D12, D14, D15 placeholder), on `agent/dld-front-panel-port`: constants at
+  three levels (Settings → Lab parameters, folder constants, plot overrides) with
+  bounded fits ± SE; fits, Bose/bimodal condensate fits and BEC properties on the
+  T/X/Y histograms; density images; mean X/Y against T and the T spectrum; shot times
+  from the raw files; Shot trends with an opt-in low-count notification in Live;
+  hot-spot masks with a placeholder finder; Release time and Velocity distributions;
+  g² and back-to-back Correlations. T in ms and X/Y in mm everywhere (Tony, 2026-10-20). Next: D13's
+  per-shot halo centring, then the plan's
+  left-to-do list; raw-pulse diagnostics after the TXY converter port. 33 open
+  decisions, each built as proposed, and on-screen and real-data checks
+  ([plan](dld-front-panel-port.md#open-decisions),
+  [register](../.ai/sessions/2026-10-20-claude-dld-coordinator/register.md),
+  [manual to-do](../.ai/MANUAL_TODO.md#dld-front-panel-port-added-2026-10-20)) (2026-10-20).
 - [ ] Export results and figures with their data source and analysis settings
   ([plan](analysis-workflow.md#export)) (2026-10-08).
 - [ ] Headless analysis runner sharing GUI jobs/results; add its CLI afterward
