@@ -61,7 +61,23 @@ Design and proposals: [notes.md](notes.md).
 - Release-time/velocity axes (D8) and region masks (D9) are not used here; they can be added as
   options once those land.
 
+## After review
+
+See [notes.md](notes.md#after-the-coordinators-review-of-ef62e3d): per-plot kept box with the box in
+the reuse key, `AnalysisContext.owner` and `DatasetAnalysis.plot_closed`, a smaller cache dropped
+with the folder's last plot, notifications only for a newer revision than the plot drew, tray icon
+hidden when Live ends, x sync on auto range, Constants gated on Temperatures, SI temperatures,
+polish adopted (wrapped titles, AMBER, key line).
+
 ## Checks
+
+- After review (fixes on top of merge 95a3137): full suite **2 failed, 1807 passed, 7 skipped,
+  2 xfailed, 10 rerun in 254.63s**; the failures and all reruns are the two known root-only tests.
+  mypy --strict helab/tests, pyright helab tests and `git diff --check` clean. A first run found
+  `EventHub.watch_feed` failing on a deleted LiveFeed's wrapper after `events.reset` (other tests'
+  closed windows): now skipped, with a test.
+
+Before review:
 
 - Full suite `python -m pytest -n 2 --reruns 5 --reruns-delay 1 -rR` (own basetemp):
   **2 failed, 1761 passed, 7 skipped, 2 xfailed, 10 rerun in 227.95s**; the 2 failures and all 10

@@ -1630,9 +1630,9 @@ class FolderExplorer(QWidget):
     def _live_halt(self, session: LiveSession, message: str) -> None:
         """Stop checking (Live stays on, data kept): Retry checks again, Live off saves."""
         logging.warning("Live stopped for %s: %s", session.path, message)
+        session.error = message
         events.notify(events.LIVE_ERROR, f"Live stopped for {session.path}: {message}", path=session.path,
                       error=message)  # For hooks (helab/utils/events.py); no desktop notification.
-        session.error = message
         self._live_timer.stop()
         self._live_changed()
 

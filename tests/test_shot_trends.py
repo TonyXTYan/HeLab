@@ -64,21 +64,23 @@ def dataset(data: dict[int, np.ndarray], path: str = PATH, raw: Optional[dict[in
     return Dataset(path, f"sig-{max(data) if data else 0}", dict(data), metadata, 0)
 
 
-def context(view: DatasetView, values: Optional[dict[str, Any]] = None) -> AnalysisContext:
+def context(view: DatasetView, values: Optional[dict[str, Any]] = None, owner: str = "") -> AnalysisContext:
+    """A run's input; ``owner``: the plot asking ("" for none)."""
     return AnalysisContext("j1", "Plot", view, effective(SCRIPT.parameters("Plot"), values),
-                           SCRIPT.get_metadata().identity())
+                           SCRIPT.get_metadata().identity(), owner=owner)
 
 
 def run(view: DatasetView, values: Optional[dict[str, Any]] = None,
-        cache: Optional[trends.ShotCache] = None) -> Trends:
-    return shot_trends.compute_trends(context(view, values), cache if cache is not None else trends.ShotCache())
+        cache: Optional[trends.ShotCache] = None, owner: str = "") -> Trends:
+    return shot_trends.compute_trends(context(view, values, owner),
+                                      cache if cache is not None else trends.ShotCache())
 
 
 def result_of(view: DatasetView, values: Optional[dict[str, Any]] = None,
-              cache: Optional[trends.ShotCache] = None) -> AnalysisResult:
-    made = context(view, values)
-    return AnalysisResult.of(made, "completed",
-                             shot_trends.compute_trends(made, cache if cache is not None else trends.ShotCache()))
+              cache: Optional[trends.ShotCache] = None, owner: str = "") -> AnalysisResult:
+    made = context(view, values, owner)
+    data = shot_trends.compute_trends(made, cache if cache is not None else trends.ShotCache())
+    return AnalysisResult.of(made, "completed", data, found=SCRIPT.result_found("Plot", data))
 
 
 MANUAL = {"range_mode": "manual", "t_min": 0.37, "t_max": 0.45, "x_min": -0.03, "x_max": 0.03,
@@ -216,19 +218,46 @@ def test_live_revisions_estimate_only_their_new_or_changed_shots() -> None:
     cache = trends.ShotCache()
     shots = {shot: shot_events(shot, 500) for shot in range(1, 11)}
     first = build_view(dataset(shots))
-    values = {"method": trends.FIT}  # auto-crop: the snapped range stays put
-    assert run(first, values, cache).computed == 10
+    values = {"method": trends.FIT}  # auto-crop: the plot's rounded-out range stays put
+    assert run(first, values, cache, "plot-1").computed == 10
     later = revise(first, dataset({**shots, 11: shot_events(11, 500)}))
-    data = run(later, values, cache)
+    data = run(later, values, cache, "plot-1")
     assert later.revision == 2 and data.computed == 1 and data.reused == 10
     assert data.record()["computed"] == 1
     # A rewritten shot (new fingerprint) is estimated again; other settings are other results.
     changed = revise(later, dataset({**shots, 11: shot_events(11, 500)}, prints={5: 999}))
-    assert run(changed, values, cache).computed == 1
-    assert run(changed, {**values, "min_events": 30}, cache).computed == 11
+    assert run(changed, values, cache, "plot-1").computed == 1
+    assert run(changed, {**values, "min_events": 30}, cache, "plot-1").computed == 11
     small = trends.ShotCache(limit=3)
     run(first, values, small)
     assert len(small) == 3
+    # Closing the folder's last plot drops its estimates; another plot keeps them until it closes.
+    run(changed, values, cache, "plot-2")
+    cache.plot_closed("plot-1")
+    assert len(cache) > 0
+    cache.plot_closed("plot-2")
+    assert len(cache) == 0
+
+
+def test_a_kept_box_is_one_plots_and_its_reuse_key_says_so() -> None:
+    """Plot B's box doesn't depend on plot A having run; one plot keeps its own box across Live
+    revisions, and the reuse key covers the box (it may come from an earlier run)."""
+    view = build_view(dataset({shot: shot_events(shot, 400, drift=2e-4) for shot in range(1, 21)}))
+    last = {"shots": "last N", "last_shots": 12}
+    shared = trends.ShotCache()
+    fresh = result_of(view, last, trends.ShotCache(), "B")
+    result_of(view, {}, shared, "A")
+    after_a = result_of(view, last, shared, "B")
+    assert after_a.data.box == fresh.data.box and after_a.reuse_key() == fresh.reuse_key()
+    assert fresh.reuse_key()["found"] == {"box": [list(bounds) for bounds in fresh.data.box]}
+    # The same plot with other Shots settings finds its box again.
+    other = result_of(view, {"shots": "last N", "last_shots": 5}, shared, "B")
+    assert "kept" not in " ".join(other.data.notes)
+    again = result_of(view, last, shared, "B")
+    assert again.data.box == fresh.data.box
+    assert "kept from an earlier run of this plot" in " ".join(again.data.notes)
+    # A run no plot asked for keeps nothing.
+    assert "kept" not in " ".join(result_of(view, last, shared).data.notes)
 
 
 def test_snapped_ranges_round_out_to_a_nice_step() -> None:
@@ -298,18 +327,21 @@ def test_axes_are_in_ms_and_mm_with_grouped_ticks_and_updates_keep_the_plots(qtb
     assert isinstance(widget, shot_trends.TrendsWidget)
     labels = {(quantity, axis): panel.plot.getAxis("left").labelText for panel, quantity, axis in widget.panels}
     assert labels[("centres", 0)] == "Centre T (ms)" and labels[("centres", 1)] == "Centre X (mm)"
-    assert labels[("widths", 2)] == "Width, full width at 50 %, Y (mm)" and labels[("temperatures", 0)] == "Temperature from T (µK)"
+    assert labels[("widths", 2)] == "Width, full width at 50 %, Y (mm)" and labels[("temperatures", 0)].startswith("Temperature from T")
     left = widget.panels[1][0].plot.getAxis("left")
     bottom = widget.counts_plot.getAxis("bottom")
     assert isinstance(left, GroupedAxis) and isinstance(bottom, GroupedAxis)
     assert left.tickStrings([20_400.0, 20_450.5], 1.0, 0.5) == ["20,400.0", "20,450.5"]
     points = point_data(widget.panels[1][0])["y"]
     assert np.allclose(sorted(points), sorted(result.data.centres[0].values * 1e3))  # ms
-    # A zoom in one plot is every plot's shot range (narrow plots under the wide counts plot).
+    temperature_axis = next(panel.plot.getAxis("left") for panel, quantity, _ in widget.panels
+                            if quantity == "temperatures")
+    assert temperature_axis.labelUnits == "K" and temperature_axis.autoSIPrefix  # µK, nK as the values need
+    # Any x change in one plot (zoom, pan, auto range) is every plot's (narrow ones under the wide one).
     widget.counts_plot.setXRange(2.0, 4.0, padding=0)
-    widget.counts_plot.vb.sigRangeChangedManually.emit([True, False])
     for panel, _, _ in widget.panels:
         assert panel.plot.vb.viewRange()[0] == pytest.approx([2.0, 4.0])
+    assert "mean ± SD of the last 100 shots" in widget.key_label.text
     later = result_of(revise(view, dataset({**shots, 6: shot_events(6, 500)})), {"show_temperatures": True})
     assert SCRIPT.update(widget, later) and len(point_data(widget.panels[0][0])) == 6
     other = result_of(view, {"method": trends.FIT})
@@ -361,20 +393,33 @@ def test_a_low_newest_shot_live_added_notifies_once(qtbot: QtBot, notifier: tupl
     fake, _ = notifier
     feed = LiveFeed()
     first, later = live_views(path=PATH)
-    result = result_of(later, NOTIFY)
-    assert shot_trends.notify_low(result) is None  # Live doesn't watch the folder.
+    # Live doesn't watch the folder: a newer revision drawn notifies nothing.
+    assert shot_trends.notify_low(result_of(first, NOTIFY, owner="p0")) is None
+    assert shot_trends.notify_low(result_of(later, NOTIFY, owner="p0")) is None
     feed.publish(dataset({shot: np.asarray(later.shots[shot]) for shot in later.shots}))
     assert events.hub().is_live(PATH)
+    # A plot's first drawing (opened during Live) notifies nothing, nor does a run with no plot.
+    result = result_of(later, NOTIFY, owner="p1")
+    assert shot_trends.notify_low(result) is None
+    assert shot_trends.notify_low(result_of(later, NOTIFY)) is None
+    assert shot_trends.notify_low(result_of(first, NOTIFY, owner="p2")) is None  # p2 drew revision 1
+    result = result_of(later, NOTIFY, owner="p2")
     event = shot_trends.notify_low(result)
     assert event is not None and event.shown and event.kind == events.LOW_COUNTS
     ((title, message),) = fake.sent
     assert title == "HeLab: low counts" and message.startswith(
         "Shot 6 of run_T: 10 events in the View range (below 50; below 50 % of the last 5 shots' mean (39")
-    assert shot_trends.notify_low(result) is None and len(fake.sent) == 1  # Once per shot.
-    # Shots shown before (revision 1 added none), notifications off, or a newest shot that isn't low.
-    assert shot_trends.notify_low(result_of(first, NOTIFY)) is None
-    assert shot_trends.notify_low(result_of(later, {"window": 5})) is None
-    assert shot_trends.notify_low(result_of(live_views(low_last=False)[1], NOTIFY)) is None
+    assert shot_trends.notify_low(result) is None and len(fake.sent) == 1  # The same revision again.
+    # Once per shot (another plot), notifications off, or a newest shot that isn't low.
+    shot_trends.notify_low(result_of(first, NOTIFY, owner="p3"))
+    assert shot_trends.notify_low(result_of(later, NOTIFY, owner="p3")) is None and len(fake.sent) == 1
+    shot_trends.notify_low(result_of(first, {"window": 5}, owner="p4"))
+    assert shot_trends.notify_low(result_of(later, {"window": 5}, owner="p4")) is None
+    calm_first, calm = live_views(low_last=False)
+    shot_trends.notify_low(result_of(calm_first, NOTIFY, owner="p5"))
+    assert shot_trends.notify_low(result_of(calm, NOTIFY, owner="p5")) is None
+    SCRIPT.plot_closed("Plot", "p2", PATH)
+    assert "p2" not in shot_trends._drawn
     feed.stop(PATH)
     assert not events.hub().is_live(PATH)
     assert len(fake.sent) == 1
@@ -389,15 +434,16 @@ def test_low_count_notifications_are_rate_limited_per_folder(notifier: tuple[Fak
     remove = events.hub().add_hook(hooked.append)
     shots = {shot: shot_events(shot, 400) for shot in range(1, 6)}
     view = build_view(dataset(shots, path))
+    shot_trends.notify_low(result_of(view, NOTIFY, owner="rate"))
     for shot in (6, 7, 8):
         shots[shot] = shot_events(shot, 10)
         view = revise(view, dataset(dict(shots), path))
-        shot_trends.notify_low(result_of(view, NOTIFY))
+        shot_trends.notify_low(result_of(view, NOTIFY, owner="rate"))
         clock.now += 10
     assert len(fake.sent) == 1 and [event.shown for event in hooked] == [True, False, False]
     clock.now += 60
     shots[9] = shot_events(9, 10)
-    shot_trends.notify_low(result_of(revise(view, dataset(dict(shots), path)), NOTIFY))
+    shot_trends.notify_low(result_of(revise(view, dataset(dict(shots), path)), NOTIFY, owner="rate"))
     assert len(fake.sent) == 2 and fake.sent[1][1].endswith("(2 more since the last notification)")
     remove()
     assert events.hub().history[-1].data["delivered"] == "fake"
@@ -506,6 +552,10 @@ def test_a_plot_following_live_notifies_once_for_a_low_new_shot(
     instance.run()  # Run again on the same shots: no second notification.
     qtbot.wait(300)
     assert len(fake.sent) == 1
+    assert instance.shown is not None and instance.shown.owner == instance.instance_id
+    assert instance.instance_id in shot_trends._drawn
+    instance.close()  # plot_closed: what the plot kept goes.
+    assert instance.instance_id not in shot_trends._drawn
     window.live_feed.stop(path)
 
 
@@ -517,3 +567,44 @@ def test_registration_and_live_policy() -> None:
     assert SCRIPT.live_policy("Plot") == LivePolicy()
     assert SCRIPT.parameter_warnings("Plot", {"notify_low": True}) == [
         "Notify during Live is on but no low-count rule is: nothing is notified"]
+
+
+def test_the_tray_icon_goes_when_live_watches_no_folder(notifier: tuple[FakeNotifier, Clock]) -> None:
+    hidden: list[bool] = []
+
+    class Tray:
+        def hide(self) -> None:
+            hidden.append(True)
+
+    desktop = events.hub().desktop
+    desktop._tray = Tray()
+    first, second = LiveFeed(), LiveFeed()
+    first._latest["/a"] = cast(DatasetView, object())
+    second._latest["/b"] = cast(DatasetView, object())
+    first.stop("/a")
+    assert hidden == []  # Live still watches /b.
+    second.stop("/b")
+    assert hidden == [True]
+
+    class Gone:
+        def hide(self) -> None:
+            raise RuntimeError("wrapped C/C++ object has been deleted")
+
+    desktop._tray = Gone()
+    desktop.hide()
+    assert desktop._tray is None
+
+
+def test_constants_show_only_with_temperatures() -> None:
+    sources = [spec for spec in SCRIPT.parameters("Plot") if spec.name.startswith("const.") and
+               spec.name.endswith(".from")]
+    assert sources and all(spec.when == ("show_temperatures", "True") for spec in sources)
+    assert SCRIPT.constant_keys("Plot") == shot_trends.CONSTANT_KEYS
+
+
+def test_a_reset_hub_skips_feeds_whose_qt_object_is_gone(notifier: tuple[FakeNotifier, Clock]) -> None:
+    """A window that closed leaves its LiveFeed's wrapper behind: a fresh hub doesn't watch it."""
+    gone = LiveFeed()
+    sip.delete(gone)
+    hub = events.reset(*notifier)
+    assert gone not in set(hub._feeds) and not hub.is_live(PATH)

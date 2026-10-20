@@ -128,13 +128,36 @@ def estimate_shot(events: Array, box: Sequence[Bounds], method: str, bins: int =
 
 
 class ShotCache:
-    """Per-shot estimates by key, least recently used dropped beyond ``limit``; thread-safe."""
+    """Per-shot estimates by key (its first item the folder), least recently used dropped beyond
+    ``limit``, and the ranges each plot keeps (``stable_range``, keys starting with the plot's
+    owner); thread-safe. A plot that closes drops its ranges, and its folder's estimates when no
+    other plot uses that folder (``plot_closed``). Outside the RAM budget, so kept small: an
+    estimate is about 2 KB of Python objects, so ``limit`` 8,000 is about 16 MB."""
 
-    def __init__(self, limit: int = 50_000) -> None:
+    def __init__(self, limit: int = 8_000) -> None:
         self.limit = limit
         self._items: OrderedDict[Hashable, ShotEstimate] = OrderedDict()
         self._ranges: OrderedDict[Hashable, Bounds] = OrderedDict()
+        self._owners: dict[str, Hashable] = {}  # plot → the folder it last ran on
         self._lock = threading.Lock()
+
+    def note_owner(self, owner: str, folder: Hashable) -> None:
+        """``owner`` (a plot) uses ``folder``'s estimates."""
+        if owner:
+            with self._lock:
+                self._owners[owner] = folder
+
+    def plot_closed(self, owner: str) -> None:
+        """Drop the ranges ``owner`` kept and, when no other plot uses its folder, that folder's
+        estimates."""
+        with self._lock:
+            folder = self._owners.pop(owner, None)
+            for key in [key for key in self._ranges if isinstance(key, tuple) and key and key[0] == owner]:
+                del self._ranges[key]
+            if folder is None or folder in self._owners.values():
+                return
+            for key in [key for key in self._items if isinstance(key, tuple) and key and key[0] == folder]:
+                del self._items[key]
 
     def get(self, key: Hashable) -> Optional[ShotEstimate]:
         with self._lock:
@@ -156,8 +179,8 @@ class ShotCache:
             self._ranges.clear()
 
     def stable_range(self, key: Hashable, low: float, high: float) -> tuple[Bounds, bool]:
-        """A data-derived range for the run ``key`` names (folder, axis, settings): the previous
-        run's while [low, high] still lies inside it and fills at least ``1 / KEEP_SLACK`` of it,
+        """A data-derived range for the run ``key`` names (the plot, its folder, the axis and the
+        settings that find it, the Shots selection included): that plot's previous run's while [low, high] still lies inside it and fills at least ``1 / KEEP_SLACK`` of it,
         else ``snapped(low, high)``. Whether the previous one was kept. Live's next shots then
         keep the box, and their per-shot results (keyed on it) are reused."""
         with self._lock:

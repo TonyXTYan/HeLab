@@ -16,7 +16,8 @@ can attach here later without touching it.
   log. No new dependency.
 - **Live:** ``is_live(path)`` says whether Live watches a folder now, from the main window's
   ``LiveFeed``s (each registers itself, ``watch_feed``), so a plot can tell a shot Live just
-  added from a historical one without reaching the window.
+  added from a historical one without reaching the window. The tray icon is hidden again once
+  Live watches no folder.
 
 GUI thread only: plots call it from ``render``/``update``, never from ``compute``.
 """
@@ -94,6 +95,11 @@ class DesktopNotifier:
             return None
         if not (QSystemTrayIcon.isSystemTrayAvailable() and QSystemTrayIcon.supportsMessages()):
             return None
+        if self._tray is not None:
+            try:
+                self._tray.isVisible()
+            except RuntimeError:  # Its Qt object went with the app (tests, quitting): made again.
+                self._tray = None
         if self._tray is None:
             icon = app.windowIcon()
             if icon.isNull():
@@ -105,6 +111,16 @@ class DesktopNotifier:
         if not self._tray.isVisible():
             self._tray.show()
         return self._tray
+
+    def hide(self) -> None:
+        """Take the tray icon away (Live watches no folder any more); the next notification shows
+        it again."""
+        if self._tray is None:
+            return
+        try:
+            self._tray.hide()
+        except RuntimeError:  # Its Qt object is gone already.
+            self._tray = None
 
     def deliver(self, title: str, message: str) -> str:
         try:
@@ -151,8 +167,23 @@ class EventHub:
     # Live
 
     def watch_feed(self, feed: _Feed) -> None:
-        """A ``LiveFeed`` whose folders count as watched by Live (held weakly)."""
+        """A ``LiveFeed`` whose folders count as watched by Live (held weakly). When Live stops
+        watching its last folder (``ended``), the tray icon goes."""
+        try:
+            ended = getattr(feed, "ended", None)
+            if ended is not None:
+                ended.connect(self._live_ended)
+        except RuntimeError:  # Its Qt object is gone (its window closed): it watches nothing.
+            return
         self._feeds.add(feed)
+
+    def _live_ended(self, path: str) -> None:
+        try:
+            live = any(feed.paths() for feed in list(self._feeds))
+        except RuntimeError:
+            live = False
+        if not live:
+            self.desktop.hide()
 
     def is_live(self, path: str) -> bool:
         return any(path in feed.paths() for feed in list(self._feeds))

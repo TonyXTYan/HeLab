@@ -105,3 +105,29 @@
 ## Checks
 
 See [handoff.md](handoff.md#checks).
+
+## After the Coordinator's review of ef62e3d
+
+Merged the integration head 3957415 (plot polish) first (95a3137), then:
+
+1. **Kept box per plot.** `AnalysisContext.owner` / `AnalysisResult.owner` (the plot's
+   `instance_id`, passed by `AnalysisInstance` through `AnalysisRunner.submit(owner=…)`; "" for runs
+   no plot asked for) is part of the remembered range's key, with the folder, axis, range settings
+   and the Shots values. Without an owner nothing is kept. `AnalysisResult.reuse_key` includes
+   `found["reuse"]` when a script gives it (documented in `DatasetAnalysis.result_found`); Shot
+   trends puts `{"box": …}` there. Note: "kept from an earlier run of this plot".
+2. **Cache size.** `ShotCache` limit 8,000 (≈ 16 MB of Python objects). A new general hook,
+   `DatasetAnalysis.plot_closed(action, owner, path)`, called from `AnalysisInstance.close`
+   (exceptions logged): Shot trends drops the plot's ranges and drawn revision, and its folder's
+   estimates when no other Shot trends plot uses that folder. Not counted in `RamBudget` (proposed:
+   not needed at this size).
+3. **Notifications only for a newer revision of what this plot drew** (`newer_than_drawn`, per
+   owner: same identity, higher revision): a plot opened during Live, a settings Rerun or a reload
+   of the same revision, and runs without a plot never notify.
+4. The tray icon hides when Live watches no folder (`LiveFeed.ended` → `EventHub._live_ended`);
+   a deleted tray is made again (RuntimeError guarded).
+5. Panels follow any x change (`sigXRangeChanged`, behind `_syncing`), auto range included.
+6. Constants group shown only with Temperatures; temperature axes in K with pyqtgraph's SI prefix,
+   record lines with `Estimate.text(unit="K")` ("(179 ± 13) nK (mean ± SD)"); `_live_halt` notifies
+   after `session.error` is set. Titles: `WrapLabel`, `line_html`, notes one per line
+   (`plot_text.notes_html`), a key line under the title; amber is `colours.AMBER`.

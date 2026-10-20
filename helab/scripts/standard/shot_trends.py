@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import html
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, List, Mapping, Optional, cast
 
 import numpy as np
@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import QWidget
 
 from helab.analysis import trends
 from helab.analysis.constant_layers import constants_specs, describe_constants, resolve_for_run
-from helab.analysis.dataset_view import DatasetView, txy
+from helab.analysis.dataset_view import DatasetView, ViewIdentity, txy
 from helab.analysis.display_units import WIDTH_DIGITS, axis_scale, axis_text, axis_unit, number_text, range_text
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.estimates import Estimate
@@ -40,15 +40,17 @@ from helab.analysis.parameters import ParameterSpec
 from helab.analysis.physics import (ResolvedConstants, sigma_v_from_arrival_width, sigma_v_from_transverse_width,
                                     temperature_estimate)
 from helab.analysis.plot_axes import GroupedAxis
+from helab.analysis.plot_text import add_label, line_html, notes_html
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_bounds, range_brief, range_specs,
                                       range_warnings, select_shots, selection_text, shots_brief, shots_text)
 from helab.analysis.stats import AXES, MAX_BINS, shortest_range
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
-from helab.scripts.standard.basic_plots import notes_html, source_title
+from helab.scripts.standard.basic_plots import source_title
 from helab.scripts.standard.shot_times import fallback_text
 from helab.utils import events
+from helab.utils.colours import AMBER
 
 RANGE = range_specs(
     "Counts and the per-shot estimates use the events inside the shortest range holding this share of "
@@ -104,14 +106,15 @@ NOTIFY = ParameterSpec("notify_low", "Notify during Live", "bool", False, group=
                        tip="While Live adds shots to this plot's folder, a desktop notification when the newest "
                            "shot is low by the rules on (once per shot, at most one a minute per folder). Never "
                            "for shots already shown, nor outside Live.")
-CONSTANTS = constants_specs(("fall_distance", "fall_time"))
+# The constants only the temperatures use: shown while Temperatures is on.
+CONSTANTS = [replace(spec, when=(TEMPERATURES.name, "True")) if spec.when is None else spec
+             for spec in constants_specs(("fall_distance", "fall_time"))]
 CONSTANT_KEYS = ("fall_distance", "fall_time", "g", "mass", "k_B")
 
 COLOUR = (40, 90, 170)
-LOW_COLOUR = (230, 140, 0)  # amber, as Shot times' TXY times and the notes
+LOW_COLOUR = AMBER  # the app's amber, as the notes and warnings
 BAND_COLOUR = (40, 90, 170, 40)
 MEAN_COLOUR = (40, 90, 170, 160)
-TEMPERATURE_SCALE, TEMPERATURE_UNIT = 1e6, "µK"
 TOOLTIP = ("Amber: a low-count shot. Triangles: the shot's time is its TXY file's (no raw file). The band is "
            "the moving mean ± SD of the last N shots.")
 
@@ -187,6 +190,8 @@ class Trends:
             "computed": self.computed, "reused": self.reused}
         if self.constants is not None:
             record["constants"] = self.constants.as_record()
+        # The box may be kept from an earlier run of the plot: a reuse must match it too.
+        record["reuse"] = {"box": [list(bounds) for bounds in self.box]}
         record["record_lines"] = self.record_lines()
         return record
 
@@ -212,8 +217,7 @@ class Trends:
                          f"over {number:,} shots")
         for series in self.temperatures:
             value, spread, number = trends.summary(series.values)
-            lines.append(f"{series.name}: {number_text(value * TEMPERATURE_SCALE, 4)} ± "
-                         f"{number_text(spread * TEMPERATURE_SCALE, 3)} {TEMPERATURE_UNIT} (SD) over {number:,} shots")
+            lines.append(f"{series.name}: {Estimate(value, spread).text(unit='K')} (mean ± SD) over {number:,} shots")
         lines.append(f"Per-shot estimates: {self.computed:,} computed, {self.reused:,} reused")
         lines.extend(f"Note: {note}" for note in self.notes)
         return lines
@@ -235,11 +239,13 @@ def low_rules(values: Mapping[str, Any]) -> tuple[Optional[int], Optional[float]
 
 
 def view_box(view: DatasetView, shots: tuple[int, ...], values: Mapping[str, Any],
-             cache: trends.ShotCache = trends.CACHE) -> tuple[tuple[tuple[float, float], ...], tuple[str, ...]]:
+             cache: trends.ShotCache = trends.CACHE, owner: str = ""
+             ) -> tuple[tuple[tuple[float, float], ...], tuple[str, ...]]:
     """The box counts and estimates use, and notes on it: manual bounds as set; an axis without
     one (auto-crop, or a manual axis left at its full extent) from the chosen events, rounded out
-    and kept from the plot's previous run while the events stay inside it
-    (``ShotCache.stable_range``)."""
+    and, for a plot (``owner``), kept from an earlier run of this plot with the same range and
+    Shots settings while the events stay inside it (``ShotCache.stable_range``). Without an
+    owner nothing is kept: the box comes from this run's input alone."""
     events = view.events(shots)
     if not len(events):
         return (), ()
@@ -255,11 +261,17 @@ def view_box(view: DatasetView, shots: tuple[int, ...], values: Mapping[str, Any
                          else shortest_range(column, keep))
             if not high > low:  # every event at one value
                 low, high = low - 0.5e-9, high + 0.5e-9
-            bounds, previous = cache.stable_range((identity, axis, manual(values), round(keep, 9)), low, high)
+            if owner:
+                selection = tuple(values.get(spec.name, spec.default) for spec in SHOT_SPECS)
+                bounds, previous = cache.stable_range((owner, identity, axis, manual(values), round(keep, 9),
+                                                       selection), low, high)
+            else:
+                bounds, previous = trends.snapped(low, high), False
             found, kept = True, kept or previous
         box.append((float(bounds[0]), float(bounds[1])))
-    notes = ((f"ranges found in the data are rounded out{' and kept from the last run' if kept else ''} "
-              f"while the events stay inside them, so Live reuses per-shot results"),) if found else ()
+    notes = ((f"ranges found in the data are rounded out"
+              f"{' and kept from an earlier run of this plot' if kept else ''}, so Live reuses per-shot "
+              f"results"),) if found else ()
     return tuple(box), notes
 
 
@@ -285,10 +297,11 @@ def compute_trends(context: AnalysisContext, cache: trends.ShotCache = trends.CA
     fraction = float(values.get(FRACTION.name, FRACTION.default)) / 100
     bins = int(values.get(BINS.name, BINS.default))
     min_events = int(values.get(MIN_EVENTS.name, MIN_EVENTS.default))
-    box, notes = view_box(view, shots, values, cache)
+    box, notes = view_box(view, shots, values, cache, context.owner)
     notes = (*range_warnings(values), *notes)
     settings = (method, round(fraction, 9) if method == trends.EDGES else None, bins, min_events, box)
     identity = view.identity.root_key or view.identity.source_path
+    cache.note_owner(context.owner, identity)
     count = len(shots)
     counts = np.zeros(count, dtype=np.int64)
     centre = np.full((len(AXES), count), np.nan)
@@ -365,12 +378,33 @@ def low_alert(data: Trends, path: str) -> tuple[Any, str] | None:
     return (events.LOW_COUNTS, path, newest, data.newest_fingerprint), message
 
 
+# Per plot (``AnalysisResult.owner``): the input it last drew (identity, revision), so only a
+# newer revision of the same data (Live's next) can notify. GUI thread; ``plot_closed`` drops it.
+_drawn: dict[str, tuple[ViewIdentity, int]] = {}
+
+
+def newer_than_drawn(result: AnalysisResult) -> bool:
+    """Whether ``result``'s input is a later revision of the data its plot drew last (and note it
+    as drawn): False for a plot's first drawing (a plot opened during Live), a rerun of the same
+    revision (settings, a reload) and other data; always False without an owner (no plot)."""
+    owner = result.owner
+    if not owner:
+        return False
+    identity, revision = result.input.identity, result.input.revision
+    before = _drawn.get(owner)
+    if before is None or before[0] != identity or revision > before[1]:
+        _drawn[owner] = (identity, revision)
+    return before is not None and before[0] == identity and revision > before[1]
+
+
 def notify_low(result: AnalysisResult) -> Optional[events.Event]:
-    """The low-count notification for a result's newest shot, if any (GUI thread): only while
-    Live watches the folder (``events.hub().is_live``)."""
+    """The low-count notification for a result's newest shot, if any (GUI thread, as its plot is
+    drawn): only for a later revision than the plot drew before (``newer_than_drawn``) while Live
+    watches the folder (``events.hub().is_live``)."""
     data = result.data
     path = result.input.identity.source_path
-    if not isinstance(data, Trends) or not events.hub().is_live(path):
+    newer = newer_than_drawn(result)
+    if not isinstance(data, Trends) or not newer or not events.hub().is_live(path):
         return None
     alert = low_alert(data, path)
     if alert is None:
@@ -396,6 +430,20 @@ def title_text(data: Trends) -> str:
              method_text(data.method, data.fraction)]
     if data.low.count:
         parts.append(f"⚠ {data.low.count:,} low (amber)")
+    return " · ".join(parts)
+
+
+def key_html(data: Trends, time_axis: bool) -> str:
+    """The plots' key, below the title (no legend inside a plot, where it would cover points)."""
+    def mark(colour: Any, symbol: str) -> str:
+        return f'<span style="color: {pg.mkColor(colour).name()}">{symbol}</span>'
+
+    parts = [f"{mark(COLOUR, '●')} shot"]
+    if data.low.count:
+        parts.append(f"{mark(LOW_COLOUR, '●')} low counts ({html.escape(data.low.rules_text())})")
+    if time_axis and data.fallbacks:
+        parts.append(f"{mark(COLOUR, '▼')} TXY file time (no raw file)")
+    parts.append(f"{mark(MEAN_COLOUR[:3], '━')} mean ± SD of the last {data.window:,} shots")
     return " · ".join(parts)
 
 
@@ -448,7 +496,8 @@ class TrendsWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
         self.setBackground("w")
         self.setToolTip(TOOLTIP)
         layout: Any = self.ci
-        self.title = layout.addLabel("", row=0, col=0, colspan=3)
+        self.title = add_label(layout, row=0, col=0, colspan=3)
+        self.key_label = add_label(layout, row=1, col=0, colspan=3)
         self.panels: list[tuple[Panel, str, int]] = []  # (panel, quantity, axis)
         self.time_axis = against == SHOT_TIME
 
@@ -458,32 +507,36 @@ class TrendsWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
         def axes() -> dict[str, Any]:
             return {"bottom": bottom(), "left": GroupedAxis("left")}
 
-        counts_plot = layout.addPlot(row=1, col=0, colspan=3, axisItems=axes())
+        counts_plot = layout.addPlot(row=2, col=0, colspan=3, axisItems=axes())
         counts_plot.setLabel("left", "Events in range")
         self._dress(counts_plot)
         self.panels.append((Panel(counts_plot, 1.0, band), "counts", 0))
         self.counts_plot = counts_plot
-        row = 2
+        row = 3
         width = width_name(data.method, data.fraction)
         for quantity, on in (("centres", centres), ("widths", widths), ("temperatures", temperatures)):
             if not on:
                 continue
             for axis_index, axis in enumerate(AXES):
-                plot = layout.addPlot(row=row, col=axis_index, axisItems=axes())
                 if quantity == "temperatures":
-                    label, scale = f"Temperature from {axis} ({TEMPERATURE_UNIT})", TEMPERATURE_SCALE
+                    # In K with pyqtgraph's SI prefix (µK, nK), as D1's temperatures are written.
+                    plot = layout.addPlot(row=row, col=axis_index, axisItems={"bottom": bottom()})
+                    plot.setLabel("left", f"Temperature from {axis}", units="K")
+                    scale = 1.0
                 else:
+                    plot = layout.addPlot(row=row, col=axis_index, axisItems=axes())
                     name = "Centre" if quantity == "centres" else f"Width, {width},"
-                    label, scale = f"{name} {axis} ({axis_unit(axis)})", axis_scale(axis)
-                plot.setLabel("left", label)
+                    plot.setLabel("left", f"{name} {axis} ({axis_unit(axis)})")
+                    scale = axis_scale(axis)
                 self._dress(plot)
                 self.panels.append((Panel(plot, scale, band), quantity, axis_index))
             row += 1
         # One shot range for all: pyqtgraph's own x link lines plots up by pixel, which a wide
-        # plot over three narrow ones defeats, so a zoom or pan in one is copied to the others.
+        # plot over three narrow ones defeats, so any x change in one (a zoom, a pan, its auto
+        # range as Live adds shots) is copied to the others.
         self._syncing = False
         for panel, _, _ in self.panels:
-            panel.plot.vb.sigRangeChangedManually.connect(self._sync_x)
+            panel.plot.vb.sigXRangeChanged.connect(self._sync_x)
 
     @pyqtSlot()
     def _sync_x(self) -> None:
@@ -504,14 +557,14 @@ class TrendsWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
         plot.setLabel("bottom", "Shot time" if self.time_axis else "Shot number")
 
     def show_data(self, result: AnalysisResult, data: Trends) -> None:
-        header = html.escape(source_title(result, title_text(data)))
+        header = line_html(source_title(result, title_text(data)))
         if data.constants is not None:
             used = describe_constants(data.constants, CONSTANT_KEYS)
             header += f"<br>Temperatures with {html.escape(used)}" if used else \
                 "<br>Temperatures with the default constants"
         notes = list(data.notes)
         if self.time_axis and data.fallbacks:
-            notes.append(f"⚠ {fallback_text(data.fallbacks)}")
+            notes.append(fallback_text(data.fallbacks))
         if self.time_axis and data.untimed:
             notes.append(f"{data.untimed:,} without a time left out")
         failed = [f"{axis} {count:,}" for axis, count in zip(AXES, data.failures) if count]
@@ -522,6 +575,7 @@ class TrendsWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
         if data.constants is not None:
             notes.extend(data.constants.notes)
         self.title.setText(header + notes_html(notes))
+        self.key_label.setText(key_html(data, self.time_axis))
         x = data.times if self.time_axis else data.shots.astype(np.float64)
         for panel, quantity, axis in self.panels:
             series = (data.counts_series if quantity == "counts" else data.centres[axis] if quantity == "centres"
@@ -584,6 +638,12 @@ class ShotTrends(DatasetAnalysis):
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         return compute_trends(context)
+
+    def plot_closed(self, action_name: str, owner: str, path: str) -> None:
+        """Forget what the plot drew and its kept ranges; its folder's per-shot estimates go when no
+        other Shot trends plot uses that folder."""
+        _drawn.pop(owner, None)
+        trends.CACHE.plot_closed(owner)
 
     def result_found(self, action_name: str, data: Any) -> dict[str, Any]:
         return data.record() if isinstance(data, Trends) else {}
