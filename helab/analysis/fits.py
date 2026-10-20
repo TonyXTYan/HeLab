@@ -20,7 +20,7 @@ How a fit runs:
   model's ``offset`` is at least 0 (a mean count can't be negative), and an offset at 0 isn't
   noted as "at its bound"; otherwise (``sigma=`` rates, background-subtracted data) it keeps
   the model's bound, −top.
-- Bins: by default (``binned``) the model is averaged over each bin (three-point
+- Bins: by default (``binned``) the model is averaged over each bin (five-point
   Gauss–Legendre, ``bin_means``), not taken at its centre: a centre value biases a
   width by about +w²/(24σ) for bins w wide (Sheppard's correction: +0.5 SE at 50 000 events
   in bins of σ/5, several SE at 10⁵–10⁶). Bin edges are ``edges=`` when given, else halfway
@@ -220,15 +220,19 @@ def bin_bounds(centres: npt.ArrayLike) -> tuple[Array, Array]:
     return lower, upper
 
 
-GAUSS_NODES = (-math.sqrt(0.6), 0.0, math.sqrt(0.6))  # three-point Gauss–Legendre on [−1, 1]
-GAUSS_WEIGHTS = (5 / 18, 8 / 18, 5 / 18)  # … its weights, summing to 1
+# Five-point Gauss–Legendre on [−1, 1], and its weights halved to sum to 1. Five, not three,
+# so a wide bin is still exact: a radial shell from 0 to 1.75 σ (an equal-volume first shell)
+# under r² weights is off by 3·10⁻³ of a Gaussian peak with three points, 10⁻⁶ with five.
+_LEGENDRE = np.polynomial.legendre.leggauss(5)
+GAUSS_NODES = tuple(float(node) for node in _LEGENDRE[0])
+GAUSS_WEIGHTS = tuple(float(weight) / 2 for weight in _LEGENDRE[1])
 
 
 def bin_means(function: Callable[..., Array], lower: Array, upper: Array, values: Sequence[float] | Array,
               weight: Callable[[Array], Array] | None = None) -> Array:
-    """``function(x, *values)`` averaged over each bin [lower, upper] by three-point
-    Gauss–Legendre quadrature (exact for polynomials up to degree 5; for a Gaussian in bins of
-    σ its error is ~10⁻⁴ of the peak, against the centre value's ~4 %). With ``weight`` w(x),
+    """``function(x, *values)`` averaged over each bin [lower, upper] by five-point
+    Gauss–Legendre quadrature (exact for polynomials up to degree 9; for a Gaussian in bins of
+    σ its error is ~10⁻¹⁰ of the peak, against the centre value's ~4 %). With ``weight`` w(x),
     the weighted mean ∫w·f / ∫w (radial shells: w = r²), both by the same quadrature."""
     middle, half = (lower + upper) / 2, (upper - lower) / 2
     points = np.concatenate([middle + node * half for node in GAUSS_NODES])

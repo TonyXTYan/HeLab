@@ -16,7 +16,7 @@ import pytest
 from helab.analysis import correlations
 from helab.analysis.correlations import (CacheKey, CorrelationResult, CorrelationSpec, InShot, PairCounts,
                                          ShotEvents, correlate, g2_from_counts, in_shot_counts, linear_edges,
-                                         fit_peak, peak_model, radial_edges)
+                                         fit_peak, peak_model, radial_edges, robust_centre)
 from helab.analysis.results import Cancelled
 
 Array = npt.NDArray[np.float64]
@@ -97,7 +97,7 @@ def check_peak(result: CorrelationResult, expected: float, max_se: float) -> Non
     assert result.ok, result.failure
     assert result.fit is not None and result.fit.ok, result.fit
     zero = result.g2_zero
-    assert result.g2_zero_method.startswith("refits of")
+    assert "bootstrap replicates" in result.g2_zero_method and "jackknife" in result.g2_zero_method
     assert math.isfinite(zero.se) and 0 < zero.se < max_se
     assert abs(zero.value - expected) < 3 * zero.se, (zero, expected)
 
@@ -272,6 +272,7 @@ def test_pointing_jitter_is_not_reported_as_bunching() -> None:
     zero = free.g2_zero
     assert not math.isfinite(zero.value) or abs(zero.value - 1) < 3 * zero.se, zero
     assert any("slope, not a peak" in note or "baseline" in note for note in free.notes), free.notes
+    assert math.isnan(free.baseline.value) or "baseline" in " ".join(free.notes)
     # A baseline fixed at 1 (the legacy fit) sees the same bump as a positive amplitude.
     fixed = correlate(shots, spec, n_boot=0, baseline="fixed")
     assert fixed.baseline_mode == "fixed" and fixed.baseline.value == 1
@@ -315,23 +316,68 @@ def test_without_the_matrix_the_bootstrap_says_it_is_optimistic(monkeypatch: pyt
     assert not np.any(np.isfinite(rough.jackknife_se)) and np.all(np.isfinite(exact.jackknife_se))
 
 
-def test_g2_zero_error_matches_its_scatter() -> None:
-    """g²(0)'s SE comes from refitting bootstrap replicates: neighbouring bins share shots,
-    so the single fit's covariance is too small."""
+def test_g2_zero_error_matches_its_scatter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """g²(0)'s SE comes from refitting bootstrap replicates and the delete-one curves
+    (the larger): neighbouring bins share shots, so the single fit's covariance is too small,
+    and the bootstrap alone runs low with few shots."""
     spec = CorrelationSpec("radial", linear_edges(0, 0.4, 20))
-    values, errors, covariance = [], [], []
+    values, errors = [], []
     for seed in range(30):
-        shots = twin_shots(seed)
-        result = correlate(shots, spec, n_boot=60)
+        result = correlate(twin_shots(seed), spec, n_boot=60)
         assert result.fit is not None and result.fit.ok and math.isfinite(result.g2_zero.value)
+        assert "jackknife" in result.g2_zero_method and "bootstrap" in result.g2_zero_method
         values.append(result.g2_zero.value)
         errors.append(result.g2_zero.se)
-        if seed < 3:
-            covariance.append(correlate(shots, spec, n_boot=0).g2_zero_method)
-    # 1.11 with these seeds; 30 runs pin the ratio to about ±13 %.
+    # 1.05 with these seeds (1.11 from the bootstrap refits alone); 30 runs pin it to ±13 %.
     ratio = float(np.std(values, ddof=1)) / float(np.mean(errors))
-    assert 0.7 < ratio < 1.5, ratio
-    assert all("covariance" in method for method in covariance)
+    assert 0.75 < ratio < 1.35, ratio
+    alone = correlate(twin_shots(0), spec, n_boot=0)
+    assert "jackknife" in alone.g2_zero_method and "bootstrap" not in alone.g2_zero_method
+    monkeypatch.setattr(correlations, "JACKKNIFE_REFITS", 1)
+    assert "covariance" in correlate(twin_shots(0), spec, n_boot=0).g2_zero_method
+
+
+def test_no_peak_reports_g2_near_zero() -> None:
+    spec = CorrelationSpec("radial", linear_edges(0, 0.4, 20))
+    flat = correlate(poisson_shots(5, 30, 400), spec, n_boot=100)
+    near = flat.near_zero
+    assert math.isfinite(near.se) and abs(near.value - 1) < 3 * near.se
+    if not math.isfinite(flat.g2_zero.value):
+        assert any(note.startswith("no peak: g² near 0 is") for note in flat.notes)
+    # A real peak (σ = 0.07) in a range of 1.4σ: no g²(0), but g² near 0 and "widen the range".
+    narrow = correlate(twin_shots(4, shots=30), CorrelationSpec("radial", linear_edges(0, 0.1, 10)), n_boot=100)
+    assert not math.isfinite(narrow.g2_zero.value)
+    assert narrow.near_zero.value > 1 + 3 * narrow.near_zero.se
+    assert any("widen the range" in note for note in narrow.notes)
+    assert any(note.startswith("no peak: g² near 0 is") for note in narrow.notes)
+    assert math.isnan(narrow.baseline.value)  # undetermined under a slope: not recorded
+    record = json.loads(json.dumps(narrow.as_record(), allow_nan=False))
+    assert record["baseline"]["value"] is None and record["near_zero"]["value"] > 1
+    wide = correlate(twin_shots(4), spec, n_boot=100)
+    assert math.isfinite(wide.g2_zero.value) and not any("no peak" in note for note in wide.notes)
+
+
+def test_robust_centre_ignores_a_background() -> None:
+    rng = np.random.default_rng(8)
+    cloud = rng.normal((0.2, -0.1, 0.05), 0.05, (800, 3))
+    background = rng.uniform(-3, 3, (200, 3)) + (2.0, 0.0, 0.0)
+    events = np.concatenate([cloud, background])
+    centre = robust_centre(events)
+    assert np.allclose(centre, (0.2, -0.1, 0.05), atol=0.01)
+    assert abs(events.mean(axis=0)[0] - 0.2) > 0.2  # the plain mean is pulled
+    spec = CorrelationSpec("1d", linear_edges(-0.1, 0.1, 10), window=0.02, recentre=True)
+    state = PairCounts(spec)
+    state.add(ShotEvents(0, 0, events))
+    assert np.allclose(state._entries[0].events, events - centre)
+
+
+def test_few_shots_say_the_g2_zero_error_is_rough() -> None:
+    spec = CorrelationSpec("radial", linear_edges(0, 0.4, 20))
+    few = correlate(twin_shots(3, shots=6, twins=60), spec, n_boot=60)
+    assert math.isfinite(few.g2_zero.se)
+    assert any("only 6 shots: g²(0)'s error is rough" in note for note in few.notes)
+    many = correlate(twin_shots(3), spec, n_boot=60)
+    assert not any("error is rough" in note for note in many.notes)
 
 
 def test_bin_averaged_model_recovers_the_peak_on_wide_shells() -> None:
@@ -345,7 +391,7 @@ def test_bin_averaged_model_recovers_the_peak_on_wide_shells() -> None:
     assert fitted.ok
     assert fitted["baseline"].value == pytest.approx(0.99, abs=1e-3)
     assert (fitted["baseline"].value + fitted["amplitude"].value) / fitted["baseline"].value == pytest.approx(
-        (0.99 + 0.98) / 0.99, abs=5e-3)  # 3-point quadrature on a first shell 1.75 σ wide: −0.003
+        (0.99 + 0.98) / 0.99, abs=1e-3)
     assert fitted["sigma"].value == pytest.approx(SIGMA_C, rel=0.01)
 
 

@@ -23,9 +23,11 @@ results and choices for Tony: [notes.md](notes.md).
 - `CorrelationResult`: `centres`, `edges`, `g2`, `se` (+ `se_method`), `counting_se`,
   `jackknife_se`, `in_counts`, `between_counts`, `in_pairs`, `between_pairs`, `shots_used`,
   `shots_total`, `complete`, `failure`, `notes`, `fit` (`FitResult`, bin-averaged model),
-  `g2_zero` (`Estimate`: (b + A)/b, SE from replicate refits, `g2_zero_method`; nan for a
-  slope), `baseline` (b), `baseline_mode`, `curve(x)`, `bootstrap`, `as_record()` (strict
-  JSON). Failures (no shots, one shot, nothing in range) are results,
+  `g2_zero` (`Estimate`: (b + A)/b, SE the larger of bootstrap and jackknife refits,
+  `g2_zero_method`; nan for a slope or a failed fit), `near_zero` (pooled g² of the 3 bins
+  nearest 0 ± bootstrap SE), `baseline` (b; nan when undetermined), `baseline_mode`,
+  `curve(x)`, `bootstrap`, `as_record()` (strict JSON). `robust_centre(events)` is the
+  re-centring centre. Failures (no shots, one shot, nothing in range) are results,
   never exceptions.
 
 ## How the D12/D13 plot should use it
@@ -54,9 +56,10 @@ results and choices for Tony: [notes.md](notes.md).
    added yet are simply added then).
 5. **Drawing**: points g² ± `se` at `centres` (radial centres are shell means), the
    fit curve `result.curve(x)` (= `fit.evaluate(x)`, the unaveraged model) on a fine grid, a line at the fitted baseline, the title `g²(0) = …` from `g2_zero.text()`
-   (relative to the baseline) and σ from `fit["sigma"]`. Show the notes: a baseline that
-   isn't 1 or "a slope, not a peak" means the reference doesn't match the shots (try
-   re-centring), and then there is no g²(0). Empty/failed: show `failure` as the plot's
+   (relative to the baseline) and σ from `fit["sigma"]`. Without a g²(0) show
+   `near_zero` ("no peak: g² near 0 is …", in the notes) instead. Show the notes: a baseline
+   that isn't 1 or "a slope, not a peak" means the reference doesn't match the shots (try
+   re-centring) or the range is too narrow ("widen the range"). Empty/failed: show `failure` as the plot's
    note (`helab/analysis/empty.py`). Coverage: `shots_used` with their fingerprints.
 6. **Record**: `result.as_record()` plus the velocity settings.
 

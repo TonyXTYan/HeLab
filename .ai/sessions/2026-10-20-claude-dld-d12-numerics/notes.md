@@ -33,8 +33,12 @@ First commit 00b8e26; the Coordinator's review of it (five findings) is answered
   q3). Now: a free baseline; a note when it is more than 2 SE from 1; no g²(0) when the
   fitted σ is above a third of the reach ("a slope, not a peak"); and `recentre=True`
   (each shot's mean velocity moved to 0 before counting; off by default, in the cache key).
-  Re-centring leaves a residual jitter of σ/√n (the mean's own error), negligible for
-  hundreds of events, and centres BB about each shot's mean (origin then relative to it).
+  The centre is robust (`robust_centre`, as `release._origin`: the mean of the events within
+  ±3 robust σ (1.4826 MAD) of the median on each axis, the window found twice), so a
+  background or a second cloud doesn't pull it. In-shot separations don't change, but each
+  centre comes from the shot's own events, so the reference narrows by the centre's error
+  (variance σ²/n per axis) and g² near 0 dips by about (1 − 1/n)^{3/2} ≈ 1 − 1.5/n (0.4 % at
+  400 events per shot). For BB the origin becomes per shot (relative to each shot's centre).
   **Later (proposed, for Tony): a cloud-matched reference**: pair each shot only with shots
   whose centre and width (per axis, from the events' mean and spread) are within a tolerance
   of its own, the banded mechanism with a different partner rule. It keeps real shot-to-shot
@@ -123,19 +127,39 @@ reproducible, and Live-unfriendly).
   shells: the pair density of a flat reference), so wide first shells of equal-volume bins
   don't bias the peak (finding 4). Since the merge of the integration head (6ed1ec9) this is
   `fits.fit_histogram`'s own averaging (`fit_peak`: `edges=spec.edges`, `binned=r²` for
-  shells, `True` in 1D; three-point Gauss–Legendre), and the local five-point averaging is
-  gone: one path. On a noise-free curve over 12 equal-volume shells (a first shell 1.75σ wide)
-  it returns (b + A)/b 0.003 low, 0.1 of a typical SE; 40 linear bins are exact to 10⁻⁴. Weights: the bootstrap SE floored at a one-count error
+  shells, `True` in 1D), one path. `fits.bin_means` now uses five-point Gauss–Legendre
+  (re-review item 3; the only change in fits.py): a first equal-volume shell 1.75σ wide was
+  0.003 low with three points, 10⁻⁶ with five; the shell test is back to 10⁻³. What's left
+  on equal-volume shells is the weight, not the quadrature: r² assumes a flat reference
+  across each shell, while the real one falls off with the cloud's autocorrelation; on the
+  noise-free probe (Coordinator's s1) that is +0.001 on (b + A)/b over 40 equal-volume
+  shells, exact on linear bins. Proposed, for Tony: weight by the measured between-shot
+  density if it ever matters. Weights: the bootstrap SE floored at a one-count error
   √max(H_in, 1)·(P_between/P_in)/H_between, since a bin with 0 pairs has a bootstrap SE of 0.
   g²(0) = (b + A)/b, b reported as `baseline`; `baseline="fixed"` keeps the legacy 1 + A fit.
   `CorrelationResult.curve(x)` and `fit.evaluate(x)` are both the point model (unaveraged),
   for drawing (tested equal).
-- **g²(0)'s SE** is the spread of refits of the first `FIT_RESAMPLES` = 200 bootstrap
-  replicates (same weights): neighbouring bins share shots, so the single fit's diagonal
-  covariance was ~1.4× too small (finding 2). Without a bootstrap (`n_boot=0`) the
-  covariance's SE is used and `g2_zero_method` says it is too small. On the twin-pair test
-  source the covariance SE is 2.1× too small, the refit SE matches the scatter (1.11 over 30
-  seeds; 0.74 and 1.32 on other sets of 16–40 seeds: the ratio itself is that noisy).
+- **g²(0)'s SE** (finding 2, then re-review item 1) is the larger of two refit spreads, with
+  the same weights: the first `FIT_RESAMPLES` = 200 bootstrap replicates, inflated by
+  √(S/(S − 1)) (the bootstrap's small-sample shrinkage), and the jackknife of refits of the
+  S delete-one-shot curves (up to `JACKKNIFE_REFITS` = 100 shots; the curves come free from
+  the shot-pair matrix). The bootstrap refits alone ran 15–30 % low (scatter/SE 1.16 at 40
+  shots, 1.24 at 8, 1.29 at 4: Coordinator's s2), and at 4 shots 106 of 300 replicates were
+  undefined (a bin with no reference pairs in the draw). Notes: more than 20 % of replicate
+  fits failed or undefined; fewer than 10 shots, "g²(0)'s error is rough". Without a
+  bootstrap the jackknife refits alone, else the covariance (`g2_zero_method` says which).
+  On the twin-pair test source (15 shots, 30 seeds) scatter/SE is now 1.05 (1.11 with the
+  bootstrap alone; the covariance SE is 2.1× too small).
+- **No peak** (re-review item 2): when the fit fails or finds a slope, the result has no
+  g²(0) but `near_zero`: the pooled g² of the 3 bins nearest Δ = 0 (ΣH_in/P_in over
+  ΣH_between/P_between) ± the bootstrap SE of the same between-pair-weighted mean, and the note
+  "no peak: g² near 0 is X ± Y". Chosen over a fit with σ fixed at a given correlation length
+  because it needs no extra parameter and says what the data say; a fixed-σ fit can come later
+  if the plot gets a "correlation length" setting (proposed, for Tony). Under a slope, when g²
+  near 0 is more than 2 SE above 1 or the amplitude is > 2 SE, the note "a peak wider than
+  the range may be real: widen the range … unless the reference doesn't match the shots".
+  An undetermined baseline (under a slope, or SE > half its value: the probe's
+  b = 0.000 ± 841) is not recorded (nan, None in the record).
 - **Integration merge** (6ed1ec9, the Coordinator's request): `fits.fit_histogram` now
   averages over bins by default, from halfway edges (equal widths). `fit_peak` always passes
   the spec's exact `edges=` and the r² weight for shells, so the equal-width default is never
@@ -181,6 +205,19 @@ reproducible, and Live-unfriendly).
 - Cost is the number of pairs within reach: ~N²·f with f the share of pair separations
   inside the bins, plus N log S tree builds. A radial reach comparable to the cloud is the
   slow case (all pairs); real correlation lengths are much shorter than the cloud.
+
+## Re-review follow-ups (after the merge, 26fc2e3)
+
+1. g²(0)'s SE: the larger of bootstrap refits × √(S/(S − 1)) and the jackknife of
+   delete-one refits; notes for > 20 % failed fits and < 10 shots. Tests:
+   `test_g2_zero_error_matches_its_scatter` (1.05 over 30 seeds; method strings),
+   `test_few_shots_say_the_g2_zero_error_is_rough`.
+2. No peak: `near_zero` and "no peak: g² near 0 is X ± Y", "widen the range", b not recorded
+   when undetermined. Test: `test_no_peak_reports_g2_near_zero` (uncorrelated; a real peak
+   in a range of 1.4σ; the record).
+3. `fits.bin_means` five-point; shell test back to 10⁻³.
+4. `recentre` uses `robust_centre`; the 1.5/n dip and per-shot BB origins documented. Test:
+   `test_robust_centre_ignores_a_background`.
 
 ## Review fixes (second commit)
 
