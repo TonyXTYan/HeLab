@@ -253,7 +253,3 @@ def histogram(values: npt.NDArray[np.float64], axis: str, keep: float = DEFAULT_
     counts, edges = np.histogram(values, bins=count, range=(lower, upper))
     counts = counts.astype(np.int64)
     return Histogram(axis, edges, counts, total, total - int(counts.sum()), bins <= 0)
-
-
-def axis_text(index: int, lower: float, upper: float) -> str:
-    return f"{AXES[index]} {lower:.6g}…{upper:.6g} {UNITS[index]}"

@@ -40,7 +40,7 @@ import numpy as np
 import numpy.typing as npt
 from scipy.signal import find_peaks, get_window
 
-from helab.analysis.display_units import frequency_text, time_text
+from helab.analysis.display_units import WIDTH_DIGITS, frequency_text, time_text
 from helab.analysis.parameters import ParameterSpec
 
 Array = npt.NDArray[np.float64]
@@ -56,7 +56,7 @@ DEFAULT_THRESHOLD = 4.0  # × the median amplitude: noise (Rayleigh-distributed)
 
 
 @dataclass(frozen=True)
-class Peak:
+class SpectrumPeak:
     frequency: float  # Hz, refined between bins
     value: float  # the spectrum's value there (amplitude or power), refined and binning-corrected
     prominence: float  # in amplitude (also in power mode), before the binning correction
@@ -70,7 +70,7 @@ class Spectrum:
     padding: int  # the transform's length over ``samples``
     window: str  # a ``WINDOWS`` name
     power: bool = False
-    peaks: tuple[Peak, ...] = ()
+    peaks: tuple[SpectrumPeak, ...] = ()
     threshold: float = 0.0  # the least prominence (amplitude) a listed peak had to have (0: none asked)
     binned: bool = False  # values divided by sinc(f·step)
     enbw: float = 1.0  # the window's equivalent noise bandwidth, in bins
@@ -230,7 +230,7 @@ def find_spectrum_peaks(spectrum: Spectrum, count: int, above: float = 0.0,
     peaks = []
     for frequency, top, prominence, _, _ in sorted(real, key=lambda item: -item[2])[:count]:
         value = top / float(np.sinc(frequency * spectrum.step)) if spectrum.binned else top
-        peaks.append(Peak(frequency, value ** 2 if spectrum.power else value, prominence))
+        peaks.append(SpectrumPeak(frequency, value ** 2 if spectrum.power else value, prominence))
     return Spectrum(spectrum.values, spectrum.step, spectrum.samples, padding, spectrum.window, spectrum.power,
                     tuple(peaks), least, spectrum.binned, spectrum.enbw)
 
@@ -264,7 +264,7 @@ def dropped_text(binned: WholeBins) -> str:
     if not binned.dropped:
         return ""
     return (f"{binned.dropped:,} event{'' if binned.dropped == 1 else 's'} in the last "
-            f"{time_text(binned.remainder)}, past the last whole bin, left out")
+            f"{time_text(binned.remainder, WIDTH_DIGITS)}, past the last whole bin, left out")
 
 
 def spectrum_text(spectrum: Spectrum) -> str:

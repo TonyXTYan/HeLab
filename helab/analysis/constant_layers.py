@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 from typing import Any, Iterable, Mapping, Sequence
 
+from helab.analysis.display_units import si_text
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.physics import DEFAULTS, TABLE, Origin, ResolvedConstants, resolve
 
@@ -84,6 +85,8 @@ def constants_specs(keys: Sequence[str], *, group: str = GROUP, page: str = "") 
         specs.append(ParameterSpec(value_name(key), f"{constant.title}, this plot", "float", default_value(key),
                                    limits=LIMITS, suffix=constant.unit, group=group, page=page,
                                    when=(source_name(key), SET_HERE), si=constant.unit in SI_UNITS,
+                                   # Times in ms, as everywhere in the plots (Tony, 2026-10-20).
+                                   unit_prefix="m" if constant.unit == "s" else None,
                                    tip=f"This plot's own value. {tip}"))
     return specs
 
@@ -140,8 +143,11 @@ def resolve_for_run(values: Mapping[str, Any], lab: Mapping[str, float] | None =
 
 
 def value_text(key: str, value: float) -> str:
-    """``value`` with its unit, short: 0.848 m, 9.79602 m/s², 6.64648e-27 kg."""
+    """``value`` with its unit, short: 848 mm, 416.101 ms, 9.79602 m/s², 6.64648e-27 kg (an SI prefix
+    for the units that take one, ``SI_UNITS``, as their settings show them)."""
     unit = TABLE[key].unit
+    if unit in SI_UNITS:
+        return si_text(value, unit, 6)
     return f"{value:.6g} {unit}" if unit else f"{value:.6g}"
 
 
@@ -167,10 +173,11 @@ def from_defaults(constants: ResolvedConstants, key: str) -> bool:
     return origin == "default"
 
 
-def record_text(constants: ResolvedConstants) -> str:
-    """Every constant with its origin, one line, for a result's record (the tooltip), then any notes."""
+def record_text(constants: ResolvedConstants, keys: Iterable[str] | None = None) -> str:
+    """The constants an analysis uses (``keys``; every constant without), each with its origin, one
+    line, for a result's record (the tooltip), then any notes."""
     text = ", ".join(f"{SYMBOLS.get(key, key)} = {value_text(key, constants.value(key))} "
-                     f"({origin_text(constants, key)})" for key in TABLE)
+                     f"({origin_text(constants, key)})" for key in (TABLE if keys is None else keys))
     return text + "".join(f"\nNote: {note}" for note in constants.notes)
 
 

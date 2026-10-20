@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from typing import Any, Sequence, cast
 
 from PyQt6.QtWidgets import QTabWidget, QWidget
@@ -22,6 +23,9 @@ NUMBER_TYPES = {"float": "helab_float", "int": "helab_int"}
 SI_PREFIX_LETTERS = "".join(prefix for prefix in fn.SI_PREFIX_EXPONENTS if prefix.strip())
 NUMBER = re.compile(r"(?P<number>[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:[eE][+-]?\d+)?)\s*"
                     r"(?P<prefix>[" + SI_PREFIX_LETTERS + r"]?)")
+# A number with thousands separators, as a fixed-prefix box shows it: "20,450.5", "-1,000".
+GROUPED = re.compile(r"(?P<number>[+-]?\d{1,3}(?:,\d{3})+(?:\.\d*)?)(?![\d,])")
+FIXED_DECIMALS = 6  # a fixed-prefix box shows up to this many decimals (trailing zeros dropped)
 
 
 class UnitSpinBox(SpinBox):  # type: ignore[misc]
@@ -37,7 +41,44 @@ class UnitSpinBox(SpinBox):  # type: ignore[misc]
     - Anything else (empty, other letters, "inf", a fraction in a whole-number box) is invalid:
       the box outlines red while typing, and its value comes back when the edit ends.
     - A number beyond the limits is set to the nearest limit when the edit ends.
+
+    With the ``fixedPrefix`` option (an SI prefix, ``ParameterSpec.unit_prefix``) the value is
+    always shown with that prefix, its digits grouped by thousands with "," and "." before the
+    decimals whatever the locale (Tony, 2026-10-20): 20.45 s shows as "20,450 ms". There a number
+    whose commas sit exactly between groups of three digits ("20,450.5") is read with them as
+    thousands separators; any other comma follows the rule above ("20,5" is 20.5 where the comma
+    is the decimal mark).
     """
+
+    def __init__(self, parent: Any = None, value: float = 0.0, **kwargs: Any) -> None:
+        super().__init__(parent, value)
+        self.opts["fixedPrefix"] = None  # Before setOpts: pyqtgraph accepts only keys it has.
+        if kwargs:
+            self.setOpts(**kwargs)
+
+    def formatText(self) -> str:
+        """pyqtgraph's text, or with ``fixedPrefix`` the value in that prefix, grouped by thousands."""
+        letter = self.opts.get("fixedPrefix")
+        if letter is None or self.opts["int"]:
+            return str(super().formatText())
+        scaled = Decimal(self.val).scaleb(-fn.SI_PREFIX_EXPONENTS[letter or " "])
+        number = f"{scaled:,.{FIXED_DECIMALS}f}"
+        if "." in number:
+            number = number.rstrip("0").rstrip(".")
+        if number in ("-0", ""):
+            number = "0"
+        prefix = self.opts["prefix"]
+        unit = f"{letter}{self.opts['suffix']}"
+        return f"{prefix}{' ' if prefix else ''}{number}{' ' if unit else ''}{unit}"
+
+    def selectNumber(self) -> None:
+        """Select the number (grouped digits too) for quick editing."""
+        edit = self.lineEdit()
+        if edit is None:
+            return
+        match = re.search(r"[+-]?[\d.,]+", edit.text())
+        if match is not None:
+            edit.setSelection(match.start(), match.end() - match.start())
 
     def interpret(self) -> Any:
         edit = self.lineEdit()
@@ -77,6 +118,8 @@ class UnitSpinBox(SpinBox):  # type: ignore[misc]
         with_unit = bool(suffix) and text.endswith(suffix)
         if with_unit:
             text = text[:-len(suffix)].rstrip()
+        if opts.get("fixedPrefix") is not None and (grouped := GROUPED.match(text)) is not None:
+            text = grouped["number"].replace(",", "") + text[grouped.end():]
         match = NUMBER.fullmatch(text)
         if match is None:
             return None
@@ -95,7 +138,7 @@ class UnitNumberItem(NumericParameterItem):  # type: ignore[misc]
         """``NumericParameterItem.makeWidget`` with a ``UnitSpinBox``."""
         opts = self.param.opts
         options: dict[str, Any] = {"value": 0, "min": None, "max": None, "step": 1.0, "dec": False,
-                                   "siPrefix": False, "suffix": "", "decimals": 3}
+                                   "siPrefix": False, "suffix": "", "decimals": 3, "fixedPrefix": None}
         if opts["type"] == NUMBER_TYPES["int"]:
             options.update(int=True, minStep=1.0)
         options.update({key: opts[key] for key in options if key in opts})

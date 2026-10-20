@@ -16,6 +16,7 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import Any, Iterable, Literal, Mapping
 
+from helab.analysis.constant_layers import record_text
 from helab.analysis.dataset_view import DatasetView, Fingerprint, ViewKey
 from helab.analysis.identity import AnalysisIdentity
 from helab.analysis.physics import ResolvedConstants
@@ -96,6 +97,9 @@ class AnalysisContext:
     # (``DatasetAnalysis.run_constants``), for an analysis that uses constants
     # (``DatasetAnalysis.constant_keys``); None otherwise. ``compute`` may read them here.
     resolved_constants: ResolvedConstants | None = None
+    # The constants the analysis uses (``DatasetAnalysis.constant_keys``), with ``resolved_constants``:
+    # the record names these.
+    constant_keys: tuple[str, ...] = ()
 
     @property
     def covered(self) -> Coverage:
@@ -128,6 +132,7 @@ class AnalysisResult:
     # The run's constant layers and what it resolved from them (``AnalysisContext``'s).
     constant_layers: Mapping[str, Mapping[str, float]] = field(default_factory=lambda: MappingProxyType({}))
     resolved_constants: ResolvedConstants | None = None
+    constant_keys: tuple[str, ...] = ()
     # What the run found or used beyond its parameters, as JSON values (``DatasetAnalysis.result_found``:
     # fit results, the constants used). Part of the record, kept when the plot is released.
     # Read-only at the top level only (a MappingProxyType over a copy of the script's dict): the
@@ -141,6 +146,7 @@ class AnalysisResult:
                    MappingProxyType(dict(context.parameters)), state, data, error,
                    started_at, time.time(), coverage=context.covered, input_signature=context.view.signature,
                    constant_layers=context.constants, resolved_constants=context.resolved_constants,
+                   constant_keys=context.constant_keys if context.resolved_constants is not None else (),
                    found=MappingProxyType(dict(found or {})))
 
     @property
@@ -176,8 +182,7 @@ class AnalysisResult:
                  f"Covers: {self.coverage.text()}",
                  f"Parameters: {parameters_text or _plain(self.parameters) or 'none'}"]
         if self.resolved_constants is not None:
-            from helab.analysis.constant_layers import record_text
-            lines.append(f"Constants: {record_text(self.resolved_constants)}")
+            lines.append(f"Constants: {record_text(self.resolved_constants, self.constant_keys or None)}")
         when = datetime.fromtimestamp(self.finished_at).strftime("%H:%M:%S") if self.finished_at else ""
         took = f" in {self.finished_at - self.started_at:.1f} s" if self.started_at and self.finished_at else ""
         lines.append(f"Job {self.job_id} · {self.state} {when}{took} · kept in RAM only")

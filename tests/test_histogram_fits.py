@@ -14,13 +14,14 @@ from PyQt6.QtWidgets import QTabWidget
 from pytestqt.qtbot import QtBot
 from scipy.integrate import quad
 
-from helab.analysis import fits, physics, profiles
+from helab.analysis import constant_layers, display_units, fits, physics, profiles
 from helab.analysis.dataset_view import DatasetView, build_view
 from helab.analysis.fits import MODELS, arrival_time_model, bin_centres, fit_histogram
 from helab.analysis.parameter_tree import apply_visibility, build_tree, parameter_of, settings_widget
 from helab.analysis.parameters import effective
 from helab.analysis.physics import DEFAULTS, ResolvedConstants
-from helab.analysis.profiles import (ARRIVAL, BIMODAL, GAUSSIAN, RATE, SMOOTHED, display_unit, fit_axis,
+from helab.analysis.plot_axes import GroupedAxis
+from helab.analysis.profiles import (ARRIVAL, BIMODAL, GAUSSIAN, RATE, SMOOTHED, fit_axis,
                                      Smoothing, rate_factor, smooth, smoothing_bins)
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
 from helab.scripts.standard import basic_plots
@@ -66,9 +67,13 @@ def view_of(events: dict[int, Array]) -> DatasetView:
 
 def run(view: DatasetView, values: dict[str, Any] | None = None,
         layers: dict[str, dict[str, float]] | None = None) -> AnalysisResult:
+    """A run as the runner makes it: the constants resolved at submit (``run_constants``)."""
     script = basic_plots.TxyHistograms()
-    context = AnalysisContext("a1", "Plot", view, effective(script.parameters("Plot"), values),
-                              script.get_metadata().identity(), constants=layers or {})
+    parameters = effective(script.parameters("Plot"), values)
+    resolved = script.run_constants("Plot", parameters, layers or {})
+    context = AnalysisContext("a1", "Plot", view, parameters, script.get_metadata().identity(),
+                              constants=layers or {}, resolved_constants=resolved,
+                              constant_keys=script.constant_keys("Plot") if resolved is not None else ())
     data = script.compute("Plot", context)
     return AnalysisResult.of(context, "completed", data, found=script.result_found("Plot", data))
 
@@ -168,6 +173,71 @@ def test_the_temperature_uses_the_runs_constants() -> None:
     assert along_t.sigma_v.value == pytest.approx(DEFAULTS.g * along_t.width.value)
 
 
+def thomas_fermi_ball(rng: np.random.Generator, count: int, radius: float) -> Array:
+    """Positions (x, y, z) of atoms in a 3D Thomas–Fermi cloud: density ∝ (1 − r²/R²)₊."""
+    found: list[Array] = []
+    total = 0
+    while total < count:
+        points = rng.uniform(-1, 1, (4 * count, 3))
+        squared = (points ** 2).sum(axis=1)
+        kept = points[(squared < 1) & (rng.uniform(0, 1, len(points)) < 1 - squared)]
+        found.append(kept)
+        total += len(kept)
+    return np.concatenate(found)[:count] * radius
+
+
+def test_the_tf_exponent_follows_how_the_histogram_integrates_the_cloud() -> None:
+    """Tony's decision 3, checked physically: a full projection of a 3D Thomas–Fermi cloud (both
+    other axes integrated) is (1 − u²)², a thin slice of one other axis (integrated over one axis
+    only) (1 − u²)^{3/2}; each fits its own exponent better and finds R, the other biases R."""
+    rng = np.random.default_rng(21)
+    radius = 1e-3
+    atoms = thomas_fermi_ball(rng, 400_000, radius)
+    full = histogram_of(atoms[:, 0], bins=120)
+    thin = histogram_of(atoms[np.abs(atoms[:, 1]) < 0.05 * radius, 0], bins=120)
+    for (edges, counts), right, wrong in ((full, "thomas_fermi_2", "thomas_fermi_1_5"),
+                                          (thin, "thomas_fermi_1_5", "thomas_fermi_2")):
+        centres = bin_centres(edges)
+        good, bad = fit_histogram(centres, counts, right), fit_histogram(centres, counts, wrong)
+        assert good.ok and bad.ok
+        assert good["radius"].value == pytest.approx(radius, rel=0.02)
+        assert good.reduced_chi2 < bad.reduced_chi2
+        assert abs(bad["radius"].value / radius - 1) > 0.04  # the wrong exponent biases R
+
+
+@pytest.mark.parametrize(("choice", "power"), [(BIMODAL, 2.0), (profiles.BIMODAL_SLICE, 1.5)])
+def test_both_bimodal_exponents_fit_data_made_with_each(choice: str, power: float) -> None:
+    rng = np.random.default_rng(22)
+    edges = np.linspace(-6e-3, 6e-3, 201)
+    centres = bin_centres(edges)
+    model = MODELS[profiles.MODEL_KEYS[choice]]
+    assert model.key == f"bimodal_tf{'2' if power == 2 else '1_5'}_gaussian"
+    sigma, ratio = 1.5e-3, 1.2  # R = 1.8 mm
+    truth = model.function(centres, 400.0, 2e-4, ratio, 120.0, sigma, 2.0)
+    counts = rng.poisson(truth).astype(np.float64)
+    fitted = fit_axis("X", edges, counts, choice, DEFAULTS)
+    assert fitted.ok and fitted.choice == choice
+    assert fitted.fit["radius"].value == pytest.approx(ratio * sigma, rel=0.05)
+    assert fitted.width.value == pytest.approx(sigma, rel=0.05)
+    assert "R (" in fitted.text() and "σ thermal" in fitted.text() and " mm" in fitted.text()
+    assert choice in profiles.T_MODELS and choice in profiles.XY_MODELS
+
+
+def test_the_arrival_time_model_uses_the_effective_fall_distance() -> None:
+    """A hand-set fall time makes the model's distance ½ g t_f² (as D8's velocities), so v = 0
+    arrives t_f after release; derived, it is h."""
+    timed = physics.resolve(plot={"fall_time": 0.417})
+    model = profiles.model_for(ARRIVAL, timed)
+    assert model.fixed["fall_distance"] == pytest.approx(0.5 * timed.g * 0.417 ** 2)
+    assert profiles.model_for(ARRIVAL, DEFAULTS).fixed["fall_distance"] == DEFAULTS.fall_distance
+
+
+def test_the_model_choice_explains_the_tf_exponent() -> None:
+    tip = basic_plots.FIT_SPECS["X"][1].tip
+    for words in ("p = 2: a full projection", "p = 3/2: a thin slice", "p = 1", "8–9 %", "g_5/2", "g_2"):
+        assert words in tip
+
+
 def test_a_bimodal_fit_takes_its_temperature_from_the_thermal_width() -> None:
     rng = np.random.default_rng(8)
     thermal = cloud(rng, 20_000, 1e-6)[:, 1]
@@ -182,10 +252,14 @@ def test_a_bimodal_fit_takes_its_temperature_from_the_thermal_width() -> None:
 
 # Units, rates and smoothing
 
+def override(key: str, value: float) -> dict[str, Any]:
+    """The plot's own value of a constant (its Constants group)."""
+    return {constant_layers.source_name(key): constant_layers.SET_HERE, constant_layers.value_name(key): value}
+
+
 def test_display_units() -> None:
-    assert display_unit("X", -0.02, 0.02) == (1e3, "mm") == display_unit("Y", -1.0, 1.0)
-    assert display_unit("T", 1.90, 1.95) == (1e3, "ms")
-    assert display_unit("T", 0.5, 2.5) == (1.0, "s")
+    assert display_units.axis_label("X") == "X (mm)" and display_units.axis_label("T") == "T (ms)"
+    assert display_units.axis_scale("T") == display_units.axis_scale("Y") == 1e3
     assert profiles.value_label("T", RATE) == "Rate (kHz per shot)"
     assert profiles.value_label("X", RATE) == "Rate (per mm per shot)"
     assert profiles.value_label("Y", "counts") == "Events"
@@ -315,7 +389,7 @@ def test_fits_are_drawn_titled_and_recorded_with_their_constants(qtbot: QtBot) -
     rng = np.random.default_rng(9)
     view = view_of({shot: cloud(rng, 5000, 1e-6) for shot in (1, 2)})
     script = basic_plots.TxyHistograms()
-    values = {"fit_t": True, "fit_t_model": ARRIVAL, "fit_x": True, "fit_y": True, "fall_distance": 0.85}
+    values = {"fit_t": True, "fit_t_model": ARRIVAL, "fit_x": True, "fit_y": True, **override("fall_distance", 0.85)}
     result = run(view, values)
     data = result.data
     assert all(fit is not None and fit.ok for fit in data.fits)
@@ -336,17 +410,23 @@ def test_fits_are_drawn_titled_and_recorded_with_their_constants(qtbot: QtBot) -
     lines = script.result_record("Plot", result)
     assert lines[0].startswith("Fit T: Arrival-time thermal: centre (") and "T (" in lines[0] and "K" in lines[0]
     assert lines[1].startswith("Fit X: Gaussian: centre (") and "reduced χ²" in lines[1]
-    assert lines[3] == ("Constants: fall distance 0.85 m (this plot) · fall time 0.416581 s (derived) · "
-                        "g 9.79602 m/s² (default)")
+    # The constants are in the record once, from the run (not among the fit lines).
+    assert len(lines) == 3 and not any("Constants" in line for line in lines)
+    record_text = result.describe()
+    assert record_text.count("Constants: ") == 1
+    assert "h = 850 mm (this plot)" in record_text and "t_f = 416.581 ms (derived)" in record_text
+    assert "ħ =" not in record_text  # only the constants the fits use
     default = run(view, {"fit_x": True})
-    assert script.result_record("Plot", default)[-1] == (
-        "Constants: fall distance 0.848 m (default, unconfirmed) · fall time 0.416091 s (derived, unconfirmed) · "
-        "g 9.79602 m/s² (default)")
+    assert default.resolved_constants is not None and default.resolved_constants.origins["fall_distance"] == "default"
     assert default.data.fits[0] is None and default.data.fits[2] is None
-    assert script.result_record("Plot", run(view, {})) == []  # no fits: nothing beyond the parameters
-    assert "constants" not in run(view, {}).data.record()
+    plain = run(view, {})
+    assert script.result_record("Plot", plain) == []  # no fits: nothing beyond the parameters
+    assert "constants" not in plain.data.record()
+    # Without a fit the histograms use no constants: not keyed on them, no Constants line.
+    assert plain.resolved_constants is None and "constants" not in plain.reuse_key()
+    assert "Constants: " not in plain.describe()
     settings = script.describe_run("Plot", result.parameters, view)[1]
-    assert settings.endswith("fit T Arrival-time thermal, X Gaussian, Y Gaussian · h 850 mm")
+    assert settings.endswith("fit T Arrival-time thermal, X Gaussian, Y Gaussian")
     widget: Any = script.render(result)
     qtbot.addWidget(widget)
     for row, fit in zip((1, 2, 3), data.fits):
@@ -358,7 +438,7 @@ def test_fits_are_drawn_titled_and_recorded_with_their_constants(qtbot: QtBot) -
         factor = 1e3
         assert xs == pytest.approx(fit.x * factor) and ys == pytest.approx(fit.y)
     header = widget.getItem(0, 0).text
-    assert "Fits with fall distance 0.85 m (this plot)" in header
+    assert "Fits with h 850 mm (this plot)" in header and "t_f 416.581 ms (derived)" in header
 
 
 def test_a_lab_or_folder_layer_reaches_the_fits() -> None:
@@ -366,10 +446,19 @@ def test_a_lab_or_folder_layer_reaches_the_fits() -> None:
     view = view_of({1: cloud(np.random.default_rng(2), 3000, 1e-6)})
     folder = run(view, {"fit_x": True}, {"lab": {"g": 9.8}, "folder": {"fall_distance": 0.86}}).data.constants
     assert (folder.origins["g"], folder.origins["fall_distance"], folder.fall_distance) == ("lab", "folder", 0.86)
-    plot = run(view, {"fit_x": True, "fall_distance": 0.9}, {"folder": {"fall_distance": 0.86}}).data.constants
+    plot = run(view, {"fit_x": True, **override("fall_distance", 0.9)}, {"folder": {"fall_distance": 0.86}}
+               ).data.constants
     assert (plot.origins["fall_distance"], plot.fall_distance) == ("plot", 0.9)
-    timed = run(view, {"fit_x": True, "fall_time": 0.5}).data.constants
+    timed = run(view, {"fit_x": True, **override("fall_time", 0.5)}).data.constants
     assert timed.origins["fall_time"] == "plot" and timed.notes and "disagree" in timed.notes[0]
+    # Bad layer values are left out, never raised (as every analysis's constants).
+    bad = run(view, {"fit_x": True}, {"lab": {"g": -1.0, "fall_distance": float("nan")}}).data.constants
+    assert bad.origins["g"] == "default" and bad.origins["fall_distance"] == "default"
+    # The run's key and the record carry them: a lab fall distance makes another key.
+    first = run(view, {"fit_x": True})
+    other = run(view, {"fit_x": True}, {"lab": {"fall_distance": 0.86}})
+    assert first.reuse_key()["constants"] != other.reuse_key()["constants"]
+    assert other.reuse_key()["constants"]["layers"]["lab"] == {"fall_distance": 0.86}
 
 
 def test_empty_single_bin_and_failed_fits_give_notes(qtbot: QtBot) -> None:
@@ -470,7 +559,7 @@ def test_fit_curves_follow_the_rate_scale_and_log_y(qtbot: QtBot) -> None:
             result.data.items[1].counts.max() * result.data.factor(1))
 
 
-def test_t_is_shown_in_seconds_over_a_long_range(qtbot: QtBot) -> None:
+def test_t_is_shown_in_ms_even_over_a_long_range(qtbot: QtBot) -> None:
     rng = np.random.default_rng(13)
     events = cloud(rng, 2000, 1e-6)
     events[:1000, 0] += 1.5  # a second cloud 1.5 s later: T spans over 1 s
@@ -478,9 +567,11 @@ def test_t_is_shown_in_seconds_over_a_long_range(qtbot: QtBot) -> None:
     widget: Any = basic_plots.TxyHistograms().render(result)
     qtbot.addWidget(widget)
     plot = widget.getItem(1, 0)
-    assert plot.getAxis("bottom").labelText == "T (s)"
+    axis = plot.getAxis("bottom")
+    assert axis.labelText == "T (ms)" and isinstance(axis, GroupedAxis)
     bars = plot.listDataItems()[0]
-    assert bars.getOriginalDataset()[0][0] == pytest.approx(result.data.items[0].edges[0])  # not scaled
+    assert bars.getOriginalDataset()[0][0] == pytest.approx(result.data.items[0].edges[0] * 1e3)
+    assert axis.tickStrings([1900.0, 3400.0], 1.0, 500.0) == ["1,900", "3,400"]
 
 
 def test_a_smoothed_bimodal_fit_of_a_thermal_cloud_finds_no_condensate() -> None:

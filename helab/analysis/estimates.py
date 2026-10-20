@@ -115,6 +115,17 @@ def format_uncertainty(value: float, se: float, style: Style = "pm", unit: str =
     return _join(*texts, style, power, unit)
 
 
+def format_fixed(value: float, se: float, style: Style = "pm", unit: str = "", digits: int = 2) -> str:
+    """As ``format_uncertainty``, in ``unit`` exactly as given: no SI prefix and no power of ten,
+    however large or small (``(20450.12 ± 0.12) ms``; ``display_units.estimate_text`` groups the
+    digits)."""
+    digits = max(int(digits), 1)
+    se = abs(se)
+    if not math.isfinite(value):
+        return _join(_special(value), _plain(se) if math.isfinite(se) else _special(se), style, "", unit)
+    return _join(*_numbers(value, se, digits), style, "", unit)
+
+
 def _largest(texts: tuple[str, str]) -> float:
     """The larger size of the written value and error (specials count as 0)."""
     sizes = [abs(float(text.replace(MINUS, "-"))) for text in texts if text not in ("nan", "∞", MINUS + "∞")]

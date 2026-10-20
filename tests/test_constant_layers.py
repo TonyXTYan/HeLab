@@ -122,10 +122,11 @@ def test_runs_resolve_plot_over_folder_over_lab_with_origins() -> None:
     assert layers.plot_overrides(values) == {"fall_distance": 0.7}
     resolved = layers.resolve_for_run(values, lab={"g": 9.8}, folder={"fall_distance": 0.9})
     assert (resolved.fall_distance, resolved.origins["fall_distance"], resolved.g) == (0.7, "plot", 9.8)
-    assert layers.describe_constants(resolved, KEYS) == ("g 9.8 m/s² (lab) · h 0.7 m (this plot) · "
-                                                         "t_f 0.377964 s (derived)")
+    assert layers.describe_constants(resolved, KEYS) == ("g 9.8 m/s² (lab) · h 700 mm (this plot) · "
+                                                         "t_f 377.964 ms (derived)")
     assert layers.describe_constants(DEFAULTS, KEYS) == ""  # All defaults: nothing to say on the line.
-    assert "h = 0.848 m (default, unconfirmed)" in layers.record_text(DEFAULTS)
+    assert "h = 848 mm (default, unconfirmed)" in layers.record_text(DEFAULTS)
+    assert layers.record_text(DEFAULTS, ("g",)) == "g = 9.79602 m/s² (default)"
     assert layers.changed_keys(DEFAULTS, resolved, KEYS) == ["g", "fall_distance", "fall_time"]
 
 
@@ -157,7 +158,8 @@ def test_the_result_records_the_constants_it_ran_with(qtbot: QtBot) -> None:
         key = json.loads(json.dumps(result.reuse_key()))
         assert key["constants"]["origins"]["g"] == "lab" and key["constants"]["layers"] == given
         assert ResolvedConstants.from_record(key["constants"]) == resolved
-        assert "Constants: ħ = " in result.describe() and "g = 9.8 m/s² (lab)" in result.describe()
+        # The record names the analysis's own constants only (not all of the table's).
+        assert "Constants: g = 9.8 m/s² (lab)" in result.describe() and "ħ =" not in result.describe()
         # An analysis that declares no constants records none: a lab or folder change never makes
         # its results look different (it keeps the layers it was given, unrecorded).
         plain = AnalysisResult.of(AnalysisContext("a9", "Plot", view, {}, script.get_metadata().identity(),
@@ -238,10 +240,10 @@ def test_a_plot_resolves_when_it_runs_and_marks_changes_until_rerun(
         "lab", "folder", "derived")
     assert instance.shown is not None and instance.shown.data[0] == pytest.approx(fall_time(0.9, 9.8))
     # Each value's source in the settings, and the ones not at their defaults on the source line.
-    assert title(instance, "fall_distance") == "Fall distance h: 0.9 m (folder)"
+    assert title(instance, "fall_distance") == "Fall distance h: 900 mm (folder)"
     assert title(instance, "g") == "Gravitational acceleration g: 9.8 m/s² (lab)"
     line = label(instance, "plot_data_source")
-    assert "constants: g 9.8 m/s² (lab) · h 0.9 m (folder) · t_f 0.428571 s (derived)" in line
+    assert "constants: g 9.8 m/s² (lab) · h 900 mm (folder) · t_f 428.571 ms (derived)" in line
     assert "Fall distance" not in line.split("\n")[1].split("constants:")[0]  # Not as a parameter.
     assert label(instance, "plot_error") == ""
     # A lab value changes: the plot is marked, and keeps what it drew.
@@ -279,7 +281,7 @@ def test_a_plot_resolves_when_it_runs_and_marks_changes_until_rerun(
     instance.run()
     qtbot.waitUntil(lambda: shown(instance).origins["fall_distance"] == "plot", timeout=10_000)
     assert shown(instance).fall_distance == 0.8 and title(instance, "fall_distance") == \
-        "Fall distance h: 0.8 m (this plot)"
+        "Fall distance h: 800 mm (this plot)"
     # A folder value it overrides doesn't mark it.
     cache.remember_constants(ROOT, {"values": {"fall_distance": 0.95}, "set_at": 3.0})
     assert label(instance, "plot_error") == ""
@@ -377,3 +379,71 @@ def test_a_released_plot_reloads_with_the_layers_it_was_drawn_with(
     instance.run()
     qtbot.waitUntil(lambda: shown(instance).fall_distance == 0.95, timeout=10_000)
     instance.close()
+
+
+def test_the_histograms_fits_are_keyed_on_constants_and_marked_when_one_changes(
+        window: Window, qtbot: QtBot, cache: FolderCache) -> None:
+    """D1 uses F0b's Constants group: with a fit on, its runs resolve the fall distance and time, g,
+    the mass and k_B, its key carries them, the constants appear once in the record, and a lab
+    change marks the plot until Rerun; without a fit it uses none (no key, no mark)."""
+    from helab.scripts.standard import basic_plots
+    window.view = window.live_feed.publish(revision([1, 2]))
+    script = basic_plots.TxyHistograms()
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    instance = panel.run_analysis(script.get_metadata(), script, "Plot")
+    assert isinstance(instance, AnalysisInstance) and instance.parameter_root is not None
+    qtbot.waitUntil(lambda: instance.shown is not None, timeout=10_000)
+    assert instance.constant_keys == ("fall_distance", "fall_time", "g", "mass", "k_B")
+    plain = instance.shown
+    assert plain is not None and plain.resolved_constants is None and "constants" not in plain.reuse_key()
+    cache.set_lab_constants({"g": 9.79})
+    assert label(instance, "plot_error") == ""  # No fit: nothing to mark.
+    specs = {spec.name: spec for spec in script.parameters("Plot")}
+    parameter_of(instance.parameter_root, specs["fit_x"]).setValue(True)
+    instance.run()
+    qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.resolved_constants is not None,
+                    timeout=10_000)
+    fitted = instance.shown
+    assert fitted is not None and fitted.resolved_constants is not None
+    assert fitted.reuse_key()["constants"]["layers"]["lab"] == {"g": 9.79}
+    assert fitted.resolved_constants.origins["g"] == "lab"
+    record = cast(QDockWidget, instance.dock_widget).findChild(QLabel, "plot_data_source")
+    assert record is not None and record.toolTip().count("Constants: ") == 1
+    assert "constants: t_f 416.219 ms (derived, unconfirmed) · g 9.79 m/s² (lab)" in label(instance, "plot_data_source")
+    assert label(instance, "plot_error") == ""
+    cache.set_lab_constants({"g": 9.79, "mass": 6.6e-27})  # A constant only the fits use: marked.
+    assert label(instance, "plot_error").startswith("⚠ constants changed (")
+
+
+class RaisingHooks(FallTime):
+    """A user's script whose dock hooks raise: the dock still shows its plot."""
+
+    def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
+        raise RuntimeError("describe_run")
+
+    def describe_result(self, action_name: str, result: AnalysisResult) -> str:
+        raise RuntimeError("describe_result")
+
+    def result_record(self, action_name: str, result: AnalysisResult) -> List[str]:
+        raise RuntimeError("result_record")
+
+    def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
+        raise RuntimeError("parameter_warnings")
+
+    def detected_parameters(self, action_name: str, result: AnalysisResult) -> dict[str, Any]:
+        raise RuntimeError("detected_parameters")
+
+
+def test_a_raising_dock_hook_is_logged_not_fatal(window: Window, qtbot: QtBot,
+                                                 caplog: pytest.LogCaptureFixture) -> None:
+    window.view = window.live_feed.publish(revision([1]))
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = RaisingHooks()
+    instance = panel.run_analysis(script.get_metadata(), script, "Plot")
+    assert isinstance(instance, AnalysisInstance)
+    qtbot.waitUntil(lambda: instance.shown is not None, timeout=10_000)
+    assert instance.shown is not None and instance.shown.state == "completed"
+    for name in ("describe_run", "describe_result", "result_record", "parameter_warnings", "detected_parameters"):
+        assert any(record.getMessage().startswith(f"{name} of ") for record in caplog.records), name

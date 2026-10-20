@@ -377,7 +377,7 @@ def test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab(
     instance.rerun_button.click()
     qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
     label = source_label(instance.dock_widget)
-    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v4\n"
+    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v5\n"
                             "manual range: full extent · bins auto · ⚠ X: min > max, using full extent")
     assert "Warning: X: min > max, using full extent" in label.toolTip()
     assert instance.status_label.text() == "⚠ X: min > max, using full extent"
@@ -406,8 +406,13 @@ def test_histogram_fits_go_in_the_docks_record(window: Window, browser: FolderEx
     assert label.text().endswith("bins auto · fit T Gaussian")
     record = label.toolTip()
     assert "\nFit T: Gaussian" in record  # 7 events: a fit or why there is none
-    assert "\nConstants: fall distance 0.848 m (default, unconfirmed) · fall time 0.416091 s (derived, " \
-           "unconfirmed) · g 9.79602 m/s² (default)" in record
+    # The constants appear once, from the run (F0b's Constants line), with the fits' keys only;
+    # all at their defaults, so the settings line names none.
+    assert record.count("Constants: ") == 1 and "ħ =" not in record
+    assert ("\nConstants: h = 848 mm (default, unconfirmed), t_f = 416.091 ms (derived, unconfirmed), "
+            "g = 9.79602 m/s² (default), m = ") in record
+    assert "constants:" not in label.text()
+    assert instance.result is not None and instance.result.reuse_key()["constants"]["values"]["fall_distance"] == 0.848
 
 
 def test_run_without_data_says_so(window: Window, qtbot: QtBot) -> None:
@@ -445,7 +450,7 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     assert metadata.file_hash[:12] in label.toolTip()
     # The record lists every parameter, those not in use included.
     assert "Parameters: Shots all, From shot (0 = first) 0, Last N 50, To shot (0 = last) 0, Range auto-crop, " \
-           "Auto-crop: keep 99 %, T min 0 s, T max 0 s," in label.toolTip()
+           "Auto-crop: keep 99 %, T min 0 ms, T max 0 ms," in label.toolTip()
     plot_id = pane.plot_id
     instance.dock_widget.close()
     qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None)

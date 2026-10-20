@@ -14,7 +14,7 @@ is no spectrum, and the plot says which. Its mean is subtracted, it is windowed,
 averaging is corrected for (``helab.analysis.spectrum``, ``binned``).
 
 Unlike the old GUI (its legacy bugs 4–6): the bins are exactly the width asked (it made them
-about twice as wide), the width is in seconds, empty bins are gaps rather than NaN spectra,
+about twice as wide), the width is a time (shown in ms), empty bins are gaps rather than NaN spectra,
 any trace length works, X/Y are labelled in the unit they are drawn in, and X/Y aren't
 rotated (Tony, 2026-10-20).
 """
@@ -31,10 +31,12 @@ import pyqtgraph as pg
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
 from helab.analysis.dataset_view import DatasetView
-from helab.analysis.display_units import LENGTH_SCALE, LENGTH_UNIT, frequency_text, si_text, time_text, time_unit
+from helab.analysis.display_units import (LENGTH_SCALE, LENGTH_UNIT, T_SCALE, WIDTH_DIGITS, axis_label, frequency_text,
+                                          number_text, range_text, time_text)
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.follow import LivePolicy
 from helab.analysis.parameters import ParameterSpec
+from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
                                       range_warnings, select_shots, selection_text, shots_brief, shots_text)
@@ -49,7 +51,7 @@ RANGE = range_specs(
     "and only events inside it count. 100 % keeps every event.")
 BINS_GROUP = "T bins"
 BIN_WIDTH = ParameterSpec(
-    "t_bin", "T bin width (0 = auto)", "float", 0.0, (0.0, 10.0), " s", group=BINS_GROUP, si=True,
+    "t_bin", "T bin width (0 = auto)", "float", 0.0, (0.0, 10.0), " s", group=BINS_GROUP, si=True, unit_prefix="m",
     tip="Each bin is exactly this wide, from the start of the range. 0 = automatic: about 100 events per bin "
         "on average, 10–1,000 bins.")
 MIN_EVENTS = ParameterSpec(
@@ -99,7 +101,6 @@ class PositionProfile:
     automatic: bool = True
     clamp: str = ""  # automatic, and at a bin limit: "at least" or "at most" (else "")
     minimum: int = 10  # bins with fewer events are left out
-    time_unit: str = "ms"
     box: CropBox | None = None
     warnings: tuple[str, ...] = ()  # settings not followed as given
     notes: tuple[str, ...] = ()  # what else the plot should say (bins left out, gaps filled)
@@ -125,12 +126,12 @@ def bin_width(events: int, span: float, given: float) -> tuple[float, bool, str,
     "at least", "at most" or "", what it says when widened)."""
     if given > 0:
         if given > span:
-            return span, False, "", (f"T bin width {time_text(given)} is wider than the range "
-                                     f"({time_text(span)}): using one bin of the range")
+            return span, False, "", (f"T bin width {time_text(given, WIDTH_DIGITS)} is wider than the range "
+                                     f"({time_text(span, WIDTH_DIGITS)}): using one bin of the range")
         if span / given > MAX_BINS:
             wider = span / MAX_BINS
-            return wider, False, "", (f"T bin width {time_text(given)} gives over {MAX_BINS:,} bins: using "
-                                      f"{time_text(wider)}")
+            return wider, False, "", (f"T bin width {time_text(given, WIDTH_DIGITS)} gives over {MAX_BINS:,} bins: "
+                                      f"using {time_text(wider, WIDTH_DIGITS)}")
         return given, False, "", ""
     low, high = AUTO_BINS
     wanted = events // AUTO_EVENTS
@@ -191,7 +192,7 @@ def longest_run(kept: npt.NDArray[np.bool_]) -> tuple[int, int]:
     return int(starts[longest]), int(stops[longest])
 
 
-def stretch(kept: npt.NDArray[np.bool_], centres: npt.NDArray[np.float64], unit: str) -> Stretch:
+def stretch(kept: npt.NDArray[np.bool_], centres: npt.NDArray[np.float64]) -> Stretch:
     """Which bins the spectrum uses (module docstring): from the first kept bin to the last with
     the gaps filled while they are at most ``MAX_FILLED`` of it, else the longest stretch
     without gaps when it is long enough, else none."""
@@ -208,11 +209,10 @@ def stretch(kept: npt.NDArray[np.bool_], centres: npt.NDArray[np.float64], unit:
         note = f"{gaps:,} gap bin{'' if gaps == 1 else 's'} filled by straight lines for the spectrum" if gaps else ""
         return Stretch(start, stop, gaps, note)
     low, high = longest_run(kept)
-    scale = 1e3 if unit == "ms" else 1.0
     if high - low >= MIN_SPECTRUM_BINS:
         return Stretch(low, high, 0, f"gaps are {share * 100:.0f} % of the traces (over {MAX_FILLED * 100:.0f} %): spectrum of the "
-                                     f"longest stretch without gaps, T {centres[low] * scale:.4g}–"
-                                     f"{centres[high - 1] * scale:.4g} {unit} ({high - low:,} bins)")
+                                     f"longest stretch without gaps, {range_text('T', centres[low], centres[high - 1])} "
+                                     f"({high - low:,} bins)")
     return Stretch(0, 0, 0, f"no spectrum: gaps are {share * 100:.0f} % of the traces (over {MAX_FILLED * 100:.0f} %) and the "
                             f"longest stretch without gaps has {high - low:,} bins, under {MIN_SPECTRUM_BINS}")
 
@@ -238,14 +238,14 @@ def empty_reason(data: PositionProfile) -> str:
                 f"(View range settings){warned}")
     if not data.kept.any():
         return (f"No T bin holds {data.minimum:,} events or more: {data.events:,} events in {len(data.counts):,} "
-                f"bins of {time_text(data.width)} (T bins settings){warned}")
+                f"bins of {time_text(data.width, WIDTH_DIGITS)} (T bins settings){warned}")
     return ""
 
 
 def peak_text(spectrum: Spectrum, axis: str) -> str:
     if not spectrum.peaks:
         return f"mean {axis}: no peak"
-    peaks = ", ".join(f"{frequency_text(peak.frequency)} ({si_text(peak.value * 1e-3, 'm', 3)})"
+    peaks = ", ".join(f"{frequency_text(peak.frequency)} ({number_text(peak.value, 3)} {LENGTH_UNIT})"
                       for peak in spectrum.peaks)
     return f"mean {axis}: {peaks}"
 
@@ -256,31 +256,57 @@ def titles(result: AnalysisResult, data: PositionProfile) -> tuple[str, str]:
     how = "auto" if data.automatic else "set"
     first = (f"{result.input.short()} · {shots_text(data.shots, data.total_shots)} · {data.events:,} of "
              f"{data.total:,} events in range")
-    second = [f"{bins:,} T bins of {time_text(data.width)} ({how})", *data.notes]
+    second = [f"{bins:,} T bins of {time_text(data.width, WIDTH_DIGITS)} ({how})", *data.notes]
     second += [f"⚠ {warning}" for warning in data.warnings]
     return first, " · ".join(second)
+
+
+def result_brief(data: PositionProfile) -> str:
+    """The automatic bins, bins left out and the spectrum's frequencies, for the settings line."""
+    parts = [f"T bins {time_text(data.width, WIDTH_DIGITS)} (auto: {auto_text(data)})" if data.automatic else ""]
+    if data.left_out:
+        parts.append(f"{data.left_out:,} of {len(data.counts):,} bins left out")
+    if data.spectra:
+        parts.append(spectrum_text(data.spectra[0]))
+    return " · ".join(part for part in parts if part)
+
+
+def record_lines(data: PositionProfile) -> list[str]:
+    """The bins (left out, filled), the spectrum's frequencies and its peaks, for the dock's record."""
+    how = f"auto: {auto_text(data)}" if data.automatic else "set"
+    lines = [f"T bins: {len(data.counts):,} of {time_text(data.width, WIDTH_DIGITS)} ({how}), {data.events:,} events; "
+             f"{data.left_out:,} with fewer than {data.minimum:,} events left out", *data.notes]
+    if data.spectra:
+        first = data.spectra[0]
+        lines.append(f"Spectrum: {first.window} window, {spectrum_text(first)}, corrected for the bins' "
+                     f"averaging (÷ sinc(f · bin width))")
+        for axis, spectrum in zip(COLOURS, data.spectra):
+            lines.append(f"Peaks, {peak_text(spectrum, axis)}")
+    return lines
 
 
 class PositionPlot(QWidget):
     """Mean X/Y and their SDs against T, optionally with their spectrum below (``graphics``, a
     PyQtGraph layout); ``show_data`` draws a newer result in place, keeping zoom and pan."""
 
-    def __init__(self, spectrum: bool, log: bool, unit: str, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, spectrum: bool, log: bool, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.graphics: Any = pg.GraphicsLayoutWidget(self)
         self.graphics.setBackground("w")
         layout.addWidget(self.graphics)
-        self.key = (spectrum, log, unit)
+        self.key = (spectrum, log)
         self.title: Any = self.graphics.addLabel("", row=0, col=0)
-        self.means: Any = self.graphics.addPlot(row=1, col=0, title="Mean position ± SE")
-        self.widths: Any = self.graphics.addPlot(row=2, col=0, title="SD ± SE")
+        self.means: Any = self.graphics.addPlot(row=1, col=0, title="Mean position ± SE",
+                                                axisItems={"bottom": GroupedAxis("bottom"), "left": GroupedAxis("left")})
+        self.widths: Any = self.graphics.addPlot(row=2, col=0, title="SD ± SE",
+                                                 axisItems={"bottom": GroupedAxis("bottom"), "left": GroupedAxis("left")})
         self.widths.setXLink(self.means)
         self.curves: dict[tuple[str, str], Any] = {}
         self.bars: dict[tuple[str, str], Any] = {}
         for plot, kind, label in ((self.means, "mean", "Mean"), (self.widths, "sd", "SD")):
-            plot.setLabel("bottom", f"T ({unit})")
+            plot.setLabel("bottom", axis_label("T"))
             plot.setLabel("left", f"{label} ({LENGTH_UNIT})")
             plot.showGrid(x=True, y=True, alpha=0.3)
             plot.addLegend(offset=(-10, 10))
@@ -310,10 +336,9 @@ class PositionPlot(QWidget):
             self.peaks_label = self.graphics.addLabel("", row=4, col=0)
 
     def show_data(self, result: AnalysisResult, data: PositionProfile) -> None:
-        unit_scale = 1e3 if data.time_unit == "ms" else 1.0
         first, second = titles(result, data)
         self.title.setText(f"{html.escape(first)}<br>{html.escape(second)}")
-        centres = data.centres * unit_scale
+        centres = data.centres * T_SCALE
         kept = data.kept
         for trace in data.traces:
             for kind, values, errors in (("mean", trace.mean, trace.mean_se), ("sd", trace.sd, trace.sd_se)):
@@ -373,36 +398,20 @@ class MeanPositionVsT(DatasetAnalysis):
         if values[SPECTRUM.name]:
             spectrum = f"spectrum {values[WINDOW.name]}"
             spectrum += ", log" if values[LOG.name] else ""
-        settings = (shots_brief(values), range_brief(values), f"T bins {time_text(width)}" if width else "",
+        settings = (shots_brief(values), range_brief(values), f"T bins {time_text(width, WIDTH_DIGITS)}" if width else "",
                     f"≥ {int(values[MIN_EVENTS.name]):,} events per bin", spectrum)
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def describe_result(self, action_name: str, result: AnalysisResult) -> str:
-        data = result.data
-        if not isinstance(data, PositionProfile) or not len(data.counts):
-            return ""
-        parts = [f"T bins {time_text(data.width)} (auto: {auto_text(data)})" if data.automatic else ""]
-        if data.left_out:
-            parts.append(f"{data.left_out:,} of {len(data.counts):,} bins left out")
-        if data.spectra:
-            parts.append(spectrum_text(data.spectra[0]))
-        return " · ".join(part for part in parts if part)
+        """The run's ``brief`` (``result_found``): kept when the plot is released."""
+        return str(result.found.get("brief", ""))
 
-    def result_record(self, action_name: str, result: AnalysisResult) -> List[str]:
-        """The bins (left out, filled), the spectrum's frequencies and its peaks, for the dock's record."""
-        data = result.data
+    def result_found(self, action_name: str, data: Any) -> dict[str, Any]:
+        """For the dock: ``brief`` (the settings line's addition: the automatic bins, bins left out,
+        the spectrum's frequencies) and ``record_lines`` (the bins, the spectrum and its peaks)."""
         if not isinstance(data, PositionProfile) or not len(data.counts):
-            return []
-        how = f"auto: {auto_text(data)}" if data.automatic else "set"
-        lines = [f"T bins: {len(data.counts):,} of {time_text(data.width)} ({how}), {data.events:,} events; "
-                 f"{data.left_out:,} with fewer than {data.minimum:,} events left out", *data.notes]
-        if data.spectra:
-            first = data.spectra[0]
-            lines.append(f"Spectrum: {first.window} window, {spectrum_text(first)}, corrected for the bins' "
-                         f"averaging (÷ sinc(f · bin width))")
-            for axis, spectrum in zip(COLOURS, data.spectra):
-                lines.append(f"Peaks, {peak_text(spectrum, axis)}")
-        return lines
+            return {}
+        return {"brief": result_brief(data), "record_lines": record_lines(data)}
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
         return list(range_warnings(values))
@@ -447,7 +456,7 @@ class MeanPositionVsT(DatasetAnalysis):
         if left_out and kept.any():
             notes.append(f"{left_out:,} of {bins:,} bins with fewer than {minimum:,} events left out")
         data = PositionProfile(shots, len(view.shots), len(events), len(inside), edges, counts, tuple(traces), width,
-                               automatic, clamp, minimum, time_unit(lower, upper)[0], box,
+                               automatic, clamp, minimum, box,
                                range_warnings(values) + ((widened,) if widened else ()), tuple(notes),
                                spectrum_asked=bool(values[SPECTRUM.name]))
         if not values[SPECTRUM.name] or not kept.any():
@@ -457,9 +466,9 @@ class MeanPositionVsT(DatasetAnalysis):
         evenly = kept.copy()
         if partial:
             evenly[-1] = False  # not evenly spaced
-            notes.append(f"the last bin is {time_text(whole.remainder)} wide (partial): in the traces, not in "
+            notes.append(f"the last bin is {time_text(whole.remainder, WIDTH_DIGITS)} wide (partial): in the traces, not in "
                          f"the spectrum")
-        part = stretch(evenly, centres, data.time_unit)  # X's and Y's gaps are the same bins
+        part = stretch(evenly, centres)  # X's and Y's gaps are the same bins
         if part.note:
             notes.append(part.note)
         if part.stop == part.start:
@@ -477,18 +486,17 @@ class MeanPositionVsT(DatasetAnalysis):
         reason = empty_reason(data)
         if reason:
             return empty_pane(reason, parent)
-        widget = PositionPlot(data.spectrum_asked, bool(result.parameters.get(LOG.name, LOG.default)),
-                              data.time_unit, parent)
+        widget = PositionPlot(data.spectrum_asked, bool(result.parameters.get(LOG.name, LOG.default)), parent)
         widget.show_data(result, data)
         return widget
 
     def update(self, widget: QWidget, result: AnalysisResult) -> bool:
         """A rerun (e.g. Live's next shots) draws in place, keeping zoom and pan, while the
-        spectrum (shown, log) and T's unit stay; otherwise, or to or from an empty plot, anew."""
+        spectrum (shown, log) stays; otherwise, or to or from an empty plot, anew."""
         data: PositionProfile = result.data
         if not isinstance(widget, PositionPlot) or empty_reason(data):
             return False
-        if widget.key != (data.spectrum_asked, bool(result.parameters.get(LOG.name, LOG.default)), data.time_unit):
+        if widget.key != (data.spectrum_asked, bool(result.parameters.get(LOG.name, LOG.default))):
             return False
         widget.show_data(result, data)
         return True

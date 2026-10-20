@@ -18,7 +18,8 @@ from helab.analysis.dataset_view import DatasetView, txy
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, newest_brief, newest_colour,
                                       newest_shot, newest_specs, range_brief, range_specs, range_warnings,
                                       select_shots, selection_text, shots_brief, shots_text)
-from helab.analysis.stats import AXES, DISPLAY_CAP, UNITS, CropBox, axis_text, crop_box, display_sample
+from helab.analysis.display_units import axis_label, axis_scale, range_text
+from helab.analysis.stats import AXES, DISPLAY_CAP, CropBox, crop_box, display_sample
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
 
@@ -75,7 +76,7 @@ def crop_text(crop: CropBox, warnings: tuple[str, ...] = ()) -> str:
     warning = "".join(f" · ⚠ {text}" for text in warnings)
     if crop.total == 0:
         return "No events" + warning
-    bounds = " · ".join(axis_text(i, crop.lower[i], crop.upper[i]) for i in range(len(AXES)))
+    bounds = " · ".join(range_text(i, crop.lower[i], crop.upper[i]) for i in range(len(AXES)))
     how = "Manual range" if crop.manual else "Auto-crop (heuristic box)"
     return f"{how} keeps {crop.fraction:.1%} ({crop.kept:,} of {crop.total:,} events): {bounds}{warning}"
 
@@ -168,22 +169,34 @@ class Scatter3D(DatasetAnalysis):
         return True
 
 
+# Plotly's axis ticks and hover text: digits grouped by thousands, "," and "." (d3-format).
+TICK_FORMAT = ",~f"
+HOVER = "X %{x:,.4f} mm<br>Y %{y:,.4f} mm<br>T %{z:,.4f} ms<extra></extra>"
+
+
+def displayed(points: npt.NDArray[np.float64]) -> tuple[npt.NDArray[np.float64], ...]:
+    """X, Y and T of ``points`` (T/X/Y columns in s and m) in the plot's mm and ms."""
+    return tuple(points[:, column] * axis_scale(column) for column in (1, 2, 0))
+
+
 def figure(result: AnalysisResult, data: ScatterData) -> go.Figure:
     points, crop = data.points, data.crop
     size = float(result.parameters.get(POINT_SIZE.name, POINT_SIZE.default))
     opacity = float(result.parameters.get(OPACITY.name, OPACITY.default))
-    traces = [go.Scatter3d(x=points[:, 1], y=points[:, 2], z=points[:, 0], mode="markers",
-                           marker=dict(size=size, opacity=opacity), hoverinfo="x+y+z", name="earlier shots")]
+    x, y, z = displayed(points)
+    traces = [go.Scatter3d(x=x, y=y, z=z, mode="markers", marker=dict(size=size, opacity=opacity),
+                           hovertemplate=HOVER, name="earlier shots")]
     if data.newest_shot is not None:
-        fresh = data.newest
-        traces.append(go.Scatter3d(x=fresh[:, 1], y=fresh[:, 2], z=fresh[:, 0], mode="markers",
+        fx, fy, fz = displayed(data.newest)
+        traces.append(go.Scatter3d(x=fx, y=fy, z=fz, mode="markers",
                                    marker=dict(size=size, opacity=max(opacity, 0.8), color=f"rgb{data.colour}"),
-                                   hoverinfo="x+y+z", name=f"shot {data.newest_shot} (newest)"))
+                                   hovertemplate=HOVER, name=f"shot {data.newest_shot} (newest)"))
 
     def axis(index: int) -> dict[str, Any]:
-        settings: dict[str, Any] = {"title": f"{AXES[index]} ({UNITS[index]})"}
+        settings: dict[str, Any] = {"title": axis_label(index), "tickformat": TICK_FORMAT}
         if crop.total:
-            settings["range"] = (crop.lower[index], crop.upper[index])
+            scale = axis_scale(index)
+            settings["range"] = (crop.lower[index] * scale, crop.upper[index] * scale)
         return settings
 
     layout = go.Layout(

@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import QLabel
 
 from helab.analysis.dataset_view import DatasetView, build_view
 from helab.analysis.parameters import effective
-from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled
+from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
 from helab.analysis.spectrum import FLAT_TOP, NO_WINDOW
 from helab.scripts.standard import mean_position
 from helab.utils.folder_cache import Dataset
@@ -50,7 +50,8 @@ def sloshing(shots: int = 10, per_shot: int = 20_000, seed: int = 5) -> DatasetV
 def run(view: DatasetView, values: dict[str, Any] | None = None) -> AnalysisResult:
     context = AnalysisContext("a1", "Plot", view, effective(SCRIPT.parameters("Plot"), values),
                               SCRIPT.get_metadata().identity())
-    return AnalysisResult.of(context, "completed", SCRIPT.compute("Plot", context))
+    data = SCRIPT.compute("Plot", context)
+    return AnalysisResult.of(context, "completed", data, found=SCRIPT.result_found("Plot", data))
 
 
 FULL = {"keep_percent": 100.0}  # the whole T span, so the bins start at the first event
@@ -103,8 +104,13 @@ def test_the_spectrum_recovers_the_slosh_frequency_and_amplitude() -> None:
     text = SCRIPT.describe_result("Plot", result)
     assert "bin spacing Δf 20 Hz, resolution ≈ 30 Hz (ENBW 1.5), Nyquist 1 kHz" in text
     record = SCRIPT.result_record("Plot", result)
-    assert record[0].startswith("T bins: 100 of 500 µs (set), 200,000 events; 0 with fewer than 10")
+    assert record[0].startswith("T bins: 100 of 0.5 ms (set), 200,000 events; 0 with fewer than 10")
     assert any(line.startswith("Peaks, mean X: 100 Hz (2") for line in record)
+    # The settings line's addition and the record are the result's ``found``: a released plot
+    # (its data dropped) keeps both.
+    released = RamResults().released(result)
+    assert released.data is None and SCRIPT.describe_result("Plot", released) == text
+    assert SCRIPT.result_record("Plot", released) == record
     for window in (NO_WINDOW, FLAT_TOP, "Hamming", "Blackman"):
         found = run(sloshing(), {**FULL, "t_bin": 0.5e-3, "spectrum": True, "window": window}).data.spectra[0]
         assert found.window == window and abs(found.peaks[0].frequency - FREQUENCY) <= found.bin_spacing
@@ -247,7 +253,7 @@ def test_settings_line_and_record_only_for_completed_runs() -> None:
     values = effective(SCRIPT.parameters("Plot"), {"shots": "last N", "last_shots": 2, "t_bin": 2e-4,
                                                    "spectrum": True})
     assert SCRIPT.describe_run("Plot", values, view) == (
-        "shots 2–3 (2 of 3)", "last 2 shots · auto-crop 99 % · T bins 200 µs · ≥ 10 events per bin · "
+        "shots 2–3 (2 of 3)", "last 2 shots · auto-crop 99 % · T bins 0.2 ms · ≥ 10 events per bin · "
         "spectrum Hann, log")
     failed = AnalysisResult.of(AnalysisContext("a1", "Plot", view, values, SCRIPT.get_metadata().identity()), "failed")
     assert SCRIPT.describe_result("Plot", failed) == "" and SCRIPT.result_record("Plot", failed) == []

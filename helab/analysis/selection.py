@@ -8,6 +8,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from helab.analysis.dataset_view import DatasetView, Events, txy
+from helab.analysis.display_units import range_text
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.stats import AXES, DEFAULT_KEEP, UNITS, CropBox
 
@@ -130,11 +131,11 @@ RANGE_MODE = ParameterSpec("range_mode", "Range", "choice", AUTO, choices=(AUTO,
                                "and Y bounds below.")
 BOUNDS: tuple[tuple[ParameterSpec, ParameterSpec], ...] = tuple(
     (ParameterSpec(f"{axis.lower()}_min", f"{axis} min", "float", 0.0, None, f" {UNITS[i]}", group=RANGE_GROUP,
-                   when=(RANGE_MODE.name, MANUAL), si=True,
+                   when=(RANGE_MODE.name, MANUAL), si=True, unit_prefix="m",
                    tip=f"Lower bound of {axis}. Leave min and max equal for {axis}'s full extent; a min "
                        f"above the max also uses the full extent, and the plot says so."),
      ParameterSpec(f"{axis.lower()}_max", f"{axis} max", "float", 0.0, None, f" {UNITS[i]}", group=RANGE_GROUP,
-                   when=(RANGE_MODE.name, MANUAL), si=True, tip=f"Upper bound of {axis}."))
+                   when=(RANGE_MODE.name, MANUAL), si=True, unit_prefix="m", tip=f"Upper bound of {axis}."))
     for i, axis in enumerate(AXES))
 
 
@@ -166,24 +167,9 @@ def manual_bounds(values: Mapping[str, Any]) -> tuple[tuple[float, float] | None
     return tuple(bounds)
 
 
-SI_PREFIXES = ((1.0, ""), (1e-3, "m"), (1e-6, "µ"), (1e-9, "n"))
-
-
-def range_text(axis: int, low: float, high: float) -> str:
-    """``T 3.84–3.87 s``, ``X −2–3.5 mm``: one prefix for both ends, from the larger magnitude."""
-    largest = max(abs(low), abs(high))
-    factor, prefix = next(((f, p) for f, p in SI_PREFIXES if largest >= f), SI_PREFIXES[-1])
-    if largest == 0:
-        factor, prefix = SI_PREFIXES[0]
-
-    def number(value: float) -> str:
-        return f"{value / factor:.4g}".replace("-", "−")
-    return f"{AXES[axis]} {number(low)}–{number(high)} {prefix}{UNITS[axis]}"
-
-
 def range_brief(values: Mapping[str, Any]) -> str:
     """The view range in a few words: ``auto-crop 99 %``, or the manual axes actually set
-    (``T 3.84–3.87 s``); unset and full-extent axes are left out."""
+    (``T 3,840–3,870 ms``, ``display_units.range_text``); unset and full-extent axes are left out."""
     if not manual(values):
         return f"auto-crop {keep_fraction(values) * 100:g} %"
     parts = [range_text(axis, *bounds) for axis, bounds in enumerate(manual_bounds(values)) if bounds is not None]
