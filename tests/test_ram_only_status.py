@@ -23,7 +23,7 @@ from helab.views.FolderExplorer import FolderExplorer
 
 pytestmark = pytest.mark.no_auto_data_root
 
-Events = list[dict[str, Any]]
+Events = list[Any]
 
 
 def data_folder(path: Path) -> Path:
@@ -117,12 +117,12 @@ def producer(cache: FolderCache, path: str, operation: str) -> IORequest:
 
 
 def replay(qtbot: QtBot, cache: FolderCache, path: str, operation: str,
-           helper: Callable[[IORequest, Callable[[dict[str, Any]], None]], None],
+           helper: Callable[[IORequest, Callable[[Any], None]], None],
            end: dict[str, Any] | None = None) -> None:
     """Send a real helper's events for the queued request (it gets the request's payload)."""
     request = producer(cache, path, operation)
 
-    def send(event: dict[str, Any]) -> None:
+    def send(event: Any) -> None:
         cache.service.resultReady.emit(request, event)
     helper(request, send)
     cache.service.resultReady.emit(request, end or {"kind": "done"})
@@ -130,7 +130,7 @@ def replay(qtbot: QtBot, cache: FolderCache, path: str, operation: str,
     qtbot.waitUntil(lambda: not any(r.path == path for r in cache._deliveries))
 
 
-def run_scan(path: str) -> Callable[[IORequest, Callable[[dict[str, Any]], None]], None]:
+def run_scan(path: str) -> Callable[[IORequest, Callable[[Any], None]], None]:
     return lambda request, send: scan(path, send, request.payload["cache"],
                                       manual=request.payload["scan_manual"],
                                       automatic=request.payload.get("automatic", False))
@@ -197,7 +197,7 @@ def test_a_failure_without_disk_cache_stays_in_ram_and_blocks_the_next_automatic
     model.request_scan(other, metadata_only=True)
     qtbot.waitUntil(lambda: ("scan", other) in cache.jobs)
 
-    def timed_out(request: IORequest, send: Callable[[dict[str, Any]], None]) -> None:
+    def timed_out(request: IORequest, send: Callable[[Any], None]) -> None:
         events: Events = []
         scan(other, events.append, options, manual=False, automatic=True)
         for event in events[:events.index({"kind": "scan_mode", "mode": "scan"}) + 1]:

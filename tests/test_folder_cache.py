@@ -1029,14 +1029,14 @@ def test_changed_folder_reads_only_new_or_modified_txy_files(
     # Shot 3 is gone, which never happens to write-once TXY files: nothing is read until the user
     # says to load the folder as it is now.
     (tmp_path / "asked").mkdir()
-    asked: list[dict[str, Any]] = []
+    asked: list[Any] = []
     load(str(source), str(tmp_path / "asked"), asked.append, options)
     missing = next(event for event in asked if event["kind"] == "shots_missing")
     assert missing["missing"] == [3] and missing["missing_count"] == 1 and missing["known_count"] == 4
     assert not read and not any(event["kind"] in ("loaded", "shot") for event in asked)
     output = tmp_path / "second"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append, options, allow_missing=True)
     assert sorted(read) == ["d_txy_forc2.txt", "d_txy_forc5.txt"]
     assert next(event for event in events if event["kind"] == "load_source") == {"kind": "load_source", "source": "merged",
@@ -1076,7 +1076,7 @@ def test_load_skips_shots_already_in_memory_and_completes_disk_cache(
     (source / "d_txy_forc3.txt").write_text("30,30,30\n")
     original_read = infra._read_txy_file
     read: list[str] = []
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
 
     def record_read(filename: str, reason: str) -> Any:
         # Before ``loaded`` only changed files are read; afterwards the disk
@@ -1125,7 +1125,7 @@ def test_scan_reports_cached_children_without_loading_or_probing_them(
 
     monkeypatch.setattr("os.scandir", record_scandir)
     monkeypatch.setattr(blosc, "decompress", forbid_decompression)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(root), events.append, options)
     assert scanned == [str(root)]
     assert next(e for e in events if e["kind"] == "entries")["entries"][0]["disk_cached"] is True
@@ -1187,7 +1187,7 @@ def test_disk_clear_epoch_prevents_older_load_from_repopulating_cache(tmp_path: 
 
     events: list[dict[str, Any]] = []
 
-    def clear_during_delivery(event: dict[str, Any]) -> None:
+    def clear_during_delivery(event: Any) -> None:
         events.append(event)
         if event["kind"] == "shot":
             with stores._cache_store(options["directory"], [str(source)]) as store:
@@ -1206,7 +1206,7 @@ def test_save_date_persists_and_cache_reuse_does_not_rewrite_it(tmp_path: Path) 
     (source / "d_txy_forc1.txt").write_text("1,2,3\n")
     path = str(source)
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(path, str(output), events.append, options)
     saved = next(event["cache_info"] for event in events if event["kind"] == "cache_saved")
     assert saved["action"] == "created"
@@ -1251,7 +1251,7 @@ def test_failed_save_keeps_the_previous_dataset(
         raise OSError("disk full") if failure == "file" else sqlite3.OperationalError("disk I/O error")
 
     monkeypatch.setattr(CacheStore, "write_dataset_file" if failure == "file" else "_upsert_dataset", fail)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(path, str(output), events.append, options)
     assert loaded_event(events)["files"] == 1
     assert any(event["kind"] == "cache_save_failed" for event in events)
@@ -1273,7 +1273,7 @@ def test_new_file_during_background_save_caches_loaded_shots_as_possibly_old(tmp
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     events: list[dict[str, Any]] = []
 
-    def add_after_load(event: dict[str, Any]) -> None:
+    def add_after_load(event: Any) -> None:
         events.append(event)
         if event["kind"] == "loaded":
             time.sleep(0.02)  # The new shot's folder mtime must follow the load's file listing.
@@ -1304,7 +1304,7 @@ def test_corrupt_disk_cache_reports_failure_and_loads_source(tmp_path: Path) -> 
         file = store.write_dataset_file(b"invalid compressed dataset")
         store.save_dataset(str(source), file, {"ram_bytes": 24, "rows": 1, "shots": 1,
             "fingerprint": [[1, info.st_size, info.st_mtime_ns]], "problematic": [], "info": {}}, guard)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append, options)
     warning = next(event for event in events if event["kind"] == "cache_warning")
     assert warning["message"].startswith("Cache read failed:")
@@ -1321,7 +1321,7 @@ def test_changed_source_during_load_is_not_published_to_disk_cache(tmp_path: Pat
     file.write_text("1,2,3\n")
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
 
-    def change_during_delivery(event: dict[str, Any]) -> None:
+    def change_during_delivery(event: Any) -> None:
         if event["kind"] == "shot":
             file.write_text("100,200,300\n")
 
@@ -1337,9 +1337,9 @@ def test_shot_added_during_live_load_is_left_for_the_next_load(tmp_path: Path) -
     for shot in (1, 2):
         (source / f"d_txy_forc{shot}.txt").write_text("1,2,3\n")
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
 
-    def next_shot_arrives(event: dict[str, Any]) -> None:
+    def next_shot_arrives(event: Any) -> None:
         events.append(event)
         if event["kind"] == "shot" and not (source / "d_txy_forc3.txt").exists():
             (source / "d_txy_forc3.txt").write_text("4,5,6\n")
@@ -1366,7 +1366,7 @@ def test_scan_and_load_use_same_fingerprint_for_symlinked_data(tmp_path: Path) -
     target = tmp_path / "converted.txt"
     target.write_text("1,2,3\n")
     (source / "d_txy_forc1.txt").symlink_to(target)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(source), events.append)
     signature = events[-1]["signature"]
     events.clear()

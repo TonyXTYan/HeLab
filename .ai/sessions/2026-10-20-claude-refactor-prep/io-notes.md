@@ -1,7 +1,7 @@
 # I/O track notes (2026-10-20)
 
 Branch `agent/refactor-io` from `agent/refactor-prep` (`9cf8782`), worktree
-`/home/user/wt/io`. Slice F done; slice G (typed helper events) not started.
+`/home/user/wt/io`. Slices F and G done.
 Plan and decisions: [readiness](readiness.md), [common brief](brief-common.md).
 
 ## Slice F: `helab/io_helper.py` as the dispatcher over `helab/io_ops/`
@@ -152,7 +152,93 @@ No correctness bugs found. Fixed on top in their own commit:
 
 ## Open points
 
-- Slice G (typed helper events) not started, as asked.
 - Proposal: `admin.py`'s `cache_admin` (150 lines) and `loading._load`
   (365 lines) are the largest single functions left; splitting them is a
   separate, behaviour-sensitive step, not part of this move.
+
+## Slice G: typed helper events (static contract, no runtime change)
+
+**Contract module: `helab/io_ops/events.py`** (705 lines, standard library and
+`typing` only). It lives beside the code that sends the events, and
+`helab/io_ops/__init__.py` imports nothing, so the app can import the
+contract without loading helper code; a `helab/utils/io_events.py` would put
+the protocol away from its producers, where new operations wouldn't see it.
+It declares 72 `TypedDict` shapes for 66 kinds, their union `HelperEvent`,
+and `KINDS`, plus the field groups spread into events (`UsageFields`,
+`DataRootField`, `DatasetFlags`, `LiveState`, `AdminResultFields`,
+`MoveCheckFields`, …).
+
+- **Shapes per sender, not per kind, where senders differ.** Strict mypy
+  (`--extra-checks`) requires every non-required key of a `TypedDict` literal
+  that uses `**` to come from a `**` item, so one shape with many optional
+  keys doesn't type-check at senders that spread `_data_root` or `_usage`.
+  So `loaded` has six shapes (cached read, unchanged since cache, unchanged
+  since RAM, load, save from RAM, Live) over a shared `_LoadedBase`; `status`
+  two (listing, scan; `FolderSummary` is the scan's base and `scan_summary`'s
+  payload); `admin_result` two (`cache_admin`, `invalidate`); `swept` two
+  (read-only store or not); `root_changed` two (`RootFoundEvent`, marker found
+  with another UUID, shared with `root_found`; `RootChangedEvent`, a location
+  forgotten). `cache_full`/`cache_approval` and `root_created`/`root_adopted`
+  are one shape each, since one expression picks between them.
+- **Helper side:** `infra.Emit = Callable[[HelperEvent], None]` and
+  `infra.emit(event: HelperEvent)`, so every `send`/`emit` is checked. The
+  spread helpers return their field groups (`_data_root`, `_usage`,
+  `_dataset_flags`, `_removed_event`, `_pending_event`, `_summary`, Live's
+  `state` and `progress`, `_scan`); `_save_summary` takes a `Mapping`.
+- **Code changes for typing only** (no emitted key, value or order changes;
+  each was checked to have no side effects or ordering effects):
+  - Four conditional spreads became annotated locals spread in the same
+    place: a shot's `raw_mtime` (`loading`, `live`, `save_held`:
+    `known_time: RawMtimeField`), the load's `disk_cached`
+    (`known_cached: DiskCachedField`), `error`'s `unverified`
+    (`io_helper`), and a scan's no-cache flags (`uncached: DatasetFlags`).
+    Neither checker types `**({...} if c else {})`.
+  - A listing's `saved_root`, added after the literal, is now an annotated
+    local spread last (`saved_root: SavedRootField`): the same last key.
+  - `cache_admin`'s `result.update(a=…, b=…)` became `result.update({"a": …,
+    "b": …})`: mypy doesn't accept keyword `update` on a `TypedDict`.
+  - Three casts, only where an untyped `dict[str, Any]` crosses into the
+    contract: `_usage` (`CacheStore`'s usage `event()`), `_dataset_flags`
+    (a comprehension over two fixed keys) and `move_check`
+    (`cache_move.check_target`). No event literal is cast.
+- **Tests:** test sinks passed to helper functions are `list[Any]` (was
+  `list[dict[str, Any]]`), and test callbacks that receive helper events take
+  `Any`: a `TypedDict` isn't a `dict[str, Any]`, so `events.append` of a
+  `list[dict[str, Any]]` can't be an `Emit`. That's 29 test files, annotations
+  only (mypy listed each one).
+- **`tests/test_helper_events.py`:** `KINDS` equals the union's kinds; the
+  kinds the helper sends (an AST scan of `helab/io_ops` and `io_helper.py`:
+  dict literals with `"kind"`, conditionals between kinds, `dict(kind=…)`,
+  `x["kind"] = …`) equal `KINDS`, with two dicts that aren't events listed
+  (`scanning`'s scan outcome `success`, `loading`'s dataset `info`); every
+  kind the app matches on (`==`, `!=`, `in`, `not in` on `x["kind"]`,
+  `x.get("kind")` or a name assigned from them, in `helab/main.py`,
+  `helab/utils`, `helab/views`, `helab/models`; `scan_history.py`'s outcome
+  kinds left out) is declared or one of the app's own `GUI_KINDS`
+  (`queued`, `started`, `cancelled`, `exit`: `IOService`'s), which the app
+  makes and no helper sends. Checked by hand that a misspelt field
+  (`mounts_seen`'s `mount`) fails mypy and a misspelt matched kind
+  (`CacheTab`'s `inventorry`) fails the test.
+- `AGENTS.md`'s Responsive filesystem I/O has a sentence on the contract.
+
+### Later (GUI side, not in this slice)
+
+`FolderCache._on_event` and the other handlers still take `dict[str, Any]`.
+A later step would type `IOService.resultReady`'s payload as
+`HelperEvent | GuiEvent` (a small union for `queued`/`started`/`cancelled`/
+`exit`, declared beside it), narrow by `event["kind"]` in each handler
+branch (mypy narrows a `TypedDict` union by a literal `kind` check), and
+handle the per-sender shapes of `loaded`/`status` by their common base. Done
+handler by handler, it would surface fields the GUI reads that no sender
+sets. Some GUI code also builds helper-kind events itself (`FolderCache`
+replays `loaded`, `entries`, `status`…), which would need the same shapes.
+
+### Validation (slice G)
+
+- Strict mypy (`helab` 136 files, `tests` 94) and pyright (`helab tests`):
+  clean.
+- Targeted (29 changed test files plus the contract, import, Live and
+  cache-move tests, `-n 2 --reruns 2`): 838 passed, 5 skipped, 2 xfailed, no
+  reruns.
+- Full suite (`-n 2 --reruns 5 --reruns-delay 1`): 2187 passed, 9 skipped,
+  2 xfailed in 5 min 42 s, **no reruns** (the same 2 pyqtgraph warnings).

@@ -83,12 +83,12 @@ def test_listings_send_each_subfolders_constants_and_the_folders_above(tmp_path:
     (child / "deep").mkdir(parents=True)
     options: dict[str, Any] = {"directory": str(tmp_path / "caches" / "store-v3")}
     list_folder(str(parent), lambda event: None, options)  # Listed first (finds the data root), as in the app.
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(options, "constants", events.append, path=str(child), values={"fall_distance": 0.85}, set_at=10.0)
     cache_admin(options, "constants", events.append, path=str(tmp_path), values={"trap_axial": 45.0}, set_at=11.0)
     assert events[0] == {"kind": "folder_constants", "folders": {str(child): {"values": {"fall_distance": 0.85},
                                                                               "set_at": 10.0}}}
-    listed: list[dict[str, Any]] = []
+    listed: list[Any] = []
     list_folder(str(parent), listed.append, options)
     entry = next(e for event in listed if event["kind"] == "entries" for e in event["entries"]
                  if e["path"] == str(child))
@@ -119,7 +119,7 @@ def test_listings_send_each_subfolders_constants_and_the_folders_above(tmp_path:
 @pytest.mark.no_auto_data_root
 def test_a_folder_without_a_data_root_is_answered_session_only(tmp_path: Path) -> None:
     options: dict[str, Any] = {"directory": str(tmp_path / "caches" / "store-v3")}
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(options, "constants", events.append, path=str(tmp_path), values={"fall_distance": 0.85}, set_at=1.0)
     assert events[0] == {"kind": "folder_constants", "folders": {},
                          "session_only": {str(tmp_path): "no .helab-root found here or above"}}

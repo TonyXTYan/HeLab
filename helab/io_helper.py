@@ -14,6 +14,7 @@ import time
 from helab.io_ops import stores
 from helab.io_ops.admin import cache_admin, cache_move_job
 from helab.io_ops.browse import list_folder
+from helab.io_ops.events import UnverifiedField
 from helab.io_ops.fingerprints import DEFAULT_CHECK_LEVEL
 from helab.io_ops.icons import folder_icons
 from helab.io_ops.infra import Pause, SOURCE_GUARD, _end_trace, _guard, _isdir, _start_trace, emit
@@ -132,8 +133,8 @@ def main() -> None:
     except Exception as exc:
         _end_trace(started, str(exc))
         from helab.utils.data_roots import VolumeUnverified
-        emit({"kind": "error", "message": str(exc), **({"unverified": True}
-                                                        if isinstance(exc, VolumeUnverified) else {})})
+        unverified: UnverifiedField = {"unverified": True} if isinstance(exc, VolumeUnverified) else {}
+        emit({"kind": "error", "message": str(exc), **unverified})
 
 
 if __name__ == "__main__":

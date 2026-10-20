@@ -1211,7 +1211,7 @@ def replay(cache: FolderCache, path: str, tmp_path: Path, operation: str) -> Non
     payload = request.payload
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     if operation == "list":
         list_folder(path, events.append, payload.get("cache"))
     else:
@@ -1381,7 +1381,7 @@ def test_an_error_stopping_live_checks_catches_plots_up(
     request = next(r for r in service.pending if r.owner == job.owner)
     output = tmp_path / "load"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(path, str(output), events.append, None)
     service.pending.remove(request)
     for event in [*events, {"kind": "done"}]:

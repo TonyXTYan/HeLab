@@ -172,7 +172,7 @@ def test_helper_scan_reports_cached_shots_the_folder_no_longer_has(tmp_path: Pat
     output = tmp_path / "artifacts"
     output.mkdir()
     load(str(source), str(output), lambda event: None, options)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(source), events.append, options)
     assert not any(event["kind"] == "cache_mismatch" for event in events)
     # Another folder moved to this path: its shot 1 is gone; shot 3 is new (not a mismatch).

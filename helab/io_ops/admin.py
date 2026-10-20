@@ -4,9 +4,10 @@ from __future__ import annotations
 import contextlib
 import os
 import time
-from typing import Any
+from typing import Any, cast
 
 from helab.io_ops import stores
+from helab.io_ops.events import AdminResultFields, MoveCheckFields
 from helab.io_ops.infra import Emit, Heartbeat, emit
 from helab.io_ops.markers import _location_path, _root_rows
 from helab.io_ops.stores import _cache_info, _deadline, _removed_event, _usage
@@ -39,7 +40,7 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     budget = params.get("budget", cache_options.get("budget"))
     # When the app set it: a budget set later (e.g. lowered while this job waited) wins.
     budget_set_at = params.get("budget_set_at", cache_options.get("budget_set_at"))
-    result: dict[str, Any] = {}
+    result: AdminResultFields = {}
     old: list[str] = []
     if action == "sweep":
         old = remove_old_caches(os.path.dirname(os.path.abspath(root)), Heartbeat(send, "cleaning up"))
@@ -96,19 +97,19 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
         elif action == "trim":
             removal = store.trim(int(budget or params["budget"]), budget_set_at)
             send(_removed_event(removal))
-            result.update(datasets=removal.datasets, bytes=removal.dataset_bytes)
+            result.update({"datasets": removal.datasets, "bytes": removal.dataset_bytes})
         elif action == "adopt":
             try:
                 adopted = store.adopt_pending(params["pending_id"], budget=budget, budget_set_at=budget_set_at,
                                               expected_room=params.get("room_paths"),
                                               make_room=bool(params.get("make_room")))
             except SaveRejected as rejection:
-                result.update(adopted=False, rejected=rejection.reason, message=str(rejection))
+                result.update({"adopted": False, "rejected": rejection.reason, "message": str(rejection)})
             else:
                 if adopted.removal is not None:
                     send(_removed_event(adopted.removal))
-                result.update(adopted=adopted.adopted, path=adopted.path, bytes=adopted.bytes,
-                              room=None if adopted.room is None else asdict(adopted.room))
+                result.update({"adopted": adopted.adopted, "path": adopted.path, "bytes": adopted.bytes,
+                               "room": None if adopted.room is None else asdict(adopted.room)})
                 if adopted.adopted:
                     row = store.read_dataset_row(adopted.path)
                     result["cache_info"] = _cache_info(row.value["info"]) if row.value is not None else {}
@@ -170,7 +171,7 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             if budget is not None and budget_set_at is not None:
                 # Lowering it (``fit``): not recorded if the data cached by now doesn't fit.
                 active = store.lower_budget(int(budget), float(budget_set_at), fit=bool(params.get("fit")))
-                result.update(budget=active if active is not None else budget, recorded=active is not None)
+                result.update({"budget": active if active is not None else budget, "recorded": active is not None})
         send({"kind": "admin_result", "action": action, **result, "next_deadline": _deadline(store),
               **_usage(store)})
 
@@ -185,7 +186,7 @@ def cache_move_job(move: dict[str, Any], send: Emit = emit) -> None:
     from helab.utils.cache_locks import cache_lock, held_with, move_lock
     action, app_dir = move["action"], move["app_dir"]
     if action == "check":
-        send({"kind": "move_check", **mover.check_target(move["from"], move["to"], app_dir)})
+        send({"kind": "move_check", **cast(MoveCheckFields, mover.check_target(move["from"], move["to"], app_dir))})
         return
     lock = move_lock(app_dir)
     if not lock.try_lock():

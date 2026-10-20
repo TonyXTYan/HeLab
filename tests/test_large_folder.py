@@ -38,7 +38,7 @@ def options_for(tmp_path: Path) -> dict[str, Any]:
 def run_load(source: Path, tmp_path: Path, options: dict[str, Any] | None, **kwargs: Any) -> list[dict[str, Any]]:
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append, options, **kwargs)
     return events
 
@@ -148,7 +148,7 @@ def test_a_large_cached_dataset_isnt_read_unless_allowed_and_listings_carry_its_
     size = sum(f.stat().st_size for f in source.glob("d_txy_forc*.txt"))
     output = tmp_path / "out"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     read_cached(str(source), str(output), events.append, options, limits={"warn": size - 1, "refuse": 1 << 40})
     assert events == [{"kind": "too_large", "estimate": size, "refused": False}] and not any(output.iterdir())
     events.clear()
@@ -180,7 +180,7 @@ def test_a_large_cached_dataset_isnt_read_unless_allowed_and_listings_carry_its_
         store.save_dataset(str(older), store.write_dataset_file(b"x"), {
             "ram_bytes": 7, "rows": 1, "shots": 2, "fingerprint": [[1, 300, 0], [2, 200, 0]], "problematic": [],
             "info": {"saved_at": time.time(), "signature": "s"}}, store.start_dataset_job(str(older)))
-    listed: list[dict[str, Any]] = []
+    listed: list[Any] = []
     list_folder(str(tmp_path), listed.append, options)
     entry = next(e for event in listed if event["kind"] == "entries" for e in event["entries"]
                  if e["path"] == str(source))

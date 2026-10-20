@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import time
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -208,7 +209,7 @@ def test_unsupported_remote_root_browses_with_typed_cache_notice(
     mount.mkdir()
     monkeypatch.setattr(cache_paths, "current_mounts",
                         lambda: [Mount("server:/export", str(mount), fstype, True)])
-    events: list[dict[str, object]] = []
+    events: list[Any] = []
     list_folder(str(mount), events.append, {"directory": str(tmp_path / "store-v2")})
     notices = [event for event in events if event.get("kind") == "cache_skipped"]
     assert len(notices) == 1
@@ -231,7 +232,7 @@ def test_mount_lookup_failure_keeps_listing_successful(
         raise RuntimeError("mount table unavailable")
 
     monkeypatch.setattr(cache_paths, "current_mounts", unavailable)
-    events: list[dict[str, object]] = []
+    events: list[Any] = []
     list_folder(str(folder), events.append,
                 {"directory": str(tmp_path / "store-v2")})
     assert any(event.get("kind") == "cache_warning" for event in events)
@@ -257,7 +258,7 @@ def test_helper_listing_uses_root_key_and_returns_source_path(
             assert root_record is not None
             assert conn.execute("SELECT path FROM folder_prefs").fetchone()[0] == (
                 f"root://{root_record[0]}/Run1")
-    events: list[dict[str, object]] = []
+    events: list[Any] = []
     list_folder(str(mount), events.append, {"directory": root})
     batches = [event["entries"] for event in events if event.get("kind") == "entries"]
     entries = [entry for batch in batches if isinstance(batch, list) for entry in batch]
@@ -282,7 +283,7 @@ def test_refused_child_does_not_fail_parent_scan_or_lose_sibling_cache(
     root = str(tmp_path / "store-v2")
     with stores._cache_store(root, [str(normal)]) as store:
         store.set_prefs(str(normal), True, True, time.time())
-    events: list[dict[str, object]] = []
+    events: list[Any] = []
     scan(str(parent), events.append, {"directory": root})
     assert any(event.get("kind") == "status" for event in events)
     assert not any(event.get("kind") == "error" for event in events)
@@ -313,7 +314,7 @@ def test_refused_subtree_does_not_lose_other_batch_saves(
     root = str(tmp_path / "store-v2")
     with stores._cache_store(root, [local]):
         pass  # Seed the test root before the local-lane save.
-    events: list[dict[str, object]] = []
+    events: list[Any] = []
     save_subtrees({"directory": root},
                   [{"path": local, "status": "nothing", "derived_at": 1.0},
                    {"path": str(remote), "status": "something", "derived_at": 1.0}],

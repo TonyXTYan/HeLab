@@ -51,7 +51,7 @@ def run_helper(explorer: FolderExplorer, qtbot: QtBot, path: str, operation: str
     """Replay a real helper's events into the queued request, then wait for delivery."""
     cache = explorer.model.cache
     request = request_for(cache, path, operation)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     if operation == "list":
         list_folder(path, events.append, options)
     else:
@@ -243,7 +243,7 @@ def test_successful_and_partial_load_counts_survive_memory_reuse(
     browser.model.service.resultReady.emit(request, {"kind": "started"})
     output = tmp_path / "artifacts"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(path, str(output), events.append)
     for event in events:
         if event["kind"] == "shot":
@@ -699,7 +699,7 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
 
     monkeypatch.setattr(pd, "read_csv", forbidden)
     monkeypatch.setattr(blosc, "decompress", forbidden)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(child), events.append, options)
     initial = next(e for e in events if e["kind"] == "status")
     assert initial["count"] == 1 and initial["status"] == "ok"
@@ -1156,7 +1156,7 @@ def test_manual_scan_confirms_data_changes_and_load_clears_cache_warning(
     assert browser.model.data(index, int(Qt.ItemDataRole.DecorationRole)) == StatusIcons.ICON_OK
     assert "different TXY fingerprints" in str(browser.model.data(index, int(Qt.ItemDataRole.ToolTipRole)))
     # A successful helper cache write replaces the old signature and save date.
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(child), str(output), events.append, options)
     saved = next(e for e in events if e["kind"] == "cache_saved")
     browser.model.cache._observe_cache(str(child), {"disk_cached": True, "cache_info": saved["cache_info"]})

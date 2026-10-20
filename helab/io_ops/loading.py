@@ -8,6 +8,7 @@ import time
 from typing import Any, TYPE_CHECKING
 
 from helab.io_ops import fingerprints, infra
+from helab.io_ops.events import DiskCachedField, PendingSaveEvent, RawMtimeField
 from helab.io_ops.fingerprints import (DEFAULT_CHECK_LEVEL, _as_of, _cached_signature,
                                        _fingerprint_signature, _raw_list, _samples_unchanged,
                                        _saved_fingerprint, _saved_raw_times, _settled, _touch)
@@ -529,9 +530,9 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                 size += array.nbytes
                 loaded += 1
                 raw_time(shot)
+                known_time: RawMtimeField = {"raw_mtime": raw_times[shot]} if shot in raw_times else {}
                 send({"kind": "shot", "shot": shot, "artifact": artifact,
-                      "fingerprint": fingerprint[i], "problematic": shot in problematic,
-                      **({"raw_mtime": raw_times[shot]} if shot in raw_times else {})})
+                      "fingerprint": fingerprint[i], "problematic": shot in problematic, **known_time})
                 load_counts["new_loaded"] += int(shot in new_shots)
                 load_counts["modified_loaded"] += int(shot in modified_shots)
                 load_counts["reused_disk"] += int(shot in from_disk)
@@ -562,14 +563,15 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     if changed():
         raise ValueError("Folder changed while loading — Retry")
     names = [os.path.basename(filename) for _, filename in files]
+    # Left out when the cache couldn't be read: unknown, not "not cached".
+    known_cached: DiskCachedField = {} if had_dataset is None and not cached else {
+        "disk_cached": cached or bool(had_dataset)}
     send({"kind": "loaded", "rows": rows, "bytes": size, "files": loaded,
           "loaded_at": time.time(),
           "total_files": len(files) + len(young), "failed_files": len(files) - loaded - len(late),
           "unsettled_files": unsettled,
           "problematic": sorted(set(problematic)),
-          "source": source, "cached": cached, **_data_root(store, path),
-          # Left out when the cache couldn't be read: unknown, not "not cached".
-          **({} if had_dataset is None and not cached else {"disk_cached": cached or bool(had_dataset)}),
+          "source": source, "cached": cached, **_data_root(store, path), **known_cached,
           "disk_cache_pending": guard is not None and not cached and not no_cache,
           "cache_info": cache_info, "load_counts": load_counts,
           "cache_reason": cache_reason, "raw_times": _raw_list(raw_times, current),
@@ -679,10 +681,10 @@ def _with_sizes(info: dict[str, Any], row: Any) -> dict[str, Any]:
     return {**info, **sizes}
 
 
-def _pending_event(store: CacheStore, path: str, result: Any) -> dict[str, Any]:
+def _pending_event(store: CacheStore, path: str, result: Any) -> PendingSaveEvent:
     """``cache_full`` (doesn't fit) or ``cache_approval`` (grows the cache over 80%) for a pending save."""
     from dataclasses import asdict
-    event: dict[str, Any] = {
+    event: PendingSaveEvent = {
         "kind": "cache_full" if result.reason == "over_budget" else "cache_approval",
         "pending_id": result.pending_id, "path": path, "reason": result.reason, "bytes": result.bytes,
         "usage": result.usage, "usage_seq": [store.store_id, result.usage_seq], "created_at": time.time(),

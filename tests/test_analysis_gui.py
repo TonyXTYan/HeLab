@@ -64,7 +64,7 @@ def browse(explorer: FolderExplorer, qtbot: QtBot, path: str) -> None:
         if (operation, path) not in cache.jobs:
             continue
         request = request_for(cache, path, operation)
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         (list_folder if operation == "list" else scan)(path, events.append, None)
         for event in events + [{"kind": "done"}]:
             cache.service.resultReady.emit(request, event)

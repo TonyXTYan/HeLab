@@ -37,7 +37,7 @@ def held(folder: Path, tmp_path: Path) -> list[list[int]]:
     """Load the folder as the app would before turning Live on: the shots it holds."""
     output = tmp_path / f"load-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(folder), str(output), events.append)
     loaded = next(event for event in events if event["kind"] == "loaded")
     return [list(entry) for entry in loaded["fingerprint"]]
@@ -46,7 +46,7 @@ def held(folder: Path, tmp_path: Path) -> list[list[int]]:
 def check(folder: Path, tmp_path: Path, memory: list[list[int]], **kwargs: Any) -> list[dict[str, Any]]:
     output = tmp_path / f"live-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     live_check(str(folder), str(output), events.append, memory, **kwargs)
     return events
 
@@ -262,7 +262,7 @@ def test_an_older_held_shot_that_changes_still_stops_the_check(folder: Path, tmp
 def check_load(folder: Path, tmp_path: Path) -> list[dict[str, Any]]:
     output = tmp_path / f"load-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(folder), str(output), events.append)
     return events
 

@@ -48,7 +48,7 @@ def test_new_marker_is_the_exact_text_a_reader_accepts(tmp_path: Path) -> None:
 
 
 def test_enabling_writes_the_marker_and_records_the_root(share: Path, tmp_path: Path) -> None:
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     create_root(str(share), options(tmp_path), events.append)
     created = next(event for event in events if event["kind"] == "root_created")
     assert data_roots.read_marker(str(share)).uuid == created["uuid"]
@@ -60,9 +60,9 @@ def test_enabling_writes_the_marker_and_records_the_root(share: Path, tmp_path: 
 
 
 def test_enabling_again_adopts_the_marker_already_there(share: Path, tmp_path: Path) -> None:
-    first: list[dict[str, Any]] = []
+    first: list[Any] = []
     create_root(str(share), options(tmp_path), first.append)
-    again: list[dict[str, Any]] = []
+    again: list[Any] = []
     create_root(str(share), options(tmp_path), again.append)
     created = next(event for event in first if event["kind"] == "root_created")
     adopted = next(event for event in again if event["kind"] == "root_adopted")
@@ -73,7 +73,7 @@ def test_enabling_again_adopts_the_marker_already_there(share: Path, tmp_path: P
 def test_without_write_permission_the_exact_contents_are_handed_out(share: Path, tmp_path: Path) -> None:
     share.chmod(stat.S_IRUSR | stat.S_IXUSR)
     try:
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         create_root(str(share), options(tmp_path), events.append)
     finally:
         share.chmod(stat.S_IRWXU)
@@ -84,7 +84,7 @@ def test_without_write_permission_the_exact_contents_are_handed_out(share: Path,
     assert not any(event["kind"] in ("root_found", "root_created") for event in events)
     # Placed by hand, the next listing finds it.
     (share / ".helab-root").write_bytes(manual["contents"].encode("utf-8"))
-    listed: list[dict[str, Any]] = []
+    listed: list[Any] = []
     list_folder(str(share), listed.append, options(tmp_path))
     assert any(event["kind"] == "root_found" for event in listed)
 
@@ -95,7 +95,7 @@ def test_inventory_lists_root_locations_and_forgetting_one_keeps_its_data(share:
     run = str(share / "run")
     with stores._cache_store(cache["directory"], [run]) as store:
         store.save_record("summaries", run, {"version": 1}, store.guard([run], ["summaries"]))
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(cache, "inventory", events.append)
     roots = next(event for event in events if event["kind"] == "inventory")["inventory"]["roots"]
     assert [(row["location"], row["label"], row["decision"], row["path"]) for row in roots] == [
@@ -148,15 +148,15 @@ def test_a_folder_deep_in_a_root_reports_that_root(share: Path, tmp_path: Path) 
     (deep / "d_txy_forc1.txt").write_text("1,2,3\n")
     identifier = data_roots.read_marker(str(share)).uuid
     expected = {"path": str(share), "uuid": identifier, "label": "share"}
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(deep), events.append, cache)
     assert next(event for event in events if event["kind"] == "status")["data_root"] == expected
     output = tmp_path / "output"
     output.mkdir()
-    loaded: list[dict[str, Any]] = []
+    loaded: list[Any] = []
     load(str(deep), str(output), loaded.append, cache)
     assert next(event for event in loaded if event["kind"] == "loaded")["data_root"] == expected
-    cached: list[dict[str, Any]] = []
+    cached: list[Any] = []
     read_cached(str(deep), str(output), cached.append, cache)
     # The local lane too, from the roots table alone.
     assert next(event for event in cached if event["kind"] == "loaded")["data_root"] == expected

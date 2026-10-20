@@ -6,6 +6,7 @@ import time
 from typing import Any, TYPE_CHECKING
 
 from helab.io_ops import fingerprints, infra
+from helab.io_ops.events import RawMtimeField
 from helab.io_ops.fingerprints import _fingerprint_signature, _raw_list, _settled
 from helab.io_ops.identity import _folder_identity, _location_identity
 from helab.io_ops.infra import Emit, Heartbeat, Pause, _entry_stat, _is_dir, _read_gate, _scandir, _stat
@@ -136,8 +137,9 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
                 times.pop(shot, None)
                 if (found_time := fingerprints._raw_mtime(raw_entries.get(shot), "save: shot time")) is not None:
                     times[shot] = found_time
+                known_time: RawMtimeField = {"raw_mtime": times[shot]} if shot in times else {}
                 send({"kind": "shot", "shot": shot, "artifact": artifact, "fingerprint": list(item),
-                      "problematic": invalid, **({"raw_mtime": times[shot]} if shot in times else {})})
+                      "problematic": invalid, **known_time})
             except (OSError, ValueError, pd.errors.ParserError):
                 data.pop(shot, None)  # Unreadable now: known by its new fingerprint, as a load keeps it.
                 problematic = sorted(set(problematic) | {shot})

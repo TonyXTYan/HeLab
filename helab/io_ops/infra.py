@@ -16,12 +16,14 @@ import sys
 import time
 from typing import Any, Callable, Iterator, TYPE_CHECKING
 
+from helab.io_ops.events import HelperEvent
+
 if TYPE_CHECKING:
     from helab.utils.cache_paths import Mount
     from helab.utils.data_roots import Marker
 
 
-Emit = Callable[[dict[str, Any]], None]
+Emit = Callable[[HelperEvent], None]
 
 
 # Test seam: with HELAB_TEST_READ_GATE=<dir>, reading a TXY file <name> first waits until
@@ -345,7 +347,7 @@ def _cached_volume_id(mount: Any) -> str | None:
     return _volume_id_cache[key]
 
 
-def emit(event: dict[str, Any]) -> None:
+def emit(event: HelperEvent) -> None:
     print(json.dumps(event, ensure_ascii=True), flush=True)
 
 

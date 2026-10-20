@@ -6,6 +6,7 @@ import time
 from typing import Any, TYPE_CHECKING
 
 from helab.io_ops import markers, metadata
+from helab.io_ops.events import HelperEvent, ListedStatusEvent, SavedRootField
 from helab.io_ops.infra import Emit, Heartbeat, _is_dir, _lstat, _mounts, _scandir, emit
 from helab.io_ops.markers import _marker_temporary
 from helab.io_ops.metadata import _dataset_flags, _saved_folders, _send_guard
@@ -52,7 +53,7 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                 pass
         if marker_before:
             markers._discover_root(path, True, cache_options, send)
-        early_events: list[dict[str, Any]] = []
+        early_events: list[HelperEvent] = []
         store = _open_store(cache_options, early_events.append, path)
         if store is not None or marker_before:
             for event in early_events:
@@ -128,13 +129,12 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                 send({"kind": "entries", "entries": patch, "replace": True})
         raw, txy = _shots(found)
         status, count = _classify(raw, txy, has_dirs)
-        report: dict[str, Any] = {"kind": "status", "details": False, "status": status, "count": count,
-                                  "empty": empty, "has_dirs": has_dirs, "scanned_at": listed_at,
-                                  "raw": sorted(raw), "txy": sorted(txy),
-                                  "files": file_kinds.files_summary(found, {}), **_dataset_flags(store, path, send),
-                                  **_data_root(store, path)}
-        if root_saved is not None:
-            report["saved_root"] = root_saved
+        saved_root: SavedRootField = {} if root_saved is None else {"saved_root": root_saved}
+        report: ListedStatusEvent = {"kind": "status", "details": False, "status": status, "count": count,
+                                     "empty": empty, "has_dirs": has_dirs, "scanned_at": listed_at,
+                                     "raw": sorted(raw), "txy": sorted(txy),
+                                     "files": file_kinds.files_summary(found, {}),
+                                     **_dataset_flags(store, path, send), **_data_root(store, path), **saved_root}
         # Only the cache needs it (its volume checks); without it a listing reads nothing more.
         if cache_options and (mounts := _mount_fingerprint()) is not None:
             send({"kind": "mounts_seen", "mounts": mounts})

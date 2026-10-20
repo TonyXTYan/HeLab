@@ -241,7 +241,7 @@ def run_load(source: Path, tmp_path: Path, options: dict[str, Any],
     output.mkdir()
     events: list[dict[str, Any]] = []
 
-    def collect(event: dict[str, Any]) -> None:
+    def collect(event: Any) -> None:
         events.append(event)
         if send is not None:
             send(event)
@@ -250,7 +250,7 @@ def run_load(source: Path, tmp_path: Path, options: dict[str, Any],
 
 
 def admin(options: dict[str, Any], action: str, **params: Any) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(options, action, events.append, **params)
     return events
 
@@ -367,11 +367,11 @@ def test_removal_while_a_scan_runs_does_not_come_back(
     scan(path, lambda event: None, options)
     original = scanning._scan
 
-    def remove_then_scan(*args: Any) -> dict[str, Any]:
+    def remove_then_scan(*args: Any) -> Any:
         removal_during(removal, options, path)
         return original(*args)
     monkeypatch.setattr(scanning, "_scan", remove_then_scan)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(path, events.append, options, manual=True)
     assert any(event["kind"] == "status" for event in events)
     with CacheStore(options["directory"]) as store:
@@ -508,7 +508,7 @@ def test_listing_and_scan_badges_are_cleared_after_a_helper_removal(tmp_path: Pa
     run_load(source, tmp_path, options)
     admin(options, "clear", kinds=["datasets"])
     for helper in (list_folder, scan):
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         helper(str(tmp_path), events.append, options)
         entry = next(e for event in events if event["kind"] == "entries" for e in event["entries"]
                      if e["path"] == str(source))
@@ -888,7 +888,7 @@ def test_failed_listing_history_write_keeps_the_listing_guard(
     try:
         assert cache.submit("tab", 0, path, "list", {"cache": options})
         request = next(r for r in service.pending if r.operation == "list")
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         with pytest.raises(OSError):
             list_folder(path, events.append, options)
         assert events[0]["kind"] == "save_guard"
@@ -945,7 +945,7 @@ def test_make_room_removes_exactly_the_folders_it_named_or_nothing(store: CacheS
     other = save(store, "other", 4000, last_used=2.0)
     assert other.saved
     later = save(store, "later", 5000, budget=store.usage() + 1000)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin({"directory": store.root, "budget": store.usage() + 1000}, "adopt", events.append,
                 pending_id=later.pending_id, make_room=True, room_paths=["nowhere"])
     assert events[-1]["adopted"] is False and dataset_paths(store) == {"new", "other"}

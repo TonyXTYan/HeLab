@@ -57,7 +57,7 @@ def two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path, st
 
 
 def duplicate(second: Path, cache: dict[str, Any]) -> dict[str, Any]:
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(second), events.append, cache)
     return next(event for event in events if event["kind"] == "root_duplicate")
 
@@ -80,7 +80,7 @@ def test_a_second_location_waits_with_hints(two: tuple[Path, Path, str, dict[str
 def test_same_folder_shares_the_cached_data(two: tuple[Path, Path, str, dict[str, Any]]) -> None:
     first, second, identifier, cache = two
     duplicate(second, cache)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(cache, "root_same", events.append, location="smb://host/second", uuid=identifier)
     confirmed = next(event for event in events if event["kind"] == "root_confirmed")
     assert confirmed["path"] == str(second)
@@ -93,7 +93,7 @@ def test_a_copy_keeping_the_known_location_gets_a_new_root_and_starts_empty(
 ) -> None:
     first, second, identifier, cache = two
     duplicate(second, cache)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     reassign_root(str(second), cache, identifier, "smb://host/first", events.append)
     reassigned = next(event for event in events if event["kind"] == "root_reassigned")
     new = data_roots.read_marker(str(second)).uuid
@@ -112,7 +112,7 @@ def test_a_copy_keeping_the_new_location_rewrites_the_known_folder(
 ) -> None:
     first, second, identifier, cache = two
     duplicate(second, cache)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     reassign_root(str(first), cache, identifier, "smb://host/second", events.append)
     new = data_roots.read_marker(str(first)).uuid
     assert data_roots.read_marker(str(second)).uuid == identifier
@@ -141,7 +141,7 @@ def test_a_read_only_copy_gets_the_new_contents_to_place(two: tuple[Path, Path, 
     duplicate(second, cache)
     second.chmod(stat.S_IRUSR | stat.S_IXUSR)
     try:
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         reassign_root(str(second), cache, identifier, "smb://host/first", events.append)
     finally:
         second.chmod(stat.S_IRWXU)
@@ -255,13 +255,13 @@ def test_a_marker_left_half_replaced_is_not_listed_as_data(tmp_path: Path) -> No
     folder = tmp_path / "share"
     (folder / "run").mkdir(parents=True)
     (folder / ".helab-root.0123abcd.tmp").write_text("{")  # A crash before os.replace.
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(folder), events.append)
     names = [entry["name"] for event in events if event["kind"] == "entries" for entry in event["entries"]]
     assert names == ["run"]
     empty = tmp_path / "empty"
     empty.mkdir()
     (empty / ".helab-root.0123abcd.tmp").write_text("{")
-    scanned: list[dict[str, Any]] = []
+    scanned: list[Any] = []
     scan(str(empty), scanned.append)
     assert next(event for event in scanned if event["kind"] == "status")["empty"] is True

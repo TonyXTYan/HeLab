@@ -26,7 +26,7 @@ from helab.views.DataRootsTab import DELETE, NOT_MOUNTED_TOOLTIP, DataRootsTab
 
 pytestmark = pytest.mark.no_auto_data_root
 
-Events = list[dict[str, Any]]
+Events = list[Any]
 
 
 def options(tmp_path: Path) -> dict[str, Any]:

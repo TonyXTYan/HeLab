@@ -88,7 +88,7 @@ def stable(value: Any) -> Any:
     return value
 
 
-def events_of(call: Callable[[Callable[[dict[str, Any]], None]], None]) -> list[Any]:
+def events_of(call: Callable[[Callable[[Any], None]], None]) -> list[Any]:
     """The events a helper call sends, without the fields that differ between runs."""
     events: list[dict[str, Any]] = []
     call(events.append)
@@ -441,7 +441,7 @@ def test_a_saved_load_stats_each_file_read_four_times_and_once_more_only_after_r
     assert found[("entry_stat", "load: shot time")] == 4
     # A load from that cache stats no raw file: the cache has their times.
     before = len(lines(trace))
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(run), str(output), events.append, {**cache, "directory": str(tmp_path / "cache-b")})
     assert ("entry_stat", "load: shot time") not in counts(lines(trace)[before:])
     loaded = next(event for event in events if event["kind"] == "loaded")  # (It did load, from the cache.)
@@ -513,7 +513,7 @@ def test_a_writer_stalled_longer_than_the_settle_age_is_read_as_it_is(tmp_path: 
     cache = store_options()
     output = tmp_path / "out"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(run), str(output), events.append, cache)
     loaded = next(event for event in events if event["kind"] == "loaded")
     assert [event["shot"] for event in events if event["kind"] == "shot"] == [1, 2, 3]
@@ -543,7 +543,7 @@ def test_data_held_in_ram_without_a_disk_cache_gets_the_quick_check(tmp_path: Pa
     write_shots(run, range(1, 21))
     output = tmp_path / "out"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(run), str(output), events.append)  # No disk cache.
     loaded = next(event for event in events if event["kind"] == "loaded")
     assert loaded["names"] == [f"d_txy_forc{shot}.txt" for shot in range(1, 21)] and loaded["identity"]
@@ -552,7 +552,7 @@ def test_data_held_in_ram_without_a_disk_cache_gets_the_quick_check(tmp_path: Pa
 
     def again(**kwargs: Any) -> tuple[dict[str, Any], Counter[tuple[str, str]]]:
         before = len(lines(trace))
-        found: list[dict[str, Any]] = []
+        found: list[Any] = []
         load(str(run), str(output), found.append, None, memory, loaded["signature"],
              **{"memory_check": check, **kwargs})
         return next(event for event in found if event["kind"] == "loaded"), counts(lines(trace)[before:])
@@ -612,7 +612,7 @@ class LiveState:
         self.seen_names: list[str] = []
 
     def check(self, run: Path, output: Path) -> dict[str, Any]:
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         live_check(str(run), str(output), events.append, self.memory, since=self.since, identity=self.identity,
                    seen=self.seen, listed_mtime=self.listed_mtime, seen_names=self.seen_names,
                    identity_root=self.identity_root)
@@ -708,7 +708,7 @@ def test_a_live_save_checks_every_held_file_once_and_reads_none(tmp_path: Path, 
     write_shots(run, range(1, 11))
     held = held_arrays(run, tmp_path / "held", range(1, 10))  # Shot 10: not read by Live yet.
     cache = store_options()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     identity, root = _folder_identity(str(run))
     before = len(lines(trace))
     save_held(str(run), events.append, cache, held, [3], str(tmp_path / "held"),
@@ -741,7 +741,7 @@ def test_a_live_save_saves_nothing_for_a_missing_changed_or_other_folder(tmp_pat
     cache = store_options()
 
     def save(**kwargs: Any) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         save_held(str(run), events.append, cache, held, [], str(tmp_path / "held"), **kwargs)
         return events
 
@@ -779,7 +779,7 @@ def test_a_live_save_reads_a_shot_live_read_recently_that_changed_again(tmp_path
     cache = store_options()
     output = tmp_path / "out"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     save_held(str(run), events.append, cache, held, [], str(tmp_path / "held"), recent=[2, 3],
               output=str(output))
     assert not any(event["kind"] == "shots_missing" for event in events)
@@ -816,7 +816,7 @@ def test_a_live_save_keeps_dont_cache_and_the_budget(tmp_path: Path) -> None:
     run = tmp_path / "run"
     write_shots(run, range(1, 4))
     held = held_arrays(run, tmp_path / "held", range(1, 4))
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     save_held(str(run), events.append, store_options(), held, [], str(tmp_path / "held"), no_cache=True)
     loaded = next(event for event in events if event["kind"] == "loaded")
     assert not loaded["disk_cache_pending"] and not any(event["kind"] == "cache_saved" for event in events)
@@ -996,7 +996,7 @@ def test_the_temp_folder_check_refuses_a_share_and_lists_earlier_recordings(
     (folder / "io-trace-20261018-090000.jsonl").write_bytes(b"{}\n")
     (folder / "io-trace-x.txt").write_text("not a trace")
     (folder / "other.jsonl").write_text("{}\n")
-    found: list[dict[str, Any]] = []
+    found: list[Any] = []
     trace_check(str(tmp_path), str(folder), found.append)
     assert found == [{"kind": "trace_folder", "problem": "", "earlier": [
         {"path": str(folder / "io-trace-20261018-090000.jsonl"), "files": [str(folder / "io-trace-20261018-090000.jsonl")],
@@ -1027,7 +1027,7 @@ def test_deleting_earlier_recordings_keeps_what_windows_wont_delete(
     old = folder / "io-trace-20261018-090000.jsonl"
     old.write_text("{}\n")
     (folder / "other.jsonl").write_text("{}\n")
-    found: list[dict[str, Any]] = []
+    found: list[Any] = []
     trace_check(str(tmp_path), str(folder), found.append)
     earlier = found[0]["earlier"]
     assert [recording["path"] for recording in earlier] == [str(old), str(one), str(two)]

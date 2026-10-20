@@ -43,10 +43,10 @@ def producer(cache: FolderCache, path: str, operation: str) -> IORequest:
 
 
 def replay(qtbot: QtBot, cache: FolderCache, path: str, operation: str,
-           helper: Callable[[Callable[[dict[str, Any]], None]], None]) -> None:
+           helper: Callable[[Callable[[Any], None]], None]) -> None:
     request = producer(cache, path, operation)
 
-    def send(event: dict[str, Any]) -> None:
+    def send(event: Any) -> None:
         if event["kind"] == "shot":
             event = {**event, "array": np.load(event["artifact"])}
         cache.service.resultReady.emit(request, event)
@@ -216,7 +216,7 @@ def test_placing_a_root_writes_it_then_lists_the_folder_again(
     request = producer(cache, str(target), "root_create")
     assert request.payload["cache"] == tab.model._cache_options
     cache.service.pending.remove(request)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     create_root(str(target), request.payload["cache"], events.append)
     for event in events:
         cache.service.resultReady.emit(request, event)

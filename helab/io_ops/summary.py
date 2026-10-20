@@ -4,8 +4,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from typing import Any, TYPE_CHECKING
+from typing import Any, Mapping, TYPE_CHECKING
 
+from helab.io_ops.events import FolderSummary
 from helab.io_ops.infra import Emit, _stat
 from helab.utils import file_kinds
 
@@ -47,7 +48,7 @@ def _valid_summary(info: object) -> dict[str, Any]:
 
 
 def _summary(path: str, found: dict[str, set[int]], sizes: dict[str, int], has_dirs: bool, empty: bool,
-             fingerprint: list[tuple[int, int, int]], scanned_at: float) -> dict[str, Any]:
+             fingerprint: list[tuple[int, int, int]], scanned_at: float) -> FolderSummary:
     """A complete status for this folder, as a scan or load computes it."""
     folder_stat = _stat(path, "folder mtime")
     raw, txy = _shots(found)
@@ -71,7 +72,7 @@ def _valid_subtree(info: object) -> dict[str, Any]:
     return {}
 
 
-def _save_summary(store: CacheStore, path: str, report: dict[str, Any], guard: SaveGuard, send: Emit) -> None:
+def _save_summary(store: CacheStore, path: str, report: Mapping[str, Any], guard: SaveGuard, send: Emit) -> None:
     # Optional persistence never turns a successful source check into a failure,
     # but a failed save is reported, not silently dropped.
     try:

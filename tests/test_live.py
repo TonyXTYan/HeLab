@@ -75,7 +75,7 @@ def run_helper(cache: FolderCache, path: str, tmp_path: Path,
     payload = request.payload
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     try:
         if operation == "list":
             list_folder(path, events.append, payload.get("cache"))
@@ -170,7 +170,7 @@ def checks(qtbot: QtBot, explorer: FolderExplorer, path: str, tmp_path: Path, co
 def cached_shots(path: str, tmp_path: Path) -> list[int]:
     output = tmp_path / f"cached-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     read_cached(path, str(output), events.append, store_options())
     return sorted(event["shot"] for event in events if event["kind"] == "shot")
 
@@ -299,7 +299,7 @@ def test_live_shots_keep_their_raw_times_through_the_app_and_its_save(
     qtbot.waitUntil(lambda: not explorer._live_sessions)
     output = tmp_path / "cached-times"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     read_cached(path, str(output), events.append, store_options())
     loaded = next(event for event in events if event["kind"] == "loaded")
     assert loaded["raw_times"] == shown.metadata["raw_times"]
@@ -473,7 +473,7 @@ def test_the_save_at_live_off_reads_a_recently_read_shot_again_and_saves_it(
     assert cached_shots(path, tmp_path) == [1, 2, 3]
     output = tmp_path / f"cached-{time.monotonic_ns()}"
     output.mkdir()
-    found: list[dict[str, Any]] = []
+    found: list[Any] = []
     read_cached(path, str(output), found.append, store_options())
     shot = next(event for event in found if event["kind"] == "shot" and event["shot"] == 3)
     np.testing.assert_array_equal(np.load(shot["artifact"]), [[3, 2, 3], [3, 4, 5]])
@@ -818,7 +818,7 @@ def run_helper_events(cache: FolderCache, path: str, tmp_path: Path) -> list[dic
     payload = request.payload
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(path, str(output), events.append, payload.get("cache"), payload.get("memory"),
          payload.get("base_signature", ""), payload.get("signature", ""), limits=payload.get("limits"))
     events.append({"kind": "done"})

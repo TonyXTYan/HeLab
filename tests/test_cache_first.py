@@ -32,7 +32,7 @@ def source_folder(tmp_path: Path, shots: int = 2) -> Path:
 def run_load(source: Path, tmp_path: Path, **kwargs: Any) -> list[dict[str, Any]]:
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append, cache_options(tmp_path), **kwargs)
     return events
 
@@ -71,7 +71,7 @@ def test_cached_read_never_touches_the_source_folder(monkeypatch: pytest.MonkeyP
     first = loaded(run_load(source, tmp_path))
     output = tmp_path / "cached"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     with monkeypatch.context() as patched:
         guard_source(patched, source, folder_stat=False)
         read_cached(str(source), str(output), events.append, cache_options(tmp_path))
@@ -91,7 +91,7 @@ def test_cached_partial_load_progress_counts_unreadable_files(tmp_path: Path) ->
     assert first["files"] == 1 and first["failed_files"] == 1
     output = tmp_path / "cached"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     read_cached(str(source), str(output), events.append, cache_options(tmp_path))
     progress = [event for event in events if event["kind"] == "progress"]
     assert progress[-1] == {"kind": "progress", "progress": 1.0, "checked_files": 2,
@@ -204,7 +204,7 @@ def test_files_still_being_written_are_left_for_the_next_load(
     assert saved["unsettled"] == 1
     output = tmp_path / "cached-unsettled"
     output.mkdir()
-    cached_events: list[dict[str, Any]] = []
+    cached_events: list[Any] = []
     read_cached(str(source), str(output), cached_events.append, cache_options(tmp_path))
     cached_progress = [event for event in cached_events if event["kind"] == "progress"][-1]
     # Cached reads give the same counts; they read no TXY files, so they have no read counters.
@@ -403,7 +403,7 @@ def test_scan_and_load_agree_while_a_file_is_still_being_written(
     source = source_folder(tmp_path)
     old = time.time() - 120
     os.utime(source / "d_txy_forc1.txt", (old, old))
-    statuses: list[dict[str, Any]] = []
+    statuses: list[Any] = []
     scan(str(source), lambda event: statuses.append(event) if event["kind"] == "status" else None)
     # Otherwise the scan would report a change and drop the data just loaded.
     assert statuses[0]["txy"] == [1, 2] and statuses[0]["unsettled"] == 1

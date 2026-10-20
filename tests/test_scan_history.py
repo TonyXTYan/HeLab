@@ -61,7 +61,7 @@ def run_scan(cache: FolderCache, path: str, operation: str = "scan") -> None:
     request = producer(cache, path, operation)
     payload = request.payload
 
-    def send(event: dict[str, Any]) -> None:
+    def send(event: Any) -> None:
         cache.service.resultReady.emit(request, event)
     if operation == "list":
         list_folder(path, send, payload.get("cache"))
@@ -141,7 +141,7 @@ def test_blocked_helper_skips_automatic_check_but_allows_browsing_and_manual_sca
     with stores._cache_store(options["directory"], [path]) as cache:
         outcome(cache, path, failure("failed", 11))
         previous = cache.read_record("summaries", path).value
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     with monkeypatch.context() as blocked:
         blocked.setattr("helab.io_ops.scanning._scan", lambda *a, **k: pytest.fail("Automatic check touched source"))
         scan(path, events.append, options, manual=False, automatic=True)
@@ -304,7 +304,7 @@ def test_visible_folder_restores_failure_before_selection_load_and_manual_recove
     output = tmp_path / "artifacts"
     output.mkdir()
 
-    def send_load(event: dict[str, Any]) -> None:
+    def send_load(event: Any) -> None:
         if event["kind"] == "shot":
             event = {**event, "array": np.load(event["artifact"])}
         service.resultReady.emit(request, event)

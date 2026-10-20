@@ -42,11 +42,11 @@ def producer(cache: FolderCache, path: str, operation: str) -> IORequest:
 
 
 def replay(qtbot: QtBot, cache: FolderCache, path: str, operation: str,
-           helper: Callable[[Callable[[dict[str, Any]], None]], None]) -> None:
+           helper: Callable[[Callable[[Any], None]], None]) -> None:
     """Send a real helper's events for the queued request, then wait for tab delivery."""
     request = producer(cache, path, operation)
 
-    def send(event: dict[str, Any]) -> None:
+    def send(event: Any) -> None:
         if event["kind"] == "shot":
             event = {**event, "array": np.load(event["artifact"])}
         cache.service.resultReady.emit(request, event)
@@ -109,7 +109,7 @@ def test_listing_reads_names_only_and_never_writes(tmp_path: Path, monkeypatch: 
         no_stat.setattr("os.scandir", lambda p: _NoStatListing(p, scandir))
         no_stat.setattr("os.stat", lambda *a, **k: pytest.fail("Listing called os.stat"))
         list_folder(path, lambda event: None)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(path, events.append, options)
     status = next(event for event in events if event["kind"] == "status")
     assert (status["status"], status["count"], status["raw"], status["txy"]) == ("ok", 2, [1, 2], [1, 2])
@@ -354,7 +354,7 @@ def test_manual_check_cannot_restore_children_removed_by_a_newer_refresh(
     explorer.start_basic_scan("current")
     explorer._dispatch_deep()
     check = producer(cache, path, "scan")
-    check_events: list[dict[str, Any]] = []
+    check_events: list[Any] = []
     scan(path, check_events.append, options)
     explorer.refresh()
     assert not check.cancelled.is_set() and explorer._basic_active

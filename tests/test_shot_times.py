@@ -73,7 +73,7 @@ def cache_options(tmp_path: Path) -> dict[str, Any]:
 def run_load(run: Path, tmp_path: Path, **kwargs: Any) -> list[dict[str, Any]]:
     output = tmp_path / f"load-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(run), str(output), events.append, cache_options(tmp_path), **kwargs)
     return events
 
@@ -81,7 +81,7 @@ def run_load(run: Path, tmp_path: Path, **kwargs: Any) -> list[dict[str, Any]]:
 def run_cached(run: Path, tmp_path: Path) -> list[dict[str, Any]]:
     output = tmp_path / f"cached-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     read_cached(str(run), str(output), events.append, cache_options(tmp_path))
     return events
 
@@ -315,7 +315,7 @@ def test_live_reads_new_shots_times_and_its_save_keeps_them(
     def check(**kwargs: Any) -> list[dict[str, Any]]:
         output = tmp_path / f"live-{time.monotonic_ns()}"
         output.mkdir()
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         live_check(str(run), str(output), events.append, memory, **kwargs)
         return events
 
@@ -333,7 +333,7 @@ def test_live_reads_new_shots_times_and_its_save_keeps_them(
     for shot, array in live.data.items():
         np.save(held / f"{shot}.npy", array, allow_pickle=False)
     shot_time_stats.clear()
-    saved: list[dict[str, Any]] = []
+    saved: list[Any] = []
     save_held(str(run), saved.append, cache_options(tmp_path), live.metadata["fingerprint"], [], str(held),
               raw_times=live.metadata["raw_times"])
     assert any(item["kind"] == "cache_saved" for item in saved), saved

@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import os
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 
+from helab.io_ops.events import DatasetFlags
 from helab.io_ops.infra import Emit
 from helab.io_ops.stores import _cache_info
 from helab.io_ops.summary import _valid_subtree, _valid_summary
@@ -110,12 +111,12 @@ def _listed_sizes(info: dict[str, Any], dataset: Any) -> dict[str, Any]:
             "disk_bytes": int(dataset["bytes"])}
 
 
-def _dataset_flags(store: CacheStore | None, path: str, send: Emit) -> dict[str, Any]:
+def _dataset_flags(store: CacheStore | None, path: str, send: Emit) -> DatasetFlags:
     """The folder's ``disk_cached`` and ``cache_info``; left out if unknown."""
     if store is None:
         return {}
     saved = _saved_folders(store, [path], send)[path]
-    return {key: saved[key] for key in ("disk_cached", "cache_info") if key in saved}
+    return cast(DatasetFlags, {key: saved[key] for key in ("disk_cached", "cache_info") if key in saved})
 
 
 def _send_saved(store: CacheStore | None, path: str, send: Emit) -> tuple[Any, dict[str, Any] | None]:

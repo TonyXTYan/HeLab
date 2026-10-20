@@ -81,7 +81,7 @@ def test_held_write_lock_does_not_unblock_a_scan(
     monkeypatch.setattr(cache_store, "BUSY_TIMEOUT", 0.05)
     no_saved_histories(monkeypatch)
     holder = hold_write_lock(options, 0.5)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(path, events.append, options, manual=False, automatic=automatic)
     holder.join(5)
     assert events[-1] == {"kind": "scan_mode", "mode": "skipped"}
@@ -91,7 +91,7 @@ def test_held_write_lock_does_not_unblock_a_scan(
 def test_held_write_lock_still_lets_a_manual_scan_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path, options = blocked_folder(tmp_path)
     monkeypatch.setattr(cache_store, "BUSY_TIMEOUT", 0.05)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     # Keep the lock through the outcome save, even when coverage or a slow
     # runner makes the scan take longer than the timed holder's half second.
     with closing(sqlite3.connect(str(Path(options["directory"]) / "records.sqlite"),
@@ -110,7 +110,7 @@ def test_begin_scan_decides_blocked_under_the_lock(
 ) -> None:
     path, options = blocked_folder(tmp_path)
     no_saved_histories(monkeypatch)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(path, events.append, options, manual=False, automatic=automatic)
     assert [e["mode"] for e in events if e["kind"] == "scan_mode"] == ["metadata", "skipped"]
     assert any(e["kind"] == "scan_history" and e["history"] and e["history"]["blocked"] for e in events)
@@ -143,7 +143,7 @@ def test_scan_history_error_skips_a_scan_that_is_not_manual(
     def broken(*args: Any, **kwargs: Any) -> Any:
         raise StoreError("disk I/O error")
     monkeypatch.setattr("helab.utils.scan_history.begin_scan", broken)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(path, events.append, options, manual=False)
     assert [e["kind"] for e in events if e["kind"] == "scan_history_warning"] == ["scan_history_warning"]
     assert events[-1] == {"kind": "scan_mode", "mode": "skipped"}
@@ -158,7 +158,7 @@ def test_history_read_error_skips_a_scan_that_is_not_manual(
 ) -> None:
     path, options = blocked_folder(tmp_path)
     fail_history_reads(monkeypatch)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(path, events.append, options, manual=False, automatic=automatic)
     # Unreadable is unknown, never empty: an automatic scan stops at once, and
     # details stop when begin_scan's own read fails.
@@ -191,7 +191,7 @@ def test_cache_that_cannot_open_skips_a_scan_that_is_not_manual(
     def cannot_open(*args: Any, **kwargs: Any) -> Any:
         raise StoreError("Disk cache could not be opened: unable to open database file")
     monkeypatch.setattr(CacheStore, "__init__", cannot_open)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(path, events.append, options, manual=False)
     assert any(e["kind"] == "scan_history_warning" for e in events)
     assert events[-1] == {"kind": "scan_mode", "mode": "skipped"}
@@ -215,12 +215,12 @@ def test_clear_during_a_scan_brings_back_neither_history_nor_summary(
     path, options = str(source), {"directory": str(tmp_path / "cache")}
     original = scanning._scan
 
-    def clear_then_scan(*args: Any) -> dict[str, Any]:
+    def clear_then_scan(*args: Any) -> Any:
         with CacheStore(options["directory"]) as store:
             store.remove(("summaries", "histories"))
         return original(*args)
     monkeypatch.setattr(scanning, "_scan", clear_then_scan)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(path, events.append, options, manual=True)
     # The check itself succeeds; both saves are discarded and reported.
     assert any(e["kind"] == "status" for e in events)
@@ -245,7 +245,7 @@ def test_failed_subtree_save_is_reported(tmp_path: Path, monkeypatch: pytest.Mon
     def fail(*args: Any, **kwargs: Any) -> None:
         raise StoreError("Disk cache could not be written: disk I/O error")
     monkeypatch.setattr(CacheStore, "save_records", fail)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     with pytest.raises(StoreError, match="disk I/O error"):
         save_subtrees(options, [subtree_record(path)], events.append)
     assert not events
@@ -258,7 +258,7 @@ def test_subtree_save_waits_for_a_held_write_lock(tmp_path: Path) -> None:
         pass
     save_subtrees(options, [subtree_record(b)], lambda event: None)
     holder = hold_write_lock(options, 0.5)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     save_subtrees(options, [subtree_record(a), {"path": b, "status": ""}], events.append)
     holder.join(5)
     assert events == [{"kind": "subtree_saved", "paths": [a, b]}]
@@ -280,7 +280,7 @@ def test_failed_summary_save_is_reported(tmp_path: Path, monkeypatch: pytest.Mon
             raise StoreError("Disk cache could not be written: disk I/O error")
         original(self, kind, *args, **kwargs)
     monkeypatch.setattr(CacheStore, "save_records", reject_summary)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(source), events.append, options, manual=True)
     # The check itself still succeeds.
     assert any(e["kind"] == "status" for e in events)

@@ -40,7 +40,7 @@ def data_folder(parent: Path, name: str = "source") -> Path:
 def run_load(source: Path, tmp_path: Path, options: dict[str, Any], **kwargs: Any) -> list[dict[str, Any]]:
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append, options, **kwargs)
     return events
 
@@ -88,7 +88,7 @@ def test_a_superseded_choice_removes_nothing(tmp_path: Path) -> None:
     run_load(source, tmp_path, options)
     with stores._cache_store(options["directory"], [str(source)]) as store:
         store.set_prefs(str(source), True, False, 20.0)  # Don't cache, keep the cached data (the newer choice).
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(options, "prefs", events.append, path=str(source), no_cache=True, no_auto_load=False,
                 set_at=10.0, remove_cached=True)  # An older request, arriving late.
     assert events[0]["prefs"]["set_at"] == 20.0 and not any(e["kind"] == "removed" for e in events)
@@ -158,13 +158,13 @@ def test_listings_send_each_subfolders_own_flags_and_admin_sets_and_clears_them(
     child = data_folder(parent, "run1")
     options: dict[str, Any] = {"directory": str(tmp_path / "caches" / "store-v2")}
     run_load(child, tmp_path, options)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(options, "prefs", events.append, path=str(child), no_cache=True, no_auto_load=False,
                 set_at=time.time(), remove_cached=True)
     assert events[0]["kind"] == "folder_prefs" and events[0]["prefs"]["no_cache"] is True
     removed = next(e for e in events if e["kind"] == "removed")
     assert removed["kinds"] == ["datasets"] and removed["paths"] == [str(child)]
-    listed: list[dict[str, Any]] = []
+    listed: list[Any] = []
     list_folder(str(parent), listed.append, options)
     entry = next(e for event in listed if event["kind"] == "entries" for e in event["entries"]
                  if e["path"] == str(child))
@@ -450,7 +450,7 @@ def test_the_cache_tab_lists_and_clears_folder_preferences_apart_from_clear_all(
             asked.append(text)
             return True
         tab.confirm = confirm
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         with CacheStore(store_options()["directory"]) as store:
             store.set_prefs("/x", True, False, time.time())
             store.set_prefs("/y", True, True, time.time())

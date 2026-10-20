@@ -172,7 +172,7 @@ def test_a_listing_with_an_old_store_reads_every_saved_record(tmp_path: Path,
                                                              monkeypatch: pytest.MonkeyPatch) -> None:
     top, cache = share(tmp_path, monkeypatch)
     for _ in range(2):  # Discovery, then the listing the app does next.
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         list_folder(str(top), events.append, cache)
         assert not any(event["kind"] == "cache_warning" for event in events), events
         entries = [entry for event in events if event["kind"] == "entries" for entry in event["entries"]]
@@ -204,7 +204,7 @@ def test_a_nested_root_rekeys_flags_datasets_summaries_and_constants(tmp_path: P
         return real(self, old, new)
 
     monkeypatch.setattr(CacheStore, "rekey_subtree", busy_once)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(inner), events.append, cache)
     # The re-key failed: the root isn't recorded either, so the next listing tries again.
     assert any(event["kind"] == "cache_warning" for event in events)
@@ -240,7 +240,7 @@ def test_constants_on_an_unverified_volume_wait_for_its_verification(tmp_path: P
     monkeypatch.setattr(data_roots, "_volume_id", lambda _: "disk-a")
     cache = {"directory": str(tmp_path / "cache" / "store-v3")}
     list_folder(str(disk), lambda _: None, cache)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(cache, "constants", events.append, path=str(run), values={"g": 9.8}, set_at=1.0,
                 verified_volumes=[])
     assert events[0] == {"kind": "folder_constants", "folders": {},

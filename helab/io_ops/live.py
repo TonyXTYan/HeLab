@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from helab.io_ops import fingerprints, infra
+from helab.io_ops.events import LiveState, ProgressEvent, RawMtimeField
 from helab.io_ops.fingerprints import (DEFAULT_CHECK_LEVEL, _fingerprint_signature, _raw_list,
                                        _sample_indices, _settled)
 from helab.io_ops.identity import _folder_identity
@@ -78,7 +79,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     waiting: list[list[int]] = []  # New files not read yet, as stat'ed now (the next ``seen``).
     file_names: dict[int, str] = {}  # Their names.
 
-    def state(listed: bool, unsettled: int, safe: bool) -> dict[str, Any]:
+    def state(listed: bool, unsettled: int, safe: bool) -> LiveState:
         # ``live_since``: what the next check may compare the folder's mtime with (None: list it).
         return {"live_since": folder.st_mtime_ns if safe and not racy and not unsettled else None,
                 "live_listed": listed, "live_seconds": time.monotonic() - started,
@@ -212,7 +213,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     total_read_bytes = sum(item[1] for item in to_read)
     last_progress = 0.0
 
-    def progress(done: int) -> dict[str, Any]:
+    def progress(done: int) -> ProgressEvent:
         checked = len(held) - len(replacing) + len(still_failed) + young + done
         return {"kind": "progress", "progress": checked / max(1, len(names)), "checked_files": checked,
                 "loaded_files": len(held) - len(replacing) + loaded, "total_files": len(names),
@@ -262,9 +263,9 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                 if (found_time := fingerprints._raw_mtime(raw_entries.get(shot), "live: shot time")) is not None:
                     raw_times[shot] = found_time
                 fingerprint.append(item)
+                known_time: RawMtimeField = {"raw_mtime": raw_times[shot]} if shot in raw_times else {}
                 send({"kind": "shot", "shot": shot, "artifact": artifact, "fingerprint": list(item),
-                      "problematic": shot in problematic,
-                      **({"raw_mtime": raw_times[shot]} if shot in raw_times else {})})
+                      "problematic": shot in problematic, **known_time})
         except (OSError, ValueError, pd.errors.ParserError):
             # Sent back with ``known`` next time: not read again unless it changes.
             unreadable.add(shot)

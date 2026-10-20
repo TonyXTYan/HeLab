@@ -37,10 +37,10 @@ def options_for(tmp_path: Path) -> dict[str, Any]:
     return {"directory": str(tmp_path / "caches" / "store-v2")}
 
 
-def run_load(source: Path, tmp_path: Path, options: dict[str, Any] | None, **kwargs: Any) -> list[dict[str, Any]]:
+def run_load(source: Path, tmp_path: Path, options: dict[str, Any] | None, **kwargs: Any) -> list[Any]:
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append, options, **kwargs)
     return events
 
@@ -71,7 +71,7 @@ def test_scan_saves_per_kind_counts_and_txy_size(tmp_path: Path) -> None:
     source = data_folder(tmp_path)
     (source / "d3.txt").write_text("raw only\n")
     options = options_for(tmp_path)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(source), events.append, options)
     txy_bytes = sum((source / f"d_txy_forc{shot}.txt").stat().st_size for shot in (1, 2))
     status = next(event for event in events if event["kind"] == "status")
@@ -147,7 +147,7 @@ def test_invalidate_removes_the_dataset_through_the_helper(tmp_path: Path) -> No
     assert json.loads(completed.stdout.strip().splitlines()[-1]) == {"kind": "done"}
     with CacheStore(options["directory"]) as store:
         assert store.read_dataset_row(path).missing
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(source.parent), events.append, options)
     entry = next(e for event in events if event["kind"] == "entries" for e in event["entries"] if e["path"] == path)
     assert entry["disk_cached"] is False and entry["cache_info"] == {}
@@ -166,7 +166,7 @@ def test_startup_cleanup_deletes_old_diskcache_folders_and_sweeps(tmp_path: Path
         stale = store.write_dataset_file(b"replaced")
         with store.transaction():
             store._retire(stale, time.time() - 3600)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(options, "sweep", events.append)
     swept = events[-1]
     assert swept["kind"] == "swept" and sorted(swept["old_caches"]) == sorted(OLD_CACHE_DIRS)
@@ -310,7 +310,7 @@ def test_unreadable_saved_records_are_unknown_not_missing(
             return original(self, kind, paths)
         monkeypatch.setattr(CacheStore, "read_records", failing_summaries)
     for helper in (list_folder, scan):
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         helper(str(source.parent), events.append, options)
         entry = next(e for event in events if event["kind"] == "entries" for e in event["entries"] if e["path"] == path)
         # Left out, so the GUI keeps what it knew; never "not cached" or "no summary".
@@ -388,7 +388,7 @@ def test_cache_that_cannot_open_is_unknown_not_missing(monkeypatch: pytest.Monke
         raise StoreError("Disk cache could not be opened: database is locked")
     monkeypatch.setattr(CacheStore, "__init__", cannot_open)
     for helper in (list_folder, scan):
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         helper(str(source.parent), events.append, options)
         status = next(event for event in events if event["kind"] == "status")
         entry = next(e for event in events if event["kind"] == "entries" for e in event["entries"])
@@ -449,7 +449,7 @@ def test_clear_while_a_scan_reads_saved_results_is_not_undone(
             store.remove(("summaries", "histories"))
         return original(*args)
     monkeypatch.setattr(metadata, "_send_saved", clear_while_restoring)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(path, events.append, options, manual=True)
     assert any(event["kind"] == "status" for event in events)
     assert any(e["kind"] == "scan_history_warning" and "cleared" in e["message"] for e in events)

@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Callable
+from typing import Any
+
+from helab.io_ops.infra import Emit
 
 
-def trace_check(temps: str, folder: str, send: Callable[[dict[str, Any]], None]) -> None:
+def trace_check(temps: str, folder: str, send: Emit) -> None:
     """Before Help › Record I/O trace starts, in a local-lane helper (the mount table can stall on a
     disconnected network drive, never on the GUI thread): whether HeLab's temp folder ``temps`` is on a
     network or synced folder (``problem``), and the recordings already in its io-traces ``folder``,

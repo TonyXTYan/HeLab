@@ -4,8 +4,9 @@ from __future__ import annotations
 import math
 import os
 import sys
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 
+from helab.io_ops.events import DataRootField, RemovedEvent, UsageFields
 from helab.io_ops.infra import Emit, _cached_volume_id, _mounts
 
 if TYPE_CHECKING:
@@ -22,7 +23,7 @@ def _cache_info(info: object) -> dict[str, Any]:
     return {}
 
 
-def _data_root(store: CacheStore | None, path: str) -> dict[str, Any]:
+def _data_root(store: CacheStore | None, path: str) -> DataRootField:
     """``data_root`` for a result: the folder holding the marker that ``path`` is keyed by, so
     the app knows the root of a folder whose root folder it hasn't listed (a restored tab deep
     inside one). Empty without one."""
@@ -159,16 +160,16 @@ def _deadline(store: CacheStore) -> float | None:
         return None
 
 
-def _usage(store: CacheStore) -> dict[str, Any]:
+def _usage(store: CacheStore) -> UsageFields:
     """The store's live usage and when it was measured, for the app's 80% pause; {} if unreadable."""
     from helab.utils.cache_store import StoreError
     try:
-        return store.measure_usage().event()
+        return cast(UsageFields, store.measure_usage().event())
     except StoreError:
         return {}
 
 
-def _removed_event(removal: Any) -> dict[str, Any]:
+def _removed_event(removal: Any) -> RemovedEvent:
     """What a removal did, for ``FolderCache.removed``; ``paths`` None means every path of those kinds."""
     return {"kind": "removed", "kinds": list(removal.kinds),
             "paths": None if removal.paths is None else list(removal.paths),

@@ -47,7 +47,7 @@ def test_listing_discovers_marker_and_uses_root_key(tmp_path: Path,
     write_marker(share, identifier)
     monkeypatch.setattr(cache_paths, "current_mounts",
                         lambda: [Mount("//host/share", str(share), "smbfs", True)])
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(share), events.append, options(tmp_path))
     assert any(event["kind"] == "root_found" for event in events)
     assert not any(event["kind"] == "cache_skipped" for event in events)
@@ -78,7 +78,7 @@ def test_late_nested_marker_rekeys_rows(tmp_path: Path,
         store.save_record("summaries", str(run), {"owner": "outer"},
                           store.guard([str(run)], ["summaries"]))
     write_marker(inner, inner_id)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(inner), events.append, cache)
     assert any(event["kind"] == "root_rekeyed" for event in events)
     with stores._cache_store(cache["directory"], [str(run)]) as store:
@@ -96,7 +96,7 @@ def test_removed_marker_disables_disk_cache(tmp_path: Path,
     cache = options(tmp_path)
     list_folder(str(share), lambda _: None, cache)
     (share / ".helab-root").unlink()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(share), events.append, cache)
     assert any(event["kind"] == "root_changed" and event.get("reason") == "marker removed"
                for event in events)
@@ -116,7 +116,7 @@ def test_new_equivalent_location_waits_for_confirmation(tmp_path: Path,
         Mount("//host/second", str(second), "smbfs", True)])
     cache = options(tmp_path)
     list_folder(str(first), lambda _: None, cache)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(second), events.append, cache)
     assert any(event["kind"] == "root_duplicate" for event in events)
     assert any(event["kind"] == "cache_skipped" for event in events)
@@ -141,7 +141,7 @@ def test_pending_nested_root_blocks_outer_root_cache(tmp_path: Path,
     cache = options(tmp_path)
     list_folder(str(share), lambda _: None, cache)
     list_folder(str(other), lambda _: None, cache)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(nested), events.append, cache)
     assert any(event["kind"] == "root_duplicate" for event in events)
     assert any(event["kind"] == "cache_skipped" for event in events)
@@ -166,7 +166,7 @@ def test_replacing_one_alias_marker_leaves_shared_cache_with_original(
         store.save_record("summaries", str(first), {"owner": "original"},
                           store.guard([str(first)], ["summaries"]))
     write_marker(second, new_id)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(second), events.append, cache)
     assert not any(event["kind"] == "root_rekeyed" for event in events)
     with stores._cache_store(cache["directory"], [str(first)]) as store:
@@ -191,7 +191,7 @@ def test_mixed_case_source_path_survives_cache_admin_event(tmp_path: Path,
         record: DatasetRecord = {"ram_bytes": 1, "rows": 1, "shots": 1,
                                  "fingerprint": [], "problematic": [], "info": {}}
         store.save_dataset(str(run), store.write_dataset_file(b"data"), record, guard)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(cache, "trim", events.append, budget=0)
     assert next(event for event in events if event["kind"] == "removed")["paths"] == [str(run)]
     with stores._cache_store(cache["directory"], [str(run)]) as store:
@@ -226,7 +226,7 @@ def test_transient_marker_read_error_keeps_confirmed_location(
         raise PermissionError("temporary share failure")
 
     monkeypatch.setattr(data_roots, "read_marker", unavailable)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(root), events.append, cache)
     assert any(event["kind"] == "cache_warning" for event in events)
     with CacheStore(cache["directory"], root_mode=True) as store:
@@ -297,7 +297,7 @@ def test_cached_read_waits_for_its_volume_to_be_verified(tmp_path: Path,
     run, mount, cache = usb_root(tmp_path, monkeypatch)
     output = tmp_path / "output"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     with pytest.raises(data_roots.VolumeUnverified):
         read_cached(str(run), str(output), events.append, cache, verified_volumes=[])
     # Not "Disk cache off": the read waits, it isn't refused.
@@ -325,7 +325,7 @@ def test_verification_reports_checked_volumes_before_visiting_markers(
     run, mount, cache = usb_root(tmp_path, monkeypatch)
     monkeypatch.setattr(infra, "_volume_id_cache", {})
     monkeypatch.setattr(data_roots, "_volume_id", lambda _: "disk-b")  # Another disk, same mount.
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     verify_known_roots(cache, events.append)
     kinds = [event["kind"] for event in events if event["kind"] != "heartbeat"]
     assert kinds.index("volumes_verified") < kinds.index("roots_verified")
@@ -346,7 +346,7 @@ def test_volume_check_alone_refreshes_hints_without_visiting_markers(
     monkeypatch.setattr(data_roots, "_volume_id", lambda _: "disk-b")
     monkeypatch.setattr(os, "lstat", lambda *_: pytest.fail("visited a source folder"))
     monkeypatch.setattr(data_roots, "read_marker", lambda _: pytest.fail("read a marker"))
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     verify_volumes(cache, events.append)
     assert events == [{"kind": "volumes_verified", "volumes": [[mount.path, mount.source]],
                        "ids": [[mount.path, mount.source, "disk-b"]]}]
@@ -357,7 +357,7 @@ def test_volume_check_alone_refreshes_hints_without_visiting_markers(
 def test_writes_on_an_unverified_volume_are_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run, mount, cache = usb_root(tmp_path, monkeypatch)
     record = {"path": str(run), "status": "something", "count": 1}
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     save_subtrees(cache, [record], events.append, verified_volumes=[])
     assert events[-1] == {"kind": "subtree_saved", "paths": [], "skipped": [str(run)]}
     events = []
@@ -400,7 +400,7 @@ def test_background_verifies_only_known_marker_folders(tmp_path: Path,
     cache = options(tmp_path)
     list_folder(str(root), lambda _: None, cache)
     (root / ".helab-root").unlink()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     verify_known_roots(cache, events.append)
     assert any(event["kind"] == "root_changed" and event.get("reason") == "marker removed"
                for event in events)
@@ -416,7 +416,7 @@ def test_marker_does_not_change_folder_counts_or_signature(tmp_path: Path) -> No
     (folder / "d_txy_forc1.txt").write_text("1,2,3\n")
 
     def status() -> dict[str, Any]:
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         scan(str(folder), events.append, None)
         return next(event for event in events if event["kind"] == "status")
 
@@ -504,7 +504,7 @@ def test_marker_found_only_by_the_scandir_resends_entries_with_its_records(
         return real_scandir(target)
 
     monkeypatch.setattr(os, "scandir", scandir)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(inner), events.append, cache)
     batches = [event for event in events if event["kind"] == "entries"]
     assert [event.get("replace", False) for event in batches] == [False, True]
@@ -534,7 +534,7 @@ def test_listing_an_unmarked_subfolder_skips_discovery(tmp_path: Path,
         return original(path, present, *args)
 
     monkeypatch.setattr(markers, "_discover_root", discover)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(run), events.append, cache)
     assert discovered == []  # No marker, and the open store has no row here to forget.
     assert [entry["path"] for event in events if event["kind"] == "entries"
@@ -549,7 +549,7 @@ def test_listing_with_a_known_marker_streams_once(tmp_path: Path, monkeypatch: p
                         lambda: [Mount("//host/share", str(root), "smbfs", True)])
     cache = options(tmp_path)
     for _ in range(2):  # Found, then known.
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         list_folder(str(root), events.append, cache)
         assert [event.get("replace", False) for event in events if event["kind"] == "entries"] == [False]
         assert not any(event["kind"] == "cache_skipped" for event in events)
@@ -574,7 +574,7 @@ def assert_no_cached_rows(cache: dict[str, Any]) -> None:
 
 def test_unrooted_listing_is_ram_only(unrooted: tuple[Path, dict[str, Any]]) -> None:
     folder, cache = unrooted
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(str(folder), events.append, cache)
     assert any(event["kind"] == "status" for event in events)
     assert sum(event["kind"] == "cache_skipped" for event in events) == 1
@@ -583,7 +583,7 @@ def test_unrooted_listing_is_ram_only(unrooted: tuple[Path, dict[str, Any]]) -> 
 
 def test_unrooted_details_is_ram_only(unrooted: tuple[Path, dict[str, Any]]) -> None:
     folder, cache = unrooted
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(folder), events.append, cache, manual=True)
     assert any(event["kind"] == "status" for event in events)
     assert any(event["kind"] == "cache_skipped" for event in events)
@@ -606,7 +606,7 @@ def test_unrooted_load_reads_source_without_saving(unrooted: tuple[Path, dict[st
     folder, cache = unrooted
     output = tmp_path / "output"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(folder), str(output), events.append, cache)
     assert any(event["kind"] == "loaded" for event in events)
     assert any(event["kind"] == "cache_skipped" for event in events)
@@ -615,7 +615,7 @@ def test_unrooted_load_reads_source_without_saving(unrooted: tuple[Path, dict[st
 
 def test_unrooted_subtree_save_skips_row(unrooted: tuple[Path, dict[str, Any]]) -> None:
     folder, cache = unrooted
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     save_subtrees(cache, [{"path": str(folder), "status": "something"}], events.append)
     assert events[-1] == {"kind": "subtree_saved", "paths": [], "skipped": [str(folder)]}
     assert_no_cached_rows(cache)

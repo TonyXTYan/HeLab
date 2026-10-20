@@ -1,0 +1,705 @@
+"""The helper's events: what an I/O helper sends the app, one JSON object per line.
+
+One ``TypedDict`` per event shape, keyed by ``kind``. Most kinds have one shape; a few are sent
+with different fields by different operations (``loaded``, ``status``, ``admin_result``,
+``swept``, ``root_changed``) and have one shape per sender, so strict type checking sees each
+sender's exact fields. ``HelperEvent`` is the union the helper's ``Emit`` accepts, and ``KINDS``
+every kind (``tests/test_helper_events.py`` checks both against the code that sends and the
+code that matches them).
+
+Standard library only: the app may import this without importing helper code. Field values
+are as JSON carries them; nested payloads (a dataset's ``cache_info``, a folder summary's
+``files``, the store's ``inventory``) stay ``dict[str, Any]``.
+"""
+from __future__ import annotations
+
+from typing import Any, Literal, NotRequired, Sequence, TypedDict, Union
+
+# Fields several events carry, spread into them by the helper (``**``).
+
+
+class UsageFields(TypedDict, total=False):
+    """The store's live usage (``stores._usage``); absent if it couldn't be measured."""
+    usage: int
+    usage_seq: list[Any]  # [store id, write count]
+
+
+class DataRoot(TypedDict):
+    path: str
+    uuid: str
+    label: str
+
+
+class DataRootField(TypedDict, total=False):
+    """The data root a folder is keyed by (``stores._data_root``); absent without one."""
+    data_root: DataRoot
+
+
+class DatasetFlags(TypedDict, total=False):
+    """Whether a folder has cached data and its record (``metadata._dataset_flags``); absent if unknown."""
+    disk_cached: bool
+    cache_info: dict[str, Any]
+
+
+class SavedRootField(TypedDict, total=False):
+    """A listing's own folder's saved records (``list``)."""
+    saved_root: dict[str, Any]
+
+
+class DiskCachedField(TypedDict, total=False):
+    disk_cached: bool
+
+
+class RawMtimeField(TypedDict, total=False):
+    """A shot's raw file's mtime (ns), when known."""
+    raw_mtime: int
+
+
+class UnverifiedField(TypedDict, total=False):
+    """An ``error`` raised because the folder's drive isn't verified yet this session."""
+    unverified: bool
+
+
+class LiveState(TypedDict):
+    """What the next Live check compares with (``live.live_check``'s ``state``)."""
+    live_since: int | None
+    live_listed: bool
+    live_seconds: float
+    unsettled_files: int
+    live_identity: str
+    live_seen: list[list[int]]
+    live_seen_names: list[str]
+    live_listed_mtime: int | None
+    live_identity_root: str | None
+
+
+class MoveCheckFields(TypedDict):
+    """``cache_move.check_target``'s answer."""
+    bytes: int
+    free: int | None
+    method: str
+    problem: str
+
+
+class AdminResultFields(TypedDict, total=False):
+    """Results of one ``cache_admin`` action (each action sets some)."""
+    removed: dict[str, int]
+    bytes: int
+    datasets: int
+    adopted: bool
+    rejected: str
+    message: str
+    path: str
+    room: dict[str, Any] | None
+    cache_info: dict[str, Any]
+    discarded: bool
+    forgotten: str
+    confirmed: bool
+    budget: int
+    recorded: bool
+
+
+# Process and progress
+
+
+class DoneEvent(TypedDict):
+    kind: Literal["done"]
+
+
+class ErrorEvent(TypedDict):
+    kind: Literal["error"]
+    message: str
+    unverified: NotRequired[bool]
+
+
+class PausedEvent(TypedDict):
+    kind: Literal["paused"]
+
+
+class ResumedEvent(TypedDict):
+    kind: Literal["resumed"]
+
+
+class HeartbeatEvent(TypedDict):
+    kind: Literal["heartbeat"]
+    phase: str
+    entries: int
+
+
+class DrivesEvent(TypedDict):
+    kind: Literal["drives"]
+    paths: list[str]
+
+
+class ResolvedEvent(TypedDict):
+    kind: Literal["resolved"]
+    path: str
+
+
+class CacheWarningEvent(TypedDict):
+    kind: Literal["cache_warning"]
+    message: str
+
+
+class CacheSkippedEvent(TypedDict):
+    kind: Literal["cache_skipped"]
+    paths: list[str]
+    mounts: list[dict[str, str]]
+
+
+# Browsing and scans
+
+
+class EntriesEvent(TypedDict):
+    kind: Literal["entries"]
+    entries: list[dict[str, Any]]
+    replace: NotRequired[bool]
+
+
+class _StatusBase(TypedDict):
+    kind: Literal["status"]
+    details: bool
+    status: str
+    count: int
+    empty: bool
+    has_dirs: bool
+    scanned_at: float
+    raw: list[int]
+    txy: list[int]
+    files: dict[str, Any]
+
+
+class ListedStatusEvent(_StatusBase):
+    """A listing's status of its folder (``details`` False)."""
+    disk_cached: NotRequired[bool]
+    cache_info: NotRequired[dict[str, Any]]
+    data_root: NotRequired[DataRoot]
+    saved_root: NotRequired[dict[str, Any]]
+
+
+class FolderSummary(_StatusBase):
+    """A folder's complete status as a scan or load computes it (``summary._summary``): a scan's
+    ``status`` event starts from it, and a load sends it as ``scan_summary``."""
+    modified: float
+    signature: str
+    unsettled: NotRequired[int]
+
+
+class ScanStatusEvent(_StatusBase):
+    """A scan's (``details``) status of its folder."""
+    modified: float
+    signature: str
+    unsettled: int
+    disk_cached: NotRequired[bool]
+    cache_info: NotRequired[dict[str, Any]]
+    data_root: NotRequired[DataRoot]
+
+
+class MountsSeenEvent(TypedDict):
+    kind: Literal["mounts_seen"]
+    mounts: list[list[str]]
+
+
+class SaveGuardEvent(TypedDict):
+    kind: Literal["save_guard"]
+    guard: dict[str, Any]
+
+
+class ScanHistoryEvent(TypedDict):
+    kind: Literal["scan_history"]
+    history: Any
+    revision: NotRequired[int]
+    saved: NotRequired[bool]
+
+
+class ScanHistorySavedEvent(TypedDict):
+    kind: Literal["scan_history_saved"]
+    history: Any
+
+
+class ScanHistoryWarningEvent(TypedDict):
+    kind: Literal["scan_history_warning"]
+    message: str
+
+
+class ScanModeEvent(TypedDict):
+    kind: Literal["scan_mode"]
+    mode: Literal["metadata", "scan", "skipped"]
+
+
+class ScanCachedEvent(TypedDict):
+    kind: Literal["scan_cached"]
+    status: dict[str, Any]
+
+
+class SubtreeCachedEvent(TypedDict):
+    kind: Literal["subtree_cached"]
+    subtree: dict[str, Any]
+
+
+class SubtreeSavedEvent(TypedDict):
+    kind: Literal["subtree_saved"]
+    paths: list[str]
+    skipped: NotRequired[list[str]]
+
+
+class SummarySaveFailedEvent(TypedDict):
+    kind: Literal["summary_save_failed"]
+    message: str
+
+
+class FolderPrefsEvent(TypedDict):
+    kind: Literal["folder_prefs"]
+    path: str
+    prefs: dict[str, Any]
+
+
+class FolderConstantsEvent(TypedDict):
+    kind: Literal["folder_constants"]
+    folders: dict[str, Any]
+    session_only: NotRequired[dict[str, str]]
+
+
+class CacheMismatchEvent(TypedDict):
+    kind: Literal["cache_mismatch"]
+    missing: list[int]
+    missing_count: int
+    known_count: int
+    listed_count: int
+
+
+class FolderIconEvent(TypedDict):
+    kind: Literal["folder_icon"]
+    path: str
+    png: str
+
+
+# Loads, cached reads, Live and saves from RAM
+
+
+class LoadSourceEvent(TypedDict):
+    kind: Literal["load_source"]
+    source: str
+    cache_reason: str
+
+
+class ProgressEvent(TypedDict):
+    kind: Literal["progress"]
+    progress: float
+    checked_files: int
+    loaded_files: int
+    total_files: int
+    failed_files: int
+    unsettled_files: int
+    read_bytes: NotRequired[int]
+    read_files: NotRequired[int]
+    total_read_bytes: NotRequired[int]
+
+
+class FileStartedEvent(TypedDict):
+    kind: Literal["file_started"]
+    filename: str
+
+
+class FileFinishedEvent(TypedDict):
+    kind: Literal["file_finished"]
+    filename: str
+
+
+class ShotEvent(TypedDict):
+    kind: Literal["shot"]
+    shot: int
+    artifact: str
+    fingerprint: Sequence[int]  # [shot, size, mtime_ns] of its TXY file
+    problematic: bool
+    raw_mtime: NotRequired[int]
+
+
+class ScanSummaryEvent(TypedDict):
+    kind: Literal["scan_summary"]
+    status: FolderSummary
+
+
+class ShotsMissingEvent(TypedDict):
+    kind: Literal["shots_missing"]
+    missing: list[int]
+    missing_count: int
+    known_count: int
+    listed_count: int
+    reason: NotRequired[str]
+
+
+class TooLargeEvent(TypedDict):
+    kind: Literal["too_large"]
+    estimate: int
+    refused: bool
+
+
+class _LoadedBase(TypedDict):
+    kind: Literal["loaded"]
+    rows: int
+    bytes: int
+    files: int
+    loaded_at: float
+    total_files: int
+    failed_files: int
+    unsettled_files: int
+    problematic: list[int]
+    source: str
+    cached: bool
+    disk_cache_pending: bool
+    load_counts: dict[str, int]
+    cache_reason: str
+    fingerprint: list[Any]
+    memory_shots: list[int]
+    signature: str
+
+
+class CachedLoadedEvent(_LoadedBase):
+    """A cached read's dataset (``cached``)."""
+    disk_cached: bool
+    cache_info: dict[str, Any]
+    verified: bool
+    raw_times: list[list[int]]
+    data_root: NotRequired[DataRoot]
+
+
+class UnchangedCachedLoadedEvent(_LoadedBase):
+    """A load's quick check that found the folder unchanged since its cached data."""
+    disk_cached: bool
+    cache_info: dict[str, Any]
+    unchanged: bool
+    modified: float
+    modified_observed_at: float
+    raw_times: list[list[int]]
+    base_signature: str
+    data_root: NotRequired[DataRoot]
+
+
+class UnchangedHeldLoadedEvent(_LoadedBase):
+    """A load's quick check that found the folder unchanged since the data in RAM was loaded."""
+    cache_info: dict[str, Any]
+    unchanged: bool
+    modified: float
+    modified_observed_at: float
+    base_signature: str
+    listed_at: float
+    names: list[str]
+    identity: str
+    data_root: NotRequired[DataRoot]
+
+
+class LoadedEvent(_LoadedBase):
+    """A load's dataset after listing the folder (``load``)."""
+    cache_info: dict[str, Any]
+    raw_times: list[list[int]]
+    base_signature: str
+    listed_at: float
+    names: list[str]
+    identity: str
+    data_root: NotRequired[DataRoot]
+    disk_cached: NotRequired[bool]
+
+
+class HeldLoadedEvent(_LoadedBase):
+    """A save from RAM's dataset (``save_held``)."""
+    cache_info: dict[str, Any]
+    live_reread: list[Any]
+    raw_times: list[list[int]]
+    base_signature: str
+    listed_at: float
+    names: list[str]
+    identity: str
+    data_root: NotRequired[DataRoot]
+
+
+class LiveLoadedEvent(_LoadedBase, LiveState):
+    """A Live check's new shots (``live_check``), with what the next check compares with."""
+    live_reread: list[Any]
+    raw_times: list[list[int]]
+    base_signature: str
+    modified: float
+    modified_observed_at: float
+
+
+class LiveUnchangedEvent(LiveState):
+    kind: Literal["live_unchanged"]
+    total_files: int
+
+
+# The disk cache
+
+
+class CacheSavedEvent(TypedDict):
+    kind: Literal["cache_saved"]
+    cache_info: dict[str, Any]
+    superseded: list[Any]
+    job_seq: int
+    next_deadline: float | None
+    usage: int
+    usage_seq: list[Any]
+
+
+class DiskCachedEvent(TypedDict):
+    kind: Literal["disk_cached"]
+    disk_cached: bool
+
+
+class CacheSaveFailedEvent(TypedDict):
+    kind: Literal["cache_save_failed"]
+    message: str
+    next_deadline: float | None
+
+
+class PendingSaveEvent(TypedDict):
+    """A dataset save held until the user answers: ``cache_full`` (it doesn't fit) or
+    ``cache_approval`` (it grows the cache over 80%)."""
+    kind: Literal["cache_full", "cache_approval"]
+    pending_id: str
+    path: str
+    reason: str
+    bytes: int
+    usage: int
+    usage_seq: list[Any]
+    created_at: float
+    budget: int | None
+    job_seq: int
+    replaces: Any
+    superseded: list[Any]
+    next_deadline: float | None
+    room: NotRequired[dict[str, Any]]
+
+
+class RemovedEvent(TypedDict):
+    """What a removal did (``FolderCache.removed``); ``paths`` None: every path of those kinds."""
+    kind: Literal["removed"]
+    kinds: list[str]
+    paths: list[str] | None
+    datasets: NotRequired[int]
+    bytes: NotRequired[int]
+
+
+class InventoryEvent(TypedDict):
+    kind: Literal["inventory"]
+    inventory: dict[str, Any]
+
+
+class PrefsClearedEvent(TypedDict):
+    kind: Literal["prefs_cleared"]
+    paths: list[str]
+    set_at: float
+
+
+class AdminResultEvent(AdminResultFields, UsageFields):
+    """The end of a ``cache_admin`` action."""
+    kind: Literal["admin_result"]
+    action: str
+    next_deadline: float | None
+
+
+class InvalidatedEvent(UsageFields):
+    """The end of an ``invalidate`` request (``admin_result``, action ``invalidate``)."""
+    kind: Literal["admin_result"]
+    action: Literal["invalidate"]
+    next_deadline: float | None
+
+
+class SweptEvent(UsageFields):
+    kind: Literal["swept"]
+    old_caches: list[str]
+    deleted_files: int
+    expired_pending: int
+    expired_ids: list[str]
+    still_open: int
+    next_deadline: float | None
+
+
+class SweptReadOnlyEvent(TypedDict):
+    """A sweep of a store opened read-only: only the old cache folders were removed."""
+    kind: Literal["swept"]
+    old_caches: list[str]
+    deleted_files: int
+    expired_pending: int
+    next_deadline: None
+    read_only: bool
+
+
+class MoveCheckEvent(MoveCheckFields):
+    kind: Literal["move_check"]
+
+
+class MoveProgressEvent(TypedDict):
+    kind: Literal["move_progress"]
+    done: int
+    total: int
+
+
+class MoveDoneEvent(TypedDict):
+    kind: Literal["move_done"]
+    record: dict[str, Any]
+
+
+class MoveFailedEvent(TypedDict):
+    kind: Literal["move_failed"]
+    message: str
+    left: list[str]
+    store_at: str
+
+
+class MoveCleanedEvent(TypedDict):
+    kind: Literal["move_cleaned"]
+    left: list[str]
+
+
+class MoveAbortedEvent(TypedDict):
+    kind: Literal["move_aborted"]
+    left: list[str]
+    store_at: str
+
+
+class MoveRecoveredEvent(TypedDict):
+    kind: Literal["move_recovered"]
+    message: str
+    usable: bool
+
+
+class TraceFolderEvent(TypedDict):
+    kind: Literal["trace_folder"]
+    problem: str
+    earlier: list[dict[str, Any]]
+
+
+# Data roots
+
+
+class RootFoundEvent(TypedDict):
+    """A marker reconciled (``root_found``), or found with another UUID than the location had
+    (``root_changed``)."""
+    kind: Literal["root_found", "root_changed"]
+    path: str
+    location: str
+    uuid: str
+    label: str
+
+
+class RootChangedEvent(TypedDict):
+    """A location's root forgotten: its marker removed or deleted, or the user forgot it."""
+    kind: Literal["root_changed"]
+    path: str
+    location: str
+    reason: str
+
+
+class RootDuplicateEvent(TypedDict):
+    kind: Literal["root_duplicate"]
+    path: str
+    location: str
+    uuid: str
+    label: str
+    other_locations: list[str]
+    marker: dict[str, Any] | None
+    others: list[dict[str, Any]]
+
+
+class RootRekeyedEvent(TypedDict):
+    kind: Literal["root_rekeyed"]
+    path: str
+    count: int
+
+
+class RootConfirmedEvent(TypedDict):
+    kind: Literal["root_confirmed"]
+    location: str
+    uuid: str
+    path: str
+    label: str
+
+
+class RootCreatedEvent(TypedDict):
+    """A marker written (``root_created``) or one already there taken on (``root_adopted``)."""
+    kind: Literal["root_created", "root_adopted"]
+    path: str
+    uuid: str
+    label: str
+
+
+class RootManualEvent(TypedDict):
+    """A marker HeLab couldn't write: its exact contents, for the user to place."""
+    kind: Literal["root_manual"]
+    path: str
+    name: str
+    contents: str
+    reason: str
+    replace: NotRequired[bool]
+
+
+class RootReassignedEvent(TypedDict):
+    kind: Literal["root_reassigned"]
+    path: str
+    uuid: str
+    label: str
+    old_uuid: str
+    moved: list[str]
+    kept: str
+
+
+class RootRemovedEvent(TypedDict):
+    kind: Literal["root_removed"]
+    path: str
+    uuid: str
+    forgotten: list[str]
+
+
+class RootRemoveRefusedEvent(TypedDict):
+    kind: Literal["root_remove_refused"]
+    path: str
+    file: str
+    reason: str
+
+
+class VolumesVerifiedEvent(TypedDict):
+    kind: Literal["volumes_verified"]
+    volumes: list[list[str]]
+    ids: list[list[str]]
+
+
+class RootsVerifiedEvent(TypedDict):
+    kind: Literal["roots_verified"]
+    mounts: list[list[str]]
+
+
+HelperEvent = Union[
+    DoneEvent, ErrorEvent, PausedEvent, ResumedEvent, HeartbeatEvent, DrivesEvent, ResolvedEvent,
+    CacheWarningEvent, CacheSkippedEvent,
+    EntriesEvent, ListedStatusEvent, ScanStatusEvent, MountsSeenEvent, SaveGuardEvent, ScanHistoryEvent,
+    ScanHistorySavedEvent, ScanHistoryWarningEvent, ScanModeEvent, ScanCachedEvent, SubtreeCachedEvent,
+    SubtreeSavedEvent, SummarySaveFailedEvent, FolderPrefsEvent, FolderConstantsEvent, CacheMismatchEvent,
+    FolderIconEvent,
+    LoadSourceEvent, ProgressEvent, FileStartedEvent, FileFinishedEvent, ShotEvent, ScanSummaryEvent,
+    ShotsMissingEvent, TooLargeEvent, CachedLoadedEvent, UnchangedCachedLoadedEvent, UnchangedHeldLoadedEvent,
+    LoadedEvent, HeldLoadedEvent, LiveLoadedEvent, LiveUnchangedEvent,
+    CacheSavedEvent, DiskCachedEvent, CacheSaveFailedEvent, PendingSaveEvent, RemovedEvent, InventoryEvent,
+    PrefsClearedEvent, AdminResultEvent, InvalidatedEvent, SweptEvent, SweptReadOnlyEvent,
+    MoveCheckEvent, MoveProgressEvent, MoveDoneEvent, MoveFailedEvent, MoveCleanedEvent, MoveAbortedEvent,
+    MoveRecoveredEvent, TraceFolderEvent,
+    RootFoundEvent, RootChangedEvent, RootDuplicateEvent, RootRekeyedEvent, RootConfirmedEvent, RootCreatedEvent,
+    RootManualEvent, RootReassignedEvent, RootRemovedEvent, RootRemoveRefusedEvent, VolumesVerifiedEvent,
+    RootsVerifiedEvent,
+]
+
+# Every kind a helper sends.
+KINDS = frozenset({
+    "done", "error", "paused", "resumed", "heartbeat", "drives", "resolved", "cache_warning", "cache_skipped",
+    "entries", "status", "mounts_seen", "save_guard", "scan_history", "scan_history_saved",
+    "scan_history_warning", "scan_mode", "scan_cached", "subtree_cached", "subtree_saved", "summary_save_failed",
+    "folder_prefs", "folder_constants", "cache_mismatch", "folder_icon",
+    "load_source", "progress", "file_started", "file_finished", "shot", "scan_summary", "shots_missing",
+    "too_large", "loaded", "live_unchanged",
+    "cache_saved", "disk_cached", "cache_save_failed", "cache_full", "cache_approval", "removed", "inventory",
+    "prefs_cleared", "admin_result", "swept",
+    "move_check", "move_progress", "move_done", "move_failed", "move_cleaned", "move_aborted", "move_recovered",
+    "trace_folder",
+    "root_found", "root_changed", "root_duplicate", "root_rekeyed", "root_confirmed", "root_created",
+    "root_adopted", "root_manual", "root_reassigned", "root_removed", "root_remove_refused",
+    "volumes_verified", "roots_verified",
+})

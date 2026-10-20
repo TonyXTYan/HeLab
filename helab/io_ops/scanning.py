@@ -5,6 +5,7 @@ import time
 from typing import Any, TYPE_CHECKING
 
 from helab.io_ops import metadata, stores
+from helab.io_ops.events import DatasetFlags, ScanStatusEvent, SubtreeSavedEvent
 from helab.io_ops.fingerprints import _saved_fingerprint, _settled
 from helab.io_ops.infra import Emit, Heartbeat, _entry_stat, _is_dir, _scandir, _stat, emit
 from helab.io_ops.markers import _marker_temporary
@@ -113,7 +114,7 @@ def save_subtrees(cache_options: dict[str, Any], records: list[dict[str, Any]], 
     if skipped:
         send({"kind": "cache_warning", "message":
               f"Subfolder status cache skipped {len(skipped)} folder(s) without a usable data root."})
-    result: dict[str, Any] = {"kind": "subtree_saved", "paths": saved}
+    result: SubtreeSavedEvent = {"kind": "subtree_saved", "paths": saved}
     if skipped:
         result["skipped"] = skipped
     send(result)
@@ -145,7 +146,7 @@ def save_scan_history(cache_options: dict[str, Any], path: str, outcome: dict[st
 
 
 def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | None,
-          cache_on: bool = False) -> dict[str, Any]:
+          cache_on: bool = False) -> ScanStatusEvent:
     found: dict[str, set[int]] = {}
     entries: list[dict[str, Any]] = []
     has_dirs = False
@@ -196,11 +197,12 @@ def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | No
     # Like load(), files that may still be being written are not in the signature,
     # so a scan during acquisition agrees with the data loaded meanwhile.
     settled = _settled(fingerprint)
-    report = {**_summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, empty, settled, time.time()),
-              "unsettled": len(fingerprint) - len(settled),
-              # Without a cache nothing is cached; a cache that couldn't be opened is unknown.
-              **({} if cache_on else {"disk_cached": False, "cache_info": {}}), **_dataset_flags(store, path, send),
-              **_data_root(store, path)}
+    # Without a cache nothing is cached; a cache that couldn't be opened is unknown.
+    uncached: DatasetFlags = {} if cache_on else {"disk_cached": False, "cache_info": {}}
+    report: ScanStatusEvent = {
+        **_summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, empty, settled, time.time()),
+        "unsettled": len(fingerprint) - len(settled), **uncached, **_dataset_flags(store, path, send),
+        **_data_root(store, path)}
     # Publish the completed source check before optional cache writes, so even a
     # stalled cache writer cannot turn it into a failed basic scan.
     send(report)
