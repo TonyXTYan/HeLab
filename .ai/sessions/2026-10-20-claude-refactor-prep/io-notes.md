@@ -131,11 +131,28 @@ loads only `helab`, `helab.utils`, `file_kinds`, `large_folder` and the
 - `test_scatter_from_the_panel`'s targeted-run rerun: passed alone (1.7 s)
   and in the full suite; a Dash/web-view timing flake under parallel load.
 
+## Review of a05d135 (coordinator)
+
+No correctness bugs found. Fixed on top in their own commit:
+
+- `tests/test_helper_imports.py`'s script also imports `helab.io_helper`, so a
+  module-level numpy/pandas/Qt import in any `io_ops` module (all imported
+  when a helper starts) fails the check, not just one in `browse` or
+  `scanning`.
+- `AGENTS.md` states the rule precisely: a name tests patch is called as
+  `module.name` from other modules (the six names above); other shared
+  helpers are imported by value.
+- Known, no change: `io_helper.py` imports `SOURCE_GUARD` by value. It is read
+  from the environment at import and only in the helper process, never
+  patched, so the copy can't go stale.
+- **PyInstaller:** the coordinator built the app from `a05d135` on Linux
+  (`HeLab.spec --clean`): all 15 `helab.io_ops` modules are in the PYZ, and
+  the frozen helper (`HeLab --helab-io-helper req resp`) ran `list`,
+  `details` and a 3-shot TXY load through to `loaded`/`done`.
+
 ## Open points
 
 - Slice G (typed helper events) not started, as asked.
-- A PyInstaller build would confirm the bundle picks up `helab.io_ops`
-  (expected: static imports from the hidden-imported `helab.io_helper`).
 - Proposal: `admin.py`'s `cache_admin` (150 lines) and `loading._load`
   (365 lines) are the largest single functions left; splitting them is a
   separate, behaviour-sensitive step, not part of this move.

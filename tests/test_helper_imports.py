@@ -17,6 +17,7 @@ HEAVY = ("numpy", "pandas", "blosc", "PyQt6")
 
 SCRIPT = """
 import json, sys
+import helab.io_helper  # noqa: F401  (the whole helper's imports, as every helper process starts)
 from helab.io_ops.browse import list_folder
 from helab.io_ops.scanning import scan
 path, store = sys.argv[1], sys.argv[2]
