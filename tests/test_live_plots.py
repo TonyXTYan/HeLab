@@ -33,8 +33,8 @@ from helab.analysis.runner import AnalysisRunner
 from helab.io_helper import list_folder, live_check, load
 from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import (basic_plots, density_images, mean_position, scatter_3d, shot_times, shot_trends,
-                                    t_spectrum, transfer_fractions)
+from helab.scripts.standard import (basic_plots, density_images, mean_position, release_time, scatter_3d, shot_times,
+                                    shot_trends, t_spectrum, transfer_fractions)
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest, IOService
@@ -320,7 +320,7 @@ def test_coverage_records_the_shots_used_and_diffs_a_later_revision() -> None:
                                     scatter_3d.Scatter3D(), density_images.DensityImages(),
                                     mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum(),
                                     transfer_fractions.TransferFractions(), shot_times.ShotTimesPlot(),
-                                    shot_trends.ShotTrends()],
+                                    shot_trends.ShotTrends(), release_time.ReleaseTimePlot()],
                          ids=lambda script: type(script).__name__)
 def test_every_result_records_coverage_and_a_json_reuse_key(qtbot: QtBot, script: DatasetAnalysis) -> None:
     """Completed, failed and cancelled runs alike; the Shots settings decide the coverage."""
@@ -364,7 +364,8 @@ def test_failed_and_cancelled_results_record_coverage_too(qtbot: QtBot) -> None:
 @pytest.mark.parametrize("script", [basic_plots.CountsPerShot(), basic_plots.TxyHistograms(),
                                     scatter_3d.Scatter3D(), density_images.DensityImages(),
                                     mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum(),
-                                    transfer_fractions.TransferFractions(), shot_trends.ShotTrends()],
+                                    transfer_fractions.TransferFractions(), shot_trends.ShotTrends(),
+                                    release_time.ReleaseTimePlot()],
                          ids=lambda script: type(script).__name__)
 @pytest.mark.parametrize("case", ["no shots yet", "none chosen", "no events"])
 def test_bundled_plots_say_why_they_are_empty(qtbot: QtBot, script: DatasetAnalysis, case: str) -> None:
@@ -413,6 +414,19 @@ def test_a_following_scatter_updates_its_page_in_place(
     plot_id = pane.plot_id
     window.close_plots()
     qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None, timeout=10_000)  # Freed with the pane.
+
+
+def test_live_reruns_are_marked_so_the_release_time_skips_its_bootstrap(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """The plot's first run is deliberate (bootstrap); Live's next revision is a Live rerun."""
+    window.view = window.live_feed.publish(revision([1, 2]))
+    instance = plot(window, qtbot, release_time.ReleaseTimePlot())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    assert instance.shown is not None and not instance.shown.data.live_skipped
+    set_live(instance, DELAY, 0.0)
+    window.live_feed.publish(revision([1, 2, 3]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
+    assert instance.shown is not None and instance.shown.data.live_skipped
 
 
 def test_a_following_shot_times_plot_updates_in_place(

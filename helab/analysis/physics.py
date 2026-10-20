@@ -10,6 +10,13 @@ defaults to trust). Values are layered (F0b builds the settings that fill the la
 3. **folder** settings (per data root, in HeLab's store);
 4. **plot** overrides.
 
+A few rows have no default: they come "from the data" (``Constant.optional``: the release time,
+the arrival of the cloud at rest and the trap's XY origin, which the Release time plot detects).
+Unset in every layer, they resolve to nan with the origin "detected": a plot then detects the
+value itself, or assumes one (the origin: 0, 0), and records which (``helab.analysis.release``).
+Set in a layer, they resolve like any other row. ``Constant.signed`` rows (the origin's
+positions) take any finite value, zero and negative included; the others must be positive.
+
 ``resolve`` merges them when a run starts (compute does no I/O) into a frozen
 ``ResolvedConstants`` that the run records in its result (``as_record``, JSON values only).
 The conversions take the run's ``ResolvedConstants``, never the defaults, so every number a
@@ -21,7 +28,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, fields
 from types import MappingProxyType
-from typing import Any, Literal, Mapping, cast, get_args
+from typing import Any, Iterable, Literal, Mapping, cast, get_args
 
 import scipy.constants as codata
 
@@ -29,9 +36,10 @@ from helab.analysis.display_units import length_text, time_text
 from helab.analysis.estimates import Estimate
 
 Level = Literal["lab", "folder"]
-# Where a resolved value came from: the table's default, one of the layers, or derived
-# from other values (the fall time from the distance and g).
-Origin = Literal["default", "lab", "folder", "plot", "derived"]
+# Where a resolved value came from: the table's default, one of the layers, derived from
+# other values (the fall time from the distance and g), or "detected": an optional row no
+# layer sets, whose value (nan here) a run takes from the data.
+Origin = Literal["default", "lab", "folder", "plot", "derived", "detected"]
 ORIGINS: tuple[str, ...] = get_args(Origin)
 LAYERS: tuple[Origin, ...] = ("lab", "folder", "plot")
 
@@ -44,7 +52,8 @@ FALL_TIME_TOLERANCE = 1e-3
 
 @dataclass(frozen=True)
 class Constant:
-    """One row of the table. ``value`` nan means derived (the fall time, unless set)."""
+    """One row of the table. ``value`` nan means derived (the fall time, unless set), or for an
+    ``optional`` row, no default: "from the data"."""
     key: str
     title: str
     unit: str
@@ -58,15 +67,17 @@ class Constant:
     # A coded row: its value is one of these numbers, each standing for its label (the trap's
     # axial axis). Empty for an ordinary number.
     choices: Mapping[float, str] = field(default_factory=lambda: MappingProxyType({}))
+    optional: bool = False  # no default: unset, a run detects it from the data (origin "detected")
+    signed: bool = False  # any finite value (a position); otherwise positive only
 
     @property
     def derived(self) -> bool:
-        return math.isnan(self.value)
+        return math.isnan(self.value) and not self.optional
 
     def allows(self, value: float) -> bool:
-        """Whether ``value`` is one this row takes: finite, positive, at most ``maximum`` and, for
-        a coded row, one of its codes."""
-        if not (math.isfinite(value) and 0 < value <= self.maximum):
+        """Whether ``value`` is one this row takes: finite, positive unless ``signed``, at most
+        ``maximum`` and, for a coded row, one of its codes."""
+        if not (math.isfinite(value) and (self.signed or value > 0) and value <= self.maximum):
             return False
         return not self.choices or value in self.choices
 
@@ -116,8 +127,25 @@ CONSTANTS: tuple[Constant, ...] = (
     Constant("dld_acquisition", "DLD acquisition", "s", 2.0,
              "monitor_momentum.m, 2026-09; a shot whose last count is earlier is incomplete", "lab",
              unconfirmed=True, shown_only=True),
+    # D8: from the data (the Release time plot), or set by hand. Its "Use for this folder" saves the
+    # arrival and the origin, not t_r: each plot then takes t_r = t_a − t_f with its own fall time
+    # (helab.analysis.release.layer_release_time), so a cloud at rest stays at v_z = 0.
+    Constant("release_time", "Release time t_r", "s", math.nan,
+             "From the data: one cloud's arrival − t_f (the Release time plot), in DLD time; set by hand to "
+             "fix it (it then wins over a saved arrival at the same level). The front panel's switch-off, "
+             "22.954 s, is out of date", "folder", optional=True),
+    Constant("arrival_time", "Arrival at rest t_a", "s", math.nan,
+             "From the data: when the cloud released at rest arrives, in DLD time (the Release time plot's Use "
+             "for this folder); plots take t_r = t_a − t_f with their own fall time", "folder", optional=True),
+    Constant("trap_x", "Trap origin X x₀", "m", math.nan,
+             "From the data: the X of the cloud released at rest (the Release time plot); unset and not "
+             "detected, 0 (the trap above X = 0)", "folder", optional=True, signed=True),
+    Constant("trap_y", "Trap origin Y y₀", "m", math.nan,
+             "From the data: the Y of the cloud released at rest (the Release time plot); unset and not "
+             "detected, 0 (the trap above Y = 0)", "folder", optional=True, signed=True),
 )
 TABLE: Mapping[str, Constant] = MappingProxyType({constant.key: constant for constant in CONSTANTS})
+OPTIONAL: tuple[str, ...] = tuple(constant.key for constant in CONSTANTS if constant.optional)
 
 
 def fall_time(distance: float, g: float) -> float:
@@ -127,10 +155,11 @@ def fall_time(distance: float, g: float) -> float:
     return math.sqrt(2 * distance / g)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class ResolvedConstants:
     """The values a run used, one attribute per ``TABLE`` key, and where each came from.
-    Hashable by its values (``origins`` is compared, not hashed)."""
+    Hashable by its values (``origins`` is compared, not hashed). An optional row no layer set is
+    nan, origin "detected" (``is_set``); such nans compare equal (``__eq__``, ``__hash__``)."""
     hbar: float
     k_B: float
     u: float
@@ -145,12 +174,33 @@ class ResolvedConstants:
     trap_axial_axis: float
     dld_trigger: float
     dld_acquisition: float
+    release_time: float
+    arrival_time: float
+    trap_x: float
+    trap_y: float
     origins: Mapping[str, Origin] = field(hash=False)
 
     def value(self, key: str) -> float:
         if key not in TABLE:
             raise KeyError(key)
         return float(getattr(self, key))
+
+    def _values(self) -> tuple[float | None, ...]:
+        """The values in table order, an unset optional row's (nan) as None: what equality and
+        the hash compare (nan never equals itself)."""
+        return tuple(self.value(key) if self.is_set(key) else None for key in TABLE)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ResolvedConstants):
+            return NotImplemented
+        return self._values() == other._values() and dict(self.origins) == dict(other.origins)
+
+    def __hash__(self) -> int:
+        return hash(self._values())
+
+    def is_set(self, key: str) -> bool:
+        """Whether ``key`` has a value: false only for an optional row no layer set ("detected")."""
+        return self.origins[key] != "detected"
 
     @property
     def unconfirmed(self) -> tuple[str, ...]:
@@ -174,26 +224,43 @@ class ResolvedConstants:
                 f"but √(2h/g) is {time_text(expected)} for h {length_text(self.fall_distance)} "
                 f"({self.origins['fall_distance']}) and g {self.g:.6g} m/s² ({self.origins['g']})",)
 
-    def as_record(self) -> dict[str, Any]:
+    def as_record(self, keys: Iterable[str] | None = None) -> dict[str, Any]:
         """JSON values only, for a result's record:
-        ``{"values": …, "origins": …, "unconfirmed": […], "notes": […]}``."""
-        return {"values": {key: self.value(key) for key in TABLE}, "origins": dict(self.origins),
-                "unconfirmed": list(self.unconfirmed), "notes": list(self.notes)}
+        ``{"values": …, "origins": …, "unconfirmed": […], "notes": […]}``; an unset optional
+        row's value is None. With ``keys``, only those (table order; the fall-time note only with
+        ``fall_time``), so rows an analysis doesn't use never change its record; ``from_record``
+        reads back the whole record only."""
+        wanted = set(TABLE if keys is None else keys)
+        chosen = [key for key in TABLE if key in wanted]
+        return {"values": {key: self.value(key) if self.is_set(key) else None for key in chosen},
+                "origins": {key: self.origins[key] for key in chosen},
+                "unconfirmed": [key for key in self.unconfirmed if key in wanted],
+                "notes": list(self.notes) if "fall_time" in wanted else []}
 
     @classmethod
     def from_record(cls, record: Mapping[str, Any]) -> ResolvedConstants:
-        """Read back ``as_record``. Every ``TABLE`` key needs a finite value and a known
-        origin (else ``ValueError``); keys the table doesn't have (a newer version's) are
-        ignored, and ``unconfirmed`` and ``notes`` are recomputed, not read."""
-        values, origins = record["values"], record["origins"]
+        """Read back ``as_record``. Every ``TABLE`` key needs a value its row accepts and a known
+        origin (else ``ValueError``), except an optional row: "detected" with no value (None),
+        also when the record lacks it (an older version's). Keys the table doesn't have (a newer
+        version's) are ignored, and ``unconfirmed`` and ``notes`` are recomputed, not read."""
+        values, origins = dict(record["values"]), dict(record["origins"])
+        for key in OPTIONAL:
+            if key not in values and key not in origins:
+                values[key], origins[key] = None, "detected"
         missing = [key for key in TABLE if key not in values or key not in origins]
         if missing:
             raise ValueError(f"constants record lacks {', '.join(missing)}")
-        bad = [key for key in TABLE if origins[key] not in ORIGINS or not math.isfinite(float(values[key]))
-               or bool(TABLE[key].choices) and float(values[key]) not in TABLE[key].choices]
+
+        def good(key: str) -> bool:
+            if origins[key] not in ORIGINS:
+                return False
+            if origins[key] == "detected":
+                return TABLE[key].optional and values[key] is None
+            return values[key] is not None and TABLE[key].allows(float(values[key]))
+        bad = [key for key in TABLE if not good(key)]
         if bad:
             raise ValueError(f"constants record has bad values or origins for {', '.join(bad)}")
-        return cls(**{key: float(values[key]) for key in TABLE},
+        return cls(**{key: math.nan if values[key] is None else float(values[key]) for key in TABLE},
                    origins=MappingProxyType({key: cast(Origin, origins[key]) for key in TABLE}))
 
 
@@ -201,20 +268,24 @@ def allowed_text(constant: Constant) -> str:
     """What a row takes, for an error: "one of 1, 2, 3, 4", "finite and positive, at most 1"."""
     if constant.choices:
         return f"one of {', '.join(f'{code:g}' for code in constant.choices)}"
-    return "finite and positive" + (f", at most {constant.maximum:g}" if math.isfinite(constant.maximum) else "")
+    kind = "finite" if constant.signed else "finite and positive"
+    return kind + (f", at most {constant.maximum:g}" if math.isfinite(constant.maximum) else "")
 
 
 def resolve(lab:Mapping[str, float] | None = None, folder: Mapping[str, float] | None = None,
             plot: Mapping[str, float] | None = None) -> ResolvedConstants:
     """The table's defaults, overridden by the lab, then folder, then plot layers (more
-    specific wins). Every value must be finite and positive; an unknown key or a bad value
-    raises ``ValueError`` (F0b validates input before it gets here).
+    specific wins). Every value must be finite, and positive unless its row is ``signed``; an
+    unknown key or a bad value raises ``ValueError`` (F0b validates input before it gets here).
+    An optional row no layer sets is nan, origin "detected".
 
     The fall time is derived, √(2h/g), from the effective distance and g, unless a layer at
     least as specific as the one that set the distance (or g) sets it by hand: a folder's new
     fall distance isn't silently paired with a lab-wide fall time. A fall time kept by hand
     that disagrees with √(2h/g) is noted (``ResolvedConstants.notes``)."""
-    chosen: dict[str, tuple[float, Origin]] = {key: (constant.value, "default") for key, constant in TABLE.items()}
+    chosen: dict[str, tuple[float, Origin]] = {
+        key: (math.nan, "detected") if constant.optional else (constant.value, "default")
+        for key, constant in TABLE.items()}
     rank = {"default": 0, **{layer: index + 1 for index, layer in enumerate(LAYERS)}}
     for layer, given in zip(LAYERS, (lab, folder, plot)):
         for key, value in (given or {}).items():
