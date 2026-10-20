@@ -2,6 +2,7 @@
 events from exact trajectories."""
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 
@@ -10,9 +11,11 @@ import numpy.typing as npt
 import pytest
 import scipy.constants as codata
 
+from helab.analysis import fits, release
 from helab.analysis.peaks import find_time_peaks
 from helab.analysis.physics import DEFAULTS, ResolvedConstants, resolve
-from helab.analysis.release import bootstrap_release_time, detect_release_time, manual_release_time
+from helab.analysis.release import (bootstrap_release_time, detect_release_time, manual_release_time,
+                                    velocity_origin)
 from helab.analysis.velocity import (RECOIL_WAVELENGTH, arrival_time, effective_fall_distance, recoil_velocity,
                                      txy_to_velocity, unit_velocity, vertical_velocity)
 
@@ -167,10 +170,38 @@ def test_release_time_uses_the_run_s_fall_time() -> None:
     assert other.value.value - found.value.value == pytest.approx(constants.fall_time - DEFAULTS.fall_time)
 
 
-def test_a_wide_cloud_gets_a_skew_note() -> None:
+def test_a_wide_cloud_is_fitted_with_the_arrival_time_profile() -> None:
+    """A 1.5 µK cloud (σ_t ≈ 5.7 ms) is skewed in T: a Gaussian's centre came out 33 µs late
+    (SE 13 µs) on average. The arrival-time profile's centre is the v = 0 arrival."""
+    sigma_v = math.sqrt(DEFAULTS.k_B * 1.5e-6 / DEFAULTS.mass)
+    errors, ses = [], []
+    for seed in range(20):
+        found = detect_release_time(cloud(np.random.default_rng(seed), 200_000, sigma_v)[:, 0], DEFAULTS)
+        assert found.ok, found.failure
+        assert found.fit is not None and found.fit.model.key == "arrival_time"
+        assert not any("skewed" in note for note in found.notes)
+        errors.append(found.value.value - RELEASE)
+        ses.append(found.value.se)
+    se = float(np.mean(ses))
+    assert abs(float(np.mean(errors))) < se  # within ~1 SE of 0 (the Gaussian's was 2.6 SE)
+    assert abs(float(np.mean(errors))) < 3 * se / math.sqrt(20)
+    assert float(np.std(errors)) == pytest.approx(se, rel=0.4)
+
+
+def test_a_failed_arrival_fit_falls_back_to_a_gaussian_with_the_skew_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = fits.fit_histogram
+
+    def no_arrival(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | fits.FitModel = "gaussian"
+                   ) -> fits.FitResult:
+        result = real(centres, counts, model)
+        if result.model.key == "arrival_time":
+            return dataclasses.replace(result, failure="made to fail")
+        return result
+    monkeypatch.setattr(release, "fit_histogram", no_arrival)
     events = cloud(np.random.default_rng(3), 200_000, 0.05)  # ~1.5 µK thermal: σ_t ≈ 5 ms
     found = detect_release_time(events[:, 0], DEFAULTS)
-    assert found.ok
+    assert found.ok and found.fit is not None and found.fit.model.key == "gaussian"
+    assert any("arrival-time fit failed (made to fail)" in note for note in found.notes)
     assert any("skewed" in note for note in found.notes)
     assert abs(found.value.value - RELEASE) < 1e-4  # off by tens of µs at most
 
@@ -267,3 +298,88 @@ def test_manual_release_time_passes_through() -> None:
     assert manual.error == "none"
     assert not manual_release_time(math.nan, DEFAULTS).ok
     json.dumps(manual.as_record(), allow_nan=False)
+
+
+ORIGIN = (1.2e-3, -0.7e-3)  # m: the trap above this point of the detector, off X = Y = 0
+
+
+def test_back_to_back_pairs_need_the_xy_origin() -> None:
+    """Pairs with v₁ = −v₂ released from a trap above (x₀, y₀): measured from the origin they
+    sum to 0; measured from (0, 0) each atom gets x₀/τ more, so the sum is x₀(1/τ₁ + 1/τ₂)
+    ≈ 2x₀/t_f."""
+    rng = np.random.default_rng(0)
+    first = rng.normal(0, 0.02, (500, 3))
+    velocities = np.concatenate([first, -first])
+    events = trajectories(velocities, RELEASE, DEFAULTS)
+    events[:, 1] += ORIGIN[0]
+    events[:, 2] += ORIGIN[1]
+    centred = txy_to_velocity(events, RELEASE, DEFAULTS, origin=ORIGIN)
+    assert centred.origin == ORIGIN
+    np.testing.assert_allclose(centred.values, velocities, atol=1e-12)
+    sums = centred.values[:500] + centred.values[500:]
+    np.testing.assert_allclose(sums, 0.0, atol=1e-12)
+    assumed = txy_to_velocity(events, RELEASE, DEFAULTS)
+    assert assumed.origin == (0.0, 0.0)
+    tau = events[:, 0] - RELEASE
+    shift = 1 / tau[:500] + 1 / tau[500:]
+    plain = assumed.values[:500] + assumed.values[500:]
+    np.testing.assert_allclose(plain[:, 1], ORIGIN[0] * shift, rtol=1e-9)
+    np.testing.assert_allclose(plain[:, 2], ORIGIN[1] * shift, rtol=1e-9)
+    assert float(np.mean(plain[:, 1])) == pytest.approx(2 * ORIGIN[0] / DEFAULTS.fall_time, rel=1e-3)
+    np.testing.assert_allclose(plain[:, 0], 0.0, atol=1e-12)  # v_z doesn't depend on it
+    with pytest.raises(ValueError):
+        txy_to_velocity(events, RELEASE, DEFAULTS, origin=(math.nan, 0.0))
+
+
+def test_the_xy_origin_is_detected_from_the_rest_cloud() -> None:
+    rng = np.random.default_rng(1)
+    rest = cloud(rng, 20_000, 0.003)
+    rest[:, 1] += ORIGIN[0]
+    rest[:, 2] += ORIGIN[1]
+    # A Bragg order 0.1 m/s up, released from the same trap: separate in T, ignored.
+    moving = cloud(rng, 4000, 0.003, drift=(0.1, 0.0, 0.0))
+    moving[:, 1:] += ORIGIN
+    events = np.concatenate([rest, moving])
+    found = detect_release_time(events[:, 0], DEFAULTS, positions=events[:, 1:3])
+    assert found.ok and found.origin_found and found.origin_events > 10_000
+    spread = 0.003 * DEFAULTS.fall_time  # the cloud's XY width
+    for axis, truth in zip(found.origin, ORIGIN):
+        assert axis.se == pytest.approx(spread / math.sqrt(found.origin_events), rel=0.2)
+        assert abs(axis.value - truth) < 3 * axis.se
+    record = found.as_record()["origin"]
+    assert record["x"]["value"] == found.origin[0].value and record["events"] == found.origin_events
+    json.dumps(found.as_record(), allow_nan=False)
+    # Without positions there is no origin, and velocities assume (0, 0).
+    times_only = detect_release_time(events[:, 0], DEFAULTS)
+    assert not times_only.origin_found and math.isnan(times_only.origin[0].value)
+    assert velocity_origin(times_only) == ((0.0, 0.0), "assumed")
+    assert velocity_origin(found) == ((found.origin[0].value, found.origin[1].value), "detected")
+    assert velocity_origin(found, manual=(1e-3, 2e-3)) == ((1e-3, 2e-3), "manual")
+    assert velocity_origin(found, manual=(math.nan, 0.0))[1] == "detected"
+    assert velocity_origin(None) == ((0.0, 0.0), "assumed")
+    with pytest.raises(ValueError):
+        detect_release_time(events[:, 0], DEFAULTS, positions=events[:10, 1:3])
+    # The detected origin centres the rest cloud's velocities.
+    origin, _ = velocity_origin(found)
+    at_rest = txy_to_velocity(rest, found.value.value, DEFAULTS, origin=origin)
+    assert abs(float(np.mean(at_rest.values[:, 1]))) < 3 * 0.003 / math.sqrt(len(rest))
+
+
+def test_the_shot_bootstrap_covers_the_trap_s_shot_to_shot_drift() -> None:
+    rng = np.random.default_rng(2)
+    shots = []
+    for _ in range(20):
+        events = cloud(rng, 1000, 0.003)
+        events[:, 1:] += np.asarray(ORIGIN) + rng.normal(0, 200e-6, 2)  # the trap moves 0.2 mm per shot
+        shots.append(events)
+    found = bootstrap_release_time(shots, DEFAULTS, n_boot=100)
+    assert found.ok and found.error == "shot bootstrap" and found.origin_found
+    within = detect_release_time(np.concatenate(shots)[:, 0], DEFAULTS, positions=np.concatenate(shots)[:, 1:3])
+    for axis, still, truth in zip(found.origin, within.origin, ORIGIN):
+        assert axis.value == still.value
+        assert axis.se > 2 * still.se
+        assert axis.se == pytest.approx(200e-6 / math.sqrt(20), rel=0.5)
+        assert abs(axis.value - truth) < 4 * axis.se
+    # Times alone: no origin, as before.
+    times = bootstrap_release_time([shot[:, 0] for shot in shots], DEFAULTS, n_boot=20)
+    assert times.ok and not times.origin_found

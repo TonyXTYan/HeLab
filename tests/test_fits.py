@@ -54,7 +54,10 @@ def test_gaussian_recovers_centre_and_width_within_their_errors(count: int) -> N
     found = coverage(150, fit, {"centre": centre, "sigma": sigma})
     for name, (within, bias) in found.items():
         assert 0.88 <= within <= 1.0, (name, within)  # about 95 % expected
-        assert abs(bias) < 0.3, (name, bias)
+        # The offset is floored at 0 and the true one is 0, so it comes out a little above
+        # (the exact Poisson likelihood with offset ≥ 0 does the same): σ's pull is about −0.3
+        # at 500 events, −0.16 at 5000.
+        assert abs(bias) < 0.4, (name, bias)
 
 
 def test_count_weights_alone_bias_the_width_low() -> None:
@@ -288,7 +291,7 @@ def test_count_weights_say_when_the_input_isnt_counts() -> None:
 def test_bounds_and_poor_models_are_noted() -> None:
     x = np.linspace(0, 1, 20)
     flat = fit_histogram(x, np.full(20, 100.0))
-    assert any(note.startswith("at its bound: σ") for note in flat.notes)
+    assert any(note.startswith("at its bound:") for note in flat.notes)
     rng = np.random.default_rng(0)
     square = fit_events(rng.uniform(-1, 1, 50_000), 60, (-1.5, 1.5))
     assert any("reduced χ²" in note for note in square.notes)
@@ -332,3 +335,31 @@ def test_fits_leave_the_warning_filters_alone() -> None:
     before = list(warnings.filters)
     fit_events(np.random.default_rng(1).normal(0, 1, 2000), 40, (-4, 4), "bimodal_tf2_gaussian")
     assert warnings.filters == before
+
+
+def test_count_weights_keep_the_offset_at_or_above_zero() -> None:
+    """Sparse raw counts with no background: an offset below 0 made the model negative in
+    the tails (117 of 200 such fits, before the floor), an impossible mean count. With
+    count weights the offset stops at 0, unnoted; given errors (sigma=, rates) keep −top."""
+    negative = 0
+    for seed in range(60):
+        rng = np.random.default_rng(seed)
+        counts, edges = np.histogram(rng.normal(0, 1, 150), bins=80, range=(-8, 8))
+        result = fit_histogram(bin_centres(edges), counts)
+        assert result.ok, result.failure
+        assert result["offset"].value >= 0
+        assert np.all(result.curve >= 0)
+        assert not any("Offset" in note for note in result.notes)
+        rates = fit_histogram(bin_centres(edges), counts / 10, sigma=np.sqrt(np.maximum(counts, 1)) / 10)
+        negative += rates.ok and rates["offset"].value < 0
+    assert negative > 10  # the given-errors fit may still go below 0
+    for weights in ("counts", "none"):
+        counts, edges = np.histogram(np.random.default_rng(1).normal(0, 1, 150), bins=80, range=(-8, 8))
+        fitted = fit_histogram(bin_centres(edges), counts, weights=weights)
+        assert fitted.ok and (fitted["offset"].value >= 0 or weights == "none")
+    # A real background is still found.
+    rng = np.random.default_rng(2)
+    events = np.concatenate([rng.normal(0, 1, 2000), rng.uniform(-8, 8, 1600)])
+    counts, edges = np.histogram(events, bins=80, range=(-8, 8))
+    background = fit_histogram(bin_centres(edges), counts)
+    assert abs(background["offset"].value - 20) < 3 * background["offset"].se

@@ -10,7 +10,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from helab.analysis.bootstrap import DEFAULT_N_BOOT, bootstrap_shots
+from helab.analysis.bootstrap import DEFAULT_N_BOOT, bootstrap_shots, shot_means
 from helab.analysis.estimates import sewm
 from helab.analysis.results import Cancelled
 
@@ -148,3 +148,43 @@ def test_bad_arguments_raise() -> None:
         bootstrap_shots([1, 2, 3], lambda chosen: 0.0, confidence=1.5)
     with pytest.raises(ValueError):
         bootstrap_shots([1, 2, 3], lambda chosen: 0.0, n_boot=1)
+
+
+def test_shot_means_per_bin_match_the_bootstrap_of_the_pooled_mean() -> None:
+    """D5's shape: each shot's mean X per T bin, weighted by its events there. The value is
+    the pooled mean over all the shots' events in the bin, and its SE (sewm) the shot
+    bootstrap's of that ratio, up to √((n−1)/n)."""
+    rng = np.random.default_rng(3)
+    shots = []
+    for _ in range(40):
+        t = rng.uniform(0, 1, int(rng.integers(300, 600)))
+        drift = rng.normal(0, 0.02)  # each shot's X moves as a whole
+        shots.append(np.column_stack([t, 0.1 * t + drift + rng.normal(0, 0.05, len(t))]))
+    bins = [np.minimum((shot[:, 0] * 5).astype(int), 4) for shot in shots]
+    counts = np.array([np.bincount(b, minlength=5) for b in bins], dtype=np.float64)
+    sums = np.array([np.bincount(b, weights=shot[:, 1], minlength=5) for b, shot in zip(bins, shots)])
+    means = sums / counts
+    means[3, 2] = math.nan  # a shot with no events in a bin
+    counts[3, 2] = 0.0
+    found = shot_means(means, counts)
+    pooled = np.nansum(means * counts, axis=0) / counts.sum(axis=0)
+    np.testing.assert_allclose(found.value, pooled)
+    assert list(found.shots) == [40, 40, 39, 40, 40]
+    for index in range(5):
+        kept = np.isfinite(means[:, index])
+        assert found.estimates[index] == sewm(means[kept, index], counts[kept, index])
+
+    def pooled_means(chosen: list[Any]) -> Array:
+        rows = np.array(chosen)
+        return np.asarray(np.sum(rows[:, 0] * rows[:, 1], axis=0) / rows[:, 1].sum(axis=0))
+    rows = [np.vstack([np.nan_to_num(m), c]) for m, c in zip(means, counts)]
+    boot = bootstrap_shots(rows, pooled_means, n_boot=1000)
+    np.testing.assert_allclose(boot.se, found.se * math.sqrt(39 / 40), rtol=0.15)
+    assert not found.value.flags.writeable
+    # Equal weights: the plain mean of per-shot values ± s/√n; one shot: no SE; none: nan.
+    plain = shot_means(np.array([[1.0], [3.0]]))
+    assert plain.value[0] == 2.0 and plain.se[0] == pytest.approx(1.0)
+    one = shot_means(np.array([[1.0, math.nan], [math.nan, math.nan]]))
+    assert one.value[0] == 1.0 and math.isnan(one.se[0]) and math.isnan(one.value[1])
+    with pytest.raises(ValueError):
+        shot_means(np.ones((3, 2)), np.ones((3, 3)))

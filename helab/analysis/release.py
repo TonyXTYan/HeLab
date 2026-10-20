@@ -1,5 +1,5 @@
 """The release time (D8): when the atoms left the trap, in DLD time (seconds after the DLD
-trigger), from one cloud's arrival, or set by hand.
+trigger), from one cloud's arrival, or set by hand; and where the trap is on the detector.
 
 Detection (roadmaps/dld-front-panel-port.md, Decided: "Release-time detection"): one cloud
 of atoms released at rest (a BEC, order 0) arrives a fall time t_f = √(2h/g) after its
@@ -7,13 +7,17 @@ release, so t_r = t_arrival − t_f. ``detect_release_time``:
 
 1. finds the peaks of the T histogram of the events (summed over the chosen shots) with
    ``peaks.find_time_peaks``, and takes the tallest as the cloud;
-2. fits a Gaussian + offset (``fits.fit_histogram``, Poisson likelihood) to the events within
-   ``FIT_FWHMS`` full widths of it (and short of halfway to any other peak), for the centre ±
-   SE; when that fit fails, the mean time of the events near the peak ± s/√n is used, noted;
+2. fits the arrival-time profile + offset (``fits.arrival_time_model`` with the run's h and
+   g, h from ``velocity.effective_fall_distance``; Poisson likelihood) to the events within
+   ``FIT_FWHMS`` full widths of it (and short of halfway to any other peak). Its centre is
+   the arrival of v = 0 by construction, so a wide cloud's skew (below) doesn't move it.
+   When that fit fails, a Gaussian + offset is fitted instead (noted, with the skew note
+   when the cloud is wide); when that fails too, the mean time of the events near the peak
+   ± s/√n is used, noted;
 3. subtracts the run's fall time (``ResolvedConstants.fall_time``).
 
 The SE (``error`` "within run") is the fit's: the statistical error of the summed events'
-centre, as if every event were independent. It leaves out the shot-to-shot jitter of the
+centre, within run (events independent). It leaves out the shot-to-shot jitter of the
 release (and of the trap), which is usually larger: on 20 shots of 1000 events with 50 µs
 jitter, the fit's SE was 2.1 µs and the shot bootstrap's 9.8 µs. The honest error over shots
 is ``bootstrap_release_time`` (``error`` "shot bootstrap"), which reruns the detection on
@@ -21,13 +25,20 @@ resampled shots. Either way the fall time is taken as exact: its error is system
 same for every shot, δt_r = −δt_f = −δh / (g t_f) (≈ −1.2 ms for the 5 mm between the
 fall-distance candidates 0.848 and 0.8529 m).
 
+The XY origin: given the events' X and Y (``positions``, or TXY shots for the bootstrap),
+the same cloud, at rest, also marks the point below the trap: the mean X and Y of its events
+within ``ORIGIN_SIGMAS`` σ_t of its arrival, ± s/√n (within run), recorded as ``origin``.
+``velocity_origin`` picks what ``velocity.txy_to_velocity`` uses: an origin set by hand,
+else the detected one, else (0, 0), the trap assumed above X = Y = 0.
+
 Results say what to trust, never raise: ``failure`` (no events, too few, no peak, no fall
 time) or ``notes`` on a result that worked (comparable peaks: "unsure"; the fit fell back to
-a mean; the cloud's skew). Skew: an atom's arrival time is not linear in its v_z, τ ≈ t_f + u
-+ u²/(2t_f) with u = v_z/g, so a cloud of T width σ_t has its mean σ_t²/(2t_f) late and its
-mode about σ_t²/t_f early; a Gaussian's centre lies between. That is 0.1 µs for a BEC
-(σ_t ≈ 0.3 ms), but ~30 µs for a 1 µK thermal cloud (σ_t ≈ 5 ms); noted when larger than
-the SE.
+a Gaussian or a mean; the cloud's skew then). Skew: an atom's arrival time is not linear in
+its v_z, τ ≈ t_f + u + u²/(2t_f) with u = v_z/g, so a cloud of T width σ_t has its mean
+σ_t²/(2t_f) late and its mode about σ_t²/t_f early; a Gaussian's centre lies between. That
+is 0.1 µs for a BEC (σ_t ≈ 0.3 ms), but ~30 µs for a 1.5 µK thermal cloud (σ_t ≈ 5.7 ms:
++33 µs measured with the Gaussian, SE 13 µs); the arrival-time fit has no such bias, and the
+fallbacks note it when larger than the SE.
 
 Pure NumPy/SciPy, no Qt, no I/O.
 """
@@ -42,13 +53,16 @@ import numpy.typing as npt
 
 from helab.analysis.bootstrap import BootstrapResult, bootstrap_shots
 from helab.analysis.estimates import Estimate, finite_or_none
-from helab.analysis.fits import FitResult, bin_centres, fit_histogram
+from helab.analysis.fits import FitModel, FitResult, arrival_time_model, bin_centres, fit_histogram
 from helab.analysis.peaks import PROMINENCE_COUNTS, Peak, find_time_peaks
 from helab.analysis.physics import ResolvedConstants
+from helab.analysis.velocity import effective_fall_distance
 
 Source = Literal["detected", "manual"]
-# What the SE covers: the fit of the summed events, or the spread over resampled shots.
+# What the SE covers: the fit of the summed events, within run (events independent, no shot
+# jitter), or the spread over resampled shots (bootstrap_release_time).
 ErrorKind = Literal["within run", "shot bootstrap", "none"]
+OriginSource = Literal["manual", "detected", "assumed"]
 RELEASE_N_BOOT = 200  # each resample is a detection; 200 is plenty for an SE (≈ 5 % its own error)
 MIN_EVENTS = 50  # fewer events in the search range: too few to find a cloud
 STANDS_OUT = 3.0  # the cloud's peak below this many times the histogram's median bin: "unsure"
@@ -56,12 +70,16 @@ COMPARABLE_SHARE = 0.5  # another peak at least this share of the tallest's heig
 FIT_FWHMS = 1.5  # the fit window's half-width, in the peak's full widths (≈ ±3.5 σ)
 FIT_BINS_PER_FWHM = 8
 MIN_FIT_BINS = 15
+ORIGIN_SIGMAS = 2.0  # the XY origin: events within this many σ_t of the cloud's arrival
+NO_ORIGIN = (Estimate(math.nan), Estimate(math.nan))
 
 
 @dataclass(frozen=True)
 class ReleaseTime:
     """A release time in DLD time (s) ± SE, with what it came from. ``failure`` is "" when
-    it worked; otherwise ``value`` is nan and the failure says why."""
+    it worked; otherwise ``value`` is nan and the failure says why. ``origin`` is the rest
+    cloud's (X, Y) centre (m) ± SE, the point below the trap, when positions were given (nan
+    otherwise); its SE covers what ``error`` says, like ``value``'s."""
     value: Estimate
     source: Source
     fall_time: float  # the run's t_f (s)
@@ -72,9 +90,11 @@ class ReleaseTime:
     events: int = 0  # events searched
     peaks: tuple[Peak, ...] = ()  # tallest first
     fit: FitResult | None = field(default=None, repr=False, compare=False)
-    error: ErrorKind = "within run"  # what ``value.se`` covers (module docstring)
+    error: ErrorKind = "within run"  # what ``value.se`` covers: "within run" leaves out shot jitter
     within_run_se: float = math.nan  # the fit's SE, kept when ``error`` is "shot bootstrap"
     bootstrap: BootstrapResult | None = field(default=None, repr=False, compare=False)
+    origin: tuple[Estimate, Estimate] = NO_ORIGIN  # the rest cloud's (X, Y) centre (m)
+    origin_events: int = 0  # events the origin came from
 
     @property
     def ok(self) -> bool:
@@ -86,6 +106,10 @@ class ReleaseTime:
         released at rest."""
         return any(note.startswith("unsure") for note in self.notes)
 
+    @property
+    def origin_found(self) -> bool:
+        return all(math.isfinite(axis.value) for axis in self.origin)
+
     def as_record(self) -> dict[str, Any]:
         """Strict JSON for a result's record."""
         return {"value": self.value.as_record(), "source": self.source, "fall_time": finite_or_none(self.fall_time),
@@ -95,7 +119,9 @@ class ReleaseTime:
                            "events": peak.events} for peak in self.peaks],
                 "fit": self.fit.as_record() if self.fit is not None else None, "error": self.error,
                 "within_run_se": finite_or_none(self.within_run_se),
-                "bootstrap": self.bootstrap.as_record() if self.bootstrap is not None else None}
+                "bootstrap": self.bootstrap.as_record() if self.bootstrap is not None else None,
+                "origin": {"x": self.origin[0].as_record(), "y": self.origin[1].as_record(),
+                           "events": self.origin_events}}
 
 
 def manual_release_time(release_time: float, constants: ResolvedConstants) -> ReleaseTime:
@@ -107,22 +133,46 @@ def manual_release_time(release_time: float, constants: ResolvedConstants) -> Re
     return ReleaseTime(Estimate(value), "manual", constants.fall_time, error="none")
 
 
+def velocity_origin(release: ReleaseTime | None, manual: tuple[float, float] | None = None
+                    ) -> tuple[tuple[float, float], OriginSource]:
+    """The XY origin for ``velocity.txy_to_velocity`` and where it came from: ``manual`` when
+    set (finite), else the release's detected ``origin``, else (0, 0), "assumed": the trap
+    taken to be above X = Y = 0 on the detector (say so beside the velocities)."""
+    if manual is not None and all(math.isfinite(float(axis)) for axis in manual):
+        return (float(manual[0]), float(manual[1])), "manual"
+    if release is not None and release.ok and release.origin_found:
+        return (release.origin[0].value, release.origin[1].value), "detected"
+    return (0.0, 0.0), "assumed"
+
+
 def detect_release_time(times: npt.ArrayLike, constants: ResolvedConstants, lower: float | None = None,
-                        upper: float | None = None, min_events: int = MIN_EVENTS) -> ReleaseTime:
+                        upper: float | None = None, min_events: int = MIN_EVENTS,
+                        positions: npt.ArrayLike | None = None) -> ReleaseTime:
     """The release time from the arrival of one cloud released at rest: ``times`` are the
     events' DLD times (s), summed over the chosen shots; [lower, upper] limits the search
-    (either end None: open). See the module docstring for the method and its notes."""
+    (either end None: open). ``positions``, when given, are the same events' (X, Y), shape
+    (n, 2), for the XY ``origin``. See the module docstring for the method and its notes; the
+    SE is within run (events independent): ``bootstrap_release_time`` gives the one over
+    shots."""
     t_f = constants.fall_time
 
     def failed(reason: str, events: int = 0, peaks: tuple[Peak, ...] = ()) -> ReleaseTime:
         return ReleaseTime(Estimate(math.nan), "detected", t_f, failure=reason, events=events, peaks=peaks)
 
     values = np.asarray(times, dtype=np.float64).ravel()
-    values = values[np.isfinite(values)]
+    xy: npt.NDArray[np.float64] | None = None
+    if positions is not None:
+        xy = np.asarray(positions, dtype=np.float64).reshape(-1, 2)
+        if len(xy) != len(values):
+            raise ValueError("positions must be (n, 2), one row per time")
+    kept = np.isfinite(values)
     if lower is not None:
-        values = values[values >= lower]
+        kept &= values >= lower
     if upper is not None:
-        values = values[values <= upper]
+        kept &= values <= upper
+    values = values[kept]
+    if xy is not None:
+        xy = xy[kept]
     if not (math.isfinite(t_f) and t_f > 0):
         return failed("no fall time: set the fall distance and g", len(values))
     if len(values) == 0:
@@ -150,51 +200,85 @@ def detect_release_time(times: npt.ArrayLike, constants: ResolvedConstants, lowe
     if typical > 0 and cloud.height < STANDS_OUT * typical:
         notes.append(f"unsure: the tallest peak is only {cloud.height / typical:.2g}× the T histogram's median "
                      "bin, so no cloud stands out: check that the search range holds one")
-    arrival, width, fit = _arrival(values, cloud, others, notes)
+    arrival, width, fit, reach = _arrival(values, cloud, others, constants, notes)
     if not math.isfinite(arrival.value):
         reason = "; ".join(note for note in notes if note.startswith("unsure")) or "too few events near the peak"
         return failed(f"the cloud's arrival couldn't be found ({reason})", len(values), search.peaks)
     skew = width.value ** 2 / t_f if math.isfinite(width.value) else math.nan
-    if math.isfinite(skew) and not skew <= arrival.se:
+    exact = fit is not None and fit.ok and fit.model.key == "arrival_time"
+    if not exact and math.isfinite(skew) and not skew <= arrival.se:
         notes.append(f"the cloud is wide (σ_t {width.value * 1e3:.3g} ms): its arrival is skewed, so the "
                      f"centre may be off by up to {skew * 1e6:.3g} µs")
+    origin, origin_events = NO_ORIGIN, 0
+    if xy is not None:
+        origin, origin_events = _origin(values, xy, arrival.value, width.value, reach, notes)
     return ReleaseTime(Estimate(arrival.value - t_f, arrival.se), "detected", t_f, arrival, width, "",
-                       tuple(notes), len(values), search.peaks, fit, within_run_se=arrival.se)
+                       tuple(notes), len(values), search.peaks, fit, within_run_se=arrival.se, origin=origin,
+                       origin_events=origin_events)
+
+
+def _split(shot: npt.ArrayLike) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64] | None]:
+    """A shot's times, and its (X, Y) when it is (n, ≥ 3) TXY events."""
+    array = np.asarray(shot, dtype=np.float64)
+    if array.ndim == 2 and array.shape[1] >= 3:
+        return array[:, 0], array[:, 1:3]
+    return array.ravel(), None
 
 
 def bootstrap_release_time(shots: Sequence[npt.ArrayLike], constants: ResolvedConstants,
                            lower: float | None = None, upper: float | None = None, min_events: int = MIN_EVENTS,
                            n_boot: int = RELEASE_N_BOOT, seed: int | None = 0,
                            cancelled: Callable[[], bool] | None = None) -> ReleaseTime:
-    """``detect_release_time`` on all the shots' times together, with its SE from the shot
+    """``detect_release_time`` on all the shots' events together, with its SE from the shot
     bootstrap (``bootstrap.bootstrap_shots``: the detection rerun on ``n_boot`` resamples of
     whole shots), so it includes the shot-to-shot jitter; ``error`` "shot bootstrap", the
-    fit's own SE kept as ``within_run_se``. ``shots`` are per-shot arrays of DLD times. When
-    the bootstrap has no error (fewer than 2 shots, or the detection failing on resamples),
-    the within-run SE stays, noted. ``cancelled`` raises ``results.Cancelled``."""
-    arrays = [np.asarray(shot, dtype=np.float64).ravel() for shot in shots]
+    fit's own (within-run) SE kept as ``within_run_se``. ``shots`` are per-shot arrays of DLD
+    times, or of TXY events (n, 3): then the XY ``origin`` is detected too, with its SE from
+    the same bootstrap. When the bootstrap has no error (fewer than 2 shots, or the
+    detection failing on resamples), the within-run SE stays, noted. ``cancelled`` raises
+    ``results.Cancelled``."""
+    split = [_split(shot) for shot in shots]
+    with_xy = bool(split) and all(xy is not None for _, xy in split)
+    pieces: list[tuple[npt.NDArray[np.float64], npt.NDArray[np.float64] | None]] = [
+        (times, xy if with_xy else None) for times, xy in split]
 
     def detect(chosen: list[Any]) -> ReleaseTime:
-        times = np.concatenate(chosen) if chosen else np.empty(0)
-        return detect_release_time(times, constants, lower, upper, min_events)
+        times = np.concatenate([t for t, _ in chosen]) if chosen else np.empty(0)
+        xy = np.concatenate([p for _, p in chosen]) if with_xy and chosen else None
+        return detect_release_time(times, constants, lower, upper, min_events, positions=xy)
 
-    whole = detect(arrays)
+    def statistic(chosen: list[Any]) -> npt.NDArray[np.float64]:
+        found = detect(chosen)
+        return np.array([found.value.value, found.origin[0].value, found.origin[1].value] if with_xy
+                        else [found.value.value])
+
+    whole = detect(list(pieces))
     if not whole.ok:
         return whole
-    result = bootstrap_shots(arrays, lambda chosen: detect(chosen).value.value, n_boot=n_boot, seed=seed,
-                             cancelled=cancelled)
-    notes = whole.notes + tuple(f"bootstrap: {note}" for note in result.notes)
-    if not result.ok:
-        return replace(whole, notes=notes + (f"no shot bootstrap error ({result.failure}): the SE is the fit's "
-                                             "alone, without the shot-to-shot jitter",), bootstrap=result)
-    return replace(whole, value=Estimate(whole.value.value, float(result.se)), notes=notes,
-                   error="shot bootstrap", bootstrap=result)
+    result = bootstrap_shots(pieces, statistic, n_boot=n_boot, seed=seed, cancelled=cancelled)
+    notes = whole.notes + tuple(f"bootstrap: {note}" for note in result.notes
+                                if not note.startswith("no error for element"))
+    if result.failures[0]:
+        return replace(whole, notes=notes + (f"no shot bootstrap error ({result.failures[0]}): the SE is the fit's "
+                                             "alone, within run, without the shot-to-shot jitter",),
+                       bootstrap=result)
+    origin = whole.origin
+    if with_xy and whole.origin_found:
+        if all(not text for text in result.failures[1:]):
+            origin = (Estimate(whole.origin[0].value, float(result.se[1])),
+                      Estimate(whole.origin[1].value, float(result.se[2])))
+        else:
+            origin = (Estimate(whole.origin[0].value), Estimate(whole.origin[1].value))
+            notes += ("no shot bootstrap error for the XY origin: its SE is unknown",)
+    return replace(whole, value=Estimate(whole.value.value, float(result.se[0])), notes=notes,
+                   error="shot bootstrap", bootstrap=result, origin=origin)
 
 
-def _arrival(values: npt.NDArray[np.float64], cloud: Peak, others: tuple[Peak, ...], notes: list[str]
-             ) -> tuple[Estimate, Estimate, FitResult | None]:
-    """(centre ± SE, σ_t ± SE, the fit) of the cloud's arrival: a Gaussian fit near the peak,
-    else the mean of the events near it (noted)."""
+def _arrival(values: npt.NDArray[np.float64], cloud: Peak, others: tuple[Peak, ...], constants: ResolvedConstants,
+             notes: list[str]) -> tuple[Estimate, Estimate, FitResult | None, float]:
+    """(centre ± SE, σ_t ± SE, the fit, the window's half-width) of the cloud's arrival: the
+    arrival-time profile fitted near the peak, else a Gaussian, else the mean of the events
+    near it (each fallback noted)."""
     reach = FIT_FWHMS * cloud.fwhm
     nearest = min((abs(peak.position - cloud.position) for peak in others), default=math.inf)
     reach = min(reach, nearest / 2)
@@ -202,23 +286,55 @@ def _arrival(values: npt.NDArray[np.float64], cloud: Peak, others: tuple[Peak, .
     near = values[(values >= low) & (values <= high)]
     bins = max(MIN_FIT_BINS, math.ceil(2 * reach / cloud.fwhm * FIT_BINS_PER_FWHM)) if cloud.fwhm > 0 else MIN_FIT_BINS
     fit: FitResult | None = None
-    reason = ""
-    if high > low and len(near) >= 2:
-        counts, edges = np.histogram(near, bins=bins, range=(low, high))
-        fit = fit_histogram(bin_centres(edges), counts, "gaussian")
+    if not (high > low and len(near) >= 2):
+        if len(near) < 2:
+            return Estimate(math.nan), Estimate(math.nan), None, reach
+        return _mean_arrival(near, reach, "too few events near the peak", notes) + (None, reach)
+    counts, edges = np.histogram(near, bins=bins, range=(low, high))
+    centres = bin_centres(edges)
+    models: list[tuple[str, FitModel | str]] = []
+    try:
+        models.append(("the arrival-time profile", arrival_time_model(effective_fall_distance(constants),
+                                                                      constants.g)))
+    except ValueError as error:
+        notes.append(f"no arrival-time fit ({error})")
+    models.append(("a Gaussian", "gaussian"))
+    reasons: list[str] = []
+    for title, model in models:
+        fit = fit_histogram(centres, counts, model)
         centre, sigma = fit["centre"], fit["sigma"]
         if not fit.ok:
-            reason = fit.failure
+            reasons.append(f"{title}: {fit.failure}")
         elif not (low <= centre.value <= high and math.isfinite(centre.se) and centre.se > 0):
-            reason = "its centre is outside the window or has no error"
+            reasons.append(f"{title}: its centre is outside the window or has no error")
         else:
+            if reasons:
+                notes.append(f"the arrival-time fit failed ({reasons[0].split(': ', 1)[1]}): a Gaussian's "
+                             "centre is used instead")
             notes.extend(f"fit: {note}" for note in fit.notes)
-            return centre, sigma, fit
-    else:
-        reason = "too few events near the peak"
-    if len(near) < 2:
-        return Estimate(math.nan), Estimate(math.nan), fit
+            return centre, sigma, fit, reach
+    return _mean_arrival(near, reach, "; ".join(reasons), notes) + (fit, reach)
+
+
+def _mean_arrival(near: npt.NDArray[np.float64], reach: float, reason: str, notes: list[str]
+                  ) -> tuple[Estimate, Estimate]:
     spread = float(np.std(near, ddof=1))
-    notes.append(f"Gaussian fit failed ({reason}): the mean time of the {len(near):,} events within "
+    notes.append(f"the fits failed ({reason}): the mean time of the {len(near):,} events within "
                  f"{reach * 1e3:.3g} ms of the peak is used instead")
-    return Estimate(float(near.mean()), spread / math.sqrt(len(near))), Estimate(spread), fit
+    return Estimate(float(near.mean()), spread / math.sqrt(len(near))), Estimate(spread)
+
+
+def _origin(values: npt.NDArray[np.float64], xy: npt.NDArray[np.float64], arrival: float, width: float,
+            reach: float, notes: list[str]) -> tuple[tuple[Estimate, Estimate], int]:
+    """The rest cloud's (X, Y) centre ± s/√n (within run), from its events within
+    ``ORIGIN_SIGMAS`` σ_t of its arrival (and the fit window), finite X and Y only."""
+    half = min(ORIGIN_SIGMAS * width, reach) if math.isfinite(width) and width > 0 else reach
+    chosen = xy[(np.abs(values - arrival) <= half) & np.all(np.isfinite(xy), axis=1)]
+    if len(chosen) < 2:
+        notes.append(f"no XY origin: {len(chosen)} event{'' if len(chosen) == 1 else 's'} with finite X and Y "
+                     "near the cloud's arrival")
+        return NO_ORIGIN, len(chosen)
+    root = math.sqrt(len(chosen))
+    x, y = (Estimate(float(chosen[:, axis].mean()), float(np.std(chosen[:, axis], ddof=1)) / root)
+            for axis in (0, 1))
+    return (x, y), len(chosen)

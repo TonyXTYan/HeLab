@@ -15,7 +15,9 @@ How a fit runs:
   settle: the Poisson maximum-likelihood fit (``_reweight`` says why: the first fit alone
   biases widths low). ``"counts"`` stops after the first fit. Either way the covariance is
   absolute (the SEs don't scale with χ²; a poor model shows as a large reduced χ², noted).
-  ``"none"`` fits unweighted and scales the covariance by the residuals instead.
+  ``"none"`` fits unweighted and scales the covariance by the residuals instead. With count
+  weights a model's ``offset`` is at least 0 (a mean count can't be negative), and an offset
+  at 0 isn't noted as "at its bound"; with ``sigma=`` it keeps the model's bound.
 - Scaling: x and counts are mapped to order one before fitting (a T profile is ~0.4 s wide
   ~0.1 ms, counts ~10³), each parameter by its role (a position, a width, a height or a
   dimensionless shape), and mapped back with the covariance.
@@ -64,6 +66,7 @@ MAX_RADIUS_RATIO = 2.0
 MIN_RADIUS_RATIO = 0.02
 RATIO = "ratio"  # the parameter max_radius_ratio caps
 RATIO_CAP_NEAR = 0.01  # a ratio within this fraction of the cap is "at its limit"
+OFFSET = "offset"  # floored at 0 for raw counts with count weights (fit_histogram)
 
 # curve_fit warns when it can't estimate a covariance; the result's checks report that
 # instead. Set once here, for SciPy's optimizer only: per-call filters aren't thread-safe.
@@ -279,6 +282,12 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
         return fit_model.function(centre + span * u, *to_data(np.asarray(normalised))) / height
 
     lower, upper = (np.array(bound, dtype=np.float64) for bound in fit_model.bounds(x, y))
+    # Raw counts with count weights: an offset below 0 makes the model negative in the tails
+    # (117 of 200 sparse Poisson fits went there), an impossible mean count. Rates and other
+    # data given with sigma= keep the model's own bound (−top: background-subtracted data).
+    floored = sigma is None and weights != "none" and OFFSET in fit_model.names
+    if floored:
+        lower[fit_model.names.index(OFFSET)] = max(float(lower[fit_model.names.index(OFFSET)]), 0.0)
     if has_ratio:
         upper[fit_model.names.index(RATIO)] = max_radius_ratio
     lower_n, upper_n = (lower - shift) / scale, (upper - shift) / scale
@@ -352,6 +361,7 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
                 zip(fit_model.parameters, found, lower_n, upper_n, width)
                 if parameter.name not in zero and parameter.name not in gated
                 and not (capped and parameter.name == RATIO)
+                and not (floored and parameter.name == OFFSET and value - low <= 1e-6 * size)
                 and (value - low <= 1e-6 * size or high - value <= 1e-6 * size)]
     if at_bound:
         notes.append(f"at its bound: {', '.join(at_bound)} (its SE is not reliable)")

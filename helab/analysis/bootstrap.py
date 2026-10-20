@@ -21,8 +21,9 @@ Tibshirani 1993, ch. 6 and 13).
   or on all but one resample, has no error either: a failure (per element for an array,
   ``BootstrapResult.failures``).
 
-For a weighted mean over shots, ``estimates.sewm`` gives the SE directly, with no resampling.
-Pure NumPy, no Qt.
+For a weighted mean over shots, ``estimates.sewm`` gives the SE directly, with no resampling;
+``shot_means`` does that per element for a per-shot statistic with many elements (D5's mean X
+per T bin: each shot's mean per bin, weighted by its events there). Pure NumPy, no Qt.
 """
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ from typing import Any, Callable, Sequence
 import numpy as np
 import numpy.typing as npt
 
-from helab.analysis.estimates import Estimate, finite_or_none
+from helab.analysis.estimates import Estimate, finite_or_none, sewm
 from helab.analysis.results import Cancelled
 
 Array = npt.NDArray[np.float64]
@@ -192,3 +193,47 @@ def bootstrap_shots(shots: Sequence[Any], statistic: Statistic, n_boot: int = DE
             notes.append(f"the statistic was undefined on {rows:,} of {n_boot:,} resamples, left out")
     return BootstrapResult(value.copy(), se, low, high, replicates, count, int(n_boot), seed, float(confidence),
                            undefined, failure, tuple(notes), tuple(element_failures))
+
+
+@dataclass(frozen=True)
+class ShotMeans:
+    """Per element: the weighted mean over shots of a per-shot value ± its SE over shots
+    (``estimates.sewm``), and how many shots it used (finite value, finite weight > 0).
+    Read-only arrays of the statistic's shape; SE nan with fewer than 2 shots, both nan with
+    none."""
+    value: Array
+    se: Array
+    shots: npt.NDArray[np.int64]
+
+    def __post_init__(self) -> None:
+        for array in (self.value, self.se, self.shots):
+            array.flags.writeable = False
+
+    @property
+    def estimates(self) -> tuple[Estimate, ...]:
+        return tuple(Estimate(float(v), float(s)) for v, s in zip(self.value.ravel(), self.se.ravel()))
+
+
+def shot_means(per_shot: npt.ArrayLike, weights: npt.ArrayLike | None = None) -> ShotMeans:
+    """The SE over shots of a per-shot mean statistic, without resampling: ``per_shot`` is
+    (shots, …), each shot's value per element (nan where it has none: no events in that
+    bin), ``weights`` the same shape (each shot's events there; None: equal). Per element,
+    ``sewm`` over the shots with a finite value and a finite weight > 0: with weights the
+    events, the value is the mean over all the shots' events and the SE includes the shot
+    to shot spread (the bootstrap's SE of the same ratio is about √((n−1)/n) of it)."""
+    values = np.asarray(per_shot, dtype=np.float64)
+    if values.ndim < 1:
+        raise ValueError("per_shot must have a shots axis first")
+    shares = np.ones_like(values) if weights is None else np.asarray(weights, dtype=np.float64)
+    if shares.shape != values.shape:
+        raise ValueError("weights must have per_shot's shape")
+    shape = values.shape[1:]
+    flat_values, flat_weights = values.reshape(len(values), -1), shares.reshape(len(values), -1)
+    usable = np.isfinite(flat_values) & np.isfinite(flat_weights) & (flat_weights > 0)
+    mean, se = np.full(flat_values.shape[1], math.nan), np.full(flat_values.shape[1], math.nan)
+    for index in range(flat_values.shape[1]):
+        chosen = usable[:, index]
+        estimate = sewm(flat_values[chosen, index], flat_weights[chosen, index])
+        mean[index], se[index] = estimate.value, estimate.se
+    shots = np.asarray(usable.sum(axis=0), dtype=np.int64).reshape(shape)
+    return ShotMeans(mean.reshape(shape), se.reshape(shape), shots)
