@@ -30,3 +30,11 @@ The conversion is one call once t_r and the origin are known, so other plots can
 4. Density images: v_x–v_y is a linear rescale of X–Y only per arrival time, so it must bin
    converted velocities (as `_density` here), not rescale the XY image.
 5. D12/D13 (correlations, halos) take the same velocities; the shared helper in 2 is what they need.
+
+## Full suite
+
+`python -m pytest -n 2 --reruns 5 --reruns-delay 1 -rR` at `9030dca`: 2 failed, 1983 passed,
+7 skipped, 2 xfailed, 11 rerun in 449.50 s. The two failures are the known root-only ones
+(`test_constants.py::test_read_only_saved_folder_is_replaced`,
+`test_cache_mover.py::test_recovery_isnt_usable_after_a_failed_settings_write`; 10 of the reruns).
+One other rerun: `test_dash_server.py::test_stop_frees_the_port`, passed on its rerun.
