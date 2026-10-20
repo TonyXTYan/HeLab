@@ -19,6 +19,7 @@ from helab.analysis.parameters import effective
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.scripts.base import DatasetAnalysis
 from helab.scripts.standard import basic_plots, scatter_3d, transfer_fractions
+from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset
 
 CENTRE, SPACING = 2.1375, 0.0125
@@ -89,8 +90,8 @@ def test_2d_plots_draw_with_every_library(script_class: Callable[[], DatasetAnal
     if isinstance(widget, MatplotlibPane):
         widget.canvas.draw()  # type: ignore[no-untyped-call]  # Draws without error, and has its toolbar.
         assert widget.toolbar is not None and widget.figure.axes
-    # A rerun shows in place only on a Plotly page (zoom and pan stay); the others draw anew.
-    assert script.update(widget, result_of(script, view(range(1, 8)), values=None)) == (backend == PLOTLY)
+    # A rerun with the same settings (Live's next shots) shows in place in every library.
+    assert script.update(widget, result_of(script, view(range(1, 8)), dict(result.parameters)))
 
 
 def test_render_is_the_default_library(qtbot: QtBot) -> None:
@@ -147,7 +148,8 @@ def test_the_scatter_draws_with_every_library(backend: str, qtbot: QtBot) -> Non
         assert widget.findChild(gl.GLViewWidget) is not None
     else:  # Qt's offscreen platform, or a PC without OpenGL: it says so instead of a black view.
         assert isinstance(widget, QLabel) and "needs OpenGL" in widget.text()
-    assert script.update(widget, result) == (backend == PLOTLY)
+    # In place, except offscreen PyQtGraph: its message is drawn anew (OpenGL may have come back).
+    assert script.update(widget, result) == (backend != PYQTGRAPH or opengl_available())
 
 
 def test_the_scatter_unit_box_spans_the_crop() -> None:
@@ -166,3 +168,162 @@ def test_empty_plots_say_why_with_every_library(backend: str, qtbot: QtBot) -> N
         widget: QWidget = script.draw(result_of(script, empty), backend)
         qtbot.addWidget(widget)
         assert isinstance(widget, QLabel) and widget.text() == "No shots yet"
+
+
+def test_pyqtgraph_updates_in_place_keeping_a_zoom(qtbot: QtBot) -> None:
+    """Unzoomed, the axes follow the new data; zoomed or panned (pyqtgraph's auto range off), the
+    view stays where the user put it."""
+    script = basic_plots.CountsPerShot()
+    widget: Any = script.draw(result_of(script, view(range(1, 7))), PYQTGRAPH)
+    qtbot.addWidget(widget)
+    widget.resize(400, 300)
+    widget.show()
+    box = widget.getPlotItem().vb
+    curve = widget.counts_curve
+    assert script.update(widget, result_of(script, view(range(1, 11))))
+    assert widget.counts_curve is curve and list(curve.xData) == list(range(1, 11))
+    box.updateAutoRange()
+    assert box.viewRange()[0][1] >= 10  # Followed the new shots.
+    box.setXRange(2, 4, padding=0)  # The user zooms: auto range off.
+    assert script.update(widget, result_of(script, view(range(1, 13))))
+    assert box.viewRange()[0] == pytest.approx([2, 4]) and len(curve.xData) == 12
+
+
+def test_pyqtgraph_histograms_update_in_place_unless_their_layout_changed(qtbot: QtBot) -> None:
+    script = basic_plots.TxyHistograms()
+    highlighted = result_of(script, view(), {"highlight_newest": True})
+    widget: Any = script.draw(highlighted, PYQTGRAPH)
+    qtbot.addWidget(widget)
+    overlay = widget.newest_views[0]
+    newer = result_of(script, view(range(1, 9)), {"highlight_newest": True})
+    assert script.update(widget, newer)
+    assert widget.newest_views[0] is overlay and newer.data.newest_shot == 8
+    item, fresh = newer.data.items[0], newer.data.newest[0]
+    assert list(overlay.curve.yData) == fresh.astype(float).tolist()
+    assert overlay._ratio == pytest.approx(basic_plots.newest_scale(item, fresh))
+    assert "shot 8" in widget.title_label.text
+    # Log Y, or the highlight off, is another layout: drawn anew.
+    assert not script.update(widget, result_of(script, view(), {"highlight_newest": True, "log_y": True}))
+    assert not script.update(widget, result_of(script, view(), {}))
+
+
+def test_transfer_fractions_pyqtgraph_update_in_place(qtbot: QtBot) -> None:
+    script = transfer_fractions.TransferFractions()
+    widget: Any = script.draw(result_of(script, view()), PYQTGRAPH)
+    qtbot.addWidget(widget)
+    curves = list(widget.fraction_curves)
+    newer = result_of(script, view(range(1, 10)))
+    assert script.update(widget, newer)
+    assert widget.fraction_curves == curves and len(curves[0].xData) == 9
+    region, _ = widget.order_windows[2]
+    assert region.getRegion() == pytest.approx(newer.data.orders.window(0))
+    # Another number of orders: drawn anew.
+    assert not script.update(widget, result_of(script, view(), {"orders_each_side": 3}))
+
+
+def test_matplotlib_redraw_keeps_a_zoom_and_home_goes_to_the_new_data(qtbot: QtBot) -> None:
+    script = basic_plots.CountsPerShot()
+    pane = script.draw(result_of(script, view(range(1, 7))), MATPLOTLIB)
+    qtbot.addWidget(pane)
+    assert isinstance(pane, MatplotlibPane)
+    figure = pane.figure
+    assert script.update(pane, result_of(script, view(range(1, 11))))
+    axes = figure.axes[0]
+    assert pane.figure is figure and axes.get_xlim()[1] >= 10  # Unzoomed: follows the new shots.
+    axes.set_xlim(2, 4)  # The user zooms.
+    assert pane.zoomed() == [True]
+    assert script.update(pane, result_of(script, view(range(1, 13))))
+    axes = figure.axes[0]
+    assert axes.get_xlim() == pytest.approx((2, 4)) and len(axes.lines[0].get_xdata()) == 12
+    pane.toolbar.home()
+    assert figure.axes[0].get_xlim()[1] >= 12
+
+
+def test_matplotlib_scatter_keeps_its_rotation(qtbot: QtBot) -> None:
+    script = scatter_3d.Scatter3D()
+    widget = script.draw(result_of(script, view()), MATPLOTLIB)
+    qtbot.addWidget(widget)
+    pane = widget.findChild(MatplotlibPane)
+    assert pane is not None
+    pane.figure.axes[0].view_init(elev=55, azim=-30)
+    newer = result_of(script, view(range(1, 9)))
+    assert script.update(widget, newer)
+    axes = pane.figure.axes[0]
+    assert (axes.elev, axes.azim) == (55, -30)
+    note = widget.findChild(QLabel, "plot_note")
+    assert note is not None and note.text() == scatter_3d.note_text(newer.data)
+
+
+def test_opengl_scatter_updates_its_points_in_place(qtbot: QtBot) -> None:
+    """Built directly (Qt's offscreen platform has no OpenGL to draw it): the same view and items,
+    newer points and axis labels; the camera is left alone."""
+    script = scatter_3d.Scatter3D()
+    first = result_of(script, view())
+    built: Any = scatter_3d.opengl_view(first, first.data)
+    widget = scatter_3d.noted(built, first.data, None)
+    qtbot.addWidget(widget)
+    points, camera = built.earlier_points, dict(built.opts)
+    newer = result_of(script, view(range(1, 9)), {"highlight_newest": True})
+    assert script.update(widget, newer)
+    assert built.earlier_points is points and len(points.pos) == len(newer.data.points)
+    assert len(built.newest_points.pos) == len(newer.data.newest)
+    assert built.opts["distance"] == camera["distance"] and built.opts["azimuth"] == camera["azimuth"]
+
+
+def test_transfer_fractions_highlight_the_newest_shot_in_the_t_histogram() -> None:
+    """Off by default; on, the newest chosen shot's T (in the XY box) in the histogram's bins."""
+    script = transfer_fractions.TransferFractions()
+    data = view()
+    plain = result_of(script, data).data
+    assert plain.newest_shot is None and len(plain.newest) == 0
+    lit = result_of(script, data, {"highlight_newest": True, "newest_colour": "magenta"}).data
+    assert lit.newest_shot == 6 and not lit.newest_left_out and lit.colour != plain.colour
+    edges = lit.histogram[0]
+    expected = np.histogram(transfer_fractions.in_box(np.asarray(data.shots[6]), 0.03)[:, 0], bins=edges)[0]
+    assert lit.newest.tolist() == expected.astype(float).tolist()
+    assert "newest shot in magenta" in script.describe_run("Plot", {**result_of(script, data).parameters,
+                                                                    "highlight_newest": True,
+                                                                    "newest_colour": "magenta"}, data)[1]
+    # A newest shot Minimum counts left out (a bad shot) is still shown, and says so.
+    shots = {shot: np.asarray(data.shots[shot]) for shot in data.shot_numbers}
+    shots[7] = shots[6][:30]
+    fingerprint = [[shot, 100 + shot, 1_000 + shot] for shot in shots]
+    weak = build_view(Dataset("/data/root/run_1", "sig-2", shots, {"fingerprint": fingerprint, "source": "files",
+                                                                   "loaded_at": 1_700_000_000.0}, 0))
+    left_out = result_of(script, weak, {"highlight_newest": True}).data
+    assert left_out.newest_shot == 7 and left_out.newest_left_out and 7 not in left_out.shots.tolist()
+    assert 0 < left_out.newest.sum() <= 30
+    assert "left out: ≤ 50 counts" in transfer_fractions.times_title(left_out)
+
+
+@pytest.mark.parametrize("backend", backends.BACKENDS)
+def test_transfer_fractions_draw_the_newest_shot_in_every_library(backend: str, qtbot: QtBot) -> None:
+    script = transfer_fractions.TransferFractions()
+    result = result_of(script, view(), {"highlight_newest": True})
+    widget: Any = script.draw(result, backend)
+    qtbot.addWidget(widget)
+    if backend == PYQTGRAPH:
+        assert widget.newest_view is not None
+        assert list(widget.newest_view.curve.yData) == result.data.newest.tolist()
+        assert widget.times_plot.getAxis("right").isVisible()
+    elif backend == PLOTLY:
+        snapshot = dash_server.snapshot(widget.plot_id)
+        assert snapshot is not None
+        newest = [trace for trace in cast(Any, snapshot.figure).data if str(trace.name).startswith("shot 6")]
+        assert len(newest) == 1 and list(newest[0].customdata[:-1]) == result.data.newest.tolist()
+    else:
+        times = widget.figure.axes[1]
+        right = next(axes for axes in widget.figure.axes if getattr(axes, backends.FOLLOWER, False))
+        scale = transfer_fractions.newest_scale(result.data.histogram[1], result.data.newest)
+        assert right.get_ylim()[1] == pytest.approx(times.get_ylim()[1] / scale)
+    # Live's next shot: in place, the highlight moving to it.
+    newer = result_of(script, view(range(1, 8)), {"highlight_newest": True})
+    assert script.update(widget, newer) and newer.data.newest_shot == 7
+    if backend == PYQTGRAPH:
+        assert list(widget.newest_view.curve.yData) == newer.data.newest.tolist()
+        assert widget.newest_view._ratio == pytest.approx(
+            transfer_fractions.newest_scale(newer.data.histogram[1], newer.data.newest))
+        # The highlight off, or another colour: another layout, drawn anew.
+        assert not script.update(widget, result_of(script, view(), {}))
+        assert not script.update(widget, result_of(script, view(), {"highlight_newest": True,
+                                                                    "newest_colour": "magenta"}))

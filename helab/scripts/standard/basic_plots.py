@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, List, Mapping, Optional, Sequence, cast
+from typing import Any, Callable, List, Mapping, Optional, Sequence, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -15,8 +15,8 @@ from plotly.subplots import make_subplots
 from PyQt6.QtCore import QRectF, pyqtSlot
 from PyQt6.QtWidgets import QWidget
 
-from helab.analysis.backends import (MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane, mpl_colour, mpl_figure,
-                                     rgb)
+from helab.analysis.backends import (FOLLOWER, MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane, matplotlib_pane,
+                                     mpl_colour, mpl_figure, rgb)
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec
@@ -74,6 +74,13 @@ class OverlayView(pg.ViewBox):  # type: ignore[misc]
         self._shift = math.log10(ratio) if log_y and ratio > 0 else 0.0
         source.sigResized.connect(self.follow)
         source.sigYRangeChanged.connect(self.follow)
+        self.curve: Any = None  # The newest shot's counts (``overlay_newest``)
+
+    def set_ratio(self, ratio: float) -> None:
+        """A newer shot's scale (a Live rerun): its counts stay where they'd sit at the plot's."""
+        self._ratio = ratio
+        self._shift = math.log10(ratio) if self._log_y and ratio > 0 else 0.0
+        self.follow()
 
     @pyqtSlot()
     def follow(self) -> None:
@@ -119,8 +126,17 @@ def overlay_newest(plot: Any, edges: npt.NDArray[np.float64], counts: npt.NDArra
     if log_y:
         curve.setLogMode(False, True)
     view.addItem(curve)
+    view.curve = curve
     view.follow()
     return view
+
+
+def nan_empty(counts: npt.NDArray[Any], log_y: bool) -> npt.NDArray[np.float64]:
+    """``counts`` as floats; with log Y, empty bins (no logarithm) as NaN, left out of the line."""
+    values = counts.astype(np.float64)
+    if log_y:
+        values[values <= 0] = np.nan
+    return values
 
 
 @dataclass(frozen=True)
@@ -178,6 +194,15 @@ def plotly_update(widget: QWidget, figure: Optional[go.Figure]) -> bool:
     return True
 
 
+def matplotlib_update(widget: QWidget, build: Callable[[Any], Any]) -> bool:
+    """A newer Matplotlib drawing on the figure already shown (``MatplotlibPane.redraw``)."""
+    pane = matplotlib_pane(widget)
+    if pane is None:
+        return False
+    pane.redraw(build)
+    return True
+
+
 class CountsPerShot(DatasetAnalysis):
     def get_metadata(self) -> ScriptMetadata:
         return self.create_metadata(
@@ -224,14 +249,23 @@ class CountsPerShot(DatasetAnalysis):
         plot.setLabel("bottom", "Shot number")
         plot.setLabel("left", "Events")
         plot.showGrid(x=True, y=True, alpha=0.3)
-        plot.plot(data.shots, data.counts, pen=pg.mkPen(COLOUR, width=1),
-                  symbol="o", symbolSize=4, symbolBrush=COLOUR, symbolPen=None)
+        plot.counts_curve = plot.plot(data.shots, data.counts, pen=pg.mkPen(COLOUR, width=1),
+                                      symbol="o", symbolSize=4, symbolBrush=COLOUR, symbolPen=None)
         return cast(QWidget, plot)
 
     def update(self, widget: QWidget, result: AnalysisResult) -> bool:
-        """A rerun (e.g. Live's next shots) updates a Plotly page in place: zoom and pan stay."""
+        """A rerun (e.g. Live's next shots) updates the plot in place, in every library: a zoom
+        or pan stays, else the axes follow the new data."""
         data: ShotCounts = result.data
-        return plotly_update(widget, counts_plotly(result) if data.total else None)
+        if not data.total:
+            return False
+        if isinstance(widget, pg.PlotWidget) and hasattr(widget, "counts_curve"):
+            plot = cast(Any, widget)
+            plot.setTitle(source_title(result, counts_title(data)))
+            plot.counts_curve.setData(data.shots, data.counts)
+            return True
+        return (plotly_update(widget, counts_plotly(result))
+                or matplotlib_update(widget, lambda figure: counts_matplotlib(result, figure)))
 
 
 def counts_plotly(result: AnalysisResult) -> go.Figure:
@@ -245,9 +279,9 @@ def counts_plotly(result: AnalysisResult) -> go.Figure:
     return figure
 
 
-def counts_matplotlib(result: AnalysisResult) -> Any:
+def counts_matplotlib(result: AnalysisResult, figure: Any = None) -> Any:
     data: ShotCounts = result.data
-    figure = mpl_figure()
+    figure = mpl_figure(figure)
     axes = figure.add_subplot()
     axes.plot(data.shots, data.counts, "-o", color=mpl_colour(COLOUR), linewidth=1, markersize=3)
     axes.set_xlabel("Shot number")
@@ -314,9 +348,19 @@ class TxyHistograms(DatasetAnalysis):
         return self.draw(result, PYQTGRAPH, parent)
 
     def update(self, widget: QWidget, result: AnalysisResult) -> bool:
-        """A rerun (e.g. Live's next shots) updates a Plotly page in place: zoom and pan stay."""
+        """A rerun (e.g. Live's next shots) updates the plot in place, in every library: a zoom
+        or pan stays, else the axes follow the new data. PyQtGraph draws anew when the plot's
+        layout changed (log Y, the highlight or its colour)."""
         data: Histograms = result.data
-        return plotly_update(widget, histograms_plotly(result) if data.items and data.items[0].total else None)
+        if not data.items or not data.items[0].total:
+            return False
+        if isinstance(widget, pg.GraphicsLayoutWidget):
+            if getattr(widget, "histogram_layout", None) != histogram_layout(result):
+                return False
+            fill_histograms(widget, result)
+            return True
+        return (plotly_update(widget, histograms_plotly(result))
+                or matplotlib_update(widget, lambda figure: histograms_matplotlib(result, figure)))
 
     def draw(self, result: AnalysisResult, backend: str, parent: Optional[QWidget] = None) -> QWidget:
         data: Histograms = result.data
@@ -330,27 +374,25 @@ class TxyHistograms(DatasetAnalysis):
         log_y = bool(result.parameters.get(LOG_Y.name, False))
         widget: Any = pg.GraphicsLayoutWidget(parent)
         widget.setBackground("w")
-        widget.addLabel(histograms_title(result), row=0, col=0)
-        overlays = []
-        for row, item in enumerate(items, start=1):
-            highlighted = data.newest_shot is not None and row - 1 < len(data.newest)
+        widget.title_label = widget.addLabel("", row=0, col=0)
+        rows, overlays = [], []
+        for row, (item, highlighted) in enumerate(zip(items, histogram_layout(result)[1]), start=1):
             # A right axis only for the newest shot's counts (pyqtgraph shows any axis it is given).
             axes = ({"left": DecadeLogAxis("left"), **({"right": DecadeLogAxis("right")} if highlighted else {})}
                     if log_y else None)
-            plot = widget.addPlot(row=row, col=0, title=histogram_title(item, item.axis in data.reversed),
-                                  axisItems=axes)
+            plot = widget.addPlot(row=row, col=0, axisItems=axes)
             plot.setLabel("bottom", f"{item.axis} ({UNITS[AXES.index(item.axis)]})")
             plot.setLabel("left", "Events")
+            counts = nan_empty(item.counts, log_y)
             if log_y:
                 # Empty bins have no logarithm: they are left out of the bars.
-                counts = item.counts.astype(np.float64)
-                counts[counts <= 0] = np.nan
                 plot.setLogMode(x=False, y=True)
-                plot.addItem(pg.PlotDataItem(item.edges, counts, stepMode="center", connect="finite",
-                                             pen=pg.mkPen(COLOUR)))
+                main = pg.PlotDataItem(item.edges, counts, stepMode="center", connect="finite", pen=pg.mkPen(COLOUR))
             else:
-                plot.addItem(pg.PlotDataItem(item.edges, item.counts, stepMode="center", fillLevel=0,
-                                             pen=pg.mkPen(COLOUR), brush=(*COLOUR, 90)))
+                main = pg.PlotDataItem(item.edges, counts, stepMode="center", fillLevel=0, pen=pg.mkPen(COLOUR),
+                                       brush=(*COLOUR, 90))
+            plot.addItem(main)
+            scaled = overlay = None
             if highlighted:
                 # One shot is a small share of all: drawn to the histogram's scale (its total over
                 # the shot's), its shape compares; its own axis on the right reads its real counts.
@@ -358,19 +400,48 @@ class TxyHistograms(DatasetAnalysis):
                 left.setPen(pg.mkPen(COLOUR))
                 left.setTextPen(pg.mkPen(COLOUR))
                 plot.setLabel("left", "Events (all)", color=pg.mkColor(COLOUR).name())
-                counts_new = data.newest[row - 1]
-                scale = float(item.counts.sum()) / float(counts_new.sum()) if counts_new.sum() > 0 else 1.0
+                fresh = data.newest[row - 1]
+                scale = newest_scale(item, fresh)
                 # The scaled line, transparent (hidden items don't count), keeps the plot's own range
                 # (and its Auto) holding the overlay.
-                scaled = counts_new * scale
-                if log_y:
-                    scaled = np.where(scaled > 0, scaled, np.nan)
-                plot.addItem(pg.PlotDataItem(item.edges, scaled, stepMode="center", connect="finite",
-                                             pen=pg.mkPen((0, 0, 0, 0))))
-                overlays.append(overlay_newest(plot, item.edges, counts_new, scale, data.colour, log_y,
-                                               f"shot {data.newest_shot}"))
+                scaled = pg.PlotDataItem(item.edges, nan_empty(fresh * scale, log_y), stepMode="center",
+                                         connect="finite", pen=pg.mkPen((0, 0, 0, 0)))
+                plot.addItem(scaled)
+                overlay = overlay_newest(plot, item.edges, fresh, scale, data.colour, log_y,
+                                         f"shot {data.newest_shot}")
+                overlays.append(overlay)
+            rows.append((plot, main, scaled, overlay))
+        widget.histogram_rows = rows
         widget.newest_views = overlays  # Kept with the widget (they live in its scene).
+        widget.histogram_layout = histogram_layout(result)
+        fill_histograms(widget, result)
         return cast(QWidget, widget)
+
+
+def histogram_layout(result: AnalysisResult) -> tuple[Any, ...]:
+    """What a PyQtGraph drawing of the histograms is built for: a newer result with the same can be
+    shown in it (``fill_histograms``), else it is drawn anew."""
+    data: Histograms = result.data
+    highlighted = tuple(data.newest_shot is not None and row < len(data.newest) for row in range(len(data.items)))
+    return (bool(result.parameters.get(LOG_Y.name, False)), highlighted, tuple(item.axis for item in data.items),
+            data.colour if any(highlighted) else None)
+
+
+def fill_histograms(widget: Any, result: AnalysisResult) -> None:
+    """``result``'s histograms in a drawing built for its layout (``histogram_layout``)."""
+    data: Histograms = result.data
+    log_y = bool(result.parameters.get(LOG_Y.name, False))
+    widget.title_label.setText(histograms_title(result))
+    for row, (item, (plot, main, scaled, overlay)) in enumerate(zip(data.items, widget.histogram_rows)):
+        plot.setTitle(histogram_title(item, item.axis in data.reversed))
+        main.setData(item.edges, nan_empty(item.counts, log_y))
+        if overlay is not None:
+            fresh = data.newest[row]
+            scale = newest_scale(item, fresh)
+            scaled.setData(item.edges, nan_empty(fresh * scale, log_y))
+            overlay.curve.setData(item.edges, nan_empty(fresh, log_y))
+            plot.setLabel("right", f"shot {data.newest_shot} events", color=pg.mkColor(data.colour).name())
+            overlay.set_ratio(scale)
 
 
 def histograms_title(result: AnalysisResult, where: str = "right axis") -> str:
@@ -432,12 +503,12 @@ def histograms_plotly(result: AnalysisResult) -> go.Figure:
     return figure
 
 
-def histograms_matplotlib(result: AnalysisResult) -> Any:
+def histograms_matplotlib(result: AnalysisResult, figure: Any = None) -> Any:
     """The histograms in three rows; the newest shot on a right axis reading its real counts,
     which follows the left one's zoom at the histogram's scale."""
     data: Histograms = result.data
     log_y = bool(result.parameters.get(LOG_Y.name, False))
-    figure = mpl_figure()
+    figure = mpl_figure(figure)
     rows = figure.subplots(len(data.items), 1, squeeze=False)[:, 0]
     for row, (axes, item) in enumerate(zip(rows, data.items)):
         counts = item.counts.astype(np.float64)
@@ -456,6 +527,7 @@ def histograms_matplotlib(result: AnalysisResult) -> Any:
             fresh = data.newest[row]
             scale = newest_scale(item, fresh)
             right = axes.twinx()
+            setattr(right, FOLLOWER, True)  # Its limits follow the left axis's.
             if log_y:
                 right.set_yscale("log")
             values = fresh.astype(np.float64)

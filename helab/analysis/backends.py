@@ -13,7 +13,7 @@ or its reuse key), and changing it draws the result already shown again, without
 from __future__ import annotations
 
 import functools
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
@@ -50,8 +50,37 @@ def mpl_colour(colour: tuple[int, int, int], alpha: float = 1.0) -> tuple[float,
     return colour[0] / 255, colour[1] / 255, colour[2] / 255, alpha
 
 
+FOLLOWER = "_helab_follower"  # An axes whose limits follow another's (a twin axis): never restored
+
+
+def axes_state(figure: Any) -> list[tuple[Any, ...]]:
+    """Each axes' scales and limits (3D: with z), in order; a follower's as None."""
+    states: list[tuple[Any, ...]] = []
+    for axes in figure.axes:
+        if getattr(axes, FOLLOWER, False):
+            states.append(())
+            continue
+        three_d = hasattr(axes, "get_zlim")
+        scales = (axes.get_xscale(), axes.get_yscale(), axes.get_zscale() if three_d else "")
+        limits = (axes.get_xlim(), axes.get_ylim(), axes.get_zlim() if three_d else ())
+        states.append((scales, limits))
+    return states
+
+
+def set_limits(axes: Any, limits: tuple[Any, ...]) -> None:
+    axes.set_xlim(*limits[0])
+    axes.set_ylim(*limits[1])
+    if limits[2]:
+        axes.set_zlim(*limits[2])
+
+
 class MatplotlibPane(QWidget):
-    """A Matplotlib figure in the plot area, with Matplotlib's navigation toolbar."""
+    """A Matplotlib figure in the plot area, with Matplotlib's navigation toolbar.
+
+    ``redraw`` draws a newer result onto the same figure (a Live rerun), keeping what the user did
+    to the view: an axes zoomed or panned away from its automatic limits keeps its limits (when the
+    newer drawing has the same axes and scales), and 3D axes keep their rotation. Home goes back to
+    the newer drawing's automatic limits."""
 
     def __init__(self, figure: Any, parent: Optional[QWidget] = None) -> None:
         from matplotlib.backends.backend_qt import NavigationToolbar2QT
@@ -68,13 +97,53 @@ class MatplotlibPane(QWidget):
         layout.setSpacing(0)
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas, 1)
+        self.auto_state = axes_state(figure)  # The limits as drawn, before the user changed any
+
+    def zoomed(self) -> list[bool]:
+        """Per axes: whether the user moved it away from its automatic limits."""
+        now = axes_state(self.figure)
+        if len(now) != len(self.auto_state):
+            return [False] * len(now)
+        return [bool(state) and state != auto for state, auto in zip(now, self.auto_state)]
+
+    def redraw(self, build: Callable[[Any], Any]) -> None:
+        """``build`` draws the newer result into the cleared figure; the user's view is kept."""
+        figure = self.figure
+        before, zoomed = axes_state(figure), self.zoomed()
+        views = [(axes.elev, axes.azim, axes.roll) if hasattr(axes, "elev") else None for axes in figure.axes]
+        figure.clear()
+        build(figure)
+        self.auto_state = axes_state(figure)
+        after = figure.axes
+        same = len(after) == len(before) and all(
+            not state or (new and new[0] == state[0]) for state, new in zip(before, self.auto_state))
+        self.toolbar.update()  # The old axes' views are gone.
+        if same:
+            for axes, view in zip(after, views):
+                if view is not None and hasattr(axes, "view_init"):
+                    axes.view_init(elev=view[0], azim=view[1], roll=view[2])
+            if any(zoomed):
+                self.toolbar.push_current()  # Home: the automatic view.
+                for axes, state, moved in zip(after, before, zoomed):
+                    if moved:
+                        set_limits(axes, state[1])
+                self.toolbar.push_current()
+        self.canvas.draw_idle()  # type: ignore[no-untyped-call]
 
 
-def mpl_figure() -> Any:
-    """A new Matplotlib figure laid out to fit its plot area (no ``pyplot``)."""
+def mpl_figure(figure: Any = None) -> Any:
+    """``figure`` (one being drawn again), else a new Matplotlib figure laid out to fit its plot
+    area (no ``pyplot``)."""
+    if figure is not None:
+        return figure
     from matplotlib.figure import Figure
 
     return Figure(layout="constrained")
+
+
+def matplotlib_pane(widget: QWidget) -> Optional[MatplotlibPane]:
+    """The Matplotlib pane ``widget`` is or holds, if any."""
+    return widget if isinstance(widget, MatplotlibPane) else widget.findChild(MatplotlibPane)
 
 
 @functools.cache
