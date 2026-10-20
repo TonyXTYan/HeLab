@@ -22,10 +22,18 @@ Units: mm/s (the default: a µK cloud's σ_v is tens of mm/s), m/s, or recoils, 
 or 2ħk/m (one Bragg order). The optional Gaussian fits give each axis's centre and σ_v ± SE and the
 temperature T = m σ_v² / k_B (the expansion's alone: the cloud's initial size is neglected). The
 record holds t_r and where it came from, the origin and how it was found, and every fit.
+
+Each histogram spans the shortest range holding 99 % of its velocities (Histogram range: keep),
+saying how many fall outside: a dark count just after t_r has a velocity without bound (τ → 0).
+A Live rerun keeps the detection and the auto-crop box of the plot's last run while the folder,
+settings and constants are the same (``KeptRuns``), and says so; a run the user starts finds both
+again. The newest shot can be highlighted, as in the T, X, Y histograms.
 """
 from __future__ import annotations
 
+import json
 import math
+import threading
 from dataclasses import dataclass, field, replace
 from typing import Any, List, Mapping, Optional, cast
 
@@ -51,12 +59,14 @@ from helab.analysis.plot_text import add_label, line_html, lines_html, notes_htm
 from helab.analysis.release import (OriginSource, ReleaseTime, detect_release_time, layer_origin, layer_release_time,
                                    velocity_origin)
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
+from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, newest_brief, newest_colour,
+                                      newest_events, newest_shot, newest_specs, range_brief, range_specs,
                                       range_warnings, select_shots, selection_text, shots_brief, shots_text)
-from helab.analysis.stats import MAX_BINS, CropBox, crop_box, histogram
-from helab.analysis.velocity import VELOCITY_AXES, recoil_velocity, txy_to_velocity
+from helab.analysis.stats import MAX_BINS, CropBox, crop_box, histogram, shortest_range
+from helab.analysis.velocity import VELOCITY_AXES, recoil_velocity, valid_velocities
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
+from helab.scripts.standard.basic_plots import OverlayView, overlay_newest, update_newest
 from helab.scripts.standard.density_images import (DECADES, GAMMA, LINEAR, SCALE, automatic_bins, colour_map,
                                                    display_image, viridis_lut)
 
@@ -72,12 +82,20 @@ UNIT = ParameterSpec("velocity_unit", "Unit", "choice", MM_S, choices=(MM_S, M_S
                      group=VELOCITY_GROUP,
                      tip="mm/s or m/s, or recoils: ħk/m is one photon's recoil at the recoil wavelength (Constants: "
                          "≈ 92 mm/s for He* at 1,083 nm), 2ħk/m one Bragg order (counter-propagating beams).")
+KEEP = ParameterSpec("velocity_keep", "Histogram range: keep", "float", 99.0, (50.0, 100.0), " %",
+                     group=VELOCITY_GROUP,
+                     tip="Each histogram spans the shortest velocity range holding this share of the events (the "
+                         "titles say how many fall outside): a dark count arriving just after t_r has a huge "
+                         "velocity (τ → 0), so the full extent hides the cloud. 100 % shows every velocity.")
 BINS = ParameterSpec("bins", "Bins (0 = auto)", "int", 0, (0, MAX_BINS), group=VELOCITY_GROUP,
-                     tip="Bins of each histogram, over its velocities' full extent. 0 = automatic (Freedman–"
+                     tip="Bins of each histogram, over its range (Histogram range). 0 = automatic (Freedman–"
                          "Diaconis: width 2·IQR·n^-1/3).")
 FIT = ParameterSpec("fit", "Fit Gaussians", "bool", False, group=VELOCITY_GROUP,
                     tip="Fit each histogram with a Gaussian + offset: its centre and σ_v ± SE, and the temperature "
-                        "T = m σ_v² / k_B (ideal gas, pure expansion: the cloud's initial size is neglected).")
+                        "T = m σ_v² / k_B (ideal gas, pure expansion: the cloud's initial size is neglected). The "
+                        "offset is approximate: a dark count uniform in T, X and Y is not flat in velocity "
+                        "(v_x = (x − x₀)/τ spreads it as 1/τ), so a strong background bends the fit.")
+HIGHLIGHT, NEWEST_COLOUR = newest_specs(VELOCITY_GROUP)
 DENSITY_GROUP = "Density"
 OFF, VX_VY, VX_VZ = "off", "v_x–v_y", "v_x–v_z"
 DENSITY_AXES = {VX_VY: (1, 2), VX_VZ: (1, 0)}  # (horizontal, vertical) as velocity columns (v_z, v_x, v_y)
@@ -106,13 +124,15 @@ OWN_KEYS = ("fall_distance", "fall_time", "g", "release_time", "arrival_time", "
             "recoil_wavelength")
 CONSTANT_KEYS = (*OWN_KEYS, "mass", "k_B", "hbar")
 CONSTANTS = tuple(constants_specs(OWN_KEYS, page=CONSTANTS_PAGE))
-PARAMETERS = (*SHOT_SPECS, *RANGE, *MASK_SPECS, UNIT, BINS, FIT, DENSITY, DENSITY_BINS, *COLOUR_SPECS, SEARCH_MIN,
+PARAMETERS = (*SHOT_SPECS, *RANGE, *MASK_SPECS, UNIT, KEEP, BINS, FIT, HIGHLIGHT, NEWEST_COLOUR, DENSITY, DENSITY_BINS, *COLOUR_SPECS, SEARCH_MIN,
               SEARCH_MAX, *CONSTANTS)
 
 DETECTED_NOTE = ("t_r detected in this run (one detection, its SE within run, no shot bootstrap): the Release time "
                  "plot measures it over shots and saves the arrival for the folder (Use for this folder…)")
 ASSUMED_NOTE = ("origin assumed (0, 0): no trap origin set or detected, so X and Y are measured from X = Y = 0 "
                 "(set it: Release time plot › Use for this folder…, or this plot's Constants)")
+# A detection note kept in the record only: said of most clean clouds, it isn't a warning.
+RECORD_ONLY = ("XY origin: background share unknown",)
 COLOUR = (40, 90, 170)
 FIT_COLOUR = (0, 0, 0)
 ZERO_COLOUR = (120, 120, 120)
@@ -129,6 +149,8 @@ class AxisData:
     automatic: bool
     fit: FitResult | None = field(default=None, compare=False)
     temperature: Estimate = Estimate(math.nan)
+    outside: int = 0  # velocities outside the histogram's range (Histogram range: keep)
+    newest: Array | None = field(default=None, compare=False)  # the highlighted shot's counts in these bins
 
     @property
     def total(self) -> int:
@@ -150,6 +172,7 @@ class Density:
     edges_v: Array
     image: Array  # (horizontal bins, vertical bins), counts
     automatic: bool
+    outside: int = 0  # velocities outside the image (the histograms' ranges)
 
 
 @dataclass(frozen=True)
@@ -176,6 +199,11 @@ class VelocityData:
     density: Density | None = None
     fitted: bool = False
     warnings: tuple[str, ...] = ()  # settings not followed as given
+    # A Live rerun that kept the detection and view range of an earlier run of this plot
+    # (``Kept``): that run's revision; 0 when this run found its own.
+    kept_from: int = 0
+    newest_shot: int | None = None  # the highlighted shot (None: off)
+    colour: tuple[int, int, int] = (214, 39, 40)
 
     @property
     def failure(self) -> str:
@@ -188,9 +216,11 @@ class VelocityData:
     def velocities(self) -> int:
         return self.converted - self.invalid
 
-    def notes(self) -> tuple[str, ...]:
+    def notes(self, record: bool = False) -> tuple[str, ...]:
         """Amber notes, in order: an assumed origin, a detected t_r, the detection's own notes, events
-        without a velocity, the constants' notes."""
+        without a velocity, the constants' notes. The title leaves out the detection's XY origin
+        notes when the origin wasn't detected, and ``RECORD_ONLY`` ones always; ``record`` keeps
+        them all."""
         notes: list[str] = []
         if self.origin_how == "assumed":
             notes.append(ASSUMED_NOTE)
@@ -199,7 +229,9 @@ class VelocityData:
         if self.release_source == "detected":
             notes.append(DETECTED_NOTE)
         if self.detection is not None and (self.release_source == "detected" or self.origin_how != "manual"):
-            notes.extend(note for note in self.detection.notes)
+            notes.extend(note for note in self.detection.notes
+                         if record or not (note.startswith(RECORD_ONLY)
+                                           or (self.origin_how == "manual" and note.startswith("XY origin"))))
         if self.release is not None and self.release_source != "detected":
             notes.extend(note for note in self.release.notes if not note.startswith("t_r from the saved arrival"))
         if self.invalid:
@@ -301,11 +333,12 @@ def titles(result: AnalysisResult, data: VelocityData) -> tuple[str, ...]:
     first = f"{result.input.short()} · {shots_text(data.shots, data.total_shots)} · {where}{masked_text(data.masked)}"
     parts = [release_line(data), origin_line(data)]
     if data.unit in (RECOIL, BRAGG):
-        parts.append(f"1 {data.unit} = {number_text(data.factor * 1e3, WIDTH_DIGITS)} mm/s")
+        parts.append(f"{data.unit} = {number_text(data.factor * 1e3, 5)} mm/s")
     second = " · ".join(part for part in parts if part)
     if second.startswith("⚠"):  # No release time: the origin and unit after it are moot.
         second = parts[0]
-    return (first, second, *(f"⚠ {warning}" for warning in data.warnings),
+    kept = kept_text(data)
+    return (first, second, *((kept,) if kept else ()), *(f"⚠ {warning}" for warning in data.warnings),
             *(f"⚠ {short_note(note)}" for note in data.notes()))
 
 
@@ -321,9 +354,21 @@ def fit_text(item: AxisData, data: VelocityData) -> str:
 
 
 def axis_heading(item: AxisData, data: VelocityData) -> str:
-    """``v_z · 80 bins (auto) · 12,345 events``."""
+    """``v_z · 80 bins (auto) · 12,345 events · 120 outside``."""
+    outside = f" · {item.outside:,} outside" if item.outside else ""
+    newest = (f" · shot {data.newest_shot}: {int(item.newest.sum()):,} (right axis)"
+              if data.newest_shot is not None and item.newest is not None else "")
     return (f"{item.axis} · {len(item.counts):,} bins ({'auto' if item.automatic else 'set'}) · "
-            f"{item.total:,} events")
+            f"{item.total:,} events{outside}{newest}")
+
+
+def kept_text(data: VelocityData) -> str:
+    """``Live: t_r detection and view range kept from rev 3 (found again on a deliberate run)``."""
+    if not data.kept_from:
+        return ""
+    what = " and ".join(part for part in (
+        "t_r detection" if data.detection is not None else "", "view range" if data.box is not None else "") if part)
+    return f"Live: {what or 'nothing'} kept from rev {data.kept_from} (found again on a run you start)"
 
 
 def brief(data: VelocityData) -> str:
@@ -352,8 +397,10 @@ def record_lines(data: VelocityData) -> list[str]:
         x, y = (length_text(axis) for axis in data.origin)
         lines.append(f"Origin ({x}, {y}): {data.origin_how}"
                      + (f" ({layer_text(data.origin_source)})" if data.origin_how == "manual" else ""))
+    if data.kept_from:
+        lines.append(kept_text(data))
     if data.unit in (RECOIL, BRAGG):
-        lines.append(f"1 {data.unit} = {number_text(data.factor * 1e3, 7)} mm/s "
+        lines.append(f"{data.unit} = {number_text(data.factor * 1e3, 7)} mm/s "
                      f"(λ {number_text(data.constants.recoil_wavelength * 1e9, 7)} nm)")
     for item in data.axes:
         text = fit_text(item, data)
@@ -362,7 +409,7 @@ def record_lines(data: VelocityData) -> list[str]:
             extra = f" · reduced χ² {chi2:.3g}" if math.isfinite(chi2) else ""
             notes = f" · notes: {'; '.join(item.fit.notes)}" if item.fit is not None and item.fit.notes else ""
             lines.append(f"Fit {item.axis}: {text}{extra}{notes}")
-    lines += [f"Note: {note}" for note in (*data.warnings, *data.notes())]
+    lines += [f"Note: {note}" for note in (*data.warnings, *data.notes(record=True))]
     return lines
 
 
@@ -381,7 +428,10 @@ def record(data: VelocityData) -> dict[str, Any]:
         "detection": data.detection.as_record() if data.detection is not None else None,
         "origin": {"x": data.origin[0], "y": data.origin[1], "how": data.origin_how, "source": data.origin_source},
         "unit": data.unit, "unit_m_per_s": finite_or_none(data.factor), "converted": data.converted,
-        "invalid": data.invalid, "fits": fits, "brief": brief(data), "record_lines": record_lines(data),
+        "invalid": data.invalid, "outside": {item.axis: item.outside for item in data.axes},
+        "fits": fits, "brief": brief(data), "record_lines": record_lines(data),
+        # What a Live rerun kept from an earlier run (its revision; 0: found its own).
+        "reuse": {"kept_from": data.kept_from},
         "constants": describe_constants(data.constants, CONSTANT_KEYS, every=True)}
 
 
@@ -408,32 +458,82 @@ def empty_reason(data: VelocityData) -> str:
 # Computation
 
 
-def _span(values: Array) -> tuple[float, float]:
-    low, high = float(values.min()), float(values.max())
+def _span(values: Array, keep: float) -> tuple[float, float]:
+    """The shortest range holding ``keep`` of ``values`` (all of them at 1), widened when empty."""
+    low, high = shortest_range(values, keep)
     if not high > low:
         low, high = low - 1e-3, high + 1e-3
     return low, high
 
 
-def _density(mode: str, velocities: Array, bins: int) -> Density:
+def _density(mode: str, velocities: Array, bins: int, spans: tuple[tuple[float, float], ...]) -> Density:
+    """The image over the histograms' ranges (``spans``, per velocity column)."""
     h, v = DENSITY_AXES[mode]
     along_h, along_v = velocities[:, h], velocities[:, v]
-    span_h, span_v = _span(along_h), _span(along_v)
+    span_h, span_v = spans[h], spans[v]
     counts_h, counts_v = (bins, bins) if bins else automatic_bins(along_h, along_v, span_h, span_v, mode == VX_VY)
     image, edges_h, edges_v = np.histogram2d(along_h, along_v, bins=(counts_h, counts_v), range=(span_h, span_v))
-    return Density(mode, edges_h, edges_v, image, bins == 0)
+    return Density(mode, edges_h, edges_v, image, bins == 0, len(velocities) - int(image.sum()))
 
 
-def _axis(axis: str, values: Array, bins: int, fit: bool, constants: ResolvedConstants) -> AxisData:
-    item = histogram(values, axis, 1.0, bins)
+def _axis(axis: str, values: Array, bins: int, fit: bool, constants: ResolvedConstants,
+          span: tuple[float, float], newest: Array | None) -> AxisData:
+    item = histogram(values, axis, 1.0, bins, bounds=span)
     counts = item.counts.astype(np.float64)
+    fresh = None if newest is None else np.histogram(newest, bins=item.edges)[0].astype(np.float64)
+    data = AxisData(axis, item.edges, counts, item.automatic_bins, outside=item.outside, newest=fresh)
     if not fit:
-        return AxisData(axis, item.edges, counts, item.automatic_bins)
+        return data
     result = fit_histogram(bin_centres(item.edges), counts, "gaussian", edges=item.edges)
-    data = AxisData(axis, item.edges, counts, item.automatic_bins, result)
+    data = replace(data, fit=result)
     if not result.ok:
         return data
     return replace(data, temperature=temperature_estimate(data.sigma, constants))
+
+
+@dataclass(frozen=True)
+class Kept:
+    """What a plot's last run found that a Live rerun keeps: the detection (when it made one) and
+    the auto-crop box (when it cropped), for ``key`` (the folder, the settings and the constants)
+    at ``revision``."""
+    key: str
+    revision: int
+    detection: ReleaseTime | None
+    box: CropBox | None
+
+
+class KeptRuns:
+    """Each plot's ``Kept`` (by ``AnalysisContext.owner``), thread-safe; dropped when the plot
+    closes. A Live rerun of the same folder, settings and constants keeps the detection and the
+    view range, the costly steps (on 5 M events: crop 7.7 s, detection 4.2 s, of 11–19 s), and
+    says so; a run the user starts finds both again."""
+
+    def __init__(self) -> None:
+        self._items: dict[str, Kept] = {}
+        self._lock = threading.Lock()
+
+    def get(self, owner: str, key: str) -> Kept | None:
+        with self._lock:
+            found = self._items.get(owner)
+        return found if found is not None and found.key == key else None
+
+    def put(self, owner: str, kept: Kept) -> None:
+        if owner:
+            with self._lock:
+                self._items[owner] = kept
+
+    def drop(self, owner: str) -> None:
+        with self._lock:
+            self._items.pop(owner, None)
+
+
+KEPT = KeptRuns()
+
+
+def kept_key(context: AnalysisContext, constants: ResolvedConstants) -> str:
+    """The folder, every setting and the constants a Live rerun's kept steps must match."""
+    return json.dumps([context.view.identity.source_path, context.view.identity.root_key,
+                       dict(context.parameters), constants.as_record(CONSTANT_KEYS)], sort_keys=True, default=repr)
 
 
 # The plot
@@ -442,19 +542,23 @@ def _axis(axis: str, values: Array, bins: int, fit: bool, constants: ResolvedCon
 class VelocityWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
     """The title, one histogram per velocity axis and, with ``density``, the image and its colour bar;
     a rerun (Live) sets their data in place, keeping zoom and pan (``show_data``). ``key``: whether
-    fitted and which density, which a rerun must keep to draw in place."""
+    fitted, which density and whether the newest shot is highlighted, which a rerun must keep to
+    draw in place. The newest shot is drawn as the T, X, Y histograms draw it: scaled to the
+    histogram's total, its real counts on a right axis in its colour."""
 
-    def __init__(self, key: tuple[bool, str], parent: Optional[QWidget] = None) -> None:
+    def __init__(self, key: tuple[bool, str, bool], parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setBackground("w")
         self.key = key
-        fitted, density = key
+        fitted, density, highlighted = key
         span = 2 if density != OFF else 1
         layout: Any = self.ci
         self.title = add_label(layout, row=0, col=0, colspan=span)
         self.plots: list[Any] = []
         self.bars: list[Any] = []
         self.fit_lines: list[Any] = []
+        self.scaled: list[Any] = []  # the newest shot at the histogram's scale, transparent (highlight)
+        self.newest_views: list[OverlayView] = []  # Kept with the widget (they live in its scene).
         for row, axis in enumerate(VELOCITY_AXES, start=1):
             plot = layout.addPlot(row=row, col=0, colspan=span,
                                   axisItems={"bottom": GroupedAxis("bottom"), "left": GroupedAxis("left")})
@@ -472,6 +576,12 @@ class VelocityWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
                 line = pg.PlotDataItem([], [], connect="finite", pen=pg.mkPen(FIT_COLOUR, width=2))
                 plot.addItem(line)
             self.fit_lines.append(line)
+            if highlighted:
+                # Transparent: keeps the plot's own range holding the overlay (as the T, X, Y histograms).
+                scaled = pg.PlotDataItem([0.0, 1.0], [np.nan], stepMode="center", connect="finite",
+                                         pen=pg.mkPen((0, 0, 0, 0)))
+                plot.addItem(scaled)
+                self.scaled.append(scaled)
             self.plots.append(plot)
         self.density_plot: Any = None
         self.image: Any = None
@@ -488,7 +598,7 @@ class VelocityWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
 
     def show_data(self, result: AnalysisResult, data: VelocityData) -> None:
         self.title.setText(lines_html(titles(result, data)))
-        for item, plot, bars, line in zip(data.axes, self.plots, self.bars, self.fit_lines):
+        for index, (item, plot, bars, line) in enumerate(zip(data.axes, self.plots, self.bars, self.fit_lines)):
             heading = line_html(axis_heading(item, data))
             text = fit_text(item, data)
             notes = list(item.fit.notes) if item.fit is not None else []
@@ -504,16 +614,30 @@ class VelocityWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
                     line.setData(x / data.factor, item.fit.evaluate(x))
                 else:
                     line.setData([], [])
+            if self.key[2] and index < len(self.scaled):
+                self._show_newest(index, plot, edges, item, data)
         if self.density_plot is not None and data.density is not None:
             self._show_density(result, data, data.density)
+
+    def _show_newest(self, index: int, plot: Any, edges: Array, item: AxisData, data: VelocityData) -> None:
+        counts = item.newest if item.newest is not None else np.zeros(len(item.counts))
+        scale = float(item.counts.sum()) / float(counts.sum()) if counts.sum() > 0 else 1.0
+        self.scaled[index].setData(edges, counts * scale)
+        name = f"shot {data.newest_shot}"
+        whole = counts.astype(np.int64)
+        if index < len(self.newest_views):
+            update_newest(plot, self.newest_views[index], edges, whole, scale, data.colour, False, name)
+        else:
+            self.newest_views.append(overlay_newest(plot, edges, whole, scale, data.colour, False, name))
 
     def _show_density(self, result: AnalysisResult, data: VelocityData, density: Density) -> None:
         values = result.parameters
         h, v = DENSITY_AXES[density.mode]
         names = VELOCITY_AXES
         bins = density.image.shape
+        outside = f" · {density.outside:,} outside" if density.outside else ""
         set_plot_title(self.density_plot, line_html(
-            f"{density.mode} · {bins[0]:,} × {bins[1]:,} bins ({'auto' if density.automatic else 'set'})"))
+            f"{density.mode} · {bins[0]:,} × {bins[1]:,} bins ({'auto' if density.automatic else 'set'}){outside}"))
         self.density_plot.setLabel("bottom", axis_title(names[h], data.unit))
         self.density_plot.setLabel("left", axis_title(names[v], data.unit))
         peak = float(density.image.max()) if density.image.size else 0.0
@@ -535,8 +659,8 @@ class VelocityWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
         self.scale_key = key
 
 
-def widget_key(result: AnalysisResult, data: VelocityData) -> tuple[bool, str]:
-    return data.fitted, data.density.mode if data.density is not None else OFF
+def widget_key(result: AnalysisResult, data: VelocityData) -> tuple[bool, str, bool]:
+    return data.fitted, data.density.mode if data.density is not None else OFF, data.newest_shot is not None
 
 
 class VelocityDistributions(DatasetAnalysis):
@@ -561,8 +685,11 @@ class VelocityDistributions(DatasetAnalysis):
         return CONSTANT_KEYS
 
     def live_policy(self, action_name: str) -> LivePolicy:
-        # A conversion and at most one detection (under a second on 500,000 events): one rerun a second.
-        return LivePolicy(min_delay=1.0)
+        # Measured on 5 M events (40 shots, 4 cores): a first run takes 9–16 s (crop 7.7 s, t_r
+        # detection 4.2 s); a Live rerun keeps both (``KeptRuns``) and takes 2.4–4.2 s (the
+        # conversion, three shortest-range sorts, the fits and the density). One analysis worker
+        # serves every plot, so 5 s between runs leaves the others room (the Release time plot's wait).
+        return LivePolicy(min_delay=5.0)
 
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
         bins = int(values.get(BINS.name, 0))
@@ -571,8 +698,10 @@ class VelocityDistributions(DatasetAnalysis):
         search = (range_text("T", lower, upper) if lower is not None and upper is not None
                   else f"T from {time_text(lower)}" if lower is not None
                   else f"T to {time_text(upper)}" if upper is not None else "")
+        keep = float(values.get(KEEP.name, KEEP.default))
         settings = (shots_brief(values), range_brief(values), mask_brief(values), str(values.get(UNIT.name, MM_S)),
-                    f"bins {bins:,}" if bins else "bins auto", "fit Gaussians" if values.get(FIT.name) else "",
+                    f"histograms {number_text(keep, 3)} %" if keep < 100 else "histograms 100 %",
+                    f"bins {bins:,}" if bins else "bins auto", newest_brief(values), "fit Gaussians" if values.get(FIT.name) else "",
                     f"density {density}" if density != OFF else "", f"search {search}" if search else "")
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
@@ -600,24 +729,33 @@ class VelocityDistributions(DatasetAnalysis):
         if not (math.isfinite(factor) and factor > 0):
             warnings += (f"the recoil wavelength gives no {unit}: using mm/s",)
             unit, factor = MM_S, 1e-3
+        newest = newest_shot(values, shots)
         data = VelocityData(tuple(shots), len(view.shots), len(events), masked, constants, unit, factor,
-                            (lower, upper), warnings=warnings, fitted=bool(values.get(FIT.name)))
+                            (lower, upper), warnings=warnings, fitted=bool(values.get(FIT.name)),
+                            newest_shot=newest, colour=newest_colour(values))
         if not len(events):
             return data
         context.check()
+        # A Live rerun keeps the detection and the auto-crop box of this plot's last run when the
+        # folder, settings and constants are the same (``KeptRuns``); any other run finds its own.
+        key = kept_key(context, constants)
+        kept = KEPT.get(context.owner, key) if context.live else None
         # t_r: the layers' (by hand, or a saved arrival − this run's t_f), else detected here; the
         # origin: the layers', else detected (the same detection), else assumed.
         given = layer_release_time(constants)
         manual_origin = layer_origin(constants)
         detection = None
         if given is None or manual_origin is None:
-            detection = detect_release_time(events[:, 0], constants, lower, upper, positions=events[:, 1:3])
+            if kept is not None and kept.detection is not None:
+                detection = kept.detection
+            else:
+                detection = detect_release_time(events[:, 0], constants, lower, upper, positions=events[:, 1:3])
             context.check()
         if given is not None:
             release = given
             from_arrival = math.isfinite(given.arrival.value)
-            key = "arrival_time" if from_arrival else "release_time"
-            source, how = constants.origins[key], key
+            how = "arrival_time" if from_arrival else "release_time"
+            source = constants.origins[how]
         else:
             assert detection is not None
             release, source, how = detection, "detected", "data"
@@ -627,26 +765,47 @@ class VelocityDistributions(DatasetAnalysis):
                        origin_source=constants.origins["trap_x"] if origin_how == "manual" else "")
         if not release.ok:
             return data
-        box = manual_box(events, values) if manual(values) else crop_box(events, keep_fraction(values),
-                                                                         context.cancelled)
+        cropped = not manual(values)
+        if cropped and kept is not None and kept.box is not None:
+            box = kept.box
+        else:
+            box = crop_box(events, keep_fraction(values), context.cancelled) if cropped else manual_box(events, values)
         context.check()
+        reused = kept is not None and ((detection is not None and detection is kept.detection)
+                                       or (cropped and box is kept.box))
+        if not reused:
+            KEPT.put(context.owner, Kept(key, view.revision, detection, box if cropped else None))
         inside = events[box.contains(events)] if box.kept else np.empty((0, 3))
-        converted = txy_to_velocity(inside, release.value.value, constants, origin)
-        data = replace(data, box=box, converted=len(inside), invalid=converted.invalid)
-        good = converted.values[converted.valid]
+        good, invalid = valid_velocities(inside, release.value.value, constants, origin)
+        data = replace(data, box=box, converted=len(inside), invalid=invalid,
+                       kept_from=kept.revision if reused and kept is not None else 0)
         if not len(good):
             return data
+        fresh = None
+        if newest is not None:
+            shot_events = mask.apply(newest_events(view, newest))[0]
+            shot_inside = shot_events[box.contains(shot_events)] if box.kept else np.empty((0, 3))
+            fresh = valid_velocities(shot_inside, release.value.value, constants, origin)[0]
         bins = int(values.get(BINS.name, 0))
-        axes = []
+        keep = float(values.get(KEEP.name, KEEP.default)) / 100
+        axes, spans = [], []
         for column, axis in enumerate(VELOCITY_AXES):
             context.check()
-            axes.append(_axis(axis, np.ascontiguousarray(good[:, column]), bins, data.fitted, constants))
+            column_values = np.ascontiguousarray(good[:, column])
+            span = _span(column_values, keep)
+            spans.append(span)
+            axes.append(_axis(axis, column_values, bins, data.fitted, constants, span,
+                              None if fresh is None else fresh[:, column]))
         density = None
         mode = str(values.get(DENSITY.name, OFF))
         if mode in DENSITY_AXES:
             context.check()
-            density = _density(mode, good, int(values.get(DENSITY_BINS.name, 0)))
+            density = _density(mode, good, int(values.get(DENSITY_BINS.name, 0)), tuple(spans))
         return replace(data, axes=tuple(axes), density=density)
+
+    def plot_closed(self, action_name: str, owner: str, path: str) -> None:
+        """Forget what the plot's last run kept for Live reruns."""
+        KEPT.drop(owner)
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: VelocityData = result.data

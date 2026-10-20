@@ -16,7 +16,7 @@ from helab.analysis.parameters import effective
 from helab.analysis.physics import DEFAULTS, TABLE, ResolvedConstants, resolve
 from helab.analysis.dataset_view import DatasetView, build_view
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.analysis.velocity import RECOIL_WAVELENGTH, arrival_time, recoil_velocity
+from helab.analysis.velocity import RECOIL_WAVELENGTH, arrival_time, recoil_velocity, txy_to_velocity, valid_velocities
 from helab.scripts import standard
 from helab.scripts.standard import velocity_distributions
 from helab.scripts.standard.velocity_distributions import VelocityData, VelocityDistributions, VelocityWidget
@@ -58,13 +58,13 @@ def view_of(clouds: list[tuple[tuple[float, float, float], int]], shots: int = 4
     return build_view(Dataset(PATH, "sig-velocity", data, {"fingerprint": prints}, 0))
 
 
-def run(view: DatasetView, values: dict[str, Any] | None = None, folder: dict[str, float] | None = None
-        ) -> AnalysisResult:
+def run(view: DatasetView, values: dict[str, Any] | None = None, folder: dict[str, float] | None = None,
+        owner: str = "", live: bool = False) -> AnalysisResult:
     params = effective(SCRIPT.parameters("Plot"), {"keep_percent": 100.0, **(values or {})})
     layers = {"lab": {}, "folder": dict(folder or {})}
     context = AnalysisContext("v1", "Plot", view, params, SCRIPT.get_metadata().identity(), constants=layers,
                               resolved_constants=SCRIPT.run_constants("Plot", params, layers),
-                              constant_keys=SCRIPT.constant_keys("Plot"))
+                              constant_keys=SCRIPT.constant_keys("Plot"), owner=owner, live=live)
     data = SCRIPT.compute("Plot", context)
     return AnalysisResult.of(context, "completed", data, found=SCRIPT.result_found("Plot", data))
 
@@ -116,7 +116,7 @@ def test_a_launch_velocity_maps_to_itself() -> None:
     alone = run(view_of([(launched, 2000)], seed=2), {"fit": True}, SAVED).data
     for item, expected in zip(alone.axes, launched):
         assert item.fit is not None and item.fit["centre"].value == pytest.approx(expected, abs=2e-3), item.axis
-    assert good.total == 4 * 3000
+    assert good.total + good.outside == 4 * 3000 and 0 < good.outside < 0.02 * 4 * 3000
 
 
 def test_a_plot_s_own_fall_distance_keeps_the_cloud_at_rest() -> None:
@@ -141,9 +141,9 @@ def test_the_recoil_units() -> None:
                      "const.recoil_wavelength": 2 * RECOIL_WAVELENGTH}, SAVED).data
     assert lab.factor == pytest.approx(one.factor / 2)
     lines = velocity_distributions.titles(run(view, {"velocity_unit": "2ħk/m"}, SAVED), data)
-    assert "1 2ħk/m = 184" in lines[1]
+    assert lines[1].endswith(" · 2ħk/m = 184.05 mm/s")
     record = "\n".join(velocity_distributions.record_lines(data))
-    assert "λ 1,083.331 nm" in record and "1 2ħk/m = 184.0" in record
+    assert "λ 1,083.331 nm" in record and "2ħk/m = 184.0" in record
 
 
 def test_the_recoil_wavelength_is_a_lab_row() -> None:
@@ -258,7 +258,8 @@ def test_titles_and_settings_in_ms_mm_and_the_unit(qtbot: QtBot, at_rest: Analys
     assert re.fullmatch(r"centre \(−?0\.\d+ ± 0\.\d+\) mm/s · σ_v \((19|20)\.\d+ ± 0\.\d+\) mm/s · T \(.+\) nK", fit), fit
     first, second = SCRIPT.describe_run("Plot", effective(SCRIPT.parameters("Plot"), {
         "fit": True, "density": "v_x–v_z", "search_min": 20.4}), view_of([], shots=1))
-    assert second == "auto-crop 99 % · mm/s · bins auto · fit Gaussians · density v_x–v_z · search T from 20,400 ms"
+    assert second == ("auto-crop 99 % · mm/s · histograms 99 % · bins auto · fit Gaussians · density v_x–v_z · "
+                      "search T from 20,400 ms")
     record = "\n".join(SCRIPT.result_record("Plot", at_rest))
     assert "Release time t_r 20,031.2 ms" in record and "Fit v_z: centre" in record
     assert "Origin (3 mm, −2 mm): manual (folder)" in record
@@ -278,7 +279,7 @@ def test_amber_notes_density_and_in_place_updates(qtbot: QtBot) -> None:
     view = view_of([((0.0, 0.0, 0.0), 1000)], seed=8)
     result = run(view, {"density": "v_x–v_y", "colour_scale": "sqrt"})
     data = result.data
-    assert data.density is not None and data.density.image.sum() == data.velocities
+    assert data.density is not None and data.density.image.sum() + data.density.outside == data.velocities
     widget = SCRIPT.render(result)
     qtbot.addWidget(widget)
     assert isinstance(widget, VelocityWidget) and widget.density_plot is not None and widget.bar is not None
@@ -303,8 +304,82 @@ def test_registered_with_its_constants_and_live_policy() -> None:
         "Velocity distributions", "helab.velocity_distributions", "1", "Basic plots v1")
     assert SCRIPT.constant_keys("Plot") == ("fall_distance", "fall_time", "g", "release_time", "arrival_time",
                                             "trap_x", "trap_y", "recoil_wavelength", "mass", "k_B", "hbar")
-    assert SCRIPT.live_policy("Plot").min_delay == 1.0
+    assert SCRIPT.live_policy("Plot").min_delay == 5.0
     warnings = SCRIPT.parameter_warnings("Plot", effective(SCRIPT.parameters("Plot"), {
         "search_min": 21.0, "search_max": 20.0}))
     assert warnings == ["Search T: from 21,000 ms is at or above to 20,000 ms: searching every event"]
     assert velocity_distributions.unit_factor("mm/s", DEFAULTS) == 1e-3
+
+
+def test_histograms_hold_99_percent_and_say_how_many_fall_outside() -> None:
+    """Dark counts just after t_r have velocities without bound: the histograms keep the cloud."""
+    rng = np.random.default_rng(9)
+    data = {}
+    for shot in range(1, 5):
+        dark = np.column_stack([rng.uniform(RELEASE + 0.01, RELEASE + 0.5, 30), rng.uniform(-0.04, 0.04, (30, 2))])
+        events = np.concatenate([cloud(rng, 2000), dark])
+        data[shot] = events[np.argsort(events[:, 0])]
+    view = build_view(Dataset(PATH, "sig-dark", data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
+    kept = run(view, {"fit": True}, SAVED).data
+    every = run(view, {"velocity_keep": 100.0}, SAVED).data
+    for near, far in zip(kept.axes, every.axes):
+        assert near.outside > 0 and near.total + near.outside == kept.velocities, near.axis
+        assert far.outside == 0 and far.total == every.velocities
+        assert near.edges[-1] - near.edges[0] < (far.edges[-1] - far.edges[0]) / 3, near.axis
+        assert near.sigma.value == pytest.approx(SIGMA_V, rel=0.15), near.axis
+    assert f"{kept.axes[1].outside:,} outside" in velocity_distributions.axis_heading(kept.axes[1], kept)
+
+
+def test_valid_velocities_are_txy_to_velocity_s_valid_rows() -> None:
+    rng = np.random.default_rng(10)
+    events = np.concatenate([cloud(rng, 500), [[RELEASE - 1, 0.0, 0.0], [np.nan, 0.0, 0.0], [RELEASE + 0.4, np.inf, 0.0]]])
+    full = txy_to_velocity(events, RELEASE, DEFAULTS, ORIGIN)
+    values, invalid = valid_velocities(events, RELEASE, DEFAULTS, ORIGIN)
+    np.testing.assert_array_equal(values, full.values[full.valid])
+    assert invalid == full.invalid == 3
+
+
+def test_a_live_rerun_keeps_the_detection_and_view_range_until_a_run_you_start() -> None:
+    owner = "plot-live-test"
+    first = run(view_of([((0.0, 0.0, 0.0), 1000)], seed=11), {"keep_percent": 99.0}, owner=owner)
+    assert first.data.kept_from == 0 and first.data.release_source == "detected"
+    later_view = view_of([((0.0, 0.0, 0.0), 1000)], shots=6, seed=11)
+    later = run(later_view, {"keep_percent": 99.0}, owner=owner, live=True)
+    assert later.data.kept_from == first.input.revision and later.data.detection is first.data.detection
+    assert later.data.box is first.data.box and later.found["reuse"] == {"kept_from": later.data.kept_from}
+    lines = velocity_distributions.titles(later, later.data)
+    assert "Live: t_r detection and view range kept from rev 1 (found again on a run you start)" in lines
+    # Another setting, a run the user starts, or another plot: found again.
+    assert run(later_view, {"keep_percent": 98.0}, owner=owner, live=True).data.kept_from == 0
+    deliberate = run(later_view, {"keep_percent": 99.0}, owner=owner)
+    assert deliberate.data.kept_from == 0 and deliberate.data.detection is not first.data.detection
+    assert run(later_view, {"keep_percent": 99.0}, owner="another", live=True).data.kept_from == 0
+    SCRIPT.plot_closed("Plot", owner, PATH)
+    assert run(later_view, {"keep_percent": 99.0}, owner=owner, live=True).data.kept_from == 0
+
+
+def test_the_origin_s_background_note_stays_in_the_record() -> None:
+    result = run(view_of([((0.0, 0.0, 0.0), 2000)], seed=12), {}, {"arrival_time": ARRIVAL})
+    data = result.data
+    assert data.detection is not None
+    unknown = [note for note in data.detection.notes if note.startswith("XY origin: background share unknown")]
+    assert unknown, data.detection.notes
+    assert not any("background share unknown" in line for line in velocity_distributions.titles(result, data))
+    assert any("background share unknown" in line for line in velocity_distributions.record_lines(data))
+
+
+def test_the_newest_shot_is_highlighted(qtbot: QtBot) -> None:
+    view = view_of([((0.0, 0.0, 0.0), 1000)], seed=13)
+    result = run(view, {"highlight_newest": True, "newest_colour": "green"}, SAVED)
+    data = result.data
+    assert data.newest_shot == 4 and data.colour == (44, 160, 44)
+    for item in data.axes:
+        assert item.newest is not None and 0 < item.newest.sum() <= 1000 and len(item.newest) == len(item.counts)
+    widget = SCRIPT.render(result)
+    qtbot.addWidget(widget)
+    assert isinstance(widget, VelocityWidget) and len(widget.newest_views) == 3
+    assert "shot 4" in widget.plots[0].getAxis("right").labelText
+    assert SCRIPT.update(widget, run(view_of([((0.0, 0.0, 0.0), 1000)], shots=5, seed=13),
+                                     {"highlight_newest": True, "newest_colour": "green"}, SAVED))
+    assert "shot 5" in widget.plots[0].getAxis("right").labelText
+    assert not SCRIPT.update(widget, run(view, {}, SAVED))

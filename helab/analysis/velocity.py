@@ -177,3 +177,29 @@ def txy_to_velocity(events: npt.ArrayLike, release_time: float, constants: Resol
     invalid = int((~np.all(np.isfinite(values), axis=1)).sum())
     return Velocities(values, invalid, float(release_time), h, constants.g,
                       constants.origins.get("fall_time", "derived") != "derived", (x0, y0))
+
+
+def valid_velocities(events: npt.ArrayLike, release_time: float, constants: ResolvedConstants,
+                     origin: tuple[float, float] = (0.0, 0.0)) -> tuple[Array, int]:
+    """``txy_to_velocity``'s valid rows only, and how many events had no velocity: the same
+    (v_z, v_x, v_y) in m/s, as a new (m, 3) array in the events' order, without an (n, 3) nan
+    array or a read-only copy (a plot converting millions of events needs only these)."""
+    data = np.asarray(events, dtype=np.float64)
+    if data.ndim != 2 or data.shape[1] < 3:
+        raise ValueError("events must be an (n, 3) array of T, X, Y")
+    x0, y0 = (float(axis) for axis in origin)
+    if not (math.isfinite(x0) and math.isfinite(y0)):
+        raise ValueError("the XY origin must be finite")
+    tau = data[:, 0] - release_time
+    with np.errstate(invalid="ignore"):
+        good = (tau > 0) & np.isfinite(tau) & np.isfinite(data[:, 1]) & np.isfinite(data[:, 2])
+    kept = tau[good]
+    values = np.empty((len(kept), 3))
+    values[:, 0] = 0.5 * constants.g * kept - effective_fall_distance(constants) / kept
+    np.divide(data[good, 1] - x0, kept, out=values[:, 1])
+    np.divide(data[good, 2] - y0, kept, out=values[:, 2])
+    # τ > 0 and finite T, X, Y can still overflow to ±inf for a τ near 0 (subnormal): not valid.
+    finite = np.isfinite(values).all(axis=1)
+    if not finite.all():
+        values = values[finite]
+    return values, len(data) - len(values)
