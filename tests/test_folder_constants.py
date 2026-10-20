@@ -92,9 +92,12 @@ def test_listings_send_each_subfolders_constants_and_the_folders_above(tmp_path:
     entry = next(e for event in listed if event["kind"] == "entries" for e in event["entries"]
                  if e["path"] == str(child))
     assert entry["constants"] == {"values": {"fall_distance": 0.85}, "set_at": 10.0}
-    # The listed folder's own (none) and every folder above it with a key (to the data root here).
+    # Each folder above it with a key that sets some (to the data root here); not the listed folder
+    # itself, which sets none, nor a subfolder setting none (no key: none set, with saved_read).
     sent = next(event for event in listed if event["kind"] == "folder_constants")["folders"]
-    assert sent[str(parent)] == {} and sent[str(tmp_path)]["values"] == {"trap_axial": 45.0}
+    assert str(parent) not in sent and sent[str(tmp_path)]["values"] == {"trap_axial": 45.0}
+    assert all("constants" not in e and e["saved_read"] for event in listed if event["kind"] == "entries"
+               for e in event["entries"] if e["path"] != str(child))
     assert str(tmp_path.parent) not in sent  # Above the data root: no key, left out.
     listed.clear()
     list_folder(str(child / "deep"), listed.append, options)
@@ -303,7 +306,7 @@ def test_values_set_while_a_folder_had_no_root_are_saved_when_it_gets_one(monkey
         assert cache.no_root(SHOT) is None and cache.constants_session_only(SHOT) == ""
         assert admin(service, "constants").payload["params"] == {
             "path": SHOT, "values": {"fall_distance": 0.9},
-            "set_at": cache.folder_constant_records[SHOT]["set_at"]}
+            "set_at": cache.folder_constant_records[SHOT]["set_at"], "verified_volumes": []}
         # A pending duplicate root, then answered: saved then.
         cache.root_duplicates["smb://x/y"] = {"path": RUN, "uuid": B, "answer": ""}
         cache.set_folder_constants(RUN, {"trap_radial": 400.0})

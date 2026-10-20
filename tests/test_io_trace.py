@@ -435,8 +435,22 @@ def test_a_saved_load_stats_each_file_read_four_times_and_once_more_only_after_r
     assert found[("entry_stat", "load: shot time")] == 4
     # A load from that cache stats no raw file: the cache has their times.
     before = len(lines(trace))
-    load(str(run), str(output), lambda _: None, {**cache, "directory": str(tmp_path / "cache-b")})
+    events: list[dict[str, Any]] = []
+    load(str(run), str(output), events.append, {**cache, "directory": str(tmp_path / "cache-b")})
     assert ("entry_stat", "load: shot time") not in counts(lines(trace)[before:])
+    loaded = next(event for event in events if event["kind"] == "loaded")  # (It did load, from the cache.)
+    assert loaded["cached"] and loaded["source"] == "disk" and loaded["files"] == 4
+    assert [shot for shot, _ in loaded["raw_times"]] == [1, 2, 3, 4]
+    # Nor does one whose shots are all held by the caller with no disk cache: the caller has their times.
+    memory = [[shot, (info := (run / f"d_txy_forc{shot}.txt").stat()).st_size, info.st_mtime_ns]
+              for shot in (1, 2, 3, 4)]
+    before = len(lines(trace))
+    events = []
+    load(str(run), str(output), events.append, None, memory)
+    found = counts(lines(trace)[before:])
+    assert ("entry_stat", "load: shot time") not in found and ("read", "load: read") not in found
+    loaded = next(event for event in events if event["kind"] == "loaded")
+    assert loaded["memory_shots"] == [1, 2, 3, 4] and loaded["files"] == 4
 
 
 def test_a_changed_cached_folder_is_listed_once_by_its_load(

@@ -877,7 +877,11 @@ class FolderCache(QObject):
                          owner: str = "") -> bool:
         """The user's choice for one folder: shown at once, then saved by a helper (with the folder's
         cached data removed too, if asked). If saving fails, the saved state is shown again and
-        ``folderPrefsFailed`` says why. Session-only when the disk cache is off."""
+        ``folderPrefsFailed`` says why. Session-only when the disk cache is off. Refused while
+        quitting, like the constants."""
+        if self.quitting:
+            self.folderPrefsFailed.emit(path, QUITTING, owner)
+            return False
         set_at = time.time()
         self.remember_prefs(path, {"no_cache": no_cache, "no_auto_load": no_auto_load, "set_at": set_at},
                             confirmed=False)
@@ -974,9 +978,15 @@ class FolderCache(QObject):
                 self._confirmed_constants[path] = dict(given)
         current = self.folder_constant_records.get(path)
         if not given:
-            if current is not None and not known:
+            # None set: nothing to keep (most folders; no record per listed folder). ``known``
+            # (the store's answer) forgets what this session held instead.
+            if current is None or not known:
                 return
-            given = {"values": {}, "set_at": 0.0}
+            before = self.folder_constants(path)
+            del self.folder_constant_records[path]
+            if before:
+                self.constantsChanged.emit(path)
+            return
         elif current is not None and float(current.get("set_at", 0)) > given["set_at"]:
             return
         before = self.folder_constants(path)
@@ -995,7 +1005,10 @@ class FolderCache(QObject):
         """The user's constants for one folder (all it sets; a key left out goes back to inheriting):
         shown at once, then saved by a helper. If saving fails, the saved ones show again and
         ``folderConstantsFailed`` says why. Kept for the session only when the folder has no disk
-        cache (``constants_session_only``)."""
+        cache (``constants_session_only``). Refused while quitting (no new folder work then)."""
+        if self.quitting:
+            self.folderConstantsFailed.emit(path, QUITTING, owner)
+            return False
         set_at = time.time()
         self.remember_constants(path, {"values": clean_layer(values), "set_at": set_at}, confirmed=False)
         self._constants_save_failed.pop(path, None)  # The user's choice is tried now.
@@ -1003,7 +1016,8 @@ class FolderCache(QObject):
             self._session_constants.add(path)
             return True
         self._session_constants.discard(path)
-        job = self.cache_admin("constants", path=path, values=self.folder_constants(path), set_at=set_at)
+        job = self.cache_admin("constants", path=path, values=self.folder_constants(path), set_at=set_at,
+                               verified_volumes=self.verified_volumes())
         if not job:
             self._constants_not_saved(path, set_at, "HeLab's work queue is full", owner)
             return False
@@ -1021,9 +1035,10 @@ class FolderCache(QObject):
         are saved now where the folder has a disk cache (proposed: the choice was the user's)."""
         def below(folder: str) -> bool:
             return not path or folder == path or folder.startswith(path.rstrip("/\\") + os.sep)
-        # Only "no data root" answers: an unsupported mount stays one whatever roots are found.
+        # Only "no data root" and "volume not verified" answers: an unsupported mount stays one
+        # whatever roots are found.
         for folder in [folder for folder, reason in self.constants_unsaved.items()
-                       if below(folder) and reason == NO_ROOT_CONSTANTS]:
+                       if below(folder) and reason in (NO_ROOT_CONSTANTS, UNVERIFIED_CONSTANTS)]:
             del self.constants_unsaved[folder]
         if path:
             self.constantsChanged.emit(path)
@@ -1038,7 +1053,8 @@ class FolderCache(QObject):
             self._session_constants.discard(folder)
             record = self.folder_constant_records.get(folder) or {}
             set_at = float(record.get("set_at") or time.time())
-            job = self.cache_admin("constants", path=folder, values=self.folder_constants(folder), set_at=set_at)
+            job = self.cache_admin("constants", path=folder, values=self.folder_constants(folder), set_at=set_at,
+                                   verified_volumes=self.verified_volumes())
             if job:
                 self._constant_writes[job] = (folder, set_at, AUTOMATIC_SAVE)
             else:
@@ -1627,10 +1643,17 @@ class FolderCache(QObject):
 
     def quit_saves(self) -> list[str]:
         """Folders whose data is being saved to the disk cache, or will be: what quitting waits
-        for. A finished load's background save, and a save not yet started or still reading."""
+        for. A finished load's background save, and a save not yet started or still reading; and a
+        folder's flags or constants the user chose, still being written (``folder_settings_saving``):
+        quitting would end that helper, and with it the user's choice."""
         writing = [self._finishing[owner] for owner in self._disk_cache_writers if owner in self._finishing]
         loading = [job.path for job in self.jobs.values() if job.operation == "load" and job.saves()]
-        return list(dict.fromkeys((*writing, *loading, *self._deferred_saves)))
+        settings = [write[0] for write in (*self._pref_writes.values(), *self._constant_writes.values())]
+        return list(dict.fromkeys((*writing, *loading, *self._deferred_saves, *settings)))
+
+    def folder_settings_saving(self, path: str) -> bool:
+        """A write of the folder's flags or constants is queued or running (``quit_saves``)."""
+        return any(write[0] == path for write in (*self._pref_writes.values(), *self._constant_writes.values()))
 
     def cancel_for_quit(self) -> None:
         """Quitting: stop the reads, listings and loads nothing will show, and data-root
@@ -2038,6 +2061,7 @@ class FolderCache(QObject):
                 self._session_constants.add(str(folder))
                 if write is not None and write[0] == folder:
                     del self._constant_writes[producer.owner]
+                    self.quitSavesChanged.emit()
                 self.constantsChanged.emit(str(folder))
             self._remember_constant_folders(event.get("folders"), known=True)
             return
@@ -2125,6 +2149,8 @@ class FolderCache(QObject):
                     self._automatic_save_failed(constants_write[0], message)
                 else:
                     self._constants_not_saved(*constants_write[:2], message, constants_write[2])
+            if write is not None or constants_write is not None:
+                self.quitSavesChanged.emit()
             if producer.owner == self._budget_owner:
                 self._budget_owner = ""
                 if kind != "done":
@@ -2671,8 +2697,12 @@ RAM_ONLY = "RAM only · no .helab-root found here or above"
 RAM_ONLY_TOOLTIP = ("No .helab-root at or above this folder, so its statuses, settings and loaded data stay in "
                     "RAM for this session.\nTo use the disk cache: right-click the top folder of this drive "
                     "or share › " + PLACE_ROOT_ACTION)
-# A helper's answer when saving a folder's constants finds no data root (``io_helper.cache_admin``).
+# A helper's answer when saving a folder's constants finds no data root, or the folder on a volume
+# this session hasn't verified yet (``io_helper.cache_admin``; the same texts as io_helper's).
 NO_ROOT_CONSTANTS = "no .helab-root found here or above"
+UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
+# Why a folder's flags or constants chosen while HeLab quits aren't saved.
+QUITTING = "HeLab is quitting"
 # The "owner" of a save of session-only constants made when the folder gained a disk cache.
 AUTOMATIC_SAVE = "automatic"
 NEEDS_ROOT_TOOLTIP = "No .helab-root found here or above: " + PLACE_ROOT_ACTION + " first"
