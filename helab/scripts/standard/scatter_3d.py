@@ -10,8 +10,8 @@ import numpy.typing as npt
 import plotly.graph_objs as go
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from helab.analysis.backends import (MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane, mpl_colour, mpl_figure,
-                                     opengl_available)
+from helab.analysis.backends import (MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane, matplotlib_pane, mpl_colour,
+                                     mpl_figure, opengl_available)
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.follow import LivePolicy
 from helab.analysis.panes import PlotlyPane
@@ -175,12 +175,26 @@ class Scatter3D(DatasetAnalysis):
         return pane
 
     def update(self, widget: QWidget, result: AnalysisResult) -> bool:
-        """A rerun (e.g. Live's next shots) updates the page in place: the camera stays."""
+        """A rerun (e.g. Live's next shots) updates the plot in place, in every library: the camera
+        (rotation, zoom) stays."""
         data: ScatterData = result.data
-        if not isinstance(widget, PlotlyPane) or not data.crop.total:
+        if not data.crop.total:
             return False
-        widget.update_figure(figure(result, data), note_text(data))
-        widget.note.setToolTip(f"{sample_text(data)}\n{crop_text(data.crop, data.warnings)}")
+        if isinstance(widget, PlotlyPane):
+            widget.update_figure(figure(result, data), note_text(data))
+            widget.note.setToolTip(f"{sample_text(data)}\n{crop_text(data.crop, data.warnings)}")
+            return True
+        note = widget.findChild(QLabel, "plot_note")
+        pane = matplotlib_pane(widget)
+        if pane is not None:
+            pane.redraw(lambda drawn: matplotlib_figure(result, data, drawn))
+        elif (view := opengl_child(widget)) is not None:
+            fill_opengl(view, result, data)
+        else:
+            return False
+        if note is not None:
+            note.setText(note_text(data))
+            note.setToolTip(f"{sample_text(data)}\n{crop_text(data.crop, data.warnings)}")
         return True
 
 
@@ -228,13 +242,13 @@ def noted(plot: QWidget, data: ScatterData, parent: Optional[QWidget]) -> QWidge
     return widget
 
 
-def matplotlib_figure(result: AnalysisResult, data: ScatterData) -> Any:
+def matplotlib_figure(result: AnalysisResult, data: ScatterData, drawn: Any = None) -> Any:
     """Matplotlib's 3D axes: X, Y across, T up, as in the Plotly figure. Slow to turn with many
     points: lower the display cap if it lags."""
     points, crop = data.points, data.crop
     size = float(result.parameters.get(POINT_SIZE.name, POINT_SIZE.default))
     opacity = float(result.parameters.get(OPACITY.name, OPACITY.default))
-    figure = mpl_figure()
+    figure = mpl_figure(drawn)
     axes = figure.add_subplot(projection="3d")
     # Matplotlib's marker size is an area in points²; Plotly's a diameter in pixels.
     axes.scatter(points[:, 1], points[:, 2], points[:, 0], s=size ** 2, alpha=opacity, linewidths=0,
@@ -271,22 +285,43 @@ def opengl_view(result: AnalysisResult, data: ScatterData) -> QWidget:
     to the same length (labelled with their ranges)."""
     import pyqtgraph.opengl as gl
 
-    size = float(result.parameters.get(POINT_SIZE.name, POINT_SIZE.default))
-    opacity = float(result.parameters.get(OPACITY.name, OPACITY.default))
-    view = gl.GLViewWidget()
+    view: Any = gl.GLViewWidget()
+    view.setObjectName("plot_opengl")
     view.setBackgroundColor("w")
     view.setCameraPosition(distance=2.2, elevation=20, azimuth=45)
-    view.addItem(gl.GLScatterPlotItem(pos=unit_box(data.points, data.crop), size=size,
-                                      color=(40 / 255, 90 / 255, 170 / 255, opacity), pxMode=True))
-    if data.newest_shot is not None and len(data.newest):
-        view.addItem(gl.GLScatterPlotItem(pos=unit_box(data.newest, data.crop), size=size,
-                                          color=mpl_colour(data.colour, max(opacity, 0.8)), pxMode=True))
+    view.earlier_points = gl.GLScatterPlotItem(pxMode=True)
+    view.newest_points = gl.GLScatterPlotItem(pxMode=True)
+    view.addItem(view.earlier_points)
+    view.addItem(view.newest_points)
     box = gl.GLBoxItem(color=(0, 0, 0, 80))
     box.setSize(1, 1, 1)
     box.translate(-0.5, -0.5, -0.5)
     view.addItem(box)
-    crop = data.crop
+    view.axis_labels = []
     for axis, position in ((1, (0.0, -0.6, -0.55)), (2, (-0.6, 0.0, -0.55)), (0, (-0.6, -0.6, 0.0))):
-        view.addItem(gl.GLTextItem(pos=position, text=axis_text(axis, crop.lower[axis], crop.upper[axis]),
-                                   color=(0, 0, 0, 255)))
+        label = gl.GLTextItem(pos=position, text="", color=(0, 0, 0, 255))
+        view.addItem(label)
+        view.axis_labels.append((axis, label))
+    fill_opengl(view, result, data)
     return cast(QWidget, view)
+
+
+def opengl_child(widget: QWidget) -> Optional[Any]:
+    """The OpenGL view ``widget`` is or holds (``opengl_view``), if any."""
+    if widget.objectName() == "plot_opengl":
+        return widget
+    return widget.findChild(QWidget, "plot_opengl")
+
+
+def fill_opengl(view: Any, result: AnalysisResult, data: ScatterData) -> None:
+    """``data`` in an OpenGL view (``opengl_view``); the camera is the user's."""
+    size = float(result.parameters.get(POINT_SIZE.name, POINT_SIZE.default))
+    opacity = float(result.parameters.get(OPACITY.name, OPACITY.default))
+    view.earlier_points.setData(pos=unit_box(data.points, data.crop), size=size,
+                                color=(40 / 255, 90 / 255, 170 / 255, opacity))
+    fresh = data.newest if data.newest_shot is not None else np.empty((0, 3))
+    view.newest_points.setData(pos=unit_box(fresh, data.crop), size=size,
+                               color=mpl_colour(data.colour, max(opacity, 0.8)))
+    crop = data.crop
+    for axis, label in view.axis_labels:
+        label.setData(text=axis_text(axis, crop.lower[axis], crop.upper[axis]))

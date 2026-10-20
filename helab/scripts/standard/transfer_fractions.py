@@ -44,8 +44,8 @@ from PyQt6.QtWidgets import QWidget
 from scipy.signal import find_peaks
 
 from helab.analysis.dataset_view import DatasetView, txy
-from helab.analysis.backends import (MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane, mpl_colour, mpl_figure,
-                                     rgb)
+from helab.analysis.backends import (MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane, matplotlib_pane, mpl_colour,
+                                     mpl_figure, rgb)
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec
@@ -442,10 +442,24 @@ class TransferFractions(DatasetAnalysis):
         return self.draw(result, PYQTGRAPH, parent)
 
     def update(self, widget: QWidget, result: AnalysisResult) -> bool:
-        """A rerun (e.g. Live's next shots) updates a Plotly page in place: zoom and pan stay."""
-        if not isinstance(widget, PlotlyPane) or empty_reason(result.data):
+        """A rerun (e.g. Live's next shots) updates the plot in place, in every library: a zoom
+        or pan stays, else the axes follow the new data. PyQtGraph draws anew when the number of
+        orders changed."""
+        data: Fractions = result.data
+        if empty_reason(data):
             return False
-        widget.update_figure(plotly_figure(result))
+        if isinstance(widget, PlotlyPane):
+            widget.update_figure(plotly_figure(result))
+            return True
+        if isinstance(widget, pg.GraphicsLayoutWidget):
+            if getattr(widget, "order_numbers", None) != data.orders.numbers:
+                return False
+            fill_pyqtgraph(widget, result)
+            return True
+        pane = matplotlib_pane(widget)
+        if pane is None:
+            return False
+        pane.redraw(lambda figure: matplotlib_figure(result, figure))
         return True
 
     def draw(self, result: AnalysisResult, backend: str, parent: Optional[QWidget] = None) -> QWidget:
@@ -459,36 +473,35 @@ class TransferFractions(DatasetAnalysis):
             return MatplotlibPane(matplotlib_figure(result), parent)
         widget: Any = pg.GraphicsLayoutWidget(parent)
         widget.setBackground("w")
-        notes = ' · '.join(data.notes)
-        notes = f'<br><span style="color: #b06000">{html.escape(notes)}</span>' if notes else ""
-        widget.addLabel(html.escape(fractions_title(result)) + notes, row=0, col=0)
+        widget.title_label = widget.addLabel("", row=0, col=0)
         colours = [pg.mkColor(colour) for colour in order_colours(orders)]
         plot = widget.addPlot(row=1, col=0)
         plot.setLabel("bottom", "Shot number")
         plot.setLabel("left", "Transfer fraction")
         plot.showGrid(x=True, y=True, alpha=0.3)
         plot.addLegend(offset=(-10, 10))
-        fractions = data.fractions
-        for column, order in enumerate(orders.numbers):
-            colour = colours[column]
-            plot.plot(data.shots, fractions[:, column], name=f"order {order_label(order)}", connect="finite",
-                      pen=pg.mkPen(colour, width=1.5), symbol="o", symbolSize=4, symbolBrush=colour, symbolPen=None)
-        edges, counts = data.histogram
+        widget.fraction_curves = [
+            plot.plot(name=f"order {order_label(order)}", connect="finite", pen=pg.mkPen(colour, width=1.5),
+                      symbol="o", symbolSize=4, symbolBrush=colour, symbolPen=None)
+            for order, colour in zip(orders.numbers, colours)]
         times = widget.addPlot(row=2, col=0, title="T around the orders, with their windows")
         times.setLabel("bottom", "T (s)")
         times.setLabel("left", "Events")
-        if len(counts):
-            times.addItem(pg.PlotDataItem(edges, counts, stepMode="center", fillLevel=0,
-                                          pen=pg.mkPen((60, 60, 60)), brush=(60, 60, 60, 60)))
+        widget.times_curve = pg.PlotDataItem(stepMode="center", fillLevel=0, pen=pg.mkPen((60, 60, 60)),
+                                             brush=(60, 60, 60, 60))
+        times.addItem(widget.times_curve)
+        widget.order_windows = []
         for column, order in enumerate(orders.numbers):
             region = pg.LinearRegionItem(orders.window(order), movable=False,
                                          brush=(*colours[column].getRgb()[:3], 50), pen=pg.mkPen(None))
             times.addItem(region)
             label = pg.TextItem(order_label(order), color=colours[column], anchor=(0.5, 0))
-            label.setPos(orders.centre + order * orders.spacing, float(counts.max()) if len(counts) else 1.0)
             times.addItem(label)
+            widget.order_windows.append((region, label))
         widget.ci.layout.setRowStretchFactor(1, 3)
         widget.ci.layout.setRowStretchFactor(2, 2)
+        widget.order_numbers = orders.numbers
+        fill_pyqtgraph(widget, result)
         return cast(QWidget, widget)
 
 
@@ -568,11 +581,11 @@ def plotly_figure(result: AnalysisResult) -> go.Figure:
     return figure
 
 
-def matplotlib_figure(result: AnalysisResult) -> Any:
+def matplotlib_figure(result: AnalysisResult, figure: Any = None) -> Any:
     data: Fractions = result.data
     orders = data.orders
     colours = order_colours(orders)
-    figure = mpl_figure()
+    figure = mpl_figure(figure)
     shares, times = figure.subplots(2, 1, height_ratios=[3, 2])
     fractions = data.fractions
     for column, order in enumerate(orders.numbers):
@@ -601,3 +614,24 @@ def matplotlib_figure(result: AnalysisResult) -> Any:
     if data.notes:
         shares.set_title(" · ".join(data.notes), fontsize=7, color=(0.69, 0.38, 0.0), wrap=True)
     return figure
+
+
+def fill_pyqtgraph(widget: Any, result: AnalysisResult) -> None:
+    """``result`` in a PyQtGraph drawing built for its orders (``widget.order_numbers``)."""
+    data: Fractions = result.data
+    orders = data.orders
+    notes = ' · '.join(data.notes)
+    notes = f'<br><span style="color: #b06000">{html.escape(notes)}</span>' if notes else ""
+    widget.title_label.setText(html.escape(fractions_title(result)) + notes)
+    fractions = data.fractions
+    for column, curve in enumerate(widget.fraction_curves):
+        curve.setData(data.shots, fractions[:, column])
+    edges, counts = data.histogram
+    if len(counts):
+        widget.times_curve.setData(edges, counts)
+    else:
+        widget.times_curve.clear()
+    top = float(counts.max()) if len(counts) else 1.0
+    for order, (region, label) in zip(orders.numbers, widget.order_windows):
+        region.setRegion(orders.window(order))
+        label.setPos(orders.centre + order * orders.spacing, top)

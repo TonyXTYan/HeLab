@@ -573,8 +573,8 @@ def test_a_highlighted_histogram_is_freed_with_its_widget(qtbot: QtBot, log_y: b
 
 def test_a_following_histograms_old_drawing_is_freed_when_redrawn(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
-    """Live's next revision draws the histograms anew; the old drawing's plot, overlay and
-    counts go with the widget it replaced."""
+    """Live's next revision updates the histograms in place; a rerun with another layout (log Y)
+    draws them anew, and the old drawing's plot, overlay and counts go with the widget it replaced."""
     window.view = window.live_feed.publish(revision([1, 2]))
     instance = plot(window, qtbot, basic_plots.TxyHistograms())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
@@ -582,10 +582,17 @@ def test_a_following_histograms_old_drawing_is_freed_when_redrawn(
     parameter_of(instance.parameter_root, basic_plots.HIGHLIGHT).setValue(True)
     instance.run()
     qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
-    refs = histogram_refs(instance._content)
+    content = instance._content
+    refs = histogram_refs(content)
     window.live_feed.publish(revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2 and instance.shown is not None
                     and instance.shown.data.newest_shot == 3, timeout=10_000)
+    assert instance._content is content  # In place: zoom and pan stay.
+    del content
+    parameter_of(instance.parameter_root, basic_plots.LOG_Y).setValue(True)
+    shown = instance.shown
+    instance.run()
+    qtbot.waitUntil(lambda: instance.shown is not shown, timeout=10_000)
     assert freed(refs)
 
 
@@ -1179,9 +1186,9 @@ def drawn(instance: AnalysisInstance, kind: type[QWidget]) -> Optional[QWidget]:
 @pytest.mark.parametrize("backend", ["PyQtGraph", "Plotly", "Matplotlib"])
 def test_a_following_plot_keeps_following_in_every_library_and_after_switching(
         window: Window, runner: AnalysisRunner, qtbot: QtBot, script_class: Any, backend: str) -> None:
-    """Each library follows Live: a Plotly page is updated in place (its zoom stays), the others are
-    drawn anew and their old drawing freed. Switching library mid-Live draws the shown revision
-    with the new one, and the next revisions follow in it."""
+    """Each library follows Live in place (a zoom or pan stays): the same page, plot or figure.
+    Switching library mid-Live draws the shown revision with the new one, and the next revisions
+    follow in it."""
     from helab.analysis.backends import BACKEND, DRAWING_GROUP, PLOTLY
     script = cast(DatasetAnalysis, script_class())
     window.view = window.live_feed.publish(lab_revision([1, 2]))
@@ -1194,21 +1201,17 @@ def test_a_following_plot_keeps_following_in_every_library_and_after_switching(
     kind = drawn_type(script, backend)
     first = drawn(instance, kind)
     assert first is not None and shown_revision(instance) == 1  # Drawn again, not rerun.
-    figure = weakref.ref(cast(Any, first).figure) if hasattr(first, "figure") else None
     old = weakref.ref(first)
     window.live_feed.publish(lab_revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
     now = drawn(instance, kind)
     assert now is not None and "rev 2" in source(instance).text()
-    if backend == PLOTLY:
-        assert now is first  # The same page: the figure swapped in place.
-    else:
+    if kind is not QLabel:
+        assert now is first  # In place: the same page, plot or figure.
+    else:  # Offscreen, PyQtGraph's 3D view says it needs OpenGL: that message is drawn anew.
         assert now is not first
         del first, now
-        refs = [old] + ([figure] if figure is not None else [])
-        # Matplotlib's canvas lets go of its figure on an event after the deferred delete, as the
-        # app's event loop delivers both: wait for them, not one pass.
-        qtbot.waitUntil(lambda: freed(refs) or (QApplication.processEvents() and False), timeout=5_000)
+        assert freed([old])
     # Another library while Live goes on: the next revisions follow in it.
     other = next(name for name in ("Matplotlib", "Plotly", "PyQtGraph") if name != backend)
     library.setValue(other)
