@@ -482,6 +482,9 @@ class TransferFractions(DatasetAnalysis):
     def backends(self, action_name: str) -> Sequence[str]:
         return (PYQTGRAPH, PLOTLY, MATPLOTLIB)
 
+    def minimum_size(self, action_name: str) -> tuple[int, int]:
+        return 240, 360  # Two plots stacked under a title and notes.
+
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         return self.draw(result, PYQTGRAPH, parent)
 

@@ -317,6 +317,9 @@ class TxyHistograms(DatasetAnalysis):
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
         return list(range_warnings(values))
 
+    def minimum_size(self, action_name: str) -> tuple[int, int]:
+        return 240, 400  # Three histograms stacked under a title.
+
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         values = context.parameters
         shots = select_shots(context.view, values)

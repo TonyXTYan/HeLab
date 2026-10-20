@@ -223,6 +223,11 @@ class AnalysisDock(QDockWidget):
         self._fit_handle()
         super().setWidget(self.frame)
 
+    def set_minimum_plot_size(self, width: int, height: int) -> None:
+        """The least size of the plot's area (the plot with its source lines; the script's
+        ``minimum_size``): docked, the window keeps room for it; floating, its window does."""
+        self._body_holder.setMinimumSize(width, height)
+
     def widget(self) -> Optional[QWidget]:
         """The plot (not the frame around it)."""
         return self._body if self._body is not None and not sip.isdeleted(self._body) else None
@@ -614,6 +619,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def start(self) -> None:
         """Open the dock and its settings page, then run with the defaults."""
         self.setup_dock_widget(self._message(f"Running {self.name} on {self.view.key.short()}…"))
+        if isinstance(self.dock_widget, AnalysisDock):
+            self.dock_widget.set_minimum_plot_size(*self.script.minimum_size(self.action))
         specs = self.script.parameters(self.action)
         page = specs[0].page if specs else ""
         drawing = backend_specs(self.script.backends(self.action), page)
