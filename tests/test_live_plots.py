@@ -141,6 +141,9 @@ def window(qtbot: QtBot, runner: AnalysisRunner) -> Iterator[Window]:
     if not sip.isdeleted(made.middle_mainwindow):
         made.middle_mainwindow.close()
         made.middle_mainwindow.deleteLater()
+    # Delete the docks now, web views among them: deleted later, by another test's event loop
+    # or at exit, a QWebEngineView outliving its test crashes Qt (macOS CI's coverage run).
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
 
 
 def plot(window: Window, qtbot: QtBot, script: DatasetAnalysis) -> AnalysisInstance:
