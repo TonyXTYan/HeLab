@@ -64,6 +64,8 @@ class AnalysisRunner(QObject):
         try:
             keys = tuple(script.constant_keys(action))
             resolved = script.run_constants(action, parameters, layers) if keys else None
+            if resolved is not None:
+                keys = tuple(script.run_constant_keys(action, parameters))
         except Exception:
             logging.exception("Constants of %s: none resolved", metadata.name)
             resolved = None

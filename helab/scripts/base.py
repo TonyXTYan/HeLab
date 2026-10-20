@@ -135,6 +135,12 @@ class DatasetAnalysis(HelabAnalysisScript):
         (``constant_layers.constants_specs``); none without one."""
         return constant_keys(self.parameters(action_name))
 
+    def run_constant_keys(self, action_name: str, values: Mapping[str, Any]) -> tuple[str, ...]:
+        """Of ``constant_keys``, the ones a run with these parameter ``values`` uses (e.g. the trap's
+        only while a fit that needs them is on): its result records and names these, and only a
+        change of one marks its plot. Default: all of ``constant_keys``."""
+        return tuple(self.constant_keys(action_name))
+
     def run_constants(self, action_name: str, values: Mapping[str, Any],
                       layers: Mapping[str, Mapping[str, float]]) -> ResolvedConstants | None:
         """The constants a run with these parameter ``values`` uses, from the lab and folder

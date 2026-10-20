@@ -73,7 +73,7 @@ def run(view: DatasetView, values: dict[str, Any] | None = None,
     resolved = script.run_constants("Plot", parameters, layers or {})
     context = AnalysisContext("a1", "Plot", view, parameters, script.get_metadata().identity(),
                               constants=layers or {}, resolved_constants=resolved,
-                              constant_keys=script.constant_keys("Plot") if resolved is not None else ())
+                              constant_keys=script.run_constant_keys("Plot", parameters) if resolved is not None else ())
     data = script.compute("Plot", context)
     return AnalysisResult.of(context, "completed", data, found=script.result_found("Plot", data))
 

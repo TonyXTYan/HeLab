@@ -7,7 +7,7 @@ stays fast) for its centre, width and temperature (``helab.analysis.profiles``).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, List, Mapping, Optional, cast
 
 import numpy as np
@@ -16,6 +16,7 @@ import pyqtgraph as pg
 from PyQt6.QtCore import QRectF, pyqtSlot
 from PyQt6.QtWidgets import QWidget
 
+from helab.analysis.bec_readout import AUTO, SOURCES, BecReadout, readout
 from helab.analysis.constant_layers import constants_specs, describe_constants, resolve_for_run
 from helab.analysis.display_units import WIDTH_DIGITS, axis_label, axis_scale, axis_text
 from helab.analysis.empty import empty_pane, empty_text
@@ -25,9 +26,9 @@ from helab.analysis.masks import (MASK_SPECS, all_masked_text, mask_brief, mask_
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.physics import ResolvedConstants
 from helab.analysis.plot_axes import GroupedAxis
-from helab.analysis.plot_text import add_label, line_html, notes_html, set_plot_title
-from helab.analysis.profiles import (COUNTS, RATE, SMOOTHED, T_MODELS, TF_EXPONENT_TIP, UNSMOOTHED, XY_MODELS,
-                                     AxisFit, fit_axis, rate_factor, smooth, smoothing_bins, value_label)
+from helab.analysis.plot_text import add_label, line_html, lines_html, notes_html, set_plot_title
+from helab.analysis.profiles import (BIMODALS, CONDENSATE, COUNTS, NO_CONDENSATE, RATE, SMOOTHED, T_MODELS,
+                                     TF_EXPONENT_TIP, UNSMOOTHED, XY_MODELS, AxisFit, fit_axis, rate_factor, smooth, smoothing_bins, value_label)
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.dataset_view import DatasetView
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_bounds, newest_brief, newest_colour,
@@ -85,20 +86,56 @@ for _axis, _models, _extra in (
     FIT_SPECS[_axis] = (_toggle, ParameterSpec(
         f"fit_{_axis.lower()}_model", f"{_axis} model", "choice", _models[0], choices=_models, group=FITS_GROUP,
         page=FITS_PAGE, when=(_toggle.name, "True"),
-        tip="Gaussian + offset; bimodal Thomas–Fermi (1 − u²)^p + Gaussian with one centre, its temperature from "
-            "the thermal σ (the condensate fraction is the BEC fit's, later). " + TF_EXPONENT_TIP + _extra))
+        tip="Gaussian + offset; Bose g_5/2 or g_2 thermal; bimodal Thomas–Fermi (1 − u²)^p + Gaussian or Bose "
+            "thermal with one centre, its temperature from the thermal σ and N0/N from the parts' areas (the "
+            "title says \"no condensate (z = …)\" when the TF + Bose choices find none). " + TF_EXPONENT_TIP
+            + _extra))
 FIT_DATA = ParameterSpec("fit_data", "Fit to", "choice", UNSMOOTHED, choices=(UNSMOOTHED, SMOOTHED),
                          group=FITS_GROUP, page=FITS_PAGE, when=(SMOOTH.name, "True"),
                          tip="The unsmoothed counts (Poisson weights; the default), or the smoothed curve (as the "
                              "front panel did), with the same smoothing applied to the model: the results are "
                              "the unsmoothed profile's (no correction for the smoothing), and their SEs count "
                              "that smoothed bins share counts. Shown while Smooth is on; it applies to every fit.")
+BEC = ParameterSpec(
+    "bec_properties", "Show BEC properties", "bool", False, group=FITS_GROUP, page=FITS_PAGE,
+    tip="From one axis's fit (BEC properties from): the atoms per shot N = events / shots / detector QE, N0 and "
+        "N0/N from a bimodal fit's parts, T, Tc (ideal; with the finite-size shift; with interactions too), T/Tc, "
+        "μ/k_B, the in-trap Thomas–Fermi radii R(0) and the peak density n0 from N0 and the trap, and two checks "
+        "of the QE: the one the fitted R(0) implies (N0 ∝ R(0)⁵, no QE needed) and the one the saturated thermal "
+        "cloud implies (ζ(3)(k_B T/ħω̄)³ atoms). Each ± its SE, from the fit's covariance (Poisson only: the "
+        "constants' own uncertainty isn't in it). Constants still at a borrowed value (the QE, the trap "
+        "frequencies) are flagged in amber. A slice fit (TF^3/2, g_2) gives only T and R(0). The record has "
+        "every number and note.")
+BEC_AXIS = ParameterSpec(
+    "bec_axis", "BEC properties from", "choice", AUTO, choices=SOURCES, group=FITS_GROUP, page=FITS_PAGE,
+    when=(BEC.name, "True"),
+    tip="The fit the properties come from. auto: a fit that reports a condensate first, then a full projection "
+        "over a slice, then an axis along a radial trap axis (T, unless Trap axial axis along says otherwise), "
+        "then T, X, Y in order.")
+
+
+def bec_constants_used(values: Mapping[str, Any]) -> bool:
+    """Whether a run with ``values`` uses the trap's constants: some fit is on, and BEC properties
+    are shown or a fitted axis has a bimodal model (its R/σ_th cap and, for TF + Bose, its condensate
+    check use the trap, the QE and the scattering length)."""
+    fitted = [str(values.get(model.name, model.default)) for toggle, model in FIT_SPECS.values()
+              if values.get(toggle.name)]
+    return bool(fitted) and (bool(values.get(BEC.name)) or any(choice in BIMODALS for choice in fitted))
+
+
 # The fall distance and time (F0b's Constants group): the lab's or folder's, or this plot's own. X and
 # Y temperatures use the fall time; the arrival-time model on T uses g and the effective fall
 # distance, ½ g t_f² when the fall time is set by hand (else h), so its v = 0 arrives t_f after release.
-CONSTANTS = constants_specs(("fall_distance", "fall_time"), page=FITS_PAGE)
-# What the fits use, so a lab or folder change of any of them marks the plot.
-CONSTANT_KEYS = ("fall_distance", "fall_time", "g", "mass", "k_B")
+# With BEC properties or a bimodal fit on, the trap's constants too (``bec_constants_used``).
+FALL_KEYS = ("fall_distance", "fall_time")
+BEC_OVERRIDES = ("detector_qe", "trap_radial", "trap_axial", "trap_axial_axis", "scattering_length")
+CONSTANTS = [spec if spec.name.split(".")[1] in FALL_KEYS else replace(spec, shown_with=bec_constants_used)
+             for spec in constants_specs((*FALL_KEYS, *BEC_OVERRIDES), page=FITS_PAGE)]
+# What the fits use, so a lab or folder change of any of them marks the plot: always, and with
+# ``bec_constants_used``, the trap's (``TxyHistograms.run_constant_keys``).
+FIT_KEYS = ("fall_distance", "fall_time", "g", "mass", "k_B")
+BEC_KEYS = ("detector_qe", "trap_radial", "trap_axial", "trap_axial_axis", "scattering_length", "hbar")
+CONSTANT_KEYS = (*FIT_KEYS, *BEC_KEYS)
 COLOUR = (40, 90, 170)
 SMOOTH_COLOUR = (20, 50, 120)  # the smoothed curve, darker than the bars behind it
 FIT_COLOUR = (0, 0, 0)
@@ -237,6 +274,9 @@ class Histograms:
     box: bool = False  # each histogram counts only the events inside the other axes' ranges
     constants: ResolvedConstants | None = field(default=None, compare=False)
     masked: int = 0  # events the mask took out of the chosen shots
+    bec: BecReadout | None = None  # with Show BEC properties on
+    # The constants the run used (``TxyHistograms.run_constant_keys``): the header names these.
+    constant_keys: tuple[str, ...] = FIT_KEYS
 
     def factor(self, index: int) -> float:
         return self.factors[index] if index < len(self.factors) else 1.0
@@ -249,10 +289,13 @@ class Histograms:
 
     def record(self) -> dict[str, Any]:
         """Strict JSON for the result's record: each fit's (``AxisFit.as_record``, with the
-        ``FitResult``'s) and, with any fit, the constants the run used (``as_record``)."""
+        ``FitResult``'s), the BEC properties (``BecReadout.as_record``) and, with any fit, the
+        constants the run used (``as_record``)."""
         fits = {item.axis: fit.as_record() for item, fit in zip(self.items, self.fits) if fit is not None}
         record: dict[str, Any] = {"units": self.units, "box": self.box, "fits": fits,
                                   "smoothing": {item.axis: sigma for item, sigma in zip(self.items, self.smoothing)}}
+        if self.bec is not None:
+            record["bec"] = self.bec.as_record()
         if fits and self.constants is not None:
             record["constants"] = self.constants.as_record()
         record["record_lines"] = self.record_lines()
@@ -272,6 +315,8 @@ class Histograms:
             extra = f" · reduced χ² {chi2:.3g}" if fit.ok and math.isfinite(chi2) else ""
             notes = f" · notes: {'; '.join(fit.notes)}" if fit.notes else ""
             lines.append(f"Fit {item.axis}: {fit.text()}{extra}{notes}")
+        if self.bec is not None:
+            lines += self.bec.record_lines()
         return lines  # The constants are in the record once, from the run (``AnalysisResult.describe``).
 
 
@@ -484,9 +529,11 @@ class HistogramsWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
                                                 f"{masked_text(data.masked)}{newest}"))
         if data.fitted() and data.constants is not None:
             # Only the values not at their defaults (the record has them all), so the header stays short.
-            used = describe_constants(data.constants, CONSTANT_KEYS)
+            used = describe_constants(data.constants, data.constant_keys)
             header += "<br>" + line_html(f"Fits with {used}" if used else "Fits with the default constants")
             header += notes_html(data.constants.notes)
+        if data.bec is not None:  # The compact block (it wraps); every number and note is in the record.
+            header += "<br>" + lines_html(data.bec.title_lines()) + notes_html(data.bec.warnings(), short=True)
         self.header.setText(header)
         for index, (item, plot) in enumerate(zip(items, self.plots)):
             x_factor = axis_scale(item.axis)
@@ -497,7 +544,9 @@ class HistogramsWidget(pg.GraphicsLayoutWidget):  # type: ignore[misc]
             notes: list[str] = list(data.bin_notes[index]) if index < len(data.bin_notes) else []
             if fit is not None and fit.ok:
                 title += "<br>" + line_html(fit.text())
-                notes = [*fit.notes, *notes]
+                # The decision when it found or ruled out a condensate is the fit line's (the record
+                # has why); a "possible condensate … not reported: why" stays, in amber.
+                notes = [*(note for note in fit.notes if not note.startswith((CONDENSATE, NO_CONDENSATE))), *notes]
             elif fit is not None:  # Why there is no fit, in amber.
                 notes = [fit.text(), *fit.notes, *notes]
             # One note per line, without their details (the dock's record has them whole).
@@ -540,7 +589,7 @@ class TxyHistograms(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.txy_histograms",
-            version="6",
+            version="7",
         )
 
     def get_actions(self) -> List[str]:
@@ -549,10 +598,14 @@ class TxyHistograms(DatasetAnalysis):
     def parameters(self, action_name: str) -> List[ParameterSpec]:
         fits = [spec for pair in FIT_SPECS.values() for spec in pair]
         return [*SHOT_SPECS, *RANGE, *MASK_SPECS, BINS, LOG_Y, VALUES, BOX, HIGHLIGHT, NEWEST_COLOUR, SMOOTH, SMOOTH_T, SMOOTH_XY,
-                *fits, FIT_DATA, *CONSTANTS]
+                *fits, FIT_DATA, BEC, BEC_AXIS, *CONSTANTS]
 
     def constant_keys(self, action_name: str) -> tuple[str, ...]:
         return CONSTANT_KEYS
+
+    def run_constant_keys(self, action_name: str, values: Mapping[str, Any]) -> tuple[str, ...]:
+        """The fits' constants, and the trap's only while BEC properties or a bimodal fit use them."""
+        return CONSTANT_KEYS if bec_constants_used(values) else FIT_KEYS
 
     def run_constants(self, action_name: str, values: Mapping[str, Any],
                       layers: Mapping[str, Mapping[str, float]]) -> ResolvedConstants | None:
@@ -572,11 +625,15 @@ class TxyHistograms(DatasetAnalysis):
                     f"{axis_text('X', float(values[SMOOTH_XY.name]), WIDTH_DIGITS)}" if smoothing else "",
                     RATE if values.get(VALUES.name) == RATE else "", "box" if values.get(BOX.name) else "",
                     "log Y" if values[LOG_Y.name] else "", newest_brief(values), fitted,
-                    "on the smoothed curve" if fitted and smoothing and values.get(FIT_DATA.name) == SMOOTHED else "")
+                    "on the smoothed curve" if fitted and smoothing and values.get(FIT_DATA.name) == SMOOTHED else "",
+                    f"BEC properties ({values.get(BEC_AXIS.name, AUTO)})" if values.get(BEC.name) else "")
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
-        return [*range_warnings(values), *mask_warnings(values)]
+        warnings = [*range_warnings(values), *mask_warnings(values)]
+        if values.get(BEC.name) and not any(values.get(toggle.name) for toggle, _ in FIT_SPECS.values()):
+            warnings.append("BEC properties need a fit: turn on Fit T, X or Y")
+        return warnings
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         values = context.parameters
@@ -631,23 +688,33 @@ class TxyHistograms(DatasetAnalysis):
             toggle, model = FIT_SPECS[axis]
             if values.get(toggle.name):
                 context.check()
+                # The shots the histogram sums: the condensate decision's μ/k_BT check needs them.
                 fits.append(fit_axis(axis, item.edges, item.counts, str(values.get(model.name, model.default)),
-                                     constants, smoothing=sigma if on_smoothed else None))
+                                     constants, smoothing=sigma if on_smoothed else None, shots=len(shots)))
             else:
                 fits.append(None)
+        bec = None
+        if values.get(BEC.name):
+            context.check()
+            bec = readout(fits, AXES, [float(np.mean(np.diff(item.edges))) for item in items], len(shots), constants,
+                          str(values.get(BEC_AXIS.name, AUTO)))
         return Histograms(tuple(items), shots, len(context.view.shots), reversed_axes(values), newest,
                           tuple(newest_counts), newest_colour(values), units, tuple(factors), tuple(smoothed),
-                          tuple(sigmas), tuple(fits), tuple(bin_notes), box, constants, masked)
+                          tuple(sigmas), tuple(fits), tuple(bin_notes), box, constants, masked, bec,
+                          self.run_constant_keys(action_name, values))
 
     def result_found(self, action_name: str, data: Any) -> dict[str, Any]:
         """With any fit: ``Histograms.record()`` (each fit's record and the constants used),
         whose ``record_lines`` the dock's record shows."""
-        return data.record() if isinstance(data, Histograms) and data.fitted() else {}
+        return data.record() if isinstance(data, Histograms) and (data.fitted() or data.bec is not None) else {}
 
     def live_policy(self, action_name: str) -> LivePolicy:
-        # Fits take a fraction of a second per axis on a large folder, and a rerun while the user
-        # reads one is noise: at most one rerun a second (fits on or off: the policy is per plot).
-        return LivePolicy(min_delay=1.0)
+        # Measured on 293k events (D4 wiring): Gaussian fits on three axes 0.1 s, the BEC readout a
+        # few ms, but a bimodal TF + Bose fit 0.6 s on a condensate and 2.4 s on a thermal axis (it
+        # fits the free-z partner too): 5.3 s with all three. A run is never cancelled for new data
+        # and the analysis worker is shared, so 2 s apart, as the other heavy plots (the policy is
+        # per plot, fits on or off; its Live settings can lower it).
+        return LivePolicy(min_delay=2.0)
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Histograms = result.data

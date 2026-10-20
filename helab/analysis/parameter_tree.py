@@ -295,7 +295,7 @@ def tree_values(root: Parameter, specs: Sequence[ParameterSpec]) -> dict[str, An
 def apply_visibility(root: Parameter, specs: Sequence[ParameterSpec]) -> None:
     values = tree_values(root, specs)
     for spec in specs:
-        if spec.when is not None:
+        if spec.when is not None or spec.shown_with is not None:
             parameter_of(root, spec).setOpts(visible=spec.applies(values))
 
 

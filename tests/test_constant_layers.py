@@ -394,7 +394,7 @@ def test_the_histograms_fits_are_keyed_on_constants_and_marked_when_one_changes(
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")
     assert isinstance(instance, AnalysisInstance) and instance.parameter_root is not None
     qtbot.waitUntil(lambda: instance.shown is not None, timeout=10_000)
-    assert instance.constant_keys == ("fall_distance", "fall_time", "g", "mass", "k_B")
+    assert instance.constant_keys == basic_plots.CONSTANT_KEYS  # Those it can use; a run names its own.
     plain = instance.shown
     assert plain is not None and plain.resolved_constants is None and "constants" not in plain.reuse_key()
     cache.set_lab_constants({"g": 9.79})
@@ -410,9 +410,13 @@ def test_the_histograms_fits_are_keyed_on_constants_and_marked_when_one_changes(
     assert fitted.resolved_constants.origins["g"] == "lab"
     record = cast(QDockWidget, instance.dock_widget).findChild(QLabel, "plot_data_source")
     assert record is not None and record.toolTip().count("Constants: ") == 1
+    assert fitted.constant_keys == ("fall_distance", "fall_time", "g", "mass", "k_B")  # No bimodal fit: no trap
+    assert "QE = " not in record.toolTip()
     assert "constants: t_f 416.2187 ms (derived, unconfirmed) · g 9.79 m/s² (lab)" in label(instance, "plot_data_source")
     assert label(instance, "plot_error") == ""
-    cache.set_lab_constants({"g": 9.79, "mass": 6.6e-27})  # A constant only the fits use: marked.
+    cache.set_lab_constants({"g": 9.79, "detector_qe": 0.2})  # The trap's: a Gaussian fit doesn't use it.
+    assert label(instance, "plot_error") == ""
+    cache.set_lab_constants({"g": 9.79, "detector_qe": 0.2, "mass": 6.6e-27})  # Only the fits use it: marked.
     assert label(instance, "plot_error").startswith("⚠ constants changed (")
 
 

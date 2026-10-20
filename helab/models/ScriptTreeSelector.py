@@ -789,7 +789,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             record = describe(without_constants(specs), result.parameters, every=True)
             if (constants := result.resolved_constants) is not None:
                 # The constants not at their defaults (all of them, with origins, are in the record).
-                used = describe_constants(constants, self.constant_keys)
+                used = describe_constants(constants, result.constant_keys or self.constant_keys)
                 settings = " · ".join(filter(None, (settings, used and f"constants: {used}",
                                                     *(f"⚠ {note}" for note in constants.notes))))
             found = self._hook("result_record", [], result) if result.state == "completed" else []
@@ -870,7 +870,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if now is None:
             self._constants_note = ""
             return
-        changed = changed_keys(shown.resolved_constants, now, self.constant_keys)
+        # The keys the shown run used (``run_constant_keys``): another one changing doesn't concern it.
+        changed = changed_keys(shown.resolved_constants, now, shown.constant_keys or self.constant_keys)
         self._constants_note = (f"constants changed ({', '.join(TABLE[key].title for key in changed)}): "
                                 "Rerun to use them") if changed else ""
         self._show_constant_titles(now)
