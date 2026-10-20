@@ -30,7 +30,7 @@ Python 3.13 is the required version (CI gates on it). Use uv, as the README's "S
 ```bash
 uv python install 3.13
 uv venv --seed --python 3.13 venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-uv pip install -r requirements.txt -e .
+uv pip install -r requirements.lock -e .   # pinned; requirements.txt lists direct deps (README: refreshing the lock)
 git submodule update --init --recursive   # legacy/tdc_autoconverter
 ```
 

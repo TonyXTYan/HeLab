@@ -107,8 +107,10 @@ uv venv --seed --python 3.13 venv
 ```bash
 source venv/bin/activate       # macOS / Linux
 venv\Scripts\activate          # Windows (cmd or PowerShell)
-uv pip install -r requirements.txt -e .
+uv pip install -r requirements.lock -e .
 ```
+
+`requirements.lock` pins every package to the versions CI tests (Python 3.13, macOS, Windows and Linux); `requirements.txt` lists only the direct dependencies, unpinned.
 
 **4. Run:**
 
@@ -122,7 +124,8 @@ Notes:
 - Bare `python` on lab PCs is often an old interpreter (for example Python 2.7). Use the one in `venv`.
 - On Windows, start HeLab from the desktop, not over SSH. An SSH session as an administrator runs elevated, and it can leave cache folders that a normal launch can't write to.
 - The submodule (`legacy/tdc_autoconverter`) is MATLAB reference code only. HeLab runs without it. In an existing clone, fetch it with `git submodule update --init --recursive`.
-- Without uv: if Python 3.13 is already installed, `python3.13 -m venv venv` then `pip install -r requirements.txt -e .` also works. With conda: `conda create -n HeLab python=3.13`, `conda activate HeLab`, then the same `pip install`.
+- Without uv: if Python 3.13 is already installed, `python3.13 -m venv venv` then `pip install -r requirements.lock -e .` also works. With conda: `conda create -n HeLab python=3.13`, `conda activate HeLab`, then the same `pip install`.
+- Updating dependencies: edit `requirements.txt`, then refresh the lock with `uv pip compile requirements.txt --universal --python-version 3.13 --upgrade -o requirements.lock` and install it. Commit both; CI's Python 3.13 jobs install the lock (the 3.11, 3.12 and 3.14 compatibility jobs install `requirements.txt` unpinned).
 - macOS with iCloud Drive syncing this folder: create the environment as `venv.nosync` and symlink it (`ln -s venv.nosync venv`), which keeps the constantly changing venv files out of iCloud. Activation and imports work the same either way.
 
 <!-- maybe it would also work on Python 3.11? See CI run [here](https://github.com/TonyXTYan/HELIUM/actions/runs/11605700722) -->

@@ -47,7 +47,7 @@ haven't been done on a second machine yet. Then continue with sections 1–4.
    ```bash
    uv python install 3.13
    uv venv --seed --python 3.13 venv && source venv/bin/activate
-   uv pip install -r requirements.txt -e .
+   uv pip install -r requirements.lock -e .
    pytest -n 4 --reruns 5 --reruns-delay 1   # should pass; report any RERUN
    ```
 
@@ -263,7 +263,7 @@ uv's cache). Keep 1 and 2 both on or both off.
 2. Packages and the floor's own editable `helab`:
 
    ```bash
-   cd "$MAESTRI_FLOOR_PATH" && [ "$MAESTRI_FLOOR_PATH" != "$MAESTRI_ROOT_PATH" ] && uv pip install -q --python venv/bin/python -r requirements.txt -e .
+   cd "$MAESTRI_FLOOR_PATH" && [ "$MAESTRI_FLOOR_PATH" != "$MAESTRI_ROOT_PATH" ] && uv pip install -q --python venv/bin/python -r requirements.lock -e .
    ```
 
 **Private app folders**, for tests and any manual run (QSettings is **not** yet
