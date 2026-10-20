@@ -196,7 +196,7 @@ def test_counts_per_shot_marks_the_newest_shot(qtbot: QtBot) -> None:
     assert lit.newest.opts["symbolBrush"].color().getRgb()[:3] == (200, 30, 180)
     assert lit.newest.opts["symbolSize"] == basic_plots.NEWEST_SIZE
     assert script.describe_run("Plot", result.parameters, view)[1].endswith("newest shot in magenta")
-    assert script.get_metadata().version == "3"
+    assert script.get_metadata().version == "4"
 
 
 def test_shot_times_marks_the_newest_shot_in_both_plots(qtbot: QtBot) -> None:
@@ -214,7 +214,7 @@ def test_shot_times_marks_the_newest_shot_in_both_plots(qtbot: QtBot) -> None:
     assert list(gaps.xData) == [when] and list(gaps.yData) == [12.0]
     assert counts.opts["symbolBrush"].color().getRgb()[:3] == (214, 39, 40)
     assert "shot 40 (newest)" in lit.key_label.text and "TXY file time" in lit.key_label.text
-    assert script.get_metadata().version == "2"
+    assert script.get_metadata().version == "3"
 
 
 def test_mean_position_record_says_the_bins_left_out_once() -> None:

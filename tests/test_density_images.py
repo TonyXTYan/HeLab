@@ -389,7 +389,7 @@ def test_discovered_in_the_bundled_group() -> None:
     manager = ScriptsManager()
     manager.load_module(density_images)
     (metadata,) = manager.get_scripts_in_group(group.NAME)
-    assert (metadata.name, metadata.analysis_id, metadata.version) == ("Density images", "helab.density_images", "1")
+    assert (metadata.name, metadata.analysis_id, metadata.version) == ("Density images", "helab.density_images", "2")
     assert manager.get_script(metadata.script_id) is DensityImages
-    assert SCRIPT.get_actions() == ["Plot"]
+    assert SCRIPT.get_actions() == ["Plot", "Find hot spots"]
     assert SCRIPT.live_policy("Plot").min_delay == 2.0

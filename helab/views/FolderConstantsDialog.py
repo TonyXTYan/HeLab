@@ -120,13 +120,13 @@ class FolderConstantsDialog(QDialog):
         start from, not typed since, or a time still at 0. Save waits for them: 0 means nothing."""
         return [key for key, check in self.set_here.items()
                 if check.isChecked() and TABLE[key].optional
-                and (not TABLE[key].accepts(number(self.editors[key]))
+                and (not TABLE[key].allows(number(self.editors[key]))
                      or (key not in self._typed and not self._resolved_without(key).is_set(key)))]
 
     def _resolved_without(self, key: str) -> ResolvedConstants:
         own = {other: (number(self.editors[other]), self.path) for other, check in self.set_here.items()
                if check.isChecked() and other != key and (not TABLE[other].optional or other in self._typed)
-               and TABLE[other].accepts(number(self.editors[other]))}
+               and TABLE[other].allows(number(self.editors[other]))}
         return resolve(lab=self.cache.lab_constants, folder=folder_layer({**self._above(), **own}))
 
     def _found(self, without: str = "") -> dict[str, tuple[float, str]]:

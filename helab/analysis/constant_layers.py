@@ -43,8 +43,8 @@ OPTIONAL_LIMITS = (0.0, 1e60)  # an optional time's: 0 until a value is typed
 SYMBOLS: Mapping[str, str] = {
     "hbar": "ħ", "k_B": "k_B", "u": "u", "mass": "m", "g": "g", "scattering_length": "a",
     "fall_distance": "h", "fall_time": "t_f", "trap_radial": "f_r", "trap_axial": "f_z",
-    "dld_trigger": "trigger", "dld_acquisition": "acquisition", "release_time": "t_r", "arrival_time": "t_a", "trap_x": "x₀",
-    "trap_y": "y₀"}
+    "detector_qe": "QE", "trap_axial_axis": "axial axis", "dld_trigger": "trigger", "dld_acquisition": "acquisition",
+    "release_time": "t_r", "arrival_time": "t_a", "trap_x": "x₀", "trap_y": "y₀"}
 
 
 def value_name(key: str) -> str:
@@ -64,11 +64,12 @@ def default_value(key: str) -> float:
 
 
 def limits(key: str) -> tuple[float, float]:
-    """The values an editor of ``key`` allows: any for a signed row, else positive ones; for an
+    """The values an editor of ``key`` allows (at most the row's maximum): any for a signed row,
+    else positive ones; for an
     optional time also 0, which shows it has no value yet (``clean_layer`` leaves 0 out)."""
-    if TABLE[key].signed:
-        return SIGNED_LIMITS
-    return OPTIONAL_LIMITS if TABLE[key].optional else LIMITS
+    constant = TABLE[key]
+    low, high = SIGNED_LIMITS if constant.signed else OPTIONAL_LIMITS if constant.optional else LIMITS
+    return low, min(high, constant.maximum)
 
 
 def is_constant(spec: ParameterSpec) -> bool:
@@ -97,6 +98,13 @@ def constants_specs(keys: Sequence[str], *, group: str = GROUP, page: str = "") 
         specs.append(ParameterSpec(source_name(key), constant.title, "choice", USE_LAYERS, choices=CHOICES,
                                    group=group, page=page,
                                    tip=f"Where the run takes {constant.title} from. {tip}"))
+        if constant.choices:  # a coded row: its code, a whole number (its labels are in the tip)
+            labels = ", ".join(f"{code:g} = {label}" for code, label in constant.choices.items())
+            specs.append(ParameterSpec(value_name(key), f"{constant.title}, this plot", "int", int(default_value(key)),
+                                       limits=(min(constant.choices), max(constant.choices)), group=group,
+                                       page=page, when=(source_name(key), SET_HERE),
+                                       tip=f"This plot's own value: {labels}. {tip}"))
+            continue
         specs.append(ParameterSpec(value_name(key), f"{constant.title}, this plot", "float", default_value(key),
                                    limits=limits(key), suffix=constant.unit, group=group, page=page,
                                    when=(source_name(key), SET_HERE), si=constant.unit in SI_UNITS,
@@ -114,8 +122,8 @@ def constant_keys(specs: Iterable[ParameterSpec]) -> tuple[str, ...]:
 
 def clean_layer(values: object, keys: Iterable[str] | None = None) -> dict[str, float]:
     """A layer's values that ``resolve`` accepts: known keys (of ``keys``, if given) with finite
-    numbers, positive unless the row is signed (``Constant.accepts``). Anything else (a newer
-    HeLab's key, text, nan) is left out."""
+    numbers that the row allows (``Constant.allows``: positive unless signed, at most its maximum;
+    a coded row's codes). Anything else (a newer HeLab's key, text, nan, a QE above 1) is left out."""
     if not isinstance(values, Mapping):
         return {}
     allowed = set(TABLE if keys is None else keys) & set(TABLE)
@@ -127,7 +135,7 @@ def clean_layer(values: object, keys: Iterable[str] | None = None) -> dict[str, 
             number = float(value)
         except (TypeError, ValueError, OverflowError):
             continue
-        if TABLE[str(key)].accepts(number):
+        if TABLE[str(key)].allows(number):
             cleaned[str(key)] = number
     return cleaned
 
@@ -166,6 +174,8 @@ def value_text(key: str, value: float) -> str:
     unit = TABLE[key].unit
     if math.isnan(value) and TABLE[key].optional:
         return FROM_THE_DATA
+    if TABLE[key].choices:
+        return TABLE[key].label(value) or f"{value:g}"
     if unit == "s":
         return time_text(value)
     if unit == "m":

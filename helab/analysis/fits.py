@@ -39,8 +39,11 @@ How a fit runs:
 Models are derived from the physics, not copied from the MATLAB code (which has bugs:
 roadmaps/dld-front-panel-port.md). Registered now: Gaussian + offset, the Thomas–Fermi
 projection (1 − u²)^p + offset, bimodal TF^p + Gaussian with a shared centre, and the exact
-arrival-time ("Yavin") thermal profile on T (``arrival_time_model``: D1). D4 adds the
-Bose-enhanced g_{5/2} part with ``register``. Pure NumPy/SciPy, no Qt. Fits run in the
+arrival-time ("Yavin") thermal profile on T (``arrival_time_model``: D1), and (D4) the
+Bose-enhanced thermal profiles g_{5/2} and g_2 (``bose_model``, with ``polylog``) and the bimodal
+TF² + g_{5/2} and TF^{3/2} + g_2 (fugacity 1). ``condensate_fraction`` and ``component_areas`` give
+N0/N and the parts' areas ± SE from a fit's covariance; ``helab/analysis/bec.py`` turns them into
+BEC properties (D14) and sets the R/σ_th cap per axis. Pure NumPy/SciPy, no Qt. Fits run in the
 analysis worker thread, so nothing here changes warning filters per call
 (``warnings.catch_warnings`` isn't thread-safe).
 """
@@ -55,7 +58,7 @@ from typing import Any, Callable, Literal, Mapping, Sequence, cast
 import numpy as np
 import numpy.typing as npt
 from scipy.optimize import OptimizeWarning, curve_fit
-from scipy.special import gammaln
+from scipy.special import gamma, gammaln, zeta
 
 from helab.analysis.estimates import Estimate, finite_or_none, propagate
 from helab.analysis.physics import DEFAULTS
@@ -76,6 +79,10 @@ MIN_RADIUS_RATIO = 0.02
 RATIO = "ratio"  # the parameter max_radius_ratio caps
 RATIO_CAP_NEAR = 0.01  # a ratio within this fraction of the cap is "at its limit"
 OFFSET = "offset"  # floored at 0 for raw counts with count weights (fit_histogram)
+FUGACITY = "fugacity"  # a Bose thermal part's z, in [0, 1]
+SLICE_NOTE = "a slice holds part of the cloud: N, N0 and Tc need a full projection (p = 2)"
+# A fugacity this close to 1 (or 0) is "at 1" (saturated: at or below Tc) or "at 0" (Boltzmann).
+FUGACITY_SATURATED = 0.999
 
 # curve_fit warns when it can't estimate a covariance; the result's checks report that
 # instead. Set once here, for SciPy's optimizer only: per-call filters aren't thread-safe.
@@ -122,6 +129,9 @@ class FitModel:
     # Constants built into the model (the arrival-time profile's fall distance and g),
     # recorded with each fit of it.
     fixed: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}))
+    # A thin-slice profile (TF^{3/2}, g_2): it integrates one other axis only, so its areas are
+    # part of the cloud's (``SLICE_NOTE``); a full projection (p = 2, g_{5/2}) holds it all.
+    slice: bool = False
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -437,16 +447,27 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
         notes.append(f"TF radius at its limit (R = {max_radius_ratio:g}·σ_th): the cloud may be colder than "
                      "the limit allows; raise it or treat T and N0/N as bounds")
     width = np.where(np.isfinite(upper_n - lower_n), upper_n - lower_n, np.maximum(np.abs(found), 1.0))
+    # A Bose fugacity at either end of [0, 1] is physics, not a fit stuck at a bound: say what it means.
+    fugacity = float(values[fit_model.names.index(FUGACITY)]) if FUGACITY in fit_model.names else math.nan
+    if fugacity >= FUGACITY_SATURATED:
+        notes.append("fugacity z at 1: the thermal cloud is saturated, at or below Tc; a condensate may be there "
+                     "(try a bimodal fit, whose z is 1)")
+    elif fugacity <= 1 - FUGACITY_SATURATED:
+        notes.append("fugacity z at 0: the Boltzmann limit (the Gaussian), far above Tc")
     at_bound = [parameter.title for parameter, value, low, high, size in
                 zip(fit_model.parameters, found, lower_n, upper_n, width)
                 if parameter.name not in zero and parameter.name not in gated
                 and not (capped and parameter.name == RATIO)
+                and not (parameter.name == FUGACITY and math.isfinite(fugacity)
+                         and not 1 - FUGACITY_SATURATED < fugacity < FUGACITY_SATURATED)
                 and not (floored and parameter.name == OFFSET and value - low <= 1e-6 * size)
                 and (value - low <= 1e-6 * size or high - value <= 1e-6 * size)]
     if at_bound:
         notes.append(f"at its bound: {', '.join(at_bound)} (its SE is not reliable)")
     if absolute and dof > 0 and chi2 / dof > CHI2_NOTE:
         notes.append(f"reduced χ² {chi2 / dof:.3g}: the model doesn't describe the data well")
+    if fit_model.slice:
+        notes.append(SLICE_NOTE)
     estimates = {name: Estimate(float(value), math.nan if name in gated else ses[name])
                  for name, value in zip(fit_model.names, values)}
     for extra in fit_model.extras:
@@ -609,7 +630,8 @@ def thomas_fermi_model(power: float) -> FitModel:
         (ModelParameter("amplitude", "Amplitude", "height"), ModelParameter("centre", "Centre", "position"),
          ModelParameter("radius", "R", "width"), ModelParameter("offset", "Offset", "height")),
         function, guesses, bounds,
-        areas=lambda p: {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2]), power)})
+        areas=lambda p: {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2]), power)},
+        slice=power < 2)
 
 
 # The bimodal model fits R as a ratio to the thermal width, r = R/σ_th, capped by
@@ -621,23 +643,31 @@ def thomas_fermi_model(power: float) -> FitModel:
 # σ_th = √(k_B T/m)·t, and a TF radius as its expansion velocity (Castin–Dum) times t, which
 # depends on the axis and the trap: along the radial axes of a cigar trap R ≈ √(2μ/m)·t, so
 # R/σ_th = √(2μ/k_B T); in an isotropic trap √(4μ/3k_B T); along a cigar's axis only
-# ≈ (π/2)(ω_z/ω_⊥)√(2μ/k_B T), much less. So the cap is axis-dependent (D4 will set it per
-# axis; ``profiles.fit_axis`` passes it through). With √(2μ/k_B T), the default 2 allows
-# μ ≤ 2 k_B T: clouds near Tc down to roughly 0.4 Tc. Colder, deep condensates (T ≈ 0.1–0.3 Tc) often have μ/k_B T of 3–10, a ratio of
+# ≈ (π/2)(ω_z/ω_⊥)√(2μ/k_B T), much less. So the cap is axis-dependent: ``bec.radius_ratio_cap``
+# gives it for a trap axis at the run's time of flight (Castin–Dum), ``bec.axis_caps`` per T/X/Y from
+# the trap-axis mapping, and ``profiles.fit_axis(max_radius_ratio=None)`` uses those. With
+# √(2μ/k_B T), the default 2 allows μ ≤ 2 k_B T: clouds near Tc down to roughly 0.4 Tc. Colder,
+# deep condensates (T ≈ 0.1–0.3 Tc) often have μ/k_B T of 3–10, a ratio of
 # 2.5–4.5: raise the cap for them (a run that ends at the cap says so, and its T and N0/N
 # are then bounds, not values). A higher cap brings back some of the ambiguity above, so
 # raise it only when the data call for it. Each part's shape parameters are gated by its
 # amplitude.
 
 
-def bimodal_model(power: float) -> FitModel:
+def bimodal_model(power: float, bose: float | None = None) -> FitModel:
     """A condensate on a thermal cloud, one centre:
     A_c (1 − u²)₊^p + A_t exp(−(x − x₀)²/2σ²) + offset, u = (x − x₀)/R, R = r σ with
     r = R/σ from MIN_RADIUS_RATIO up to the fit's max_radius_ratio. R is reported as an
     extra. Started from a Gaussian fit (count weights, or the caller's errors), split four
-    ways (the last a cold cloud's, clipped to the cap)."""
+    ways (the last a cold cloud's, clipped to the cap).
+
+    ``bose`` (the polylog order, 5/2 or 2) makes the thermal part the Bose-enhanced
+    A_t g_ν(e^{−(x − x₀)²/2σ²}) / ζ(ν), its fugacity fixed at 1 (see ``bose_thermal``)."""
     def function(x: Array, condensate: float, centre: float, ratio: float, thermal: float, sigma: float,
                  offset: float) -> Array:
+        if bose is not None:
+            return (thomas_fermi(x, condensate, centre, ratio * sigma, 0.0, power)
+                    + bose_thermal(x, thermal, centre, sigma, 1.0, offset, bose))
         return (thomas_fermi(x, condensate, centre, ratio * sigma, 0.0, power)
                 + gaussian(x, thermal, centre, sigma, offset))
 
@@ -660,11 +690,17 @@ def bimodal_model(power: float) -> FitModel:
                 np.array([np.inf, high, MAX_RADIUS_RATIO, np.inf, 10 * span, top]))
 
     def areas(p: Array) -> dict[str, float]:
+        if bose is not None:
+            return {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2] * p[4]), power),
+                    "bose": bose_area(float(p[3]), float(p[4]), 1.0, bose)}
         return {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2] * p[4]), power),
                 "gaussian": gaussian_area(float(p[3]), float(p[4]))}
 
+    thermal_key, thermal_title = ("gaussian", "Gaussian") if bose is None else \
+        (f"g{_power_text(bose)}", f"Bose g_{_order_text(bose)} (z = 1)")
     return FitModel(
-        f"bimodal_tf{_power_text(power)}_gaussian", f"Bimodal: Thomas–Fermi (1 − u²)^{power:g} + Gaussian",
+        f"bimodal_tf{_power_text(power)}_{thermal_key}",
+        f"Bimodal: Thomas–Fermi (1 − u²)^{power:g} + {thermal_title}",
         (ModelParameter("condensate", "Condensate amplitude", "height"),
          ModelParameter("centre", "Centre", "position"),
          ModelParameter("ratio", "R / σ thermal", "shape", gates=("condensate", "thermal")),
@@ -672,12 +708,350 @@ def bimodal_model(power: float) -> FitModel:
          ModelParameter("sigma", "σ thermal", "width", gates=("thermal",)),
          ModelParameter("offset", "Offset", "height")),
         function, guesses, bounds, areas=areas, min_bins=4,
-        extras=(Extra("radius", "R", lambda p: float(p[2] * p[4]), gates=("condensate",)),))
+        extras=(Extra("radius", "R", lambda p: float(p[2] * p[4]), gates=("condensate",)),),
+        fixed=MappingProxyType({} if bose is None else {"fugacity": 1.0}), slice=power < 2)
 
 
 for _power in (2.0, 1.5):
     register(thomas_fermi_model(_power))
     register(bimodal_model(_power))
+
+
+# Polylogarithms, for the Bose-enhanced thermal profile below: Li_s(x) = Σ_{k≥1} x^k / k^s
+# (also written g_s), for real 0 ≤ x ≤ 1 and s > 1, without mpmath:
+# - x ≤ e^{−1}: the series itself, POLYLOG_TERMS terms (the next is below e^{−60} of the first).
+# - x > e^{−1}, μ = ln x ∈ (−1, 0]: the expansion about x = 1 (D. C. Wood, "The computation of
+#   polylogarithms", 1992), convergent for |μ| < 2π and here to ~(1/2π)^k:
+#     Li_s(e^μ) = Γ(1 − s)(−μ)^{s−1} + Σ_{k≥0} ζ(s − k) μ^k / k!            (s not a whole number)
+#     Li_n(e^μ) = μ^{n−1}/(n − 1)! (H_{n−1} − ln(−μ)) + Σ_{k≥0, k≠n−1} ζ(n − k) μ^k / k!   (s = n)
+#   with H the harmonic numbers, ζ from SciPy (which takes negative arguments). At x = 1 it is ζ(s).
+# The two agree to ~1e-15 where they meet (tests/test_bose_fits.py also checks known values).
+POLYLOG_TERMS = 60
+POLYLOG_NEAR_TERMS = 30
+POLYLOG_SPLIT = math.exp(-1.0)
+
+
+def _near_one_coefficients(order: float) -> tuple[Array, float, float, bool]:
+    """(ζ(s − k)/k! for k < POLYLOG_NEAR_TERMS, the singular term's coefficient, H_{n−1}, whether s
+    is a whole number) for ``polylog``'s expansion about 1. The k = n − 1 entry is 0 when s = n."""
+    whole = float(order).is_integer()
+    coefficients = np.array([0.0 if whole and k == round(order) - 1 else
+                             float(zeta(order - k)) / math.factorial(k) for k in range(POLYLOG_NEAR_TERMS)])
+    if whole:
+        n = round(order)
+        return coefficients, 1.0 / math.factorial(n - 1), sum(1.0 / j for j in range(1, n)), True
+    return coefficients, float(gamma(1 - order)), 0.0, False
+
+
+_NEAR_ONE: dict[float, tuple[Array, float, float, bool]] = {}
+
+
+def polylog(order: float, x: npt.ArrayLike) -> Array:
+    """Li_order(x) for real x in [0, 1] (clipped to it) and order > 1: the Bose functions g_ν."""
+    if not order > 1:
+        raise ValueError("polylog needs an order above 1 (it diverges at x = 1 otherwise)")
+    values = np.clip(np.asarray(x, dtype=np.float64), 0.0, 1.0)
+    result = np.empty(values.shape)
+    far = values <= POLYLOG_SPLIT
+    if far.any():
+        points = values[far]
+        total, power = np.zeros(points.shape), np.ones(points.shape)
+        for k in range(1, POLYLOG_TERMS + 1):
+            power = power * points
+            total += power / k ** order
+        result[far] = total
+    if (~far).any():
+        if order not in _NEAR_ONE:
+            _NEAR_ONE[order] = _near_one_coefficients(order)
+        coefficients, singular, harmonic, whole = _NEAR_ONE[order]
+        mu = np.log(values[~far])
+        total = np.zeros(mu.shape)
+        for coefficient in coefficients[::-1]:  # Horner: Σ c_k μ^k
+            total = total * mu + coefficient
+        with np.errstate(divide="ignore", invalid="ignore"):
+            if whole:
+                n = round(order)
+                log_term = np.where(mu < 0, harmonic - np.log(np.where(mu < 0, -mu, 1.0)), 0.0)
+                total += singular * mu ** (n - 1) * log_term
+            else:
+                total += singular * np.where(mu < 0, -mu, 0.0) ** (order - 1)
+        result[~far] = total
+    return result
+
+
+def _order_text(order: float) -> str:
+    return {2.5: "5/2", 1.5: "3/2"}.get(order, f"{order:g}")
+
+
+# The Bose-enhanced thermal profile. An ideal Bose gas in a harmonic trap, released and expanded
+# ballistically for long enough that the initial size is negligible, has the 3D density
+#   n(r) ∝ g_{3/2}(z exp(−Σ xᵢ²/2σᵢ²)),   σᵢ = √(k_B T/m)·t
+# (with the trap's initial size, × √(1 + 1/ωᵢ²t²)),
+# z = e^{μ/k_BT} the fugacity, 0 < z ≤ 1. Expanding g_{3/2} as Σ z^k e^{−k r²/2σ²}/k^{3/2} and
+# integrating each Gaussian over the other axes, every axis integrated raises the order by 1/2:
+#   over both other axes (a full projection, any T, X or Y histogram of all events): g_{5/2};
+#   over one (a thin slice of one other axis): g_2.
+# So the 1D profile is A g_ν(z e^{−(x − x₀)²/2σ²}) / g_ν(z) + offset (A the peak height above the
+# offset), ν = 5/2 paired with the TF exponent p = 2 and ν = 2 with p = 3/2: they integrate the same
+# axes. Its area is A √(2π) σ g_{ν+1/2}(z)/g_ν(z) (each Gaussian of the sum: σ√(2π/k)). As z → 0 it
+# is the Gaussian (the Boltzmann limit), and σ gives T exactly as the Gaussian's does (T = m σ_v²/k_B).
+# Near Tc (z → 1) the centre is Bose-enhanced, sharper than a Gaussian of the same σ: a Gaussian
+# fitted to it comes out narrower, biasing T low: by 5 % at z = 0.6, 10 % at z = 1, over ±5σ; as a
+# bimodal fit's thermal part it overstates N0/N by 0.04–0.08 and R by up to 9 % low (session notes,
+# 2026-10-20-claude-dld-d4-d14; tests/test_bose_fits.py). Below Tc the thermal cloud is saturated,
+# z = 1, so the bimodal fits fix it there (``bimodal_model``). That is the ideal-gas picture: the
+# condensate's mean field (μ > 0) pushes thermal atoms out of its centre, which z = 1 ignores (a
+# Hartree–Fock profile would include it; not offered). Above Tc a z = 1 bimodal invents a
+# condensate, so ``fit_condensate`` checks it against the free-z profile.
+# Along T the profile is a velocity distribution taken as a Gaussian in time (the arrival-time
+# model's skew is left out here, as in the Gaussian model).
+
+
+def bose_thermal(x: Array, amplitude: float, centre: float, sigma: float, fugacity: float, offset: float,
+                 order: float = 2.5) -> Array:
+    """A g_ν(z e^{−(x − x₀)²/2σ²}) / g_ν(z) + offset; the Gaussian when z is (nearly) 0."""
+    shape = np.exp(-0.5 * ((x - centre) / sigma) ** 2)
+    if fugacity < 1e-12:
+        return amplitude * shape + offset
+    return amplitude * polylog(order, fugacity * shape) / float(polylog(order, fugacity)) + offset
+
+
+def bose_area(amplitude: float, sigma: float, fugacity: float, order: float = 2.5) -> float:
+    """∫ A g_ν(z e^{−u²/2σ²}) / g_ν(z) dx = A √(2π) σ g_{ν+1/2}(z) / g_ν(z) (1 as z → 0)."""
+    z = min(max(float(fugacity), 0.0), 1.0)
+    ratio = 1.0 if z < 1e-12 else float(polylog(order + 0.5, z)) / float(polylog(order, z))
+    return gaussian_area(amplitude, sigma) * ratio
+
+
+def bose_model(order: float) -> FitModel:
+    """The Bose-enhanced thermal profile g_ν + offset, its fugacity z fitted in [0, 1]. Started
+    from a Gaussian fit, at three fugacities (σ wider as z grows: the enhanced centre is narrower)."""
+    def function(x: Array, amplitude: float, centre: float, sigma: float, fugacity: float, offset: float
+                 ) -> Array:
+        return bose_thermal(x, amplitude, centre, sigma, fugacity, offset, order)
+
+    def guesses(x: Array, y: Array, errors: Array) -> list[Array]:
+        single = fit_histogram(x, y, "gaussian", sigma=errors)
+        if single.ok:
+            peak, mean, spread, baseline = (single[name].value for name in ("amplitude", "centre", "sigma", "offset"))
+        else:
+            baseline, peak, mean, spread = _moments(x, y)
+        return [np.array([peak, mean, s * spread, z, baseline]) for z, s in ((0.3, 1.02), (0.8, 1.08), (0.99, 1.2))]
+
+    def bounds(x: Array, y: Array) -> tuple[Array, Array]:
+        low, high = _position_bounds(x)
+        _, _, span, step = _extent(x)
+        top = float(np.max(np.abs(y)))
+        return np.array([0.0, low, step / 100, 0.0, -top]), np.array([np.inf, high, 10 * span, 1.0, top])
+
+    return FitModel(
+        f"bose_g{_power_text(order)}", f"Bose-enhanced thermal g_{_order_text(order)} + offset",
+        (ModelParameter("amplitude", "Amplitude", "height"), ModelParameter("centre", "Centre", "position"),
+         ModelParameter("sigma", "σ", "width"), ModelParameter(FUGACITY, "Fugacity z", "shape"),
+         ModelParameter("offset", "Offset", "height")),
+        function, guesses, bounds, min_bins=4, slice=order < 2.5,
+        areas=lambda p: {"bose": bose_area(float(p[0]), float(p[2]), float(p[3]), order)})
+
+
+# ν = 5/2 for full projections (paired with TF²), ν = 2 for thin slices (with TF^{3/2}).
+for _order, _power in ((2.5, 2.0), (2.0, 1.5)):
+    register(bose_model(_order))
+    register(bimodal_model(_power, bose=_order))
+
+
+# Condensate fraction and atom numbers from a bimodal fit's components.
+
+CONDENSATE_AREA = "thomas_fermi"
+
+
+def component_areas(fit: FitResult) -> dict[str, Estimate]:
+    """Each component's area (counts × x units: divide by the bin width for counts) ± SE from the
+    fit's covariance (``FitModel.areas``). Empty when the model has no areas; nan without a fit."""
+    areas = fit.model.areas
+    if areas is None:
+        return {}
+    model_areas: Callable[[Array], dict[str, float]] = areas
+    names = list(model_areas(fit.values if fit.ok else np.ones(len(fit.model.names))))
+    if not fit.ok:
+        return {name: Estimate(math.nan, math.nan) for name in names}
+
+    def area_of(name: str) -> Callable[[Array], float]:
+        return lambda p: model_areas(p)[name]
+    return {name: fit.derived(area_of(name)) for name in names}
+
+
+def condensate_fraction(fit: FitResult) -> Estimate:
+    """N0/N = A_TF / (A_TF + A_thermal) from a bimodal fit's component areas, ± SE by the delta
+    method on the fitted parameters' covariance (so the areas' correlation is counted). nan for
+    a failed fit or a model without a condensate part. The fraction is of the counts the
+    histogram holds: a cropped box or window crops the thermal wings more than the condensate.
+    On a slice model (``FitModel.slice``: TF^{3/2}, g_2) it is the slice's fraction, not the
+    cloud's (a thin central slice holds relatively more condensate); the fit's notes say so
+    (``SLICE_NOTE``)."""
+    areas = fit.model.areas
+    if areas is None or not fit.ok or CONDENSATE_AREA not in areas(fit.values):
+        return Estimate(math.nan, math.nan)
+    model_areas: Callable[[Array], dict[str, float]] = areas
+
+    def fraction(p: Array) -> float:
+        parts = model_areas(p)
+        total = sum(parts.values())
+        return parts[CONDENSATE_AREA] / total if total > 0 else math.nan
+    return fit.derived(fraction)
+
+
+# Is there a condensate? The bimodal TF + Bose fits fix the thermal part's z at 1 (saturated), so
+# on a cloud above Tc they invent one: a thermal cloud at z = 0.3 came out with N0/N = 0.15 ± 0.01 and
+# σ 7 % wide (the review's probe). ``fit_condensate`` therefore always fits the free-z Bose
+# profile beside the bimodal one, and reports the condensate only when the bimodal fit's χ² is lower
+# by at least CONDENSATE_DELTA_CHI2 = 9 (the data are described clearly better by a condensate on a
+# saturated cloud than by any ideal thermal cloud, z ≤ 1) and either
+#   - the free-z fit saturates, z ≥ FUGACITY_SATURATED (at or below Tc), or
+#   - the bimodal fit is better by at least CONDENSATE_STRONG_DELTA_CHI2 = 25 (5σ for one parameter).
+# The second branch is there because the z condition alone fails real, strong condensates: with a
+# condensate of 2/3 of the peak the free-z profile follows the condensate with a narrow σ and z =
+# 0.44 ± 0.20, while the bimodal fit is better by Δχ² ≈ 150 (tests/test_bose_fits.py). Measured
+# (session notes): above Tc, true z of 0.3, 0.7, 0.95 gave Δχ² of about −340, −130, −9 at 400 000
+# events (the z = 1 bimodal can't follow an unsaturated cloud) and at most 12 at 20 000; at z = 1,
+# at most 11; condensates of 5–70 % were found in 5/5 runs each from 400 000 events and 30–70 % from
+# 20 000 (5 % in 2/5 there), N0/N within 0.005 from 400 000 events. False condensates: 1 in 60 thermal clouds of 20 000
+# events (at z = 1, i.e. at Tc), none in 120 from 400 000 up (proposed, for Tony).
+# Both fits are Poisson maximum-likelihood fits (``_reweight``) whose χ² uses the model's own
+# variance, so the χ² difference is the likelihood-ratio statistic to second order. The bimodal has
+# one more free parameter than the free-z profile (condensate amplitude and R/σ for z), so for one
+# extra degree of freedom Δχ² ≥ 9 is a 3σ improvement (p ≈ 0.003); the models aren't nested, so the
+# level is a convention, not an exact test (proposed, for Tony). For a smoothed-curve fit the χ² uses
+# the smoothed bins' variances as if independent, which overstates Δχ²: treat its decision as loose.
+# Otherwise the free-z fit is the result, with "no condensate (z = …)".
+CONDENSATE_DELTA_CHI2 = 9.0
+CONDENSATE_STRONG_DELTA_CHI2 = 25.0
+
+
+@dataclass(frozen=True)
+class CondensateChoice:
+    """``fit_condensate``'s outcome: the fit to report (the bimodal one or the free-z thermal one),
+    both fits, whether a condensate is reported, the χ² difference (thermal − bimodal) and why."""
+    fit: FitResult
+    bimodal: FitResult
+    thermal: FitResult
+    condensate: bool
+    delta_chi2: float
+    note: str
+
+
+def bose_order(power: float) -> float:
+    """The Bose order that integrates the same axes as the TF exponent: 5/2 for p = 2, 2 for 3/2."""
+    return power + 0.5
+
+
+# Unsaturated free-z fits need more (the re-review): summed shots whose widths jitter by ~10 % (T by
+# ~20 %) aren't one Bose profile, and the mismatch grows with N, so at 4·10⁶ events Δχ² reached
+# 140–230 with the free z at 0.98 and a "condensate" of 5–9 %. Those fits put R/σ_th at 1.8–2.0, up
+# against the cap, where real condensates sit near 0.8 of it or less, and neither fit described the
+# data. Jittered clouds near Tc (z 0.9–0.97) also drove the free z to 1, so the saturated branch was
+# fooled too (Δχ² 170–460 at 4·10⁶ events). So every condensate also needs (``_plausibility``):
+#   - R/σ_th ≤ UNSATURATED_CAP_SHARE (0.8) × the fit's cap (a cold cloud at the cap: raise the cap);
+#   - the bimodal fit acceptable by reduced χ² (χ²/dof ≤ 1 + ACCEPTABLE_SIGMAS √(2/dof), 3σ of the
+#     χ² distribution), or its gain over the thermal fit at least MISFIT_RATIO (10) times its own
+#     excess χ² − dof: summed real condensates fit no model to 3σ at 4·10⁶ events, but there the
+#     bimodal's gain was 40–500 times its misfit, against 2–3 times for the jittered thermal sums
+#     (both grow ∝ N, so the ratio holds at any N);
+#   - when the caller can check it (``consistency``: profiles.fit_axis with the run's constants and
+#     shots), μ/k_BT from the fitted R/σ_th agreeing within ×2 with μ/k_BT from N0 and T;
+# and without a saturated free z, Δχ² ≥ 25 and the free-z fit not acceptable. Otherwise: "possible
+# condensate (…, Δχ² …), not reported: why", and the thermal fit is the result. Measured (session
+# notes): σ-jittered sums (50 shots, 10 % σ jitter, 4·10⁶ events) at z 0.5/0.9/0.97 gave 1 false
+# condensate in 18 (z = 0.97, bimodal reduced χ² just acceptable); clean 5 % and 30 % mixtures were
+# all found, and jittered 5 % and 30 % mixtures at 4·10⁵ and 4·10⁶ events (N0/N 0.06 and 0.31: the
+# jitter biases them). Per-shot fits (D2) avoid the jitter and should make this decision per shot.
+UNSATURATED_CAP_SHARE = 0.8
+ACCEPTABLE_SIGMAS = 3.0
+MISFIT_RATIO = 10.0
+MU_AGREEMENT = 2.0  # μ/k_BT from R/σ and from N0, T agree within this factor
+# A check of a bimodal fit against the run's constants: (agrees, or None when it can't be checked,
+# and a note).
+Consistency = Callable[[FitResult], tuple[bool | None, str]]
+
+
+def acceptable(fit: FitResult) -> bool:
+    """Whether a fit's reduced χ² is within ``ACCEPTABLE_SIGMAS`` of 1 (χ²/dof ≤ 1 + 3√(2/dof))."""
+    return fit.ok and fit.dof > 0 and fit.reduced_chi2 <= 1 + ACCEPTABLE_SIGMAS * math.sqrt(2 / fit.dof)
+
+
+def _plausibility(bimodal: FitResult, thermal: FitResult, consistency: Consistency | None, saturated: bool
+                  ) -> list[str]:
+    """Why a condensate isn't credible ([] when it is); see the comment above
+    ``UNSATURATED_CAP_SHARE``."""
+    failed: list[str] = []
+    cap = bimodal.options.get("max_radius_ratio", MAX_RADIUS_RATIO)
+    ratio = bimodal[RATIO].value
+    if not ratio <= UNSATURATED_CAP_SHARE * cap:
+        failed.append(f"R/σ_th {ratio:.2f} near its cap {cap:.2f}")
+    misfit = bimodal.chi2 - bimodal.dof
+    gain = thermal.chi2 - bimodal.chi2
+    if not (acceptable(bimodal) or gain >= MISFIT_RATIO * misfit):
+        failed.append(f"the bimodal fit doesn't describe the data either (reduced χ² {bimodal.reduced_chi2:.3g}; "
+                      f"its gain Δχ² {gain:.3g} is under {MISFIT_RATIO:g}× its misfit {misfit:.3g})")
+    elif not saturated and acceptable(thermal):
+        failed.append(f"the thermal fit describes the data too (reduced χ² {thermal.reduced_chi2:.3g})")
+    if consistency is not None:
+        agrees, why = consistency(bimodal)
+        if agrees is False:
+            failed.append(why)
+    return failed
+
+
+def choose_condensate(bimodal: FitResult, thermal: FitResult, consistency: Consistency | None = None
+                      ) -> CondensateChoice:
+    """Decide between a bimodal TF + Bose (z = 1) fit and a free-z Bose fit of the same bins (see
+    the comments above ``CONDENSATE_DELTA_CHI2`` and ``UNSATURATED_CAP_SHARE``). ``consistency``
+    checks a bimodal fit against the run's constants (μ/k_BT both ways); None skips it."""
+    delta = thermal.chi2 - bimodal.chi2 if bimodal.ok and thermal.ok else math.nan
+    if not thermal.ok:
+        if bimodal.ok:
+            return CondensateChoice(bimodal, bimodal, thermal, True, delta,
+                                    f"condensate not checked: the free-z thermal fit failed ({thermal.failure})")
+        return CondensateChoice(bimodal, bimodal, thermal, False, delta, "")
+    z = thermal[FUGACITY]
+    saturated = z.value >= FUGACITY_SATURATED
+    z_text = "1" if saturated else z.text()
+    if not bimodal.ok:
+        return CondensateChoice(thermal, bimodal, thermal, False, delta,
+                                f"no condensate (z = {z_text}; the bimodal fit failed: {bimodal.failure})")
+    if not delta >= (CONDENSATE_DELTA_CHI2 if saturated else CONDENSATE_STRONG_DELTA_CHI2):
+        where = "at about Tc" if saturated else "above Tc"
+        return CondensateChoice(thermal, bimodal, thermal, False, delta,
+                                f"no condensate (z = {z_text}: {where}; the bimodal fit is not better by "
+                                f"Δχ² ≥ {CONDENSATE_DELTA_CHI2 if saturated else CONDENSATE_STRONG_DELTA_CHI2:g}: "
+                                f"{delta:.3g})")
+    failed = _plausibility(bimodal, thermal, consistency, saturated)
+    if failed:
+        kind = "saturated thermal fit, z = 1" if saturated else f"unsaturated thermal fit, z = {z_text}"
+        return CondensateChoice(thermal, bimodal, thermal, False, delta,
+                                f"possible condensate ({kind}, Δχ² {delta:.3g}), not reported: {'; '.join(failed)}")
+    if saturated:
+        why = (f"the free-z thermal fit saturates (z = 1) and the bimodal fit is better by Δχ² {delta:.3g} "
+               "and describes the data")
+    else:
+        why = (f"the bimodal fit is better by Δχ² {delta:.3g} and describes the data; the free-z thermal fit "
+               f"can't follow the condensate (its z = {z_text} means nothing here)")
+    if consistency is not None:
+        agrees, note = consistency(bimodal)
+        if agrees is None and note:
+            why += f" ({note})"
+    return CondensateChoice(bimodal, bimodal, thermal, True, delta, f"condensate: {why}")
+
+
+def fit_condensate(centres: npt.ArrayLike, counts: npt.ArrayLike, power: float = 2.0, *,
+                   consistency: Consistency | None = None, **options: Any) -> CondensateChoice:
+    """Fit the bimodal TF^p + Bose g_{p+1/2} (z = 1) and the free-z Bose g_{p+1/2} profile to the
+    same histogram (``options`` go to both ``fit_histogram`` calls; ``max_radius_ratio`` to the
+    bimodal only) and ``choose_condensate``."""
+    order = bose_order(power)
+    thermal_options = {key: value for key, value in options.items() if key != "max_radius_ratio"}
+    bimodal = fit_histogram(centres, counts, f"bimodal_tf{_power_text(power)}_g{_power_text(order)}", **options)
+    thermal = fit_histogram(centres, counts, f"bose_g{_power_text(order)}", **thermal_options)
+    return choose_condensate(bimodal, thermal, consistency)
 
 
 # The arrival-time ("Yavin") thermal profile. With z up and the detector a distance h below

@@ -68,7 +68,8 @@ def test_script_loading(script_folder: Path) -> None:
 
 
 def test_tree_panel_lists_only_working_scripts(qtbot: QtBot) -> None:
-    """HeLab's bundled analyses, each with its Plot button; no placeholder groups."""
+    """HeLab's bundled analyses, each with its Plot button (Density images also Find hot spots); no
+    placeholder groups."""
     widget = TreePanelWidget(cast(HelabMainWindow, MockHelabMainWindow()))
     qtbot.addWidget(widget)
     assert [widget.group_selector.itemText(i) for i in range(widget.group_selector.count())] == ["Basic plots v1"]
@@ -81,7 +82,13 @@ def test_tree_panel_lists_only_working_scripts(qtbot: QtBot) -> None:
     for i in range(plots.childCount()):
         button = widget.tree_widget.itemWidget(plots.child(i), 1)
         assert isinstance(button, QPushButton) and button.text() == "Plot"
-        assert widget.tree_widget.itemWidget(plots.child(i), 2) is None
+        item = plots.child(i)
+        assert item is not None
+        second = widget.tree_widget.itemWidget(item, 2)
+        if item.text(0) == "Density images":
+            assert isinstance(second, QPushButton) and second.text() == "Find hot spots"
+        else:
+            assert second is None
 
 
 def test_load_scripts_adds_a_working_group(qtbot: QtBot, script_folder: Path,

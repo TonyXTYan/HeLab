@@ -20,7 +20,7 @@ def ini(tmp_path: Path) -> QSettings:
 
 def test_lab_rows_are_the_tables_lab_level_rows() -> None:
     assert [row.key for row in lab_rows()] == ["hbar", "k_B", "u", "mass", "g", "scattering_length",
-                                              "dld_trigger", "dld_acquisition"]
+                                              "detector_qe", "dld_trigger", "dld_acquisition"]
 
 
 def test_values_persist_and_bad_ones_are_ignored(tmp_path: Path) -> None:
@@ -63,7 +63,7 @@ def test_the_tab_edits_restores_and_saves(qtbot: QtBot, tmp_path: Path) -> None:
     write_lab_constants(settings, {"g": 9.8})
     tab = LabParametersTab(settings)
     qtbot.addWidget(tab)
-    assert set(tab.editors) == {"mass", "g", "scattering_length", "dld_trigger", "dld_acquisition"}
+    assert set(tab.editors) == {"mass", "g", "scattering_length", "detector_qe", "dld_trigger", "dld_acquisition"}
     assert set(tab.read_only) == {"hbar", "k_B", "u"} and tab.status_text("hbar") == "CODATA, read-only"
     assert tab.editor_value("g") == 9.8 and tab.status_text("g") == "set here"
     assert tab.restore_buttons["g"].isEnabled() and not tab.restore_buttons["mass"].isEnabled()

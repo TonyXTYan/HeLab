@@ -43,6 +43,7 @@ from scipy.signal import find_peaks
 from helab.analysis.dataset_view import DatasetView, txy
 from helab.analysis.display_units import T_SCALE, WIDTH_DIGITS, axis_label, length_text, range_text, time_text
 from helab.analysis.empty import empty_pane, empty_text
+from helab.analysis.masks import MASK_SPECS, mask_brief, mask_from, mask_warnings, masked_text
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.plot_text import add_label, line_html, notes_html
@@ -84,7 +85,7 @@ XY_HALF = ParameterSpec("xy_half", "XY box ±", "float", 0.03, (0.0, 1.0), " m",
 MIN_COUNTS = ParameterSpec("min_counts", "Minimum counts", "int", 50, (0, 10_000_000), group=BOX_GROUP,
                            tip="Shots with no more events than this in the XY box are left out.")
 PARAMETERS = (*SHOT_SPECS, MODE, EACH_SIDE, CENTRE, SPACING, HALF_WIDTH, SEARCH_MIN, SEARCH_MAX, XY_HALF,
-              MIN_COUNTS)
+              MIN_COUNTS, *MASK_SPECS)
 MAX_DETECTION_BINS = 20_000
 MIN_DETECTION_BINS = 50
 DENSEST_SHARE = 0.1  # the bin width is half the shortest T interval holding this share of the events
@@ -140,6 +141,7 @@ class Fractions:
     events: int = 0  # events in the chosen shots, before the XY box
     extent: tuple[float, float] = (math.nan, math.nan)  # T of the events counted, first to last
     jumped: int = 0  # auto's order 0 is this many orders from the last detection (``jump``)
+    masked: int = 0  # events the mask took out of the chosen shots (before the XY box)
 
     @property
     def fractions(self) -> npt.NDArray[np.float64]:
@@ -322,7 +324,7 @@ class TransferFractions(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.transfer_fractions",
-            version="6",
+            version="7",
         )
 
     def get_actions(self) -> List[str]:
@@ -336,7 +338,8 @@ class TransferFractions(DatasetAnalysis):
         how = "auto orders" if values[MODE.name] == AUTO else "manual orders"
         half = float(values[XY_HALF.name])
         box = f"XY ±{length_text(half)}" if half > 0 else "no XY limit"
-        settings = (shots_brief(values), f"{how} ±{each}", box, f"> {int(values[MIN_COUNTS.name]):,} counts")
+        settings = (shots_brief(values), f"{how} ±{each}", box, f"> {int(values[MIN_COUNTS.name]):,} counts",
+                    mask_brief(values))
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def detected_parameters(self, action_name: str, result: AnalysisResult) -> dict[str, Any]:
@@ -348,10 +351,12 @@ class TransferFractions(DatasetAnalysis):
         return {CENTRE.name: data.orders.centre, SPACING.name: data.orders.spacing}
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
+        masking = list(mask_warnings(values))
         if values[MODE.name] == AUTO:
-            return list(search_warnings(values))  # The spacing, and so the window's limit, is found later.
+            # The spacing, and so the window's limit, is found later.
+            return [*search_warnings(values), *masking]
         _, clipped = window_half(float(values[HALF_WIDTH.name]), float(values[SPACING.name]))
-        return [clipped] if clipped else []
+        return [clipped, *masking] if clipped else masking
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         values = context.parameters
@@ -359,8 +364,9 @@ class TransferFractions(DatasetAnalysis):
         chosen = select_shots(view, values)
         half, minimum = float(values[XY_HALF.name]), int(values[MIN_COUNTS.name])
         each_side = int(values[EACH_SIDE.name])
+        mask = mask_from(values)  # Circles that can't be read fail the run, saying which.
         boxed: dict[int, npt.NDArray[np.float64]] = {}
-        events_total = not_finite = 0
+        events_total = not_finite = masked = 0
         for shot in chosen:
             context.check()
             events = txy(np.asarray(view.shots[shot], dtype=np.float64))
@@ -369,6 +375,8 @@ class TransferFractions(DatasetAnalysis):
             if not finite.all():
                 not_finite += len(events) - int(np.count_nonzero(finite))
                 events = events[finite]
+            events, dropped = mask.apply(events)
+            masked += dropped
             events = in_box(events, half)
             if len(events) > minimum:
                 boxed[shot] = np.ascontiguousarray(events[:, 0])
@@ -431,7 +439,7 @@ class TransferFractions(DatasetAnalysis):
                          (histogram[1], histogram[0].astype(np.float64)) if histogram else (np.empty(0), np.empty(0)),
                          detected, minimum, events_total,
                          (float(times.min()), float(times.max())) if len(times) else (math.nan, math.nan),
-                         jumped)
+                         jumped, masked)
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Fractions = result.data
@@ -452,7 +460,7 @@ class TransferFractions(DatasetAnalysis):
         found = "found" if data.auto else "set"
         title = (f"{result.input.short()} · {shots_text(data.shots.tolist(), data.total_shots)} · order 0 at "
                  f"{time_text(orders.centre)}, spacing {time_text(orders.spacing, WIDTH_DIGITS)}, window ±{time_text(orders.half_width, WIDTH_DIGITS)} "
-                 f"({found})")
+                 f"({found}){masked_text(data.masked)}")
         add_label(widget, line_html(title) + notes_html(data.notes), row=0, col=0)  # One note per line.
         colours = [pg.intColor(i, hues=len(orders.numbers), values=1, maxValue=200) for i in range(len(orders.numbers))]
         plot = widget.addPlot(row=1, col=0)

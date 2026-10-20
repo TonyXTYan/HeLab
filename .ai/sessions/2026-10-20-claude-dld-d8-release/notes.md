@@ -92,3 +92,33 @@ only by default.
 - "Use for this folder" writes to the plotted folder itself (its subfolders inherit), not to the
   data root. **Proposed.**
 - Origin X/Y histograms rather than an XY image (simpler, and the window is per axis).
+
+## Review fixes (the Coordinator's review of 8fb2f0b)
+
+1. **Live cost.** One plot following Live kept the analysis worker ~85 % busy (31–32 s per run on
+   100 shots × 5,000 events). Chosen: Live reruns skip the bootstrap. `AnalysisContext.live` is
+   set by a plot's follow run while the feed still holds its folder (`ScriptTreeSelector
+   ._follow_next`, `AnalysisRunner.submit(live=)`); the catch-up run when Live stops isn't one
+   (the feed drops the folder first), so it bootstraps. The rerun's line says "(within run)" with
+   an amber "Live rerun: shot bootstrap skipped…"; `found["reuse"]["bootstrap_skipped"]`.
+   Rejected: every 20 shots and 60 s apart (still 30 s of worker time per run, and stale plots).
+   **Proposed, for Tony.**
+2. **A saved t_r embeds this plot's fall time.** Now "Use for this folder" saves a new optional
+   row `arrival_time` (t_a) with the origin, never t_r, and drops a t_r set by hand in that folder
+   (it would otherwise win on the tie). Consumers take t_r = t_a − t_f with their own constants
+   (`release.layer_release_time`). The question shows the t_r the folder's plots will get and
+   warns, with Cancel the default, when this run's fall time isn't the folder's.
+3. **Times positive.** `release_time` and `arrival_time` are positive only (0 s refused);
+   `trap_x`/`trap_y` stay signed. Their editors run from 0 ("no value yet", `OPTIONAL_LIMITS`;
+   `clean_layer` drops 0). The Folder constants dialog keeps Save disabled, with "Type a value for
+   … or clear Set here, to save", while a row set here has nothing to start from or is at 0.
+4. `ReleasePlot.confirm` returns False when the plot was closed during the question.
+5. `AnalysisResult.constants_record` (in reuse keys) holds only the analysis's `constant_keys`
+   (values, origins and layer values): a folder's saved arrival or origin no longer changes other
+   plots' keys. `ResolvedConstants.as_record(keys)`; `from_record` reads whole records only.
+6. Tests: the real `FolderCache` (RAM-only status; refused while quitting → the plot's failure
+   line), Live reruns marked through the plot panel and the runner, cheap.
+
+Merge with the integration head `7fa394f`: D4 added `Constant.maximum`, coded `choices` and
+`allows`. `allows` now also covers `signed` (my `accepts` was folded into it), `allowed_text` says
+"finite" for signed rows, and `limits(key)` caps at the row's maximum.

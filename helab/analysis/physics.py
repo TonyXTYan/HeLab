@@ -63,16 +63,27 @@ class Constant:
     unconfirmed: bool = False  # a borrowed legacy value, not yet checked on the current setup
     shown_only: bool = False  # displayed (and used for flags), never in a physics formula
     codata: bool = False  # a fundamental constant from scipy.constants
+    maximum: float = math.inf  # the largest value allowed (a quantum efficiency is at most 1)
+    # A coded row: its value is one of these numbers, each standing for its label (the trap's
+    # axial axis). Empty for an ordinary number.
+    choices: Mapping[float, str] = field(default_factory=lambda: MappingProxyType({}))
     optional: bool = False  # no default: unset, a run detects it from the data (origin "detected")
-    signed: bool = False  # any finite value (a time or a position); otherwise positive only
+    signed: bool = False  # any finite value (a position); otherwise positive only
 
     @property
     def derived(self) -> bool:
         return math.isnan(self.value) and not self.optional
 
-    def accepts(self, value: float) -> bool:
-        """Whether a layer may set this row to ``value``: finite, and positive unless ``signed``."""
-        return math.isfinite(value) and (self.signed or value > 0)
+    def allows(self, value: float) -> bool:
+        """Whether ``value`` is one this row takes: finite, positive unless ``signed``, at most
+        ``maximum`` and, for a coded row, one of its codes."""
+        if not (math.isfinite(value) and (self.signed or value > 0) and value <= self.maximum):
+            return False
+        return not self.choices or value in self.choices
+
+    def label(self, value: float) -> str:
+        """A coded row's label for ``value`` ("" for other rows or an unknown code)."""
+        return self.choices.get(value, "")
 
 
 CONSTANTS: tuple[Constant, ...] = (
@@ -99,6 +110,18 @@ CONSTANTS: tuple[Constant, ...] = (
              unconfirmed=True),
     Constant("trap_axial", "Trap frequency, axial", "Hz", 50.0, "Front panel, 2017 only: stale", "folder",
              unconfirmed=True),
+    # D14: atoms = counts / QE, for Tc, μ, the TF radii and the peak density (helab/analysis/bec.py).
+    Constant("detector_qe", "Detector quantum efficiency", "", 0.1,
+             "Proposed, not from the legacy code (it has none) nor measured here: about 10 %, the value usually "
+             "quoted for MCP delay-line detectors of He* (MCP gain ages, so it drifts). Calibrate it, e.g. "
+             "with the QE a condensate's TF radius implies (BEC properties)", "lab", unconfirmed=True,
+             maximum=1.0),
+    # Which of T/X/Y the trap's long (axial) axis lies along: the per-axis cap on R/σ_th and R(0).
+    Constant("trap_axial_axis", "Trap axial axis along", "", 4.0,
+             "Proposed: the magnetic trap's long axis is horizontal, so T (vertical) is a radial axis; which "
+             "detector axis it lies along is unknown (the legacy 0.61 rad XY rotation suggests neither X nor "
+             "Y). 1 = T, 2 = X, 3 = Y, 4 = in the XY plane, between X and Y", "folder", unconfirmed=True,
+             maximum=4.0, choices=MappingProxyType({1.0: "T", 2.0: "X", 3.0: "Y", 4.0: "between X and Y"})),
     Constant("dld_trigger", "DLD trigger", "s", 20.5, "monitor_momentum.m, since 2023-09 (sequence time)", "lab",
              unconfirmed=True, shown_only=True),
     Constant("dld_acquisition", "DLD acquisition", "s", 2.0,
@@ -147,6 +170,8 @@ class ResolvedConstants:
     fall_time: float
     trap_radial: float
     trap_axial: float
+    detector_qe: float
+    trap_axial_axis: float
     dld_trigger: float
     dld_acquisition: float
     release_time: float
@@ -231,7 +256,7 @@ class ResolvedConstants:
                 return False
             if origins[key] == "detected":
                 return TABLE[key].optional and values[key] is None
-            return values[key] is not None and TABLE[key].accepts(float(values[key]))
+            return values[key] is not None and TABLE[key].allows(float(values[key]))
         bad = [key for key in TABLE if not good(key)]
         if bad:
             raise ValueError(f"constants record has bad values or origins for {', '.join(bad)}")
@@ -239,7 +264,15 @@ class ResolvedConstants:
                    origins=MappingProxyType({key: cast(Origin, origins[key]) for key in TABLE}))
 
 
-def resolve(lab: Mapping[str, float] | None = None, folder: Mapping[str, float] | None = None,
+def allowed_text(constant: Constant) -> str:
+    """What a row takes, for an error: "one of 1, 2, 3, 4", "finite and positive, at most 1"."""
+    if constant.choices:
+        return f"one of {', '.join(f'{code:g}' for code in constant.choices)}"
+    kind = "finite" if constant.signed else "finite and positive"
+    return kind + (f", at most {constant.maximum:g}" if math.isfinite(constant.maximum) else "")
+
+
+def resolve(lab:Mapping[str, float] | None = None, folder: Mapping[str, float] | None = None,
             plot: Mapping[str, float] | None = None) -> ResolvedConstants:
     """The table's defaults, overridden by the lab, then folder, then plot layers (more
     specific wins). Every value must be finite, and positive unless its row is ``signed``; an
@@ -259,9 +292,8 @@ def resolve(lab: Mapping[str, float] | None = None, folder: Mapping[str, float] 
             if key not in TABLE:
                 raise ValueError(f"unknown constant {key!r}")
             number = float(value)
-            if not TABLE[key].accepts(number):
-                kind = "finite" if TABLE[key].signed else "finite and positive"
-                raise ValueError(f"{TABLE[key].title} must be {kind}, not {value!r}")
+            if not TABLE[key].allows(number):
+                raise ValueError(f"{TABLE[key].title} must be {allowed_text(TABLE[key])}, not {value!r}")
             chosen[key] = (number, layer)
     _, time_origin = chosen["fall_time"]
     if time_origin == "default" or rank[time_origin] < max(rank[chosen[key][1]] for key in ("fall_distance", "g")):

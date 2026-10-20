@@ -1,82 +1,82 @@
 # D8 part 1 handoff: release time and trap origin
 
-Branch `agent/dld-d8-release`, from `52386ec`. Not pushed or merged. Design and the choices
-proposed for Tony: [notes.md](notes.md). Brief: [brief.md](brief.md).
+Branch `agent/dld-d8-release`, from `52386ec`, with the integration head `7fa394f` (D4/D14, D9/D15)
+merged in. Not pushed or merged. Design and the choices proposed for Tony: [notes.md](notes.md)
+(the review fixes at the end). Brief: [brief.md](brief.md).
 
 ## Done
 
-- `helab/analysis/physics.py`: optional rows (`Constant.optional`, `signed`, `accepts`;
-  `physics.OPTIONAL`), new folder rows `release_time`, `trap_x`, `trap_y`; unset → nan with origin
-  "detected" (`ResolvedConstants.is_set`); records with None, older records read; nan-safe
-  `__eq__`/`__hash__`.
-- `helab/analysis/constant_layers.py`: signed limits, `FROM_THE_DATA`, `value_and_origin`, nan-safe
-  `changed_keys`, `clean_layer` by `Constant.accepts`, symbols t_r, x₀, y₀.
+- `helab/analysis/physics.py`: optional rows (`Constant.optional`, `signed`; validity is
+  `Constant.allows`, merged with D4's maximum and codes; `physics.OPTIONAL`). New folder rows
+  `release_time` and `arrival_time` (s, positive) and `trap_x`, `trap_y` (m, signed). Unset → nan
+  with origin "detected" (`ResolvedConstants.is_set`); records with None, older records read;
+  nan-safe `__eq__`/`__hash__`; `as_record(keys)`.
+- `helab/analysis/constant_layers.py`: `limits(key)` (signed, optional times from 0, the row's
+  maximum), `FROM_THE_DATA`, `value_and_origin`, nan-safe `changed_keys`, symbols t_r, t_a, x₀, y₀.
 - `helab/analysis/release.py` (additive): drawing fields on `ReleaseTime` (`fit_window`,
-  `origin_half`, `origin_window`), `layer_release_time`, `layer_origin`.
+  `origin_half`, `origin_window`), `layer_release_time` (t_r by hand, or a saved arrival − the
+  consumer's t_f), `layer_origin`.
+- `helab/analysis/results.py`, `runner.py`, `models/ScriptTreeSelector.py`: `AnalysisContext.live`
+  (a rerun following Live); `constants_record` limited to the analysis's constant keys.
 - `helab/scripts/standard/release_time.py`: the **Release time** plot with **Use for this
-  folder…**; registered in `standard.MODULES`.
-- Views (minimal): `FolderConstantsDialog` (from the data source, nan-safe editors, signed
-  bounds via `constant_editor`), `LabParametersTab.constant_editor` (signed bounds),
-  `ScriptTreeSelector` (constant titles via `value_and_origin`).
-- Tests: `tests/test_release_time_plot.py` (11); shared lists in `test_analysis.py`,
-  `test_live_plots.py`, `test_plot_text.py`, `test_display_units.py`; `test_physics.py`'s table set.
+  folder…** (saves `arrival_time` and the origin); registered in `standard.MODULES`.
+- Views: `FolderConstantsDialog` (from the data source; Save waits while a row set here has no
+  value), `LabParametersTab.constant_editor` (`limits`), plot settings' constant titles.
+- Tests: `tests/test_release_time_plot.py` (15), a Live-rerun test in `test_live_plots.py`, the
+  shared lists, `test_physics.py`'s table set, `test_constant_layers.py`'s record (own keys only).
 
 ## How D8 part 2 (velocity axes) and D12/D13 should read them
 
-1. Declare the keys: `constants_specs(("fall_distance", "fall_time", "g", "release_time", "trap_x",
-   "trap_y"))` (or `constant_keys` + `run_constants`), so a plot can also set t_r or the origin for
-   itself, and is marked when "Use for this folder" changes them.
+1. Declare the keys: `constants_specs(("fall_distance", "fall_time", "g", "release_time",
+   "arrival_time", "trap_x", "trap_y"))` (or `constant_keys` + `run_constants`), so a plot can set
+   t_r or the origin for itself and is marked when "Use for this folder" changes them. A plot's own
+   t_r or t_a of 0 counts as not set (the layers' is used).
 2. In `compute`, from `context.resolved_constants`:
    ```python
-   given = release.layer_release_time(constants)          # None: no layer sets t_r
+   given = release.layer_release_time(constants)   # t_r by hand, or saved t_a − this run's t_f; None: unset
    found = given or release.bootstrap_release_time(per_shot_txy, constants, lower, upper,
                                                    cancelled=context.cancelled)
    origin, how = release.velocity_origin(found, manual=release.layer_origin(constants))
    velocities = velocity.txy_to_velocity(events, found.value.value, constants, origin=origin)
    ```
-   Record where each came from: t_r `constants.origins["release_time"]` ("folder", "plot", …) or
-   "detected" (and `found.error`); the origin's `how` ("manual" from a layer, "detected",
-   "detected (unsure)" or "assumed"). Say "assumed (0, 0)" beside the velocities in amber.
-3. A layer that sets only one of `trap_x`/`trap_y` is no origin (`layer_origin` → None): the
-   detected or assumed one is used. Show `value_and_origin(constants, key)` in titles ("from the
-   data" when unset).
-4. A detection there costs a bootstrap (seconds; notes.md): prefer the folder's values, and when
-   unset consider `detect_release_time` without the bootstrap for a quick preview, saying the SE is
-   within run.
+   **Never store or reuse another plot's t_r**: the folder holds the arrival, and t_r = t_a − t_f
+   comes from *this* run's fall time, so the cloud at rest is at v_z = 0 whatever h, g or t_f the
+   plot uses. Record where each came from: `constants.origins["arrival_time"]` /
+   `["release_time"]` ("folder", "plot", …) or "detected" (with `found.error`), and the origin's
+   `how` ("manual" from a layer, "detected", "detected (unsure)", "assumed"); say "assumed (0, 0)"
+   beside the velocities in amber. `found.notes` says when t_r came from the saved arrival.
+3. A layer that sets only one of `trap_x`/`trap_y` is no origin (`layer_origin` → None).
+4. Detecting costs a bootstrap (seconds; notes.md): prefer the folder's values; when unset, on
+   `context.live` reruns use `detect_release_time` (one detection, SE "within run", said so), as the
+   Release time plot does.
 5. D12/D13 (correlations, halos) use the same velocities; they need nothing else.
-
-## Expected merge conflicts
-
-- **D4/D14** (`physics.py` new rows, `LabParametersTab`): both append rows to `CONSTANTS` and fields
-  to `ResolvedConstants` (keep both, any order: the assert checks the field set matches `TABLE`),
-  and maybe `SYMBOLS` in `constant_layers.py` and `test_physics.py`'s folder-row set. In
-  `LabParametersTab.constant_editor` keep `bounds=list(limits(constant.key))`. If D4 adds a row that
-  can be zero or negative, give it `signed=True`.
-- **D9/D15**: no shared file except the shared test lists (add both plots).
 
 ## For Tony (proposed)
 
 1. Unset optional rows resolve with origin "detected", shown "from the data".
-2. Plot bootstrap default 100 resamples (measured costs in notes.md), Live `min_delay` 5 s.
-3. "Use for this folder" writes to the plotted folder, merged with what it sets, Cancel default
-   when unsure; the plot always detects and doesn't draw the folder's value.
-4. Folder dialog editors of unset rows start at 0.
+2. Plot bootstrap default 100 resamples; Live reruns skip it (fit SE, said so), deliberate runs and
+   the catch-up when Live stops keep it; Live `min_delay` 5 s.
+3. "Use for this folder" saves the arrival t_a (not t_r) and the origin to the plotted folder,
+   merged with what it sets and dropping its t_r by hand; Cancel is the default when the detection
+   is unsure or this run's fall time isn't the folder's. When both a t_r by hand and a t_a are set,
+   the more specific layer wins, t_r by hand on a tie.
+4. Release and arrival times are positive; 0 in an editor means "no value yet" and Save waits.
 
 ## On-screen checklist for Tony
 
-1. Open the Release time plot on a BEC folder: the three panels, the title line in ms/mm,
-   notes in amber; zoom keeps on a Live rerun (5 s apart).
-2. Use for this folder…: the question lists values and "now"; Cancel writes nothing; Save shows
-   "Set for this folder"; right-click › Folder constants… shows them as "this folder".
-3. Folder constants… on another folder: Release time "from the data (Release time plot)", trap
-   origin editors accept negative mm.
+1. Open the Release time plot on a BEC folder: the three panels, the title line in ms/mm, notes in
+   amber. Turn Live on: reruns say "(within run)" and "Live rerun: shot bootstrap skipped"; Live off:
+   one more run with the bootstrap.
+2. Use for this folder…: the question lists t_a and the origin with "now", and the t_r the folder's
+   plots will get; change the plot's own h first: the warning and Cancel as the default. Save:
+   "Set for this folder"; Folder constants… shows them as "this folder".
+3. Folder constants…: Set here on Release time with nothing above: Save is greyed with a note until a
+   value is typed; trap origin editors take negative mm.
 
 ## Checks
 
-- `mypy helab --strict`, `mypy tests --strict`, `pyright helab tests`: clean. `git diff --check`: clean.
-- New tests: 11 passed, no reruns. `tests/test_script_system.py`'s bundled-plot list gained the plot
-  (it failed in the first full run, before that).
-- Full suite (`-n 2 --reruns 5 --reruns-delay 1 -rR`): **2 failed, 1861 passed, 7 skipped,
-  2 xfailed, 14 rerun in 278 s**. Failed (5 reruns each): only the two known root-only tests.
-  Other reruns, which then passed: `test_dash_server.py::test_stop_frees_the_port` (3) and
-  `test_window_resize.py::test_label_keeps_painting_after_resize[repeated]` (1), neither touched here.
+- `mypy --strict helab tests` (196 files), `pyright helab tests`: clean. `git diff --check`: clean.
+- Targeted tests after the merge (live plots, release time, constants, physics, folder constants,
+  lab parameters, velocity, plot text, analysis, display units, script system, bec, fits) `-n 2
+  --reruns 5`: 372 passed, no reruns.
+- Full suite: in the final report (the Coordinator's message).
