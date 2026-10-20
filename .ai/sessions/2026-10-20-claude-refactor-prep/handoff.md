@@ -144,6 +144,15 @@ Local runs were on Linux, 4 cores, at `-n 2` to `-n 4` with
   listed below.
 - **Integration tree** (all five branches): **2201 passed, 9 skipped,
   2 xfailed, no reruns**. Strict mypy and pyright run inside the suite.
+- **Frozen app (Linux PyInstaller build of `agent/refactor-integration`):**
+  - Every new module is in the bundle (`io_ops.*`, `views.plots.*`,
+    `explorer_live`, `explorer_text`, `settings_store`, and the new
+    `analysis` modules).
+  - The GUI started offscreen with a private profile, loaded both script
+    groups, ran for 25 s and closed its tabs cleanly when stopped. Its only
+    ERROR line is `main.py`'s demo `logging.error("this is an error
+    message")`, which predates this work.
+  - The frozen helper loaded 3 TXY shots through to `loaded` and `done`.
 - **Reruns seen:**
   - `test_dash_server.py::test_stop_frees_the_port` once, during C, while three
     suites ran at once and competed for port 8050.
