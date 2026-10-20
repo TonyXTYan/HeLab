@@ -18,8 +18,8 @@ from helab.analysis.parameters import effective
 from helab.analysis.plot_text import AMBER, WrapLabel, line_html, notes_html, short_note
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.scripts.base import DatasetAnalysis
-from helab.scripts.standard import (basic_plots, density_images, mean_position, release_time, shot_times,
-                                    t_spectrum, transfer_fractions, velocity_distributions)
+from helab.scripts.standard import (basic_plots, correlations_plot, density_images, mean_position, release_time,
+                                    shot_times, t_spectrum, transfer_fractions, velocity_distributions)
 from helab.utils import colours
 from helab.utils.folder_cache import Dataset
 
@@ -87,6 +87,7 @@ PLOTS: list[tuple[str, DatasetAnalysis, dict[str, Any]]] = [
     ("release time", release_time.ReleaseTimePlot(), {"n_boot": 20}),
     ("velocity distributions", velocity_distributions.VelocityDistributions(),
      {"fit": True, "density": "v_x–v_z", "velocity_unit": "2ħk/m"}),
+    ("correlations", correlations_plot.Correlations(), {"n_boot": 20}),
 ]
 
 

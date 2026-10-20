@@ -56,8 +56,7 @@ from helab.analysis.parameters import ParameterSpec
 from helab.analysis.physics import Origin, ResolvedConstants, temperature_estimate
 from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.plot_text import add_label, line_html, lines_html, notes_html, set_plot_title, short_note
-from helab.analysis.release import (OriginSource, ReleaseTime, detect_release_time, layer_origin, layer_release_time,
-                                   velocity_origin)
+from helab.analysis.release import OriginSource, ReleaseTime, detect_release_time, run_velocity_source
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, newest_brief, newest_colour,
                                       newest_events, newest_shot, newest_specs, range_brief, range_specs,
@@ -742,27 +741,18 @@ class VelocityDistributions(DatasetAnalysis):
         kept = KEPT.get(context.owner, key) if context.live else None
         # t_r: the layers' (by hand, or a saved arrival − this run's t_f), else detected here; the
         # origin: the layers', else detected (the same detection), else assumed.
-        given = layer_release_time(constants)
-        manual_origin = layer_origin(constants)
-        detection = None
-        if given is None or manual_origin is None:
+
+        def detect() -> ReleaseTime:
             if kept is not None and kept.detection is not None:
-                detection = kept.detection
-            else:
-                detection = detect_release_time(events[:, 0], constants, lower, upper, positions=events[:, 1:3])
+                return kept.detection
+            found = detect_release_time(events[:, 0], constants, lower, upper, positions=events[:, 1:3])
             context.check()
-        if given is not None:
-            release = given
-            from_arrival = math.isfinite(given.arrival.value)
-            how = "arrival_time" if from_arrival else "release_time"
-            source = constants.origins[how]
-        else:
-            assert detection is not None
-            release, source, how = detection, "detected", "data"
-        origin, origin_how = velocity_origin(detection, manual_origin)
-        data = replace(data, release=release, release_source=source, release_from=how, detection=detection,
-                       origin=origin, origin_how=origin_how,
-                       origin_source=constants.origins["trap_x"] if origin_how == "manual" else "")
+            return found
+        source = run_velocity_source(constants, detect)
+        release, detection, origin = source.release, source.detection, source.origin
+        data = replace(data, release=release, release_source=source.release_source,
+                       release_from=source.release_from, detection=detection, origin=origin,
+                       origin_how=source.origin_how, origin_source=source.origin_source)
         if not release.ok:
             return data
         cropped = not manual(values)

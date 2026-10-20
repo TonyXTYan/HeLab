@@ -33,8 +33,9 @@ from helab.analysis.runner import AnalysisRunner
 from helab.io_helper import list_folder, live_check, load
 from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import (basic_plots, density_images, mean_position, release_time, scatter_3d, shot_times,
-                                    shot_trends, t_spectrum, transfer_fractions, velocity_distributions)
+from helab.scripts.standard import (basic_plots, correlations_plot, density_images, mean_position, release_time,
+                                    scatter_3d, shot_times, shot_trends, t_spectrum, transfer_fractions,
+                                    velocity_distributions)
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest, IOService
@@ -321,7 +322,7 @@ def test_coverage_records_the_shots_used_and_diffs_a_later_revision() -> None:
                                     mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum(),
                                     transfer_fractions.TransferFractions(), shot_times.ShotTimesPlot(),
                                     shot_trends.ShotTrends(), release_time.ReleaseTimePlot(),
-                                    velocity_distributions.VelocityDistributions()],
+                                    velocity_distributions.VelocityDistributions(), correlations_plot.Correlations()],
                          ids=lambda script: type(script).__name__)
 def test_every_result_records_coverage_and_a_json_reuse_key(qtbot: QtBot, script: DatasetAnalysis) -> None:
     """Completed, failed and cancelled runs alike; the Shots settings decide the coverage."""
@@ -366,7 +367,8 @@ def test_failed_and_cancelled_results_record_coverage_too(qtbot: QtBot) -> None:
                                     scatter_3d.Scatter3D(), density_images.DensityImages(),
                                     mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum(),
                                     transfer_fractions.TransferFractions(), shot_trends.ShotTrends(),
-                                    release_time.ReleaseTimePlot(), velocity_distributions.VelocityDistributions()],
+                                    release_time.ReleaseTimePlot(), velocity_distributions.VelocityDistributions(),
+                                    correlations_plot.Correlations()],
                          ids=lambda script: type(script).__name__)
 @pytest.mark.parametrize("case", ["no shots yet", "none chosen", "no events"])
 def test_bundled_plots_say_why_they_are_empty(qtbot: QtBot, script: DatasetAnalysis, case: str) -> None:
@@ -428,6 +430,40 @@ def test_live_reruns_are_marked_so_the_release_time_skips_its_bootstrap(
     window.live_feed.publish(revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
     assert instance.shown is not None and instance.shown.data.live_skipped
+
+
+def cloud_revision(shots: list[int]) -> Dataset:
+    """A cloud released at rest (about 400 events a shot, the same for a shot in every revision)."""
+    data = {}
+    for shot in shots:
+        rng = np.random.default_rng(shot)
+        data[shot] = np.column_stack([rng.normal(0.4165, 0.002, 400), rng.normal(0, 0.002, (400, 2))])
+    return Dataset(PATH, f"sig-cloud-{shots[-1]}", data, {
+        "fingerprint": [[shot, 100 + shot, 1_000 + shot] for shot in shots], "source": "updated",
+        "loaded_at": time.time()}, 0)
+
+
+def test_a_following_correlations_plot_counts_only_new_shots_and_skips_its_bootstrap(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """The Correlations plot's Live rerun counts only the new shot and skips the bootstrap; closing
+    the plot drops its pair counts."""
+    held = correlations_plot.held_states()
+    window.view = window.live_feed.publish(cloud_revision([1, 2, 3]))
+    instance = plot(window, qtbot, correlations_plot.Correlations())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=20_000)
+    assert instance.shown is not None
+    first = instance.shown.data
+    assert first.result is not None and not first.live_skipped, first.failure
+    assert correlations_plot.held_states() == held + 1
+    set_live(instance, DELAY, 0.0)
+    window.live_feed.publish(cloud_revision([1, 2, 3, 4]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=20_000)
+    assert instance.shown is not None
+    data = instance.shown.data
+    assert data.live_skipped and data.result is not None and data.result.se_method == "delete-one-shot jackknife"
+    assert (data.reused, data.added) == (3, 1), (data.reused, data.added, data.release_how)
+    window.close_plots()
+    qtbot.waitUntil(lambda: correlations_plot.held_states() == held, timeout=10_000)
 
 
 def test_a_following_shot_times_plot_updates_in_place(
