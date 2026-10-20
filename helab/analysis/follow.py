@@ -1,7 +1,7 @@
 """Plots following Live (roadmaps/live-monitoring.md, "Plots following Live: L3").
 
 Live is HeLab's, never a plot's: the main window publishes each new dataset Live shows to a
-``LiveFeed`` as the next revision of the folder's view (``revise``), and each plot of that
+``LiveFeed`` (helab/analysis/live_feed.py) as the next revision of the folder's view (``revise``), and each plot of that
 folder that follows Live (``Follow``) reruns on the newest revision when its policy allows.
 
 Hold and coalesce: a running analysis is never cancelled for new data. Revisions that arrive
@@ -15,16 +15,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import Any, Mapping, Optional
 
-from PyQt6.QtCore import QObject, pyqtSignal
-
-from helab.analysis.dataset_view import DatasetView, revise, view_of
+from helab.analysis.dataset_view import DatasetView
 from helab.analysis.parameters import ParameterSpec
-from helab.utils import events
-
-if TYPE_CHECKING:
-    from helab.utils.folder_cache import Dataset
 
 MAX_EVERY_SHOTS = 100_000
 MAX_DELAY = 3600.0
@@ -189,38 +183,3 @@ class Follow:
 
     def unpin(self) -> None:
         self.on = True
-
-
-class LiveFeed(QObject):
-    """The newest revision of each folder Live watches, for the plots following it.
-
-    The main window publishes every dataset a Live tab shows; a dataset that adds shots becomes
-    the next revision of the folder's view and is announced (``revised``). ``ended`` when Live
-    stops for the folder. Memory only: nothing here reads a file."""
-    revised = pyqtSignal(object)  # DatasetView
-    ended = pyqtSignal(str)  # The folder's path.
-
-    def __init__(self, parent: Optional[QObject] = None) -> None:
-        super().__init__(parent)
-        self._latest: dict[str, DatasetView] = {}
-        events.hub().watch_feed(self)  # Plots ask the hub whether Live watches a folder.
-
-    def latest(self, path: str) -> Optional[DatasetView]:
-        """The newest revision of ``path``'s data while Live watches it."""
-        return self._latest.get(path)
-
-    def paths(self) -> set[str]:
-        return set(self._latest)
-
-    def publish(self, dataset: Dataset, root: tuple[str, str, str] | None = None) -> DatasetView:
-        """``dataset``, the data a Live tab now shows, as the newest revision of its folder."""
-        base = self._latest.get(dataset.path)
-        view = revise(base, dataset, root) if base is not None else view_of(dataset, root)
-        self._latest[dataset.path] = view
-        if view is not base:
-            self.revised.emit(view)
-        return view
-
-    def stop(self, path: str) -> None:
-        if self._latest.pop(path, None) is not None:
-            self.ended.emit(path)

@@ -23,9 +23,10 @@ from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QGuiApplicati
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QMenu, QApplication, QInputDialog, QProgressBar, QToolButton, QMessageBox
 
-from helab.analysis.budget import DIALOG_SHARE, RELEASE_SHARE, WARN_SHARE, RamBudget
+from helab.analysis.budget import RamBudget
+from helab.analysis.budget_core import DIALOG_SHARE, RELEASE_SHARE, WARN_SHARE
 from helab.analysis.dataset_view import DatasetView, view_of
-from helab.analysis.follow import LiveFeed
+from helab.analysis.live_feed import LiveFeed
 from helab.analysis.results import AnalysisResult
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.script_tree import TreePanelWidget

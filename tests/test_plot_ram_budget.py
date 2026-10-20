@@ -21,9 +21,10 @@ from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QMessageBox, QTabWidget, QToolButton, QWidget
 from pytestqt.qtbot import QtBot
 
-from helab.analysis.budget import RamBudget, hollow, restore, shots_list
+from helab.analysis.budget import RamBudget
+from helab.analysis.budget_core import hollow, restore, shots_list
 from helab.analysis.dataset_view import DatasetView, read_only, view_of
-from helab.analysis.follow import LiveFeed
+from helab.analysis.live_feed import LiveFeed
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec

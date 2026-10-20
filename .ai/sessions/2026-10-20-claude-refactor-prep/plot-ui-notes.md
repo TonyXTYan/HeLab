@@ -92,3 +92,68 @@ files imports the main window, scripts or `helab.analysis` lazily.
 - `HelabMainWindow` still reaches the plot package only through `dock`,
   `script_tree` and `settings_panel`; slice E's `PlotWorkspace` will own those.
 - `AnalysisInstance`'s duck-typed `getattr(main_window, …)` calls are unchanged.
+
+## Slice C: a Qt-free analysis core
+
+Behaviour-preserving; class and function bodies moved unchanged except where noted.
+
+| From | To | Notes |
+|---|---|---|
+| `follow.LiveFeed` | `helab/analysis/live_feed.py` | With its Qt, `revise`/`view_of` and `events` imports. `follow.py` keeps `LivePolicy`, `Follow`, the specs and texts, and imports no Qt (nor `events`). |
+| `budget.py`: `WARN_SHARE`, `DIALOG_SHARE`, `REARM_SHARE`, `RELEASE_SHARE`, `RELOAD_GRACE`, `view_buffers` (and its weak cache), `hollow` (`_NO_EVENTS`), `Restored`, `restore`, `shots_list`, the `Plot`/`Panel` protocols, `Usage` | `helab/analysis/budget_core.py` | A clean cut: everything above `RamBudget` was pure. `budget.py` keeps `RamBudget` and imports the shares, protocols and `Usage` from the core. |
+| `AnalysisRunner`'s queue, worker thread, job ids, contexts, cancellation, `stop` | `helab/analysis/runner_core.py`, `AnalysisQueue` | Same code; the two `emit`s became calls to `on_started(job_id)` / `on_finished(result)` callbacks given at construction. |
+
+**Runner delivery is unchanged.** `AnalysisRunner(QObject)` keeps `started`/`finished`,
+`results`, `submit`/`cancel`/`running`/`stop` and `get_analysis_runner()`; it builds
+`self.core = AnalysisQueue(results, self._started, self._finished)`, whose callbacks emit the
+signals. They are called on the worker thread at exactly the points the old `emit`s were, so
+Qt queues them to GUI-thread receivers as before. The worker thread's target is now the core's
+bound method, and the core holds the runner's bound methods, so the runner stays alive while
+its worker runs, as before. `AnalysisRunner.results` is the core's `RamResults` object.
+
+The one private access in tests (`runner._thread`, `test_analysis.py`) is now
+`runner.core._thread`. No test patched a name in `follow`, `budget` or `runner` by string;
+`LiveFeed._latest` and `RamResults._pinned` accesses are on instances and unchanged.
+
+Imports updated: `HelabMainWindow` (`LiveFeed`; `RamBudget` plus the shares from
+`budget_core`), `CacheTab` (`RELEASE_SHARE`), `helab/views/plots/instance.py`, and tests
+`test_live_plots`, `test_shot_trends`, `test_plot_ram_budget`, `test_constant_layers`.
+The scripts' `from helab.analysis.follow import LivePolicy` stays valid (DLD scripts untouched).
+
+### The guard: `tests/test_headless_imports.py`
+
+- In a fresh subprocess (environment copied, cwd the repo root), imports `helab.scripts.base`,
+  `helab.utils.ram_buffers` and 26 `helab.analysis` modules (all science modules, `follow`,
+  `budget_core`, `runner_core`) and asserts none of PyQt6, pyqtgraph, matplotlib, dash, plotly
+  or `helab.utils.constants` is in `sys.modules`. No pure module needed `constants`.
+- A second test makes every `helab/analysis/` module listed as pure or Qt (`backends`,
+  `budget`, `empty`, `live_feed`, `panes`, `parameter_tree`, `plot_axes`, `plot_text`,
+  `runner`), so a new module has to be classified. My addition beyond the brief.
+- Proven: adding `import PyQt6.QtCore` to `follow.py` failed it (`['PyQt6'] == []`); an
+  unlisted `helab/analysis/probe_new.py` failed the listing test. Both reverted.
+- scipy is still imported by the core (physics, fits…); not Qt, so allowed.
+
+### Docs
+
+`AGENTS.md`: `LiveFeed`'s module; `budget_core.py` beside `budget.py`; the runner sentence
+names `AnalysisQueue` in `runner_core.py` and the new guard. Docstrings of `follow`, `budget`,
+`runner` point to the new modules; `ram_buffers`' docstring names `budget_core`.
+`roadmaps/refactoring.md` names none of these; unchanged.
+
+### Validation
+
+- Targeted (`-n 2 --reruns 2`): 11 files (analysis, plots, budget, Live, shot trends,
+  release time, Cache tab, script system, headless imports): 355 passed, 1 skipped.
+- Strict mypy `helab` (127 files) and `tests` (95 files), `pyright helab tests`: clean.
+- Full suite (`-n 2 --reruns 5 --reruns-delay 1 -rR`): **2185 passed, 9 skipped, 2 xfailed,
+  1 rerun in 6 min 24 s.** The rerun: `tests/test_dash_server.py::test_stop_frees_the_port`
+  (port 8050; other workers' suites run at the same time). Unrelated to the moves; the file
+  alone passed 3 times out of 3.
+
+### Left / proposals
+
+- `RamBudget` and `AnalysisRunner` are still Qt; a headless runner uses `AnalysisQueue`
+  directly. `helab/analysis/empty.py` imports Qt for one widget; drawing modules stay Qt.
+- Pre-existing lint (not touched): unused `RamBudget` import in `test_plot_ram_budget.py`,
+  unused `IORequest`/`PLOTLY` and ruff F821 on a lambda reading `widget` before `del widget` in
+  `test_live_plots.py`.

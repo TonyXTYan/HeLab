@@ -19,7 +19,8 @@ from pytestqt.qtbot import QtBot
 
 from helab.analysis import trends
 from helab.analysis.dataset_view import DatasetView, build_view, revise
-from helab.analysis.follow import LiveFeed, LivePolicy
+from helab.analysis.follow import LivePolicy
+from helab.analysis.live_feed import LiveFeed
 from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import effective
 from helab.analysis.plot_axes import GroupedAxis

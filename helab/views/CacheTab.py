@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QSpinBox, QVBoxLayout, QWidget,
 )
 
-from helab.analysis.budget import RELEASE_SHARE
+from helab.analysis.budget_core import RELEASE_SHARE
 from helab.utils.cache_store import KINDS, purge_estimate, trim_estimate
 from helab.utils.constants import (
     DISK_BUDGET_SETTING, LIVE_AUTOSAVE_SETTING, PLOT_AUTO_RELOAD_SETTING, MAX_LIVE_AUTOSAVE, MIN_DISK_BUDGET, RAM_BUDGET_SETTING, RAM_STEPS,

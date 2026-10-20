@@ -18,9 +18,11 @@ from helab.analysis.backends import BACKEND, backend_specs
 from helab.analysis.constant_layers import (changed_keys, describe_constants, source_name, value_and_origin,
                                            without_constants)
 from helab.analysis.physics import TABLE, ResolvedConstants
-from helab.analysis.budget import RELOAD_GRACE, RamBudget, Restored, hollow, restore, shots_list, view_buffers
+from helab.analysis.budget import RamBudget
+from helab.analysis.budget_core import RELOAD_GRACE, Restored, hollow, restore, shots_list, view_buffers
 from helab.analysis.dataset_view import DatasetView, ViewKey
-from helab.analysis.follow import FOLLOW, Follow, LiveFeed, changes, live_specs, policy_of, shots_text
+from helab.analysis.follow import FOLLOW, Follow, changes, live_specs, policy_of, shots_text
+from helab.analysis.live_feed import LiveFeed
 from helab.analysis.parameter_tree import build_tree, commit_pending_text, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import describe
 from helab.analysis.results import AnalysisResult

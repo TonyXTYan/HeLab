@@ -23,8 +23,8 @@ from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QTab
 from pytestqt.qtbot import QtBot
 
 from helab.analysis.dataset_view import DatasetView, build_view, revise, view_of
-from helab.analysis.follow import (DELAY, EVERY, FOLLOW, Follow, LiveFeed, LivePolicy, live_specs, newer,
-                                   policy_of)
+from helab.analysis.follow import DELAY, EVERY, FOLLOW, Follow, LivePolicy, live_specs, newer, policy_of
+from helab.analysis.live_feed import LiveFeed
 from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec, effective

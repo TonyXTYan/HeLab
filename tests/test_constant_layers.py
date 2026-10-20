@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QTabWidget, QWidge
 from helab.analysis import constant_layers as layers
 from helab.analysis import release
 from helab.analysis.dataset_view import DatasetView, build_view, view_of
-from helab.analysis.follow import LiveFeed
+from helab.analysis.live_feed import LiveFeed
 from helab.analysis.parameter_tree import build_tree, parameter_of, tree_values
 from helab.analysis.parameters import ParameterSpec, effective
 from helab.analysis.physics import DEFAULTS, ResolvedConstants, fall_time, resolve

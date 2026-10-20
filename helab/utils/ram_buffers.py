@@ -1,6 +1,6 @@
 """Counting the RAM arrays use, by the memory behind them: an array and every view of it are
 one buffer, so data shared between datasets, views and results counts once (the RAM budget:
-``FolderCache._evict``, ``helab.analysis.budget``)."""
+``FolderCache._evict``, ``helab.analysis.budget_core``)."""
 from __future__ import annotations
 
 import dataclasses

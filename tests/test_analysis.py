@@ -838,7 +838,7 @@ def test_stop_keeps_a_blocked_worker_registered(qtbot: QtBot, harness: Harness) 
         runner.submit(script, script.get_metadata(), "Plot", view)
     script.release.set()
     assert harness.finished(qtbot, first.job_id).state == "cancelled"
-    qtbot.waitUntil(lambda: runner._thread is None, timeout=5_000)
+    qtbot.waitUntil(lambda: runner.core._thread is None, timeout=5_000)
     # Exited: the runner takes work again, on one new worker.
     again = runner.submit(script, script.get_metadata(), "Plot", view)
     assert harness.finished(qtbot, again.job_id).state == "completed"
