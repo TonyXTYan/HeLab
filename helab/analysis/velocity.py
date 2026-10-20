@@ -42,9 +42,8 @@ from typing import Literal, Mapping
 
 import numpy as np
 import numpy.typing as npt
-import scipy.constants as codata
 
-from helab.analysis.physics import ResolvedConstants
+from helab.analysis.physics import TABLE, ResolvedConstants
 
 Array = npt.NDArray[np.float64]
 VELOCITY_AXES = ("v_z", "v_x", "v_y")  # beside stats.AXES = ("T", "X", "Y")
@@ -53,11 +52,11 @@ VELOCITY_AXES = ("v_z", "v_x", "v_y")  # beside stats.AXES = ("T", "X", "Y")
 VelocityUnit = Literal["m/s", "ħk", "2ħk"]
 RECOILS_PER_UNIT: Mapping[str, int] = MappingProxyType({"ħk": 1, "2ħk": 2})
 # He* 2³S₁ → 2³P₂ (the cooling and Bragg line), vacuum wavelength from its frequency,
-# 276.732 186 5 THz (NIST ASD; Pastor et al. 2004). Not in physics.CONSTANTS yet: proposed
-# for Tony as a lab-level row there, marked unconfirmed until he says which beams set the
-# recoil unit (a Bragg transfer of order n is 2nħk for counter-propagating beams).
-RECOIL_WAVELENGTH = codata.c / 276.7321865e12
-RECOIL_WAVELENGTH_UNCONFIRMED = True
+# 276.732 186 5 THz (NIST ASD; Pastor et al. 2004): the table's lab-level row
+# ``recoil_wavelength`` (unconfirmed until Tony says which beams set the recoil unit: a Bragg
+# transfer of order n is 2nħk for counter-propagating beams). A run uses its constants' value.
+RECOIL_WAVELENGTH = TABLE["recoil_wavelength"].value
+RECOIL_WAVELENGTH_UNCONFIRMED = TABLE["recoil_wavelength"].unconfirmed
 
 
 @dataclass(frozen=True)
@@ -93,7 +92,7 @@ class Velocities:
         return scaled
 
     def in_unit(self, unit: VelocityUnit, constants: ResolvedConstants,
-                wavelength: float = RECOIL_WAVELENGTH) -> Array:
+                wavelength: float | None = None) -> Array:
         """The velocities in ``unit`` (``unit_velocity``), a new read-only array."""
         return self.in_recoils(unit_velocity(unit, constants, wavelength))
 
@@ -109,15 +108,18 @@ def effective_fall_distance(constants: ResolvedConstants) -> float:
     return 0.5 * constants.g * constants.fall_time ** 2
 
 
-def recoil_velocity(constants: ResolvedConstants, wavelength: float = RECOIL_WAVELENGTH) -> float:
-    """v_rec = ħk/m = h/(λ m): one photon's recoil at ``wavelength`` (≈ 9.2 cm/s for He* at
-    1083 nm). nan unless the wavelength is finite and positive."""
+def recoil_velocity(constants: ResolvedConstants, wavelength: float | None = None) -> float:
+    """v_rec = ħk/m = h/(λ m): one photon's recoil at ``wavelength`` (default: the constants'
+    ``recoil_wavelength``; ≈ 9.2 cm/s for He* at 1083 nm). nan unless the wavelength is finite
+    and positive."""
+    if wavelength is None:
+        wavelength = constants.recoil_wavelength
     if not (math.isfinite(wavelength) and wavelength > 0):
         return math.nan
     return 2 * math.pi * constants.hbar / (wavelength * constants.mass)
 
 
-def unit_velocity(unit: VelocityUnit, constants: ResolvedConstants, wavelength: float = RECOIL_WAVELENGTH) -> float:
+def unit_velocity(unit: VelocityUnit, constants: ResolvedConstants, wavelength: float | None = None) -> float:
     """One ``unit`` in m/s: 1 for "m/s", ħk/m for "ħk", 2ħk/m for "2ħk"."""
     if unit == "m/s":
         return 1.0
@@ -175,3 +177,29 @@ def txy_to_velocity(events: npt.ArrayLike, release_time: float, constants: Resol
     invalid = int((~np.all(np.isfinite(values), axis=1)).sum())
     return Velocities(values, invalid, float(release_time), h, constants.g,
                       constants.origins.get("fall_time", "derived") != "derived", (x0, y0))
+
+
+def valid_velocities(events: npt.ArrayLike, release_time: float, constants: ResolvedConstants,
+                     origin: tuple[float, float] = (0.0, 0.0)) -> tuple[Array, int]:
+    """``txy_to_velocity``'s valid rows only, and how many events had no velocity: the same
+    (v_z, v_x, v_y) in m/s, as a new (m, 3) array in the events' order, without an (n, 3) nan
+    array or a read-only copy (a plot converting millions of events needs only these)."""
+    data = np.asarray(events, dtype=np.float64)
+    if data.ndim != 2 or data.shape[1] < 3:
+        raise ValueError("events must be an (n, 3) array of T, X, Y")
+    x0, y0 = (float(axis) for axis in origin)
+    if not (math.isfinite(x0) and math.isfinite(y0)):
+        raise ValueError("the XY origin must be finite")
+    tau = data[:, 0] - release_time
+    with np.errstate(invalid="ignore"):
+        good = (tau > 0) & np.isfinite(tau) & np.isfinite(data[:, 1]) & np.isfinite(data[:, 2])
+    kept = tau[good]
+    values = np.empty((len(kept), 3))
+    values[:, 0] = 0.5 * constants.g * kept - effective_fall_distance(constants) / kept
+    np.divide(data[good, 1] - x0, kept, out=values[:, 1])
+    np.divide(data[good, 2] - y0, kept, out=values[:, 2])
+    # τ > 0 and finite T, X, Y can still overflow to ±inf for a τ near 0 (subnormal): not valid.
+    finite = np.isfinite(values).all(axis=1)
+    if not finite.all():
+        values = values[finite]
+    return values, len(data) - len(values)

@@ -12,7 +12,7 @@ from typing import Any
 from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import QGridLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
-from helab.analysis.constant_layers import FIXED_PREFIX, LIMITS, SI_UNITS, limits
+from helab.analysis.constant_layers import LIMITS, SI_UNITS, fixed_prefix, limits
 from helab.analysis.parameter_tree import UnitSpinBox
 from helab.analysis.physics import Constant
 from helab.utils.colours import AMBER
@@ -37,7 +37,7 @@ def constant_editor(constant: Constant, value: float) -> UnitSpinBox:
         return box
     box.setOpts(value=value, suffix=constant.unit, siPrefix=constant.unit in SI_UNITS, dec=True, step=0.1,
                 minStep=LIMITS[0], decimals=8, bounds=list(limits(constant.key)),
-                fixedPrefix=FIXED_PREFIX.get(constant.unit))
+                fixedPrefix=fixed_prefix(constant.key))
     box.setToolTip(constant.source)
     fit_width(box)
     box.sigValueChanged.connect(lambda *_: fit_width(box))

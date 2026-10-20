@@ -46,6 +46,8 @@ LAYERS: tuple[Origin, ...] = ("lab", "folder", "plot")
 # The He-4 atomic mass (AME2020, 4.002 603 254 13(6) u); helium's standard atomic weight,
 # 4.002602, is a different number. The metastable state's ~20 eV/c² is negligible (2e-8).
 HE4_MASS_U = 4.00260325413
+# He* 2³S₁ → 2³P₂ (Hz): the cooling and Bragg line whose wavelength sets the recoil unit.
+HE_LINE_FREQUENCY = 276.7321865e12
 # A fall time set by hand that differs from √(2h/g) by more than this (relative) is noted.
 FALL_TIME_TOLERANCE = 1e-3
 
@@ -99,6 +101,11 @@ CONSTANTS: tuple[Constant, ...] = (
              "Canberra, Core hebec_constants (9.7960207 − 78e-8, GGMplus at the ANU)", "lab"),
     Constant("scattering_length", "He* scattering length a", "m", 7.512e-9,
              "Spin-polarised He* (m = +1), Moal et al., PRL 96, 023203 (2006); Core hebec_constants", "lab"),
+    # D8: the velocity plots' recoil unit ħk/m = h/(λ m). Unconfirmed until Tony says which beams set it
+    # (a Bragg transfer of order n is 2nħk for counter-propagating beams at this line).
+    Constant("recoil_wavelength", "Recoil wavelength λ", "m", codata.c / HE_LINE_FREQUENCY,
+             "He* 2³S₁ → 2³P₂, the cooling and Bragg line: 1,083.331 nm in vacuum, from 276.732 186 5 THz (NIST ASD; "
+             "Pastor et al. 2004). Proposed: confirm that the Bragg beams are on this line", "lab", unconfirmed=True),
     Constant("fall_distance", "Fall distance h", "m", 0.848,
              "Tony 2026-10-20, for now: Momentum_Bells_test lib/monitor_halos.m (2024) and the front panel. "
              "monitor_momentum.m has 0.852925545 m; measure from a cloud released at rest", "folder",
@@ -166,6 +173,7 @@ class ResolvedConstants:
     mass: float
     g: float
     scattering_length: float
+    recoil_wavelength: float
     fall_distance: float
     fall_time: float
     trap_radial: float

@@ -16,7 +16,8 @@ from helab.analysis.estimates import Estimate, format_fixed
 from helab.analysis.parameter_tree import UnitSpinBox, build_tree, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.plot_axes import GroupedAxis, grouped_axes
-from helab.scripts.standard import basic_plots, mean_position, release_time, shot_trends, t_spectrum, transfer_fractions
+from helab.scripts.standard import (basic_plots, mean_position, release_time, shot_trends, t_spectrum, transfer_fractions,
+                                    velocity_distributions)
 
 GERMAN = QLocale(QLocale.Language.German, QLocale.Country.Germany)
 ENGLISH = QLocale(QLocale.Language.English, QLocale.Country.Australia)
@@ -175,7 +176,9 @@ def test_every_t_and_xy_setting_of_the_plots_is_in_ms_or_mm() -> None:
              transfer_fractions.TransferFractions(): ("centre", "spacing", "half_width", "search_min",
                                                       "search_max", "xy_half"),
              shot_trends.ShotTrends(): ("t_min", "x_max", "const.fall_time", "const.fall_distance"),
-             release_time.ReleaseTimePlot(): ("search_min", "search_max", "const.fall_time", "const.fall_distance")}
+             release_time.ReleaseTimePlot(): ("search_min", "search_max", "const.fall_time", "const.fall_distance"),
+             velocity_distributions.VelocityDistributions(): ("t_min", "y_max", "search_min", "const.arrival_time",
+                                                              "const.trap_x", "const.fall_distance")}
     for script, wanted in names.items():
         specs = {spec.name: spec for spec in script.parameters("Plot")}
         for name in wanted:

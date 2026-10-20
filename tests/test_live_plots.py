@@ -34,7 +34,7 @@ from helab.io_helper import list_folder, live_check, load
 from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import (basic_plots, density_images, mean_position, release_time, scatter_3d, shot_times,
-                                    shot_trends, t_spectrum, transfer_fractions)
+                                    shot_trends, t_spectrum, transfer_fractions, velocity_distributions)
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest, IOService
@@ -320,7 +320,8 @@ def test_coverage_records_the_shots_used_and_diffs_a_later_revision() -> None:
                                     scatter_3d.Scatter3D(), density_images.DensityImages(),
                                     mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum(),
                                     transfer_fractions.TransferFractions(), shot_times.ShotTimesPlot(),
-                                    shot_trends.ShotTrends(), release_time.ReleaseTimePlot()],
+                                    shot_trends.ShotTrends(), release_time.ReleaseTimePlot(),
+                                    velocity_distributions.VelocityDistributions()],
                          ids=lambda script: type(script).__name__)
 def test_every_result_records_coverage_and_a_json_reuse_key(qtbot: QtBot, script: DatasetAnalysis) -> None:
     """Completed, failed and cancelled runs alike; the Shots settings decide the coverage."""
@@ -365,7 +366,7 @@ def test_failed_and_cancelled_results_record_coverage_too(qtbot: QtBot) -> None:
                                     scatter_3d.Scatter3D(), density_images.DensityImages(),
                                     mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum(),
                                     transfer_fractions.TransferFractions(), shot_trends.ShotTrends(),
-                                    release_time.ReleaseTimePlot()],
+                                    release_time.ReleaseTimePlot(), velocity_distributions.VelocityDistributions()],
                          ids=lambda script: type(script).__name__)
 @pytest.mark.parametrize("case", ["no shots yet", "none chosen", "no events"])
 def test_bundled_plots_say_why_they_are_empty(qtbot: QtBot, script: DatasetAnalysis, case: str) -> None:
