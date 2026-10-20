@@ -25,7 +25,10 @@ from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.runner import get_analysis_runner
 from helab.io_helper import list_folder, scan
-from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
+from helab.views.plots.dock import AnalysisDock
+from helab.views.plots.instance import AnalysisInstance
+from helab.views.plots.script_tree import TreePanelWidget
+from helab.views.plots.settings_panel import PlotSettingsPanel
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.dld import basic_plots as dld_plots, density_images
 from helab.scripts.standard import basic_plots, group

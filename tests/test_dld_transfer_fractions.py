@@ -15,7 +15,7 @@ from helab.analysis.display_units import time_text
 from helab.analysis.parameter_tree import build_tree, tree_values
 from helab.analysis.parameters import effective
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.models.ScriptTreeSelector import AnalysisInstance
+from helab.views.plots.instance import AnalysisInstance
 from helab.scripts.dld import transfer_fractions as tf
 from helab.utils.folder_cache import Dataset
 

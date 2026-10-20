@@ -14,8 +14,9 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QLineEdit, QMainWindow, QTabBar, QVBoxLayout, QWidget
 import pyqtgraph as pg
 
-from helab.models.ScriptTreeSelector import (AnalysisDock, DockTabCloser, FloatingSettings, PlotSettingsPanel,
-                                             TreePanelWidget)
+from helab.views.plots.dock import AnalysisDock, DockTabCloser, FloatingSettings
+from helab.views.plots.script_tree import TreePanelWidget
+from helab.views.plots.settings_panel import PlotSettingsPanel
 
 
 def app() -> QApplication:
@@ -672,7 +673,7 @@ def test_a_release_the_dock_never_saw_ends_the_drag_at_its_next_mouse_event(
     qtbot.wait(50)  # Events of its window coming up, the button still down: still waiting.
     assert moves == [] and plots.panel._drag_end.waiting(dock)
     # Let go where the dock gets no event: Qt knows no button is down.
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.mouse_held", lambda: False)
+    monkeypatch.setattr("helab.views.plots.settings_panel.mouse_held", lambda: False)
     qtbot.mouseMove(dock, QPoint(30, 30))  # type: ignore[no-untyped-call]
     qtbot.waitUntil(lambda: moves == ["in"])
     assert not plots.panel._drag_end.waiting(dock)

@@ -29,8 +29,10 @@ from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult, RamResults
 from helab.analysis.runner import AnalysisRunner
-from helab.models.ScriptTreeSelector import (AnalysisInstance, PlotPicture, PlotSettingsPanel, ReleasedPlot,
-                                             TreePanelWidget)
+from helab.views.plots.pictures import PlotPicture, ReleasedPlot
+from helab.views.plots.instance import AnalysisInstance
+from helab.views.plots.script_tree import TreePanelWidget
+from helab.views.plots.settings_panel import PlotSettingsPanel
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import scatter_3d
 from helab.utils.constants import PLOT_AUTO_RELOAD_SETTING, read_plot_auto_reload
@@ -147,7 +149,7 @@ class Window(HelabMainWindow):
 @pytest.fixture
 def runner(monkeypatch: pytest.MonkeyPatch) -> Iterator[AnalysisRunner]:
     made = AnalysisRunner()
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.get_analysis_runner", lambda: made)
+    monkeypatch.setattr("helab.views.plots.instance.get_analysis_runner", lambda: made)
     yield made
     made.stop()
 
@@ -543,7 +545,7 @@ def test_the_scatter_keeps_a_snapshot_of_its_last_frame(window: Window, qtbot: Q
 
 def test_auto_reload_when_shown_again_on_and_off(window: Window, cache: FolderCache, qtbot: QtBot,
                                                  monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {})
+    monkeypatch.setattr("helab.views.plots.instance.store_options", lambda: {})
     entry = hold(cache, dataset("again", range(1, 4)))
     instance = open_plot(window, qtbot, entry)
     other = open_plot(window, qtbot, dataset("other", range(1, 2)))
@@ -573,7 +575,7 @@ def test_auto_reload_tries_once_until_the_folder_changes(
         window: Window, cache: FolderCache, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     """A plot whose data is nowhere: its first show asks the disk cache once; clicks in it and
     later shows don't ask again until the folder's data or disk cache changes. Reload always asks."""
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {"directory": "store"})
+    monkeypatch.setattr("helab.views.plots.instance.store_options", lambda: {"directory": "store"})
     instance = open_plot(window, qtbot, dataset("nowhere", range(1, 3)))
     other = open_plot(window, qtbot, dataset("other", range(1, 2)))
     assert instance.release()
@@ -610,7 +612,7 @@ def test_a_plot_just_reloaded_goes_after_the_others(window: Window, cache: Folde
                                                     monkeypatch: pytest.MonkeyPatch) -> None:
     """Two plots under a tight budget don't keep releasing and reloading each other while a third
     could go: the one a reload drew just now is released last."""
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {})
+    monkeypatch.setattr("helab.views.plots.instance.store_options", lambda: {})
     entry = hold(cache, dataset("reloaded", range(1, 3)))
     cache.retain("tab", entry)
     reloaded = open_plot(window, qtbot, entry)
@@ -646,7 +648,7 @@ def test_auto_reload_setting_saved_and_read(qtbot: QtBot, cache: FolderCache, tm
 
 def test_a_reload_leaves_out_and_names_changed_and_missing_shots(
         window: Window, cache: FolderCache, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {})  # RAM only
+    monkeypatch.setattr("helab.views.plots.instance.store_options", lambda: {})  # RAM only
     entry = hold(cache, dataset("changed", range(1, 6)))
     instance = open_plot(window, qtbot, entry)
     open_plot(window, qtbot, dataset("other", range(1, 2)))
@@ -670,7 +672,7 @@ def test_a_reload_leaves_out_and_names_changed_and_missing_shots(
 
 def test_a_reload_reads_only_the_disk_cache_never_the_folder(
         window: Window, cache: FolderCache, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {"directory": "store", "budget": 1})
+    monkeypatch.setattr("helab.views.plots.instance.store_options", lambda: {"directory": "store", "budget": 1})
     entry = dataset("disk", range(1, 4))
     instance = open_plot(window, qtbot, entry)
     open_plot(window, qtbot, dataset("other", range(1, 2)))
@@ -697,7 +699,7 @@ def test_a_disk_reload_ending_during_a_live_run_leaves_that_run(
         window: Window, cache: FolderCache, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     """Live started on the folder while a released plot read the disk cache: its revision's run
     draws the plot; the read, ending first, doesn't replace that run."""
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {"directory": "store"})
+    monkeypatch.setattr("helab.views.plots.instance.store_options", lambda: {"directory": "store"})
     script = Copy()
     instance = open_plot(window, qtbot, dataset("live", range(1, 3)), script)
     open_plot(window, qtbot, dataset("other", range(1, 2)))
@@ -723,13 +725,13 @@ def test_with_no_data_anywhere_the_plot_says_so_and_keeps_its_picture(
     assert instance.release()
     picture = cast(ReleasedPlot, instance.released)
     # The disk cache off: nothing to ask.
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {})
+    monkeypatch.setattr("helab.views.plots.instance.store_options", lambda: {})
     picture.reload_button.click()
     assert instance.released is picture and not instance.job_id
     assert "can't reload: its data isn't in RAM or in the disk cache" in picture.state.text()
     assert picture.reload_button.isEnabled()
     # The disk cache on, but it has nothing for the folder.
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {"directory": "store"})
+    monkeypatch.setattr("helab.views.plots.instance.store_options", lambda: {"directory": "store"})
     picture.reload_button.click()
     request = next(iter(cache.jobs[("cached", instance.path)].subscribers.values()))
     cache.resultReady.emit(request, {"kind": "error", "message": "No cached data for this folder"})
@@ -737,7 +739,7 @@ def test_with_no_data_anywhere_the_plot_says_so_and_keeps_its_picture(
     assert picture.state.text().endswith("the disk cache couldn't give it (No cached data for this folder)")
     # Data of the folder that has none of its shots as they were.
     hold(cache, dataset("nowhere", range(1, 3), prints={1: (1, 0, 0), 2: (2, 0, 0)}))
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {})
+    monkeypatch.setattr("helab.views.plots.instance.store_options", lambda: {})
     picture.reload_button.click()
     assert instance.released is picture and "none of its 2 shots" in picture.state.text()
 
@@ -757,7 +759,7 @@ def test_a_reload_that_draws_nothing_keeps_no_data(window: Window, cache: Folder
                                                     ending: str) -> None:
     """The reviewer's probe: a reload whose run fails (or is cancelled) leaves the plot released,
     holding nothing (its picture aside), so nothing is counted that can't be freed."""
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {})
+    monkeypatch.setattr("helab.views.plots.instance.store_options", lambda: {})
     entry = hold(cache, dataset("f", range(1, 4)))
     script = Fails()
     instance = open_plot(window, qtbot, entry, script)
@@ -797,7 +799,7 @@ def test_a_reload_takes_exactly_the_shots_the_plot_drew(
         window: Window, cache: FolderCache, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     """Shot 5 of the two drawn (4, 5) is gone: Reload draws shot 4 alone, never shot 3, which the
     plot never drew, and names shot 5. Rerun with the settings shown takes the view's shots."""
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.store_options", lambda: {})
+    monkeypatch.setattr("helab.views.plots.instance.store_options", lambda: {})
     entry = hold(cache, dataset("exact", range(1, 6)))
     reloaded = open_plot(window, qtbot, entry, LastTwo())
     rerun = open_plot(window, qtbot, entry, LastTwo())

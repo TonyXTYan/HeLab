@@ -27,7 +27,9 @@ from helab.analysis.budget import DIALOG_SHARE, RELEASE_SHARE, WARN_SHARE, RamBu
 from helab.analysis.dataset_view import DatasetView, view_of
 from helab.analysis.follow import LiveFeed
 from helab.analysis.results import AnalysisResult
-from helab.models.ScriptTreeSelector import AnalysisDock, TreePanelWidget, PlotSettingsPanel
+from helab.views.plots.dock import AnalysisDock
+from helab.views.plots.script_tree import TreePanelWidget
+from helab.views.plots.settings_panel import PlotSettingsPanel
 from helab.resources.icons import ToolIcons
 from helab.utils.constants import *
 from helab.utils.number_format import byte_size, fnum

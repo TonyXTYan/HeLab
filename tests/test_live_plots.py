@@ -31,7 +31,10 @@ from helab.analysis.parameters import ParameterSpec, effective
 from helab.analysis.results import AnalysisContext, AnalysisResult, Coverage
 from helab.analysis.runner import AnalysisRunner
 from helab.io_helper import list_folder, live_check, load
-from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
+from helab.views.plots.dock import AnalysisDock
+from helab.views.plots.instance import AnalysisInstance
+from helab.views.plots.script_tree import TreePanelWidget
+from helab.views.plots.settings_panel import PlotSettingsPanel
 from helab.scripts.base import PLOT_MINIMUM_SIZE, DatasetAnalysis, ScriptMetadata
 from helab.scripts.dld import (correlations_plot, density_images, mean_position, release_time, shot_times,
                                shot_trends, t_spectrum, velocity_distributions)
@@ -127,7 +130,7 @@ class Window(HelabMainWindow):
 def runner(monkeypatch: pytest.MonkeyPatch) -> Iterator[AnalysisRunner]:
     """A runner of the test's own, so its job counts are this test's."""
     made = AnalysisRunner()
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.get_analysis_runner", lambda: made)
+    monkeypatch.setattr("helab.views.plots.instance.get_analysis_runner", lambda: made)
     yield made
     made.stop()
 

@@ -7,8 +7,8 @@ from PyQt6.QtWidgets import QDockWidget, QFileDialog, QMainWindow, QPushButton, 
 from pytestqt.qtbot import QtBot
 
 from helab.scripts.scripts_manager import ScriptsManager
-from helab.models import TreePanelWidget
-from helab.models.ScriptTreeSelector import PlotSettingsPanel
+from helab.views.plots.script_tree import TreePanelWidget
+from helab.views.plots.settings_panel import PlotSettingsPanel
 from helab.views.HelabMainWindow import HelabMainWindow
 
 # A user's script folder: an older-style script with plain actions.

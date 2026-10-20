@@ -25,7 +25,9 @@ from helab.analysis.parameters import effective
 from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.runner import AnalysisRunner
-from helab.models.ScriptTreeSelector import AnalysisInstance, PlotSettingsPanel, TreePanelWidget
+from helab.views.plots.instance import AnalysisInstance
+from helab.views.plots.script_tree import TreePanelWidget
+from helab.views.plots.settings_panel import PlotSettingsPanel
 from helab.scripts.dld import shot_trends
 from helab.scripts.dld.shot_trends import ShotTrends, Trends
 from helab.utils import events
@@ -518,7 +520,7 @@ class Window(HelabMainWindow):
 @pytest.fixture
 def window(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> Iterator[Window]:
     runner = AnalysisRunner()
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.get_analysis_runner", lambda: runner)
+    monkeypatch.setattr("helab.views.plots.instance.get_analysis_runner", lambda: runner)
     made = Window()
     qtbot.addWidget(made)
     yield made

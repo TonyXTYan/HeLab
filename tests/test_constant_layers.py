@@ -26,7 +26,9 @@ from helab.analysis.parameters import ParameterSpec, effective
 from helab.analysis.physics import DEFAULTS, ResolvedConstants, fall_time, resolve
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.runner import AnalysisRunner
-from helab.models.ScriptTreeSelector import AnalysisInstance, PlotSettingsPanel, TreePanelWidget
+from helab.views.plots.instance import AnalysisInstance
+from helab.views.plots.script_tree import TreePanelWidget
+from helab.views.plots.settings_panel import PlotSettingsPanel
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IOService
@@ -215,7 +217,7 @@ def test_a_run_whose_keys_cant_be_named_keeps_its_constants(qtbot: QtBot) -> Non
 @pytest.fixture
 def runner(monkeypatch: pytest.MonkeyPatch) -> Iterator[AnalysisRunner]:
     made = AnalysisRunner()
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.get_analysis_runner", lambda: made)
+    monkeypatch.setattr("helab.views.plots.instance.get_analysis_runner", lambda: made)
     yield made
     made.stop()
 
@@ -227,7 +229,7 @@ def cache(monkeypatch: pytest.MonkeyPatch) -> Iterator[FolderCache]:
     monkeypatch.setattr(service, "_dispatch", lambda: None)
     made = FolderCache(service)
     made.data_roots[ROOT] = ("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "root")
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.get_folder_cache", lambda _service: made)
+    monkeypatch.setattr("helab.views.plots.instance.get_folder_cache", lambda _service: made)
     yield made
     service.shutdown()
 
