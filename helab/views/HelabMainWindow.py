@@ -9,7 +9,7 @@ import types
 import threading
 import time
 from helab.utils.io_service import IORequest, delete_io_traces, get_io_service, io_trace_folder, io_trace_refused
-from helab.utils.folder_cache import FolderCache, get_folder_cache, set_disk_budget, store_options
+from helab.utils.folder_cache import get_folder_cache, set_disk_budget, store_options
 from helab.utils.gui_watchdog import GUIWatchdog
 from helab.utils.lab_parameters import read_lab_constants
 from helab.utils import events
@@ -20,28 +20,21 @@ from typing import Any, Callable, List, Optional
 import psutil
 from PyQt6.QtCore import Qt, QSize, QTimer, QItemSelection, QUrl, QDateTime, QSettings, QRect
 from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QGuiApplication, QPainter, QPixmap, QKeySequence
-from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
+from PyQt6.QtWidgets import QMainWindow, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QMenu, QApplication, QInputDialog, QProgressBar, QToolButton, QMessageBox
 
-from helab.analysis.budget import RamBudget
-from helab.analysis.budget_core import DIALOG_SHARE, RELEASE_SHARE, WARN_SHARE
-from helab.analysis.dataset_view import DatasetView, view_of
-from helab.analysis.live_feed import LiveFeed
-from helab.analysis.results import AnalysisResult
-from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.script_tree import TreePanelWidget
-from helab.views.plots.settings_panel import PlotSettingsPanel
+from helab.views.plots.workspace import PlotWorkspace
 from helab.resources.icons import ToolIcons
 from helab.utils.constants import *
 from helab.utils.number_format import byte_size, fnum
 from helab.utils.settings_store import app_settings
 from helab.views.CacheDialogs import CacheDialogs
-from helab.views.CentralHint import CentralHint
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HoverMenuToolButton import HoverMenuToolButton
 from helab.views.FolderExplorer import (
-    AMBER, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP, IO_SPINNER, FolderExplorer,
+    AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP, IO_SPINNER, FolderExplorer,
     large_text, paint_spinner,
 )
 from helab.views.FolderTabWidget import FolderTabWidget
@@ -134,7 +127,7 @@ class HelabMainWindow(QMainWindow):
         self.root_duplicates = RootDuplicatesWindow(cache, self)
         self.roots_button.clicked.connect(lambda: self.review_root(None))
         cache.rootDuplicatesChanged.connect(self._update_roots_button)
-        self.setup_ram_budget(cache, app_settings())
+        self.plots.setup_ram_budget(cache, app_settings())
 
         # Create Left Panel (File Tree View)
         self.tab_widget.currentChanged.connect(self.on_current_tab_changed)
@@ -178,10 +171,7 @@ class HelabMainWindow(QMainWindow):
         self.roots_button.hide()
         self.status_bar.addPermanentWidget(self.roots_button)
         # Shown from 50 % of the RAM budget (loaded folders and plots); opens their sizes.
-        self.ram_button = QToolButton()
-        self.ram_button.setAutoRaise(True)
-        self.ram_button.hide()
-        self.status_bar.addPermanentWidget(self.ram_button)
+        self.status_bar.addPermanentWidget(self.plots.ram_button)
         # Shown while Help › Record I/O trace is on.
         self.io_trace_label = QLabel("● I/O trace")
         self.io_trace_label.hide()
@@ -664,7 +654,7 @@ class HelabMainWindow(QMainWindow):
             size = sum(int(dataset.metadata.get("bytes", 0)) for dataset in dropped)
             self.show_status_notice(f"RAM budget lowered: dropped {len(dropped)} loaded "
                                     f"folder{'' if len(dropped) == 1 else 's'} ({byte_size(size)}) not shown in tabs")
-        if (budget := getattr(self, "ram_budget", None)) is not None:
+        if (budget := self.plots.ram_budget) is not None:
             budget.auto_reload = read_plot_auto_reload(settings)
             budget.check()  # The plots' share of a new budget.
         self.apply_auto_scan_visible(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
@@ -678,74 +668,6 @@ class HelabMainWindow(QMainWindow):
     def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
         self._status_notice = (text, time.monotonic() + seconds)
         self.update_status_bar_left()
-
-    def setup_ram_budget(self, cache: FolderCache, settings: QSettings) -> None:
-        """Plots count toward the RAM budget: from 50 % the status bar's button (``ram_button``),
-        the 75 % window once per crossing, and plots released above 80 % (``RamBudget``)."""
-        self.ram_budget = RamBudget(cache, self.panel_right_top_plot_settings, self)
-        self.ram_budget.auto_reload = read_plot_auto_reload(settings)
-        self.ram_budget.changed.connect(self._update_ram_button)
-        self.ram_budget.warning.connect(lambda: self.show_ram_report(warn=True))
-        self.ram_budget.released.connect(self._plots_released)
-        self.ram_button.clicked.connect(lambda: self.show_ram_report())
-        self._ram_report: QMessageBox | None = None
-
-    def _update_ram_button(self) -> None:
-        """From 50 % of the RAM budget the status bar says how much is in use (amber from 75 %)."""
-        usage = self.ram_budget.usage
-        self.ram_button.setVisible(usage.share >= WARN_SHARE)
-        if usage.share < WARN_SHARE:
-            return
-        released = self.ram_budget.released_count()
-        self.ram_button.setText(f"RAM {usage.share:.0%} of budget")
-        self.ram_button.setStyleSheet(f"color: {AMBER};" if usage.share >= DIALOG_SHARE else "")
-        self.ram_button.setToolTip(
-            f"Loaded folders and plots use {byte_size(usage.total)} of the {byte_size(usage.budget)} RAM budget "
-            f"(Settings → Cache): folders {byte_size(usage.datasets)}, plots {byte_size(usage.plots)} more.\n"
-            f"Above {RELEASE_SHARE:.0%}, plots not viewed lately are released (each keeps a picture and reloads "
-            "when shown)." + (f"\n{released} plot{'' if released == 1 else 's'} released now." if released else "")
-            + "\nClick for the biggest plots and folders.")
-
-    def _plots_released(self, count: int) -> None:
-        self.show_status_notice(f"Released {count} plot{'' if count == 1 else 's'} to keep RAM under "
-                                f"{RELEASE_SHARE:.0%} of its budget: shown again, each reloads")
-
-    def ram_report_text(self) -> tuple[str, str]:
-        """The 75 % window's text: how RAM stands, and the biggest plots and folders."""
-        usage = self.ram_budget.usage
-        plots, folders = self.ram_budget.biggest()
-        text = (f"Loaded folders and plots use {byte_size(usage.total)}, {usage.share:.0%} of the RAM budget "
-                f"({byte_size(usage.budget)}, Settings → Cache). Above {RELEASE_SHARE:.0%}, HeLab first drops "
-                "loaded folders no tab shows, then releases plots not viewed lately: each keeps a picture and "
-                "reloads from RAM or the disk cache when shown again. Closing plots or tabs frees RAM too.")
-        lines = ["Biggest plots:", *(f"  {label} — {byte_size(size)}" for label, size in plots)] if plots else []
-        if folders:
-            lines.append("Biggest loaded folders:")
-            for path, size, shown in folders:
-                name = os.path.basename(path.rstrip(os.sep)) or path
-                lines.append(f"  {name} — {byte_size(size)}" + (" (shown in a tab)" if shown else ""))
-        return text, "\n".join(lines)
-
-    def show_ram_report(self, warn: bool = False) -> None:
-        """The biggest plots and folders: a window that doesn't block (at 75 % once per crossing,
-        or from the status bar)."""
-        if self._closing:
-            return
-        text, details = self.ram_report_text()
-        box = self._ram_report
-        if box is None:
-            box = self._ram_report = QMessageBox(self)
-            box.setWindowModality(Qt.WindowModality.NonModal)
-            box.setStandardButtons(QMessageBox.StandardButton.Ok)
-            settings = box.addButton("Settings…", QMessageBox.ButtonRole.ActionRole)
-            if settings is not None:
-                settings.clicked.connect(lambda: QTimer.singleShot(0, self.show_settings_dialog))
-        box.setIcon(QMessageBox.Icon.Warning if warn else QMessageBox.Icon.Information)
-        box.setWindowTitle("RAM nearly at its budget" if warn else "RAM in use")
-        box.setText(text)
-        box.setInformativeText(details)
-        box.show()
-        box.raise_()
 
     def _auto_load_pause_changed(self, paused: bool) -> None:
         cache = get_folder_cache(get_io_service())
@@ -996,9 +918,7 @@ class HelabMainWindow(QMainWindow):
 
         # right_top_widget = QLabel("Right Top Placeholder")
         # right_top_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.panel_right_top_plot_settings = PlotSettingsPanel(parent=self)
-
-        self.panel_right_bottom_script_selector = TreePanelWidget(helab_main_window=self)
+        self.panel_right_bottom_script_selector = TreePanelWidget(self.plots)
 
         self.panel_right_bottom_script_selector.setVisible(True)
         # Add the bottom panel to the right_layout
@@ -1009,7 +929,7 @@ class HelabMainWindow(QMainWindow):
         toggle_right_bottom_panel_action.triggered.connect(self.toggle_right_bottom_panel)
         self.sidebar_toolbar_right.addAction(toggle_right_bottom_panel_action)
 
-        self.right_splitter.addWidget(self.panel_right_top_plot_settings)
+        self.right_splitter.addWidget(self.plots.panel_right_top_plot_settings)
         self.right_splitter.addWidget(self.panel_right_bottom_script_selector)
         self.right_splitter.setSizes([400, 300])
 
@@ -1018,14 +938,11 @@ class HelabMainWindow(QMainWindow):
 
 
     def _setup_middle_area(self) -> None:
-        self.middle_mainwindow = QMainWindow()
-        # Set a central widget for the middle main window
-        # Load details are in Folder details; the plot area keeps a short hint.
-        self.central_placeholder = CentralHint("Select a data folder to begin")
-        self.middle_mainwindow.setCentralWidget(self.central_placeholder)
-        self.dock_widgets: List[QDockWidget] = []
-        # The newest data of the folder Live watches, for the plots following it.
-        self.live_feed = LiveFeed(self)
+        # The plot area: its docks, hint, Settings panel, Live feed and RAM budget.
+        self.plots = PlotWorkspace(self, current_explorer=self.current_explorer,
+                                   explorers=lambda: [explorer for _, explorer in self._explorers()],
+                                   notice=self.show_status_notice, show_settings=self.show_settings_dialog,
+                                   closing=lambda: self._closing)
         # Desktop notifications without a system tray (helab/utils/events.py) go to the status bar.
         events.hub().desktop.set_status_sink(self.show_status_notice)
 
@@ -1037,9 +954,9 @@ class HelabMainWindow(QMainWindow):
         """ True is loading, False is loaded, None is not loadable"""
 
         # Add the middle main window to the splitter
-        self.splitter.addWidget(self.middle_mainwindow)
+        self.splitter.addWidget(self.plots.middle_mainwindow)
 
-        self.update_placeholder_visibility()
+        self.plots.update_placeholder_visibility()
 
     def _start_with_rhi_surface(self) -> None:
         """The 3D scatter's web view needs the window drawn through Qt's RHI; Qt switches a shown
@@ -1060,156 +977,6 @@ class HelabMainWindow(QMainWindow):
         if qpa is None:
             qpa = QGuiApplication.platformName()
         return system == "darwin" and qpa == "cocoa"
-
-    def close_plots(self) -> None:
-        """Close every plot dock as its close button does: each run's job is cancelled, it
-        leaves the analysis runner and its result is unpinned (the window is closing; its
-        widgets may outlive it, as in tests)."""
-        for dock in list(self.dock_widgets):
-            dock.close()
-
-    def update_placeholder_visibility(self) -> None:
-        """The plot area's hint shows while no plot dock is open, and hides while any is.
-
-        Open docks are those in ``dock_widgets`` (closing removes them), not the visible
-        ones: ``addDockWidget`` shows a new dock through a queued event, so the first dock
-        isn't visible yet when it is added, and a dock behind another tabbed one isn't
-        visible either but is still open."""
-        self.central_placeholder.setVisible(not self.dock_widgets)
-
-    def _set_plot_source(self, dock: QDockWidget, explorer: FolderExplorer) -> None:
-        """Attach provenance to a plot at creation, before the selection changes."""
-        dataset = explorer.displayed_dataset
-        content = dock.widget()
-        if dataset is None or content is None:
-            return
-        dock.setProperty("dataSourcePath", dataset.path)
-        dock.setProperty("dataSourceSignature", dataset.signature)
-        HelabMainWindow._wrap_plot(dock, content)
-        HelabMainWindow._update_plot_source_label(dock, explorer)
-
-    def follow_live(self, explorer: FolderExplorer) -> None:
-        """Plots follow Live: the data a Live tab shows is published as the newest revision of
-        its folder, and a folder no tab checks any more ends (Live off, another tab, or checks
-        stopped by an error until Retry): its plots catch up (memory only)."""
-        def checking(tab: FolderExplorer) -> bool:
-            return tab.live is not None and not tab.live.error and not tab.closed
-
-        session = explorer.live
-        dataset = explorer.displayed_dataset
-        if session is not None and checking(explorer) and dataset is not None and dataset.path == session.path:
-            self.live_feed.publish(dataset, explorer.model.cache.root_of(dataset.path))
-        watched = {other.live.path for _, other in self._explorers() if other.live is not None and checking(other)}
-        if explorer.live is not None and checking(explorer):
-            watched.add(explorer.live.path)
-        for path in self.live_feed.paths() - watched:
-            self.live_feed.stop(path)
-
-    def current_dataset_view(self) -> DatasetView | None:
-        """An immutable view of the data the current tab shows (memory only), for a new run.
-        While Live watches it, that is the revision the plots following it have."""
-        current = self.tab_widget.currentWidget()
-        if not isinstance(current, FolderExplorer) or current.displayed_dataset is None:
-            return None
-        dataset = current.displayed_dataset
-        return view_of(dataset, current.model.cache.root_of(dataset.path))
-
-    def set_plot_result(self, dock: QDockWidget, content: QWidget, result: AnalysisResult,
-                        parameters_text: str = "", record_text: str = "", selection_text: str = "") -> None:
-        """Show an analysis result in its dock, with two source lines: the input folder and
-        revision, which shots (``selection_text``) and the analysis with its version; then the
-        settings in short form (``parameters_text``). The full record (every parameter,
-        ``record_text``) is in the tooltip."""
-        identity = result.input.identity
-        dock.setProperty("dataSourcePath", identity.source_path)
-        dock.setProperty("dataSourceSignature", result.input_signature or identity.signature)
-        dock.setProperty("plotSourceRevision", f"rev {result.input.revision}")
-        dock.setProperty("plotSourceDetail", " · ".join(filter(None, (selection_text, result.analysis.short()))))
-        dock.setProperty("plotSourceSettings", parameters_text)
-        dock.setProperty("plotSourceRecord", result.describe(record_text or parameters_text))
-        old = dock.widget()
-        if old is None or content.parentWidget() is not old:  # Else updated in place: kept as it is.
-            HelabMainWindow._wrap_plot(dock, content)
-            if old is not None:
-                old.setParent(None)  # out of the dock now, so findChild sees only the new label
-                old.deleteLater()
-        self.update_plot_source(dock)
-
-    def replace_plot_content(self, dock: QDockWidget, content: QWidget) -> None:
-        """Show ``content`` (a released plot's picture) in place of the plot, under the same
-        source lines; the plot before it is deleted."""
-        old = dock.widget()
-        HelabMainWindow._wrap_plot(dock, content)
-        if old is not None:
-            old.setParent(None)
-            old.deleteLater()
-        self.update_plot_source(dock)
-
-    def update_plot_source(self, dock: QDockWidget) -> None:
-        """A plot's source lines changed (its result, or its Live state): show them now, and
-        its settings in short form in its floating window's settings header."""
-        current = self.tab_widget.currentWidget()
-        HelabMainWindow._update_plot_source_label(dock, current if isinstance(current, FolderExplorer) else None)
-        if isinstance(dock, AnalysisDock):
-            settings = dock.property("plotSourceSettings")
-            dock.settings.toggle.set_text(summary=settings if isinstance(settings, str) else "")
-
-    @staticmethod
-    def _wrap_plot(dock: QDockWidget, content: QWidget) -> None:
-        """The dock shows its source above the plot: one or two lines (source, then settings),
-        never wrapped (a long line is cut at the dock's edge; the tooltip has it all), with no
-        vertical padding. Below them, only after a failed run, the error in amber (the plot
-        shown is the last one drawn)."""
-        wrapper = QWidget(dock)
-        layout = QVBoxLayout(wrapper)
-        layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(0)
-        label = QLabel(wrapper)
-        label.setObjectName("plot_data_source")
-        label.setTextFormat(Qt.TextFormat.PlainText)
-        label.setWordWrap(False)
-        label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        layout.addWidget(label)
-        error = QLabel(wrapper)
-        error.setObjectName("plot_error")
-        error.setTextFormat(Qt.TextFormat.PlainText)
-        error.setStyleSheet(f"color: {AMBER};")
-        error.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        error.hide()
-        layout.addWidget(error)
-        layout.addWidget(content, 1)
-        dock.setWidget(wrapper)
-
-    @staticmethod
-    def _update_plot_source_label(dock: QDockWidget, explorer: FolderExplorer | None) -> None:
-        path = dock.property("dataSourcePath")
-        if not isinstance(path, str):
-            return
-        label = dock.findChild(QLabel, "plot_data_source")
-        if label is None:
-            return
-        node = explorer.model.nodes.get(explorer.selected_path_globally) if explorer is not None else None
-        # A names-only listing has no signature; the explorer compares shot lists then. A plot
-        # following Live is the folder's data, catching up as its line says.
-        current = bool(dock.property("plotFollowing")) or (
-            explorer is not None and path == explorer.selected_path_globally and node is not None
-            and (not node.signature or dock.property("dataSourceSignature") == node.signature)
-            and explorer.folder_opened_path == path)
-        prefix = "Data source" if current else "Showing previously loaded data"
-        parts = [dock.property(name) for name in ("plotSourceRevision", "plotFollow", "plotSourceDetail")]
-        settings = dock.property("plotSourceSettings")
-        record = dock.property("plotSourceRecord")
-        name = os.path.basename(path.rstrip(os.sep)) or path
-        label.setText(" · ".join([f"{prefix}: {name}", *(part for part in parts if isinstance(part, str) and part)])
-                      + (f"\n{settings}" if isinstance(settings, str) and settings else ""))
-        label.setToolTip(record if isinstance(record, str) and record else path)
-        error_label = dock.findChild(QLabel, "plot_error")
-        error = dock.property("plotError")
-        if error_label is not None:
-            text = f"⚠ {error}" if isinstance(error, str) and error else ""
-            error_label.setText(text)
-            error_label.setToolTip(text)
-            error_label.setVisible(bool(text))
 
     def toggle_left_panel(self, checked: bool) -> None:
         if checked: # Expand the left panel
@@ -1361,7 +1128,7 @@ class HelabMainWindow(QMainWindow):
         if self.tab_widget.currentWidget() is explorer and path == explorer.selected_path_globally:
             self.current_tracking_folder_path_is_loading = False
             self._update_folder_details()
-            self.update_placeholder_visibility()
+            self.plots.update_placeholder_visibility()
 
     def _update_roots_button(self) -> None:
         count = len(get_folder_cache(get_io_service()).root_duplicates)
@@ -1389,6 +1156,11 @@ class HelabMainWindow(QMainWindow):
             return
         for path in paths:
             current.load_as_it_is_now(path)
+
+    def current_explorer(self) -> FolderExplorer | None:
+        """The current tab's folder browser (None: no tab, or another kind)."""
+        current = self.tab_widget.currentWidget()
+        return current if isinstance(current, FolderExplorer) else None
 
     def _explorers(self) -> list[tuple[int, FolderExplorer]]:
         return [(index, widget) for index in range(self.tab_widget.count())
@@ -1426,12 +1198,12 @@ class HelabMainWindow(QMainWindow):
         if not self.folder_details.isHidden():
             self.folder_details.show_explorer(explorer, explorer.model.service if explorer else None)
         if explorer is None:
-            self.central_placeholder.set_hint("Select a data folder to begin")
+            self.plots.central_placeholder.set_hint("Select a data folder to begin")
             return
-        for dock in self.dock_widgets:
-            HelabMainWindow._update_plot_source_label(dock, explorer)
+        for dock in self.plots.dock_widgets:
+            PlotWorkspace._update_plot_source_label(dock, explorer)
         self.current_tracking_folder_path_is_loading = explorer.loading
-        self.central_placeholder.set_hint(*HelabMainWindow.central_hint(explorer))
+        self.plots.central_placeholder.set_hint(*HelabMainWindow.central_hint(explorer))
 
     @staticmethod
     def central_hint(explorer: FolderExplorer) -> tuple[str, str]:
@@ -1506,8 +1278,8 @@ class HelabMainWindow(QMainWindow):
             current_folder_explorer.loadStateChanged.connect(self._update_folder_details)
             current_folder_explorer.loadStateChanged.connect(self._update_cancel_loading_action)
             current_folder_explorer.liveChanged.connect(self._update_live_action)
-            current_folder_explorer.liveChanged.connect(lambda fe=current_folder_explorer: self.follow_live(fe))
-            current_folder_explorer.dataLoaded.connect(lambda _, fe=current_folder_explorer: self.follow_live(fe))
+            current_folder_explorer.liveChanged.connect(lambda fe=current_folder_explorer: self.plots.follow_live(fe))
+            current_folder_explorer.dataLoaded.connect(lambda _, fe=current_folder_explorer: self.plots.follow_live(fe))
             current_folder_explorer.dataLoaded.connect(
                 lambda p, fe=current_folder_explorer: self._snapshot_data_loaded(fe, p))
         else:
@@ -1660,10 +1432,8 @@ class HelabMainWindow(QMainWindow):
                 a0.ignore()
             return
         self._closing = True
-        self.close_plots()
-        if (budget := getattr(self, "ram_budget", None)) is not None:
-            budget.detach()
-        self.panel_right_top_plot_settings.detach()
+        self.plots.close_plots()
+        self.plots.detach()  # The RAM budget, then the Settings panel.
         if not self._cache_dialogs_detached:
             self.cache_dialogs.detach()
         self.watchdog.stop()

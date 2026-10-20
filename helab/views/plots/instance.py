@@ -35,7 +35,7 @@ from helab.utils.ram_buffers import Buffers, arrays_in, buffers
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.pictures import ReleasedPlot, snapshot
 if TYPE_CHECKING:
-    from helab.views.HelabMainWindow import HelabMainWindow
+    from helab.views.plots.workspace import PlotWorkspace
 
 
 class LinkedAnalysisInstance(QObject):
@@ -51,26 +51,26 @@ class LinkedAnalysisInstance(QObject):
     Args:
         name: Base name of the analysis (used for display)
         instance_id: Unique identifier for this instance
-        main_window: Reference to main window for cleanup
+        workspace: The plot area it opens in (None: no dock, as in tests of the plot alone)
     """
     
     ended = pyqtSignal(str)  # instance_id, once closed
 
-    def __init__(self, name: str, instance_id: str, main_window: Optional['HelabMainWindow']):
+    def __init__(self, name: str, instance_id: str, workspace: Optional[PlotWorkspace]):
         super().__init__()
         self.name = name
         self.instance_id = instance_id
-        self.main_window = main_window
+        self.workspace = workspace
         self.dock_widget: Optional[QDockWidget] = None
         self.param_tab: Optional[QWidget] = None
         self.is_closed = False
         
     def setup_dock_widget(self, content: QWidget) -> None:
         """Create and setup the dock widget."""
-        if not self.main_window:
+        if self.workspace is None:
             return
             
-        dock = AnalysisDock(f"{self.name} ({self.instance_id})", self.main_window)
+        dock = AnalysisDock(f"{self.name} ({self.instance_id})", self.workspace.host)
         dock.setStyleSheet(QDOCKWIDGET_STYLESHEET)
         dock.setWidget(content)
         dock.closed.connect(self.close)
@@ -80,10 +80,10 @@ class LinkedAnalysisInstance(QObject):
         
     def setup_param_tab(self, param_tree: QWidget, title: str = "") -> None:
         """Add this plot's page to the Settings panel (after its dock is made)."""
-        if not self.main_window or self.dock_widget is None:
+        if self.workspace is None or self.dock_widget is None:
             return
         self.param_tab = param_tree
-        self.main_window.panel_right_top_plot_settings.add_plot(
+        self.workspace.panel_right_top_plot_settings.add_plot(
             self.dock_widget, param_tree, title or f"{self.name} ({self.instance_id})")
         
     @pyqtSlot()
@@ -95,22 +95,20 @@ class LinkedAnalysisInstance(QObject):
             
         self.is_closed = True
         self.ended.emit(self.instance_id)
-        window, dock = self.main_window, self.dock_widget
-        if window is None or sip.isdeleted(window):
+        plots, dock = self.workspace, self.dock_widget
+        if plots is None or sip.isdeleted(plots.host):
             return
-        if dock is not None and dock in window.dock_widgets:
-            window.dock_widgets.remove(dock)
+        if dock is not None and dock in plots.dock_widgets:
+            plots.dock_widgets.remove(dock)
         if self.param_tab is not None and not sip.isdeleted(self.param_tab):
             self.param_tab.deleteLater()
         if dock is None or sip.isdeleted(dock):
             return  # Deleted with the plot area: the Settings panel drops the page itself.
-        window.middle_mainwindow.removeDockWidget(dock)
+        plots.middle_mainwindow.removeDockWidget(dock)
         dock.deleteLater()
         if self.param_tab is not None:
-            window.panel_right_top_plot_settings.remove_plot(dock)
-        update = getattr(window, "update_placeholder_visibility", None)
-        if callable(update):
-            update()
+            plots.panel_right_top_plot_settings.remove_plot(dock)
+        plots.update_placeholder_visibility()
 
 
 class AnalysisInstance(LinkedAnalysisInstance):
@@ -129,9 +127,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
     from RAM or the disk cache, never its folder (``reload``), when shown again or on Reload."""
 
     def __init__(self, metadata: ScriptMetadata, script: DatasetAnalysis, action: str, view: DatasetView,
-                 instance_id: str, main_window: Optional['HelabMainWindow'],
+                 instance_id: str, workspace: Optional[PlotWorkspace],
                  runner: Optional[AnalysisRunner] = None, cache: Optional[FolderCache] = None) -> None:
-        super().__init__(metadata.name, instance_id, main_window)
+        super().__init__(metadata.name, instance_id, workspace)
         # The app's FolderCache unless given (tests); its lab and folder constants feed each run.
         self._given_cache = cache
         self.metadata, self.script, self.action = metadata, script, action
@@ -151,8 +149,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.parameter_root: Optional[Parameter] = None
         self.status_label = QLabel()
         self.input_label = QLabel()
-        feed = getattr(main_window, "live_feed", None)
-        self.feed: Optional[LiveFeed] = feed if isinstance(feed, LiveFeed) else None
+        self.feed: Optional[LiveFeed] = workspace.live_feed if workspace is not None else None
         self._follow_timer = QTimer(self)
         self._follow_timer.setSingleShot(True)
         self._follow_timer.timeout.connect(self._follow_next)
@@ -160,8 +157,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if self.feed is not None:
             self.feed.revised.connect(self._revised)
             self.feed.ended.connect(self._live_ended)
-        budget = getattr(main_window, "ram_budget", None)
-        self.budget: Optional[RamBudget] = budget if isinstance(budget, RamBudget) else None
+        self.budget: Optional[RamBudget] = workspace.ram_budget if workspace is not None else None
         # Released to free RAM: the picture shown instead of the plot, until a run draws it again.
         self.released: Optional[ReleasedPlot] = None
         self._reload_owner = ""  # The disk-cache read of a reload in flight (its request's owner).
@@ -222,8 +218,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         layout.addWidget(self.rerun_button)
         layout.addWidget(self.status_label)
         self.setup_param_tab(tab, self._title())
-        if self.param_tab is not None and self.main_window is not None:
-            self.main_window.panel_right_top_plot_settings.plotShown.connect(self._plot_shown)
+        if self.param_tab is not None and self.workspace is not None:
+            self.workspace.panel_right_top_plot_settings.plotShown.connect(self._plot_shown)
         if self.budget is not None:
             self.budget.add(self)
         self.run()
@@ -394,8 +390,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if self.dock_widget is None:
             content.deleteLater()
             return
-        show = getattr(self.main_window, "set_plot_result", None)
-        if callable(show):
+        if self.workspace is not None:
             chosen, settings = self._hook("describe_run", ("", ""), result.parameters, self.view)
             record = describe(without_constants(specs), result.parameters, every=True)
             if (constants := result.resolved_constants) is not None:
@@ -413,7 +408,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             if warnings:
                 settings = " · ".join(filter(None, (settings, f"⚠ {warnings}")))
                 record = f"{record}\nWarning: {warnings}"
-            show(self.dock_widget, content, result, settings, record, chosen)
+            self.workspace.set_plot_result(self.dock_widget, content, result, settings, record, chosen)
         elif self.dock_widget.widget() is not content:
             old = self.dock_widget.widget()
             self.dock_widget.setWidget(content)
@@ -589,18 +584,16 @@ class AnalysisInstance(LinkedAnalysisInstance):
         following = self.follow.on and self.live() is not None
         self.input_label.setText(f"Input: {self._shown_key().short()}"
                                  + (" · following Live" if following else " (stays with this plot)"))
-        dock, window = self.dock_widget, self.main_window
-        if dock is None or window is None or sip.isdeleted(dock):
+        dock, plots = self.dock_widget, self.workspace
+        if dock is None or plots is None or sip.isdeleted(dock):
             return
         dock.setProperty("plotFollow", self.follow_text())
         dock.setProperty("plotFollowing", following)
         dock.setProperty("plotError", " · ".join(filter(None, (self.error or self._reload_note,
                                                                self._constants_note))))
-        update = getattr(window, "update_plot_source", None)
-        if callable(update):
-            update(dock)
+        plots.update_plot_source(dock)
         if self.param_tab is not None:
-            window.panel_right_top_plot_settings.set_title(dock, self._title())
+            plots.panel_right_top_plot_settings.set_title(dock, self._title())
 
     def _shown_key(self) -> ViewKey:
         """The data the plot shows (before its first result: what it runs on)."""
@@ -677,7 +670,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if not self.releasable():
             return False
         assert self.shown is not None and self._content is not None
-        area = getattr(self.main_window, "middle_mainwindow", None)
+        area = self.workspace.middle_mainwindow if self.workspace is not None else None
         picture = snapshot(self._content, area.size() if isinstance(area, QWidget) else QSize())
         self._picture_cost = len(picture.png)
         if frees is not None and self._picture_cost >= frees:
@@ -704,13 +697,12 @@ class AnalysisInstance(LinkedAnalysisInstance):
 
     def _swap_content(self, content: QWidget) -> None:
         """Show ``content`` in the dock in place of the plot, keeping its source lines."""
-        dock, window = self.dock_widget, self.main_window
+        dock, plots = self.dock_widget, self.workspace
         if dock is None or sip.isdeleted(dock):
             content.deleteLater()
             return
-        replace = getattr(window, "replace_plot_content", None)
-        if callable(replace):
-            replace(dock, content)
+        if plots is not None:
+            plots.replace_plot_content(dock, content)
             return
         old = dock.widget()
         dock.setWidget(content)
@@ -887,9 +879,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
                     signal.disconnect(self._folder_changed)
                 except TypeError:
                     pass
-        window = self.main_window
-        panel = (window.panel_right_top_plot_settings
-                 if self.param_tab is not None and window is not None and not sip.isdeleted(window) else None)
+        plots = self.workspace
+        panel = (plots.panel_right_top_plot_settings
+                 if self.param_tab is not None and plots is not None and not sip.isdeleted(plots.host) else None)
         for signal, slot in ((self.runner.finished, self._finished),
                              *(((self.feed.revised, self._revised), (self.feed.ended, self._live_ended))
                                if self.feed is not None else ()),

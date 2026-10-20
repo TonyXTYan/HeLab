@@ -14,13 +14,11 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6 import sip
-from PyQt6.QtGui import QCloseEvent
-from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QTabWidget, QWidget
+from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QWidget
 
 from helab.analysis import constant_layers as layers
 from helab.analysis import release
 from helab.analysis.dataset_view import DatasetView, build_view, view_of
-from helab.analysis.live_feed import LiveFeed
 from helab.analysis.parameter_tree import build_tree, parameter_of, tree_values
 from helab.analysis.parameters import ParameterSpec, effective
 from helab.analysis.physics import DEFAULTS, ResolvedConstants, fall_time, resolve
@@ -28,12 +26,10 @@ from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.runner import AnalysisRunner
 from helab.views.plots.instance import AnalysisInstance
 from helab.views.plots.script_tree import TreePanelWidget
-from helab.views.plots.settings_panel import PlotSettingsPanel
+from helab.views.plots.workspace import PlotWorkspace
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IOService
-from helab.views.CentralHint import CentralHint
-from helab.views.HelabMainWindow import HelabMainWindow
 
 ROOT = os.path.join(os.sep, "data", "root")
 PATH = os.path.join(ROOT, "run_L")  # test_live_plots' folder
@@ -48,28 +44,25 @@ def revision(shots: list[int]) -> Dataset:
         "loaded_at": time.time()}, 0)
 
 
-class Window(HelabMainWindow):
-    """The main window's plot-dock parts and the Live feed (as in test_live_plots)."""
+class Plots(PlotWorkspace):
+    """The plot area; a new plot runs on the window's ``view``."""
 
-    def __init__(self) -> None:
-        QMainWindow.__init__(self)
-        self.middle_mainwindow = QMainWindow()
-        self.central_placeholder = CentralHint("Select a data folder to begin")
-        self.middle_mainwindow.setCentralWidget(self.central_placeholder)
-        self.dock_widgets: List[QDockWidget] = []
-        self.tab_widget = QTabWidget()  # type: ignore[assignment]
-        self.panel_right_top_plot_settings = PlotSettingsPanel(self)
-        self.live_feed = LiveFeed(self)
-        self.view: Optional[DatasetView] = None
+    def __init__(self, window: Window) -> None:
+        super().__init__(window)
+        self.window = window
 
     def current_dataset_view(self) -> DatasetView | None:
-        return self.view
+        return self.window.view
 
-    def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
-        pass
 
-    def closeEvent(self, a0: QCloseEvent | None) -> None:
-        QMainWindow.closeEvent(self, a0)
+class Window(QMainWindow):
+    """A window with the plot area (``plots``: docks, Settings panel, Live feed), as in
+    tests/test_live_plots.py."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.view: Optional[DatasetView] = None
+        self.plots = Plots(self)
 
 
 class FallTime(DatasetAnalysis):
@@ -239,14 +232,14 @@ def window(qtbot: QtBot, runner: AnalysisRunner, cache: FolderCache) -> Iterator
     made = Window()
     qtbot.addWidget(made)
     yield made
-    made.close_plots()
-    if not sip.isdeleted(made.middle_mainwindow):
-        made.middle_mainwindow.close()
-        made.middle_mainwindow.deleteLater()
+    made.plots.close_plots()
+    if not sip.isdeleted(made.plots.middle_mainwindow):
+        made.plots.middle_mainwindow.close()
+        made.plots.middle_mainwindow.deleteLater()
 
 
 def plot(window: Window, qtbot: QtBot) -> AnalysisInstance:
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     instance = panel.run_analysis(FallTime().get_metadata(), FallTime(), "Plot")
     assert isinstance(instance, AnalysisInstance)
@@ -275,7 +268,7 @@ def test_a_plot_resolves_when_it_runs_and_marks_changes_until_rerun(
         window: Window, cache: FolderCache, qtbot: QtBot) -> None:
     cache.set_lab_constants({"g": 9.8})
     cache.remember_constants(ROOT, {"values": {"fall_distance": 0.9}, "set_at": 1.0})
-    window.view = window.live_feed.publish(revision([1]))
+    window.view = window.plots.live_feed.publish(revision([1]))
     instance = plot(window, qtbot)
     constants = shown(instance)
     assert (constants.origins["g"], constants.origins["fall_distance"], constants.origins["fall_time"]) == (
@@ -331,12 +324,12 @@ def test_a_plot_resolves_when_it_runs_and_marks_changes_until_rerun(
 
 
 def test_live_reruns_resolve_again(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
-    window.view = window.live_feed.publish(revision([1]))
+    window.view = window.plots.live_feed.publish(revision([1]))
     instance = plot(window, qtbot)
     assert shown(instance) == DEFAULTS and label(instance, "plot_error") == ""
     cache.remember_constants(PATH, {"values": {"fall_distance": 0.9}, "set_at": 1.0})  # Its own folder.
     assert label(instance, "plot_error").startswith("⚠ constants changed (Fall distance h, Fall time t_f)")
-    window.live_feed.publish(revision([1, 2]))  # The next Live update uses them.
+    window.plots.live_feed.publish(revision([1, 2]))  # The next Live update uses them.
     qtbot.waitUntil(lambda: shown(instance).fall_distance == 0.9, timeout=10_000)
     assert shown(instance).origins["fall_distance"] == "folder" and label(instance, "plot_error") == ""
     instance.close()
@@ -386,8 +379,8 @@ class OwnOverrides(DatasetAnalysis):
 
 def test_an_analysis_with_its_own_overrides_gets_the_layers(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
     cache.remember_constants(ROOT, {"values": {"fall_distance": 0.9}, "set_at": 1.0})
-    window.view = window.live_feed.publish(revision([1]))
-    panel = TreePanelWidget(window)
+    window.view = window.plots.live_feed.publish(revision([1]))
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     instance = panel.run_analysis(OwnOverrides().get_metadata(), OwnOverrides(), "Plot")
     assert isinstance(instance, AnalysisInstance)
@@ -429,9 +422,9 @@ def test_the_histograms_fits_are_keyed_on_constants_and_marked_when_one_changes(
     the mass and k_B, its key carries them, the constants appear once in the record, and a lab
     change marks the plot until Rerun; without a fit it uses none (no key, no mark)."""
     from helab.scripts.dld import basic_plots
-    window.view = window.live_feed.publish(revision([1, 2]))
+    window.view = window.plots.live_feed.publish(revision([1, 2]))
     script = basic_plots.TxyHistograms()
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")
     assert isinstance(instance, AnalysisInstance) and instance.parameter_root is not None
@@ -483,8 +476,8 @@ class RaisingHooks(FallTime):
 
 def test_a_raising_dock_hook_is_logged_not_fatal(window: Window, qtbot: QtBot,
                                                  caplog: pytest.LogCaptureFixture) -> None:
-    window.view = window.live_feed.publish(revision([1]))
-    panel = TreePanelWidget(window)
+    window.view = window.plots.live_feed.publish(revision([1]))
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = RaisingHooks()
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")

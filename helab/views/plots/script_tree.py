@@ -18,7 +18,7 @@ from helab.scripts.scripts_manager import ScriptsManager
 from helab.views.plots.dock import AnalysisDock, DockTabCloser
 from helab.views.plots.instance import AnalysisInstance, LinkedAnalysisInstance
 if TYPE_CHECKING:
-    from helab.views.HelabMainWindow import HelabMainWindow
+    from helab.views.plots.workspace import PlotWorkspace
 
 
 GroupType = Literal["dynamic"]
@@ -63,11 +63,11 @@ class TreePanelWidget(QWidget):
     # Signal emitted when selected group changes (group_name, group_type)
     group_changed = pyqtSignal(str, str)
     
-    def __init__(self, helab_main_window: Optional[HelabMainWindow] = None,
+    def __init__(self, workspace: Optional[PlotWorkspace] = None,
                  parent: Any = None) -> None:
         super().__init__(parent)
 
-        self.helab_main_window = helab_main_window
+        self.workspace = workspace  # The plot area new plots open in.
         self.script_manager = ScriptsManager()
         
         # Group tracking
@@ -292,32 +292,30 @@ class TreePanelWidget(QWidget):
     def run_analysis(self, metadata: ScriptMetadata, script: DatasetAnalysis,
                      action: str) -> Optional[AnalysisInstance]:
         """Run ``action`` on the current tab's shown dataset, in a new plot dock."""
-        window = self.helab_main_window
-        current = getattr(window, "current_dataset_view", None)
-        view = current() if callable(current) else None
-        if window is None or not isinstance(view, DatasetView):
-            notice = getattr(window, "show_status_notice", None)
-            if callable(notice):
-                notice(f"{metadata.name}: load a folder's data first")
+        plots = self.workspace
+        view = plots.current_dataset_view() if plots is not None else None
+        if plots is None or not isinstance(view, DatasetView):
+            if plots is not None:
+                plots.notice(f"{metadata.name}: load a folder's data first")
             return None
         self._instance_counter += 1
         instance_id = f"{self._instance_counter}"
-        instance = AnalysisInstance(metadata, script, action, view, instance_id, window)
+        instance = AnalysisInstance(metadata, script, action, view, instance_id, plots)
         self._analysis_instances[instance_id] = instance
         instance.start()
         self._add_dock(instance)
         return instance
 
     def _add_dock(self, instance: LinkedAnalysisInstance) -> None:
-        window, dock = self.helab_main_window, instance.dock_widget
-        if window is None or not isinstance(dock, AnalysisDock):
+        plots, dock = self.workspace, instance.dock_widget
+        if plots is None or not isinstance(dock, AnalysisDock):
             return
         instance.ended.connect(self._forget_instance)
-        settings = window.panel_right_top_plot_settings
-        area = window.middle_mainwindow
+        settings = plots.panel_right_top_plot_settings
+        area = plots.middle_mainwindow
         settings.follow(area)
         closer = area.findChild(DockTabCloser) or DockTabCloser(area)
-        target = self.tab_target(area, window.dock_widgets, settings.current_plot())
+        target = self.tab_target(area, plots.dock_widgets, settings.current_plot())
         area.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         # In a shown area Qt hides the new dock and shows it later, and it won't tab a plot
         # opened meanwhile with a hidden one: show it now.
@@ -327,10 +325,8 @@ class TreePanelWidget(QWidget):
             area.tabifyDockWidget(target, dock)
             dock.raise_()
         closer.watch(dock)
-        window.dock_widgets.append(dock)
-        update = getattr(window, "update_placeholder_visibility", None)
-        if callable(update):
-            update()
+        plots.dock_widgets.append(dock)
+        plots.update_placeholder_visibility()
 
     @staticmethod
     def tab_target(area: QMainWindow, open_docks: List[QDockWidget],

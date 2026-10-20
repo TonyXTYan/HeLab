@@ -22,6 +22,7 @@ from helab.utils.settings_store import app_settings
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.HelabMainWindow import HelabMainWindow
+from helab.views.plots.workspace import PlotWorkspace
 from helab.views.SettingsDialog import SettingsDialog
 
 
@@ -287,6 +288,7 @@ class CancelTestWindow(HelabMainWindow):
     def __init__(self) -> None:
         QMainWindow.__init__(self)
         self._closing = False
+        self.plots = PlotWorkspace(self)  # Settings applies the RAM budget's (none here).
         self._setup_left_toolbar()
         self.tab_widget = FolderTabWidget(self)
         self.setCentralWidget(self.tab_widget)

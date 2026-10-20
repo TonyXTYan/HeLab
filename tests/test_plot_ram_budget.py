@@ -17,14 +17,12 @@ import numpy.typing as npt
 import pytest
 from PyQt6 import sip
 from PyQt6.QtCore import QSettings
-from PyQt6.QtGui import QCloseEvent
-from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QMessageBox, QTabWidget, QToolButton, QWidget
+from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QMessageBox, QWidget
 from pytestqt.qtbot import QtBot
 
 from helab.analysis.budget import RamBudget
 from helab.analysis.budget_core import hollow, restore, shots_list
 from helab.analysis.dataset_view import DatasetView, read_only, view_of
-from helab.analysis.live_feed import LiveFeed
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
@@ -33,7 +31,7 @@ from helab.analysis.runner import AnalysisRunner
 from helab.views.plots.pictures import PlotPicture, ReleasedPlot
 from helab.views.plots.instance import AnalysisInstance
 from helab.views.plots.script_tree import TreePanelWidget
-from helab.views.plots.settings_panel import PlotSettingsPanel
+from helab.views.plots.workspace import PlotWorkspace
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import scatter_3d
 from helab.utils.constants import PLOT_AUTO_RELOAD_SETTING, read_plot_auto_reload
@@ -42,8 +40,6 @@ from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache
 from helab.utils.io_service import IOService
 from helab.utils.ram_buffers import buffer_of, buffers
 from helab.views.CacheTab import CacheTab
-from helab.views.CentralHint import CentralHint
-from helab.views.HelabMainWindow import HelabMainWindow
 
 ROWS = 1000  # events per shot: 24 kB a shot
 SHOT_BYTES = ROWS * 3 * 8
@@ -118,33 +114,31 @@ class Keeping(Copy):
         self.kept.pop(owner, None)
 
 
-class Window(HelabMainWindow):
-    """The main window's plot area, Settings panel, Live feed and RAM budget, with no tabs."""
+class Plots(PlotWorkspace):
+    """The plot area; a new plot runs on the window's ``view``."""
 
-    def __init__(self, cache: FolderCache, settings: QSettings) -> None:
-        QMainWindow.__init__(self)
-        self._closing = False
-        self.middle_mainwindow = QMainWindow()
-        self.middle_mainwindow.resize(800, 600)
-        self.central_placeholder = CentralHint("Select a data folder to begin")
-        self.middle_mainwindow.setCentralWidget(self.central_placeholder)
-        self.dock_widgets: List[QDockWidget] = []
-        self.tab_widget = QTabWidget()  # type: ignore[assignment]
-        self.panel_right_top_plot_settings = PlotSettingsPanel(self)
-        self.live_feed = LiveFeed(self)
-        self.ram_button = QToolButton()
-        self.view: Optional[DatasetView] = None
-        self.notices: list[str] = []
-        self.setup_ram_budget(cache, settings)
+    def __init__(self, window: Window) -> None:
+        super().__init__(window, notice=window.notices.append, closing=lambda: window.closing)
+        self.window = window
 
     def current_dataset_view(self) -> DatasetView | None:
-        return self.view
+        return self.window.view
 
-    def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
-        self.notices.append(text)
 
-    def closeEvent(self, a0: QCloseEvent | None) -> None:
-        QMainWindow.closeEvent(self, a0)
+class Window(QMainWindow):
+    """A window with the plot area (``plots``: Settings panel, Live feed and RAM budget,
+    ``budget``), with no tabs."""
+
+    def __init__(self, cache: FolderCache, settings: QSettings) -> None:
+        super().__init__()
+        self.closing = False
+        self.view: Optional[DatasetView] = None
+        self.notices: list[str] = []
+        self.plots = Plots(self)
+        self.plots.middle_mainwindow.resize(800, 600)
+        self.plots.setup_ram_budget(cache, settings)
+        assert self.plots.ram_budget is not None
+        self.budget: RamBudget = self.plots.ram_budget
 
 
 @pytest.fixture
@@ -171,20 +165,20 @@ def cache(monkeypatch: pytest.MonkeyPatch) -> Iterator[FolderCache]:
 def window(qtbot: QtBot, runner: AnalysisRunner, cache: FolderCache, tmp_path: Path) -> Iterator[Window]:
     made = Window(cache, QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat))
     qtbot.addWidget(made)
-    made.middle_mainwindow.show()
+    made.plots.middle_mainwindow.show()
     yield made
-    made.close_plots()
-    made.ram_budget.detach()
-    if not sip.isdeleted(made.middle_mainwindow):
-        made.middle_mainwindow.close()
-        made.middle_mainwindow.deleteLater()
+    made.plots.close_plots()
+    made.budget.detach()
+    if not sip.isdeleted(made.plots.middle_mainwindow):
+        made.plots.middle_mainwindow.close()
+        made.plots.middle_mainwindow.deleteLater()
 
 
 def open_plot(window: Window, qtbot: QtBot, data: Dataset | DatasetView, script: Optional[DatasetAnalysis] = None,
               *, wait: bool = True) -> AnalysisInstance:
     """A plot of ``data`` (the test keeps no view of it), drawn unless ``wait`` is off."""
     window.view = data if isinstance(data, DatasetView) else view_of(data)
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = script or Copy()
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")
@@ -239,8 +233,8 @@ def test_shared_arrays_are_counted_once(window: Window, cache: FolderCache, qtbo
     assert cache.plot_bytes() == shots  # Its result: a copy of the events, its own.
     second = open_plot(window, qtbot, entry)
     assert cache.plot_bytes() == 2 * shots  # Two results; the view's shots are the dataset's.
-    window.ram_budget.check()
-    assert window.ram_budget.usage.total == 3 * shots
+    window.budget.check()
+    assert window.budget.usage.total == 3 * shots
     del cache.datasets[(entry.path, entry.signature, 0)]
     assert cache.memory_usage()[1] == 0
     assert cache.plot_bytes() == 3 * shots  # The shots once, though both plots hold them.
@@ -263,22 +257,22 @@ def test_eviction_keeps_a_dataset_whose_arrays_plots_hold(window: Window, cache:
 
 
 def test_thresholds_status_bar_window_once_per_crossing_with_hysteresis(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
-    budget = window.ram_budget
+    budget = window.budget
     warnings: list[None] = []
     budget.warning.connect(lambda: warnings.append(None))
     shown = hold(cache, dataset("shown", range(1, 41)))  # 960 kB, shown in a tab: never dropped
     cache.retain("tab", shown)
     cache.max_data_bytes = 4 * 40 * SHOT_BYTES  # 25 %
     budget.check()
-    assert budget.usage.share == pytest.approx(0.25) and window.ram_button.isHidden() and not warnings
+    assert budget.usage.share == pytest.approx(0.25) and window.plots.ram_button.isHidden() and not warnings
     cache.max_data_bytes = int(40 * SHOT_BYTES / 0.55)
     budget.check()
-    assert not window.ram_button.isHidden() and window.ram_button.text() == "RAM 55% of budget"
-    assert not warnings and "plots" in window.ram_button.toolTip()
+    assert not window.plots.ram_button.isHidden() and window.plots.ram_button.text() == "RAM 55% of budget"
+    assert not warnings and "plots" in window.plots.ram_button.toolTip()
     cache.max_data_bytes = int(40 * SHOT_BYTES / 0.76)
     budget.check()
     assert len(warnings) == 1
-    box = window._ram_report
+    box = window.plots._ram_report
     assert isinstance(box, QMessageBox) and box.isVisible() and not box.isModal()
     assert "76%" in box.text() and "Biggest loaded folders:" in box.informativeText()
     assert "  shown — " in box.informativeText() and "(shown in a tab)" in box.informativeText()
@@ -309,17 +303,17 @@ def test_release_order_and_exemptions(window: Window, cache: FolderCache, runner
                                       qtbot: QtBot) -> None:
     """Above 80 %: datasets no tab shows go first, then plots least recently viewed first, until
     under 80 %. Never the shown plot, a running one or one following Live; none is closed."""
-    budget = window.ram_budget
+    budget = window.budget
     plots = {name: open_plot(window, qtbot, dataset(name, range(1, 3))) for name in ("d", "e", "a")}
     blocked = Copy()
     plots["b"] = open_plot(window, qtbot, dataset("b", range(1, 3)), blocked)
-    plots["c"] = open_plot(window, qtbot, window.live_feed.publish(dataset("c", range(1, 3))))
+    plots["c"] = open_plot(window, qtbot, window.plots.live_feed.publish(dataset("c", range(1, 3))))
     assert plots["c"].following()
     blocked.go.clear()
     plots["b"].run()  # Running from now on.
     qtbot.waitUntil(lambda: bool(plots["b"].job_id) and runner.running() == 1, timeout=5_000)
     unshown = hold(cache, dataset("x", range(1, 3)))
-    panel = window.panel_right_top_plot_settings
+    panel = window.plots.panel_right_top_plot_settings
     for name in ("d", "e", "b", "c", "a"):  # d least recently viewed; a shown.
         panel.show_plot(dock_of(plots[name]))
     assert panel.current_plot() is dock_of(plots["a"])
@@ -335,13 +329,13 @@ def test_release_order_and_exemptions(window: Window, cache: FolderCache, runner
     assert released == {"d", "e"}
     assert budget.usage.total <= 0.8 * cache.max_data_bytes
     assert window.notices[-1].startswith("Released 2 plots")
-    assert all(not instance.is_closed for instance in plots.values()) and len(window.dock_widgets) == 5
+    assert all(not instance.is_closed for instance in plots.values()) and len(window.plots.dock_widgets) == 5
     # More pressure: still never a, b or c.
     cache.max_data_bytes = 1
     budget.check()
     assert {name for name, instance in plots.items() if instance.released is not None} == {"d", "e"}
     blocked.go.set()
-    window.live_feed.stop(plots["c"].path)
+    window.plots.live_feed.stop(plots["c"].path)
     qtbot.waitUntil(lambda: not plots["b"].job_id, timeout=10_000)
     budget.check()  # b ran, c no longer follows Live: both may go now; a is still shown.
     assert {name for name, instance in plots.items() if instance.released is not None} == {"b", "c", "d", "e"}
@@ -355,26 +349,26 @@ def test_datasets_go_first_again_after_each_release(window: Window, cache: Folde
     plot_a = open_plot(window, qtbot, held)  # Its own result: 4 shots
     plot_b = open_plot(window, qtbot, dataset("b", range(1, 3)))  # 2 shots and their copy
     plot_c = open_plot(window, qtbot, dataset("c", range(1, 2)))  # Shown
-    panel = window.panel_right_top_plot_settings
+    panel = window.plots.panel_right_top_plot_settings
     for instance in (plot_a, plot_b, plot_c):
         panel.show_plot(dock_of(instance))
-    window.ram_budget.check()
-    assert window.ram_budget.usage.total == 14 * SHOT_BYTES
+    window.budget.check()
+    assert window.budget.usage.total == 14 * SHOT_BYTES
     cache.max_data_bytes = int(9 * SHOT_BYTES / 0.8)
-    window.ram_budget.check()
+    window.budget.check()
     assert plot_a.released is not None and not cache.holds(held) and plot_b.released is None
-    assert window.ram_budget.usage.total <= 9 * SHOT_BYTES
+    assert window.budget.usage.total <= 9 * SHOT_BYTES
 
 
 def test_the_least_recently_viewed_plot_goes_first(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
     first, second, third = (open_plot(window, qtbot, dataset(name, range(1, 3))) for name in ("p1", "p2", "p3"))
-    panel = window.panel_right_top_plot_settings
+    panel = window.plots.panel_right_top_plot_settings
     for instance in (second, first, third):
         panel.show_plot(dock_of(instance))
-    window.ram_budget.check()
-    total = window.ram_budget.usage.total
+    window.budget.check()
+    total = window.budget.usage.total
     cache.max_data_bytes = int((total - 1) / 0.8)  # Over by a byte: one plot goes.
-    window.ram_budget.check()
+    window.budget.check()
     assert second.released is not None and first.released is None and third.released is None
 
 
@@ -394,13 +388,13 @@ def test_one_small_plot_of_a_held_unshown_folder(window: Window, cache: FolderCa
     held = hold(cache, dataset("held", range(1, 41)))  # 40 shots, no tab shows it
     plot = open_plot(window, qtbot, held, Tiny())
     shown = open_plot(window, qtbot, dataset("c", range(1, 2)))
-    panel = window.panel_right_top_plot_settings
+    panel = window.plots.panel_right_top_plot_settings
     for instance in (plot, shown):
         panel.show_plot(dock_of(instance))
     cache.max_data_bytes = int(10 * SHOT_BYTES / 0.8)
-    window.ram_budget.check()
+    window.budget.check()
     assert plot.released is not None and not cache.holds(held)
-    assert window.ram_budget.usage.total <= 10 * SHOT_BYTES
+    assert window.budget.usage.total <= 10 * SHOT_BYTES
 
 
 def test_two_small_plots_of_one_unloaded_folder(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
@@ -411,13 +405,13 @@ def test_two_small_plots_of_one_unloaded_folder(window: Window, cache: FolderCac
     second = open_plot(window, qtbot, shared, Tiny())
     del shared
     shown = open_plot(window, qtbot, dataset("c", range(1, 2)))
-    panel = window.panel_right_top_plot_settings
+    panel = window.plots.panel_right_top_plot_settings
     for instance in (first, second, shown):
         panel.show_plot(dock_of(instance))
     cache.max_data_bytes = int(10 * SHOT_BYTES / 0.8)
-    window.ram_budget.check()
+    window.budget.check()
     assert first.released is not None and second.released is not None
-    assert window.ram_budget.usage.total <= 10 * SHOT_BYTES
+    assert window.budget.usage.total <= 10 * SHOT_BYTES
 
 
 def test_no_needless_release_on_a_shared_buffer(window: Window, cache: FolderCache, qtbot: QtBot) -> None:
@@ -430,15 +424,15 @@ def test_no_needless_release_on_a_shared_buffer(window: Window, cache: FolderCac
     del shared
     own = open_plot(window, qtbot, dataset("own", range(1, 3)))
     shown = open_plot(window, qtbot, dataset("c", range(1, 2)))
-    panel = window.panel_right_top_plot_settings
+    panel = window.plots.panel_right_top_plot_settings
     for instance in (first, own, second, shown):
         panel.show_plot(dock_of(instance))
-    window.ram_budget.check()
-    total = window.ram_budget.usage.total
+    window.budget.check()
+    total = window.budget.usage.total
     cache.max_data_bytes = int((total - 3 * SHOT_BYTES) / 0.8)
-    window.ram_budget.check()
+    window.budget.check()
     assert own.released is not None and first.released is None and second.released is None
-    assert window.ram_budget.usage.total <= 0.8 * cache.max_data_bytes
+    assert window.budget.usage.total <= 0.8 * cache.max_data_bytes
 
 
 def test_older_results_count_and_go_with_a_release_or_close(
@@ -474,11 +468,11 @@ def test_a_release_must_free_more_than_its_picture_costs(window: Window, cache: 
     tiny = open_plot(window, qtbot, shown, Tiny())
     big = open_plot(window, qtbot, dataset("big", range(1, 5)))
     open_plot(window, qtbot, dataset("other", range(1, 2)))  # Shown
-    panel = window.panel_right_top_plot_settings
+    panel = window.plots.panel_right_top_plot_settings
     panel.show_plot(dock_of(big))
     panel.show_plot(dock_of(tiny))
-    panel.show_plot(window.dock_widgets[-1])
-    budget = window.ram_budget
+    panel.show_plot(window.plots.dock_widgets[-1])
+    budget = window.budget
     cache.max_data_bytes = 1
     budget.check()
     assert tiny.released is None and tiny.picture_cost() > 8
@@ -550,21 +544,21 @@ def test_auto_reload_when_shown_again_on_and_off(window: Window, cache: FolderCa
     entry = hold(cache, dataset("again", range(1, 4)))
     instance = open_plot(window, qtbot, entry)
     other = open_plot(window, qtbot, dataset("other", range(1, 2)))
-    panel = window.panel_right_top_plot_settings
-    window.ram_budget.auto_reload = False
+    panel = window.plots.panel_right_top_plot_settings
+    window.budget.auto_reload = False
     assert instance.release()
     panel.show_plot(dock_of(instance))
     qtbot.wait(50)
     assert instance.released is not None and not instance.job_id  # Off: only Reload draws it.
     panel.show_plot(dock_of(other))
-    window.ram_budget.auto_reload = True
+    window.budget.auto_reload = True
     panel.show_plot(dock_of(instance))
     qtbot.waitUntil(lambda: drawn(instance), timeout=10_000)
     assert cast(AnalysisResult, instance.shown).coverage.shots == (1, 2, 3) and error_line(instance) == ""
     assert instance.status_label.text() == ""
     # The manual Reload button always works.
     panel.show_plot(dock_of(other))
-    window.ram_budget.auto_reload = False
+    window.budget.auto_reload = False
     assert instance.release()
     released = instance.released
     assert released is not None
@@ -580,7 +574,7 @@ def test_auto_reload_tries_once_until_the_folder_changes(
     instance = open_plot(window, qtbot, dataset("nowhere", range(1, 3)))
     other = open_plot(window, qtbot, dataset("other", range(1, 2)))
     assert instance.release()
-    panel = window.panel_right_top_plot_settings
+    panel = window.plots.panel_right_top_plot_settings
     asked: list[str] = []
     real_submit = cache.submit
 
@@ -619,16 +613,16 @@ def test_a_plot_just_reloaded_goes_after_the_others(window: Window, cache: Folde
     reloaded = open_plot(window, qtbot, entry)
     older = open_plot(window, qtbot, dataset("older", range(1, 3)))
     shown = open_plot(window, qtbot, dataset("shown", range(1, 2)))
-    panel = window.panel_right_top_plot_settings
+    panel = window.plots.panel_right_top_plot_settings
     assert reloaded.release()
     panel.show_plot(dock_of(reloaded))  # Reloads (auto reload).
     qtbot.waitUntil(lambda: drawn(reloaded), timeout=10_000)
     panel.show_plot(dock_of(older))
     panel.show_plot(dock_of(shown))  # Least recently viewed: reloaded, then older.
     assert reloaded.recently_reloaded() and not older.recently_reloaded()
-    window.ram_budget.check()
-    cache.max_data_bytes = int((window.ram_budget.usage.total - 1) / 0.8)
-    window.ram_budget.check()
+    window.budget.check()
+    cache.max_data_bytes = int((window.budget.usage.total - 1) / 0.8)
+    window.budget.check()
     assert older.released is not None and reloaded.released is None
     reloaded.reloaded_at -= 60  # Later, it goes in its turn.
     assert not reloaded.recently_reloaded()
@@ -708,7 +702,7 @@ def test_a_disk_reload_ending_during_a_live_run_leaves_that_run(
     cast(ReleasedPlot, instance.released).reload_button.click()
     request = next(iter(cache.jobs[("cached", instance.path)].subscribers.values()))
     script.go.clear()
-    window.live_feed.publish(dataset("live", range(1, 5)))  # Live: a revision with 4 shots
+    window.plots.live_feed.publish(dataset("live", range(1, 5)))  # Live: a revision with 4 shots
     live_job = instance.job_id
     assert live_job
     cache.resultReady.emit(request, {"kind": "loaded", "dataset": dataset("live", range(1, 3))})

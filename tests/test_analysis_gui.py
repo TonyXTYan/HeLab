@@ -13,7 +13,6 @@ import pyqtgraph as pg
 import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6 import sip
-from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QTabBar, QTabWidget, QWidget
 
@@ -28,16 +27,15 @@ from helab.io_helper import list_folder, scan
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.instance import AnalysisInstance
 from helab.views.plots.script_tree import TreePanelWidget
-from helab.views.plots.settings_panel import PlotSettingsPanel
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.dld import basic_plots as dld_plots, density_images
 from helab.scripts.standard import basic_plots, group
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest, IOService
-from helab.views.CentralHint import CentralHint
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.HelabMainWindow import HelabMainWindow
+from helab.views.plots.workspace import PlotWorkspace
 
 
 @pytest.fixture
@@ -100,25 +98,24 @@ def folder(root: Path, name: str, shots: int) -> Path:
     return path
 
 
-class Window(HelabMainWindow):
-    """The main window's plot-dock parts only, around one tab."""
+class Window(QMainWindow):
+    """A window with the plot area (``plots``) around one tab; its notices are kept."""
 
     def __init__(self, explorer: FolderExplorer) -> None:
-        QMainWindow.__init__(self)
-        self.middle_mainwindow = QMainWindow()
-        self.central_placeholder = CentralHint("Select a data folder to begin")
-        self.middle_mainwindow.setCentralWidget(self.central_placeholder)
-        self.dock_widgets: List[QDockWidget] = []
-        self.tab_widget = QTabWidget()  # type: ignore[assignment]
+        super().__init__()
+        self.tab_widget = QTabWidget()
         self.tab_widget.addTab(explorer, "tab")
-        self.panel_right_top_plot_settings = PlotSettingsPanel(self)
         self.notices: list[str] = []
+        self.plots = PlotWorkspace(self, current_explorer=self.current_explorer, explorers=self.explorers,
+                                   notice=self.notices.append)
 
-    def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
-        self.notices.append(text)
+    def current_explorer(self) -> FolderExplorer | None:
+        current = self.tab_widget.currentWidget()
+        return current if isinstance(current, FolderExplorer) else None
 
-    def closeEvent(self, a0: QCloseEvent | None) -> None:
-        QMainWindow.closeEvent(self, a0)
+    def explorers(self) -> List[FolderExplorer]:
+        return [widget for index in range(self.tab_widget.count())
+                if isinstance(widget := self.tab_widget.widget(index), FolderExplorer)]
 
 
 class Blocking(DatasetAnalysis):
@@ -151,10 +148,10 @@ def window(qtbot: QtBot, browser: FolderExplorer) -> Iterator[Window]:
     made = Window(browser)
     qtbot.addWidget(made)
     yield made
-    made.close_plots()  # As the main window's close does: each plot ends now, not when collected.
-    if not sip.isdeleted(made.middle_mainwindow):  # A window of its own here: deleted with its docks.
-        made.middle_mainwindow.close()
-        made.middle_mainwindow.deleteLater()
+    made.plots.close_plots()  # As the main window's close does: each plot ends now, not when collected.
+    if not sip.isdeleted(made.plots.middle_mainwindow):  # A window of its own here: deleted with its docks.
+        made.plots.middle_mainwindow.close()
+        made.plots.middle_mainwindow.deleteLater()
 
 
 def source_label(dock: QDockWidget) -> QLabel:
@@ -168,7 +165,7 @@ def test_selection_change_mid_run_keeps_the_input(
     first, second = folder(tmp_path, "run_A", 2), folder(tmp_path, "run_B", 1)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, first, {1: 3, 2: 4})
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = Blocking()
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")
@@ -186,11 +183,11 @@ def test_selection_change_mid_run_keeps_the_input(
     assert result.input.identity.source_path == str(first) and result.input.revision == 1
     assert result.data == 7  # run_A's events, not run_B's
     label = source_label(instance.dock_widget)
-    window._update_plot_source_label(instance.dock_widget, browser)
+    window.plots._update_plot_source_label(instance.dock_widget, browser)
     assert label.text() == "Showing previously loaded data: run_A · rev 1 · tests.blocking v3\nScale 1"
     assert "Input: " + str(first) in label.toolTip() and "kept in RAM only" in label.toolTip()
     # A new run takes the data shown now.
-    view = window.current_dataset_view()
+    view = window.plots.current_dataset_view()
     assert view is not None and view.identity.source_path == str(second)
 
 
@@ -199,7 +196,7 @@ def test_rerun_uses_the_same_input_and_close_cleans_up(
     run = folder(tmp_path, "run_C", 1)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 2})
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = Blocking()
     script.release.set()
@@ -208,7 +205,7 @@ def test_rerun_uses_the_same_input_and_close_cleans_up(
     qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
     first = instance.result
     assert first is not None and first.data == 2
-    assert window.panel_right_top_plot_settings.page(instance.dock_widget) is instance.param_tab
+    assert window.plots.panel_right_top_plot_settings.page(instance.dock_widget) is instance.param_tab
     label = source_label(instance.dock_widget)
     assert label.text() == "Data source: run_C · rev 1 · tests.blocking v3\nScale 1"
     instance.parameter_root.child("scale").setValue(4)
@@ -221,7 +218,7 @@ def test_rerun_uses_the_same_input_and_close_cleans_up(
     assert runner.results.get(instance.result.job_id) is not None
     instance.dock_widget.close()
     assert instance.is_closed and instance.instance_id not in panel._analysis_instances
-    assert window.panel_right_top_plot_settings.page(instance.dock_widget) is None
+    assert window.plots.panel_right_top_plot_settings.page(instance.dock_widget) is None
 
 
 def test_closing_a_dock_mid_run_delivers_nothing(
@@ -229,7 +226,7 @@ def test_closing_a_dock_mid_run_delivers_nothing(
     run = folder(tmp_path, "run_E", 1)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 2})
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = Blocking()
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")
@@ -256,11 +253,11 @@ def test_centre_hint_hides_while_a_plot_dock_is_open(
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 3})
     window.show()
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = Blocking()
     metadata = script.get_metadata()
-    hint = window.central_placeholder
+    hint = window.plots.central_placeholder
     assert not hint.isHidden()
     first = panel.run_analysis(metadata, script, "Plot")
     assert first is not None and first.dock_widget is not None
@@ -270,9 +267,9 @@ def test_centre_hint_hides_while_a_plot_dock_is_open(
     script.release.set()
     qtbot.waitUntil(lambda: first.result is not None and second.result is not None, timeout=10_000)
     first.dock_widget.close()
-    assert hint.isHidden() and window.dock_widgets == [second.dock_widget]
+    assert hint.isHidden() and window.plots.dock_widgets == [second.dock_widget]
     second.dock_widget.close()
-    assert not hint.isHidden() and not window.dock_widgets
+    assert not hint.isHidden() and not window.plots.dock_widgets
 
 
 def test_settings_panel_follows_the_active_plot(
@@ -283,8 +280,8 @@ def test_settings_panel_follows_the_active_plot(
     run = folder(tmp_path, "run_S", 1)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 3})
-    window.middle_mainwindow.show()  # The plot area; the test window doesn't hold it.
-    panel = TreePanelWidget(window)
+    window.plots.middle_mainwindow.show()  # The plot area; the test window doesn't hold it.
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = Blocking()
     script.release.set()
@@ -292,21 +289,21 @@ def test_settings_panel_follows_the_active_plot(
     runs: list[Optional[AnalysisInstance]] = []
     for _ in range(3):  # One click at a time: each new plot is tabbed with the one shown.
         runs.append(panel.run_analysis(metadata, script, "Plot"))
-        qtbot.waitUntil(window.dock_widgets[-1].isVisible)
+        qtbot.waitUntil(window.plots.dock_widgets[-1].isVisible)
     first, second, third = runs
     assert first is not None and second is not None and third is not None
     docks = [instance.dock_widget for instance in (first, second, third)]
     assert all(isinstance(dock, QDockWidget) for dock in docks)
     one, two, three = cast(List[QDockWidget], docks)
-    settings = window.panel_right_top_plot_settings
+    settings = window.plots.panel_right_top_plot_settings
     assert settings.current_plot() is three and settings.stack.currentWidget() is third.param_tab
     assert [settings.chooser.itemText(i) for i in range(3)] == [
         "Blocking (1) · run_S · rev 1", "Blocking (2) · run_S · rev 1", "Blocking (3) · run_S · rev 1"]
     assert settings.chooser.currentIndex() == 2 and not settings.chooser_row.isHidden()
     qtbot.waitUntil(lambda: all(instance.result is not None for instance in (first, second, third)), timeout=10_000)
     # Clicking a tabbed dock's tab brings it to the front and shows its settings.
-    qtbot.waitUntil(lambda: any(bar.count() == 3 for bar in window.middle_mainwindow.findChildren(QTabBar)))
-    bars = [bar for bar in window.middle_mainwindow.findChildren(QTabBar) if bar.count() == 3]
+    qtbot.waitUntil(lambda: any(bar.count() == 3 for bar in window.plots.middle_mainwindow.findChildren(QTabBar)))
+    bars = [bar for bar in window.plots.middle_mainwindow.findChildren(QTabBar) if bar.count() == 3]
     bars[0].setCurrentIndex(next(i for i in range(3) if bars[0].tabText(i) == one.windowTitle()))
     qtbot.waitUntil(lambda: settings.current_plot() is one)
     assert settings.stack.currentWidget() is first.param_tab and settings.chooser.currentIndex() == 0
@@ -341,24 +338,24 @@ def test_plots_close_from_their_tab_and_the_settings_panel(
     run = folder(tmp_path, "run_X", 1)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 3})
-    window.middle_mainwindow.show()
-    panel = TreePanelWidget(window)
+    window.plots.middle_mainwindow.show()
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = Blocking()
     script.release.set()
     runs: list[Optional[AnalysisInstance]] = []
     for _ in range(3):
         runs.append(panel.run_analysis(script.get_metadata(), script, "Plot"))
-        qtbot.waitUntil(window.dock_widgets[-1].isVisible)
+        qtbot.waitUntil(window.plots.dock_widgets[-1].isVisible)
     first, second, third = runs
     assert first is not None and second is not None and third is not None
     qtbot.waitUntil(lambda: any(bar.count() == 3 and bar.tabsClosable()
-                                for bar in window.middle_mainwindow.findChildren(QTabBar)))
-    bar = next(bar for bar in window.middle_mainwindow.findChildren(QTabBar) if bar.count() == 3)
+                                for bar in window.plots.middle_mainwindow.findChildren(QTabBar)))
+    bar = next(bar for bar in window.plots.middle_mainwindow.findChildren(QTabBar) if bar.count() == 3)
     assert first.dock_widget is not None
     bar.tabCloseRequested.emit(next(i for i in range(3) if bar.tabText(i) == first.dock_widget.windowTitle()))
     assert first.is_closed and not second.is_closed and not third.is_closed
-    settings = window.panel_right_top_plot_settings
+    settings = window.plots.panel_right_top_plot_settings
     assert settings.current_plot() is third.dock_widget
     settings.close_button.click()
     assert third.is_closed and settings.current_plot() is second.dock_widget
@@ -369,7 +366,7 @@ def test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab(
     run = folder(tmp_path, "run_R", 2)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 3, 2: 4})
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = basic_plots.TxyHistograms()
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")
@@ -396,7 +393,7 @@ def test_a_mask_from_the_settings_tab_and_its_errors(window: Window, browser: Fo
     run = folder(tmp_path, "run_K", 2)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 3, 2: 4})  # shot N's events at T, X, Y = N (s, m)
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = dld_plots.CountsPerShot()
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")
@@ -425,7 +422,7 @@ def test_find_hot_spots_from_the_panel(window: Window, browser: FolderExplorer, 
     run = folder(tmp_path, "run_H", 2)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 3, 2: 4})
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = density_images.DensityImages()
     assert script.get_actions() == ["Plot", "Find hot spots"]
@@ -445,7 +442,7 @@ def test_histogram_fits_go_in_the_docks_record(window: Window, browser: FolderEx
     run = folder(tmp_path, "run_F", 2)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 3, 2: 4})
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = dld_plots.TxyHistograms()
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")
@@ -474,7 +471,7 @@ def test_histogram_fits_go_in_the_docks_record(window: Window, browser: FolderEx
 
 
 def test_run_without_data_says_so(window: Window, qtbot: QtBot) -> None:
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = Blocking()
     assert panel.run_analysis(script.get_metadata(), script, "Plot") is None
@@ -485,7 +482,7 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     run = folder(tmp_path, "run_D", 2)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 30, 2: 40})
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     metadata = next(m for m in panel.script_manager.get_scripts_in_group(group.NAME) if m.name == "3D scatter")
     script_class = panel.script_manager.get_script(metadata.script_id)
@@ -522,7 +519,7 @@ def test_another_library_draws_the_plot_again_without_a_rerun(
     run = folder(tmp_path, "run_K", 2)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 30, 2: 40})
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = basic_plots.TxyHistograms()
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")
@@ -556,11 +553,11 @@ def test_plots_deleted_with_their_window_end_their_runs(
         window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path) -> None:
     """A plot area deleted with plots still open (the window went, no close events) ends their
     runs: nothing stays connected to the app-wide runner or pinned in its results."""
-    middle = window.middle_mainwindow
+    middle = window.plots.middle_mainwindow
     run = folder(tmp_path, "run_W", 1)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 3})
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = Blocking()
     script.release.set()
@@ -574,8 +571,8 @@ def test_plots_deleted_with_their_window_end_their_runs(
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     assert all(cast(AnalysisInstance, instance).is_closed for instance in instances)
     assert runner.receivers(runner.finished) == connected - 3
-    assert not panel._analysis_instances and not window.dock_widgets
-    assert window.panel_right_top_plot_settings.plots() == []
+    assert not panel._analysis_instances and not window.plots.dock_widgets
+    assert window.plots.panel_right_top_plot_settings.plots() == []
     assert not any(job in runner.results._pinned for job in jobs)
 
 
@@ -595,8 +592,8 @@ def test_twenty_plots_tabbed_and_floating(
     run = folder(tmp_path, "run_M", 1)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 3})
-    window.middle_mainwindow.show()
-    panel = TreePanelWidget(window)
+    window.plots.middle_mainwindow.show()
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = TwoPages()
     script.release.set()
@@ -604,13 +601,13 @@ def test_twenty_plots_tabbed_and_floating(
                  for _ in range(20)]  # At once: no waiting for each dock to show.
     qtbot.waitUntil(lambda: all(instance.result is not None for instance in instances), timeout=20_000)
     docks = [cast(QDockWidget, instance.dock_widget) for instance in instances]
-    settings = window.panel_right_top_plot_settings
+    settings = window.plots.panel_right_top_plot_settings
     assert settings.plots() == docks and settings.current_plot() is docks[-1]
     assert [settings.chooser.itemText(i) for i in range(20)] == [
         f"Blocking ({n}) · run_M · rev 1" for n in range(1, 21)]
     assert len({dock.windowTitle() for dock in docks}) == 20
     # Opened at once, before any dock showed: still one tab group.
-    assert set(window.middle_mainwindow.tabifiedDockWidgets(docks[0])) == set(docks[1:])
+    assert set(window.plots.middle_mainwindow.tabifiedDockWidgets(docks[0])) == set(docks[1:])
     for dock in docks[::4]:  # Five float; their pages follow a pass of the event loop later.
         dock.setFloating(True)
     qtbot.waitUntil(lambda: all(settings.settings_away(dock) for dock in docks[::4]))
@@ -655,7 +652,7 @@ def test_twenty_plots_tabbed_and_floating(
         dock.close()
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     assert settings.plots() == [] and settings.stack.count() == 2 and settings.chooser.count() == 0
-    assert not window.dock_widgets and not panel._analysis_instances
+    assert not window.plots.dock_widgets and not panel._analysis_instances
     assert all(sip.isdeleted(widget) for widget in [*docks, *pages, *contents])
     refs = [weakref.ref(instance) for instance in instances]
     runner = instances[0].runner
@@ -671,8 +668,8 @@ def test_a_new_plot_docks_alone_when_all_others_float(
     run = folder(tmp_path, "run_F", 1)
     browse(browser, qtbot, str(tmp_path))
     load(browser, qtbot, run, {1: 3})
-    window.middle_mainwindow.show()
-    panel = TreePanelWidget(window)
+    window.plots.middle_mainwindow.show()
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     script = Blocking()
     script.release.set()
@@ -682,7 +679,7 @@ def test_a_new_plot_docks_alone_when_all_others_float(
         cast(QDockWidget, instance.dock_widget).setFloating(True)
     third = cast(AnalysisInstance, panel.run_analysis(script.get_metadata(), script, "Plot"))
     dock = cast(QDockWidget, third.dock_widget)
-    area = window.middle_mainwindow
+    area = window.plots.middle_mainwindow
     assert not dock.isFloating() and area.dockWidgetArea(dock) == Qt.DockWidgetArea.LeftDockWidgetArea
     assert area.tabifiedDockWidgets(dock) == []
     # The next one joins it, not a floating one.
@@ -702,7 +699,7 @@ def test_closing_the_main_window_ends_its_plots(qtbot: QtBot, monkeypatch: pytes
         "loaded_at": 1_700_000_000.0}, 0))
     window = HelabMainWindow()
     qtbot.addWidget(window)
-    monkeypatch.setattr(window, "current_dataset_view", lambda: view)
+    monkeypatch.setattr(window.plots, "current_dataset_view", lambda: view)
     runner = get_analysis_runner()
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)  # Earlier tests' plots go.
     connected, pinned = runner.receivers(runner.finished), set(runner.results._pinned)
@@ -727,7 +724,7 @@ def test_closing_the_main_window_ends_its_plots(qtbot: QtBot, monkeypatch: pytes
         assert result_job in runner.results._pinned
         assert runner.receivers(runner.finished) == connected + 3
         window.close()
-        assert finished.is_closed and busy.is_closed and not window.dock_widgets
+        assert finished.is_closed and busy.is_closed and not window.plots.dock_widgets
         assert runner.receivers(runner.finished) == connected + 1  # on_finished only.
         assert result_job not in runner.results._pinned and set(runner.results._pinned) <= pinned
         running.release.set()

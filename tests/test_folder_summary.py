@@ -21,6 +21,7 @@ from helab.views.CentralHint import CentralHint
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.HelabMainWindow import HelabMainWindow
+from helab.views.plots.workspace import PlotWorkspace
 from helab.resources.icons import IconsInitUtil, StatusIcons
 from helab.utils.cache_freshness import CacheFreshness
 
@@ -114,14 +115,14 @@ def test_folder_details_and_hint_describe_each_folder_state(
     root, path = str(tmp_path), str(child)
     window: Any = SimpleNamespace(
         _closing=False, tab_widget=SimpleNamespace(currentWidget=lambda: browser),
-        central_placeholder=CentralHint(parent=browser), folder_details=FolderDetailsPanel(browser),
-        dock_widgets=[])
+        plots=SimpleNamespace(central_placeholder=CentralHint(parent=browser), dock_widgets=[]),
+        folder_details=FolderDetailsPanel(browser))
     panel = window.folder_details
 
     def show() -> tuple[str, str]:
         browser._update_activity()
         HelabMainWindow._update_folder_details(window)
-        return panel.text("state"), window.central_placeholder.text()
+        return panel.text("state"), window.plots.central_placeholder.text()
 
     complete_scan(browser, qtbot, root)
     assert show() == ("No TXY files here", f"No TXY files in {tmp_path.name} — select a data folder")
@@ -201,15 +202,15 @@ def test_scan_states_agree_in_summary_and_folder_details(
     request = request_for(browser.model.cache, path, operation)
     window: Any = SimpleNamespace(
         _closing=False, tab_widget=SimpleNamespace(currentWidget=lambda: browser),
-        central_placeholder=CentralHint(parent=browser), folder_details=FolderDetailsPanel(browser),
-        dock_widgets=[])
+        plots=SimpleNamespace(central_placeholder=CentralHint(parent=browser), dock_widgets=[]),
+        folder_details=FolderDetailsPanel(browser))
 
     def assert_message(message: str) -> None:
         browser._update_activity()
         HelabMainWindow._update_folder_details(window)
         assert browser.folder_summary_label.text().endswith(message)
         assert window.folder_details.text("state") == message
-        assert window.central_placeholder.text() == "Select a data folder to begin"
+        assert window.plots.central_placeholder.text() == "Select a data folder to begin"
 
     assert_message("Scan queued")
     browser.model.service.resultReady.emit(request, {"kind": "started"})
@@ -329,7 +330,7 @@ def test_subfolder_scope_and_retained_plot_source(
     dock = QDockWidget()
     qtbot.addWidget(dock)
     dock.setWidget(QLabel("plot"))
-    HelabMainWindow._set_plot_source(SimpleNamespace(), dock, browser)  # type: ignore[arg-type]
+    PlotWorkspace._set_plot_source(SimpleNamespace(), dock, browser)  # type: ignore[arg-type]
     label = dock.findChild(QLabel, "plot_data_source")
     assert label is not None and label.text() == "Data source: run_042"
     browser.deselect_button.click()
@@ -342,7 +343,7 @@ def test_subfolder_scope_and_retained_plot_source(
     assert browser.selected_folder_label.isHidden()
     assert browser.deselect_button.isHidden()
     qtbot.waitUntil(lambda: browser.model.root is not None and browser.model.root.state == "idle")
-    HelabMainWindow._update_plot_source_label(dock, browser)
+    PlotWorkspace._update_plot_source_label(dock, browser)
     assert label.text() == "Showing previously loaded data: run_042"
     assert label.toolTip() == str(child)
     assert browser.folder_summary_label.text() == "No TXY files here · Select a subfolder to load data"
@@ -354,7 +355,7 @@ def test_subfolder_scope_and_retained_plot_source(
         blocked.setattr("os.scandir", forbidden)
         blocked.setattr("os.stat", forbidden)
         browser._update_activity()
-        HelabMainWindow._update_plot_source_label(dock, browser)
+        PlotWorkspace._update_plot_source_label(dock, browser)
 
 
 def fail_cached_read(browser: FolderExplorer, qtbot: QtBot, path: str) -> None:

@@ -13,8 +13,7 @@ import pyqtgraph as pg
 import pytest
 from PyQt6 import sip
 from PyQt6.QtCore import QObject
-from PyQt6.QtGui import QCloseEvent
-from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QTabWidget
+from PyQt6.QtWidgets import QLabel, QMainWindow
 from pytestqt.qtbot import QtBot
 
 from helab.analysis import trends
@@ -28,14 +27,12 @@ from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.runner import AnalysisRunner
 from helab.views.plots.instance import AnalysisInstance
 from helab.views.plots.script_tree import TreePanelWidget
-from helab.views.plots.settings_panel import PlotSettingsPanel
+from helab.views.plots.workspace import PlotWorkspace
 from helab.scripts.dld import shot_trends
 from helab.scripts.dld.shot_trends import ShotTrends, Trends
 from helab.utils import events
 from helab.utils.folder_cache import Dataset
-from helab.views.CentralHint import CentralHint
 from helab.views.FolderExplorer import FolderExplorer
-from helab.views.HelabMainWindow import HelabMainWindow
 
 PATH = "/data/root/run_T"
 SCRIPT = ShotTrends()
@@ -494,28 +491,25 @@ def test_live_errors_go_through_the_event_hub(notifier: tuple[FakeNotifier, Cloc
 
 # A plot following Live
 
-class Window(HelabMainWindow):
-    """The main window's plot-dock parts and the Live feed (as tests/test_live_plots.py's)."""
+class Plots(PlotWorkspace):
+    """The plot area; a new plot runs on the window's ``view``."""
 
-    def __init__(self) -> None:
-        QMainWindow.__init__(self)
-        self.middle_mainwindow = QMainWindow()
-        self.central_placeholder = CentralHint("Select a data folder to begin")
-        self.middle_mainwindow.setCentralWidget(self.central_placeholder)
-        self.dock_widgets: List[QDockWidget] = []
-        self.tab_widget = QTabWidget()  # type: ignore[assignment]
-        self.panel_right_top_plot_settings = PlotSettingsPanel(self)
-        self.live_feed = LiveFeed(self)
-        self.view: Optional[DatasetView] = None
+    def __init__(self, window: Window) -> None:
+        super().__init__(window)
+        self.window = window
 
     def current_dataset_view(self) -> DatasetView | None:
-        return self.view
+        return self.window.view
 
-    def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
-        pass
 
-    def closeEvent(self, a0: QCloseEvent | None) -> None:
-        QMainWindow.closeEvent(self, a0)
+class Window(QMainWindow):
+    """A window with the plot area (``plots``: docks, Settings panel, Live feed), as in
+    tests/test_live_plots.py."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.view: Optional[DatasetView] = None
+        self.plots = Plots(self)
 
 
 @pytest.fixture
@@ -525,10 +519,10 @@ def window(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> Iterator[Window]:
     made = Window()
     qtbot.addWidget(made)
     yield made
-    made.close_plots()
-    if not sip.isdeleted(made.middle_mainwindow):
-        made.middle_mainwindow.close()
-        made.middle_mainwindow.deleteLater()
+    made.plots.close_plots()
+    if not sip.isdeleted(made.plots.middle_mainwindow):
+        made.plots.middle_mainwindow.close()
+        made.plots.middle_mainwindow.deleteLater()
     runner.stop()
 
 
@@ -537,8 +531,8 @@ def test_a_plot_following_live_notifies_once_for_a_low_new_shot(
     fake, _ = notifier
     path = "/data/root/run_window"
     shots = {shot: shot_events(shot, 400) for shot in range(1, 6)}
-    window.view = window.live_feed.publish(dataset(dict(shots), path))
-    panel = TreePanelWidget(window)
+    window.view = window.plots.live_feed.publish(dataset(dict(shots), path))
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     instance = panel.run_analysis(SCRIPT.get_metadata(), SCRIPT, "Plot")
     assert isinstance(instance, AnalysisInstance)
@@ -549,7 +543,7 @@ def test_a_plot_following_live_notifies_once_for_a_low_new_shot(
     qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.parameters["notify_low"], timeout=10_000)
     assert fake.sent == []  # The shots shown when it started are never notified.
     shots[6] = shot_events(6, 10)
-    window.live_feed.publish(dataset(dict(shots), path))
+    window.plots.live_feed.publish(dataset(dict(shots), path))
     qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.input.revision == 2, timeout=10_000)
     assert len(fake.sent) == 1 and fake.sent[0][1].startswith("Shot 6 of run_window: 10 events")
     instance.run()  # Run again on the same shots: no second notification.
@@ -559,7 +553,7 @@ def test_a_plot_following_live_notifies_once_for_a_low_new_shot(
     assert instance.instance_id in shot_trends._drawn
     instance.close()  # plot_closed: what the plot kept goes.
     assert instance.instance_id not in shot_trends._drawn
-    window.live_feed.stop(path)
+    window.plots.live_feed.stop(path)
 
 
 def test_registration_and_live_policy() -> None:

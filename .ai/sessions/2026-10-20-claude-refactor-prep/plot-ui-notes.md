@@ -220,3 +220,86 @@ it), no longer by refcount. Fixed in its own commit:
   `31358e1`); a runner whose job is computing stays alive with no other reference, reports
   the job, and is freed once stopped.
 - Also reflowed `follow.py`'s docstring line that slice C made 120 characters.
+
+## Slice E2: `PlotWorkspace` out of `HelabMainWindow`
+
+New `helab/views/plots/workspace.py`, `PlotWorkspace`: a plain class (not a `QObject`), which
+the window composes as `self.plots`. It owns:
+- `middle_mainwindow`, `central_placeholder`, `dock_widgets`, `live_feed`;
+- `panel_right_top_plot_settings`, made here now (the window still places it in the right
+  splitter);
+- `ram_button`, made here (the window still adds it to its status bar, at the same place
+  among the permanent widgets), and `ram_budget` with `setup_ram_budget`,
+  `_update_ram_button`, `_plots_released`, `ram_report_text` and `show_ram_report`;
+- the presentation methods, moved verbatim: `close_plots`, `update_placeholder_visibility`,
+  `_set_plot_source`, `follow_live`, `current_dataset_view`, `set_plot_result`,
+  `replace_plot_content`, `update_plot_source`, `_wrap_plot` and `_update_plot_source_label`;
+- new: `notice(text)` and `detach()` (the RAM budget's, then the Settings panel's detach, in
+  the old order).
+
+**Interface to the window.** Callables passed in: `current_explorer`, `explorers`, `notice`
+(`show_status_notice`), `show_settings` (`show_settings_dialog`) and `closing`. Each defaults to
+an empty answer, for tests. `host` is the window. Every object it makes keeps the parent it had
+before: `LiveFeed`, `PlotSettingsPanel`, `RamBudget`, the RAM window and each `AnalysisDock`
+until it is docked are parented to `host`. `HelabMainWindow` gains `current_explorer()`.
+
+**Callers.**
+- `AnalysisInstance`/`LinkedAnalysisInstance` take `workspace: Optional[PlotWorkspace]` (was
+  `main_window`) and call it typed. Every duck-typed `getattr` is gone (`live_feed`,
+  `ram_budget`, `set_plot_result`, `update_plot_source`, `replace_plot_content`,
+  `middle_mainwindow`, `update_placeholder_visibility`).
+- None-tolerance is kept: with no workspace there is no dock, no feed and no budget, and
+  `_show_content`/`_swap_content` fall back to `setWidget` as before.
+- The deleted-window check is `sip.isdeleted(workspace.host)`, the same object as before.
+- `TreePanelWidget(workspace)` (was `helab_main_window`) uses the typed `current_dataset_view()`
+  and `notice()`. The Settings panel never reached the window, so it is unchanged.
+- `PlotWorkspace` imports `FolderExplorer` only under TYPE_CHECKING, and `instance` and
+  `script_tree` import `PlotWorkspace` only under TYPE_CHECKING, so there is no cycle.
+
+**The window** keeps menus, tabs, the status bar, the quit flow, `central_hint`,
+`_update_folder_details` (now reading `plots.dock_widgets`/`central_placeholder`), the
+folder-details timer and the desktop-notice sink. `closeEvent` order is unchanged:
+`_closing = True`, `plots.close_plots()`, then `plots.detach()` (budget, then panel), then the
+rest. Settings applies `plots.ram_budget`.
+
+**No delegating properties** on the window: callers write `window.plots.X`.
+
+**Tests.**
+- The five hand-built windows (`test_live_plots`, `test_analysis_gui`, `test_plot_ram_budget`,
+  `test_constant_layers`, `test_shot_trends`) are now plain `QMainWindow`s holding a real
+  `PlotWorkspace`, no longer `HelabMainWindow` subclasses with a skipped `__init__`. A
+  `PlotWorkspace` subclass overrides `current_dataset_view` where a test chooses the data
+  (`window.view`).
+- `test_plot_ram_budget`'s window keeps the typed `budget` (the set-up `RamBudget`).
+- About 230 accesses are now `window.plots.X`, and `TreePanelWidget(window.plots)`.
+- `test_script_system`'s mock window is now a `PlotWorkspace(QMainWindow())`.
+- `test_folder_summary`/`test_folder_cache` `SimpleNamespace` windows have `plots=…`, and their
+  static calls are `PlotWorkspace._set_plot_source/_update_plot_source_label`.
+- `test_load_queue`'s partial `CancelTestWindow` gets a `PlotWorkspace` (Settings reads
+  `plots.ram_budget`; the old `getattr(self, "ram_budget", None)` was only for such windows).
+- One `monkeypatch.setattr(window, "current_dataset_view", …)` on a real window now targets
+  `window.plots`.
+- Checked: no test module's QtWebEngine import at collection changed (all modules imported
+  alone, before and after).
+
+AGENTS.md: the Live paragraph (`PlotWorkspace.follow_live`, its `live_feed`) and the Script
+system paragraph (`PlotWorkspace.close_plots`, what the workspace owns, how it reaches the
+window).
+
+**Left on the window, noted rather than forced:** `central_hint` (explorer text) and
+`_update_folder_details` (Folder details plus the plot hint: it is the window's timer). The
+desktop-notice sink stays too.
+
+**Note:** the workspace and its window refer to each other (the `host` attribute and the
+callables), a Python cycle. It doesn't matter in the app (one window for the session), and test
+windows are deleted by qtbot. The fake windows had cycles of their own through their lambdas.
+
+### Validation (E)
+
+- Targeted (16 files: plots, Live, budget, analysis GUI, scripts, folder summary and cache,
+  main window, load queue, resize, central hint, transfer fractions): 513 passed, 2 fixed, then
+  47 passed on those two files. Reruns there were the two failures being reproduced, both fixed
+  (a `setattr` on the window, the partial window).
+- Strict mypy `helab` (129 files) and `tests` (96 files), `pyright helab tests`: clean.
+- Full suite (`-n 2 --reruns 5 --reruns-delay 1 -rR`): **2191 passed, 9 skipped, 2 xfailed in
+  5 min 49 s, no RERUN.**
