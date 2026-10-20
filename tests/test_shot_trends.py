@@ -32,7 +32,7 @@ from helab.scripts.dld import shot_trends
 from helab.scripts.dld.shot_trends import ShotTrends, Trends
 from helab.utils import events
 from helab.utils.folder_cache import Dataset
-from helab.views.FolderExplorer import FolderExplorer
+from helab.views.explorer_live import LiveController
 
 PATH = "/data/root/run_T"
 SCRIPT = ShotTrends()
@@ -482,7 +482,7 @@ def test_live_errors_go_through_the_event_hub(notifier: tuple[FakeNotifier, Cloc
     tab = SimpleNamespace(_live_timer=SimpleNamespace(stop=lambda: stopped.append(True)),
                           _live_changed=lambda: None)
     session = SimpleNamespace(path=PATH, error="")
-    FolderExplorer._live_halt(cast(FolderExplorer, tab), cast(Any, session), "the drive went away")
+    LiveController._live_halt(cast(LiveController, tab), cast(Any, session), "the drive went away")
     assert session.error == "the drive went away" and stopped == [True]
     (event,) = hooked
     assert event.kind == events.LIVE_ERROR and event.data["path"] == PATH and not event.desktop

@@ -19,8 +19,9 @@ from helab.utils.time_format import clock as stopwatch, relative_age
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderExplorer import (
     AMBER, AUTO_LOAD_OFF, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, LOAD_ORIGINS, REFUSED_TOOLTIP,
-    LOAD_SPINNER, FolderExplorer, large_text,
+    LOAD_SPINNER, FolderExplorer,
 )
+from helab.views.explorer_text import large_text
 
 
 # Marks the large-folder part of a state row, which is then amber.

@@ -1288,7 +1288,7 @@ def test_a_plot_follows_live_from_an_empty_folder_to_its_first_shots(
     # Checks stopped by an error: the plot stops following (it caught up already); Retry resumes.
     session = explorer.live
     assert session is not None
-    explorer._live_halt(session, "Folder not found — is its drive connected?")
+    explorer.live_control._live_halt(session, "Folder not found — is its drive connected?")
     assert window.plots.live_feed.latest(path) is None and "following Live" not in source(instance).text()
     explorer.resume_live()
     assert window.plots.live_feed.latest(path) is not None and instance.follow_text() == "following Live"
@@ -1341,7 +1341,7 @@ def test_auto_orders_are_found_again_on_each_rerun_and_manual_fixes_them(
 def test_the_main_window_feeds_its_live_tab_to_the_plots(qtbot: QtBot, runner: AnalysisRunner) -> None:
     """The real window: each tab's Live changes and shown data reach the feed (wired when the tab
     is made), and Live off ends the folder's feed."""
-    from helab.views.FolderExplorer import LiveSession
+    from helab.views.explorer_live import LiveSession
     window = HelabMainWindow()
     qtbot.addWidget(window)
     qtbot.waitUntil(lambda: isinstance(window.tab_widget.currentWidget(), FolderExplorer))
@@ -1409,7 +1409,7 @@ def test_an_error_stopping_live_checks_catches_plots_up(
     assert script.started == [1]  # Held back: 1 of 5.
     session = explorer.live
     assert session is not None
-    explorer._live_halt(session, "Folder not found — is its drive connected?")
+    explorer.live_control._live_halt(session, "Folder not found — is its drive connected?")
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
     assert script.started == [1, 2] and cast(AnalysisResult, instance.shown).coverage.shots == (1, 2)
     explorer.stop_live(save=False)
