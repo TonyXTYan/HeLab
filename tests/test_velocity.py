@@ -406,7 +406,11 @@ def test_the_xy_origin_ignores_background_and_a_horizontal_order(seed: int) -> N
         assert found.ok and found.origin_found, found.failure
         for axis, truth in zip(found.origin, ORIGIN):
             assert abs(axis.value - truth) < 3 * axis.se, (axis, truth)
-        assert 0 <= found.origin_background < 0.05
+        if extra is order:  # no background: no events around the window to measure it from
+            assert math.isnan(found.origin_background)
+            assert any("background share unknown" in note for note in found.notes)
+        else:
+            assert 0 <= found.origin_background < 0.05
     # A plain mean of the T slice would have been pulled by the order: 30/130 of 20 mm.
     events = np.concatenate([rest, order])
     times = events[:, 0]
@@ -414,20 +418,38 @@ def test_the_xy_origin_ignores_background_and_a_horizontal_order(seed: int) -> N
     assert float(np.mean(events[slice_, 1])) - ORIGIN[0] > 3e-3
 
 
+def slice_events(rng: np.random.Generator, cloud_count: int, background_count: int,
+                 half_widths: tuple[float, float]) -> tuple[Array, Array]:
+    """A T slice at the arrival: a cloud of XY σ 1 mm at ORIGIN on a uniform background
+    ±``half_widths`` (X, Y) about it."""
+    times = np.full(cloud_count + background_count, 2.0)
+    spread = rng.uniform(-1, 1, (background_count, 2)) * np.asarray(half_widths)
+    xy = np.concatenate([rng.normal(ORIGIN, 1e-3, (cloud_count, 2)), np.asarray(ORIGIN) + spread])
+    return times, xy
+
+
 def test_a_background_inside_the_window_is_noted() -> None:
-    rng = np.random.default_rng(4)
-    rest = rest_cloud_at_origin(rng, 10_000)
-    # A background nearly as dense near the cloud as the cloud itself, over a small detector.
-    spread = 0.003 * DEFAULTS.fall_time
-    arrival = RELEASE + DEFAULTS.fall_time
-    background = np.column_stack([rng.uniform(arrival - 0.015, arrival + 0.015, 100_000),
-                                  ORIGIN[0] + rng.uniform(-5 * spread, 5 * spread, 100_000),
-                                  ORIGIN[1] + rng.uniform(-5 * spread, 5 * spread, 100_000)])
-    events = np.concatenate([rest, background])
-    found = detect_release_time(events[:, 0], DEFAULTS, positions=events[:, 1:3])
-    assert found.ok and found.origin_background > 0.05
-    assert any("background" in note and "XY origin" in note for note in found.notes)
+    notes: list[str] = []
+    times, xy = slice_events(np.random.default_rng(4), 10_000, 9000, (0.01, 0.01))  # ~12 % of the window's
+    origin, events, share = release._origin(times, xy, 2.0, 1e-3, 1.0, notes)
+    assert 0.05 < share < 0.2
+    assert any("background" in note and "XY origin" in note for note in notes)
+    for axis, truth in zip(origin, ORIGIN):
+        assert abs(axis.value - truth) < 3 * axis.se
+
+
+def test_the_background_share_is_unknown_without_room_around_the_window() -> None:
+    rng = np.random.default_rng(6)
+    clean = rest_cloud_at_origin(rng, 5000)
+    found = detect_release_time(clean[:, 0], DEFAULTS, positions=clean[:, 1:3])
+    assert found.origin_found and math.isnan(found.origin_background)
+    assert any("background share unknown (its window covers most" in note for note in found.notes)
     json.dumps(found.as_record(), allow_nan=False)
+    # A background in a strip only a little wider than the window: the frame reaches past it.
+    notes: list[str] = []
+    times, xy = slice_events(rng, 10_000, 5000, (0.02, 0.004))
+    _, _, share = release._origin(times, xy, 2.0, 1e-3, 1.0, notes)
+    assert math.isnan(share) and any("reaches past the T slice's events" in note for note in notes)
 
 
 def test_an_unsure_release_gives_an_unsure_origin() -> None:

@@ -10,6 +10,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 from scipy.integrate import quad
+from scipy.stats import norm
 
 from helab.analysis import fits
 from helab.analysis.estimates import Estimate
@@ -422,3 +423,31 @@ def test_the_offset_floor_can_be_asked_for_or_refused() -> None:
         asked_below += fit_histogram(x, rates, sigma=errors, nonnegative_offset=True)["offset"].value < 0
         refused_below += fit_histogram(x, counts, nonnegative_offset=False)["offset"].value < 0
     assert given_below > 2 and refused_below > 2 and asked_below == 0
+
+
+def test_given_edges_and_a_weight_function_average_over_the_real_bins() -> None:
+    """Unequal bins (wide in the tails, narrow in the middle), noise-free densities: halfway
+    edges put the bounds in the wrong places; the real edges recover σ = 1."""
+    edges = np.r_[np.arange(-4.5, -1.5, 1.0), np.arange(-1.5, 1.5001, 0.1), np.arange(2.5, 4.6, 1.0)]
+    widths = np.diff(edges)
+    density = 1e5 * np.diff(norm.cdf(edges)) / widths
+    centres, errors = bin_centres(edges), np.sqrt(density * widths) / widths
+    exact = fit_histogram(centres, density, sigma=errors, edges=edges)
+    assert exact.ok and exact["sigma"].value == pytest.approx(1.0, abs=2e-4)
+    assert exact["centre"].value == pytest.approx(0.0, abs=1e-4)
+    halfway = fit_histogram(centres, density, sigma=errors)
+    assert abs(halfway["sigma"].value - 1) > 10 * abs(exact["sigma"].value - 1)
+    with pytest.raises(ValueError):
+        fit_histogram(centres, density, sigma=errors, edges=edges[:-1])
+    # Radial shells of a 3D Gaussian, as a density per volume: each shell's mean of f
+    # weighted by r² (the shell's volume element).
+    shells = np.linspace(0.0, 4.0, 13)  # shells of σ/3
+
+    def shell_mean(low: float, high: float) -> float:
+        return float(quad(lambda r: r * r * math.exp(-r * r / 2), low, high)[0]) / ((high ** 3 - low ** 3) / 3)
+    per_volume = 1e4 * np.array([shell_mean(low, high) for low, high in zip(shells[:-1], shells[1:])])
+    radial = fit_histogram(bin_centres(shells), per_volume, sigma=1e-4 * per_volume.max(), edges=shells,
+                           binned=lambda r: r * r)
+    assert radial.ok and radial["sigma"].value == pytest.approx(1.0, abs=1e-4)
+    flat = fit_histogram(bin_centres(shells), per_volume, sigma=1e-4 * per_volume.max(), edges=shells)
+    assert abs(flat["sigma"].value - 1) > 5 * abs(radial["sigma"].value - 1)

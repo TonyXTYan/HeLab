@@ -29,7 +29,8 @@ The XY origin: given the events' X and Y (``positions``, or TXY shots for the bo
 the same cloud, at rest, also marks the point below the trap: the mean X and Y of its events
 within ``ORIGIN_SIGMAS`` σ_t of its arrival and within an XY window about their median
 (``ORIGIN_WINDOW`` robust σ, found twice), ± s/√n (within run), recorded as ``origin`` with
-the background's estimated share (noted above 5 %). The window keeps a uniform background and
+the background's estimated share (noted above 5 %; nan, noted, when it can't be measured:
+a clean cloud, or a frame around the window reaching past the slice's events). The window keeps a uniform background and
 a horizontal Bragg order in the same T slice out; one inside the window (a cloud less than
 ~3σ away, or a background as dense as the cloud) still pulls the mean towards itself.
 ``velocity_origin`` picks what ``velocity.txy_to_velocity`` uses: an origin set by hand,
@@ -77,6 +78,7 @@ MIN_FIT_BINS = 15
 ORIGIN_SIGMAS = 2.0  # the XY origin: events within this many σ_t of the cloud's arrival
 ORIGIN_WINDOW = 3.0  # … and within this many robust σ (1.4826 MAD) of their median in X and Y
 ORIGIN_BACKGROUND_NOTE = 0.05  # a background share of the origin's events above this: noted
+ORIGIN_MOST = 0.5  # the window covering more than this share of the slice's XY extent: share unknown
 NO_ORIGIN = (Estimate(math.nan), Estimate(math.nan))
 
 
@@ -342,7 +344,9 @@ def _origin(values: npt.NDArray[np.float64], xy: npt.NDArray[np.float64], arriva
     window keeps a uniform background and another cloud in the same T slice (a horizontal
     Bragg order) out of the mean unless they fall inside it. The background's share is its
     density in a frame around the window (out to twice its half-widths) times the window's
-    area, over the events kept."""
+    area, over the events kept; nan (noted) when the frame reaches past the slice's events or
+    the window covers more than ``ORIGIN_MOST`` of their XY bounding box (a clean cloud:
+    nothing outside to measure)."""
     half = min(ORIGIN_SIGMAS * width, reach) if math.isfinite(width) and width > 0 else reach
     near = xy[(np.abs(values - arrival) <= half) & np.all(np.isfinite(xy), axis=1)]
 
@@ -367,9 +371,21 @@ def _origin(values: npt.NDArray[np.float64], xy: npt.NDArray[np.float64], arriva
             for axis in (0, 1))
     # The background's density from a frame around the window, as wide again on each side
     # (three times its area; the cloud's own tails there are ~0.5 % of it).
+    # Unknown (nan, noted) when the window covers most of the slice's XY extent (too little
+    # outside it to measure), or the frame reaches past the slice's events, where there may
+    # be no detector.
     middle, reach_xy = (low + high) / 2, (high - low) / 2
+    extent = near.max(axis=0) - near.min(axis=0)
+    most = bool(np.prod(2 * reach_xy) > ORIGIN_MOST * np.prod(extent))
+    past = bool(np.any(middle - 2 * reach_xy < near.min(axis=0)) or np.any(middle + 2 * reach_xy > near.max(axis=0)))
+    if not np.all(reach_xy > 0) or most or past:
+        why = ("its window covers most of the T slice's XY extent: a background that fills the slice "
+               "would pull the origin towards its own centre" if most else
+               "the frame around its window reaches past the T slice's events")
+        notes.append(f"XY origin: background share unknown ({why})")
+        return (x, y), len(chosen), math.nan
     frame = near[np.all(np.abs(near - middle) <= 2 * reach_xy, axis=1)]
-    share = min((len(frame) - len(chosen)) / 3 / len(chosen), 1.0) if np.all(reach_xy > 0) else 0.0
+    share = min((len(frame) - len(chosen)) / 3 / len(chosen), 1.0)
     if share > ORIGIN_BACKGROUND_NOTE:
         notes.append(f"XY origin: about {share:.0%} of its {len(chosen):,} events are background (the density "
                      "outside its window), pulling it towards the background's centre")

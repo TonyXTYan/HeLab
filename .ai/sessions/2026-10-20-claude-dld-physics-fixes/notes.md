@@ -154,3 +154,23 @@ at 0 biases σ by 2–3.5 SE once there is any background, so never by default:
    window (less than ~3σ away) or a background as dense as the cloud still pulls the mean.
 4. **`shot_means` notes** elements with 2 to `MIN_SHOTS` − 1 shots ("the SE over shots is
    rough there").
+
+## Reviewer follow-up (after the merge 157686b)
+
+1. `fit_histogram(edges=…)`: the bins' exact bounds (len(centres) + 1, in the centres'
+   order), used whenever given; the default halfway edges are documented as right for
+   equal-width bins of counts only. `binned` may be a weight function w(x): each bin gets
+   ∫w·f / ∫w (radial shells: r²). The quadrature is now three-point Gauss–Legendre instead of
+   Simpson (same three evaluations per bin, exact to degree 5): on r²-weighted shells of σ/3
+   Simpson was off by up to 1.3·10⁻³ and moved σ by 0.19 %, Gauss–Legendre by 1.5·10⁻⁶.
+   The reviewer's `r2.py` unequal-bin densities: σ 1.043 with halfway edges, 1.0000 (±2·10⁻⁴
+   in the test) with `edges=`; radial shells recover σ = 1 within 10⁻⁴ with w = r².
+2. Origin background share: nan with a note when the window covers more than half the T
+   slice's XY bounding box (a clean cloud, or a background that fills the slice, which then
+   pulls the origin: the note says so) or the frame reaches past the slice's events. The
+   reviewer's "keeps most of the slice" read as events failed with a real but sparse
+   background (480 background events beside 19 000: window keeps 97 %, yet the estimate is
+   fine), so it is read as XY extent. Median/MAD clipping breaks down once the background
+   is more than about half the slice's events (the window then spans it all); that case now
+   says so instead of reporting a share.
+3. `FitResult.curve` is documented as the model at points, not bin-averaged.
