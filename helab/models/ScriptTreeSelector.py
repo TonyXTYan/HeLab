@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 )
 from pyqtgraph.parametertree import Parameter
 
-from helab.analysis.constant_layers import (changed_keys, describe_constants, origin_text, source_name, value_text,
+from helab.analysis.constant_layers import (changed_keys, describe_constants, source_name, value_and_origin,
                                            without_constants)
 from helab.analysis.physics import TABLE, ResolvedConstants
 from helab.analysis.budget import RELOAD_GRACE, RamBudget, Restored, hollow, restore, shots_list, view_buffers
@@ -676,7 +676,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._submit(self.follow.latest)
 
     def _submit(self, view: DatasetView, values: Optional[Dict[str, Any]] = None, *, reloading: bool = False,
-                constants: Optional[Mapping[str, Mapping[str, float]]] = None) -> None:
+                constants: Optional[Mapping[str, Mapping[str, float]]] = None, live: bool = False) -> None:
         self._follow_timer.stop()
         if not reloading:
             self._reload_note = ""
@@ -685,7 +685,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             constants = self.constant_layers(view.identity.source_path)
         try:
             context = self.runner.submit(self.script, self.metadata, self.action, view, values, constants,
-                                         owner=self.instance_id)
+                                         owner=self.instance_id, live=live)
         except RuntimeError as error:  # The runner is stopping: HeLab is closing.
             self.status_label.setText(str(error))
             return
@@ -888,7 +888,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             if spec is None:
                 continue
             parameter = parameter_of(root, spec)
-            title = f"{TABLE[key].title}: {value_text(key, constants.value(key))} ({origin_text(constants, key)})"
+            title = f"{TABLE[key].title}: {value_and_origin(constants, key)}"
             if parameter.opts.get("title") != title:
                 parameter.setOpts(title=title)
 
@@ -923,7 +923,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         view, wait = self.follow.due(time.monotonic())
         if view is not None:
-            self._submit(view)
+            # While Live watches the folder (not the catch-up once it stops: the feed has dropped it).
+            self._submit(view, live=self.live() is not None)
             return
         if wait > 0:
             self._follow_timer.start(max(1, math.ceil(wait * 1000)))

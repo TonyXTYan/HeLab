@@ -154,10 +154,10 @@ def test_the_result_records_the_constants_it_ran_with(qtbot: QtBot) -> None:
         result = ended[0]
         assert result.state == "completed" and result.data == (resolved.fall_time, 9.8)
         assert result.resolved_constants == resolved and result.constant_layers == given
-        assert result.constants_record == {"layers": given, **resolved.as_record()}
+        assert result.constants_record == {"layers": given, **resolved.as_record(KEYS)}
         key = json.loads(json.dumps(result.reuse_key()))
         assert key["constants"]["origins"]["g"] == "lab" and key["constants"]["layers"] == given
-        assert ResolvedConstants.from_record(key["constants"]) == resolved
+        assert set(key["constants"]["values"]) == set(KEYS)  # The analysis's own constants only.
         # The record names the analysis's own constants only (not all of the table's).
         assert "Constants: g = 9.8 m/s² (lab)" in result.describe() and "ħ =" not in result.describe()
         # An analysis that declares no constants records none: a lab or folder change never makes

@@ -37,8 +37,13 @@ def test_table_values_and_metadata() -> None:
         "fall_distance", "fall_time", "trap_radial", "trap_axial", "detector_qe", "trap_axial_axis", "dld_trigger",
         "dld_acquisition"}
     assert {key for key, constant in TABLE.items() if constant.level == "folder"} == {
-        "fall_distance", "fall_time", "trap_radial", "trap_axial", "trap_axial_axis"}
+        "fall_distance", "fall_time", "trap_radial", "trap_axial", "trap_axial_axis", "release_time",
+        "arrival_time", "trap_x", "trap_y"}
     assert TABLE["detector_qe"].level == "lab" and TABLE["detector_qe"].maximum == 1.0
+    assert physics.OPTIONAL == ("release_time", "arrival_time", "trap_x", "trap_y")
+    for key in physics.OPTIONAL:
+        assert TABLE[key].optional and not TABLE[key].derived and not TABLE[key].unconfirmed
+        assert TABLE[key].signed == (key in ("trap_x", "trap_y"))  # Times are positive, positions any.
 
 
 def test_fall_time_is_derived_from_the_distance() -> None:
