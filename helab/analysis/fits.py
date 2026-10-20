@@ -20,11 +20,13 @@ How a fit runs:
   model's ``offset`` is at least 0 (a mean count can't be negative), and an offset at 0 isn't
   noted as "at its bound"; otherwise (``sigma=`` rates, background-subtracted data) it keeps
   the model's bound, −top.
-- Bins: by default (``binned``) the model is averaged over each bin (Simpson's rule on the
-  bin's ends and centre, ``bin_means``), not taken at its centre: a centre value biases a
+- Bins: by default (``binned``) the model is averaged over each bin (three-point
+  Gauss–Legendre, ``bin_means``), not taken at its centre: a centre value biases a
   width by about +w²/(24σ) for bins w wide (Sheppard's correction: +0.5 SE at 50 000 events
-  in bins of σ/5, several SE at 10⁵–10⁶). Bin edges are halfway between neighbouring
-  centres. The result's ``curve`` and ``evaluate`` are the model itself, for drawing.
+  in bins of σ/5, several SE at 10⁵–10⁶). Bin edges are ``edges=`` when given, else halfway
+  between neighbouring centres, which assumes equal-width bins of counts. ``binned`` may be a
+  weight function w(x) (r² for radial shells): each bin then gets ∫w·f / ∫w. The result's
+  ``curve`` and ``evaluate`` are the model itself at points (not averaged), for drawing.
 - Scaling: x and counts are mapped to order one before fitting (a T profile is ~0.4 s wide
   ~0.1 ms, counts ~10³), each parameter by its role (a position, a width, a height or a
   dimensionless shape), and mapped back with the covariance.
@@ -152,7 +154,7 @@ class FitResult:
     estimates: Mapping[str, Estimate]
     covariance: Array | None = field(repr=False)
     x: Array = field(repr=False)
-    curve: Array = field(repr=False)  # the model at ``x`` (empty without a fit)
+    curve: Array = field(repr=False)  # the model at ``x``, not bin-averaged, for drawing (empty without a fit)
     chi2: float = math.nan
     dof: int = 0
     points: int = 0  # bins fitted (after leaving out unusable ones)
@@ -218,15 +220,27 @@ def bin_bounds(centres: npt.ArrayLike) -> tuple[Array, Array]:
     return lower, upper
 
 
-def bin_means(function: Callable[..., Array], lower: Array, upper: Array, values: Sequence[float] | Array) -> Array:
-    """``function(x, *values)`` averaged over each bin [lower, upper] by Simpson's rule (exact
-    for cubics; for a Gaussian in bins of σ its error is ~10⁻³ of the peak, against the
-    centre value's ~4 %)."""
-    middle = (lower + upper) / 2
-    points = np.concatenate([lower, middle, upper])
+GAUSS_NODES = (-math.sqrt(0.6), 0.0, math.sqrt(0.6))  # three-point Gauss–Legendre on [−1, 1]
+GAUSS_WEIGHTS = (5 / 18, 8 / 18, 5 / 18)  # … its weights, summing to 1
+
+
+def bin_means(function: Callable[..., Array], lower: Array, upper: Array, values: Sequence[float] | Array,
+              weight: Callable[[Array], Array] | None = None) -> Array:
+    """``function(x, *values)`` averaged over each bin [lower, upper] by three-point
+    Gauss–Legendre quadrature (exact for polynomials up to degree 5; for a Gaussian in bins of
+    σ its error is ~10⁻⁴ of the peak, against the centre value's ~4 %). With ``weight`` w(x),
+    the weighted mean ∫w·f / ∫w (radial shells: w = r²), both by the same quadrature."""
+    middle, half = (lower + upper) / 2, (upper - lower) / 2
+    points = np.concatenate([middle + node * half for node in GAUSS_NODES])
     evaluated = function(points, *values)
     count = len(lower)
-    return (evaluated[:count] + 4 * evaluated[count:2 * count] + evaluated[2 * count:]) / 6
+
+    def mean(column: Array) -> Array:
+        return cast(Array, sum(w * column[k * count:(k + 1) * count] for k, w in enumerate(GAUSS_WEIGHTS)))
+    if weight is None:
+        return mean(evaluated)
+    weights = np.asarray(weight(points), dtype=np.float64)
+    return mean(evaluated * weights) / mean(weights)
 
 
 def bin_centres(edges: npt.ArrayLike) -> Array:
@@ -239,7 +253,8 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
                   max_evaluations: int = MAX_EVALUATIONS,
                   max_radius_ratio: float = MAX_RADIUS_RATIO,
                   covariance_of: Callable[[Array, Array, Array], Array] | None = None,
-                  nonnegative_offset: bool | None = None, binned: bool = True) -> FitResult:
+                  nonnegative_offset: bool | None = None, binned: bool | Callable[[Array], Array] = True,
+                  edges: npt.ArrayLike | None = None) -> FitResult:
     """Fit ``model`` (a ``MODELS`` key or a ``FitModel``) to a histogram's bin centres and
     raw counts. ``sigma``, when given, is each bin's error (absolute) and replaces
     ``weights``: pass it for anything that isn't raw counts. Bins with a non-finite centre,
@@ -257,8 +272,11 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
 
     ``nonnegative_offset``: the offset is at least 0 (counts); None means so for raw counts
     with count weights (no ``sigma``, weights not "none"). ``binned``: the model is averaged
-    over each bin (edges halfway between the centres given, before any are left out); False
-    takes it at the centres (point samples, or a model that already integrates its bins)."""
+    over each bin; False takes it at the centres (point samples, or a model that already
+    integrates its bins); a function w(x) averages with that weight, ∫w·f / ∫w (radial
+    shells: r²). ``edges`` (len(centres) + 1, in the centres' order) are the bins' exact bounds,
+    used whenever given; without them the edges are halfway between the centres given (before
+    any are left out), which is right for equal-width bins of counts only."""
     fit_model = MODELS[model] if isinstance(model, str) else model
     has_ratio = RATIO in fit_model.names
     if has_ratio and not max_radius_ratio > MIN_RADIUS_RATIO:
@@ -270,7 +288,13 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
         raise ValueError("centres and counts must have the same length")
     finite_x = np.isfinite(x)
     lower_x, upper_x = x.copy(), x.copy()
-    if binned and finite_x.any():
+    weight = binned if callable(binned) else None
+    if edges is not None:
+        bounds = np.asarray(edges, dtype=np.float64).ravel()
+        if len(bounds) != len(x) + 1:
+            raise ValueError("edges must have one more entry than centres")
+        lower_x, upper_x = bounds[:-1].copy(), bounds[1:].copy()
+    elif binned is not False and finite_x.any():
         lower_x[finite_x], upper_x[finite_x] = bin_bounds(x[finite_x])
     absolute = sigma is not None or weights != "none"
     if sigma is not None:
@@ -326,8 +350,8 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
     def normalised_model(u: Array, *normalised: float) -> Array:
         """The model on the fitted bins (``u`` is always their centres, normalised)."""
         parameters = to_data(np.asarray(normalised))
-        if binned:
-            return bin_means(fit_model.function, lower_x, upper_x, parameters) / height
+        if binned is not False:
+            return bin_means(fit_model.function, lower_x, upper_x, parameters, weight) / height
         return fit_model.function(centre + span * u, *parameters) / height
 
     lower, upper = (np.array(bound, dtype=np.float64) for bound in fit_model.bounds(x, y))
