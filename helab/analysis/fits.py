@@ -39,8 +39,11 @@ How a fit runs:
 Models are derived from the physics, not copied from the MATLAB code (which has bugs:
 roadmaps/dld-front-panel-port.md). Registered now: Gaussian + offset, the Thomas–Fermi
 projection (1 − u²)^p + offset, bimodal TF^p + Gaussian with a shared centre, and the exact
-arrival-time ("Yavin") thermal profile on T (``arrival_time_model``: D1). D4 adds the
-Bose-enhanced g_{5/2} part with ``register``. Pure NumPy/SciPy, no Qt. Fits run in the
+arrival-time ("Yavin") thermal profile on T (``arrival_time_model``: D1), and (D4) the
+Bose-enhanced thermal profiles g_{5/2} and g_2 (``bose_model``, with ``polylog``) and the bimodal
+TF² + g_{5/2} and TF^{3/2} + g_2 (fugacity 1). ``condensate_fraction`` and ``component_areas`` give
+N0/N and the parts' areas ± SE from a fit's covariance; ``helab/analysis/bec.py`` turns them into
+BEC properties (D14) and sets the R/σ_th cap per axis. Pure NumPy/SciPy, no Qt. Fits run in the
 analysis worker thread, so nothing here changes warning filters per call
 (``warnings.catch_warnings`` isn't thread-safe).
 """
@@ -55,7 +58,7 @@ from typing import Any, Callable, Literal, Mapping, Sequence, cast
 import numpy as np
 import numpy.typing as npt
 from scipy.optimize import OptimizeWarning, curve_fit
-from scipy.special import gammaln
+from scipy.special import gamma, gammaln, zeta
 
 from helab.analysis.estimates import Estimate, finite_or_none, propagate
 from helab.analysis.physics import DEFAULTS
@@ -76,6 +79,9 @@ MIN_RADIUS_RATIO = 0.02
 RATIO = "ratio"  # the parameter max_radius_ratio caps
 RATIO_CAP_NEAR = 0.01  # a ratio within this fraction of the cap is "at its limit"
 OFFSET = "offset"  # floored at 0 for raw counts with count weights (fit_histogram)
+FUGACITY = "fugacity"  # a Bose thermal part's z, in [0, 1]
+# A fugacity this close to 1 (or 0) is "at 1" (saturated: at or below Tc) or "at 0" (Boltzmann).
+FUGACITY_SATURATED = 0.999
 
 # curve_fit warns when it can't estimate a covariance; the result's checks report that
 # instead. Set once here, for SciPy's optimizer only: per-call filters aren't thread-safe.
@@ -433,10 +439,19 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
         notes.append(f"TF radius at its limit (R = {max_radius_ratio:g}·σ_th): the cloud may be colder than "
                      "the limit allows; raise it or treat T and N0/N as bounds")
     width = np.where(np.isfinite(upper_n - lower_n), upper_n - lower_n, np.maximum(np.abs(found), 1.0))
+    # A Bose fugacity at either end of [0, 1] is physics, not a fit stuck at a bound: say what it means.
+    fugacity = float(values[fit_model.names.index(FUGACITY)]) if FUGACITY in fit_model.names else math.nan
+    if fugacity >= FUGACITY_SATURATED:
+        notes.append("fugacity z at 1: the thermal cloud is saturated, at or below Tc; a condensate may be there "
+                     "(try a bimodal fit, whose z is 1)")
+    elif fugacity <= 1 - FUGACITY_SATURATED:
+        notes.append("fugacity z at 0: the Boltzmann limit (the Gaussian), far above Tc")
     at_bound = [parameter.title for parameter, value, low, high, size in
                 zip(fit_model.parameters, found, lower_n, upper_n, width)
                 if parameter.name not in zero and parameter.name not in gated
                 and not (capped and parameter.name == RATIO)
+                and not (parameter.name == FUGACITY and math.isfinite(fugacity)
+                         and not 1 - FUGACITY_SATURATED < fugacity < FUGACITY_SATURATED)
                 and not (floored and parameter.name == OFFSET and value - low <= 1e-6 * size)
                 and (value - low <= 1e-6 * size or high - value <= 1e-6 * size)]
     if at_bound:
@@ -617,23 +632,30 @@ def thomas_fermi_model(power: float) -> FitModel:
 # σ_th = √(k_B T/m)·t, and a TF radius as its expansion velocity (Castin–Dum) times t, which
 # depends on the axis and the trap: along the radial axes of a cigar trap R ≈ √(2μ/m)·t, so
 # R/σ_th = √(2μ/k_B T); in an isotropic trap √(4μ/3k_B T); along a cigar's axis only
-# ≈ (π/2)(ω_z/ω_⊥)√(2μ/k_B T), much less. So the cap is axis-dependent (D4 will set it per
-# axis; ``profiles.fit_axis`` passes it through). With √(2μ/k_B T), the default 2 allows
-# μ ≤ 2 k_B T: clouds near Tc down to roughly 0.4 Tc. Colder, deep condensates (T ≈ 0.1–0.3 Tc) often have μ/k_B T of 3–10, a ratio of
+# ≈ (π/2)(ω_z/ω_⊥)√(2μ/k_B T), much less. So the cap is axis-dependent: ``bec.radius_ratio_cap``
+# gives it for a trap axis at the run's time of flight (Castin–Dum), ``bec.axis_caps`` per T/X/Y from
+# the trap-axis mapping, and ``profiles.fit_axis(max_radius_ratio=None)`` uses those. With
+# √(2μ/k_B T), the default 2 allows μ ≤ 2 k_B T: clouds near Tc down to roughly 0.4 Tc. Colder, deep condensates (T ≈ 0.1–0.3 Tc) often have μ/k_B T of 3–10, a ratio of
 # 2.5–4.5: raise the cap for them (a run that ends at the cap says so, and its T and N0/N
 # are then bounds, not values). A higher cap brings back some of the ambiguity above, so
 # raise it only when the data call for it. Each part's shape parameters are gated by its
 # amplitude.
 
 
-def bimodal_model(power: float) -> FitModel:
+def bimodal_model(power: float, bose: float | None = None) -> FitModel:
     """A condensate on a thermal cloud, one centre:
     A_c (1 − u²)₊^p + A_t exp(−(x − x₀)²/2σ²) + offset, u = (x − x₀)/R, R = r σ with
     r = R/σ from MIN_RADIUS_RATIO up to the fit's max_radius_ratio. R is reported as an
     extra. Started from a Gaussian fit (count weights, or the caller's errors), split four
-    ways (the last a cold cloud's, clipped to the cap)."""
+    ways (the last a cold cloud's, clipped to the cap).
+
+    ``bose`` (the polylog order, 5/2 or 2) makes the thermal part the Bose-enhanced
+    A_t g_ν(e^{−(x − x₀)²/2σ²}) / ζ(ν), its fugacity fixed at 1 (see ``bose_thermal``)."""
     def function(x: Array, condensate: float, centre: float, ratio: float, thermal: float, sigma: float,
                  offset: float) -> Array:
+        if bose is not None:
+            return (thomas_fermi(x, condensate, centre, ratio * sigma, 0.0, power)
+                    + bose_thermal(x, thermal, centre, sigma, 1.0, offset, bose))
         return (thomas_fermi(x, condensate, centre, ratio * sigma, 0.0, power)
                 + gaussian(x, thermal, centre, sigma, offset))
 
@@ -656,11 +678,17 @@ def bimodal_model(power: float) -> FitModel:
                 np.array([np.inf, high, MAX_RADIUS_RATIO, np.inf, 10 * span, top]))
 
     def areas(p: Array) -> dict[str, float]:
+        if bose is not None:
+            return {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2] * p[4]), power),
+                    "bose": bose_area(float(p[3]), float(p[4]), 1.0, bose)}
         return {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2] * p[4]), power),
                 "gaussian": gaussian_area(float(p[3]), float(p[4]))}
 
+    thermal_key, thermal_title = ("gaussian", "Gaussian") if bose is None else \
+        (f"g{_power_text(bose)}", f"Bose g_{_order_text(bose)} (z = 1)")
     return FitModel(
-        f"bimodal_tf{_power_text(power)}_gaussian", f"Bimodal: Thomas–Fermi (1 − u²)^{power:g} + Gaussian",
+        f"bimodal_tf{_power_text(power)}_{thermal_key}",
+        f"Bimodal: Thomas–Fermi (1 − u²)^{power:g} + {thermal_title}",
         (ModelParameter("condensate", "Condensate amplitude", "height"),
          ModelParameter("centre", "Centre", "position"),
          ModelParameter("ratio", "R / σ thermal", "shape", gates=("condensate", "thermal")),
@@ -668,12 +696,190 @@ def bimodal_model(power: float) -> FitModel:
          ModelParameter("sigma", "σ thermal", "width", gates=("thermal",)),
          ModelParameter("offset", "Offset", "height")),
         function, guesses, bounds, areas=areas, min_bins=4,
-        extras=(Extra("radius", "R", lambda p: float(p[2] * p[4]), gates=("condensate",)),))
+        extras=(Extra("radius", "R", lambda p: float(p[2] * p[4]), gates=("condensate",)),),
+        fixed=MappingProxyType({} if bose is None else {"fugacity": 1.0}))
 
 
 for _power in (2.0, 1.5):
     register(thomas_fermi_model(_power))
     register(bimodal_model(_power))
+
+
+# Polylogarithms, for the Bose-enhanced thermal profile below: Li_s(x) = Σ_{k≥1} x^k / k^s
+# (also written g_s), for real 0 ≤ x ≤ 1 and s > 1, without mpmath:
+# - x ≤ e^{−1}: the series itself, POLYLOG_TERMS terms (the next is below e^{−60} of the first).
+# - x > e^{−1}, μ = ln x ∈ (−1, 0]: the expansion about x = 1 (D. C. Wood, "The computation of
+#   polylogarithms", 1992), convergent for |μ| < 2π and here to ~(1/2π)^k:
+#     Li_s(e^μ) = Γ(1 − s)(−μ)^{s−1} + Σ_{k≥0} ζ(s − k) μ^k / k!            (s not a whole number)
+#     Li_n(e^μ) = μ^{n−1}/(n − 1)! (H_{n−1} − ln(−μ)) + Σ_{k≥0, k≠n−1} ζ(n − k) μ^k / k!   (s = n)
+#   with H the harmonic numbers, ζ from SciPy (which takes negative arguments). At x = 1 it is ζ(s).
+# The two agree to ~1e-15 where they meet (tests/test_bose_fits.py also checks known values).
+POLYLOG_TERMS = 60
+POLYLOG_NEAR_TERMS = 30
+POLYLOG_SPLIT = math.exp(-1.0)
+
+
+def _near_one_coefficients(order: float) -> tuple[Array, float, float, bool]:
+    """(ζ(s − k)/k! for k < POLYLOG_NEAR_TERMS, the singular term's coefficient, H_{n−1}, whether s
+    is a whole number) for ``polylog``'s expansion about 1. The k = n − 1 entry is 0 when s = n."""
+    whole = float(order).is_integer()
+    coefficients = np.array([0.0 if whole and k == round(order) - 1 else
+                             float(zeta(order - k)) / math.factorial(k) for k in range(POLYLOG_NEAR_TERMS)])
+    if whole:
+        n = round(order)
+        return coefficients, 1.0 / math.factorial(n - 1), sum(1.0 / j for j in range(1, n)), True
+    return coefficients, float(gamma(1 - order)), 0.0, False
+
+
+_NEAR_ONE: dict[float, tuple[Array, float, float, bool]] = {}
+
+
+def polylog(order: float, x: npt.ArrayLike) -> Array:
+    """Li_order(x) for real x in [0, 1] (clipped to it) and order > 1: the Bose functions g_ν."""
+    if not order > 1:
+        raise ValueError("polylog needs an order above 1 (it diverges at x = 1 otherwise)")
+    values = np.clip(np.asarray(x, dtype=np.float64), 0.0, 1.0)
+    result = np.empty(values.shape)
+    far = values <= POLYLOG_SPLIT
+    if far.any():
+        points = values[far]
+        total, power = np.zeros(points.shape), np.ones(points.shape)
+        for k in range(1, POLYLOG_TERMS + 1):
+            power = power * points
+            total += power / k ** order
+        result[far] = total
+    if (~far).any():
+        if order not in _NEAR_ONE:
+            _NEAR_ONE[order] = _near_one_coefficients(order)
+        coefficients, singular, harmonic, whole = _NEAR_ONE[order]
+        mu = np.log(values[~far])
+        total = np.zeros(mu.shape)
+        for coefficient in coefficients[::-1]:  # Horner: Σ c_k μ^k
+            total = total * mu + coefficient
+        with np.errstate(divide="ignore", invalid="ignore"):
+            if whole:
+                n = round(order)
+                log_term = np.where(mu < 0, harmonic - np.log(np.where(mu < 0, -mu, 1.0)), 0.0)
+                total += singular * mu ** (n - 1) * log_term
+            else:
+                total += singular * np.where(mu < 0, -mu, 0.0) ** (order - 1)
+        result[~far] = total
+    return result
+
+
+def _order_text(order: float) -> str:
+    return {2.5: "5/2", 1.5: "3/2"}.get(order, f"{order:g}")
+
+
+# The Bose-enhanced thermal profile. An ideal Bose gas in a harmonic trap, released and expanded
+# ballistically for long enough that the initial size is negligible, has the 3D density
+#   n(r) ∝ g_{3/2}(z exp(−Σ xᵢ²/2σᵢ²)),   σᵢ = √(k_B T/m)·t
+# (with the trap's initial size, × √(1 + 1/ωᵢ²t²)),
+# z = e^{μ/k_BT} the fugacity, 0 < z ≤ 1. Expanding g_{3/2} as Σ z^k e^{−k r²/2σ²}/k^{3/2} and
+# integrating each Gaussian over the other axes, every axis integrated raises the order by 1/2:
+#   over both other axes (a full projection, any T, X or Y histogram of all events): g_{5/2};
+#   over one (a thin slice of one other axis): g_2.
+# So the 1D profile is A g_ν(z e^{−(x − x₀)²/2σ²}) / g_ν(z) + offset (A the peak height above the
+# offset), ν = 5/2 paired with the TF exponent p = 2 and ν = 2 with p = 3/2: they integrate the same
+# axes. Its area is A √(2π) σ g_{ν+1/2}(z)/g_ν(z) (each Gaussian of the sum: σ√(2π/k)). As z → 0 it
+# is the Gaussian (the Boltzmann limit), and σ gives T exactly as the Gaussian's does (T = m σ_v²/k_B).
+# Near Tc (z → 1) the centre is Bose-enhanced, sharper than a Gaussian of the same σ: a Gaussian
+# fitted to it comes out narrower, biasing T low: by 5 % at z = 0.6, 10 % at z = 1, over ±5σ; as a
+# bimodal fit's thermal part it overstates N0/N by 0.04–0.08 and R by up to 9 % low (session notes,
+# 2026-10-20-claude-dld-d4-d14; tests/test_bose_fits.py). Below Tc the thermal cloud is saturated,
+# z = 1, so the bimodal fits fix it there (``bimodal_model``).
+# Along T the profile is a velocity distribution taken as a Gaussian in time (the arrival-time
+# model's skew is left out here, as in the Gaussian model).
+
+
+def bose_thermal(x: Array, amplitude: float, centre: float, sigma: float, fugacity: float, offset: float,
+                 order: float = 2.5) -> Array:
+    """A g_ν(z e^{−(x − x₀)²/2σ²}) / g_ν(z) + offset; the Gaussian when z is (nearly) 0."""
+    shape = np.exp(-0.5 * ((x - centre) / sigma) ** 2)
+    if fugacity < 1e-12:
+        return amplitude * shape + offset
+    return amplitude * polylog(order, fugacity * shape) / float(polylog(order, fugacity)) + offset
+
+
+def bose_area(amplitude: float, sigma: float, fugacity: float, order: float = 2.5) -> float:
+    """∫ A g_ν(z e^{−u²/2σ²}) / g_ν(z) dx = A √(2π) σ g_{ν+1/2}(z) / g_ν(z) (1 as z → 0)."""
+    z = min(max(float(fugacity), 0.0), 1.0)
+    ratio = 1.0 if z < 1e-12 else float(polylog(order + 0.5, z)) / float(polylog(order, z))
+    return gaussian_area(amplitude, sigma) * ratio
+
+
+def bose_model(order: float) -> FitModel:
+    """The Bose-enhanced thermal profile g_ν + offset, its fugacity z fitted in [0, 1]. Started
+    from a Gaussian fit, at three fugacities (σ wider as z grows: the enhanced centre is narrower)."""
+    def function(x: Array, amplitude: float, centre: float, sigma: float, fugacity: float, offset: float
+                 ) -> Array:
+        return bose_thermal(x, amplitude, centre, sigma, fugacity, offset, order)
+
+    def guesses(x: Array, y: Array, errors: Array) -> list[Array]:
+        single = fit_histogram(x, y, "gaussian", sigma=errors)
+        if single.ok:
+            peak, mean, spread, baseline = (single[name].value for name in ("amplitude", "centre", "sigma", "offset"))
+        else:
+            baseline, peak, mean, spread = _moments(x, y)
+        return [np.array([peak, mean, s * spread, z, baseline]) for z, s in ((0.3, 1.02), (0.8, 1.08), (0.99, 1.2))]
+
+    def bounds(x: Array, y: Array) -> tuple[Array, Array]:
+        low, high = _position_bounds(x)
+        _, _, span, step = _extent(x)
+        top = float(np.max(np.abs(y)))
+        return np.array([0.0, low, step / 100, 0.0, -top]), np.array([np.inf, high, 10 * span, 1.0, top])
+
+    return FitModel(
+        f"bose_g{_power_text(order)}", f"Bose-enhanced thermal g_{_order_text(order)} + offset",
+        (ModelParameter("amplitude", "Amplitude", "height"), ModelParameter("centre", "Centre", "position"),
+         ModelParameter("sigma", "σ", "width"), ModelParameter(FUGACITY, "Fugacity z", "shape"),
+         ModelParameter("offset", "Offset", "height")),
+        function, guesses, bounds, min_bins=4,
+        areas=lambda p: {"bose": bose_area(float(p[0]), float(p[2]), float(p[3]), order)})
+
+
+# ν = 5/2 for full projections (paired with TF²), ν = 2 for thin slices (with TF^{3/2}).
+for _order, _power in ((2.5, 2.0), (2.0, 1.5)):
+    register(bose_model(_order))
+    register(bimodal_model(_power, bose=_order))
+
+
+# Condensate fraction and atom numbers from a bimodal fit's components.
+
+CONDENSATE_AREA = "thomas_fermi"
+
+
+def component_areas(fit: FitResult) -> dict[str, Estimate]:
+    """Each component's area (counts × x units: divide by the bin width for counts) ± SE from the
+    fit's covariance (``FitModel.areas``). Empty when the model has no areas; nan without a fit."""
+    areas = fit.model.areas
+    if areas is None:
+        return {}
+    model_areas: Callable[[Array], dict[str, float]] = areas
+    names = list(model_areas(fit.values if fit.ok else np.ones(len(fit.model.names))))
+    if not fit.ok:
+        return {name: Estimate(math.nan, math.nan) for name in names}
+
+    def area_of(name: str) -> Callable[[Array], float]:
+        return lambda p: model_areas(p)[name]
+    return {name: fit.derived(area_of(name)) for name in names}
+
+
+def condensate_fraction(fit: FitResult) -> Estimate:
+    """N0/N = A_TF / (A_TF + A_thermal) from a bimodal fit's component areas, ± SE by the delta
+    method on the fitted parameters' covariance (so the areas' correlation is counted). nan for
+    a failed fit or a model without a condensate part. The fraction is of the counts the
+    histogram holds: a cropped box or window crops the thermal wings more than the condensate."""
+    areas = fit.model.areas
+    if areas is None or not fit.ok or CONDENSATE_AREA not in areas(fit.values):
+        return Estimate(math.nan, math.nan)
+    model_areas: Callable[[Array], dict[str, float]] = areas
+
+    def fraction(p: Array) -> float:
+        parts = model_areas(p)
+        total = sum(parts.values())
+        return parts[CONDENSATE_AREA] / total if total > 0 else math.nan
+    return fit.derived(fraction)
 
 
 # The arrival-time ("Yavin") thermal profile. With z up and the detector a distance h below
