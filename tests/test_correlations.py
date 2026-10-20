@@ -13,9 +13,11 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from helab.analysis import correlations
 from helab.analysis.correlations import (CacheKey, CorrelationResult, CorrelationSpec, InShot, PairCounts,
                                          ShotEvents, correlate, g2_from_counts, in_shot_counts, linear_edges,
-                                         radial_edges)
+                                         peak_model, radial_edges)
+from helab.analysis.fits import fit_histogram
 from helab.analysis.results import Cancelled
 
 Array = npt.NDArray[np.float64]
@@ -47,12 +49,18 @@ def thermal_shots(seed: int, shots: int = 40, events: int = 400) -> list[ShotEve
     return result
 
 
-def expected_peak() -> float:
-    """g²(0) the estimator should give on ``thermal_shots``: 2 over the mean of g² over all
-    pairs, 1 + β + (1 − β)/MODES, with β = ∫(g² − 1)A / ∫A = (σ_c²/(σ_c² + 2σ²))^{3/2} the
-    peak's share of pairs (A the envelope's autocorrelation; module docstring)."""
+def expected_peak(dilution: float = 1.0) -> float:
+    """g²(0) over the baseline, (b + A)/b, that the estimator should give on
+    ``thermal_shots``: the simulated g² is 1 + 1/K + (1 − 1/K)|g¹|² (K = MODES), so the peak
+    over the far baseline is 1 + (1 − 1/K)/(1 + 1/K)·dilution. The pair-total normalisation
+    divides the whole curve by 1 + β + (1 − β)/K (β = (σ_c²/(σ_c² + 2σ²))^{3/2}, the peak's
+    share of pairs), lowering the baseline to ``expected_baseline`` but not this ratio."""
+    return 1 + (1 - 1 / MODES) / (1 + 1 / MODES) * dilution
+
+
+def expected_baseline() -> float:
     beta = (SIGMA_C ** 2 / (SIGMA_C ** 2 + 2 * CLOUD ** 2)) ** 1.5
-    return float(2 / (1 + beta + (1 - beta) / MODES))
+    return float((1 + 1 / MODES) / (1 + beta + (1 - beta) / MODES))
 
 
 def poisson_shots(seed: int, shots: int, events: int, sigma: float = CLOUD) -> list[ShotEvents]:
@@ -86,13 +94,13 @@ def thermal() -> list[ShotEvents]:
     return thermal_shots(1)
 
 
-def check_peak(result: CorrelationResult, expected: float) -> None:
+def check_peak(result: CorrelationResult, expected: float, max_se: float) -> None:
     assert result.ok, result.failure
     assert result.fit is not None and result.fit.ok, result.fit
     zero = result.g2_zero
-    assert math.isfinite(zero.se) and 0 < zero.se < 0.15
+    assert result.g2_zero_method.startswith("refits of")
+    assert math.isfinite(zero.se) and 0 < zero.se < max_se
     assert abs(zero.value - expected) < 3 * zero.se, (zero, expected)
-    assert abs(zero.value - 2) < 0.15
 
 
 # ---- counts against brute force ----
@@ -143,27 +151,42 @@ def test_counts_match_brute_force(spec: CorrelationSpec) -> None:
         assert np.array_equal(cross[index], brute_hist(spec, values))
         assert q[index] == sum(len(own) * len(events[t]) for t in others)
     assert np.array_equal(in_shot_counts(spec, shots[0].events).counts, h_in[0])
+    # The shot-pair matrix, pair by pair.
+    matrix = state.matrix()
+    assert matrix is not None
+    pairs, partner = matrix
+    for index, own in enumerate(events):
+        for other in range(len(shots)):
+            linked = other != index and abs(other - index) <= partners
+            assert partner[index, other] == linked
+            expected = brute_hist(spec, brute_values(spec, own, events[other], False)) if linked else 0
+            assert np.array_equal(pairs[index, other], expected * np.ones(spec.bins, dtype=np.int64))
+    assert np.array_equal(pairs.sum(axis=1), cross)
 
 
 # ---- the physics ----
 
 def test_thermal_source_bunches_to_two_radially(thermal: list[ShotEvents]) -> None:
     result = correlate(thermal, CorrelationSpec("radial", linear_edges(0, 0.4, 40)))
-    check_peak(result, expected_peak())
+    check_peak(result, expected_peak(), 0.08)
+    assert abs(result.baseline.value - expected_baseline()) < 3 * result.baseline.se + 0.002
     assert result.fit is not None
     sigma = result.fit["sigma"]
     assert abs(sigma.value - SIGMA_C) < max(3 * sigma.se, 0.01)
     assert result.se_method == "shot bootstrap" and result.bootstrap is not None
     far = result.centres > 4 * SIGMA_C
     assert np.allclose(result.g2[far], 1, atol=0.05)
+    # The delete-one jackknife and the bootstrap agree bin by bin (within their own noise).
+    ratio = result.jackknife_se[1:] / result.se[1:]
+    assert np.all((ratio > 0.6) & (ratio < 1.6)), ratio
+    assert result.curve([0.0])[0] == pytest.approx(result.baseline.value + result.fit["amplitude"].value)
 
 
 def test_thermal_source_bunches_to_two_in_one_dimension(thermal: list[ShotEvents]) -> None:
-    window = 0.15 * SIGMA_C
+    window = 0.25 * SIGMA_C
     result = correlate(thermal, CorrelationSpec("1d", linear_edges(-0.4, 0.4, 40), axis=1, window=window))
     # A Gaussian peak averaged over the two transverse windows: 1 − w²/(6σ_c²) on each.
-    diluted = 1 + (expected_peak() - 1) * (1 - window ** 2 / (6 * SIGMA_C ** 2)) ** 2
-    check_peak(result, diluted)
+    check_peak(result, expected_peak((1 - window ** 2 / (6 * SIGMA_C ** 2)) ** 2), 0.25)
     assert result.fit is not None
     centre = result.fit["centre"]
     assert abs(centre.value) < 3 * centre.se + 1e-3
@@ -193,7 +216,7 @@ def test_back_to_back_pairs_peak_at_zero_and_twice_an_unknown_origin() -> None:
     edges = linear_edges(-0.1, 0.1, 40)
     centred = correlate(pair_shots(7), CorrelationSpec("1d", edges, mode="bb", window=0.01), n_boot=200)
     assert centred.fit is not None and centred.fit.ok
-    assert centred.g2_zero.value - 1 > 10 * centred.g2_zero.se  # a clear pair peak
+    assert centred.g2_zero.value - 1 > 5 * centred.g2_zero.se  # a clear pair peak
     assert abs(centred.fit["centre"].value) < 0.003
     # The pair width per event is 0.01, so v1 + v2 has σ = 0.01·√2 on each axis.
     assert abs(centred.fit["sigma"].value - 0.01 * math.sqrt(2)) < 0.003
@@ -214,8 +237,115 @@ def test_back_to_back_pairs_peak_at_zero_and_twice_an_unknown_origin() -> None:
 def test_back_to_back_radial_peaks_at_zero() -> None:
     result = correlate(pair_shots(8), CorrelationSpec("radial", linear_edges(0, 0.08, 16), mode="bb"), n_boot=200)
     assert result.ok and result.fit is not None and result.fit.ok
-    assert result.g2_zero.value - 1 > 10 * result.g2_zero.se
+    assert result.g2_zero.value - 1 > 5 * result.g2_zero.se
     assert result.g2[0] > 1.5 and abs(result.g2[-1] - 1) < 0.2
+
+
+def jittered_shots(seed: int, shots: int, events: int, jitter: float) -> list[ShotEvents]:
+    """Uncorrelated clouds (σ = CLOUD) whose centre moves by N(0, jitter) per axis from shot
+    to shot (pointing jitter): the in-shot pairs are narrower than the between-shot
+    reference, so the ratio is a broad bump of (1 + j²/σ²)^{3/2} at 0 with no correlation."""
+    rng = np.random.default_rng(seed)
+    return [ShotEvents(shot, (shot, 0, 0), rng.normal(rng.normal(0, jitter, 3), CLOUD, (int(rng.poisson(events)), 3)))
+            for shot in range(shots)]
+
+
+def twin_shots(seed: int, shots: int = 15, events: int = 250, twins: int = 40, width: float = 0.05) -> list[ShotEvents]:
+    """A cheap peaked source: uncorrelated events plus twins (v, v + N(0, width)), so
+    radial g² has a peak at 0 of width √2·width."""
+    rng = np.random.default_rng(seed)
+    result = []
+    for shot in range(shots):
+        single = rng.normal(0, CLOUD, (int(rng.poisson(events)), 3))
+        first = rng.normal(0, CLOUD, (int(rng.poisson(twins)), 3))
+        result.append(ShotEvents(shot, (shot, 0, 0),
+                                 np.concatenate([single, first, first + rng.normal(0, width, first.shape)])))
+    return result
+
+
+def test_pointing_jitter_is_not_reported_as_bunching() -> None:
+    spec = CorrelationSpec("radial", linear_edges(0, 0.4, 20))
+    shots = jittered_shots(1, 60, 300, 0.2 * CLOUD)
+    free = correlate(shots, spec, n_boot=100)
+    assert free.ok
+    zero = free.g2_zero
+    assert not math.isfinite(zero.value) or abs(zero.value - 1) < 3 * zero.se, zero
+    assert any("slope, not a peak" in note or "baseline" in note for note in free.notes), free.notes
+    # A baseline fixed at 1 (the legacy fit) sees the same bump as a positive amplitude.
+    fixed = correlate(shots, spec, n_boot=0, baseline="fixed")
+    assert fixed.baseline_mode == "fixed" and fixed.baseline.value == 1
+    assert fixed.fit is not None and fixed.fit.ok and fixed.fit["amplitude"].value > 0.03
+    # Re-centring each shot removes the jitter: g² ≈ 1 again.
+    centred = correlate(shots, CorrelationSpec("radial", spec.edges, recentre=True), n_boot=100, fit=False)
+    pulls = (centred.g2 - 1) / centred.se
+    assert np.mean(np.abs(pulls) < 3) >= 0.9, pulls
+    weights = 1 / centred.se ** 2
+    assert abs(float(np.sum(weights * centred.g2) / np.sum(weights)) - 1) < 0.01
+    assert CorrelationSpec("radial", spec.edges, recentre=True).key() != spec.key()
+
+
+@pytest.mark.parametrize("shots", [4, 8])
+def test_bootstrap_resamples_the_reference_with_few_shots(shots: int) -> None:
+    """The bootstrap SE of a bin matches the scatter of that bin over independent runs, also
+    with few shots, where the reference's own noise matters (the shot-pair matrix)."""
+    spec = CorrelationSpec("radial", linear_edges(0, 0.4, 20))
+    values, errors = [], []
+    for seed in range(30):
+        result = correlate(jittered_shots(100 + seed, shots, 300, 0.2 * CLOUD), spec, n_boot=200, fit=False)
+        values.append(float(np.mean(result.g2[8:12])))
+        # (a draw of one shot only has no reference: nan, left out)
+        errors.append(float(np.nanstd(result.bootstrap.replicates[:, 8:12].mean(axis=1), ddof=1))
+                      if result.bootstrap is not None else math.nan)
+        assert np.all(np.isfinite(result.jackknife_se[8:12]))
+    ratio = float(np.std(values, ddof=1)) / float(np.mean(errors))
+    assert 0.65 < ratio < 1.5, ratio
+
+
+def test_without_the_matrix_the_bootstrap_says_it_is_optimistic(monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = CorrelationSpec("radial", linear_edges(0, 0.4, 10))
+    shots = poisson_shots(21, 6, 200)
+    exact = correlate(shots, spec, n_boot=50, fit=False)
+    monkeypatch.setattr(correlations, "MATRIX_LIMIT", 10)
+    state = PairCounts(spec)
+    rough = correlate(shots, spec, state=state, n_boot=50, fit=False)
+    assert not state.matrix_kept and state.matrix() is None
+    assert np.array_equal(rough.g2, exact.g2, equal_nan=True)
+    assert any("optimistic" in note for note in rough.notes)
+    assert not np.any(np.isfinite(rough.jackknife_se)) and np.all(np.isfinite(exact.jackknife_se))
+
+
+def test_g2_zero_error_matches_its_scatter() -> None:
+    """g²(0)'s SE comes from refitting bootstrap replicates: neighbouring bins share shots,
+    so the single fit's covariance is too small."""
+    spec = CorrelationSpec("radial", linear_edges(0, 0.4, 20))
+    values, errors, covariance = [], [], []
+    for seed in range(30):
+        shots = twin_shots(seed)
+        result = correlate(shots, spec, n_boot=60)
+        assert result.fit is not None and result.fit.ok and math.isfinite(result.g2_zero.value)
+        values.append(result.g2_zero.value)
+        errors.append(result.g2_zero.se)
+        if seed < 3:
+            covariance.append(correlate(shots, spec, n_boot=0).g2_zero_method)
+    # 1.11 with these seeds; 30 runs pin the ratio to about ±13 %.
+    ratio = float(np.std(values, ddof=1)) / float(np.mean(errors))
+    assert 0.7 < ratio < 1.5, ratio
+    assert all("covariance" in method for method in covariance)
+
+
+def test_bin_averaged_model_recovers_the_peak_on_wide_shells() -> None:
+    """Equal-volume shells make the first bin wide; the model averaged over each shell
+    (r²-weighted) still returns the peak, where the point model at the centres would not."""
+    spec = CorrelationSpec("radial", radial_edges(0.4, 12))
+    edges = np.asarray(spec.edges)
+    grid = [np.linspace(a, b, 2001) for a, b in zip(edges[:-1], edges[1:])]
+    truth = [np.sum(r * r * (0.99 + 0.98 * np.exp(-r * r / (2 * SIGMA_C ** 2)))) / np.sum(r * r) for r in grid]
+    fitted = fit_histogram(spec.centres, np.array(truth), peak_model(spec), sigma=np.full(spec.bins, 0.01))
+    assert fitted.ok
+    assert fitted["baseline"].value == pytest.approx(0.99, abs=1e-3)
+    assert (fitted["baseline"].value + fitted["amplitude"].value) / fitted["baseline"].value == pytest.approx(
+        (0.99 + 0.98) / 0.99, abs=2e-3)
+    assert fitted["sigma"].value == pytest.approx(SIGMA_C, rel=0.01)
 
 
 # ---- Live: incremental updates and the cache ----
@@ -237,8 +367,8 @@ def test_incremental_updates_equal_a_full_recompute(partners: int | None) -> Non
     full = PairCounts(spec)
     full.update(shots)
     assert same_counts(live, full)
-    first = g2_from_counts(live, n_boot=50)
-    second = g2_from_counts(full, n_boot=50)
+    first = g2_from_counts(live, n_boot=50, fit=False)
+    second = g2_from_counts(full, n_boot=50, fit=False)
     assert np.array_equal(first.g2, second.g2, equal_nan=True)
     # A shot read again (new fingerprint and events) and one gone.
     changed = list(shots)
@@ -364,7 +494,7 @@ def test_record_is_strict_json(thermal: list[ShotEvents]) -> None:
     result = correlate(thermal[:10], CorrelationSpec("radial", linear_edges(0, 0.4, 10), partners=3), n_boot=100)
     record: dict[str, Any] = json.loads(json.dumps(result.as_record(), allow_nan=False))
     assert record["spec"]["partners"] == 3 and record["se_method"] == "shot bootstrap"
-    assert record["shots_used"] == list(range(10)) and record["fit"]["model"] == "g2_gaussian_centred"
+    assert record["shots_used"] == list(range(10)) and record["fit"]["model"] == "g2_peak_radial_free"
     assert len(record["g2"]) == 10 and record["in_pairs"] == sum(
         len(s.events) * (len(s.events) - 1) for s in thermal[:10])
     with pytest.raises(ValueError):

@@ -18,11 +18,19 @@ The estimator (roadmaps/dld-front-panel-port.md D12; the legacy ``calc_any_g2_ty
   volumes (the window area × bin width, the shell volume) cancel and need no division. The
   normalisation fixes the mean of g² over all pairs at 1, which removes shot-to-shot atom
   number noise (technical noise would otherwise raise g² everywhere), at a cost: the bump
-  itself is in that mean, so g² is biased low by the share of in-shot pairs it holds,
-  ≈ ∫(g² − 1) A(Δ) dΔ / ∫ A(Δ) dΔ with A the cloud's autocorrelation; for a Gaussian peak of
-  width σ_c in a Gaussian cloud of width σ (each axis) that is (σ_c / (√2 σ))³ — 3·10⁻⁴ at
-  σ_c = σ/10, the "1 / number of modes" of a thermal source. The legacy code has the same
-  bias. Noted in notes.md; nothing corrects it.
+  itself is in that mean, so the whole curve is divided by 1 + β, β ≈ ∫(g² − 1) A(Δ) dΔ /
+  ∫ A(Δ) dΔ (A the cloud's autocorrelation; (σ_c / (√2 σ))³ for a Gaussian peak of width σ_c
+  in a Gaussian cloud of width σ on each axis, 3·10⁻⁴ at σ_c = σ/10: the "1 / number of
+  modes" of a thermal source). The baseline drops to 1/(1 + β) with the peak, so the peak
+  over the *fitted* baseline, (b + A)/b, is free of it; a baseline fixed at 1 (the legacy
+  fit) is not.
+- The reference must match the shots: a cloud that moves (pointing jitter) or changes size
+  from shot to shot makes the between-shot pairs broader than the in-shot ones, and the ratio
+  a broad bump at 0 ((1 + j²/σ²)^{3/2} for a jitter j) that a baseline fixed at 1 reads as
+  bunching. Hence the free baseline, the note when it isn't 1, the "slope, not a peak" check
+  on the fitted width, and ``recentre`` (each shot's mean moved to 0 before counting, off by
+  default). A reference matched per shot (pairs with shots of similar centre and size) is a
+  later option (notes.md).
 
 Geometries (``CorrelationSpec``):
 - ``"1d"`` (``corr_1d_cart``): the histogram of one component Δv_axis of the separation,
@@ -61,14 +69,22 @@ when shots are interchangeable; when the cloud drifts slowly through a run it is
 each shot's own conditions than the all-pairs reference, but noisier (fewer pairs).
 
 Errors: the shot bootstrap (``bootstrap.bootstrap_shots``) of the per-shot counts, cheap
-because no pairs are recounted: a replicate draws shots with replacement and sums their
-``H_in``, ``P_in``, ``R_s`` and ``Q_s`` (their between-shot pair totals). Each R_s stays the
-count against all the other shots held, not the drawn set, so a drawn shot never pairs
-with its own copy. ``counting_se`` (g² √(1/H_in + 1/H_between)) is reported beside it but
-underestimates: pairs sharing an event aren't independent. A Gaussian on a baseline of 1 is
-fitted to g² with ``fits.fit_histogram`` (``G2_GAUSSIAN``, centred at 0 for radial g²:
-``G2_GAUSSIAN_CENTRED``), weighted by the bootstrap SE (floored at a 1-count error for
-bins with few pairs); g²(0) is 1 + its amplitude.
+because no pairs are recounted. The state also keeps the shot-pair matrix B[s, t, bin]
+(ordered pairs with an event of s first against shot t; up to ``MATRIX_LIMIT`` numbers), so
+a replicate with shot multiplicities c has numerator c·H_in / c·P_in and reference
+cᵀBc / Σ_{s≠t partners} c_s c_t n_s n_t: the reference is resampled too, and a shot's copies
+never pair with each other (B[s, s] = 0). The same matrix gives the exact delete-one-shot
+jackknife (``jackknife_se``). Past the limit the state drops it and each drawn shot keeps
+its reference against all the others (c·R / c·Q), noted as optimistic (notably below ~10
+shots). ``counting_se`` (g² √(1/H_in + 1/H_between)) is reported beside them but
+underestimates: pairs sharing an event aren't independent.
+
+The peak fit (``peak_model``, ``fits.fit_histogram``): b + A exp(−(Δ − c)²/2σ²), centred at
+0 for radial g², averaged over each bin (r²-weighted over radial shells), weighted by the
+bootstrap SE (floored at a one-count error for bins with few pairs). g²(0) = (b + A)/b; its
+SE is the spread of refits of ``FIT_RESAMPLES`` bootstrap replicates, since neighbouring
+bins share shots and the single fit's covariance is too small. ``baseline="fixed"`` fits
+1 + A·Gaussian as the legacy code did.
 
 ``cancelled`` is polled between shots and between blocks of query points, and raises
 ``results.Cancelled``. A time ``budget`` (seconds) stops adding shots once spent: the result
@@ -84,6 +100,7 @@ import math
 import time
 from collections.abc import Hashable
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Callable, Iterable, Literal, MutableMapping, Sequence, cast
 
 import numpy as np
@@ -92,7 +109,7 @@ from scipy.spatial import KDTree
 
 from helab.analysis.bootstrap import DEFAULT_N_BOOT, DEFAULT_SEED, BootstrapResult, bootstrap_shots
 from helab.analysis.estimates import Estimate, finite_or_none
-from helab.analysis.fits import FitModel, FitResult, ModelParameter, fit_histogram
+from helab.analysis.fits import FitModel, FitResult, ModelParameter, Role, fit_histogram
 from helab.analysis.results import Cancelled
 
 Array = npt.NDArray[np.float64]
@@ -106,6 +123,13 @@ Cancel = Callable[[], bool] | None
 CHUNK = 2048  # query points per sparse_distance_matrix call: bounds the pairs held at once
 PAD = 1e-9  # the tree's search radius is widened by this share, then pairs are filtered exactly
 MIN_PAIRS = 100  # fewer in-shot pairs in range than this: a note (g² is mostly noise)
+# The shot-pair matrix B[s, t, bin] the bootstrap resamples the reference from is kept up to
+# this many numbers (64 MB): S²·bins, so 400 shots of 50 bins. Beyond it the state drops it.
+MATRIX_LIMIT = 8_000_000
+FIT_RESAMPLES = 200  # bootstrap replicates refitted for g²(0)'s SE
+GAUSS_POINTS = 5  # Gauss–Legendre points per bin for the bin-averaged fit model
+SLOPE_WIDTH = 1 / 3  # a fitted σ above this share of the reach is a slope, not a peak
+BASELINE_SE = 2.0  # a fitted baseline this many SEs from 1 gets a note
 
 
 @dataclass(frozen=True)
@@ -116,7 +140,9 @@ class CorrelationSpec:
     for 0. ``partners``: None compares every shot with every other; K pairs each with the K
     before and after it. ``events_key``: anything upstream that changes the events but not
     their fingerprints (the release time, a mask), so cached in-shot counts aren't reused
-    across it."""
+    across it. ``recentre`` moves each shot's mean to 0 first (off by default), so a cloud
+    that moves from shot to shot (pointing jitter) doesn't make the reference broader than
+    the shots; for BB the origin is then relative to each shot's mean."""
     geometry: Geometry
     edges: tuple[float, ...]
     mode: Mode = "cl"
@@ -125,6 +151,7 @@ class CorrelationSpec:
     origin: tuple[float, float, float] | None = None
     partners: int | None = None
     events_key: str = ""
+    recentre: bool = False  # subtract each shot's mean velocity before counting
 
     def __post_init__(self) -> None:
         edges = tuple(float(edge) for edge in self.edges)
@@ -172,14 +199,14 @@ class CorrelationSpec:
                            "axis": self.axis if self.geometry == "1d" else None,
                            "window": self.window if self.geometry == "1d" else None,
                            "origin": list(self.origin) if self.origin else None,
-                           "events_key": self.events_key}, sort_keys=True)
+                           "events_key": self.events_key, "recentre": self.recentre}, sort_keys=True)
 
     def as_record(self) -> dict[str, Any]:
         return {"geometry": self.geometry, "mode": self.mode, "edges": list(self.edges),
                 "axis": self.axis if self.geometry == "1d" else None,
                 "window": finite_or_none(self.window) if self.geometry == "1d" else None,
                 "origin": list(self.origin) if self.origin else None,
-                "partners": self.partners, "events_key": self.events_key}
+                "partners": self.partners, "events_key": self.events_key, "recentre": self.recentre}
 
     # How pairs are searched: query points scale(v) against tree points scale(v) (CL) or
     # scale(2·origin − v) (BB); a separation inside the bins has Minkowski-p distance ≤ radius.
@@ -316,26 +343,25 @@ class _Block:
 
 
 def _cross(spec: CorrelationSpec, new: Array, block: _Block, cancelled: Cancel) -> tuple[Counts, Counts]:
-    """Pairs of ``new``'s events with the block's: (the new shot's histogram, with its event
-    first, summed over the block; each block shot's histogram with its event first,
-    (len(slots), bins))."""
+    """Pairs of ``new``'s events with each block shot's, (len(slots), bins) each: (the new
+    shot's event first; the block shot's event first)."""
     bins = spec.bins
-    forward = np.zeros(bins, dtype=np.int64)
+    forward = np.zeros(len(block.slots) * bins, dtype=np.int64)
     backward = np.zeros(len(block.slots) * bins, dtype=np.int64)
     if not len(new) or not len(block.events):
-        return forward, backward.reshape(len(block.slots), bins)
+        return forward.reshape(len(block.slots), bins), backward.reshape(len(block.slots), bins)
     for i, j in _pairs(spec, new, block.tree, cancelled):
         values, keep = _values(spec, _separations(spec, new[i], block.events[j]))
         values, owners = values[keep], block.owners[j[keep]]
         index = _bin_index(spec, values)
         inside = index >= 0
-        forward += np.bincount(index[inside], minlength=bins).astype(np.int64)
+        forward += np.bincount(owners[inside] * bins + index[inside], minlength=len(forward)).astype(np.int64)
         # From the other event's side the separation is −Δ for CL, the same for BB, and
         # |Δ| the same either way.
         back = _bin_index(spec, -values) if spec.mode == "cl" and spec.geometry == "1d" else index
         inside = back >= 0
         backward += np.bincount(owners[inside] * bins + back[inside], minlength=len(backward)).astype(np.int64)
-    return forward, backward.reshape(len(block.slots), bins)
+    return forward.reshape(len(block.slots), bins), backward.reshape(len(block.slots), bins)
 
 
 @dataclass
@@ -346,6 +372,9 @@ class _Entry:
     in_shot: InShot
     cross: Counts  # R_s: ordered pairs with this shot's event first, against the shots it pairs with
     cross_pairs: int  # Q_s: Σ n_s n_t over those shots
+    # This shot's row of the shot-pair matrix: partner slot → its pairs with this shot's
+    # event first (every partner, zeros included); None once the state dropped the matrix.
+    pairs: dict[int, Counts] | None = None
 
 
 class PairCounts:
@@ -359,6 +388,7 @@ class PairCounts:
         self._next = 0
         self._blocks: list[_Block] = []
         self.cache_hits = 0
+        self.matrix_kept = True  # False once the shot-pair matrix outgrew MATRIX_LIMIT
 
     @property
     def shots(self) -> tuple[ShotId, ...]:
@@ -398,26 +428,37 @@ class PairCounts:
             raise ValueError(f"shot {shot.shot} is already held")
         _check(cancelled)
         events = _finite(shot.events)
+        if self.spec.recentre and len(events):
+            events = events - events.mean(axis=0)
         self._insert(shot.shot, shot.fingerprint, events, self._in_shot(shot, events, cancelled), cancelled)
 
     def _insert(self, shot: ShotId, fingerprint: Hashable, events: Array, in_shot: InShot, cancelled: Cancel) -> None:
-        updates: list[tuple[_Block, Counts]] = []
+        updates: list[tuple[_Block, Counts, Counts]] = []
         forward = np.zeros(self.spec.bins, dtype=np.int64)
         for block in self._partners():
             ahead, back = _cross(self.spec, events, block, cancelled)
-            forward += ahead
-            updates.append((block, back))
+            forward += ahead.sum(axis=0)
+            updates.append((block, ahead, back))
         # Apply only once every count is in, so a cancelled add leaves the state as it was.
+        slot = self._next
+        self._next += 1
+        held = len(self._entries) + 1
+        if self.matrix_kept and held * held * self.spec.bins > MATRIX_LIMIT:
+            self.matrix_kept = False
+            for entry in self._entries.values():
+                entry.pairs = None
+        row_of_new: dict[int, Counts] | None = {} if self.matrix_kept else None
         cross_pairs = 0
-        for block, back in updates:
-            for row, slot in enumerate(block.slots):
-                other = self._entries[slot]
+        for block, ahead, back in updates:
+            for row, other_slot in enumerate(block.slots):
+                other = self._entries[other_slot]
                 other.cross = other.cross + back[row]
                 other.cross_pairs += len(other.events) * len(events)
                 cross_pairs += len(other.events) * len(events)
-        slot = self._next
-        self._next += 1
-        self._entries[slot] = _Entry(shot, fingerprint, events, in_shot, forward, cross_pairs)
+                if row_of_new is not None and other.pairs is not None:
+                    other.pairs[slot] = back[row].copy()
+                    row_of_new[other_slot] = ahead[row].copy()
+        self._entries[slot] = _Entry(shot, fingerprint, events, in_shot, forward, cross_pairs, row_of_new)
         if self.spec.partners is None:
             self._blocks.append(_Block.of(self.spec, [(slot, events)]))
             # Merge like a binary counter: a block is rebuilt when one as large follows it.
@@ -452,6 +493,8 @@ class PairCounts:
                 other = self._entries[s]
                 other.cross = other.cross - back[row]
                 other.cross_pairs -= len(other.events) * len(removed.events)
+                if other.pairs is not None:
+                    other.pairs.pop(slot, None)
         del self._entries[slot]
         self._blocks = blocks
 
@@ -459,9 +502,11 @@ class PairCounts:
         """Count the between-shot pairs of ``entries`` again, in their order, keeping their
         in-shot counts. Nothing changes if it's cancelled."""
         fresh = PairCounts(self.spec, None)
+        fresh.matrix_kept = self.matrix_kept
         for entry in entries:
             fresh._insert(entry.shot, entry.fingerprint, entry.events, entry.in_shot, cancelled)
         self._entries, self._next, self._blocks = fresh._entries, fresh._next, fresh._blocks
+        self.matrix_kept = fresh.matrix_kept
 
     def update(self, shots: Sequence[ShotEvents], cancelled: Cancel = None, budget: float | None = None,
                clock: Callable[[], float] = time.monotonic) -> tuple[ShotId, ...]:
@@ -482,6 +527,7 @@ class PairCounts:
             # the in-shot counts of the shots that stay; the old state stays until it's done.
             kept = {entry.shot: entry for entry in self._entries.values() if entry.shot not in stale}
             fresh = PairCounts(self.spec, self.cache)
+            fresh.matrix_kept = self.matrix_kept
             left: tuple[ShotId, ...] = ()
             for index, shot in enumerate(shots):
                 if budget is not None and clock() - start >= budget:
@@ -493,6 +539,7 @@ class PairCounts:
                 else:
                     fresh._insert(entry.shot, entry.fingerprint, entry.events, entry.in_shot, cancelled)
             self._entries, self._next, self._blocks = fresh._entries, fresh._next, fresh._blocks
+            self.matrix_kept = fresh.matrix_kept
             self.cache_hits += fresh.cache_hits
             return left
         for shot_id in stale:
@@ -517,56 +564,122 @@ class PairCounts:
                 np.array([e.cross for e in entries], dtype=np.int64),
                 np.array([e.cross_pairs for e in entries], dtype=np.int64))
 
+    def sizes(self) -> tuple[int, ...]:
+        """Events used per held shot, in ``arrays()``' order."""
+        return tuple(len(entry.events) for entry in self._entries.values())
 
-# A g² peak on a baseline of 1 (fit amplitude = g²(0) − 1 at the centre).
-def _g2_gaussian(x: Array, amplitude: float, centre: float, sigma: float) -> Array:
-    return 1.0 + amplitude * np.exp(-0.5 * ((x - centre) / sigma) ** 2)
-
-
-def _g2_gaussian_centred(x: Array, amplitude: float, sigma: float) -> Array:
-    return 1.0 + amplitude * np.exp(-0.5 * (x / sigma) ** 2)
-
-
-def _peak_guess(x: Array, y: Array) -> tuple[float, float, float]:
-    excess = y - 1.0
-    top = int(np.argmax(np.abs(excess)))
-    weights = np.clip(excess * np.sign(excess[top]), 0, None)
-    total = float(weights.sum())
-    centre = float(x[top])
-    spread = math.sqrt(float((weights * (x - centre) ** 2).sum()) / total) if total > 0 else 0.0
-    span = float(x[-1] - x[0]) if len(x) > 1 else 1.0
-    return float(excess[top]), centre, max(spread, span / max(len(x), 1), 1e-300)
-
-
-def _peak_bounds(x: Array, centred: bool) -> tuple[Array, Array]:
-    span = float(x[-1] - x[0]) or 1.0
-    step = span / max(len(x) - 1, 1)
-    low = [-1.0, *([] if centred else [float(x[0]) - span]), step / 100]
-    high = [math.inf, *([] if centred else [float(x[-1]) + span]), 10 * span]
-    return np.array(low), np.array(high)
+    def matrix(self) -> tuple[Counts, npt.NDArray[np.bool_]] | None:
+        """The shot-pair matrix in ``arrays()``' order: (B (S, S, bins), ordered pairs with
+        shot s's event first against shot t; partner (S, S), which shot pairs are in the
+        reference). The diagonal is 0 and not a partner. None once dropped (``matrix_kept``)."""
+        entries = list(self._entries.items())
+        if not self.matrix_kept or any(entry.pairs is None for _, entry in entries):
+            return None
+        position = {slot: index for index, (slot, _) in enumerate(entries)}
+        size = len(entries)
+        counts = np.zeros((size, size, self.spec.bins), dtype=np.int64)
+        partner = np.zeros((size, size), dtype=bool)
+        for index, (_, entry) in enumerate(entries):
+            assert entry.pairs is not None
+            for other, row in entry.pairs.items():
+                counts[index, position[other]] = row
+                partner[index, position[other]] = True
+        return counts, partner
 
 
-G2_GAUSSIAN = FitModel(
-    "g2_gaussian", "1 + Gaussian",
-    (ModelParameter("amplitude", "g²(0) − 1", "shape"), ModelParameter("centre", "Centre", "position"),
-     ModelParameter("sigma", "σ", "width")),
-    _g2_gaussian,
-    lambda x, y, errors: [np.array(_peak_guess(x, y))],
-    lambda x, y: _peak_bounds(x, False))
-G2_GAUSSIAN_CENTRED = FitModel(
-    "g2_gaussian_centred", "1 + Gaussian at 0",
-    (ModelParameter("amplitude", "g²(0) − 1", "shape"), ModelParameter("sigma", "σ", "width")),
-    _g2_gaussian_centred,
-    lambda x, y, errors: [np.array(_peak_guess(x, y))[[0, 2]]],
-    lambda x, y: _peak_bounds(x, True))
+Baseline = Literal["free", "fixed"]
+
+
+def _peak_names(spec: CorrelationSpec, baseline: Baseline) -> tuple[str, ...]:
+    centred = spec.geometry == "radial"
+    return ("amplitude", *(() if centred else ("centre",)), "sigma", *(("baseline",) if baseline == "free" else ()))
+
+
+def peak_curve(spec: CorrelationSpec, baseline: Baseline, x: npt.ArrayLike, *values: float) -> Array:
+    """The peak model at points ``x``: b + A exp(−(x − c)²/2σ²), with b = 1 for a fixed
+    baseline and c = 0 radially (parameters in ``peak_model``'s order)."""
+    named = dict(zip(_peak_names(spec, baseline), values))
+    points = np.asarray(x, dtype=np.float64)
+    centre, level = named.get("centre", 0.0), named.get("baseline", 1.0)
+    return level + named["amplitude"] * np.exp(-0.5 * ((points - centre) / named["sigma"]) ** 2)
+
+
+def peak_model(spec: CorrelationSpec, baseline: Baseline = "free") -> FitModel:
+    """The g² peak model for ``spec``'s bins, averaged over each bin (Gauss–Legendre,
+    ``GAUSS_POINTS`` points; weighted by r² for radial shells, the pair density of a flat
+    reference), so wide bins (equal-volume first shells) don't bias the peak. Evaluated at
+    any x it gives the average over the bin x falls in: draw the smooth curve with
+    ``peak_curve`` (``CorrelationResult.curve``)."""
+    names = _peak_names(spec, baseline)
+    radial = spec.geometry == "radial"
+    edges = np.asarray(spec.edges)
+    nodes, weights = np.polynomial.legendre.leggauss(GAUSS_POINTS)
+
+    grids: dict[bytes, tuple[Array, Array]] = {}  # the fit calls it at the same x every time
+
+    def averaged(x: Array, *values: float) -> Array:
+        key = x.tobytes()
+        grid = grids.get(key)
+        if grid is None:
+            index = np.clip(np.searchsorted(edges, x, side="right") - 1, 0, spec.bins - 1)
+            low, high = edges[index][:, None], edges[index + 1][:, None]
+            r = (low + high) / 2 + (high - low) / 2 * nodes[None, :]
+            w = weights[None, :] * (r * r if radial else np.ones_like(r))
+            total = w.sum(axis=1, keepdims=True)
+            grid = r, w / np.where(total > 0, total, 1.0)
+            if len(grids) < 8:
+                grids[key] = grid
+        r, w = grid
+        return (w * peak_curve(spec, baseline, r, *values)).sum(axis=1)
+
+    def guesses(x: Array, y: Array, errors: Array) -> list[Array]:
+        level = float(np.median(y)) if baseline == "free" else 1.0
+        excess = y - level
+        top = int(np.argmax(np.abs(excess)))
+        weight = np.clip(excess * np.sign(excess[top]), 0, None)
+        total = float(weight.sum())
+        centre = 0.0 if radial else float(x[top])
+        spread = math.sqrt(float((weight * (x - centre) ** 2).sum()) / total) if total > 0 else 0.0
+        span = float(x[-1] - x[0]) if len(x) > 1 else 1.0
+        named = {"amplitude": float(excess[top]), "centre": centre,
+                 "sigma": max(spread, span / max(len(x), 1), 1e-300), "baseline": level}
+        return [np.array([named[name] for name in names])]
+
+    def bounds(x: Array, y: Array) -> tuple[Array, Array]:
+        span = float(x[-1] - x[0]) or 1.0
+        step = span / max(len(x) - 1, 1)
+        top = float(np.max(np.abs(y))) or 1.0
+        low = {"amplitude": -2 * top, "centre": float(x[0]) - span, "sigma": step / 100, "baseline": 0.0}
+        high = {"amplitude": math.inf, "centre": float(x[-1]) + span, "sigma": 10 * span, "baseline": 2 * top + 1}
+        return np.array([low[name] for name in names]), np.array([high[name] for name in names])
+
+    roles: dict[str, tuple[str, Role]] = {
+        "amplitude": ("Amplitude", "shape"), "centre": ("Centre", "position"), "sigma": ("σ", "width"),
+        "baseline": ("Baseline", "shape")}
+    return FitModel(f"g2_peak_{spec.geometry}_{baseline}",
+                    f"{'b' if baseline == 'free' else '1'} + Gaussian{' at 0' if radial else ''}, bin-averaged",
+                    tuple(ModelParameter(name, *roles[name]) for name in names), averaged, guesses, bounds,
+                    fixed=MappingProxyType({"gauss_points": float(GAUSS_POINTS)}))
+
+
+def _peak_value(fit: FitResult, baseline: Baseline) -> float:
+    """g²(0) relative to the fitted baseline: (b + A)/b (1 + A for a fixed baseline)."""
+    amplitude = fit["amplitude"].value
+    if baseline == "fixed":
+        return 1 + amplitude
+    level = fit["baseline"].value
+    return (level + amplitude) / level if level > 0 else math.nan
 
 
 @dataclass(frozen=True)
 class CorrelationResult:
     """g² per bin with its pair counts. ``se`` is the bootstrap SE when there was one
-    (``se_method`` "shot bootstrap"), else ``counting_se``. ``failure`` is "" when g² can
-    be shown. ``shots_used`` are the shots counted (all of them unless the time budget ran
-    out: ``complete`` False). Arrays are read-only."""
+    (``se_method`` "shot bootstrap"), else ``counting_se``; ``jackknife_se`` is the
+    delete-one-shot jackknife's (nan without the shot-pair matrix). ``failure`` is "" when
+    g² can be shown. ``shots_used`` are the shots counted (all of them unless the time budget
+    ran out: ``complete`` False). ``g2_zero`` is the peak over the fitted baseline,
+    (b + A)/b, its SE from refitting bootstrap replicates (nan when there's no peak: a
+    slope, a failed fit); ``baseline`` is b (1 when fixed). Arrays are read-only."""
     spec: CorrelationSpec
     centres: Array = field(repr=False)
     g2: Array = field(repr=False)
@@ -583,11 +696,16 @@ class CorrelationResult:
     failure: str = ""
     notes: tuple[str, ...] = ()
     fit: FitResult | None = None
-    g2_zero: Estimate = Estimate(math.nan)  # 1 + the fit's amplitude: g² at the peak's centre
+    g2_zero: Estimate = Estimate(math.nan)
+    baseline: Estimate = Estimate(1.0, 0.0)
+    baseline_mode: Baseline = "free"
+    g2_zero_method: str = ""
+    jackknife_se: Array = field(default_factory=lambda: np.empty(0), repr=False)
     bootstrap: BootstrapResult | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        for array in (self.centres, self.g2, self.se, self.counting_se, self.in_counts, self.between_counts):
+        for array in (self.centres, self.g2, self.se, self.counting_se, self.in_counts, self.between_counts,
+                      self.jackknife_se):
             array.flags.writeable = False
 
     @property
@@ -598,19 +716,28 @@ class CorrelationResult:
     def edges(self) -> Array:
         return np.asarray(self.spec.edges)
 
+    def curve(self, x: npt.ArrayLike) -> Array:
+        """The fitted peak at points ``x`` (not bin-averaged: to draw); nan without a fit."""
+        points = np.asarray(x, dtype=np.float64)
+        if self.fit is None or not self.fit.ok:
+            return np.full(points.shape, math.nan)
+        return peak_curve(self.spec, self.baseline_mode, points, *(float(v) for v in self.fit.values))
+
     def as_record(self) -> dict[str, Any]:
         """Strict JSON (nan as None) for a result's record."""
         def listed(array: Array) -> list[float | None]:
             return [finite_or_none(float(x)) for x in array]
         return {"spec": self.spec.as_record(), "centres": listed(self.centres), "g2": listed(self.g2),
                 "se": listed(self.se), "counting_se": listed(self.counting_se), "se_method": self.se_method,
+                "jackknife_se": listed(self.jackknife_se),
                 "in_counts": [int(x) for x in self.in_counts],
                 "between_counts": [int(x) for x in self.between_counts],
                 "in_pairs": self.in_pairs, "between_pairs": self.between_pairs,
                 "shots_used": list(self.shots_used), "shots_total": self.shots_total, "complete": self.complete,
                 "failure": self.failure, "notes": list(self.notes),
                 "fit": self.fit.as_record() if self.fit is not None else None,
-                "g2_zero": self.g2_zero.as_record(),
+                "g2_zero": self.g2_zero.as_record(), "g2_zero_method": self.g2_zero_method,
+                "baseline": self.baseline.as_record(), "baseline_mode": self.baseline_mode,
                 "bootstrap": self.bootstrap.as_record() if self.bootstrap is not None else None,
                 "method": "in-shot over between-shot ordered pairs, each over its pair total"}
 
@@ -621,11 +748,76 @@ def _ratio(h_in: Array, p_in: float, h_between: Array, p_between: float) -> Arra
     return cast(Array, np.where(h_between > 0, g2, math.nan))
 
 
+def _resampler(state: PairCounts) -> tuple[Callable[[Array], Array], bool]:
+    """g² for shot multiplicities c (S,): [c·H_in / c·P_in] / [cᵀBc / Σ_{s≠t partners} c_s c_t n_s n_t]
+    from the shot-pair matrix, so a replicate resamples the reference too and a shot's
+    copies never pair with each other (B[s, s] = 0). Without the matrix (too many shots),
+    each drawn shot keeps its reference against all others: [c·R / c·Q] (False)."""
+    h_in_s, p_in_s, cross_s, q_s = (array.astype(np.float64) for array in state.arrays())
+    matrix = state.matrix()
+    if matrix is not None:
+        counts, partner = matrix
+        pairs_of = counts.astype(np.float64)
+        sizes = np.array(state.sizes(), dtype=np.float64)
+        reference_pairs = np.outer(sizes, sizes) * partner
+
+        def full(c: Array) -> Array:
+            reference = c @ np.tensordot(c, pairs_of, axes=(0, 0))
+            return _ratio(c @ h_in_s, float(c @ p_in_s), reference, float(c @ reference_pairs @ c))
+        return full, True
+
+    def approximate(c: Array) -> Array:
+        return _ratio(c @ h_in_s, float(c @ p_in_s), c @ cross_s, float(c @ q_s))
+    return approximate, False
+
+
+def _jackknife(resample: Callable[[Array], Array], held: int, bins: int, cancelled: Cancel) -> Array:
+    """The delete-one-shot jackknife SE per bin: √((S − 1)/S Σ (g²₍ₛ₎ − mean)²)."""
+    values = []
+    for index in range(held):
+        _check(cancelled)
+        c = np.ones(held)
+        c[index] = 0
+        values.append(resample(c))
+    table = np.array(values).reshape(held, bins)
+    complete = np.isfinite(table).all(axis=0)
+    spread = ((table - table.mean(axis=0)) ** 2).sum(axis=0)
+    return cast(Array, np.where(complete, np.sqrt((held - 1) / held * np.where(complete, spread, 0.0)), math.nan))
+
+
+def _zero_error(fitted: FitResult, model: FitModel, baseline: Baseline, boot: BootstrapResult | None,
+                centres: Array, sigma: Array, cancelled: Cancel, noted: list[str]) -> tuple[float, str]:
+    """g²(0)'s SE: the spread of refits of up to ``FIT_RESAMPLES`` bootstrap replicates
+    (neighbouring bins are correlated, so the fit's own covariance is too small), else the
+    covariance's, said so."""
+    if boot is not None and len(boot.replicates):
+        replicas = []
+        for row in boot.replicates[:FIT_RESAMPLES]:
+            _check(cancelled)
+            refit = fit_histogram(centres, row, model, sigma=sigma)
+            replicas.append(_peak_value(refit, baseline) if refit.ok else math.nan)
+        found = np.array(replicas)
+        found = found[np.isfinite(found)]
+        if len(found) < len(replicas) / 2:
+            noted.append(f"g²(0)'s error: only {len(found)} of {len(replicas)} replicate fits worked")
+        se = float(np.std(found, ddof=1)) if len(found) >= 2 else math.nan
+        return se, f"refits of {len(found)} of {len(replicas)} bootstrap replicates"
+    if baseline == "free":
+        where = model.names.index("baseline")
+        se = fitted.derived(lambda p: float((p[where] + p[0]) / p[where])).se
+    else:
+        se = fitted["amplitude"].se
+    return se, "the fit's covariance (too small: neighbouring bins are correlated)"
+
+
 def g2_from_counts(state: PairCounts, *, shots_total: int | None = None, n_boot: int = DEFAULT_N_BOOT,
-                   seed: int | None = DEFAULT_SEED, fit: bool = True, cancelled: Cancel = None,
-                   notes: Sequence[str] = ()) -> CorrelationResult:
+                   seed: int | None = DEFAULT_SEED, fit: bool = True, baseline: Baseline = "free",
+                   cancelled: Cancel = None, notes: Sequence[str] = ()) -> CorrelationResult:
     """g², its errors and the peak fit from a state's counts. ``n_boot`` 0 skips the
-    bootstrap (the counting SE is used)."""
+    bootstrap (the counting SE is used, and g²(0)'s SE comes from the fit's covariance).
+    ``baseline`` "free" (default) fits b + A·Gaussian and reports (b + A)/b; "fixed" fits
+    1 + A·Gaussian, as the legacy code did (a reference that doesn't match the shots then
+    shows as a peak)."""
     spec = state.spec
     h_in_s, p_in_s, cross_s, q_s = state.arrays()
     h_in, h_between = h_in_s.sum(axis=0), cross_s.sum(axis=0)
@@ -658,38 +850,57 @@ def g2_from_counts(state: PairCounts, *, shots_total: int | None = None, n_boot:
         noted.append(f"only {int(h_in.sum()):,} in-shot pairs in range: g² is mostly noise")
     boot: BootstrapResult | None = None
     se, method = counting, "pair counting (underestimates: pairs share events)"
-    if not failure and n_boot and held >= 2:
-        def statistic(draw: list[Any]) -> Array:
-            rows = np.asarray(draw, dtype=np.intp)
-            return _ratio(h_in_s[rows].sum(axis=0).astype(np.float64), float(p_in_s[rows].sum()),
-                          cross_s[rows].sum(axis=0).astype(np.float64), float(q_s[rows].sum()))
-        boot = bootstrap_shots(list(range(held)), statistic, n_boot=n_boot, seed=seed, cancelled=cancelled)
-        se, method = np.asarray(boot.se, dtype=np.float64), "shot bootstrap"
-        noted.extend(boot.notes)
+    jackknife = np.full(spec.bins, math.nan)
+    if not failure:
+        resample, exact = _resampler(state)
+        if exact:
+            jackknife = _jackknife(resample, held, spec.bins, cancelled)
+        if n_boot:
+            def statistic(draw: list[Any]) -> Array:
+                return resample(np.bincount(np.asarray(draw, dtype=np.intp), minlength=held).astype(np.float64))
+            boot = bootstrap_shots(list(range(held)), statistic, n_boot=n_boot, seed=seed, cancelled=cancelled)
+            se, method = np.asarray(boot.se, dtype=np.float64), "shot bootstrap"
+            noted.extend(boot.notes)
+            if not exact:
+                noted.append("too many shots for the shot-pair matrix: the bootstrap keeps each shot's reference "
+                             "against all the others, so its error is optimistic, notably below ~10 shots")
     centres = spec.centres
     fitted: FitResult | None = None
-    zero = Estimate(math.nan)
+    zero, level, zero_method = Estimate(math.nan), Estimate(1.0, 0.0), ""
     if not failure and fit:
         # Bins with few pairs get at least a one-count error (a bootstrap of 0 counts is 0).
         with np.errstate(divide="ignore", invalid="ignore"):
             floor = np.sqrt(np.maximum(h_in, 1)) * (p_between / p_in) / h_between
         sigma = np.fmax(np.where(np.isfinite(se), se, 0.0), floor)
-        model = G2_GAUSSIAN_CENTRED if spec.geometry == "radial" else G2_GAUSSIAN
+        model = peak_model(spec, baseline)
         fitted = fit_histogram(centres, g2, model, sigma=sigma)
         if fitted.ok:
-            amplitude = fitted["amplitude"]
-            zero = Estimate(1 + amplitude.value, amplitude.se)
+            if baseline == "free":
+                level = fitted["baseline"]
+                if math.isfinite(level.se) and abs(level.value - 1) > BASELINE_SE * level.se:
+                    noted.append(f"the baseline is {level.text(digits=2)}, not 1: the reference doesn't match the "
+                                 "shots (a cloud moving or changing between shots? try re-centring), or the peak holds a "
+                                 "large share of the pairs")
+            width = fitted["sigma"].value
+            reach = max(abs(spec.edges[0]), abs(spec.edges[-1]))
+            if width > SLOPE_WIDTH * reach:
+                noted.append(f"the fitted width (σ = {width:.3g}) is comparable to the range: a slope, not a peak; "
+                             "no g²(0)")
+            else:
+                zero_se, zero_method = _zero_error(fitted, model, baseline, boot, centres, sigma, cancelled, noted)
+                zero = Estimate(_peak_value(fitted, baseline), zero_se)
     return CorrelationResult(spec, centres, g2, np.asarray(se, dtype=np.float64), counting, method,
                              h_in.astype(np.int64), h_between.astype(np.int64), p_in, p_between,
                              state.shots, total, held >= total, failure, tuple(dict.fromkeys(noted)),
-                             fitted, zero, boot)
+                             fitted, zero, level, baseline, zero_method, np.asarray(jackknife, dtype=np.float64),
+                             boot)
 
 
 def correlate(shots: Sequence[ShotEvents], spec: CorrelationSpec, *,
               cache: MutableMapping[CacheKey, InShot] | None = None, state: PairCounts | None = None,
               cancelled: Cancel = None, budget: float | None = None,
               clock: Callable[[], float] = time.monotonic, n_boot: int = DEFAULT_N_BOOT,
-              seed: int | None = DEFAULT_SEED, fit: bool = True) -> CorrelationResult:
+              seed: int | None = DEFAULT_SEED, fit: bool = True, baseline: Baseline = "free") -> CorrelationResult:
     """g² of ``shots`` (see the module docstring). Pass the ``state`` of the previous run
     (same ``spec``) to update it instead of starting again (Live), and a ``cache`` to reuse
     in-shot counts by fingerprint; ``budget`` limits the time spent adding shots."""
@@ -700,7 +911,8 @@ def correlate(shots: Sequence[ShotEvents], spec: CorrelationSpec, *,
     elif cache is not None:
         state.cache = cache
     state.update(shots, cancelled, budget, clock)
-    return g2_from_counts(state, shots_total=len(shots), n_boot=n_boot, seed=seed, fit=fit, cancelled=cancelled)
+    return g2_from_counts(state, shots_total=len(shots), n_boot=n_boot, seed=seed, fit=fit, baseline=baseline,
+                          cancelled=cancelled)
 
 
 def linear_edges(low: float, high: float, bins: int) -> tuple[float, ...]:
