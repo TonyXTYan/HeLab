@@ -44,12 +44,13 @@ class AnalysisRunner(QObject):
 
     def submit(self, script: DatasetAnalysis, metadata: ScriptMetadata, action: str,
                view: DatasetView, values: Optional[Mapping[str, Any]] = None,
-               constants: Optional[Mapping[str, Mapping[str, float]]] = None) -> AnalysisContext:
+               constants: Optional[Mapping[str, Mapping[str, float]]] = None, owner: str = "") -> AnalysisContext:
         """Queue ``action`` on ``view`` with ``values`` validated against its declared parameters,
         and the lab and folder layers of the constants taken now (``constants``: {"lab": …,
         "folder": …}; GUI thread). An analysis that uses constants gets them resolved with its own
         values now too (``DatasetAnalysis.run_constants``), in its context and its result.
         The run's coverage is the shots the script says it uses (all of them if it can't say).
+        ``owner``: the plot asking (``AnalysisContext.owner``).
         Raises ``RuntimeError`` while the runner is stopping (until its worker has exited)."""
         parameters = effective(script.parameters(action), values)
         try:
@@ -68,7 +69,7 @@ class AnalysisRunner(QObject):
             resolved = None
         context = AnalysisContext(f"a{next(self._ids)}", action, view, parameters, metadata.identity(),
                                   coverage=coverage, constants=layers, resolved_constants=resolved,
-                                  constant_keys=keys if resolved is not None else ())
+                                  constant_keys=keys if resolved is not None else (), owner=owner)
         with self._lock:
             if self._stopping:
                 raise RuntimeError("The analysis runner is stopping")

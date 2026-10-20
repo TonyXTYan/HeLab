@@ -21,6 +21,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from helab.analysis.dataset_view import DatasetView, revise, view_of
 from helab.analysis.parameters import ParameterSpec
+from helab.utils import events
 
 if TYPE_CHECKING:
     from helab.utils.folder_cache import Dataset
@@ -202,6 +203,7 @@ class LiveFeed(QObject):
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self._latest: dict[str, DatasetView] = {}
+        events.hub().watch_feed(self)  # Plots ask the hub whether Live watches a folder.
 
     def latest(self, path: str) -> Optional[DatasetView]:
         """The newest revision of ``path``'s data while Live watches it."""
