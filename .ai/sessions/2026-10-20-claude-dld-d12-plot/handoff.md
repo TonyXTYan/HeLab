@@ -25,6 +25,14 @@ choices proposed for Tony: [notes.md](notes.md). Brief: [brief.md](brief.md).
   settings line and registration). Shared lists: `test_plot_text.py` (560 px dock),
   `test_live_plots.py` (coverage, empty reasons, a Live-follow test), `test_display_units.py`.
 
+## Review round
+
+Coordinator's review of f75c009, fixed in the merge of dbc79bf (21820a7): Live bars from the
+jackknife; per-mode defaults (collinear ±3 mm/s, 60 bins, ±0.3 mm/s; back-to-back ±20 mm/s, 40
+bins, ±2 mm/s) with σ_c and resolution in the tooltips; the BB detected-t_r note; mask the BECs
+before re-centring halos. Shared `release.run_velocity_source` for both velocity plots. Refits warm
+started (~100 s → ~4 s on sparse data). Then the integration head e14843f merged cleanly.
+
 ## On-screen checklist for Tony
 
 1. Open Correlations on a BEC folder with the folder's t_a and origin set (Release time plot →
@@ -34,7 +42,7 @@ choices proposed for Tony: [notes.md](notes.md). Brief: [brief.md](brief.md).
 2. Without the folder's values: "t_r detected in this run" note; on a halo, the amber
    "origin's detection is unsure".
 3. Plot in ħk: same counts, axes rescaled, the "unconfirmed" note.
-4. Live on: reruns at most every 5 s, "N shots held, 1 counted", the Live-rerun bootstrap note;
+4. Live on: reruns at most every 5 s, "N shots held, 1 counted", the Live-rerun note (jackknife bars);
    Live off: one rerun with the bootstrap.
 5. A small time budget (e.g. 1 s) on a large folder: "stopped at the time budget…" and Rerun
    continuing the count.
@@ -51,7 +59,10 @@ choices proposed for Tony: [notes.md](notes.md). Brief: [brief.md](brief.md).
 - `mypy --strict helab tests` (198 files) and `pyright helab tests`: clean. `git diff --check`: clean.
 - Targeted: `tests/test_correlations_plot.py` 14 passed; the shared cases 6 passed; the Live test
   passed (`-n 1 --reruns 5 --reruns-delay 1`).
-- Full suite `-n 2 --reruns 5 --reruns-delay 1 -rR`: **2 failed, 1986 passed, 7 skipped, 2 xfailed,
+- Review round (merges of dbc79bf and e14843f, the fixes above): full suite **2 failed, 2018
+  passed, 7 skipped, 2 xfailed, 10 rerun in 420 s**: only the two known root-only failures (5
+  reruns each).
+- First round: full suite `-n 2 --reruns 5 --reruns-delay 1 -rR`: **2 failed, 1986 passed, 7 skipped, 2 xfailed,
   11 rerun in 511 s**: the two known root-only failures (5 reruns each) and one rerun of
   `test_folder_summary.py::test_disk_cache_summary_tracks_shared_save_completion[cache_saved]`,
   which passed. (The first full run also caught the registry lists in `test_analysis.py` and

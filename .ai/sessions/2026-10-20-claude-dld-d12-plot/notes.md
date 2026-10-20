@@ -40,24 +40,40 @@ WIP (3ffe2a3) first. Three tests failed then:
   the detection. `plot_closed` drops it and remembers the owner (up to 4096) so a late run of a
   closed plot keeps nothing. Another folder starts anew.
 - Live policy `min_delay=5 s` (proposed, for Tony). Live reruns (`context.live`) skip the shot
-  bootstrap (`LIVE_NOTE`, `reuse.bootstrap_skipped`): the bars are then pair counting's (too small)
-  and g²(0)'s error the jackknife refits'. Deliberate runs and the catch-up when Live stops keep it.
-- Defaults (proposed, for Tony): 1D v_z, range ±20 mm/s, 40 bins, window ±2 mm/s, free baseline,
-  200 resamples, time budget 30 s, all-shots reference (K = 10 when banded).
+  bootstrap (`LIVE_NOTE`, `reuse.bootstrap_skipped`): the bars and fit weights are then the
+  delete-one-shot jackknife's (`correlate(..., errors="jackknife")`, new in the numerics; the
+  default stays "counting"), pair counting only when the shot-pair matrix was dropped
+  (`LIVE_COUNTING_NOTE`). Deliberate runs and the catch-up when Live stops keep the bootstrap.
+- t_r and origin: `release.run_velocity_source(constants, detect)` (added at the merge of dbc79bf)
+  is the one rule the Velocity distributions and Correlations plots share; each passes its own
+  `detect()` (Correlations: the steady detection; Velocity distributions: its kept one on Live).
+- Back-to-back with a detected t_r: `BB_DETECTED_NOTE` (the tallest T peak may be a Bragg-kicked
+  cloud, v_z off by its velocity; set t_r from a rest-cloud run, or re-centre), not shown when
+  shots are re-centred (proposed, for Tony).
+- Defaults (proposed, for Tony; per Pairs mode since the review): collinear 1D v_z, ±3 mm/s,
+  60 bins, window ±0.3 mm/s (a thermal cloud's σ_c ≈ ħ/(2mσ₀) is ~0.55 mm/s radially, 0.055 mm/s
+  axially at 1 µK; the XY resolution ~0.24 mm/s; ±2 mm/s kept only ~0.31 of the bump per windowed
+  axis); back-to-back ±20 mm/s, 40 bins, ±2 mm/s (`bb_range`, `bb_bins`, `bb_window`). Free
+  baseline, 200 resamples, time budget 30 s, all-shots reference (K = 10 when banded). The window
+  shows for 1D only: a local `_ModeSpec` (ParameterSpec with a second condition).
 - Drawing: g² ± SE points, the fitted curve (point model) and its baseline (dashed), a dotted 1,
   and below the in-shot pairs per bin beside the between-shot pairs scaled by P_in/P_between.
   Title lines (WrapLabel): input · shots · events · kind; g²(0) over baseline · σ in the plot's
   unit (or "no peak: g² near 0 is …"); t_r (where from) · origin; pair counts · held/counted ·
   seconds; then warnings and notes in amber.
 
+## Numerics changes (review round)
+
+- g²(0)'s refits (bootstrap replicates, delete-one curves) start from the fit's parameters
+  (`_warm`) with at most `REFIT_EVALUATIONS` = 1000 evaluations: with the narrower collinear
+  defaults, sparse noisy curves took ~600 evaluations per refit from scratch, ~100 s a run; now
+  ~4 s. test_correlations (35) still passes, calibration tests included.
+- `_near_zero`'s divide warning is silenced (a replicate with none of the bins: nan, dropped).
+
 ## Open / proposed, for Tony
 
-1. Per-bin errors on a Live rerun are pair counting's (underestimates). The numerics already have
-   the exact jackknife per bin (`jackknife_se`) for free; using it as `se` when there is no
-   bootstrap would be more honest (a change in `correlations.py`, outside this task).
-2. `correlations._near_zero` raises a RuntimeWarning ("invalid value encountered in divide",
-   line ~878) on a budget-stopped run with few shots (bootstrap rows all nan); harmless (nan
-   results), worth an `np.errstate` in the numerics.
+1. The per-mode defaults and the scales in the tooltips.
+2. The BB detected-t_r note is skipped when shots are re-centred.
 3. D13's per-shot halo centring isn't built: "Re-centre each shot" stands in (each shot's robust
    centre to 0; BB's v₀ then relative to it).
 4. Radial/BB on real halos: the origin detection on a halo is "unsure" (no cloud at rest); set the
