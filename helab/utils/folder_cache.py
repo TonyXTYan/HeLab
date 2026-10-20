@@ -1060,6 +1060,23 @@ class FolderCache(QObject):
             else:
                 self._automatic_save_failed(folder, "HeLab's work queue is full")
 
+    def _root_constants_gone(self, path: str) -> None:
+        """The data root at ``path`` changed identity or went (``root_changed``): what the old
+        root's store said about the folders at or below it no longer applies, so the next
+        listing's answer (none: no record) stands, whatever its ``set_at``. This session's
+        unsaved choices (RAM only, or a write still running) stay: they were the user's."""
+        def below(folder: str) -> bool:
+            return folder == path or folder.startswith(path.rstrip("/\\") + os.sep)
+        writing = {write[0] for write in self._constant_writes.values()}
+        for folder in [folder for folder in self._confirmed_constants if below(folder)]:
+            del self._confirmed_constants[folder]
+        for folder in [folder for folder in self.folder_constant_records if below(folder)
+                       and folder not in self._session_constants and folder not in writing]:
+            before = self.folder_constants(folder)
+            del self.folder_constant_records[folder]
+            if before:
+                self.constantsChanged.emit(folder)
+
     def _automatic_save_failed(self, folder: str, message: str) -> None:
         """An automatic save of session-only values failed: they stay in RAM (still "RAM only",
         saying why) and are tried again at the next root change; no tab asked, so it is logged."""
@@ -2196,6 +2213,7 @@ class FolderCache(QObject):
                       *self.scan_histories, *self.subtrees, *self._disk_cached_paths})
             affected = [path for path in known if path == root_path or path.startswith(root_path.rstrip("/\\") + os.sep)]
             self.removed(affected, list(KINDS))
+            self._root_constants_gone(root_path)
         if event["kind"] == "mounts_seen":
             self._mounts_observed = tuple(tuple(pair) for pair in event["mounts"])
             # A mount gone since may come back as another disk: verified again first.

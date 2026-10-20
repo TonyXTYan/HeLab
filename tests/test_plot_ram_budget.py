@@ -95,6 +95,26 @@ class Copy(DatasetAnalysis):
         return label
 
 
+class Keeping(Copy):
+    """A ``Copy`` that keeps a private array per plot between runs (as Correlations does)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.kept: dict[str, npt.NDArray[np.float64]] = {}
+        self.released: list[str] = []
+
+    def compute(self, action_name: str, context: AnalysisContext) -> Any:
+        self.kept[context.owner] = np.ones(50_000)
+        return super().compute(action_name, context)
+
+    def plot_buffers(self, action_name: str, owner: str) -> dict[int, int]:
+        return buffers([self.kept[owner]]) if owner in self.kept else {}
+
+    def plot_released(self, action_name: str, owner: str, path: str) -> None:
+        self.released.append(owner)
+        self.kept.pop(owner, None)
+
+
 class Window(HelabMainWindow):
     """The main window's plot area, Settings panel, Live feed and RAM budget, with no tabs."""
 
@@ -839,3 +859,14 @@ def test_ram_results_released_forgets_the_data() -> None:
     stub = results.released(result)
     assert stub.data is None and stub.job_id == "a1" and stub.coverage == result.coverage
     assert results.get("a1") is None and len(results) == 0
+
+
+def test_a_scripts_private_arrays_count_and_go_when_the_plot_is_released(window: Window, qtbot: QtBot) -> None:
+    script = Keeping()
+    plot = open_plot(window, qtbot, dataset("keep", range(1, 4)), script)
+    kept = weakref.ref(script.kept[plot.instance_id])
+    assert buffer_of(script.kept[plot.instance_id])[0] in plot.ram_buffers()
+    open_plot(window, qtbot, dataset("other", range(1, 2)))  # Shown now.
+    assert plot.release()
+    gc.collect()
+    assert script.released == [plot.instance_id] and kept() is None

@@ -29,6 +29,7 @@ from helab.scripts import dld
 from helab.scripts.dld import correlations_plot
 from helab.scripts.dld.correlations_plot import CorrelationData, CorrelationPlot, Correlations
 from helab.utils.folder_cache import Dataset
+from helab.utils.ram_buffers import buffer_of
 
 Array = npt.NDArray[np.float64]
 SCRIPT = Correlations()
@@ -392,6 +393,23 @@ def test_closing_a_plot_drops_its_state_for_good() -> None:
     state = correlations_plot.plot_state("closing-2", other.identity.source_path + "/x")
     assert state.counts is None
     SCRIPT.plot_closed("Plot", "closing-2", PATH)
+
+
+def test_a_plots_state_counts_toward_ram_and_a_release_drops_it_but_not_for_good() -> None:
+    view = txy_view(poisson_velocities(11, 3, 100))
+    run(view, {"n_boot": 0}, owner="released-1")
+    state = correlations_plot.plot_state("released-1", PATH)
+    assert state.counts is not None
+    events = [entry.events for entry in state.counts._entries.values()]
+    measured = SCRIPT.plot_buffers("Plot", "released-1")
+    assert events and all(buffer_of(array)[0] in measured for array in events)
+    del state
+    SCRIPT.plot_released("Plot", "released-1", PATH)
+    assert SCRIPT.plot_buffers("Plot", "released-1") == {}
+    # Released, not closed: its next run (a Reload or Rerun) keeps its state again.
+    run(view, {"n_boot": 0}, owner="released-1")
+    assert SCRIPT.plot_buffers("Plot", "released-1")
+    SCRIPT.plot_closed("Plot", "released-1", PATH)
 
 
 # ---- drawing, text and registration ----

@@ -65,6 +65,7 @@ from helab.analysis.stats import CropBox, crop_box
 from helab.analysis.velocity import (RECOIL_WAVELENGTH_UNCONFIRMED, VELOCITY_AXES,
                                      effective_fall_distance, txy_to_velocity, unit_velocity)
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
+from helab.utils.ram_buffers import Buffers, buffers
 from helab.scripts.dld import group
 
 Array = npt.NDArray[np.float64]
@@ -252,6 +253,23 @@ def drop_state(owner: str) -> None:
         _CLOSED[owner] = None
         while len(_CLOSED) > CLOSED_LIMIT:
             _CLOSED.popitem(last=False)
+
+
+def release_state(owner: str) -> None:
+    """Drop the plot's state to free RAM (the plot stays open: its next run starts anew)."""
+    with _LOCK:
+        _STATES.pop(owner, None)
+
+
+def state_buffers(owner: str) -> Buffers:
+    """The memory the plot's state holds: its pair counts' arrays and its in-shot cache's."""
+    with _LOCK:
+        state = _STATES.get(owner)
+    if state is None:
+        return {}
+    arrays = state.counts.held_arrays() if state.counts is not None else []
+    arrays += [counted.counts for counted in list(state.cache.values())]
+    return buffers(arrays)
 
 
 def held_states() -> int:
@@ -866,6 +884,13 @@ class Correlations(DatasetAnalysis):
         """Drop the plot's pair counts, in-shot cache, box and detection."""
         drop_state(owner)
 
+    def plot_released(self, action_name: str, owner: str, path: str) -> None:
+        """Released: drop its state (a Reload or Rerun counts its shots again)."""
+        release_state(owner)
+
+    def plot_buffers(self, action_name: str, owner: str) -> Buffers:
+        return state_buffers(owner)
+
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         return compute_correlations(context)
 
@@ -889,4 +914,4 @@ class Correlations(DatasetAnalysis):
 
 
 __all__ = ["CorrelationData", "CorrelationPlot", "Correlations", "compute_correlations", "drop_state",
-           "held_states", "plot_state"]
+           "held_states", "plot_state", "release_state", "state_buffers"]

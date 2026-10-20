@@ -408,6 +408,28 @@ def test_a_nested_root_moves_the_inheritance_boundary(monkeypatch: pytest.Monkey
         service.shutdown()
 
 
+def test_a_replaced_root_drops_the_old_roots_constants_but_not_unsaved_choices(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    service, cache = frozen(monkeypatch)
+    try:
+        cache._root_seen(ROOT, A, "old")
+        cache.remember_constants(ROOT, {"values": {"fall_distance": 0.91}, "set_at": 20.0})
+        cache._remember_unrooted(SHOT, "no .helab-root found here or above")
+        cache.set_folder_constants(SHOT, {"trap_axial": 40.0})  # RAM only: the user's, kept.
+        changed: list[str] = []
+        cache.constantsChanged.connect(changed.append)
+        request = IORequest("probe", 0, ROOT, "list", {}, 60)
+        service.resultReady.emit(request, {"kind": "root_changed", "path": ROOT, "location": "vol://test/data/root",
+                                           "uuid": B, "label": "replacement"})
+        assert ROOT in changed and cache.effective_folder_constants(RUN) == {}
+        assert cache.folder_constants(SHOT) == {"trap_axial": 40.0}
+        # The new root's own values win, even with an older set_at than the old root's.
+        cache.remember_constants(ROOT, {"values": {"fall_distance": 0.85}, "set_at": 5.0})
+        assert cache.effective_folder_constants(RUN) == {"fall_distance": 0.85}
+    finally:
+        service.shutdown()
+
+
 def test_the_dialog_says_when_values_last_only_this_session(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     service, cache = frozen(monkeypatch)
     try:

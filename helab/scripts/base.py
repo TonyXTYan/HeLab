@@ -11,6 +11,7 @@ from helab.analysis.dataset_view import DatasetView
 from helab.analysis.parameters import ParameterSpec, describe
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import SHOTS, select_shots
+from helab.utils.ram_buffers import Buffers
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QWidget
@@ -174,6 +175,17 @@ class DatasetAnalysis(HelabAnalysisScript):
         """A plot of this analysis closed (GUI thread): drop what the script kept for it, under
         ``owner`` (``AnalysisContext.owner``), and for its folder ``path`` if no other plot needs
         it. Default: nothing kept."""
+
+    def plot_released(self, action_name: str, owner: str, path: str) -> None:
+        """A plot of this analysis was released to keep RAM within the budget (GUI thread; it
+        stays open and may run again): drop the arrays kept for it (``plot_buffers``) that a
+        later run can rebuild. Default: nothing kept."""
+
+    def plot_buffers(self, action_name: str, owner: str) -> Buffers:
+        """The memory of arrays the script keeps for the plot ``owner`` between runs (beyond
+        its results), for the RAM budget (``helab.utils.ram_buffers.buffers``; GUI thread).
+        Default: none."""
+        return {}
 
     def result_record(self, action_name: str, result: AnalysisResult) -> List[str]:
         """Lines a completed run adds to the plot dock's record (its tooltip), after the

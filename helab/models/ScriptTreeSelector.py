@@ -1074,6 +1074,10 @@ class AnalysisInstance(LinkedAnalysisInstance):
                    if result is not None}
         for result in results.values():
             merged.update(buffers(arrays_in(result.data)))
+        try:
+            merged.update(self.script.plot_buffers(self.action, self.instance_id))
+        except Exception:  # A script's hook never stops the budget's count.
+            logging.exception("%s: plot_buffers failed", self.name)
         return merged
 
     def _forget_runs(self) -> None:
@@ -1116,6 +1120,10 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.result = shown if last is None or last is self.shown else self.runner.results.released(last)
         self.shown = shown
         self._forget_runs()
+        try:
+            self.script.plot_released(self.action, self.instance_id, self.path)
+        except Exception:  # A script's cleanup never stops a release.
+            logging.exception("%s: plot_released failed", self.name)
         drawn = self._shown_view or self.follow.ran
         view = hollow(drawn)
         self.follow.ran = view if self.follow.ran is drawn else hollow(self.follow.ran)

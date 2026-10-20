@@ -592,6 +592,16 @@ class PairCounts:
                 np.array([e.cross for e in entries], dtype=np.int64),
                 np.array([e.cross_pairs for e in entries], dtype=np.int64))
 
+    def held_arrays(self) -> list[npt.NDArray[Any]]:
+        """Every array the state holds (events, counts, the trees' points and indices), for
+        the RAM budget; the cache's ``InShot`` counts are the caller's."""
+        held: list[npt.NDArray[Any]] = []
+        for entry in list(self._entries.values()):
+            held += [entry.events, entry.in_shot.counts, entry.cross, *(entry.pairs or {}).values()]
+        for block in list(self._blocks):
+            held += [block.events, block.owners, block.tree.data, block.tree.indices]
+        return held
+
     def sizes(self) -> tuple[int, ...]:
         """Events used per held shot, in ``arrays()``' order."""
         return tuple(len(entry.events) for entry in self._entries.values())
