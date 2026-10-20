@@ -377,7 +377,7 @@ def test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab(
     instance.rerun_button.click()
     qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
     label = source_label(instance.dock_widget)
-    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v6\n"
+    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v7\n"
                             "manual range: full extent · bins auto · ⚠ X: min > max, using full extent")
     assert "Warning: X: min > max, using full extent" in label.toolTip()
     assert instance.status_label.text() == "⚠ X: min > max, using full extent"

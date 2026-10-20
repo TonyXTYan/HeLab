@@ -110,6 +110,9 @@ class AnalysisContext:
     # bootstrap). Not part of the result's reuse key unless the script puts what it did in
     # ``found["reuse"]``.
     live: bool = False
+    # The parameters not in use under ``parameters`` (``parameters.unused_parameters``: rows the
+    # settings hide, e.g. a smoothing width with Smooth off): left out of the result's reuse key.
+    unused: frozenset[str] = frozenset()
 
     @property
     def covered(self) -> Coverage:
@@ -149,6 +152,8 @@ class AnalysisResult:
     # lists and dicts inside are shared, so readers must not change them.
     found: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     owner: str = ""  # the plot that asked for the run (``AnalysisContext.owner``)
+    # The parameters the run didn't use (``AnalysisContext.unused``): not in ``reuse_key``.
+    unused: frozenset[str] = frozenset()
 
     @classmethod
     def of(cls, context: AnalysisContext, state: State, data: Any = None, error: str = "",
@@ -158,7 +163,7 @@ class AnalysisResult:
                    started_at, time.time(), coverage=context.covered, input_signature=context.view.signature,
                    constant_layers=context.constants, resolved_constants=context.resolved_constants,
                    constant_keys=context.constant_keys if context.resolved_constants is not None else (),
-                   found=MappingProxyType(dict(found or {})), owner=context.owner)
+                   found=MappingProxyType(dict(found or {})), owner=context.owner, unused=context.unused)
 
     @property
     def constants_record(self) -> dict[str, Any] | None:
@@ -166,24 +171,26 @@ class AnalysisResult:
         (``DatasetAnalysis.constant_keys``), its lab and folder layers and what it resolved
         (``ResolvedConstants.as_record``), of its ``constant_keys`` only (all without); None for one
         that doesn't, so a lab or folder change of a value it doesn't use never makes its results
-        look different."""
+        look different. A layer with none of those keys is left out."""
         if self.resolved_constants is None:
             return None
         keys = set(self.constant_keys) or None
-        layers = {name: {key: value for key, value in values.items() if keys is None or key in keys}
-                  for name, values in self.constant_layers.items()}
+        layers = {name: kept for name, values in self.constant_layers.items()
+                  if (kept := {key: value for key, value in values.items() if keys is None or key in keys})}
         return {"layers": layers, **self.resolved_constants.as_record(self.constant_keys or None)}
 
     def reuse_key(self) -> dict[str, Any]:
         """What a later reuse of this result must match (result caching rule 5), as JSON values:
         not used yet (R2 and R3 will). What the run decided beyond its parameters and input, which a
         reuse must match too, comes from ``found["reuse"]`` when the script gives it
-        (``DatasetAnalysis.result_found``; e.g. a box kept from an earlier run of the plot)."""
+        (``DatasetAnalysis.result_found``; e.g. a box kept from an earlier run of the plot). The
+        parameters are those in use (not ``unused``: a hidden setting never changes the key)."""
         identity = self.input.identity
         return {"analysis_id": self.analysis.analysis_id, "version": self.analysis.version,
                 "file_hash": self.analysis.file_hash, "action": self.action, "root_key": identity.root_key,
                 "signature": identity.signature, "input_signature": self.input_signature,
-                "parameters": dict(self.parameters), "coverage": self.coverage.to_json(),
+                "parameters": {name: value for name, value in self.parameters.items() if name not in self.unused},
+                "coverage": self.coverage.to_json(),
                 **({"constants": record} if (record := self.constants_record) is not None else {}),
                 **({"found": self.found["reuse"]} if "reuse" in self.found else {}),
                 **mask_key(self.parameters)}

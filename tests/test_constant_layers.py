@@ -154,9 +154,13 @@ def test_the_result_records_the_constants_it_ran_with(qtbot: QtBot) -> None:
         result = ended[0]
         assert result.state == "completed" and result.data == (resolved.fall_time, 9.8)
         assert result.resolved_constants == resolved and result.constant_layers == given
-        assert result.constants_record == {"layers": given, **resolved.as_record(KEYS)}
+        # The empty folder layer is left out of the record.
+        assert result.constants_record == {"layers": {"lab": {"g": 9.8}}, **resolved.as_record(KEYS)}
         key = json.loads(json.dumps(result.reuse_key()))
-        assert key["constants"]["origins"]["g"] == "lab" and key["constants"]["layers"] == given
+        assert key["constants"]["origins"]["g"] == "lab" and key["constants"]["layers"] == {"lab": {"g": 9.8}}
+        # Hidden rows (this plot's own values, while the layers are used) aren't in the reuse key.
+        assert "bins" in key["parameters"] and "const.g.from" in key["parameters"]
+        assert "const.g" not in key["parameters"] and "const.g" in result.parameters
         assert set(key["constants"]["values"]) == set(KEYS)  # The analysis's own constants only.
         # The record names the analysis's own constants only (not all of the table's).
         assert "Constants: g = 9.8 m/s² (lab)" in result.describe() and "ħ =" not in result.describe()
@@ -166,6 +170,23 @@ def test_the_result_records_the_constants_it_ran_with(qtbot: QtBot) -> None:
                                                   constants=given), "completed")
         assert plain.resolved_constants is None and plain.constant_layers == given
         assert plain.constants_record is None and "constants" not in plain.reuse_key()
+    finally:
+        runner.stop()
+
+
+def test_a_run_whose_keys_cant_be_named_keeps_its_constants(qtbot: QtBot) -> None:
+    """``run_constant_keys`` raising: the run keeps what it resolved, with every declared key."""
+    class Broken(FallTime):
+        def run_constant_keys(self, action_name: str, values: Mapping[str, Any]) -> tuple[str, ...]:
+            raise RuntimeError("no keys")
+
+    script = Broken()
+    view = build_view(Dataset(PATH, "sig", {1: np.zeros((2, 3))}, {"fingerprint": [[1, 1, 1]], "source": "files",
+                                                                 "loaded_at": 0.0}, 0))
+    runner = AnalysisRunner()
+    try:
+        context = runner.submit(script, script.get_metadata(), "Plot", view, {}, {"lab": {"g": 9.8}})
+        assert context.resolved_constants is not None and context.constant_keys == script.constant_keys("Plot")
     finally:
         runner.stop()
 
@@ -394,7 +415,7 @@ def test_the_histograms_fits_are_keyed_on_constants_and_marked_when_one_changes(
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")
     assert isinstance(instance, AnalysisInstance) and instance.parameter_root is not None
     qtbot.waitUntil(lambda: instance.shown is not None, timeout=10_000)
-    assert instance.constant_keys == ("fall_distance", "fall_time", "g", "mass", "k_B")
+    assert instance.constant_keys == basic_plots.CONSTANT_KEYS  # Those it can use; a run names its own.
     plain = instance.shown
     assert plain is not None and plain.resolved_constants is None and "constants" not in plain.reuse_key()
     cache.set_lab_constants({"g": 9.79})
@@ -410,9 +431,13 @@ def test_the_histograms_fits_are_keyed_on_constants_and_marked_when_one_changes(
     assert fitted.resolved_constants.origins["g"] == "lab"
     record = cast(QDockWidget, instance.dock_widget).findChild(QLabel, "plot_data_source")
     assert record is not None and record.toolTip().count("Constants: ") == 1
+    assert fitted.constant_keys == ("fall_distance", "fall_time", "g", "mass", "k_B")  # No bimodal fit: no trap
+    assert "QE = " not in record.toolTip()
     assert "constants: t_f 416.2187 ms (derived, unconfirmed) · g 9.79 m/s² (lab)" in label(instance, "plot_data_source")
     assert label(instance, "plot_error") == ""
-    cache.set_lab_constants({"g": 9.79, "mass": 6.6e-27})  # A constant only the fits use: marked.
+    cache.set_lab_constants({"g": 9.79, "detector_qe": 0.2})  # The trap's: a Gaussian fit doesn't use it.
+    assert label(instance, "plot_error") == ""
+    cache.set_lab_constants({"g": 9.79, "detector_qe": 0.2, "mass": 6.6e-27})  # Only the fits use it: marked.
     assert label(instance, "plot_error").startswith("⚠ constants changed (")
 
 
