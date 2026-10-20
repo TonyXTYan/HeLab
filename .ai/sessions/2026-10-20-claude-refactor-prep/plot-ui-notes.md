@@ -203,3 +203,20 @@ Proposals (not made: roadmap edits are Tony's):
 
 Validation (E1): tests that build the main window or settings (22 files): 510 passed,
 1 skipped; strict mypy `helab`, `tests` and pyright clean.
+
+## Fix after the slice C review: the runner's lifetime
+
+Review finding on `31358e1`: `AnalysisRunner` → `core` → its bound `_started`/`_finished` →
+runner made a cycle, so an idle runner was freed only by the cyclic GC (on whatever thread ran
+it), no longer by refcount. Fixed in its own commit:
+
+- `AnalysisQueue` holds the callbacks in `_Held`: a bound method by `weakref.WeakMethod`,
+  anything else strongly. An idle runner has no cycle again.
+- Starting the worker resolves them to strong references and passes them to the thread
+  (`Thread(target=self._work, args=callbacks)`, then `_run_jobs`/`_run` take them), so a
+  running worker keeps its runner alive exactly as the old `target=self._work` did. A callback
+  whose owner is gone when a worker starts is skipped (can't happen: only the runner submits).
+- Tests (`test_analysis.py`): an idle runner is freed with the cyclic GC off (it failed on
+  `31358e1`); a runner whose job is computing stays alive with no other reference, reports
+  the job, and is freed once stopped.
+- Also reflowed `follow.py`'s docstring line that slice C made 120 characters.

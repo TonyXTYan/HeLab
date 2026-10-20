@@ -11,8 +11,9 @@ import logging
 import queue
 import threading
 import time
+import weakref
 from types import MappingProxyType
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Generic, Mapping, Optional, TypeVar
 
 from helab.analysis.dataset_view import DatasetView
 from helab.analysis.parameters import effective, unused_parameters
@@ -20,6 +21,24 @@ from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, C
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 
 _Job = tuple[DatasetAnalysis, AnalysisContext]
+_Call = TypeVar("_Call", bound=Callable[..., None])
+
+
+class _Held(Generic[_Call]):
+    """A callback held while the queue is idle: a bound method weakly (its owner, e.g. the
+    ``AnalysisRunner`` that owns this queue, isn't kept alive by it, so no cycle), anything else
+    strongly. ``get`` resolves it (None: its owner is gone)."""
+
+    def __init__(self, callback: Optional[_Call]) -> None:
+        self._method: Optional[weakref.WeakMethod[_Call]] = None
+        self._strong: Optional[_Call] = None
+        if callback is not None and hasattr(callback, "__self__") and hasattr(callback, "__func__"):
+            self._method = weakref.WeakMethod(callback)
+        else:
+            self._strong = callback
+
+    def get(self) -> Optional[_Call]:
+        return self._method() if self._method is not None else self._strong
 
 
 class AnalysisQueue:
@@ -27,13 +46,14 @@ class AnalysisQueue:
     job ids, cooperative cancellation and the completed results kept in RAM (``results``).
     ``on_started(job_id)`` when a job starts computing and ``on_finished(result)`` when it ends,
     however it ends, are called on the worker thread (``AnalysisRunner`` turns them into Qt
-    signals delivered on the GUI thread)."""
+    signals delivered on the GUI thread). Bound methods are held weakly while no worker runs;
+    a running worker holds them strongly, so their owner lives as long as its worker."""
 
     def __init__(self, results: Optional[RamResults] = None,
                  on_started: Optional[Callable[[str], None]] = None,
                  on_finished: Optional[Callable[[AnalysisResult], None]] = None) -> None:
-        self._on_started = on_started
-        self._on_finished = on_finished
+        self._on_started = _Held(on_started)
+        self._on_finished = _Held(on_finished)
         self.results = results if results is not None else RamResults()
         self._queue: queue.Queue[_Job | None] = queue.Queue()
         self._contexts: dict[str, AnalysisContext] = {}
@@ -84,7 +104,10 @@ class AnalysisQueue:
                 raise RuntimeError("The analysis runner is stopping")
             self._contexts[context.job_id] = context
             if self._thread is None:
-                self._thread = threading.Thread(target=self._work, name="AnalysisWorker", daemon=True)
+                # The worker holds the callbacks (and so their owner) while it runs.
+                callbacks = (self._on_started.get(), self._on_finished.get())
+                self._thread = threading.Thread(target=self._work, args=callbacks, name="AnalysisWorker",
+                                                daemon=True)
                 self._thread.start()
         self._queue.put((script, context))
         return context
@@ -116,16 +139,18 @@ class AnalysisQueue:
             return not thread.is_alive()
         return True
 
-    def _work(self) -> None:
+    def _work(self, on_started: Optional[Callable[[str], None]],
+              on_finished: Optional[Callable[[AnalysisResult], None]]) -> None:
         try:
-            self._run_jobs()
+            self._run_jobs(on_started, on_finished)
         finally:
             with self._lock:
                 self._thread, self._stopping = None, False
 
-    def _run_jobs(self) -> None:
+    def _run_jobs(self, on_started: Optional[Callable[[str], None]],
+                  on_finished: Optional[Callable[[AnalysisResult], None]]) -> None:
         while (job := self._queue.get()) is not None:
-            self._run(*job)
+            self._run(*job, on_started, on_finished)
             # Nothing of the job stays referenced while the worker waits for the next one: a plot
             # released to free RAM must free its input (``helab.analysis.budget``).
             del job
@@ -140,13 +165,15 @@ class AnalysisQueue:
             logging.exception("Analysis %s: its record of what the run found failed", context.analysis.short())
             return {}
 
-    def _run(self, script: DatasetAnalysis, context: AnalysisContext) -> None:
+    def _run(self, script: DatasetAnalysis, context: AnalysisContext,
+             on_started: Optional[Callable[[str], None]],
+             on_finished: Optional[Callable[[AnalysisResult], None]]) -> None:
         started = time.time()
         if context.cancelled():
             result = AnalysisResult.of(context, "cancelled", started_at=started)
         else:
-            if self._on_started is not None:
-                self._on_started(context.job_id)
+            if on_started is not None:
+                on_started(context.job_id)
             try:
                 data = script.compute(context.action, context)
                 state: State = "cancelled" if context.cancelled() else "completed"
@@ -163,5 +190,5 @@ class AnalysisQueue:
             self._contexts.pop(context.job_id, None)
         if result.state == "completed":
             self.results.add(result)
-        if self._on_finished is not None:
-            self._on_finished(result)
+        if on_finished is not None:
+            on_finished(result)

@@ -1,8 +1,9 @@
 """Plots following Live (roadmaps/live-monitoring.md, "Plots following Live: L3").
 
 Live is HeLab's, never a plot's: the main window publishes each new dataset Live shows to a
-``LiveFeed`` (helab/analysis/live_feed.py) as the next revision of the folder's view (``revise``), and each plot of that
-folder that follows Live (``Follow``) reruns on the newest revision when its policy allows.
+``LiveFeed`` (helab/analysis/live_feed.py) as the next revision of the folder's view
+(``revise``), and each plot of that folder that follows Live (``Follow``) reruns on the newest
+revision when its policy allows.
 
 Hold and coalesce: a running analysis is never cancelled for new data. Revisions that arrive
 meanwhile wait in one slot per plot (the newest replaces the one before: no backlog), and when
