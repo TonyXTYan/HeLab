@@ -21,7 +21,25 @@
 - `DatasetAnalysis.run_constant_keys(action, values)`: the keys a run uses (default: all of
   `constant_keys`). The runner records those on the result, so the reuse key, the header's
   "Fits with …", the dock's "constants:" and the "constants changed" mark name only the keys the
-  shown run used: a lab QE change doesn't mark a Gaussian-only plot.
+  shown run used: a lab QE change doesn't mark a Gaussian-only plot. If `run_constant_keys`
+  raises, the runner logs it and keeps the resolution with every declared key.
+- **Reuse key and records** (after the merge with D8, whose `ResolvedConstants.as_record(keys)`
+  and `AnalysisResult.constants_record` narrow to `constant_keys`): `reuse_key()["constants"]`
+  holds only the run's `run_constant_keys`: no fit, no constants; a Gaussian-only fit
+  `fall_distance, fall_time, g, k_B, mass`; a bimodal fit or BEC properties those plus
+  `detector_qe, hbar, scattering_length, trap_axial, trap_axial_axis, trap_radial`. The layers
+  keep only those keys, and an empty layer is left out. The histograms' `found["constants"]` is
+  `as_record(self.constant_keys)`, so it agrees with the result's own record.
+  `ResolvedConstants.from_record` reads back only whole records: when R2/R3 first read a reuse
+  key's constants back they need a `keys=` variant (defaults or "unknown" for the rest).
+- **Hidden settings stay out of the reuse key:** `parameters.unused_parameters(specs, values)`
+  (rows whose `when` / `shown_with` doesn't hold) is computed by the runner, carried as
+  `AnalysisContext.unused` / `AnalysisResult.unused`, and `reuse_key()["parameters"]` leaves them
+  out (e.g. σ X/Y with Smooth off, Y's model with Fit Y off, "BEC properties from" with the
+  readout off). `result.parameters` and the record still have every value. AnalysisResult can't
+  reach the specs, hence the field.
+- The plot's "constants:" line and the "constants changed" mark use `result.constant_keys` as is,
+  for any run with resolved constants (no fallback to the plot's declared keys).
 
 ## Cost (294k events, 5 shots, whole compute)
 
@@ -43,10 +61,3 @@ the worker is shared), like the other heavy plots.
 - **Trap rows shown with a bimodal fit even without BEC properties**, since the bimodal's cap and
   its condensate check use the trap, QE and scattering length.
 - **Live wait 2 s** (Live settings can lower it per plot).
-- **Reuse key keeps every constant.** `AnalysisResult.reuse_key()["constants"]` is the full
-  `constants_record`, which `ResolvedConstants.from_record` must read back
-  (`test_constant_layers.py::test_the_result_records_the_constants_it_ran_with`), so a Gaussian-only
-  run's key still holds the QE even though its plot isn't marked when the QE changes. Narrowing it
-  to `constant_keys` (and reading back with defaults for the rest) is a choice for R2/R3, when
-  reuse is first used; tried here and reverted to keep that invariant. The key carries constants
-  only when a fit is on (`run_constants` None otherwise), as the brief asks.

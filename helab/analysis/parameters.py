@@ -131,3 +131,10 @@ def tree_children(specs: Sequence[ParameterSpec]) -> list[dict[str, Any]]:
             children.append(group)
         group["children"].append(item)
     return children
+
+
+def unused_parameters(specs: Sequence[ParameterSpec], values: Mapping[str, Any]) -> frozenset[str]:
+    """The names of the parameters not in use under ``values`` (``ParameterSpec.applies``: hidden by
+    their ``when`` or ``shown_with``), which a result's reuse key leaves out (a setting the run
+    didn't use never makes its result look different)."""
+    return frozenset(spec.name for spec in specs if not spec.applies(values))

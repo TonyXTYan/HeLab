@@ -228,6 +228,17 @@ def test_the_trap_constants_are_used_only_with_a_bimodal_fit_or_the_readout() ->
         assert used.constant_keys == basic_plots.CONSTANT_KEYS
         assert used.describe().count("Constants: ") == 1 and "QE = 0.1 (default, unconfirmed)" in used.describe()
         assert used.reuse_key()["constants"]["values"]["detector_qe"] == 0.1
+    # The fits' record of the constants is the result's own (the keys the run used, both ways).
+    for values in ({"fit_x": True}, {"fit_x": True, "bec_properties": True}):
+        used = run(condensate_view(), values, LAYERS)
+        record = used.constants_record
+        assert record is not None and used.found["constants"] == {key: record[key] for key in record if key != "layers"}
+    # A setting the run doesn't use (hidden) doesn't change the reuse key; a used one does.
+    base = run(condensate_view(), {"fit_x": True})
+    assert run(condensate_view(), {"fit_x": True, "smooth_xy": 3e-4}).reuse_key() == base.reuse_key()
+    assert run(condensate_view(), {"fit_x": True, "bec_axis": "Y"}).reuse_key() == base.reuse_key()
+    assert run(condensate_view(), {"fit_x": True, "fit_x_model": BIMODAL_BOSE}).reuse_key() != base.reuse_key()
+    assert "fit_y_model" not in base.reuse_key()["parameters"] and "fit_x_model" in base.reuse_key()["parameters"]
     # A bimodal model chosen for an axis that isn't fitted uses nothing more.
     assert not basic_plots.bec_constants_used({"fit_x": False, "fit_x_model": BIMODAL_BOSE})
     # The settings list the trap's rows (once each) only then.

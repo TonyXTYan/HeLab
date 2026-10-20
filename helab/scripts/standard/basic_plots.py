@@ -290,14 +290,15 @@ class Histograms:
     def record(self) -> dict[str, Any]:
         """Strict JSON for the result's record: each fit's (``AxisFit.as_record``, with the
         ``FitResult``'s), the BEC properties (``BecReadout.as_record``) and, with any fit, the
-        constants the run used (``as_record``)."""
+        constants the run used (``as_record`` of ``constant_keys``)."""
         fits = {item.axis: fit.as_record() for item, fit in zip(self.items, self.fits) if fit is not None}
         record: dict[str, Any] = {"units": self.units, "box": self.box, "fits": fits,
                                   "smoothing": {item.axis: sigma for item, sigma in zip(self.items, self.smoothing)}}
         if self.bec is not None:
             record["bec"] = self.bec.as_record()
         if fits and self.constants is not None:
-            record["constants"] = self.constants.as_record()
+            # The keys the run used, as the result's own record (``AnalysisResult.constants_record``).
+            record["constants"] = self.constants.as_record(self.constant_keys)
         record["record_lines"] = self.record_lines()
         return record
 

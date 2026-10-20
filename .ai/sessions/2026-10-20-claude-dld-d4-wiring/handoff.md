@@ -36,4 +36,9 @@ pushed. What changed and the judgement calls: [notes.md](notes.md) ("Proposed, f
   (`test_constants.py::test_read_only_saved_folder_is_replaced`,
   `test_cache_mover.py::test_recovery_isnt_usable_after_a_failed_settings_write`) and all 10
   reruns are theirs (5 each): no other test needed a rerun.
+- After the review fixes (reuse key without hidden settings, empty layers left out, records
+  agreeing, runner key fallback): `3 failed, 1975 passed, 7 skipped, 2 xfailed, 4 warnings, 15
+  rerun in 356.54s`: the two root-only failures, plus
+  `test_release_time_plot.py::test_a_constants_record_holds_only_the_analysis_s_keys`, which
+  expected the empty folder layer; its expectation is updated and it passes (15 passed in that file).
 - Cost on 294k events: notes.md, "Cost".
