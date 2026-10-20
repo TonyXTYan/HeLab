@@ -493,6 +493,7 @@ def test_queued_requests_open_no_cache_once_it_is_off(monkeypatch: pytest.Monkey
         service.shutdown()
 
 
+@pytest.mark.skipif(sys.platform != "win32" and os.geteuid() == 0, reason="root ignores read-only permissions")
 def test_recovery_isnt_usable_after_a_failed_settings_write(tmp_path: Path) -> None:
     from helab.io_helper import cache_move_job
     app, source, target = str(tmp_path / "app"), tmp_path / "caches", tmp_path / "moved"
