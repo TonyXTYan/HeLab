@@ -11,8 +11,8 @@ from typing import Any, Mapping, Sequence
 
 import pytest
 
-from helab import io_helper
-from helab.io_helper import save_subtrees, scan
+from helab.io_ops import scanning, stores
+from helab.io_ops.scanning import save_subtrees, scan
 from helab.utils import cache_store
 from helab.utils.cache_store import CacheStore, Kind, Read, StoreError
 from helab.utils.scan_history import ScanSkipped, begin_scan, empty_history, write_outcome
@@ -27,14 +27,14 @@ def blocked_folder(tmp_path: Path) -> tuple[str, dict[str, Any]]:
     source.mkdir()
     (source / "d_txy_forc1.txt").write_text("1,2,3\n")
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
-    with io_helper._cache_store(options["directory"], [str(source)]) as store:
+    with stores._cache_store(options["directory"], [str(source)]) as store:
         write_outcome(store, str(source), {"operation_id": "failed", "revision": 11, "kind": "timeout",
             "at": time.time() - 60, "attempts": 1, "reason": "I/O timeout"}, history_guard(store, str(source)))
     return str(source), options
 
 
 def saved_history(options: dict[str, Any], path: str) -> dict[str, Any]:
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    with stores._cache_store(options["directory"], [path]) as store:
         found = store.read_record("histories", path)
     assert found.value is not None
     return found.value
@@ -117,7 +117,7 @@ def test_begin_scan_decides_blocked_under_the_lock(
     assert not any(e["kind"] == "status" for e in events)
     # A skipped scan writes nothing, not even its start.
     assert not saved_history(options, path)["starts"]
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    with stores._cache_store(options["directory"], [path]) as store:
         with pytest.raises(ScanSkipped):
             begin_scan(store, path, "auto", 20, history_guard(store, path), manual=False, automatic=automatic)
         # A manual scan still runs.
@@ -213,13 +213,13 @@ def test_clear_during_a_scan_brings_back_neither_history_nor_summary(
     source.mkdir()
     (source / "d_txy_forc1.txt").write_text("1,2,3\n")
     path, options = str(source), {"directory": str(tmp_path / "cache")}
-    original = io_helper._scan
+    original = scanning._scan
 
     def clear_then_scan(*args: Any) -> dict[str, Any]:
         with CacheStore(options["directory"]) as store:
             store.remove(("summaries", "histories"))
         return original(*args)
-    monkeypatch.setattr(io_helper, "_scan", clear_then_scan)
+    monkeypatch.setattr(scanning, "_scan", clear_then_scan)
     events: list[dict[str, Any]] = []
     scan(path, events.append, options, manual=True)
     # The check itself succeeds; both saves are discarded and reported.
@@ -239,7 +239,7 @@ def subtree_record(path: str) -> dict[str, Any]:
 def test_failed_subtree_save_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     path = str(tmp_path / "a")
-    with io_helper._cache_store(options["directory"], [path]):
+    with stores._cache_store(options["directory"], [path]):
         pass
 
     def fail(*args: Any, **kwargs: Any) -> None:
@@ -254,7 +254,7 @@ def test_failed_subtree_save_is_reported(tmp_path: Path, monkeypatch: pytest.Mon
 def test_subtree_save_waits_for_a_held_write_lock(tmp_path: Path) -> None:
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     a, b = str(tmp_path / "a"), str(tmp_path / "b")
-    with io_helper._cache_store(options["directory"], [a, b]):
+    with stores._cache_store(options["directory"], [a, b]):
         pass
     save_subtrees(options, [subtree_record(b)], lambda event: None)
     holder = hold_write_lock(options, 0.5)
@@ -262,7 +262,7 @@ def test_subtree_save_waits_for_a_held_write_lock(tmp_path: Path) -> None:
     save_subtrees(options, [subtree_record(a), {"path": b, "status": ""}], events.append)
     holder.join(5)
     assert events == [{"kind": "subtree_saved", "paths": [a, b]}]
-    with io_helper._cache_store(options["directory"], [a, b]) as store:
+    with stores._cache_store(options["directory"], [a, b]) as store:
         saved = store.read_record("subtrees", a)
         assert saved.value is not None and saved.value["status"] == "something"
         assert store.read_record("subtrees", b).missing

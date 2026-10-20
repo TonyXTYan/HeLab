@@ -14,8 +14,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QMessageBox, QPushButton
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
-from helab.io_helper import list_folder
+from helab.io_ops.browse import list_folder
+from helab.io_ops.markers import create_root
 from helab.resources.icons import IconsInitUtil, StatusIcons
 from helab.utils import data_roots
 from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, PLACE_ROOT_TOOLTIP, RAM_ONLY, FolderCache,
@@ -217,7 +217,7 @@ def test_placing_a_root_writes_it_then_lists_the_folder_again(
     assert request.payload["cache"] == tab.model._cache_options
     cache.service.pending.remove(request)
     events: list[dict[str, Any]] = []
-    io_helper.create_root(str(target), request.payload["cache"], events.append)
+    create_root(str(target), request.payload["cache"], events.append)
     for event in events:
         cache.service.resultReady.emit(request, event)
     cache.service.resultReady.emit(request, {"kind": "done"})

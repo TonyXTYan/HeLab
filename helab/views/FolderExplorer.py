@@ -812,7 +812,7 @@ class FolderExplorer(QWidget):
         allow_missing = self.model.cache.take_allow_missing(path)
         return {"cache": store_options(), "signature": node.signature if node else "",
                 "no_cache": self.model.cache.folder_prefs(path)["no_cache"], "full_check": full_check,
-                # Its cached read runs now: the check counts those shots as held (see io_helper.load).
+                # Its cached read runs now: the check counts those shots as held (see io_ops.loading.load).
                 "cache_base": self.model.cache.has_request(self.model.owner, "cached", path),
                 "check_level": self.model.cache.check_level, "allow_missing": allow_missing,
                 **self._large_payload(path, deliberate)}
@@ -1568,7 +1568,7 @@ class FolderExplorer(QWidget):
         if not session.unsaved or session.request or self._live_save_blocked(session):
             return False
         cache = self.model.cache
-        # Saved from RAM: the folder is listed and its files checked, none read (``io_helper.save_held``).
+        # Saved from RAM: the folder is listed and its files checked, none read (``io_ops.save_held.save_held``).
         payload = {"cache": store_options(), "signature": "", "no_cache": False, "check_level": cache.check_level,
                    "limits": cache.large_limits(), "deliberate": False, "allow_large": False,
                    "prefer_base": session.dataset.signature, "save_memory": True,

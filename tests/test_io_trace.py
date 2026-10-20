@@ -21,8 +21,14 @@ import pytest
 from PyQt6 import QtWebEngineWidgets  # noqa: F401  (before any QApplication: conftest loads the views)
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
-from helab.io_helper import list_folder, live_check, load, scan
+from helab.io_ops import infra, markers, stores
+from helab.io_ops.browse import list_folder
+from helab.io_ops.identity import _folder_identity
+from helab.io_ops.live import live_check
+from helab.io_ops.loading import load
+from helab.io_ops.save_held import save_held
+from helab.io_ops.scanning import scan
+from helab.io_ops.trace_check import trace_check
 from helab.utils.folder_cache import store_options
 from helab.utils.io_service import IOService
 from helab.views.FolderExplorer import FolderExplorer
@@ -60,13 +66,13 @@ def trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     folder."""
     folder = tmp_path / "trace"
     folder.mkdir()
-    monkeypatch.setattr(io_helper, "TRACE", str(folder / f"{os.getpid()}.jsonl"))
-    monkeypatch.setattr(io_helper, "_trace_request", {})
-    monkeypatch.setattr(io_helper, "_trace_fd", None)
+    monkeypatch.setattr(infra, "TRACE", str(folder / f"{os.getpid()}.jsonl"))
+    monkeypatch.setattr(infra, "_trace_request", {})
+    monkeypatch.setattr(infra, "_trace_fd", None)
     monkeypatch.setenv("HELAB_TEST_IO_TRACE", str(folder))
     yield folder
-    if io_helper._trace_fd is not None:
-        os.close(io_helper._trace_fd)
+    if infra._trace_fd is not None:
+        os.close(infra._trace_fd)
 
 
 # Event fields that differ between two runs of the same call: times, and each run's output folder.
@@ -92,7 +98,7 @@ def events_of(call: Callable[[Callable[[dict[str, Any]], None]], None]) -> list[
 def test_off_unless_the_test_seam_names_a_folder(tmp_path: Path) -> None:
     """No user-facing variable: only the test seam turns a helper's trace on by itself (the old
     HELAB_IO_TRACE does nothing), into its own file in that folder."""
-    script = "import os, helab.io_helper as h; print(h.TRACE, os.getpid())"
+    script = "import os, helab.io_ops.infra as h; print(h.TRACE, os.getpid())"
     environment = {key: value for key, value in os.environ.items()
                    if key not in ("HELAB_TEST_IO_TRACE", "HELAB_IO_TRACE")}
     for name, value, traced in (("", None, False), ("HELAB_TEST_IO_TRACE", "", False),
@@ -129,11 +135,11 @@ def test_a_helper_traces_into_the_folder_its_request_names(tmp_path: Path) -> No
 
 def test_off_it_writes_nothing_and_lists_with_the_plain_scandir(tmp_path: Path,
                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(io_helper, "TRACE", None)
-    monkeypatch.setattr(io_helper, "_trace_fd", None)
+    monkeypatch.setattr(infra, "TRACE", None)
+    monkeypatch.setattr(infra, "_trace_fd", None)
     run = tmp_path / "run"
     write_shots(run, range(1, 4))
-    with io_helper._scandir(str(run), "listing") as listing:
+    with infra._scandir(str(run), "listing") as listing:
         assert type(listing) is type(os.scandir(str(run)))
     output = tmp_path / "out"
     output.mkdir()
@@ -141,7 +147,7 @@ def test_off_it_writes_nothing_and_lists_with_the_plain_scandir(tmp_path: Path,
     list_folder(str(run), lambda _: None, cache)
     scan(str(run), lambda _: None, cache)
     load(str(run), str(output), lambda _: None, cache)
-    assert io_helper._trace_fd is None
+    assert infra._trace_fd is None
     assert not list(tmp_path.glob("**/*.jsonl"))
 
 
@@ -199,15 +205,15 @@ def test_tracing_changes_no_event_and_no_source_call(tmp_path: Path, monkeypatch
                   events_of(lambda send: load(str(run), str(output), send)),
                   events_of(lambda send: live_check(str(run), str(output), send, memory, seen=seen))]
         return events, list(source.calls)
-    monkeypatch.setattr(io_helper, "TRACE", None)
+    monkeypatch.setattr(infra, "TRACE", None)
     plain = calls()
-    monkeypatch.setattr(io_helper, "TRACE", str(tmp_path / "io.jsonl"))
-    monkeypatch.setattr(io_helper, "_trace_fd", None)
+    monkeypatch.setattr(infra, "TRACE", str(tmp_path / "io.jsonl"))
+    monkeypatch.setattr(infra, "_trace_fd", None)
     try:
         traced = calls()
     finally:
-        if io_helper._trace_fd is not None:
-            os.close(io_helper._trace_fd)
+        if infra._trace_fd is not None:
+            os.close(infra._trace_fd)
     assert traced[0] == plain[0]
     assert traced[1] == plain[1] and plain[1]
     assert lines(tmp_path / "io.jsonl")
@@ -359,7 +365,7 @@ def test_read_marker_behaves_the_same_with_a_trace_callback(tmp_path: Path) -> N
 def test_hiding_a_marker_is_traced(tmp_path: Path, trace: Path) -> None:
     marker = tmp_path / ".helab-root"
     marker.write_text("{}")
-    io_helper._hide(str(marker))
+    markers._hide(str(marker))
     expected = {"darwin": ["stat", "chflags"], "win32": ["get_attributes", "set_attributes"]}.get(sys.platform, [])
     assert [record["op"] for record in lines(trace)] == expected
 
@@ -703,10 +709,10 @@ def test_a_live_save_checks_every_held_file_once_and_reads_none(tmp_path: Path, 
     held = held_arrays(run, tmp_path / "held", range(1, 10))  # Shot 10: not read by Live yet.
     cache = store_options()
     events: list[dict[str, Any]] = []
-    identity, root = io_helper._folder_identity(str(run))
+    identity, root = _folder_identity(str(run))
     before = len(lines(trace))
-    io_helper.save_held(str(run), events.append, cache, held, [3], str(tmp_path / "held"),
-                        identity=identity, identity_root=root)
+    save_held(str(run), events.append, cache, held, [3], str(tmp_path / "held"),
+              identity=identity, identity_root=root)
     kinds = [event["kind"] for event in events]
     assert "cache_saved" in kinds and "disk_cached" in kinds and "shots_missing" not in kinds
     assert "scan_summary" not in kinds  # (The fingerprint is the data's: nothing new to say.)
@@ -717,7 +723,7 @@ def test_a_live_save_checks_every_held_file_once_and_reads_none(tmp_path: Path, 
     assert found[("scandir", "save: listing")] == 1 and found[("entry_stat", "save: checking")] == 10
     assert not any(op in ("read", "stat") for op, _ in found)
     assert found[("marker_read", "save: identity")] == 1
-    with io_helper._cache_store(cache["directory"], [str(run)]) as store:
+    with stores._cache_store(cache["directory"], [str(run)]) as store:
         value = store.read_dataset(str(run)).value
         assert value is not None
         row, packed = value
@@ -736,13 +742,13 @@ def test_a_live_save_saves_nothing_for_a_missing_changed_or_other_folder(tmp_pat
 
     def save(**kwargs: Any) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
-        io_helper.save_held(str(run), events.append, cache, held, [], str(tmp_path / "held"), **kwargs)
+        save_held(str(run), events.append, cache, held, [], str(tmp_path / "held"), **kwargs)
         return events
 
     def stopped(events: list[dict[str, Any]], reason: str) -> bool:
         return (any(event["kind"] == "shots_missing" and event["reason"] == reason for event in events)
                 and not any(event["kind"] in ("loaded", "cache_saved") for event in events))
-    identity, root = io_helper._folder_identity(str(run))
+    identity, root = _folder_identity(str(run))
     other = {"helab": "root", "version": 1, "uuid": str(uuid.uuid4()), "label": "x", "created_at": "2026-10-19T00:00:00Z"}
     marker = tmp_path / data_roots.MARKER_NAME
     original = marker.read_text()
@@ -753,7 +759,7 @@ def test_a_live_save_saves_nothing_for_a_missing_changed_or_other_folder(tmp_pat
     assert stopped(save(identity=identity, identity_root=root), "changed")
     (run / "d_txy_forc2.txt").unlink()
     assert stopped(save(), "missing")
-    with io_helper._cache_store(cache["directory"], [str(run)]) as store:
+    with stores._cache_store(cache["directory"], [str(run)]) as store:
         assert store.read_dataset_row(str(run)).value is None
 
 
@@ -774,8 +780,8 @@ def test_a_live_save_reads_a_shot_live_read_recently_that_changed_again(tmp_path
     output = tmp_path / "out"
     output.mkdir()
     events: list[dict[str, Any]] = []
-    io_helper.save_held(str(run), events.append, cache, held, [], str(tmp_path / "held"), recent=[2, 3],
-                        output=str(output))
+    save_held(str(run), events.append, cache, held, [], str(tmp_path / "held"), recent=[2, 3],
+              output=str(output))
     assert not any(event["kind"] == "shots_missing" for event in events)
     shots = [event for event in events if event["kind"] == "shot"]
     assert [event["shot"] for event in shots] == [3]
@@ -790,7 +796,7 @@ def test_a_live_save_reads_a_shot_live_read_recently_that_changed_again(tmp_path
     summary = next(event for event in events if event["kind"] == "scan_summary")["status"]
     assert summary["signature"] == loaded["signature"] and summary["txy"] == [1, 2, 3] and summary["unsettled"] == 0
     assert counts(lines(trace))[("read", "save: read again")] == 1
-    with io_helper._cache_store(cache["directory"], [str(run)]) as store:
+    with stores._cache_store(cache["directory"], [str(run)]) as store:
         value = store.read_dataset(str(run)).value
         assert value is not None
         row, packed = value
@@ -799,8 +805,8 @@ def test_a_live_save_reads_a_shot_live_read_recently_that_changed_again(tmp_path
         np.testing.assert_array_equal(data[3], [[3, 2, 3], [3, 4, 5], [3, 6, 7]])
     # Not read by Live recently: a mismatch, nothing saved over it.
     events = []
-    io_helper.save_held(str(run), events.append, cache, held, [], str(tmp_path / "held"), recent=[2],
-                        output=str(output))
+    save_held(str(run), events.append, cache, held, [], str(tmp_path / "held"), recent=[2],
+              output=str(output))
     stopped = next(event for event in events if event["kind"] == "shots_missing")
     assert stopped["reason"] == "changed" and stopped["missing"] == [3]
     assert not any(event["kind"] in ("shot", "loaded", "cache_saved") for event in events)
@@ -811,12 +817,12 @@ def test_a_live_save_keeps_dont_cache_and_the_budget(tmp_path: Path) -> None:
     write_shots(run, range(1, 4))
     held = held_arrays(run, tmp_path / "held", range(1, 4))
     events: list[dict[str, Any]] = []
-    io_helper.save_held(str(run), events.append, store_options(), held, [], str(tmp_path / "held"), no_cache=True)
+    save_held(str(run), events.append, store_options(), held, [], str(tmp_path / "held"), no_cache=True)
     loaded = next(event for event in events if event["kind"] == "loaded")
     assert not loaded["disk_cache_pending"] and not any(event["kind"] == "cache_saved" for event in events)
     events = []
-    io_helper.save_held(str(run), events.append, {**store_options(), "budget": 1, "budget_set_at": time.time()},
-                        held, [], str(tmp_path / "held"))
+    save_held(str(run), events.append, {**store_options(), "budget": 1, "budget_set_at": time.time()},
+              held, [], str(tmp_path / "held"))
     assert any(event["kind"] == "cache_full" for event in events)
     assert not any(event["kind"] == "cache_saved" for event in events)
 
@@ -958,19 +964,19 @@ def test_on_off_on_never_shares_a_recording_and_running_helpers_finish_in_theirs
     service = IOService()
     try:
         first = service.start_io_trace(str(tmp_path))
-        monkeypatch.setattr(io_helper, "TRACE", None)
-        monkeypatch.setattr(io_helper, "_trace_request", {})
-        monkeypatch.setattr(io_helper, "_trace_fd", None)
-        io_helper._start_trace({"operation": "list", "path": "/x", "trace": {"dir": first}})  # (Started now…)
+        monkeypatch.setattr(infra, "TRACE", None)
+        monkeypatch.setattr(infra, "_trace_request", {})
+        monkeypatch.setattr(infra, "_trace_fd", None)
+        infra._start_trace({"operation": "list", "path": "/x", "trace": {"dir": first}})  # (Started now…)
         service.stop_io_trace()
         second = service.start_io_trace(str(tmp_path))  # (…on again, at once: no helper of it has written.)
         assert second != first and os.listdir(second) == []
-        io_helper._trace("stat", "/x/a", "late")  # (…and the first one's helper writes after that.)
+        infra._trace("stat", "/x/a", "late")  # (…and the first one's helper writes after that.)
         assert [record["reason"] for record in lines(Path(first))] == ["list", "late"] and os.listdir(second) == []
         assert sorted(os.listdir(tmp_path / IO_TRACE_FOLDER)) == sorted(map(os.path.basename, (first, second)))
     finally:
-        if io_helper._trace_fd is not None:
-            os.close(io_helper._trace_fd)
+        if infra._trace_fd is not None:
+            os.close(infra._trace_fd)
         service.shutdown()
 
 
@@ -991,17 +997,17 @@ def test_the_temp_folder_check_refuses_a_share_and_lists_earlier_recordings(
     (folder / "io-trace-x.txt").write_text("not a trace")
     (folder / "other.jsonl").write_text("{}\n")
     found: list[dict[str, Any]] = []
-    io_helper.trace_check(str(tmp_path), str(folder), found.append)
+    trace_check(str(tmp_path), str(folder), found.append)
     assert found == [{"kind": "trace_folder", "problem": "", "earlier": [
         {"path": str(folder / "io-trace-20261018-090000.jsonl"), "files": [str(folder / "io-trace-20261018-090000.jsonl")],
          "size": 3},
         {"path": str(recording), "files": [str(recording / "11.jsonl"), str(recording / "12.jsonl")], "size": 9}]}]
     found.clear()
-    io_helper.trace_check(str(tmp_path), str(tmp_path / "none yet"), found.append)
+    trace_check(str(tmp_path), str(tmp_path / "none yet"), found.append)
     assert found == [{"kind": "trace_folder", "problem": "", "earlier": []}]
     monkeypatch.setattr(cache_location, "cache_location_problem", lambda path: "on a network drive (smbfs)")
     found.clear()
-    io_helper.trace_check(str(tmp_path), str(folder), found.append)
+    trace_check(str(tmp_path), str(folder), found.append)
     assert found == [{"kind": "trace_folder", "problem": "on a network drive (smbfs)", "earlier": []}]
 
 
@@ -1022,7 +1028,7 @@ def test_deleting_earlier_recordings_keeps_what_windows_wont_delete(
     old.write_text("{}\n")
     (folder / "other.jsonl").write_text("{}\n")
     found: list[dict[str, Any]] = []
-    io_helper.trace_check(str(tmp_path), str(folder), found.append)
+    trace_check(str(tmp_path), str(folder), found.append)
     earlier = found[0]["earlier"]
     assert [recording["path"] for recording in earlier] == [str(old), str(one), str(two)]
     remove = os.remove

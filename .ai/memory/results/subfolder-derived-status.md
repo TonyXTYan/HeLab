@@ -9,7 +9,7 @@ metadata:
 ---
 Rules Tony chose (2026-10-08/09) for showing a folder's status from its
 subfolders in the active browser. Code: `SnapshotFileSystemModel._derive`,
-`FolderCache.save_subtree`, `io_helper._subtree_info` / `save_subtrees`.
+`FolderCache.save_subtree`, `io_ops.scanning.save_subtrees`.
 Tests: end of `tests/test_two_step_browse.py`.
 
 - A folder's own result (`report`) is unchanged: own TXY data always wins, and

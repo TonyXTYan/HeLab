@@ -9,8 +9,10 @@ import pytest
 from PyQt6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 
-from helab.io_helper import list_folder, load, scan
-from helab import io_helper
+from helab.io_ops import stores
+from helab.io_ops.browse import list_folder
+from helab.io_ops.loading import load
+from helab.io_ops.scanning import scan
 from helab.resources.icons import IconsInitUtil, StatusIcons
 from helab.utils.folder_cache import FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService
@@ -136,12 +138,12 @@ def test_blocked_helper_skips_automatic_check_but_allows_browsing_and_manual_sca
     path, options = str(source), options_for(tmp_path)
     if had_counts:
         scan(path, lambda e: None, options, revision=10)
-    with io_helper._cache_store(options["directory"], [path]) as cache:
+    with stores._cache_store(options["directory"], [path]) as cache:
         outcome(cache, path, failure("failed", 11))
         previous = cache.read_record("summaries", path).value
     events: list[dict[str, Any]] = []
     with monkeypatch.context() as blocked:
-        blocked.setattr("helab.io_helper._scan", lambda *a, **k: pytest.fail("Automatic check touched source"))
+        blocked.setattr("helab.io_ops.scanning._scan", lambda *a, **k: pytest.fail("Automatic check touched source"))
         scan(path, events.append, options, manual=False, automatic=True)
         assert {"kind": "scan_mode", "mode": "skipped"} in events
         events.clear()
@@ -153,14 +155,14 @@ def test_blocked_helper_skips_automatic_check_but_allows_browsing_and_manual_sca
     assert any(e["kind"] == "entries" for e in events)
     status = next(e for e in events if e["kind"] == "status")
     assert not status["details"] and "signature" not in status
-    with io_helper._cache_store(options["directory"], [path]) as cache:
+    with stores._cache_store(options["directory"], [path]) as cache:
         history = read_history(cache, path)
         assert history is not None and history["blocked"]
         assert cache.read_record("summaries", path).value == previous
     events.clear()
     scan(path, events.append, options, manual=True, revision=12)
     assert any(e["kind"] == "status" for e in events)
-    with io_helper._cache_store(options["directory"], [path]) as cache:
+    with stores._cache_store(options["directory"], [path]) as cache:
         history = read_history(cache, path)
         assert history is not None and not history["blocked"] and len(history["failures"]) == 1
 
@@ -171,13 +173,13 @@ def test_unknown_metadata_does_not_auto_check_and_manual_scan_repairs_it(
     source = tmp_path / "source"
     source.mkdir()
     path, options = str(source), options_for(tmp_path)
-    with io_helper._cache_store(options["directory"], [path]) as cache:
+    with stores._cache_store(options["directory"], [path]) as cache:
         save_history(cache, path, {"version": "corrupt"})
     with monkeypatch.context() as blocked:
-        blocked.setattr("helab.io_helper._scan", lambda *a, **k: pytest.fail("Unknown metadata touched source"))
+        blocked.setattr("helab.io_ops.scanning._scan", lambda *a, **k: pytest.fail("Unknown metadata touched source"))
         scan(path, lambda e: None, options, manual=False, automatic=True)
     scan(path, lambda e: None, options, manual=True)
-    with io_helper._cache_store(options["directory"], [path]) as cache:
+    with stores._cache_store(options["directory"], [path]) as cache:
         history = read_history(cache, path)
         assert history is not None and not history["blocked"] and history["last_success_at"] is not None
 
@@ -276,7 +278,7 @@ def test_visible_folder_restores_failure_before_selection_load_and_manual_recove
         "cache": options, "signature": explorer.model.nodes[p].signature})
     if had_counts:
         scan(path, lambda e: None, options, revision=10)
-    with io_helper._cache_store(options["directory"], [path]) as disk:
+    with stores._cache_store(options["directory"], [path]) as disk:
         outcome(disk, path, failure("saved-failure", 11))
     browse(qtbot, cache, str(root))
     qtbot.waitUntil(lambda: path in explorer.model.nodes)

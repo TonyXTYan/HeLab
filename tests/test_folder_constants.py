@@ -13,7 +13,8 @@ from typing import Any
 import pytest
 from pytestqt.qtbot import QtBot
 
-from helab.io_helper import cache_admin, list_folder
+from helab.io_ops.admin import cache_admin
+from helab.io_ops.browse import list_folder
 from helab.utils.cache_store import KINDS, CacheStore
 from helab.utils.folder_cache import FolderCache, store_options
 from helab.utils.io_service import IORequest, IOService

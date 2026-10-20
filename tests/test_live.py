@@ -19,8 +19,12 @@ from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QDialog
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
-from helab.io_helper import list_folder, live_check, load, read_cached, save_held, scan
+from helab.io_ops import fingerprints
+from helab.io_ops.browse import list_folder
+from helab.io_ops.live import live_check
+from helab.io_ops.loading import load, read_cached
+from helab.io_ops.save_held import save_held
+from helab.io_ops.scanning import scan
 from helab.utils.constants import (
     DEFAULT_LIVE_AUTOSAVE, DEFAULT_LIVE_INTERVAL, LIVE_AUTOSAVE_SETTING, LIVE_INTERVAL_SETTING, read_live_autosave,
     read_live_interval,
@@ -309,7 +313,7 @@ def test_files_still_being_written_wait_and_are_counted(
     explorer = open_loaded(qtbot, service, run, tmp_path)
     cache = explorer.model.cache
     assert explorer.start_live()
-    monkeypatch.setattr(io_helper, "SETTLE_SECONDS", 5.0)
+    monkeypatch.setattr(fingerprints, "SETTLE_SECONDS", 5.0)
     write_shot(run, 3, age=0)
     age_folder(run, 60)
     checks(qtbot, explorer, path, tmp_path)

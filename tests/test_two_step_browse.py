@@ -12,8 +12,10 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
-from helab.io_helper import list_folder, load, save_subtrees, scan
+from helab.io_ops import stores
+from helab.io_ops.browse import list_folder
+from helab.io_ops.loading import load
+from helab.io_ops.scanning import save_subtrees, scan
 from helab.utils.cache_store import CacheStore, Read
 from helab.utils.cache_paths import Mount
 from helab.utils import cache_paths
@@ -87,7 +89,7 @@ class _NoStatListing:
 
 
 def saved_summary(options: dict[str, Any], path: str) -> dict[str, Any]:
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    with stores._cache_store(options["directory"], [path]) as store:
         found = store.read_record("summaries", path)
     assert found.value is not None
     return found.value
@@ -196,7 +198,7 @@ def test_refresh_replaces_newer_ram_status_history_and_subtree_with_saved_listin
     qtbot.addWidget(explorer)
     cache, options = explorer.model.cache, explorer.model._cache_options
     scan(path, lambda event: None, options)
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    with stores._cache_store(options["directory"], [path]) as store:
         saved_status = store.read_record("summaries", path).value
         assert saved_status is not None
         saved_history = apply_outcome(empty_history(), {
@@ -712,7 +714,7 @@ def test_startup_restores_saved_subfolder_status_without_rescanning(
     for child in children:
         scan(str(child), lambda event: None, options)  # Saved by a previous session.
     # A prior version stored mount-dependent IDs. Their mismatch must not erase statuses.
-    with io_helper._cache_store(options["directory"], [str(child) for child in children]) as store:
+    with stores._cache_store(options["directory"], [str(child) for child in children]) as store:
         for child in children:
             saved = store.read_record("summaries", str(child)).value
             assert saved is not None
@@ -918,8 +920,8 @@ def test_derived_status_survives_restart_without_listing_the_folder(
     # B's background details scan saves its summary (a names-only listing does not).
     scan(str(a / "B"), lambda event: None, tree.model._cache_options)
     assert set(save_queued_subtrees(qtbot, tree)) == {str(a), str(tmp_path)}
-    with io_helper._cache_store(tree.model._cache_options["directory"],
-                                [str(a), str(tmp_path)]) as store:
+    with stores._cache_store(tree.model._cache_options["directory"],
+                             [str(a), str(tmp_path)]) as store:
         for path in (str(a), str(tmp_path)):
             saved = store.read_record("subtrees", path).value
             assert saved is not None

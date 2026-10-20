@@ -14,8 +14,9 @@ import uuid
 import numpy as np
 import pytest
 
-from helab import io_helper
-from helab.io_helper import live_check, load
+from helab.io_ops import fingerprints, infra
+from helab.io_ops.live import live_check
+from helab.io_ops.loading import load
 
 
 def write_shot(folder: Path, shot: int, *, age: float = 60.0) -> Path:
@@ -270,7 +271,7 @@ def test_files_still_being_written_are_counted_and_left_for_later(
     monkeypatch: pytest.MonkeyPatch, folder: Path, tmp_path: Path,
 ) -> None:
     memory = held(folder, tmp_path)
-    monkeypatch.setattr(io_helper, "SETTLE_SECONDS", 5.0)
+    monkeypatch.setattr(fingerprints, "SETTLE_SECONDS", 5.0)
     write_shot(folder, 3, age=0)
     age_folder(folder, 30)
     result = last(check(folder, tmp_path, memory), "live_unchanged")
@@ -303,12 +304,12 @@ def test_unreadable_new_files_are_kept_known_and_not_read_again(
     assert loaded["failed_files"] == 1 and 3 in loaded["problematic"] and loaded["memory_shots"] == [1, 2]
     known = [entry for entry in loaded["fingerprint"] if entry[0] == 3]
     reads: list[str] = []
-    real = io_helper._read_txy_file
+    real = infra._read_txy_file
 
     def read_file(filename: str, reason: str) -> Any:
         reads.append(filename)
         return real(filename, reason)
-    monkeypatch.setattr(io_helper, "_read_txy_file", read_file)
+    monkeypatch.setattr(infra, "_read_txy_file", read_file)
     again = check(folder, tmp_path, memory, known=known)
     assert last(again, "live_unchanged")["total_files"] == 3 and not reads
 

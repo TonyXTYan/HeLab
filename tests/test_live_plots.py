@@ -30,7 +30,9 @@ from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec, effective
 from helab.analysis.results import AnalysisContext, AnalysisResult, Coverage
 from helab.analysis.runner import AnalysisRunner
-from helab.io_helper import list_folder, live_check, load
+from helab.io_ops.browse import list_folder
+from helab.io_ops.live import live_check
+from helab.io_ops.loading import load
 from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import PLOT_MINIMUM_SIZE, DatasetAnalysis, ScriptMetadata
 from helab.scripts.dld import (correlations_plot, density_images, mean_position, release_time, shot_times,

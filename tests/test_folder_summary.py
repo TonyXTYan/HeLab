@@ -14,7 +14,9 @@ from pytestqt.qtbot import QtBot
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel
 
-from helab.io_helper import list_folder, load, scan
+from helab.io_ops.browse import list_folder
+from helab.io_ops.loading import load
+from helab.io_ops.scanning import scan
 from helab.utils.folder_cache import FolderCache
 from helab.utils.io_service import IORequest, IOService
 from helab.views.CentralHint import CentralHint
@@ -683,7 +685,7 @@ def test_cancel_button_preserves_another_tabs_shared_load(
 def test_scan_metadata_survives_restart_without_reading_txy_contents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from helab import io_helper
+    from helab.io_ops import stores
     import pandas as pd
     import blosc
     root, child = tmp_path / "source", tmp_path / "source" / "run"
@@ -701,7 +703,7 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
     scan(str(child), events.append, options)
     initial = next(e for e in events if e["kind"] == "status")
     assert initial["count"] == 1 and initial["status"] == "ok"
-    with io_helper._cache_store(options["directory"], [str(child)]) as store:
+    with stores._cache_store(options["directory"], [str(child)]) as store:
         # Scan persistence exists without any loaded data.
         assert store.read_dataset_row(str(child)).missing
         saved = store.read_record("summaries", str(child)).value
@@ -725,7 +727,7 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
     assert {"kind": "scan_cached", "status": saved} in events
     assert next(e for e in events if e["kind"] == "status")["scanned_at"] >= saved["scanned_at"]
     # A failed refresh retains the previous date and count in persistent storage.
-    with io_helper._cache_store(options["directory"], [str(child)]) as store:
+    with stores._cache_store(options["directory"], [str(child)]) as store:
         previous = store.read_record("summaries", str(child)).value
 
     def unavailable(path: str) -> Any:
@@ -736,7 +738,7 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
     with pytest.raises(OSError, match="Volume unavailable"):
         scan(str(child), events.append, options)
     assert next(e for e in events if e["kind"] == "scan_cached")["status"] == previous
-    with io_helper._cache_store(options["directory"], [str(child)]) as store:
+    with stores._cache_store(options["directory"], [str(child)]) as store:
         assert store.read_record("summaries", str(child)).value == previous
 
 
@@ -982,7 +984,7 @@ def test_auto_scan_keeps_persisted_results_until_manual_basic_scan(
     options: dict[str, Any] = {"directory": str(tmp_path_factory.mktemp("scan-cache"))}
     saved_at = time.time() - 7200
     with monkeypatch.context() as old_clock:
-        old_clock.setattr("helab.io_helper.time.time", lambda: saved_at)
+        old_clock.setattr("helab.io_ops.scanning.time.time", lambda: saved_at)
         scan(str(cached_child), lambda e: None, options)
     # Source changes are deliberately left for a manual scan to discover.
     (cached_child / "d_txy_forc2.txt").write_text("4,5,6\n")
@@ -1125,7 +1127,7 @@ def test_manual_scan_confirms_data_changes_and_load_clears_cache_warning(
     output = tmp_path_factory.mktemp("freshness-artifacts")
     saved_at = time.time() - 3600
     with monkeypatch.context() as old_clock:
-        old_clock.setattr("helab.io_helper.time.time", lambda: saved_at)
+        old_clock.setattr("helab.io_ops.scanning.time.time", lambda: saved_at)
         scan(str(child), lambda e: None, options)
         load(str(child), str(output), lambda e: None, options)
     (child / "d2.txt").write_text("")

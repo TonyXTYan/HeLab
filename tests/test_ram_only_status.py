@@ -10,8 +10,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
-from helab.io_helper import list_folder, save_scan_history, scan
+from helab.io_ops import stores
+from helab.io_ops.browse import list_folder
+from helab.io_ops.scanning import save_scan_history, scan
 from helab.resources.icons import IconsInitUtil, StatusIcons
 from helab.utils import cache_paths
 from helab.utils.cache_paths import Mount
@@ -95,7 +96,7 @@ def test_a_cache_that_cannot_open_still_skips_scans_that_are_not_manual(
 
     def cannot_open(*args: Any, **kwargs: Any) -> Any:
         raise StoreError("Disk cache could not be opened: unable to open database file")
-    monkeypatch.setattr(io_helper, "_cache_store", cannot_open)
+    monkeypatch.setattr(stores, "_cache_store", cannot_open)
     events: Events = []
     scan(str(folder), events.append, {"directory": str(tmp_path / "store")}, manual=False, automatic=automatic)
     assert events[-1] == {"kind": "scan_mode", "mode": "skipped"}

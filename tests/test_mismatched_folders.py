@@ -11,7 +11,8 @@ import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6 import QtWebEngineWidgets  # noqa: F401  Shared worker cleanup imports WebEngine; preload before QApplication.
 
-from helab.io_helper import load, scan
+from helab.io_ops.loading import load
+from helab.io_ops.scanning import scan
 from helab.utils.folder_cache import FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService
 from helab.views.MissingShotsWindow import CANCEL_TIP, LOAD_TIP, SKIP_ALL_TIP, SKIP_TIP, MissingShotsWindow

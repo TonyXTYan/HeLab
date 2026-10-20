@@ -12,7 +12,11 @@ import uuid
 import pytest
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
+from helab.io_ops import stores
+from helab.io_ops.admin import cache_admin
+from helab.io_ops.browse import list_folder
+from helab.io_ops.loading import load, read_cached
+from helab.io_ops.markers import create_root
 from helab.utils import cache_paths, data_roots
 from helab.utils.cache_paths import Mount
 from helab.utils.cache_store import CacheStore
@@ -45,21 +49,21 @@ def test_new_marker_is_the_exact_text_a_reader_accepts(tmp_path: Path) -> None:
 
 def test_enabling_writes_the_marker_and_records_the_root(share: Path, tmp_path: Path) -> None:
     events: list[dict[str, Any]] = []
-    io_helper.create_root(str(share), options(tmp_path), events.append)
+    create_root(str(share), options(tmp_path), events.append)
     created = next(event for event in events if event["kind"] == "root_created")
     assert data_roots.read_marker(str(share)).uuid == created["uuid"]
     assert any(event["kind"] == "root_found" for event in events)
     with CacheStore(options(tmp_path)["directory"], root_mode=True) as store:
         assert store.root_at("smb://host/share") == (created["uuid"], "share", "confirmed")
-    with io_helper._cache_store(options(tmp_path)["directory"], [str(share / "run")]) as store:
+    with stores._cache_store(options(tmp_path)["directory"], [str(share / "run")]) as store:
         assert store._path_key(str(share / "run")) == f"root://{created['uuid']}/run"
 
 
 def test_enabling_again_adopts_the_marker_already_there(share: Path, tmp_path: Path) -> None:
     first: list[dict[str, Any]] = []
-    io_helper.create_root(str(share), options(tmp_path), first.append)
+    create_root(str(share), options(tmp_path), first.append)
     again: list[dict[str, Any]] = []
-    io_helper.create_root(str(share), options(tmp_path), again.append)
+    create_root(str(share), options(tmp_path), again.append)
     created = next(event for event in first if event["kind"] == "root_created")
     adopted = next(event for event in again if event["kind"] == "root_adopted")
     assert adopted["uuid"] == created["uuid"]
@@ -70,7 +74,7 @@ def test_without_write_permission_the_exact_contents_are_handed_out(share: Path,
     share.chmod(stat.S_IRUSR | stat.S_IXUSR)
     try:
         events: list[dict[str, Any]] = []
-        io_helper.create_root(str(share), options(tmp_path), events.append)
+        create_root(str(share), options(tmp_path), events.append)
     finally:
         share.chmod(stat.S_IRWXU)
     manual = next(event for event in events if event["kind"] == "root_manual")
@@ -81,31 +85,31 @@ def test_without_write_permission_the_exact_contents_are_handed_out(share: Path,
     # Placed by hand, the next listing finds it.
     (share / ".helab-root").write_bytes(manual["contents"].encode("utf-8"))
     listed: list[dict[str, Any]] = []
-    io_helper.list_folder(str(share), listed.append, options(tmp_path))
+    list_folder(str(share), listed.append, options(tmp_path))
     assert any(event["kind"] == "root_found" for event in listed)
 
 
 def test_inventory_lists_root_locations_and_forgetting_one_keeps_its_data(share: Path, tmp_path: Path) -> None:
     cache = options(tmp_path)
-    io_helper.create_root(str(share), cache, lambda _: None)
+    create_root(str(share), cache, lambda _: None)
     run = str(share / "run")
-    with io_helper._cache_store(cache["directory"], [run]) as store:
+    with stores._cache_store(cache["directory"], [run]) as store:
         store.save_record("summaries", run, {"version": 1}, store.guard([run], ["summaries"]))
     events: list[dict[str, Any]] = []
-    io_helper.cache_admin(cache, "inventory", events.append)
+    cache_admin(cache, "inventory", events.append)
     roots = next(event for event in events if event["kind"] == "inventory")["inventory"]["roots"]
     assert [(row["location"], row["label"], row["decision"], row["path"]) for row in roots] == [
         ("smb://host/share", "share", "confirmed", str(share))]
     events = []
-    io_helper.cache_admin(cache, "forget_root", events.append, location="smb://host/share")
+    cache_admin(cache, "forget_root", events.append, location="smb://host/share")
     assert {"kind": "root_changed", "path": str(share), "location": "smb://host/share",
             "reason": "forgotten"} in events
     with CacheStore(cache["directory"], root_mode=True) as store:
         assert store.root_rows() == []
         assert store._conn.execute("SELECT COUNT(*) FROM folder_summaries").fetchone()[0] == 1
     # The marker is still there: the next listing finds it, and the data with it.
-    io_helper.list_folder(str(share), lambda _: None, cache)
-    with io_helper._cache_store(cache["directory"], [run]) as store:
+    list_folder(str(share), lambda _: None, cache)
+    with stores._cache_store(cache["directory"], [run]) as store:
         assert store.read_record("summaries", run).value == {"version": 1}
 
 
@@ -138,22 +142,22 @@ def test_folder_cache_tracks_roots_and_ram_only_folders(qtbot: QtBot, monkeypatc
 def test_a_folder_deep_in_a_root_reports_that_root(share: Path, tmp_path: Path) -> None:
     """A restored tab inside a root whose folder this session never listed still learns it."""
     cache = options(tmp_path)
-    io_helper.create_root(str(share), cache, lambda _: None)
+    create_root(str(share), cache, lambda _: None)
     deep = share / "run" / "a"
     deep.mkdir()
     (deep / "d_txy_forc1.txt").write_text("1,2,3\n")
     identifier = data_roots.read_marker(str(share)).uuid
     expected = {"path": str(share), "uuid": identifier, "label": "share"}
     events: list[dict[str, Any]] = []
-    io_helper.list_folder(str(deep), events.append, cache)
+    list_folder(str(deep), events.append, cache)
     assert next(event for event in events if event["kind"] == "status")["data_root"] == expected
     output = tmp_path / "output"
     output.mkdir()
     loaded: list[dict[str, Any]] = []
-    io_helper.load(str(deep), str(output), loaded.append, cache)
+    load(str(deep), str(output), loaded.append, cache)
     assert next(event for event in loaded if event["kind"] == "loaded")["data_root"] == expected
     cached: list[dict[str, Any]] = []
-    io_helper.read_cached(str(deep), str(output), cached.append, cache)
+    read_cached(str(deep), str(output), cached.append, cache)
     # The local lane too, from the roots table alone.
     assert next(event for event in cached if event["kind"] == "loaded")["data_root"] == expected
 
@@ -161,14 +165,14 @@ def test_a_folder_deep_in_a_root_reports_that_root(share: Path, tmp_path: Path) 
 def test_an_invalid_marker_is_never_overwritten(share: Path, tmp_path: Path) -> None:
     (share / ".helab-root").write_text("not json")
     with pytest.raises(ValueError, match="already exists here but can't be used.*Fix or remove it"):
-        io_helper.create_root(str(share), options(tmp_path), lambda _: None)
+        create_root(str(share), options(tmp_path), lambda _: None)
     assert (share / ".helab-root").read_text() == "not json"
 
 
 def test_a_marker_created_on_macos_is_flagged_hidden(share: Path, tmp_path: Path) -> None:
     if sys.platform != "darwin":  # (A check type checkers follow: st_flags is macOS/BSD only.)
         pytest.skip("macOS file flags")
-    io_helper.create_root(str(share), options(tmp_path), lambda _: None)
+    create_root(str(share), options(tmp_path), lambda _: None)
     assert os.stat(share / ".helab-root").st_flags & stat.UF_HIDDEN
 
 

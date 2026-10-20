@@ -16,7 +16,8 @@ from pytestqt.qtbot import QtBot
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QTreeView
 
-from helab.io_helper import load, scan
+from helab.io_ops.loading import load
+from helab.io_ops.scanning import scan
 from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.utils.io_service import IORequest, IOService
 from helab.views.FolderExplorer import FolderExplorer
@@ -177,8 +178,8 @@ def test_scope_and_stale_results(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, 
 def test_helpers_send_heartbeats_while_listing_and_checking_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from helab import io_helper
-    monkeypatch.setattr(io_helper.Heartbeat, "INTERVAL", 0.0)
+    from helab.io_ops import infra
+    monkeypatch.setattr(infra.Heartbeat, "INTERVAL", 0.0)
     source = tmp_path / "source"
     source.mkdir()
     for shot in (1, 2, 3):

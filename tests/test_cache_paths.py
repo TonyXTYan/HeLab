@@ -202,14 +202,14 @@ def test_unresolved_smb_mount_refuses_literal_key(tmp_path: Path) -> None:
 @pytest.mark.parametrize("fstype", ["nfs", "afpfs", "webdav"])
 def test_unsupported_remote_root_browses_with_typed_cache_notice(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fstype: str) -> None:
-    from helab import io_helper
+    from helab.io_ops.browse import list_folder
 
     mount = tmp_path / "remote"
     mount.mkdir()
     monkeypatch.setattr(cache_paths, "current_mounts",
                         lambda: [Mount("server:/export", str(mount), fstype, True)])
     events: list[dict[str, object]] = []
-    io_helper.list_folder(str(mount), events.append, {"directory": str(tmp_path / "store-v2")})
+    list_folder(str(mount), events.append, {"directory": str(tmp_path / "store-v2")})
     notices = [event for event in events if event.get("kind") == "cache_skipped"]
     assert len(notices) == 1
     mounts_seen = notices[0]["mounts"]
@@ -221,7 +221,7 @@ def test_unsupported_remote_root_browses_with_typed_cache_notice(
 @pytest.mark.no_auto_data_root
 def test_mount_lookup_failure_keeps_listing_successful(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from helab import io_helper
+    from helab.io_ops.browse import list_folder
 
     folder = tmp_path / "run"
     folder.mkdir()
@@ -232,8 +232,8 @@ def test_mount_lookup_failure_keeps_listing_successful(
 
     monkeypatch.setattr(cache_paths, "current_mounts", unavailable)
     events: list[dict[str, object]] = []
-    io_helper.list_folder(str(folder), events.append,
-                          {"directory": str(tmp_path / "store-v2")})
+    list_folder(str(folder), events.append,
+                {"directory": str(tmp_path / "store-v2")})
     assert any(event.get("kind") == "cache_warning" for event in events)
     assert any(event.get("kind") == "entries" for event in events)
     assert not any(event.get("kind") == "error" for event in events)
@@ -241,7 +241,8 @@ def test_mount_lookup_failure_keeps_listing_successful(
 
 def test_helper_listing_uses_root_key_and_returns_source_path(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from helab import io_helper
+    from helab.io_ops import stores
+    from helab.io_ops.browse import list_folder
 
     mount = tmp_path / "volume-1"
     child = mount / "Run1"
@@ -249,7 +250,7 @@ def test_helper_listing_uses_root_key_and_returns_source_path(
     monkeypatch.setattr(cache_paths, "current_mounts",
                         lambda: [Mount("//example-server/Share", str(mount), "smbfs")])
     root = str(tmp_path / "store-v2")
-    with io_helper._cache_store(root, [str(child)]) as store:
+    with stores._cache_store(root, [str(child)]) as store:
         store.set_prefs(str(child), True, True, time.time())
         with sqlite3.connect(store.database) as conn:
             root_record = store.root_at("smb://example-server/share")
@@ -257,7 +258,7 @@ def test_helper_listing_uses_root_key_and_returns_source_path(
             assert conn.execute("SELECT path FROM folder_prefs").fetchone()[0] == (
                 f"root://{root_record[0]}/Run1")
     events: list[dict[str, object]] = []
-    io_helper.list_folder(str(mount), events.append, {"directory": root})
+    list_folder(str(mount), events.append, {"directory": root})
     batches = [event["entries"] for event in events if event.get("kind") == "entries"]
     entries = [entry for batch in batches if isinstance(batch, list) for entry in batch]
     assert len(entries) == 1
@@ -267,7 +268,8 @@ def test_helper_listing_uses_root_key_and_returns_source_path(
 
 def test_refused_child_does_not_fail_parent_scan_or_lose_sibling_cache(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from helab import io_helper
+    from helab.io_ops import stores
+    from helab.io_ops.scanning import scan
 
     parent = tmp_path / "parent"
     normal = parent / "normal"
@@ -278,10 +280,10 @@ def test_refused_child_does_not_fail_parent_scan_or_lose_sibling_cache(
         Mount(str(tmp_path), str(tmp_path), "apfs"),
         Mount("server:/export", str(remote), "nfs", True)])
     root = str(tmp_path / "store-v2")
-    with io_helper._cache_store(root, [str(normal)]) as store:
+    with stores._cache_store(root, [str(normal)]) as store:
         store.set_prefs(str(normal), True, True, time.time())
     events: list[dict[str, object]] = []
-    io_helper.scan(str(parent), events.append, {"directory": root})
+    scan(str(parent), events.append, {"directory": root})
     assert any(event.get("kind") == "status" for event in events)
     assert not any(event.get("kind") == "error" for event in events)
     assert not any(event.get("kind") == "cache_warning" for event in events)
@@ -299,7 +301,8 @@ def test_refused_child_does_not_fail_parent_scan_or_lose_sibling_cache(
 
 def test_refused_subtree_does_not_lose_other_batch_saves(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from helab import io_helper
+    from helab.io_ops import stores
+    from helab.io_ops.scanning import save_subtrees
 
     remote = tmp_path / "remote"
     remote.mkdir()
@@ -308,14 +311,14 @@ def test_refused_subtree_does_not_lose_other_batch_saves(
         Mount(str(tmp_path), str(tmp_path), "apfs"),
         Mount("server:/export", str(remote), "nfs", True)])
     root = str(tmp_path / "store-v2")
-    with io_helper._cache_store(root, [local]):
+    with stores._cache_store(root, [local]):
         pass  # Seed the test root before the local-lane save.
     events: list[dict[str, object]] = []
-    io_helper.save_subtrees({"directory": root},
-                            [{"path": local, "status": "nothing", "derived_at": 1.0},
-                             {"path": str(remote), "status": "something", "derived_at": 1.0}],
-                            events.append)
+    save_subtrees({"directory": root},
+                  [{"path": local, "status": "nothing", "derived_at": 1.0},
+                   {"path": str(remote), "status": "something", "derived_at": 1.0}],
+                  events.append)
     assert any(event.get("kind") == "subtree_saved" and event.get("paths") == [local]
                and event.get("skipped") == [str(remote)] for event in events)
-    with io_helper._cache_store(root, [local]) as store:
+    with stores._cache_store(root, [local]) as store:
         assert store.read_record("subtrees", local).found

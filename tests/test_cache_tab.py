@@ -13,7 +13,7 @@ from pytestqt.qtbot import QtBot
 from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QDialog, QMessageBox, QWidget
 
-from helab.io_helper import cache_admin
+from helab.io_ops.admin import cache_admin
 from helab.utils.cache_store import CacheStore, DatasetRecord, _record_bytes, trim_estimate
 from helab.utils.constants import (
     DISK_BUDGET_SETTING, RAM_BUDGET_SETTING, read_disk_budget, read_io_concurrency, read_ram_budget,

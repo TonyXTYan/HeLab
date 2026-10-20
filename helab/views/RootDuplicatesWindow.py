@@ -2,7 +2,7 @@
 also at another location (data roots, D4).
 
 A listing that finds a marker whose UUID another confirmed location already has records the new
-location as pending (``io_helper._discover_root``'s ``root_duplicate``): it uses RAM only until the
+location as pending (``io_ops.markers._discover_root``'s ``root_duplicate``): it uses RAM only until the
 user answers here. Same folder confirms it (``cache_admin root_same``); It's a copy… gives one side a
 new marker (``root_reassign``), and the side keeping the original UUID keeps the cached data.
 The window opens once per location per session (``FolderCache.rootDuplicateFound``); Later reopens

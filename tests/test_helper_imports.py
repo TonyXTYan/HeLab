@@ -1,7 +1,7 @@
 """Browsing helpers stay light: listings and scans import no numpy, pandas, Blosc or Qt.
 
 Only TXY reads (loads, cached reads, Live) import numpy and pandas, and only the icon
-helper imports Qt, each inside the function that needs it (``helab/io_helper.py``). A
+helper imports Qt, each inside the function that needs it (``helab/io_ops/``). A
 listing on a slow share should start at once, and moving helper code into modules must
 keep it that way.
 """
@@ -17,13 +17,14 @@ HEAVY = ("numpy", "pandas", "blosc", "PyQt6")
 
 SCRIPT = """
 import json, sys
-from helab import io_helper
+from helab.io_ops.browse import list_folder
+from helab.io_ops.scanning import scan
 path, store = sys.argv[1], sys.argv[2]
 events = []
 for options in ({}, {"directory": store}):
-    io_helper.list_folder(path, events.append, options)
-    io_helper.scan(path, events.append, options, manual=True)
-    io_helper.scan(path, events.append, options, manual=False, automatic=True)
+    list_folder(path, events.append, options)
+    scan(path, events.append, options, manual=True)
+    scan(path, events.append, options, manual=False, automatic=True)
 print(json.dumps({"events": [e.get("kind") for e in events],
                   "errors": [e for e in events if e.get("kind") == "error"],
                   "heavy": sorted(name for name in %r if name in sys.modules)}))

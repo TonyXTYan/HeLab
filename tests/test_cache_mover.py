@@ -414,7 +414,7 @@ def test_an_abort_that_cant_rename_back_resumes_where_the_store_is(
 
 
 def test_the_helper_reports_where_the_store_is_after_a_failed_move(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from helab.io_helper import cache_move_job
+    from helab.io_ops.admin import cache_move_job
     app, source, target = str(tmp_path / "app"), tmp_path / "caches", tmp_path / "moved"
     make_cache(source)
     set_step = cache_move.set_step
@@ -495,7 +495,7 @@ def test_queued_requests_open_no_cache_once_it_is_off(monkeypatch: pytest.Monkey
 
 @pytest.mark.skipif(sys.platform != "win32" and os.geteuid() == 0, reason="root ignores read-only permissions")
 def test_recovery_isnt_usable_after_a_failed_settings_write(tmp_path: Path) -> None:
-    from helab.io_helper import cache_move_job
+    from helab.io_ops.admin import cache_move_job
     app, source, target = str(tmp_path / "app"), tmp_path / "caches", tmp_path / "moved"
     make_cache(source)
     record = cache_move.start(str(source), str(target), app, cache_move.RENAME)
@@ -561,7 +561,7 @@ def test_the_cache_path_is_saved_only_at_startup(tmp_path: Path, monkeypatch: py
 
 
 def test_cleanup_and_abort_touch_only_their_own_move(tmp_path: Path) -> None:
-    from helab.io_helper import cache_move_job
+    from helab.io_ops.admin import cache_move_job
     app = str(tmp_path / "app")
     newer = {"from": str(tmp_path / "b"), "to": str(tmp_path / "c"), "method": cache_move.RENAME,
              "step": "renamed", "store_id": "s", "id": "newer"}
@@ -591,7 +591,7 @@ def test_cleanup_and_abort_touch_only_their_own_move(tmp_path: Path) -> None:
 
 
 def test_startup_recovery_runs_in_a_helper_and_saves_the_setting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from helab.io_helper import cache_move_job
+    from helab.io_ops.admin import cache_move_job
     app, source, target = str(tmp_path / "app"), tmp_path / "caches", tmp_path / "moved"
     store_id = make_cache(source)
     monkeypatch.setattr(cache_move, "same_disk", lambda a, b: False)

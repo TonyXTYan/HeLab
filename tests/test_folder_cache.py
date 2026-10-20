@@ -25,15 +25,17 @@ from helab.views.FolderExplorer import FolderExplorer
 from helab.views.CentralHint import CentralHint
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HelabMainWindow import HelabMainWindow
-from helab import io_helper
-from helab.io_helper import list_folder, load, scan
+from helab.io_ops import infra, stores
+from helab.io_ops.browse import list_folder
+from helab.io_ops.loading import load
+from helab.io_ops.scanning import scan
 from helab.utils.cache_store import CacheStore, DatasetRow, unpack_dataset
 from helab.resources.icons import IconsInitUtil, StatusIcons
 
 
 def saved_dataset(options: dict[str, Any], path: str) -> tuple[DatasetRow, dict[int, Any]] | None:
     """The folder's cached dataset row and its shots, or None."""
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    with stores._cache_store(options["directory"], [path]) as store:
         found = store.read_dataset(path)
     assert not found.failed, found.error
     if found.value is None:
@@ -950,15 +952,15 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
 def test_disk_cache_reused_after_process_restart_and_rejects_changed_files(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
-    from helab import io_helper
-    with io_helper._cache_store(str(tmp_path / "cache"), [str(source)]):
+    from helab.io_ops import stores
+    with stores._cache_store(str(tmp_path / "cache"), [str(source)]):
         pass
     converted = source / "d_txy_forc1.txt"
     converted.write_text("1,2,3\n")
     program = """
 import json, sys
 import pandas as pd
-from helab.io_helper import load
+from helab.io_ops.loading import load
 request = json.load(sys.stdin)
 if request["require_cache"]:
     def forbid_csv(*args, **kwargs):
@@ -1016,14 +1018,14 @@ def test_changed_folder_reads_only_new_or_modified_txy_files(
     (source / "d_txy_forc2.txt").write_text("20,20,20\n")
     (source / "d_txy_forc3.txt").unlink()
     (source / "d_txy_forc5.txt").write_text("50,50,50\n")
-    original_read = io_helper._read_txy_file
+    original_read = infra._read_txy_file
     read: list[str] = []
 
     def record_read(filename: str, reason: str) -> Any:
         read.append(os.path.basename(filename))
         return original_read(filename, reason)
 
-    monkeypatch.setattr(io_helper, "_read_txy_file", record_read)
+    monkeypatch.setattr(infra, "_read_txy_file", record_read)
     # Shot 3 is gone, which never happens to write-once TXY files: nothing is read until the user
     # says to load the folder as it is now.
     (tmp_path / "asked").mkdir()
@@ -1072,7 +1074,7 @@ def test_load_skips_shots_already_in_memory_and_completes_disk_cache(
     memory = [[shot, info.st_size, info.st_mtime_ns] for shot in (1, 2, 3)
               for info in ((source / f"d_txy_forc{shot}.txt").stat(),)]
     (source / "d_txy_forc3.txt").write_text("30,30,30\n")
-    original_read = io_helper._read_txy_file
+    original_read = infra._read_txy_file
     read: list[str] = []
     events: list[dict[str, Any]] = []
 
@@ -1082,7 +1084,7 @@ def test_load_skips_shots_already_in_memory_and_completes_disk_cache(
         read.append(os.path.basename(filename) + ("" if any(e["kind"] == "loaded" for e in events) else "*"))
         return original_read(filename, reason)
 
-    monkeypatch.setattr(io_helper, "_read_txy_file", record_read)
+    monkeypatch.setattr(infra, "_read_txy_file", record_read)
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     load(str(source), str(output), events.append, options, memory)
     assert read == ["d_txy_forc3.txt*", "d_txy_forc1.txt", "d_txy_forc2.txt"]
@@ -1188,7 +1190,7 @@ def test_disk_clear_epoch_prevents_older_load_from_repopulating_cache(tmp_path: 
     def clear_during_delivery(event: dict[str, Any]) -> None:
         events.append(event)
         if event["kind"] == "shot":
-            with io_helper._cache_store(options["directory"], [str(source)]) as store:
+            with stores._cache_store(options["directory"], [str(source)]) as store:
                 store.remove(("datasets",), [str(source)])
 
     load(str(source), str(output), clear_during_delivery, options)
@@ -1297,7 +1299,7 @@ def test_corrupt_disk_cache_reports_failure_and_loads_source(tmp_path: Path) -> 
     converted.write_text("1,2,3\n")
     info = converted.stat()
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
-    with io_helper._cache_store(options["directory"], [str(source)]) as store:
+    with stores._cache_store(options["directory"], [str(source)]) as store:
         guard = store.start_dataset_job(str(source))
         file = store.write_dataset_file(b"invalid compressed dataset")
         store.save_dataset(str(source), file, {"ram_bytes": 24, "rows": 1, "shots": 1,
