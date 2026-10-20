@@ -136,12 +136,13 @@ class DatasetAnalysis(HelabAnalysisScript):
         return constant_keys(self.parameters(action_name))
 
     def run_constants(self, action_name: str, values: Mapping[str, Any],
-                      layers: Mapping[str, Mapping[str, float]]) -> ResolvedConstants:
+                      layers: Mapping[str, Mapping[str, float]]) -> ResolvedConstants | None:
         """The constants a run with these parameter ``values`` uses, from the lab and folder
         ``layers`` (``AnalysisContext.constants``) and the plot's own values. Pure (it runs on the
         GUI thread when the run is submitted). Default: the Constants group's choices
         (``constant_layers.resolve_for_run``); an analysis with its own override parameters
-        returns its own resolution here."""
+        returns its own resolution here, or None when this run uses no constants (it is then
+        neither keyed on them nor marked when one changes)."""
         return resolve_for_run(values, layers.get("lab"), layers.get("folder"))
 
     def covered_shots(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> Sequence[int]:

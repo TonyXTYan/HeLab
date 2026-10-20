@@ -79,9 +79,9 @@ its reference against all the others (c·R / c·Q), noted as optimistic (notably
 shots). ``counting_se`` (g² √(1/H_in + 1/H_between)) is reported beside them but
 underestimates: pairs sharing an event aren't independent.
 
-The peak fit (``peak_model``, ``fits.fit_histogram``): b + A exp(−(Δ − c)²/2σ²), centred at
-0 for radial g², averaged over each bin (r²-weighted over radial shells), weighted by the
-bootstrap SE (floored at a one-count error for bins with few pairs). g²(0) = (b + A)/b; its
+The peak fit (``peak_model``, ``fit_peak``): b + A exp(−(Δ − c)²/2σ²), centred at 0 for
+radial g², averaged over each bin by ``fits.fit_histogram`` (exact edges; r²-weighted over
+radial shells), weighted by the bootstrap SE (floored at a one-count error for bins with few pairs). g²(0) = (b + A)/b; its
 SE is the spread of refits of ``FIT_RESAMPLES`` bootstrap replicates, since neighbouring
 bins share shots and the single fit's covariance is too small. ``baseline="fixed"`` fits
 1 + A·Gaussian as the legacy code did.
@@ -100,7 +100,6 @@ import math
 import time
 from collections.abc import Hashable
 from dataclasses import dataclass, field
-from types import MappingProxyType
 from typing import Any, Callable, Iterable, Literal, MutableMapping, Sequence, cast
 
 import numpy as np
@@ -127,7 +126,6 @@ MIN_PAIRS = 100  # fewer in-shot pairs in range than this: a note (g² is mostly
 # this many numbers (64 MB): S²·bins, so 400 shots of 50 bins. Beyond it the state drops it.
 MATRIX_LIMIT = 8_000_000
 FIT_RESAMPLES = 200  # bootstrap replicates refitted for g²(0)'s SE
-GAUSS_POINTS = 5  # Gauss–Legendre points per bin for the bin-averaged fit model
 SLOPE_WIDTH = 1 / 3  # a fitted σ above this share of the reach is a slope, not a peak
 BASELINE_SE = 2.0  # a fitted baseline this many SEs from 1 gets a note
 
@@ -605,32 +603,16 @@ def peak_curve(spec: CorrelationSpec, baseline: Baseline, x: npt.ArrayLike, *val
 
 
 def peak_model(spec: CorrelationSpec, baseline: Baseline = "free") -> FitModel:
-    """The g² peak model for ``spec``'s bins, averaged over each bin (Gauss–Legendre,
-    ``GAUSS_POINTS`` points; weighted by r² for radial shells, the pair density of a flat
-    reference), so wide bins (equal-volume first shells) don't bias the peak. Evaluated at
-    any x it gives the average over the bin x falls in: draw the smooth curve with
-    ``peak_curve`` (``CorrelationResult.curve``)."""
+    """The g² peak model for ``spec``: the point model ``peak_curve``. Fit it with
+    ``fit_peak``, which has ``fits.fit_histogram`` average it over each bin (its exact edges;
+    weighted by r² over radial shells, the pair density of a flat reference), so wide bins
+    (equal-volume first shells) don't bias the peak. ``FitResult.evaluate`` (and
+    ``CorrelationResult.curve``) give the model itself at points, for drawing."""
     names = _peak_names(spec, baseline)
     radial = spec.geometry == "radial"
-    edges = np.asarray(spec.edges)
-    nodes, weights = np.polynomial.legendre.leggauss(GAUSS_POINTS)
 
-    grids: dict[bytes, tuple[Array, Array]] = {}  # the fit calls it at the same x every time
-
-    def averaged(x: Array, *values: float) -> Array:
-        key = x.tobytes()
-        grid = grids.get(key)
-        if grid is None:
-            index = np.clip(np.searchsorted(edges, x, side="right") - 1, 0, spec.bins - 1)
-            low, high = edges[index][:, None], edges[index + 1][:, None]
-            r = (low + high) / 2 + (high - low) / 2 * nodes[None, :]
-            w = weights[None, :] * (r * r if radial else np.ones_like(r))
-            total = w.sum(axis=1, keepdims=True)
-            grid = r, w / np.where(total > 0, total, 1.0)
-            if len(grids) < 8:
-                grids[key] = grid
-        r, w = grid
-        return (w * peak_curve(spec, baseline, r, *values)).sum(axis=1)
+    def point(x: Array, *values: float) -> Array:
+        return peak_curve(spec, baseline, x, *values)
 
     def guesses(x: Array, y: Array, errors: Array) -> list[Array]:
         level = float(np.median(y)) if baseline == "free" else 1.0
@@ -657,9 +639,19 @@ def peak_model(spec: CorrelationSpec, baseline: Baseline = "free") -> FitModel:
         "amplitude": ("Amplitude", "shape"), "centre": ("Centre", "position"), "sigma": ("σ", "width"),
         "baseline": ("Baseline", "shape")}
     return FitModel(f"g2_peak_{spec.geometry}_{baseline}",
-                    f"{'b' if baseline == 'free' else '1'} + Gaussian{' at 0' if radial else ''}, bin-averaged",
-                    tuple(ModelParameter(name, *roles[name]) for name in names), averaged, guesses, bounds,
-                    fixed=MappingProxyType({"gauss_points": float(GAUSS_POINTS)}))
+                    f"{'b' if baseline == 'free' else '1'} + Gaussian{' at 0' if radial else ''}",
+                    tuple(ModelParameter(name, *roles[name]) for name in names), point, guesses, bounds)
+
+
+def _shell_weight(r: Array) -> Array:
+    return r * r
+
+
+def fit_peak(spec: CorrelationSpec, model: FitModel, g2: npt.ArrayLike, sigma: npt.ArrayLike) -> FitResult:
+    """Fit ``model`` to g² per bin, averaged over each of ``spec``'s bins (exact edges; r²
+    weights over radial shells)."""
+    return fit_histogram(spec.centres, g2, model, sigma=sigma, edges=spec.edges,
+                         binned=_shell_weight if spec.geometry == "radial" else True)
 
 
 def _peak_value(fit: FitResult, baseline: Baseline) -> float:
@@ -786,7 +778,7 @@ def _jackknife(resample: Callable[[Array], Array], held: int, bins: int, cancell
 
 
 def _zero_error(fitted: FitResult, model: FitModel, baseline: Baseline, boot: BootstrapResult | None,
-                centres: Array, sigma: Array, cancelled: Cancel, noted: list[str]) -> tuple[float, str]:
+                spec: CorrelationSpec, sigma: Array, cancelled: Cancel, noted: list[str]) -> tuple[float, str]:
     """g²(0)'s SE: the spread of refits of up to ``FIT_RESAMPLES`` bootstrap replicates
     (neighbouring bins are correlated, so the fit's own covariance is too small), else the
     covariance's, said so."""
@@ -794,7 +786,7 @@ def _zero_error(fitted: FitResult, model: FitModel, baseline: Baseline, boot: Bo
         replicas = []
         for row in boot.replicates[:FIT_RESAMPLES]:
             _check(cancelled)
-            refit = fit_histogram(centres, row, model, sigma=sigma)
+            refit = fit_peak(spec, model, row, sigma)
             replicas.append(_peak_value(refit, baseline) if refit.ok else math.nan)
         found = np.array(replicas)
         found = found[np.isfinite(found)]
@@ -873,7 +865,7 @@ def g2_from_counts(state: PairCounts, *, shots_total: int | None = None, n_boot:
             floor = np.sqrt(np.maximum(h_in, 1)) * (p_between / p_in) / h_between
         sigma = np.fmax(np.where(np.isfinite(se), se, 0.0), floor)
         model = peak_model(spec, baseline)
-        fitted = fit_histogram(centres, g2, model, sigma=sigma)
+        fitted = fit_peak(spec, model, g2, sigma)
         if fitted.ok:
             if baseline == "free":
                 level = fitted["baseline"]
@@ -887,7 +879,7 @@ def g2_from_counts(state: PairCounts, *, shots_total: int | None = None, n_boot:
                 noted.append(f"the fitted width (σ = {width:.3g}) is comparable to the range: a slope, not a peak; "
                              "no g²(0)")
             else:
-                zero_se, zero_method = _zero_error(fitted, model, baseline, boot, centres, sigma, cancelled, noted)
+                zero_se, zero_method = _zero_error(fitted, model, baseline, boot, spec, sigma, cancelled, noted)
                 zero = Estimate(_peak_value(fitted, baseline), zero_se)
     return CorrelationResult(spec, centres, g2, np.asarray(se, dtype=np.float64), counting, method,
                              h_in.astype(np.int64), h_between.astype(np.int64), p_in, p_between,

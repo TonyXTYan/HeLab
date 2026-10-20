@@ -10,6 +10,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 from scipy.integrate import quad
+from scipy.stats import norm
 
 from helab.analysis import fits
 from helab.analysis.estimates import Estimate
@@ -54,7 +55,10 @@ def test_gaussian_recovers_centre_and_width_within_their_errors(count: int) -> N
     found = coverage(150, fit, {"centre": centre, "sigma": sigma})
     for name, (within, bias) in found.items():
         assert 0.88 <= within <= 1.0, (name, within)  # about 95 % expected
-        assert abs(bias) < 0.3, (name, bias)
+        # The offset is floored at 0 and the true one is 0, so it comes out a little above
+        # (the exact Poisson likelihood with offset ≥ 0 does the same): σ's pull is about −0.3
+        # at 500 events, −0.16 at 5000.
+        assert abs(bias) < 0.4, (name, bias)
 
 
 def test_count_weights_alone_bias_the_width_low() -> None:
@@ -95,7 +99,7 @@ def test_unweighted_fit_scales_its_errors_by_the_residuals() -> None:
 def test_given_errors_replace_the_weights() -> None:
     x = np.linspace(-3, 3, 31)
     y = 50 * np.exp(-x ** 2 / 2) + 2
-    result = fit_histogram(x, y, sigma=0.01)
+    result = fit_histogram(x, y, sigma=0.01, binned=False)  # point samples, not bins
     assert result.ok
     assert result.values == pytest.approx([50, 0, 1, 2], abs=1e-6)
     assert result.chi2 == pytest.approx(0, abs=1e-6)
@@ -288,7 +292,7 @@ def test_count_weights_say_when_the_input_isnt_counts() -> None:
 def test_bounds_and_poor_models_are_noted() -> None:
     x = np.linspace(0, 1, 20)
     flat = fit_histogram(x, np.full(20, 100.0))
-    assert any(note.startswith("at its bound: σ") for note in flat.notes)
+    assert any(note.startswith("at its bound:") for note in flat.notes)
     rng = np.random.default_rng(0)
     square = fit_events(rng.uniform(-1, 1, 50_000), 60, (-1.5, 1.5))
     assert any("reduced χ²" in note for note in square.notes)
@@ -308,7 +312,7 @@ def test_registry() -> None:
 
 def test_evaluate_draws_the_fitted_model() -> None:
     x = np.linspace(-3, 3, 31)
-    result = fit_histogram(x, 50 * np.exp(-x ** 2 / 2) + 2, sigma=0.01)
+    result = fit_histogram(x, 50 * np.exp(-x ** 2 / 2) + 2, sigma=0.01, binned=False)
     assert result.evaluate([0.0]) == pytest.approx([52.0], abs=1e-4)
     assert result.derived(lambda values: float(values[0] + values[3])).value == pytest.approx(52.0, abs=1e-4)
 
@@ -332,3 +336,118 @@ def test_fits_leave_the_warning_filters_alone() -> None:
     before = list(warnings.filters)
     fit_events(np.random.default_rng(1).normal(0, 1, 2000), 40, (-4, 4), "bimodal_tf2_gaussian")
     assert warnings.filters == before
+
+
+def test_count_weights_keep_the_offset_at_or_above_zero() -> None:
+    """Sparse raw counts with no background: an offset below 0 made the model negative in
+    the tails (117 of 200 such fits, before the floor), an impossible mean count. With
+    count weights the offset stops at 0, unnoted; given errors (sigma=, rates) keep −top."""
+    negative = 0
+    for seed in range(60):
+        rng = np.random.default_rng(seed)
+        counts, edges = np.histogram(rng.normal(0, 1, 150), bins=80, range=(-8, 8))
+        result = fit_histogram(bin_centres(edges), counts)
+        assert result.ok, result.failure
+        assert result["offset"].value >= 0
+        assert np.all(result.curve >= 0)
+        assert not any("Offset" in note for note in result.notes)
+        rates = fit_histogram(bin_centres(edges), counts / 10, sigma=np.sqrt(np.maximum(counts, 1)) / 10)
+        negative += rates.ok and rates["offset"].value < 0
+    assert negative > 10  # the given-errors fit may still go below 0
+    for weights in ("counts", "none"):
+        counts, edges = np.histogram(np.random.default_rng(1).normal(0, 1, 150), bins=80, range=(-8, 8))
+        fitted = fit_histogram(bin_centres(edges), counts, weights=weights)
+        assert fitted.ok and (fitted["offset"].value >= 0 or weights == "none")
+    # A real background is still found.
+    rng = np.random.default_rng(2)
+    events = np.concatenate([rng.normal(0, 1, 2000), rng.uniform(-8, 8, 1600)])
+    counts, edges = np.histogram(events, bins=80, range=(-8, 8))
+    background = fit_histogram(bin_centres(edges), counts)
+    assert abs(background["offset"].value - 20) < 3 * background["offset"].se
+
+
+def sigma_pull(seeds: int, count: int, binned: bool, width: float = 0.2) -> float:
+    """The fitted σ's mean pull from the events' own standard deviation (their unbinned
+    maximum-likelihood σ), which takes out the seeds' own scatter."""
+    pulls = []
+    for seed in range(seeds):
+        events = np.random.default_rng(seed).normal(0, 1, count)
+        counts, edges = np.histogram(events, bins=round(10 / width), range=(-5, 5))
+        result = fit_histogram(bin_centres(edges), counts, binned=binned)
+        assert result.ok, result.failure
+        pulls.append((result["sigma"].value - float(np.std(events))) / result["sigma"].se)
+    return float(np.mean(pulls))
+
+
+def test_the_model_is_averaged_over_each_bin() -> None:
+    """At a bin's centre a Gaussian is higher than its mean over the bin, so a fit of centre
+    values comes out wide by about w²/(24σ) (Sheppard): +0.5 SE at 50 000 events in bins of
+    σ/5. Averaged over the bins, it isn't."""
+    assert abs(sigma_pull(40, 50_000, binned=True)) < 0.15
+    assert sigma_pull(40, 50_000, binned=False) > 0.3
+    # Bins of σ: the centre values are 4 % wide; the bin means still get σ.
+    counts, edges = np.histogram(np.random.default_rng(1).normal(0, 1, 200_000), bins=10, range=(-5, 5))
+    coarse = fit_histogram(bin_centres(edges), counts)
+    assert abs(coarse["sigma"].value - 1) < 3 * coarse["sigma"].se
+    assert fit_histogram(bin_centres(edges), counts, binned=False)["sigma"].value > 1.03
+    # Edges halfway between centres, the outer bins as wide as their neighbours.
+    lower, upper = fits.bin_bounds([0.0, 1.0, 3.0])
+    assert list(lower) == [-0.5, 0.5, 2.0] and list(upper) == [0.5, 2.0, 4.0]
+    assert fits.bin_means(lambda x, a: a * x ** 3, np.array([0.0]), np.array([2.0]), [1.0]) == pytest.approx([2.0])
+
+
+def test_coarse_bins_keep_the_arrival_time_and_thomas_fermi_models_right() -> None:
+    g, h = 9.796, 0.848
+    model = fits.arrival_time_model(h, g)
+    rng = np.random.default_rng(5)
+    v = rng.normal(0, 0.05, 300_000)
+    times = 1.7 + (v + np.sqrt(v * v + 2 * g * h)) / g
+    t_f = math.sqrt(2 * h / g)
+    counts, edges = np.histogram(times, bins=30, range=(1.7 + t_f - 0.03, 1.7 + t_f + 0.03))  # bins of σ/2.5
+    result = fit_histogram(bin_centres(edges), counts, model)
+    assert result.ok, result.failure
+    assert abs(result["centre"].value - (1.7 + t_f)) < 3 * result["centre"].se
+    assert abs(result["sigma"].value - 0.05 / g) < 3 * result["sigma"].se
+    events = thomas_fermi_events(np.random.default_rng(6), 100_000, 1.0)
+    counts, edges = np.histogram(events, bins=16, range=(-1.6, 1.6))  # bins of R/5
+    tf = fit_histogram(bin_centres(edges), counts, "thomas_fermi_2")
+    assert tf.ok and abs(tf["radius"].value - 1) < 3 * tf["radius"].se
+
+
+def test_the_offset_floor_can_be_asked_for_or_refused() -> None:
+    asked_below, refused_below, given_below = 0, 0, 0
+    for seed in range(20):
+        counts, edges = np.histogram(np.random.default_rng(seed).normal(0, 1, 150), bins=80, range=(-8, 8))
+        x, rates, errors = bin_centres(edges), counts / 10, np.sqrt(np.maximum(counts, 1)) / 10
+        given_below += fit_histogram(x, rates, sigma=errors)["offset"].value < 0
+        asked_below += fit_histogram(x, rates, sigma=errors, nonnegative_offset=True)["offset"].value < 0
+        refused_below += fit_histogram(x, counts, nonnegative_offset=False)["offset"].value < 0
+    assert given_below > 2 and refused_below > 2 and asked_below == 0
+
+
+def test_given_edges_and_a_weight_function_average_over_the_real_bins() -> None:
+    """Unequal bins (wide in the tails, narrow in the middle), noise-free densities: halfway
+    edges put the bounds in the wrong places; the real edges recover σ = 1."""
+    edges = np.r_[np.arange(-4.5, -1.5, 1.0), np.arange(-1.5, 1.5001, 0.1), np.arange(2.5, 4.6, 1.0)]
+    widths = np.diff(edges)
+    density = 1e5 * np.diff(norm.cdf(edges)) / widths
+    centres, errors = bin_centres(edges), np.sqrt(density * widths) / widths
+    exact = fit_histogram(centres, density, sigma=errors, edges=edges)
+    assert exact.ok and exact["sigma"].value == pytest.approx(1.0, abs=2e-4)
+    assert exact["centre"].value == pytest.approx(0.0, abs=1e-4)
+    halfway = fit_histogram(centres, density, sigma=errors)
+    assert abs(halfway["sigma"].value - 1) > 10 * abs(exact["sigma"].value - 1)
+    with pytest.raises(ValueError):
+        fit_histogram(centres, density, sigma=errors, edges=edges[:-1])
+    # Radial shells of a 3D Gaussian, as a density per volume: each shell's mean of f
+    # weighted by r² (the shell's volume element).
+    shells = np.linspace(0.0, 4.0, 13)  # shells of σ/3
+
+    def shell_mean(low: float, high: float) -> float:
+        return float(quad(lambda r: r * r * math.exp(-r * r / 2), low, high)[0]) / ((high ** 3 - low ** 3) / 3)
+    per_volume = 1e4 * np.array([shell_mean(low, high) for low, high in zip(shells[:-1], shells[1:])])
+    radial = fit_histogram(bin_centres(shells), per_volume, sigma=1e-4 * per_volume.max(), edges=shells,
+                           binned=lambda r: r * r)
+    assert radial.ok and radial["sigma"].value == pytest.approx(1.0, abs=1e-4)
+    flat = fit_histogram(bin_centres(shells), per_volume, sigma=1e-4 * per_volume.max(), edges=shells)
+    assert abs(flat["sigma"].value - 1) > 5 * abs(radial["sigma"].value - 1)

@@ -12,10 +12,11 @@ from PyQt6.QtWidgets import QLabel
 
 from helab.analysis import spectrum as spectrum_module
 from helab.analysis.dataset_view import DatasetView, build_view
-from helab.analysis.display_units import frequency_text, si_text, time_text, time_unit
+from helab.analysis.display_units import frequency_text, si_text, time_text
 from helab.analysis.parameters import effective
-from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled
-from helab.analysis.spectrum import (FLAT_TOP, MAX_PADDED, WINDOWS, Peak, amplitude_spectrum, find_spectrum_peaks,
+from helab.analysis.plot_axes import GroupedAxis
+from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
+from helab.analysis.spectrum import (FLAT_TOP, MAX_PADDED, WINDOWS, SpectrumPeak, amplitude_spectrum, find_spectrum_peaks,
                                      padding_for, refine)
 from helab.scripts.standard import t_spectrum
 from helab.utils.folder_cache import Dataset
@@ -57,7 +58,8 @@ def modulated(shots: int = 10, per_shot: int = 20_000, frequency: float = F0, se
 def run(view: DatasetView, values: dict[str, Any] | None = None) -> AnalysisResult:
     context = AnalysisContext("a1", "Plot", view, effective(SCRIPT.parameters("Plot"), values),
                               SCRIPT.get_metadata().identity())
-    return AnalysisResult.of(context, "completed", SCRIPT.compute("Plot", context))
+    data = SCRIPT.compute("Plot", context)
+    return AnalysisResult.of(context, "completed", data, found=SCRIPT.result_found("Plot", data))
 
 
 
@@ -75,13 +77,18 @@ def test_finds_the_pulse_rate_modulation_within_one_bin() -> None:
     assert data.profile.mean() == pytest.approx(400.0, rel=1e-3) and data.unit == "kHz/shot"
     assert top.value == pytest.approx(80.0, rel=0.05) and top.prominence > 0.5 * top.value
     assert spectrum.peaks == (top,)  # the noise lists nothing else
-    assert SCRIPT.describe_result("Plot", result) == (
-        "bin spacing Δf 20 Hz, resolution ≈ 30 Hz (ENBW 1.5), Nyquist 50 kHz")
+    text = SCRIPT.describe_result("Plot", result)
+    assert text == "bin spacing Δf 20 Hz, resolution ≈ 30 Hz (ENBW 1.5), Nyquist 50 kHz"
     assert t_spectrum.peak_lines(data)[0].startswith("1. 2 kHz · 8")
     record = SCRIPT.result_record("Plot", result)
-    assert record[0] == "T profile: 5,000 bins of 10 µs (set), 200,000 events"
+    assert record[0] == "T profile: 5,000 bins of 0.01 ms (set), 200,000 events"
     assert record[1].startswith("Spectrum: Hann window, bin spacing Δf 20 Hz") and "÷ sinc" in record[1]
     assert record[2].startswith("Peaks (prominence ≥ ") and record[3].startswith("  1. 2 kHz · 8")
+    # The settings line's addition and the record are the result's ``found``: a released plot
+    # (its data dropped) keeps both.
+    released = RamResults().released(result)
+    assert released.data is None and SCRIPT.describe_result("Plot", released) == text
+    assert SCRIPT.result_record("Plot", released) == record
 
 
 @pytest.mark.parametrize("window", list(WINDOWS))
@@ -156,7 +163,7 @@ def test_automatic_bins_follow_the_data_rate_within_their_limits() -> None:
     few = run(modulated(shots=1), FULL)
     assert few.data.automatic and len(few.data.counts) == 2_000 and few.data.clamp == ""  # 10 events per bin
     assert few.data.spectrum.nyquist == pytest.approx(20_000 / SPAN / 20, rel=1e-3)
-    assert SCRIPT.describe_result("Plot", few).startswith("T bins 25 µs (auto: ~10 events per bin) · bin spacing")
+    assert SCRIPT.describe_result("Plot", few).startswith("T bins 0.025 ms (auto: ~10 events per bin) · bin spacing")
     assert len(run(modulated(shots=5), FULL).data.counts) == 10_000
     many = run(modulated(shots=10), FULL)
     assert many.data.clamp == "at most" and len(many.data.counts) == 16_384
@@ -198,7 +205,7 @@ def test_empty_and_short_cases_say_why(qtbot: QtBot, case: str) -> None:
                 "too few bins": "Only 8 T bins of 6.25 ms in the view range: a spectrum needs 16 or more"}[case]
     assert widget.text().startswith(expected)
     assert result.data.spectrum is None
-    line = {"no events in range": "", "too few events": "T bins 195.3 µs (auto: at least 256 bins, ~0.0195 events "
+    line = {"no events in range": "", "too few events": "T bins 0.1953 ms (auto: at least 256 bins, ~0.0195 events "
                                                         "per bin)", "too few bins": ""}[case]
     assert SCRIPT.describe_result("Plot", result) == line
 
@@ -219,6 +226,7 @@ def test_drawn_with_its_peak_list_and_updated_in_place(qtbot: QtBot) -> None:
     assert widget.profile_plot.getAxis("bottom").labelText == "T (ms)"
     assert widget.spectrum_plot.getAxis("bottom").labelUnits == "Hz"
     assert widget.spectrum_plot.getAxis("left").labelText == "Amplitude (kHz/shot)"
+    assert isinstance(widget.spectrum_plot.getAxis("left"), GroupedAxis)
     assert "Peaks: 1. 2 kHz" in widget.peaks_label.text and len(widget.labels) == len(widget.markers.getData()[0])
     assert "bin spacing Δf 20 Hz, resolution ≈ 30 Hz (ENBW 1.5), Nyquist 50 kHz" in widget.title.text
     widget.spectrum_plot.vb.setXRange(1000, 3000, padding=0)
@@ -234,7 +242,7 @@ def test_settings_line_and_record_only_for_completed_runs() -> None:
     values = effective(SCRIPT.parameters("Plot"), {"shots": "last N", "last_shots": 2, "t_bin": 2e-6,
                                                    "padding": 4, "window": "Hamming"})
     assert SCRIPT.describe_run("Plot", values, view) == (
-        "shots 2–3 (2 of 3)", "last 2 shots · auto-crop 99 % · T bins 2 µs · Hamming window, ×4 padding · log · "
+        "shots 2–3 (2 of 3)", "last 2 shots · auto-crop 99 % · T bins 0.002 ms · Hamming window, ×4 padding · log · "
         "5 peaks")
     failed = AnalysisResult.of(AnalysisContext("a1", "Plot", view, values, SCRIPT.get_metadata().identity()), "failed")
     assert SCRIPT.describe_result("Plot", failed) == "" and SCRIPT.result_record("Plot", failed) == []
@@ -310,7 +318,7 @@ def test_a_weaker_line_3_to_10_bins_away_is_listed(window: str) -> None:
                     spectrum = amplitude_spectrum(trace, step, window)
                     target = 300 + offset + distance
 
-                    def listed(peaks: tuple[Peak, ...]) -> bool:
+                    def listed(peaks: tuple[SpectrumPeak, ...]) -> bool:
                         return any(abs(peak.frequency / spacing - target) < 1 for peak in peaks)
                     spectrum_module.SIDELOBE_MARGIN = margin
                     peaks = find_spectrum_peaks(spectrum, 5).peaks
@@ -347,6 +355,6 @@ def test_small_helpers_and_units() -> None:
     assert refine(np.array([0.0, 3.0, 1.0]), 1)[0] == pytest.approx(0.1)  # a zero: the straight parabola
     flat = find_spectrum_peaks(amplitude_spectrum(np.zeros(64), STEP), 3)
     assert flat.peaks == ()
-    assert frequency_text(1250) == "1.25 kHz" and time_text(5e-8) == "50 ns" and si_text(-0.002, "m") == "−2 mm"
-    assert time_text(0.00099999) == "1 ms" and si_text(float("nan"), "Hz") == "–" and si_text(0, "Hz") == "0 Hz"
-    assert time_unit(0.4, 0.45) == ("ms", 1e3) and time_unit(20.0, 21.0) == ("s", 1.0)
+    assert frequency_text(1250) == "1.25 kHz" and si_text(5e-8, "s") == "50 ns" and si_text(-0.002, "m") == "−2 mm"
+    assert si_text(0.00099999, "s") == "1 ms" and si_text(float("nan"), "Hz") == "–" and si_text(0, "Hz") == "0 Hz"
+    assert time_text(0.4) == "400 ms" and time_text(20.5) == "20,500 ms"  # T always in ms

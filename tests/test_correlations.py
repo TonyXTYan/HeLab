@@ -16,8 +16,7 @@ import pytest
 from helab.analysis import correlations
 from helab.analysis.correlations import (CacheKey, CorrelationResult, CorrelationSpec, InShot, PairCounts,
                                          ShotEvents, correlate, g2_from_counts, in_shot_counts, linear_edges,
-                                         peak_model, radial_edges)
-from helab.analysis.fits import fit_histogram
+                                         fit_peak, peak_model, radial_edges)
 from helab.analysis.results import Cancelled
 
 Array = npt.NDArray[np.float64]
@@ -180,6 +179,8 @@ def test_thermal_source_bunches_to_two_radially(thermal: list[ShotEvents]) -> No
     ratio = result.jackknife_se[1:] / result.se[1:]
     assert np.all((ratio > 0.6) & (ratio < 1.6)), ratio
     assert result.curve([0.0])[0] == pytest.approx(result.baseline.value + result.fit["amplitude"].value)
+    grid = np.linspace(0, 0.4, 101)
+    assert np.allclose(result.curve(grid), result.fit.evaluate(grid))  # both unaveraged
 
 
 def test_thermal_source_bunches_to_two_in_one_dimension(thermal: list[ShotEvents]) -> None:
@@ -340,11 +341,11 @@ def test_bin_averaged_model_recovers_the_peak_on_wide_shells() -> None:
     edges = np.asarray(spec.edges)
     grid = [np.linspace(a, b, 2001) for a, b in zip(edges[:-1], edges[1:])]
     truth = [np.sum(r * r * (0.99 + 0.98 * np.exp(-r * r / (2 * SIGMA_C ** 2)))) / np.sum(r * r) for r in grid]
-    fitted = fit_histogram(spec.centres, np.array(truth), peak_model(spec), sigma=np.full(spec.bins, 0.01))
+    fitted = fit_peak(spec, peak_model(spec), np.array(truth), np.full(spec.bins, 0.01))
     assert fitted.ok
     assert fitted["baseline"].value == pytest.approx(0.99, abs=1e-3)
     assert (fitted["baseline"].value + fitted["amplitude"].value) / fitted["baseline"].value == pytest.approx(
-        (0.99 + 0.98) / 0.99, abs=2e-3)
+        (0.99 + 0.98) / 0.99, abs=5e-3)  # 3-point quadrature on a first shell 1.75 σ wide: −0.003
     assert fitted["sigma"].value == pytest.approx(SIGMA_C, rel=0.01)
 
 

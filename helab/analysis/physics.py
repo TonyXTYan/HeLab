@@ -25,6 +25,7 @@ from typing import Any, Literal, Mapping, cast, get_args
 
 import scipy.constants as codata
 
+from helab.analysis.display_units import length_text, time_text
 from helab.analysis.estimates import Estimate
 
 Level = Literal["lab", "folder"]
@@ -140,8 +141,8 @@ class ResolvedConstants:
             return ()
         if abs(self.fall_time - expected) <= FALL_TIME_TOLERANCE * expected:
             return ()
-        return (f"fall time and distance disagree: t_f {self.fall_time:.6g} s ({self.origins['fall_time']}), "
-                f"but √(2h/g) is {expected:.6g} s for h {self.fall_distance:.6g} m "
+        return (f"fall time and distance disagree: t_f {time_text(self.fall_time)} ({self.origins['fall_time']}), "
+                f"but √(2h/g) is {time_text(expected)} for h {length_text(self.fall_distance)} "
                 f"({self.origins['fall_distance']}) and g {self.g:.6g} m/s² ({self.origins['g']})",)
 
     def as_record(self) -> dict[str, Any]:

@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 from typing import Any, Iterable, Mapping, Sequence
 
+from helab.analysis.display_units import length_text, si_text, time_text
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.physics import DEFAULTS, TABLE, Origin, ResolvedConstants, resolve
 
@@ -32,6 +33,8 @@ ORIGIN_TEXT: Mapping[Origin, str] = {"default": "default", "lab": "lab", "folder
                                      "plot": "this plot", "derived": "derived"}
 # Units whose values are shown with SI prefixes (4 mm, 416 ms); the others in scientific form.
 SI_UNITS = ("m", "s", "Hz")
+# Of those, the ones always shown in one prefix, as the plots' axes (ms and mm: Tony, 2026-10-20).
+FIXED_PREFIX = {"s": "m", "m": "m"}
 LIMITS = (1e-60, 1e60)
 # Short symbols for a plot's source line.
 SYMBOLS: Mapping[str, str] = {
@@ -84,6 +87,8 @@ def constants_specs(keys: Sequence[str], *, group: str = GROUP, page: str = "") 
         specs.append(ParameterSpec(value_name(key), f"{constant.title}, this plot", "float", default_value(key),
                                    limits=LIMITS, suffix=constant.unit, group=group, page=page,
                                    when=(source_name(key), SET_HERE), si=constant.unit in SI_UNITS,
+                                   # Times in ms and lengths in mm, as in the plots (Tony, 2026-10-20).
+                                   unit_prefix=FIXED_PREFIX.get(constant.unit),
                                    tip=f"This plot's own value. {tip}"))
     return specs
 
@@ -140,8 +145,16 @@ def resolve_for_run(values: Mapping[str, Any], lab: Mapping[str, float] | None =
 
 
 def value_text(key: str, value: float) -> str:
-    """``value`` with its unit, short: 0.848 m, 9.79602 m/s², 6.64648e-27 kg."""
+    """``value`` with its unit, short: 848 mm, 416.101 ms, 20,500 ms, 9.79602 m/s², 500 Hz,
+    6.64648e-27 kg: lengths in mm and times in ms (``FIXED_PREFIX``, as the plots and the settings
+    show them), Hz with an SI prefix, the others in scientific form."""
     unit = TABLE[key].unit
+    if unit == "s":
+        return time_text(value)
+    if unit == "m":
+        return length_text(value)
+    if unit in SI_UNITS:
+        return si_text(value, unit, 6)
     return f"{value:.6g} {unit}" if unit else f"{value:.6g}"
 
 
@@ -167,10 +180,11 @@ def from_defaults(constants: ResolvedConstants, key: str) -> bool:
     return origin == "default"
 
 
-def record_text(constants: ResolvedConstants) -> str:
-    """Every constant with its origin, one line, for a result's record (the tooltip), then any notes."""
+def record_text(constants: ResolvedConstants, keys: Iterable[str] | None = None) -> str:
+    """The constants an analysis uses (``keys``; every constant without), each with its origin, one
+    line, for a result's record (the tooltip), then any notes."""
     text = ", ".join(f"{SYMBOLS.get(key, key)} = {value_text(key, constants.value(key))} "
-                     f"({origin_text(constants, key)})" for key in TABLE)
+                     f"({origin_text(constants, key)})" for key in (TABLE if keys is None else keys))
     return text + "".join(f"\nNote: {note}" for note in constants.notes)
 
 

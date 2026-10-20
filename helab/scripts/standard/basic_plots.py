@@ -1,7 +1,7 @@
 """Counts per shot and T/X/Y histograms of a loaded folder (PyQtGraph: native Qt drawing,
 fast to redraw when Live adds shots, and painted on lab PCs that can't paint QtWebEngine).
 
-The histograms show X and Y in mm and T in ms or s (``profiles.display_unit``), as counts or
+The histograms show X and Y in mm and T in ms (``display_units``), as counts or
 a rate per shot, optionally smoothed, and can fit each axis (D1: off by default, so the plot
 stays fast) for its centre, width and temperature (``helab.analysis.profiles``)."""
 from __future__ import annotations
@@ -17,12 +17,14 @@ import pyqtgraph as pg
 from PyQt6.QtCore import QRectF, pyqtSlot
 from PyQt6.QtWidgets import QWidget
 
+from helab.analysis.constant_layers import constants_specs, describe_constants, resolve_for_run
+from helab.analysis.display_units import WIDTH_DIGITS, axis_label, axis_scale, axis_text
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.parameters import ParameterSpec
-from helab.analysis.physics import ResolvedConstants, resolve
-from helab.analysis.profiles import (COUNTS, RATE, SMOOTHED, T_MODELS, UNSMOOTHED, XY_MODELS, AxisFit,
-                                     constants_text, display_unit, fit_axis, rate_factor, si_text, smooth,
-                                     smoothing_bins, unit_of, value_label)
+from helab.analysis.physics import ResolvedConstants
+from helab.analysis.plot_axes import GroupedAxis
+from helab.analysis.profiles import (COUNTS, RATE, SMOOTHED, T_MODELS, TF_EXPONENT_TIP, UNSMOOTHED, XY_MODELS,
+                                     AxisFit, fit_axis, rate_factor, smooth, smoothing_bins, value_label)
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.dataset_view import DatasetView
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_bounds, newest_brief, newest_colour,
@@ -56,9 +58,11 @@ SMOOTH = ParameterSpec("smooth", "Smooth", "bool", False, group=SMOOTH_GROUP,
                        tip="Smooth each histogram with a Gaussian of σ, over bins of σ/5 (the front panel's "
                            "profiles). Fits still use the unsmoothed counts unless Fit to says otherwise.")
 SMOOTH_T = ParameterSpec("smooth_t", "σ, T", "float", 1e-4, (1e-9, 10.0), " s", group=SMOOTH_GROUP,
-                         when=(SMOOTH.name, "True"), si=True, tip="The smoothing Gaussian's σ along T.")
+                         when=(SMOOTH.name, "True"), si=True, unit_prefix="m",
+                         tip="The smoothing Gaussian's σ along T.")
 SMOOTH_XY = ParameterSpec("smooth_xy", "σ, X and Y", "float", 2e-4, (1e-9, 1.0), " m", group=SMOOTH_GROUP,
-                          when=(SMOOTH.name, "True"), si=True, tip="The smoothing Gaussian's σ along X and Y.")
+                          when=(SMOOTH.name, "True"), si=True, unit_prefix="m",
+                          tip="The smoothing Gaussian's σ along X and Y.")
 HIGHLIGHT, NEWEST_COLOUR = newest_specs(BINS_GROUP)
 
 FITS_PAGE = FITS_GROUP = "Fits"
@@ -68,7 +72,8 @@ FIT_SPECS: dict[str, tuple[ParameterSpec, ParameterSpec]] = {}
 for _axis, _models, _extra in (
         ("T", T_MODELS, " Arrival-time thermal: the exact profile of atoms falling the fall distance with "
                         "Maxwell–Boltzmann vertical velocities (skewed, not a Gaussian), its centre the arrival "
-                        "of v = 0."),
+                        "of v = 0. It uses g and the fall distance, or ½ g t_f² when the fall time is set by "
+                        "hand (Constants), so that v = 0 arrives t_f after release."),
         ("X", XY_MODELS, ""), ("Y", XY_MODELS, "")):
     _toggle = ParameterSpec(f"fit_{_axis.lower()}", f"Fit {_axis}", "bool", False, group=FITS_GROUP, page=FITS_PAGE,
                             tip=f"Fit the {_axis} histogram: its centre, width and temperature ± SE, drawn over "
@@ -76,46 +81,28 @@ for _axis, _models, _extra in (
     FIT_SPECS[_axis] = (_toggle, ParameterSpec(
         f"fit_{_axis.lower()}_model", f"{_axis} model", "choice", _models[0], choices=_models, group=FITS_GROUP,
         page=FITS_PAGE, when=(_toggle.name, "True"),
-        tip="Gaussian + offset; bimodal Thomas–Fermi (1 − u²)² + Gaussian with one centre, its temperature from "
-            "the thermal σ (the condensate fraction is the BEC fit's, later)." + _extra))
+        tip="Gaussian + offset; bimodal Thomas–Fermi (1 − u²)^p + Gaussian with one centre, its temperature from "
+            "the thermal σ (the condensate fraction is the BEC fit's, later). " + TF_EXPONENT_TIP + _extra))
 FIT_DATA = ParameterSpec("fit_data", "Fit to", "choice", UNSMOOTHED, choices=(UNSMOOTHED, SMOOTHED),
                          group=FITS_GROUP, page=FITS_PAGE, when=(SMOOTH.name, "True"),
                          tip="The unsmoothed counts (Poisson weights; the default), or the smoothed curve (as the "
                              "front panel did), with the same smoothing applied to the model: the results are "
                              "the unsmoothed profile's (no correction for the smoothing), and their SEs count "
                              "that smoothed bins share counts. Shown while Smooth is on; it applies to every fit.")
-CONSTANTS_GROUP = "Constants"
-FALL_DISTANCE = ParameterSpec(
-    "fall_distance", "Fall distance (0 = default)", "float", 0.0, (0.0, 100.0), " m", group=CONSTANTS_GROUP,
-    page=FITS_PAGE, si=True,
-    tip="This plot's fall distance from the trap to the detector; 0 uses the lab's or folder's (for now the "
-        "default, 0.848 m: borrowed, unconfirmed).")
-FALL_TIME = ParameterSpec(
-    "fall_time", "Fall time (0 = from distance)", "float", 0.0, (0.0, 100.0), " s", group=CONSTANTS_GROUP,
-    page=FITS_PAGE, si=True,
-    tip="This plot's fall time, set by hand; 0 derives it, √(2h/g). X and Y temperatures use it. The "
-        "arrival-time model on T is built from the fall distance and g alone (a fall is √(2h/g) long in it), "
-        "so a hand-set fall time that disagrees isn't used there; the plot notes the disagreement.")
+# The fall distance and time (F0b's Constants group): the lab's or folder's, or this plot's own. X and
+# Y temperatures use the fall time; the arrival-time model on T uses g and the effective fall
+# distance, ½ g t_f² when the fall time is set by hand (else h), so its v = 0 arrives t_f after release.
+CONSTANTS = constants_specs(("fall_distance", "fall_time"), page=FITS_PAGE)
+# What the fits use, so a lab or folder change of any of them marks the plot.
+CONSTANT_KEYS = ("fall_distance", "fall_time", "g", "mass", "k_B")
 COLOUR = (40, 90, 170)
 SMOOTH_COLOUR = (20, 50, 120)  # the smoothed curve, darker than the bars behind it
 FIT_COLOUR = (0, 0, 0)
 NOTE_COLOUR = "#b06000"  # amber, as Transfer fractions' notes
 
 
-class DecadeLogAxis(pg.AxisItem):  # type: ignore[misc]
-    """A log axis that labels whole decades only, with unlabelled 2…9 ticks between them.
-    pyqtgraph labels the 2…9 ticks too when the axis spans under about two decades, and
-    those labels overlap. With no whole decade in view it keeps pyqtgraph's own ticks."""
-
-    def logTickValues(self, minVal: float, maxVal: float, size: float,
-                      stdTicks: list[tuple[float, list[float]]]) -> list[tuple[float | None, list[float]]]:
-        decades = [float(v) for v in range(math.ceil(minVal), math.floor(maxVal) + 1)]
-        if not decades:
-            return cast(list[tuple[float | None, list[float]]],
-                        super().logTickValues(minVal, maxVal, size, stdTicks))
-        minor = [v + math.log10(k) for v in range(math.floor(minVal), math.ceil(maxVal)) for k in range(2, 10)]
-        self.setStyle(maxTextLevel=0)
-        return [(1.0, decades), (None, [v for v in minor if minVal < v < maxVal])]
+class DecadeLogAxis(GroupedAxis):
+    """The histograms' log Y axis: ``GroupedAxis``'s decade-only log ticks."""
 
 
 class OverlayView(pg.ViewBox):  # type: ignore[misc]
@@ -237,8 +224,7 @@ class Histograms:
         return record
 
     def record_lines(self) -> list[str]:
-        """For the dock's record: each fit (its numbers, reduced χ² and notes) and, with any,
-        the constants used, with where each came from and which are still unconfirmed."""
+        """For the dock's record: each fit (its numbers, reduced χ² and notes)."""
         lines = []
         for item, fit in zip(self.items, self.fits):
             if fit is None:
@@ -247,10 +233,7 @@ class Histograms:
             extra = f" · reduced χ² {chi2:.3g}" if fit.ok and math.isfinite(chi2) else ""
             notes = f" · notes: {'; '.join(fit.notes)}" if fit.notes else ""
             lines.append(f"Fit {item.axis}: {fit.text()}{extra}{notes}")
-        if lines and self.constants is not None:
-            lines.append(f"Constants: {constants_text(self.constants)}")
-            lines += [f"Constants note: {note}" for note in self.constants.notes]
-        return lines
+        return lines  # The constants are in the record once, from the run (``AnalysisResult.describe``).
 
 
 def counts_title(data: ShotCounts) -> str:
@@ -315,14 +298,6 @@ class CountsPerShot(DatasetAnalysis):
         return cast(QWidget, plot)
 
 
-def plot_constants(values: Mapping[str, Any], layers: Mapping[str, Mapping[str, float]]) -> ResolvedConstants:
-    """The constants a run uses: the lab and folder layers it was given (``AnalysisContext.constants``;
-    none until F0b), then this plot's fall distance and fall time where set (0 = not set)."""
-    plot = {spec.name: float(values[spec.name]) for spec in (FALL_DISTANCE, FALL_TIME)
-            if float(values.get(spec.name, 0.0)) > 0}
-    return resolve(lab=layers.get("lab"), folder=layers.get("folder"), plot=plot)
-
-
 def _inside_others(events: npt.NDArray[np.float64], ranges: list[tuple[float, float] | None],
                    axis: int) -> npt.NDArray[np.bool_]:
     """The events inside every other axis's range (an axis without one keeps all)."""
@@ -354,7 +329,7 @@ class TxyHistograms(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.txy_histograms",
-            version="4",
+            version="5",
         )
 
     def get_actions(self) -> List[str]:
@@ -363,23 +338,30 @@ class TxyHistograms(DatasetAnalysis):
     def parameters(self, action_name: str) -> List[ParameterSpec]:
         fits = [spec for pair in FIT_SPECS.values() for spec in pair]
         return [*SHOT_SPECS, *RANGE, BINS, LOG_Y, VALUES, BOX, HIGHLIGHT, NEWEST_COLOUR, SMOOTH, SMOOTH_T, SMOOTH_XY,
-                *fits, FIT_DATA, FALL_DISTANCE, FALL_TIME]
+                *fits, FIT_DATA, *CONSTANTS]
+
+    def constant_keys(self, action_name: str) -> tuple[str, ...]:
+        return CONSTANT_KEYS
+
+    def run_constants(self, action_name: str, values: Mapping[str, Any],
+                      layers: Mapping[str, Mapping[str, float]]) -> ResolvedConstants | None:
+        """The constants the fits use; None when no fit is on (the histograms alone use none, so
+        they are neither keyed on constants nor marked when one changes)."""
+        if not any(values.get(toggle.name) for toggle, _ in FIT_SPECS.values()):
+            return None
+        return resolve_for_run(values, layers.get("lab"), layers.get("folder"))
 
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
         bins = int(values[BINS.name])
         smoothing = bool(values.get(SMOOTH.name))
         fitted = fits_brief(values)
-        overrides = [f"{label} {si_text(float(values[spec.name]), unit)}"
-                     for spec, label, unit in ((FALL_DISTANCE, "h", "m"), (FALL_TIME, "t_f", "s"))
-                     if fitted and float(values.get(spec.name, 0.0)) > 0]
         settings = (shots_brief(values), range_brief(values),
                     "" if smoothing else (f"bins {bins:,}" if bins else "bins auto"),
-                    f"smoothed σ {si_text(float(values[SMOOTH_T.name]), 's')} / "
-                    f"{si_text(float(values[SMOOTH_XY.name]), 'm')}" if smoothing else "",
+                    f"smoothed σ {axis_text('T', float(values[SMOOTH_T.name]), WIDTH_DIGITS)} / "
+                    f"{axis_text('X', float(values[SMOOTH_XY.name]), WIDTH_DIGITS)}" if smoothing else "",
                     RATE if values.get(VALUES.name) == RATE else "", "box" if values.get(BOX.name) else "",
                     "log Y" if values[LOG_Y.name] else "", newest_brief(values), fitted,
-                    "on the smoothed curve" if fitted and smoothing and values.get(FIT_DATA.name) == SMOOTHED else "",
-                    *overrides)
+                    "on the smoothed curve" if fitted and smoothing and values.get(FIT_DATA.name) == SMOOTHED else "")
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
@@ -399,7 +381,9 @@ class TxyHistograms(DatasetAnalysis):
         on_smoothed = smoothing and values.get(FIT_DATA.name) == SMOOTHED
         newest = newest_shot(values, shots)
         fresh = newest_events(context.view, newest)
-        constants = plot_constants(values, context.constants)
+        constants = context.resolved_constants
+        if constants is None:  # Run without the runner (or no fit on): resolved here, the same way.
+            constants = resolve_for_run(values, context.constants.get("lab"), context.constants.get("folder"))
         # Each axis's range first (the manual bounds, its full extent, or auto-crop's shortest
         # range): with the box on, every histogram counts only events inside the others' ranges.
         ranges: list[tuple[float, float] | None] = []
@@ -421,7 +405,7 @@ class TxyHistograms(DatasetAnalysis):
             sigma = float(values[(SMOOTH_T if axis == "T" else SMOOTH_XY).name]) if smoothing else None
             count, note = bins, ""
             if sigma is not None and ranges[i] is not None:
-                count, note = smoothing_bins(*cast(tuple[float, float], ranges[i]), sigma, unit_of(axis))
+                count, note = smoothing_bins(*cast(tuple[float, float], ranges[i]), sigma, axis)
             item = histogram(np.ascontiguousarray(column), axis, keep, count, ranges[i])
             items.append(item)
             bin_notes.append((note,) if note else ())
@@ -461,7 +445,9 @@ class TxyHistograms(DatasetAnalysis):
                   if data.newest_shot is not None and data.newest else "")
         header = html.escape(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}{newest}"))
         if data.fitted() and data.constants is not None:
-            header += f"<br>Fits with {html.escape(constants_text(data.constants))}"
+            # Only the values not at their defaults (the record has them all), so the header stays short.
+            used = describe_constants(data.constants, CONSTANT_KEYS)
+            header += f"<br>Fits with {html.escape(used)}" if used else "<br>Fits with the default constants"
             header += notes_html(data.constants.notes)
         widget.addLabel(header, row=0, col=0)
         overlays = []
@@ -469,11 +455,12 @@ class TxyHistograms(DatasetAnalysis):
             index = row - 1
             highlighted = data.newest_shot is not None and index < len(data.newest)
             # A right axis only for the newest shot's counts (pyqtgraph shows any axis it is given).
-            axes = ({"left": DecadeLogAxis("left"), **({"right": DecadeLogAxis("right")} if highlighted else {})}
-                    if log_y else None)
-            x_factor, x_unit = display_unit(item.axis, float(item.edges[0]), float(item.edges[-1]))
+            axes: dict[str, Any] = {"bottom": GroupedAxis("bottom")}
+            if log_y:
+                axes.update({"left": DecadeLogAxis("left"), **({"right": DecadeLogAxis("right")} if highlighted else {})})
+            x_factor = axis_scale(item.axis)
             sigma = data.smoothing[index] if index < len(data.smoothing) else None
-            how = (f"σ/5 for smoothing σ {si_text(sigma, unit_of(item.axis))}"
+            how = (f"σ/5 for smoothing σ {axis_text(item.axis, sigma, WIDTH_DIGITS)}"
                    if sigma is not None else "")
             title = html.escape(histogram_title(item, item.axis in data.reversed, how))
             fit = data.fit(index)
@@ -485,7 +472,7 @@ class TxyHistograms(DatasetAnalysis):
                 notes = [fit.text(), *fit.notes, *notes]
             title += notes_html(notes)
             plot = widget.addPlot(row=row, col=0, title=title, axisItems=axes)
-            plot.setLabel("bottom", f"{item.axis} ({x_unit})")
+            plot.setLabel("bottom", axis_label(item.axis))
             label = value_label(item.axis, data.units)
             plot.setLabel("left", label)
             edges = item.edges * x_factor

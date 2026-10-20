@@ -503,7 +503,7 @@ def test_the_scatter_highlights_the_newest_shot(qtbot: QtBot) -> None:
     assert len(traces) == 2 and traces[1].marker.color == "rgb(200, 30, 180)" and traces[1].name == "shot 3 (newest)"
     assert "shot 3 highlighted (2 events)" in scatter_3d.note_text(data)
     assert script.describe_run("Plot", lit.parameters, view)[1].endswith("newest shot in magenta")
-    assert script.get_metadata().version == "3" and basic_plots.TxyHistograms().get_metadata().version == "4"
+    assert script.get_metadata().version == "3" and basic_plots.TxyHistograms().get_metadata().version == "5"
 
 
 def test_the_display_cap_keeps_the_newest_shot_whole() -> None:

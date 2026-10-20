@@ -16,6 +16,17 @@ How a fit runs:
   biases widths low). ``"counts"`` stops after the first fit. Either way the covariance is
   absolute (the SEs don't scale with χ²; a poor model shows as a large reduced χ², noted).
   ``"none"`` fits unweighted and scales the covariance by the residuals instead.
+- Offset: for counts (``nonnegative_offset``; by default raw counts with count weights) a
+  model's ``offset`` is at least 0 (a mean count can't be negative), and an offset at 0 isn't
+  noted as "at its bound"; otherwise (``sigma=`` rates, background-subtracted data) it keeps
+  the model's bound, −top.
+- Bins: by default (``binned``) the model is averaged over each bin (three-point
+  Gauss–Legendre, ``bin_means``), not taken at its centre: a centre value biases a
+  width by about +w²/(24σ) for bins w wide (Sheppard's correction: +0.5 SE at 50 000 events
+  in bins of σ/5, several SE at 10⁵–10⁶). Bin edges are ``edges=`` when given, else halfway
+  between neighbouring centres, which assumes equal-width bins of counts. ``binned`` may be a
+  weight function w(x) (r² for radial shells): each bin then gets ∫w·f / ∫w. The result's
+  ``curve`` and ``evaluate`` are the model itself at points (not averaged), for drawing.
 - Scaling: x and counts are mapped to order one before fitting (a T profile is ~0.4 s wide
   ~0.1 ms, counts ~10³), each parameter by its role (a position, a width, a height or a
   dimensionless shape), and mapped back with the covariance.
@@ -64,6 +75,7 @@ MAX_RADIUS_RATIO = 2.0
 MIN_RADIUS_RATIO = 0.02
 RATIO = "ratio"  # the parameter max_radius_ratio caps
 RATIO_CAP_NEAR = 0.01  # a ratio within this fraction of the cap is "at its limit"
+OFFSET = "offset"  # floored at 0 for raw counts with count weights (fit_histogram)
 
 # curve_fit warns when it can't estimate a covariance; the result's checks report that
 # instead. Set once here, for SciPy's optimizer only: per-call filters aren't thread-safe.
@@ -142,7 +154,7 @@ class FitResult:
     estimates: Mapping[str, Estimate]
     covariance: Array | None = field(repr=False)
     x: Array = field(repr=False)
-    curve: Array = field(repr=False)  # the model at ``x`` (empty without a fit)
+    curve: Array = field(repr=False)  # the model at ``x``, not bin-averaged, for drawing (empty without a fit)
     chi2: float = math.nan
     dof: int = 0
     points: int = 0  # bins fitted (after leaving out unusable ones)
@@ -193,6 +205,44 @@ class FitResult:
                 "fixed": dict(self.model.fixed)}
 
 
+def bin_bounds(centres: npt.ArrayLike) -> tuple[Array, Array]:
+    """(lower, upper) edges of bins with these centres (any order): halfway to each
+    neighbour in x, the outermost ones as wide on their open side as on the other. A single
+    bin has zero width."""
+    x = np.asarray(centres, dtype=np.float64).ravel()
+    order = np.argsort(x, kind="stable")
+    ordered = x[order]
+    half = np.diff(ordered) / 2
+    left = np.concatenate([half[:1], half]) if len(half) else np.zeros(len(x))
+    right = np.concatenate([half, half[-1:]]) if len(half) else np.zeros(len(x))
+    lower, upper = np.empty(len(x)), np.empty(len(x))
+    lower[order], upper[order] = ordered - left, ordered + right
+    return lower, upper
+
+
+GAUSS_NODES = (-math.sqrt(0.6), 0.0, math.sqrt(0.6))  # three-point Gauss–Legendre on [−1, 1]
+GAUSS_WEIGHTS = (5 / 18, 8 / 18, 5 / 18)  # … its weights, summing to 1
+
+
+def bin_means(function: Callable[..., Array], lower: Array, upper: Array, values: Sequence[float] | Array,
+              weight: Callable[[Array], Array] | None = None) -> Array:
+    """``function(x, *values)`` averaged over each bin [lower, upper] by three-point
+    Gauss–Legendre quadrature (exact for polynomials up to degree 5; for a Gaussian in bins of
+    σ its error is ~10⁻⁴ of the peak, against the centre value's ~4 %). With ``weight`` w(x),
+    the weighted mean ∫w·f / ∫w (radial shells: w = r²), both by the same quadrature."""
+    middle, half = (lower + upper) / 2, (upper - lower) / 2
+    points = np.concatenate([middle + node * half for node in GAUSS_NODES])
+    evaluated = function(points, *values)
+    count = len(lower)
+
+    def mean(column: Array) -> Array:
+        return cast(Array, sum(w * column[k * count:(k + 1) * count] for k, w in enumerate(GAUSS_WEIGHTS)))
+    if weight is None:
+        return mean(evaluated)
+    weights = np.asarray(weight(points), dtype=np.float64)
+    return mean(evaluated * weights) / mean(weights)
+
+
 def bin_centres(edges: npt.ArrayLike) -> Array:
     edges = np.asarray(edges, dtype=np.float64)
     return cast(Array, (edges[:-1] + edges[1:]) / 2)
@@ -202,7 +252,9 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
                   weights: Weights = "poisson", sigma: npt.ArrayLike | None = None,
                   max_evaluations: int = MAX_EVALUATIONS,
                   max_radius_ratio: float = MAX_RADIUS_RATIO,
-                  covariance_of: Callable[[Array, Array, Array], Array] | None = None) -> FitResult:
+                  covariance_of: Callable[[Array, Array, Array], Array] | None = None,
+                  nonnegative_offset: bool | None = None, binned: bool | Callable[[Array], Array] = True,
+                  edges: npt.ArrayLike | None = None) -> FitResult:
     """Fit ``model`` (a ``MODELS`` key or a ``FitModel``) to a histogram's bin centres and
     raw counts. ``sigma``, when given, is each bin's error (absolute) and replaces
     ``weights``: pass it for anything that isn't raw counts. Bins with a non-finite centre,
@@ -216,7 +268,15 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
     (data units, from the weights alone) before anything reads it: the SEs, the "consistent
     with 0" gating and its notes, the undetermined check and the extras. For data whose bins
     are correlated (a smoothed curve: ``profiles.fit_smoothed``), where only the caller knows
-    the real spread; ``x`` are the bins fitted."""
+    the real spread; ``x`` are the bins fitted.
+
+    ``nonnegative_offset``: the offset is at least 0 (counts); None means so for raw counts
+    with count weights (no ``sigma``, weights not "none"). ``binned``: the model is averaged
+    over each bin; False takes it at the centres (point samples, or a model that already
+    integrates its bins); a function w(x) averages with that weight, ∫w·f / ∫w (radial
+    shells: r²). ``edges`` (len(centres) + 1, in the centres' order) are the bins' exact bounds,
+    used whenever given; without them the edges are halfway between the centres given (before
+    any are left out), which is right for equal-width bins of counts only."""
     fit_model = MODELS[model] if isinstance(model, str) else model
     has_ratio = RATIO in fit_model.names
     if has_ratio and not max_radius_ratio > MIN_RADIUS_RATIO:
@@ -226,6 +286,16 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
     y = np.asarray(counts, dtype=np.float64).ravel()
     if len(x) != len(y):
         raise ValueError("centres and counts must have the same length")
+    finite_x = np.isfinite(x)
+    lower_x, upper_x = x.copy(), x.copy()
+    weight = binned if callable(binned) else None
+    if edges is not None:
+        bounds = np.asarray(edges, dtype=np.float64).ravel()
+        if len(bounds) != len(x) + 1:
+            raise ValueError("edges must have one more entry than centres")
+        lower_x, upper_x = bounds[:-1].copy(), bounds[1:].copy()
+    elif binned is not False and finite_x.any():
+        lower_x[finite_x], upper_x[finite_x] = bin_bounds(x[finite_x])
     absolute = sigma is not None or weights != "none"
     if sigma is not None:
         errors = np.broadcast_to(np.asarray(sigma, dtype=np.float64), y.shape).ravel()
@@ -242,6 +312,7 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
         notes.append(f"{int((~positive[finite]).sum()):,} bins with an error that isn't finite and > 0 left out")
     usable = finite & positive
     x, y, errors = x[usable], y[usable], errors[usable]
+    lower_x, upper_x = lower_x[usable], upper_x[usable]
     if sigma is None and weights != "none" and not np.all(y == np.round(y)):
         notes.append("the counts aren't whole numbers: Poisson weights assume raw counts "
                      "(give errors as sigma for rates or smoothed counts)")
@@ -266,6 +337,7 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
 
     order = np.argsort(x, kind="stable")
     x, y, errors = x[order], y[order], errors[order]
+    lower_x, upper_x = lower_x[order], upper_x[order]
     centre, span = (float(x[0]) + float(x[-1])) / 2, float(x[-1] - x[0]) or 1.0
     height = float(np.max(np.abs(y))) or 1.0
     scale = np.array([span if parameter.role in ("position", "width") else
@@ -276,9 +348,22 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
         return cast(Array, shift + scale * normalised)
 
     def normalised_model(u: Array, *normalised: float) -> Array:
-        return fit_model.function(centre + span * u, *to_data(np.asarray(normalised))) / height
+        """The model on the fitted bins (``u`` is always their centres, normalised)."""
+        parameters = to_data(np.asarray(normalised))
+        if binned is not False:
+            return bin_means(fit_model.function, lower_x, upper_x, parameters, weight) / height
+        return fit_model.function(centre + span * u, *parameters) / height
 
     lower, upper = (np.array(bound, dtype=np.float64) for bound in fit_model.bounds(x, y))
+    # Counts: an offset below 0 makes the model negative in the tails (117 of 200 sparse
+    # Poisson fits went there), an impossible mean count. Rates and other data given with
+    # sigma= keep the model's own bound (−top: background-subtracted data), unless the caller
+    # says they are counts (profiles.fit_smoothed).
+    if nonnegative_offset is None:
+        nonnegative_offset = sigma is None and weights != "none"
+    floored = nonnegative_offset and OFFSET in fit_model.names
+    if floored:
+        lower[fit_model.names.index(OFFSET)] = max(float(lower[fit_model.names.index(OFFSET)]), 0.0)
     if has_ratio:
         upper[fit_model.names.index(RATIO)] = max_radius_ratio
     lower_n, upper_n = (lower - shift) / scale, (upper - shift) / scale
@@ -352,6 +437,7 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
                 zip(fit_model.parameters, found, lower_n, upper_n, width)
                 if parameter.name not in zero and parameter.name not in gated
                 and not (capped and parameter.name == RATIO)
+                and not (floored and parameter.name == OFFSET and value - low <= 1e-6 * size)
                 and (value - low <= 1e-6 * size or high - value <= 1e-6 * size)]
     if at_bound:
         notes.append(f"at its bound: {', '.join(at_bound)} (its SE is not reliable)")
@@ -527,10 +613,13 @@ def thomas_fermi_model(power: float) -> FitModel:
 # and a Gaussian sum to a shape close to either alone: on a purely thermal cloud the fit
 # invented a condensate wider than the Gaussian (R/σ 2–4, N0/N up to 0.15), and on a pure
 # condensate the "thermal" part became a narrow spike inside the TF.
-# The cap follows the physics: after a time of flight t both widths grow with t,
-# σ_th = √(k_B T/m)·t and R = √(2μ/m)·t (a TF cloud expands at its sound-speed scale), so
-# R/σ_th = √(2μ/k_B T). The default 2 allows μ ≤ 2 k_B T: clouds near Tc down to roughly
-# 0.4 Tc. Colder, deep condensates (T ≈ 0.1–0.3 Tc) often have μ/k_B T of 3–10, a ratio of
+# The cap follows the physics: after a long time of flight t the thermal width grows as
+# σ_th = √(k_B T/m)·t, and a TF radius as its expansion velocity (Castin–Dum) times t, which
+# depends on the axis and the trap: along the radial axes of a cigar trap R ≈ √(2μ/m)·t, so
+# R/σ_th = √(2μ/k_B T); in an isotropic trap √(4μ/3k_B T); along a cigar's axis only
+# ≈ (π/2)(ω_z/ω_⊥)√(2μ/k_B T), much less. So the cap is axis-dependent (D4 will set it per
+# axis; ``profiles.fit_axis`` passes it through). With √(2μ/k_B T), the default 2 allows
+# μ ≤ 2 k_B T: clouds near Tc down to roughly 0.4 Tc. Colder, deep condensates (T ≈ 0.1–0.3 Tc) often have μ/k_B T of 3–10, a ratio of
 # 2.5–4.5: raise the cap for them (a run that ends at the cap says so, and its T and N0/N
 # are then bounds, not values). A higher cap brings back some of the ambiguity above, so
 # raise it only when the data call for it. Each part's shape parameters are gated by its

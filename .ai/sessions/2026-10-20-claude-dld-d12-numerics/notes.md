@@ -119,23 +119,27 @@ reproducible, and Live-unfriendly).
   clumps.
 - **Fit** (`peak_model(spec, baseline)` with `fits.fit_histogram`, local models not
   registered in `fits.MODELS`): b + A exp(−(x − c)²/2σ²) for 1D (the centre free: BB shifts
-  it), centred at 0 radially, **averaged over each bin** with 5 Gauss–Legendre points
-  (weighted by r² over radial shells: the pair density of a flat reference), so wide first
-  shells of equal-volume bins don't bias the peak (finding 4; tested on a noise-free curve
-  over 12 equal-volume shells). Weights: the bootstrap SE floored at a one-count error
+  it), centred at 0 radially, **averaged over each bin** (weighted by r² over radial
+  shells: the pair density of a flat reference), so wide first shells of equal-volume bins
+  don't bias the peak (finding 4). Since the merge of the integration head (6ed1ec9) this is
+  `fits.fit_histogram`'s own averaging (`fit_peak`: `edges=spec.edges`, `binned=r²` for
+  shells, `True` in 1D; three-point Gauss–Legendre), and the local five-point averaging is
+  gone: one path. On a noise-free curve over 12 equal-volume shells (a first shell 1.75σ wide)
+  it returns (b + A)/b 0.003 low, 0.1 of a typical SE; 40 linear bins are exact to 10⁻⁴. Weights: the bootstrap SE floored at a one-count error
   √max(H_in, 1)·(P_between/P_in)/H_between, since a bin with 0 pairs has a bootstrap SE of 0.
   g²(0) = (b + A)/b, b reported as `baseline`; `baseline="fixed"` keeps the legacy 1 + A fit.
-  `CorrelationResult.curve(x)` draws the point model; `fit.evaluate(x)` gives bin averages.
+  `CorrelationResult.curve(x)` and `fit.evaluate(x)` are both the point model (unaveraged),
+  for drawing (tested equal).
 - **g²(0)'s SE** is the spread of refits of the first `FIT_RESAMPLES` = 200 bootstrap
   replicates (same weights): neighbouring bins share shots, so the single fit's diagonal
   covariance was ~1.4× too small (finding 2). Without a bootstrap (`n_boot=0`) the
   covariance's SE is used and `g2_zero_method` says it is too small. On the twin-pair test
   source the covariance SE is 2.1× too small, the refit SE matches the scatter (1.11 over 30
   seeds; 0.74 and 1.32 on other sets of 16–40 seeds: the ratio itself is that noisy).
-- **When the fit integration lands** (Coordinator, 2026-10-20): `fits.fit_histogram` on the
-  integration branch averages over equal-width bins by default (`binned=True`). Merging that
-  head, pass `binned=False` here (the model already averages, r²-weighted for shells) or move
-  to its `edges=`/weight option once it exists; the equal-width default is wrong for shells.
+- **Integration merge** (6ed1ec9, the Coordinator's request): `fits.fit_histogram` now
+  averages over bins by default, from halfway edges (equal widths). `fit_peak` always passes
+  the spec's exact `edges=` and the r² weight for shells, so the equal-width default is never
+  used here.
 
 ## Simulations in the tests
 
@@ -172,7 +176,7 @@ reproducible, and Live-unfriendly).
 
 - 50 shots × 2000 events, cloud σ = 1 per axis, with a 1000-resample bootstrap, 200 refits
   and the fit: 1D (L = 0.3, w = 0.02) plus radial r ≤ 0.3 together ~5.5 s (2.4·10⁷ radial
-  between-shot pairs). The bin-averaged model caches its quadrature grid per x, so a refit
+  between-shot pairs). A replicate refit
   costs ~5–20 ms. The test allows 20 s each for a loaded machine.
 - Cost is the number of pairs within reach: ~N²·f with f the share of pair separations
   inside the bins, plus N log S tree builds. A radial reach comparable to the cloud is the

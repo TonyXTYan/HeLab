@@ -42,8 +42,10 @@ from PyQt6.QtWidgets import QWidget
 from scipy.signal import find_peaks
 
 from helab.analysis.dataset_view import DatasetView, txy
+from helab.analysis.display_units import T_SCALE, WIDTH_DIGITS, axis_label, length_text, range_text, time_text
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.parameters import ParameterSpec
+from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import SHOT_SPECS, select_shots, selection_text, shots_brief, shots_text
 from helab.analysis.stats import shortest_range
@@ -59,23 +61,24 @@ MODE = ParameterSpec("orders_mode", "Orders", "choice", AUTO, choices=(AUTO, MAN
 EACH_SIDE = ParameterSpec("orders_each_side", "Orders each side", "int", 2, (1, 6), group=ORDERS_GROUP,
                           tip="Orders −N…+N are counted; +1 arrives later than 0.")
 CENTRE = ParameterSpec("centre", "Order 0 at", "float", 2.1375, (0.0, 100.0), " s", group=ORDERS_GROUP,
-                       when=(MODE.name, MANUAL), si=True, tip="Arrival time of order 0.")
+                       when=(MODE.name, MANUAL), si=True, unit_prefix="m", tip="Arrival time of order 0.")
 SPACING = ParameterSpec("spacing", "Spacing", "float", 0.0125, (1e-6, 10.0), " s", group=ORDERS_GROUP,
-                        when=(MODE.name, MANUAL), si=True, tip="Time between neighbouring orders.")
+                        when=(MODE.name, MANUAL), si=True, unit_prefix="m", tip="Time between neighbouring orders.")
 HALF_WIDTH = ParameterSpec("half_width", "Window ± (0 = half spacing)", "float", 0.0, (0.0, 10.0), " s",
-                           group=ORDERS_GROUP, si=True,
+                           group=ORDERS_GROUP, si=True, unit_prefix="m",
                            tip="Each order's window is its time ± this; 0 makes neighbouring windows touch. Over "
                                "half the spacing it is clipped to that (the plot says so): windows never overlap.")
 SEARCH_MIN = ParameterSpec("search_min", "Search T from (0 = first)", "float", 0.0, (0.0, 100.0), " s",
-                           group=ORDERS_GROUP, when=(MODE.name, AUTO), si=True,
+                           group=ORDERS_GROUP, when=(MODE.name, AUTO), si=True, unit_prefix="m",
                            tip="Auto looks for the orders between these times; 0 leaves that end open. Put order 0 "
                                "inside: the tallest peak here is taken as order 0. With both ends set, the plot "
                                "doesn't warn about orders outside it.")
 SEARCH_MAX = ParameterSpec("search_max", "Search T to (0 = last)", "float", 0.0, (0.0, 100.0), " s",
-                           group=ORDERS_GROUP, when=(MODE.name, AUTO), si=True,
+                           group=ORDERS_GROUP, when=(MODE.name, AUTO), si=True, unit_prefix="m",
                            tip="See Search T from. A From at or above To searches every event, and the plot says so.")
 BOX_GROUP = "Counting"
 XY_HALF = ParameterSpec("xy_half", "XY box ±", "float", 0.03, (0.0, 1.0), " m", group=BOX_GROUP, si=True,
+                        unit_prefix="m",
                         tip="Only events with |X| and |Y| within this count (0 = no XY limit); keeps a hot spot "
                             "out of the counts.")
 MIN_COUNTS = ParameterSpec("min_counts", "Minimum counts", "int", 50, (0, 10_000_000), group=BOX_GROUP,
@@ -244,8 +247,8 @@ def window_half(half_width: float, spacing: float) -> tuple[float, str]:
     """The window ± used: as set, half the spacing for 0, and clipped to half the spacing when
     set wider, so neighbouring windows never overlap (each event counts once); with what it says."""
     if half_width > spacing / 2:
-        return spacing / 2, (f"Window ± {half_width * 1e3:.3g} ms is over half the spacing: using "
-                             f"{spacing / 2 * 1e3:.3g} ms, so neighbouring windows touch without sharing events")
+        return spacing / 2, (f"Window ± {time_text(half_width, WIDTH_DIGITS)} is over half the spacing: using "
+                             f"{time_text(spacing / 2, WIDTH_DIGITS)}, so neighbouring windows touch without sharing events")
     return half_width or spacing / 2, ""
 
 
@@ -332,7 +335,7 @@ class TransferFractions(DatasetAnalysis):
         each = int(values[EACH_SIDE.name])
         how = "auto orders" if values[MODE.name] == AUTO else "manual orders"
         half = float(values[XY_HALF.name])
-        box = f"XY ±{half * 1e3:g} mm" if half > 0 else "no XY limit"
+        box = f"XY ±{length_text(half)}" if half > 0 else "no XY limit"
         settings = (shots_brief(values), f"{how} ±{each}", box, f"> {int(values[MIN_COUNTS.name]):,} counts")
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
@@ -388,14 +391,14 @@ class TransferFractions(DatasetAnalysis):
                 found = detect(searched, lower, upper if upper > lower else lower + 1e-6, each_side)
                 centre, detected = found.centre, True
                 if found.spacing is None:
-                    coarse = (f"; T bins of {found.edges[1] - found.edges[0]:.2g} s are coarse for order 0, narrow "
+                    coarse = (f"; T bins of {time_text(found.edges[1] - found.edges[0], 2)} are coarse for order 0, narrow "
                               f"Search T") if found.coarse else ""
-                    notes.append(f"no side peak found beyond order 0's width ({found.fwhm * 1e3:.3g} ms): "
+                    notes.append(f"no side peak found beyond order 0's width ({time_text(found.fwhm, 3)}): "
                                  f"spacing as set{coarse}")
                 else:
                     spacing = found.spacing
                 if found.fwhm > spacing / 2:
-                    notes.append(f"orders overlap: order 0's width (FWHM {found.fwhm * 1e3:.3g} ms) is over half the "
+                    notes.append(f"orders overlap: order 0's width (FWHM {time_text(found.fwhm, 3)}) is over half the "
                                  f"spacing, so neighbouring orders share events")
             else:
                 notes.append("no events in the search range: orders as set")
@@ -410,13 +413,13 @@ class TransferFractions(DatasetAnalysis):
             replaced = chosen_by_search(previous, low, high) and previous != CENTRE.default
             jumped = 0 if chosen_by_search(previous, low, high) else jump(previous, centre, spacing, each_side)
             if replaced:  # The user's word on order 0, but say what it replaced.
-                notes.append(f"order 0 now at {centre:.6g} s; the last detection, {previous:.6g} s, was outside "
+                notes.append(f"order 0 now at {time_text(centre)}; the last detection, {time_text(previous)}, was outside "
                              f"Search T")
             if jumped:
                 notes.append(f"⚠ order 0 moved by {order_label(jumped)} order{'' if abs(jumped) == 1 else 's'} "
-                             f"from the last detection ({previous:.6g} s → {centre:.6g} s): a strong transfer can "
+                             f"from the last detection ({time_text(previous)} → {time_text(centre)}): a strong transfer can "
                              f"make another order the tallest. Manual starts from the last one; to accept the new "
-                             f"one, set Order 0 at {centre:.6g} s in manual mode, Rerun, then back to Auto")
+                             f"one, set Order 0 at {time_text(centre)} in manual mode, Rerun, then back to Auto")
         empty = int(np.count_nonzero(counts.sum(axis=1) == 0))
         if empty and empty < len(boxed):
             notes.append(f"{empty:,} shot{'' if empty == 1 else 's'} with no events in the windows: no fractions")
@@ -440,15 +443,15 @@ class TransferFractions(DatasetAnalysis):
             return empty_pane(" · ".join((text, *said)), parent)
         if not data.counts.any():
             first, last = data.extent
-            text = (f"No events in the orders' windows: order 0 at {orders.centre:.6g} s, spacing "
-                    f"{orders.spacing * 1e3:.4g} ms, and the events counted are at T {first:.6g}–{last:.6g} s "
+            text = (f"No events in the orders' windows: order 0 at {time_text(orders.centre)}, spacing "
+                    f"{time_text(orders.spacing, WIDTH_DIGITS)}, and the events counted are at {range_text('T', first, last)} "
                     f"(Orders settings)")
             return empty_pane(" · ".join((text, *data.notes)), parent)
         widget: Any = pg.GraphicsLayoutWidget(parent)
         widget.setBackground("w")
         found = "found" if data.auto else "set"
         title = (f"{result.input.short()} · {shots_text(data.shots.tolist(), data.total_shots)} · order 0 at "
-                 f"{orders.centre:.6g} s, spacing {orders.spacing * 1e3:.4g} ms, window ±{orders.half_width * 1e3:.3g} ms "
+                 f"{time_text(orders.centre)}, spacing {time_text(orders.spacing, WIDTH_DIGITS)}, window ±{time_text(orders.half_width, WIDTH_DIGITS)} "
                  f"({found})")
         notes = ' · '.join(data.notes)
         notes = f'<br><span style="color: #b06000">{html.escape(notes)}</span>' if notes else ""
@@ -465,18 +468,20 @@ class TransferFractions(DatasetAnalysis):
             plot.plot(data.shots, fractions[:, column], name=f"order {order_label(order)}", connect="finite",
                       pen=pg.mkPen(colour, width=1.5), symbol="o", symbolSize=4, symbolBrush=colour, symbolPen=None)
         edges, counts = data.histogram
-        times = widget.addPlot(row=2, col=0, title="T around the orders, with their windows")
-        times.setLabel("bottom", "T (s)")
+        times = widget.addPlot(row=2, col=0, title="T around the orders, with their windows",
+                               axisItems={"bottom": GroupedAxis("bottom")})
+        times.setLabel("bottom", axis_label("T"))
         times.setLabel("left", "Events")
         if len(counts):
-            times.addItem(pg.PlotDataItem(edges, counts, stepMode="center", fillLevel=0,
+            times.addItem(pg.PlotDataItem(edges * T_SCALE, counts, stepMode="center", fillLevel=0,
                                           pen=pg.mkPen((60, 60, 60)), brush=(60, 60, 60, 60)))
         for column, order in enumerate(orders.numbers):
-            region = pg.LinearRegionItem(orders.window(order), movable=False,
+            low, high = orders.window(order)
+            region = pg.LinearRegionItem((low * T_SCALE, high * T_SCALE), movable=False,
                                          brush=(*colours[column].getRgb()[:3], 50), pen=pg.mkPen(None))
             times.addItem(region)
             label = pg.TextItem(order_label(order), color=colours[column], anchor=(0.5, 0))
-            label.setPos(orders.centre + order * orders.spacing, float(counts.max()) if len(counts) else 1.0)
+            label.setPos((orders.centre + order * orders.spacing) * T_SCALE, float(counts.max()) if len(counts) else 1.0)
             times.addItem(label)
         widget.ci.layout.setRowStretchFactor(1, 3)
         widget.ci.layout.setRowStretchFactor(2, 2)

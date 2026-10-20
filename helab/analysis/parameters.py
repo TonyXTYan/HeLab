@@ -10,7 +10,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping, Sequence
 
+from helab.analysis.display_units import number_text
+
 Kind = Literal["float", "int", "bool", "choice"]
+# The prefixes ``unit_prefix`` may name, with their factors.
+SI_FACTORS = {"G": 1e9, "M": 1e6, "k": 1e3, "": 1.0, "m": 1e-3, "µ": 1e-6, "n": 1e-9}
 Value = float | int | bool | str
 
 
@@ -28,6 +32,10 @@ class ParameterSpec:
     when: tuple[str, str] | None = None  # (choice parameter, value) this applies under; None = always
     si: bool = False  # a float in a base unit (s, m): shown with SI prefixes (4 mm), stepped by decade
     page: str = ""  # the settings tab this is on ("" = the first); a group goes on its first parameter's page
+    # With ``si``: the one SI prefix the value is always shown with ("m": a T in s shown in ms, an X
+    # in m in mm), its digits grouped by thousands (``display_units``). The value stays in the base
+    # unit, so saved settings keep their meaning. None: the prefix follows the value.
+    unit_prefix: str | None = None
 
     def coerce(self, value: Any) -> Value:
         """``value`` as this parameter's type, clamped to its limits (a choice outside
@@ -62,6 +70,8 @@ class ParameterSpec:
         if self.si:
             # Steps of a tenth of the value's decade: 4 mm → 5 mm, 3.85 s → 3.95 s.
             item.update(siPrefix=True, dec=True, step=0.1, decimals=6)
+            if self.unit_prefix is not None:
+                item["fixedPrefix"] = self.unit_prefix  # UnitSpinBox's option
         if self.tip:
             item["tip"] = self.tip
         return item
@@ -70,6 +80,9 @@ class ParameterSpec:
         """``title value suffix`` for a source line."""
         if self.kind == "bool":
             shown = "on" if value else "off"
+        elif isinstance(value, float) and self.si and self.unit_prefix is not None:
+            unit = f"{self.unit_prefix}{self.suffix.strip()}"
+            return f"{self.title} {number_text(value / SI_FACTORS[self.unit_prefix])} {unit}"
         elif isinstance(value, float):
             shown = f"{value:g}"
         elif isinstance(value, int):

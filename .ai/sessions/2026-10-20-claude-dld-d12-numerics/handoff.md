@@ -2,9 +2,10 @@
 
 Branch `agent/dld-d12-numerics`, from `fb47de7`. Not pushed or merged. New files only:
 `helab/analysis/correlations.py`, `tests/test_correlations.py` (35 tests, ~45 s with `-n 1`,
-most of it the error-calibration runs, the thermal simulation and the speed test). Two
-commits: the numerics, then the Coordinator's review fixes (free baseline, honest errors,
-shot-pair matrix, bin-averaged model). Estimators, derivations, simulation
+most of it the error-calibration runs, the thermal simulation and the speed test). Commits:
+the numerics, the Coordinator's review fixes (free baseline, honest errors, shot-pair
+matrix, bin-averaged model), then a merge of the integration head 6ed1ec9 with the fit
+moved onto `fit_histogram`'s `edges=`/weight averaging. Estimators, derivations, simulation
 results and choices for Tony: [notes.md](notes.md).
 
 ## API
@@ -52,8 +53,7 @@ results and choices for Tony: [notes.md](notes.md).
    shots used") and, under Live, the next rerun continues from the state (the shots not
    added yet are simply added then).
 5. **Drawing**: points g² ± `se` at `centres` (radial centres are shell means), the
-   fit curve `result.curve(x)` on a fine grid (not `fit.evaluate`, which gives bin
-   averages), a line at the fitted baseline, the title `g²(0) = …` from `g2_zero.text()`
+   fit curve `result.curve(x)` (= `fit.evaluate(x)`, the unaveraged model) on a fine grid, a line at the fitted baseline, the title `g²(0) = …` from `g2_zero.text()`
    (relative to the baseline) and σ from `fit["sigma"]`. Show the notes: a baseline that
    isn't 1 or "a slope, not a peak" means the reference doesn't match the shots (try
    re-centring), and then there is no g²(0). Empty/failed: show `failure` as the plot's
@@ -62,10 +62,8 @@ results and choices for Tony: [notes.md](notes.md).
 
 ## To do / open
 
-- **Merging the integration head**: its `fits.fit_histogram` averages over equal-width bins
-  by default (`binned=True`). Pass `binned=False` from `g2_from_counts` and `_zero_error`
-  (the model here averages itself, r²-weighted over shells), or use its `edges=`/weight
-  option once it lands; the equal-width default is wrong for radial shells.
+- The integration head (6ed1ec9) is merged: fits go through `fit_peak`, which gives
+  `fits.fit_histogram` the spec's exact edges and the r² shell weight (one averaging path).
 - A cloud-matched reference (partners by similar centre and width) and a banded shot-pair
   matrix for very long runs: notes.md.
 
