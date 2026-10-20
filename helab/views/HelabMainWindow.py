@@ -2,13 +2,10 @@ import gc
 import logging
 import os
 import platform
-import re
 import signal
-import subprocess
 import sys
 import tempfile
 import types
-import warnings
 import threading
 import time
 from helab.utils.io_service import IORequest, delete_io_traces, get_io_service, io_trace_folder, io_trace_refused
@@ -16,21 +13,15 @@ from helab.utils.folder_cache import FolderCache, get_folder_cache, set_disk_bud
 from helab.utils.gui_watchdog import GUIWatchdog
 from helab.utils.lab_parameters import read_lab_constants
 from helab.utils import events
-from datetime import datetime, timedelta
+from datetime import datetime
 from sys import getsizeof
 from typing import Any, Callable, List, Optional
 
 import psutil
-from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
-    QDir, QDateTime, QSettings, QStorageInfo, QRect
+from PyQt6.QtCore import Qt, QSize, QTimer, QItemSelection, QUrl, QDateTime, QSettings, QRect
 from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QGuiApplication, QPainter, QPixmap, QKeySequence
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
-    QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget, QHBoxLayout, \
-    QPushButton, QTreeWidget, QTreeWidgetItem, QInputDialog, QProgressBar, QToolButton, QMessageBox
-from humanfriendly.terminal import message
-# from numpy.f2py.crackfortran import include_paths
-from pyqtgraph.parametertree import ParameterTree, Parameter
-from typing_extensions import no_type_check
+    QLabel, QToolBar, QSizePolicy, QMenu, QApplication, QInputDialog, QProgressBar, QToolButton, QMessageBox
 
 from helab.analysis.budget import DIALOG_SHARE, RELEASE_SHARE, WARN_SHARE, RamBudget
 from helab.analysis.dataset_view import DatasetView, view_of
@@ -57,12 +48,8 @@ from helab.views.RootDuplicatesWindow import RootDuplicatesWindow
 from helab.views.SettingsDialog import SettingsDialog
 from helab.views.DebugIconsWindow import DebugIconsWindow
 
-from PyQt6.QtWebEngineWidgets import QWebEngineView
-# sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
-# from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density
-import plotly
-import pyqtgraph as pg
-import pyqtgraph.parametertree as ptree
+# QtWebEngine must be imported before the QApplication exists; main.py imports this module first.
+from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
 
 PLACE_ROOT_MENU = " Place .helab-root…"
 
@@ -1366,9 +1353,6 @@ class HelabMainWindow(QMainWindow):
             explorer.load_to_ram_cache(path)
         self._update_folder_details()
 
-    def load_folder_to_ram(self, current_folder_explorer: FolderExplorer, file_info: QFileInfo) -> None:
-        current_folder_explorer.load_to_ram_cache(file_info.absoluteFilePath())
-
     def _snapshot_data_loaded(self, explorer: FolderExplorer, path: str) -> None:
         if self.tab_widget.currentWidget() is explorer and path == explorer.selected_path_globally:
             self.current_tracking_folder_path_is_loading = False
@@ -1599,12 +1583,6 @@ class HelabMainWindow(QMainWindow):
         # self.action_tab_folder_up.setEnabled(False)
         self.action_tab_refresh.setEnabled(False)
         self.action_tab_rescan.setEnabled(False)
-
-    def connect_folder_explorer_signals(self, index: QModelIndex) -> None:
-        current_folder_explorer = self.tab_widget.currentWidget()
-        if isinstance(current_folder_explorer, FolderExplorer):
-            current_folder_explorer.itemExpandedSignal.connect(self.update_tool_enabled_state)
-            QTimer.singleShot(50, self.update_status_bar_left)
 
     def on_live_button_clicked(self) -> None:
         """Live on or off for the current tab's selected folder (roadmaps/live-monitoring.md)."""
