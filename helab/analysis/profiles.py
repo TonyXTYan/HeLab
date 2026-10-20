@@ -26,9 +26,9 @@ from scipy.sparse import csr_matrix
 from helab.analysis.bec import Axis, axis_caps
 from helab.analysis.display_units import WIDTH_DIGITS, axis_text, estimate_text
 from helab.analysis.estimates import Estimate
-from helab.analysis.fits import (FUGACITY, MAX_RADIUS_RATIO, MODELS, VARIANCE_FLOOR, FitModel, FitResult,
-                                 arrival_time_model, bin_bounds, bin_centres, bin_means, condensate_fraction,
-                                 fit_histogram)
+from helab.analysis.fits import (FUGACITY, MAX_RADIUS_RATIO, MIN_RADIUS_RATIO, MODELS, VARIANCE_FLOOR, FitModel,
+                                 FitResult, arrival_time_model, bin_bounds, bin_centres, bin_means, choose_condensate,
+                                 condensate_fraction, fit_histogram)
 from helab.analysis.physics import (ResolvedConstants, sigma_v_from_arrival_width, sigma_v_from_transverse_width,
                                     temperature_estimate)
 from helab.analysis.velocity import effective_fall_distance
@@ -135,6 +135,8 @@ BOSE, BOSE_SLICE = "Bose g_5/2 thermal", "Bose g_2 thermal (slice)"
 BIMODAL_BOSE, BIMODAL_BOSE_SLICE = "Bimodal TF² + Bose g_5/2", "Bimodal TF^3/2 + Bose g_2"
 BIMODALS = (BIMODAL, BIMODAL_SLICE, BIMODAL_BOSE, BIMODAL_BOSE_SLICE)
 BOSES = (BOSE, BOSE_SLICE)
+# Each bimodal TF + Bose choice's free-z thermal partner (``fit_axis`` fits both).
+BIMODAL_BOSES = {BIMODAL_BOSE: BOSE, BIMODAL_BOSE_SLICE: BOSE_SLICE}
 T_MODELS = (GAUSSIAN, ARRIVAL, BOSE, BOSE_SLICE, BIMODAL, BIMODAL_SLICE, BIMODAL_BOSE, BIMODAL_BOSE_SLICE)
 XY_MODELS = (GAUSSIAN, BOSE, BOSE_SLICE, BIMODAL, BIMODAL_SLICE, BIMODAL_BOSE, BIMODAL_BOSE_SLICE)
 MODEL_KEYS = {GAUSSIAN: "gaussian", ARRIVAL: "arrival_time", BIMODAL: "bimodal_tf2_gaussian",
@@ -159,7 +161,12 @@ TF_EXPONENT_TIP = (
     "Pair the order with the integration as the TF exponent: g_5/2 for a full projection, g_2 for a thin "
     "slice. z at 1 means a saturated cloud, at or below Tc: try a bimodal fit. "
     "Bimodal TF + Bose: the condensate on a saturated thermal cloud (z fixed at 1), TF² with g_5/2 and "
-    "TF^3/2 with g_2; their N0/N comes from the parts' areas. "
+    "TF^3/2 with g_2; their N0/N comes from the parts' areas. The free-z Bose profile is fitted too, and "
+    "a condensate is reported only when its z reaches 1 and the bimodal fit is clearly better (Δχ² ≥ 9); "
+    "otherwise the line says \"no condensate (z = …)\". z = 1 ignores the condensate's mean field, which "
+    "pushes thermal atoms out of its centre. A slice (TF^3/2, g_2) holds part of the cloud: its N0/N is "
+    "the slice's, and N, N0 and Tc need a full projection. T from many shots includes their centres' "
+    "jitter, so it reads high. "
     "R/σ_th is capped: after the fall it is about √(2μ/k_B T) along the trap's radial axes but only "
     "≈ (π/2)(ω_z/ω_⊥)√(2μ/k_B T) along its long axis, so the cap depends on the axis (which detector axis "
     "is the trap's long one: the Trap axial axis constant). A fit that ends at the cap says so: its T and "
@@ -217,8 +224,10 @@ class AxisFit:
                  f"T {self.temperature.text(unit='K')}"]
         if bimodal and "radius" in self.fit.estimates:
             parts.insert(2, f"R {estimate_text(self.axis, self.fit['radius'])}")
-        if bimodal:
-            parts.append(f"N0/N {condensate_fraction(self.fit).text()}")
+        if bimodal and "radius" in self.fit.estimates:
+            parts.append(f"N0/N{' (slice)' if self.fit.model.slice else ''} {condensate_fraction(self.fit).text()}")
+        elif bimodal:
+            parts.append("no condensate")
         if FUGACITY in self.fit.estimates:
             parts.append(f"z {self.fit[FUGACITY].text()}")
         return f"{self.choice}{' ⊗ smoothing' if self.on_smoothed else ''}: " + " · ".join(parts)
@@ -231,12 +240,25 @@ class AxisFit:
                 "on_smoothed": self.on_smoothed, "notes": list(self.notes)}
 
 
+def axis_cap(axis: str, constants: ResolvedConstants) -> float:
+    """The bimodal fits' R/σ_th cap on ``axis`` (T, X or Y) from the run's constants
+    (``bec.axis_caps``), or ``fits.MAX_RADIUS_RATIO`` for any other axis or constants that give
+    none (a solver failure, a non-finite result)."""
+    if axis not in ("T", "X", "Y"):
+        return MAX_RADIUS_RATIO
+    try:
+        cap = axis_caps(constants)[cast(Axis, axis)]
+    except (ValueError, RuntimeError, ZeroDivisionError, OverflowError):
+        return MAX_RADIUS_RATIO
+    return cap if math.isfinite(cap) and cap > MIN_RADIUS_RATIO else MAX_RADIUS_RATIO
+
+
 def _scaled(estimate: Estimate, factor: float) -> Estimate:
     return Estimate(estimate.value * factor, abs(estimate.se * factor))
 
 
 def fit_axis(axis: str, edges: npt.ArrayLike, counts: npt.ArrayLike, choice: str, constants: ResolvedConstants,
-             smoothing: float | None = None, max_radius_ratio: float | None = MAX_RADIUS_RATIO) -> AxisFit:
+             smoothing: float | None = None, max_radius_ratio: float | None = None) -> AxisFit:
     """Fit one histogram (``edges`` in s or m, raw ``counts``) with the model ``choice`` names.
 
     By default the raw counts, Poisson weighted (``fit_histogram``). ``smoothing`` (σ in the
@@ -245,11 +267,15 @@ def fit_axis(axis: str, edges: npt.ArrayLike, counts: npt.ArrayLike, choice: str
     bimodal fit's R) needs no correction, and the SEs count the smoothed bins' correlation.
     Temperatures are the ideal-gas, pure-expansion ones (``physics``): along T σ_v = g σ, along
     X and Y σ_v = σ / t_f, each with the run's constants. ``max_radius_ratio``: the bimodal
-    fits' cap on R/σ_thermal (``fit_histogram``); None takes this axis's physical cap at
-    μ/k_B T ≤ 2 (``bec.axis_caps``: the trap frequencies, the fall time and which detector axis is
-    the trap's long one), which a bimodal plot should pass (D4)."""
+    fits' cap on R/σ_thermal (``fit_histogram``); None (the default) takes this axis's physical cap
+    at μ/k_B T ≤ 2 (``axis_cap``: the trap frequencies, the fall time and which detector axis is the
+    trap's long one), or ``fits.MAX_RADIUS_RATIO`` when those don't give one.
+
+    The bimodal TF + Bose choices also fit the free-z Bose profile and report a condensate only
+    when that one saturates and the bimodal fit is clearly better (``fits.choose_condensate``);
+    otherwise the result is the free-z fit, with "no condensate (z = …)" in the notes."""
     if max_radius_ratio is None:
-        max_radius_ratio = axis_caps(constants)[cast(Axis, axis)]
+        max_radius_ratio = axis_cap(axis, constants)
     edges = np.asarray(edges, dtype=np.float64)
     raw = np.asarray(counts, dtype=np.float64)
     centres = bin_centres(edges)
@@ -267,15 +293,23 @@ def fit_axis(axis: str, edges: npt.ArrayLike, counts: npt.ArrayLike, choice: str
             f"smoothed curve (at most {MAX_SMOOTHING_SHARE:g} of it): fit the unsmoothed counts"))
         nan = Estimate(math.nan, math.nan)
         return AxisFit(axis, choice, fit, nan, nan, nan, nan, np.empty(0), np.empty(0), (), True)
-    curve = np.empty(0)
-    if on_smoothed:
-        assert smoothing is not None
-        fit, curve = fit_smoothed(centres, raw, model, smoothing / width_bins, max_radius_ratio)
-        if fit.ok:
-            notes.append("fitted to the smoothed curve with the smoothing in the model; SEs include the "
-                         "smoothed bins' correlation")
-    else:
-        fit = fit_histogram(centres, raw, model, max_radius_ratio=max_radius_ratio)
+    def fitted(chosen: FitModel) -> tuple[FitResult, Array]:
+        if on_smoothed:
+            assert smoothing is not None
+            return fit_smoothed(centres, raw, chosen, smoothing / width_bins, max_radius_ratio)
+        return fit_histogram(centres, raw, chosen, max_radius_ratio=max_radius_ratio), np.empty(0)
+    fit, curve = fitted(model)
+    if choice in BIMODAL_BOSES:
+        thermal_model = MODELS[MODEL_KEYS[BIMODAL_BOSES[choice]]]
+        thermal, thermal_curve = fitted(thermal_model)
+        decision = choose_condensate(fit, thermal)
+        if decision.fit is thermal:
+            fit, curve = thermal, thermal_curve
+        if decision.note:
+            notes.append(decision.note)
+    if on_smoothed and fit.ok:
+        notes.append("fitted to the smoothed curve with the smoothing in the model; SEs include the "
+                     "smoothed bins' correlation")
     nan = Estimate(math.nan, math.nan)
     if not fit.ok:
         return AxisFit(axis, choice, fit, nan, nan, nan, nan, np.empty(0), np.empty(0), (*fit.notes, *notes),

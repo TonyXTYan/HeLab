@@ -148,3 +148,33 @@ treats the counted N0 and R as independent: rough; N0 ∝ R⁵ makes it R-sensit
   50 Hz after 0.416 s, so negligible here; offer it only if short TOFs come up.
 - Interacting thermal cloud (Hartree–Fock) profiles: not offered.
 - Detector saturation correction for N0: only a note.
+
+## Review fixes (physics review, via the Coordinator)
+
+1. **Bimodal z = 1 invented condensates above Tc** (z 0.3 → N0/N 0.15, σ +7 %). `fits.fit_condensate`
+   / `choose_condensate` now always fit the free-z Bose profile beside the bimodal; `fit_axis` does
+   this for both TF + Bose choices and reports the free-z fit with "no condensate (z = …)" unless a
+   condensate is clearly there. **Rule (proposed, for Tony):** Δχ² = χ²(free z) − χ²(bimodal) ≥ 9
+   when the free-z fit saturates (z ≥ 0.999), or ≥ 25 when it doesn't. The review asked for
+   "z ≥ 0.999 AND better"; the z condition alone rejects strong condensates (2/3 of the peak: free z
+   0.44 ± 0.20 following the condensate with a narrow σ, while the bimodal is better by Δχ² ≈ 150),
+   hence the 25 branch. χ² is Pearson with the model's variance (both fits are Poisson ML), so Δχ²
+   is the likelihood ratio to second order; one extra free parameter; the models aren't nested, so
+   9/25 are conventions (3σ/5σ for 1 dof). Measured (scratch p3.py, 15 thermal clouds per z, 5
+   mixtures per fraction, 120 bins ±5σ): no false condensates at z = 0.3, 0.7, 0.95, 1.0 from
+   4·10⁵ and 4·10⁶ events; one at z = 1 (at Tc) from 2·10⁴ events. Mixtures of 5, 30, 70 % found
+   5/5 with N0/N within 0.005 from 4·10⁵ events; from 2·10⁴, 30 and 70 % found 5/5, 5 % in 2/5.
+   Smoothed-curve fits use diagonal χ², which overstates Δχ²: their decision is looser (noted in
+   fits.py).
+2. **Slice fits** (`FitModel.slice`: TF^3/2, g_2) now note `SLICE_NOTE` in every fit;
+   `bec.from_fit` gives only T and R(0) for them (N, N0, N0/N, Tc, μ, n0, both implied QEs nan);
+   `AxisFit.text()` labels the fraction "N0/N (slice)".
+3. **`fit_axis(max_radius_ratio=None)` is now the default** (`profiles.axis_cap`, falling back to
+   `MAX_RADIUS_RATIO` for another axis or constants that give no cap), so the plot uses the per-axis
+   caps without changes. At the defaults the caps are 1.989 (no existing test changed).
+4. `cigar_scaling` docstring: orientation only (λ_z 5 % off at ε = 0.1); the code uses the ODE.
+5. Notes/tooltips: z = 1 ignores the condensate's mean-field depletion of the thermal centre; T from
+   many shots includes centre jitter and reads high (a `from_fit` note; per-shot fits avoid it);
+   second QE check `BecProperties.implied_qe_thermal` = QE · (counted thermal)/ζ(3)(k_BT/ħω̄)³
+   (R-independent, with a condensate only; σ⁶-sensitive through T³) beside `saturated_thermal`;
+   QE scalings in the QE note (N, N0 ∝ 1/QE, Tc ∝ QE^−1/3, μ and n0 ∝ QE^−2/5, R ∝ QE^−1/5).

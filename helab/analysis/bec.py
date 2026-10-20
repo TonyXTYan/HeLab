@@ -47,7 +47,7 @@ from scipy.integrate import solve_ivp
 from scipy.special import zeta
 
 from helab.analysis.estimates import Estimate, propagate
-from helab.analysis.fits import CONDENSATE_AREA, FitResult
+from helab.analysis.fits import CONDENSATE_AREA, SLICE_NOTE, FitResult
 from helab.analysis.physics import ResolvedConstants
 
 Array = npt.NDArray[np.float64]
@@ -57,7 +57,8 @@ AXES: tuple[Axis, ...] = ("T", "X", "Y")
 # them (in the XY plane, at an unknown angle).
 Role = Literal["radial", "axial", "between"]
 
-TC_IDEAL = float(zeta(3.0)) ** (-1 / 3)  # 0.9405
+ZETA3 = float(zeta(3.0))
+TC_IDEAL = ZETA3 ** (-1 / 3)  # 0.9405
 FINITE_SIZE = float(zeta(2.0)) / (2 * float(zeta(3.0)) ** (2 / 3))  # 0.7275
 INTERACTION = 1.326  # Giorgini, Pitaevskii & Stringari, PRA 54, R4633 (1996)
 TC_SHIFT_NOTE = 0.1  # a Tc shift beyond this share of Tc0 is noted: the first-order expansions are rough
@@ -145,7 +146,9 @@ def scaling_factors(omegas: Sequence[float], t: float) -> tuple[float, ...]:
 
 def cigar_scaling(omega_radial: float, omega_axial: float, t: float) -> tuple[float, float]:
     """(λ_⊥, λ_z) for a cigar trap to first order in ε = ω_z/ω_⊥ (Castin & Dum 1996):
-    λ_⊥ = √(1 + τ²), λ_z = 1 + ε² (τ arctan τ − ln √(1 + τ²)), τ = ω_⊥ t."""
+    λ_⊥ = √(1 + τ²), λ_z = 1 + ε² (τ arctan τ − ln √(1 + τ²)), τ = ω_⊥ t. For orientation only:
+    at the table's ε = 0.1, λ_z is 5 % off after the fall. Everything else here uses the solved
+    ``scaling_factors``."""
     tau, epsilon = omega_radial * t, omega_axial / omega_radial
     return (math.sqrt(1 + tau ** 2),
             1 + epsilon ** 2 * (tau * math.atan(tau) - 0.5 * math.log1p(tau ** 2)))
@@ -227,6 +230,11 @@ def _quantities(atoms: float, condensed: float, temperature: float, constants: R
     else:
         out.update(chemical_potential=math.nan, radius_0=math.nan, radius_1=math.nan, radius_2=math.nan,
                    peak_density=math.nan, mu_over_kt=math.nan)
+    # A saturated (z = 1) ideal thermal cloud holds N_th = ζ(3)(k_B T/ħω̄)³ atoms, whatever N0 is: the
+    # counted thermal atoms over it is the QE's error factor (``implied_qe_thermal``), R-independent.
+    saturated = ZETA3 * (k_b * temperature / (hbar * trap.mean)) ** 3 if temperature > 0 else math.nan
+    out["saturated_thermal"] = saturated
+    out["thermal_ratio"] = (atoms - condensed) / saturated if saturated > 0 and atoms > 0 else math.nan
     return out
 
 
@@ -268,6 +276,10 @@ class BecProperties:
     mu_over_kt: Estimate
     radii: tuple[Estimate, Estimate, Estimate]
     peak_density: Estimate
+    # ζ(3)(k_B T/ħω̄)³: the thermal atoms a saturated (z = 1) ideal cloud holds at T, and the QE
+    # that makes the counted thermal atoms match it (with a condensate only; nan otherwise).
+    saturated_thermal: Estimate
+    implied_qe_thermal: Estimate
     mean_frequency: float  # ω̄, rad/s
     oscillator_length: float  # a_ho, m
     finite_size_shift: float  # δTc/Tc0
@@ -280,7 +292,8 @@ class BecProperties:
         """Strict JSON (nan as None)."""
         estimates = {name: getattr(self, name).as_record() for name in (
             "atoms", "condensed", "fraction", "temperature", "tc_ideal", "tc_finite_size", "tc", "t_over_tc",
-            "t_over_tc_ideal", "chemical_potential", "mu_over_kt", "peak_density")}
+            "t_over_tc_ideal", "chemical_potential", "mu_over_kt", "peak_density", "saturated_thermal",
+            "implied_qe_thermal")}
         return {**estimates, "radii": [radius.as_record() for radius in self.radii],
                 "mean_frequency": self.mean_frequency, "oscillator_length": self.oscillator_length,
                 "finite_size_shift": _finite(self.finite_size_shift),
@@ -300,8 +313,8 @@ def constant_notes(constants: ResolvedConstants, counted: bool) -> list[str]:
     if stale:
         notes.append("trap frequencies unconfirmed (stale 2017 values): Tc, μ, the radii and n0 scale with them")
     if counted and "detector_qe" in constants.unconfirmed:
-        notes.append(f"detector QE unconfirmed (proposed {constants.detector_qe:g}): N, N0 and all from them "
-                     "scale with it; its uncertainty isn't in the SEs")
+        notes.append(f"detector QE unconfirmed (proposed {constants.detector_qe:g}): N and N0 scale as 1/QE, "
+                     "Tc as QE^−1/3, μ and n0 as QE^−2/5, the radii as QE^−1/5; its uncertainty isn't in the SEs")
     return notes
 
 
@@ -341,6 +354,12 @@ def bec_properties(atoms: float, condensed: float, temperature: float, constants
                      "Thomas–Fermi regime (≫ 1), so μ, the radii and n0 are rough")
     if condensed > 0 and values["t_over_tc"] > 1:
         notes.append("a condensate above the computed Tc: check N (the QE) and the trap frequencies")
+    implied_thermal = Estimate(math.nan, math.nan)
+    if counted and condensed > 0 and math.isfinite(values["thermal_ratio"]):
+        ratio = estimate("thermal_ratio")
+        implied_thermal = Estimate(ratio.value * constants.detector_qe, ratio.se * constants.detector_qe)
+        notes.append("QE from the thermal cloud: counted thermal atoms over ζ(3)(k_B T/ħω̄)³, the saturated "
+                     "ideal gas's (interactions deplete it a little; T ∝ σ² and N_th ∝ T³ make it σ⁶-sensitive)")
     return BecProperties(
         atoms=Estimate(atoms, _se(matrix, 0)), condensed=Estimate(condensed, _se(matrix, 1)),
         fraction=estimate("fraction"), temperature=Estimate(temperature, _se(matrix, 2)),
@@ -348,7 +367,8 @@ def bec_properties(atoms: float, condensed: float, temperature: float, constants
         t_over_tc=estimate("t_over_tc"), t_over_tc_ideal=estimate("t_over_tc_ideal"),
         chemical_potential=estimate("chemical_potential"), mu_over_kt=estimate("mu_over_kt"),
         radii=(estimate("radius_0"), estimate("radius_1"), estimate("radius_2")),
-        peak_density=estimate("peak_density"), mean_frequency=trap.mean, oscillator_length=a_ho,
+        peak_density=estimate("peak_density"), saturated_thermal=estimate("saturated_thermal"),
+        implied_qe_thermal=implied_thermal, mean_frequency=trap.mean, oscillator_length=a_ho,
         finite_size_shift=values["finite_size_shift"], interaction_shift=values["interaction_shift"],
         notes=tuple(notes))
 
@@ -380,7 +400,10 @@ def from_fit(fit: FitResult, axis: Axis, constants: ResolvedConstants, bin_width
     for a model without a condensate part), T from its (thermal) σ as ``profiles.fit_axis`` takes it
     (σ_v = g σ on T, σ / t_f on X and Y; T = m σ_v²/k_B), and their covariance from the fit's. With a
     TF radius, ``from_radius`` checks it against N0 (``RadiusCheck``). A failed fit gives nan with its
-    failure as a note."""
+    failure as a note.
+
+    A slice model (``FitModel.slice``: TF^{3/2}, g_2) holds only part of the cloud, so only T and
+    R(0) are given; N, N0, N0/N, Tc, μ, n0 and the implied QEs are nan, with ``fits.SLICE_NOTE``."""
     areas = fit.model.areas
     record = {"model": fit.model.key, "axis": axis, "bin_width": bin_width, "shots": shots,
               "detector_qe": constants.detector_qe}
@@ -406,14 +429,28 @@ def from_fit(fit: FitResult, axis: Axis, constants: ResolvedConstants, bin_width
         combined: Array | None = jacobian @ covariance @ jacobian.T
     else:
         combined = None
-    properties = bec_properties(float(point[0]), float(point[1]), float(point[2]), constants, combined,
-                                counted=True)
-    notes = list(properties.notes)
-    notes.append("N and N0 per shot (the histogram's events over its shots), counting only the events in its "
-                 "range and box")
+    if fit.model.slice:
+        temperature_only = None if combined is None else np.diag([math.nan, math.nan, float(combined[2, 2])])
+        properties = bec_properties(math.nan, math.nan, float(point[2]), constants, temperature_only)
+        notes = [*constant_notes(constants, False), SLICE_NOTE]
+    else:
+        properties = bec_properties(float(point[0]), float(point[1]), float(point[2]), constants, combined,
+                                    counted=True)
+        notes = list(properties.notes)
+        notes.append("N and N0 per shot (the histogram's events over its shots), counting only the events in "
+                     "its range and box")
+    notes.append(f"T from {'the histogram of all shots' if shots > 1 else 'one shot'}"
+                 + (": shot-to-shot jitter of the cloud's centre widens it, so T reads high (per-shot fits "
+                    "avoid it)" if shots > 1 else ""))
     check = None
-    if "radius" in fit.estimates and point[1] > 0 and math.isfinite(fit["radius"].value):
-        check = radius_check(fit["radius"], axis, constants, properties.condensed)
+    condensate_part = fit.model.areas is not None and CONDENSATE_AREA in model_areas(fit.values)
+    if "radius" in fit.estimates and condensate_part and math.isfinite(fit["radius"].value) and (
+            fit.model.slice or point[1] > 0):
+        check = radius_check(fit["radius"], axis, constants, Estimate(math.nan, math.nan) if fit.model.slice
+                             else properties.condensed)
+        if fit.model.slice:  # R(0) only: μ and N0 from it stay with the full projection, as the rest
+            nan = Estimate(math.nan, math.nan)
+            check = replace(check, chemical_potential=nan, condensed=nan)
         if check.role == "between":
             notes.append(f"R on {axis} lies between the trap's axes (Trap axial axis along): no R(0) from it")
     return _replace_notes(properties, tuple(notes), record, check)

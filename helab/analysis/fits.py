@@ -80,6 +80,7 @@ RATIO = "ratio"  # the parameter max_radius_ratio caps
 RATIO_CAP_NEAR = 0.01  # a ratio within this fraction of the cap is "at its limit"
 OFFSET = "offset"  # floored at 0 for raw counts with count weights (fit_histogram)
 FUGACITY = "fugacity"  # a Bose thermal part's z, in [0, 1]
+SLICE_NOTE = "a slice holds part of the cloud: N, N0 and Tc need a full projection (p = 2)"
 # A fugacity this close to 1 (or 0) is "at 1" (saturated: at or below Tc) or "at 0" (Boltzmann).
 FUGACITY_SATURATED = 0.999
 
@@ -128,6 +129,9 @@ class FitModel:
     # Constants built into the model (the arrival-time profile's fall distance and g),
     # recorded with each fit of it.
     fixed: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}))
+    # A thin-slice profile (TF^{3/2}, g_2): it integrates one other axis only, so its areas are
+    # part of the cloud's (``SLICE_NOTE``); a full projection (p = 2, g_{5/2}) holds it all.
+    slice: bool = False
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -458,6 +462,8 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
         notes.append(f"at its bound: {', '.join(at_bound)} (its SE is not reliable)")
     if absolute and dof > 0 and chi2 / dof > CHI2_NOTE:
         notes.append(f"reduced χ² {chi2 / dof:.3g}: the model doesn't describe the data well")
+    if fit_model.slice:
+        notes.append(SLICE_NOTE)
     estimates = {name: Estimate(float(value), math.nan if name in gated else ses[name])
                  for name, value in zip(fit_model.names, values)}
     for extra in fit_model.extras:
@@ -620,7 +626,8 @@ def thomas_fermi_model(power: float) -> FitModel:
         (ModelParameter("amplitude", "Amplitude", "height"), ModelParameter("centre", "Centre", "position"),
          ModelParameter("radius", "R", "width"), ModelParameter("offset", "Offset", "height")),
         function, guesses, bounds,
-        areas=lambda p: {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2]), power)})
+        areas=lambda p: {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2]), power)},
+        slice=power < 2)
 
 
 # The bimodal model fits R as a ratio to the thermal width, r = R/σ_th, capped by
@@ -635,7 +642,8 @@ def thomas_fermi_model(power: float) -> FitModel:
 # ≈ (π/2)(ω_z/ω_⊥)√(2μ/k_B T), much less. So the cap is axis-dependent: ``bec.radius_ratio_cap``
 # gives it for a trap axis at the run's time of flight (Castin–Dum), ``bec.axis_caps`` per T/X/Y from
 # the trap-axis mapping, and ``profiles.fit_axis(max_radius_ratio=None)`` uses those. With
-# √(2μ/k_B T), the default 2 allows μ ≤ 2 k_B T: clouds near Tc down to roughly 0.4 Tc. Colder, deep condensates (T ≈ 0.1–0.3 Tc) often have μ/k_B T of 3–10, a ratio of
+# √(2μ/k_B T), the default 2 allows μ ≤ 2 k_B T: clouds near Tc down to roughly 0.4 Tc. Colder,
+# deep condensates (T ≈ 0.1–0.3 Tc) often have μ/k_B T of 3–10, a ratio of
 # 2.5–4.5: raise the cap for them (a run that ends at the cap says so, and its T and N0/N
 # are then bounds, not values). A higher cap brings back some of the ambiguity above, so
 # raise it only when the data call for it. Each part's shape parameters are gated by its
@@ -697,7 +705,7 @@ def bimodal_model(power: float, bose: float | None = None) -> FitModel:
          ModelParameter("offset", "Offset", "height")),
         function, guesses, bounds, areas=areas, min_bins=4,
         extras=(Extra("radius", "R", lambda p: float(p[2] * p[4]), gates=("condensate",)),),
-        fixed=MappingProxyType({} if bose is None else {"fugacity": 1.0}))
+        fixed=MappingProxyType({} if bose is None else {"fugacity": 1.0}), slice=power < 2)
 
 
 for _power in (2.0, 1.5):
@@ -787,7 +795,10 @@ def _order_text(order: float) -> str:
 # fitted to it comes out narrower, biasing T low: by 5 % at z = 0.6, 10 % at z = 1, over ±5σ; as a
 # bimodal fit's thermal part it overstates N0/N by 0.04–0.08 and R by up to 9 % low (session notes,
 # 2026-10-20-claude-dld-d4-d14; tests/test_bose_fits.py). Below Tc the thermal cloud is saturated,
-# z = 1, so the bimodal fits fix it there (``bimodal_model``).
+# z = 1, so the bimodal fits fix it there (``bimodal_model``). That is the ideal-gas picture: the
+# condensate's mean field (μ > 0) pushes thermal atoms out of its centre, which z = 1 ignores (a
+# Hartree–Fock profile would include it; not offered). Above Tc a z = 1 bimodal invents a
+# condensate, so ``fit_condensate`` checks it against the free-z profile.
 # Along T the profile is a velocity distribution taken as a Gaussian in time (the arrival-time
 # model's skew is left out here, as in the Gaussian model).
 
@@ -834,7 +845,7 @@ def bose_model(order: float) -> FitModel:
         (ModelParameter("amplitude", "Amplitude", "height"), ModelParameter("centre", "Centre", "position"),
          ModelParameter("sigma", "σ", "width"), ModelParameter(FUGACITY, "Fugacity z", "shape"),
          ModelParameter("offset", "Offset", "height")),
-        function, guesses, bounds, min_bins=4,
+        function, guesses, bounds, min_bins=4, slice=order < 2.5,
         areas=lambda p: {"bose": bose_area(float(p[0]), float(p[2]), float(p[3]), order)})
 
 
@@ -869,7 +880,10 @@ def condensate_fraction(fit: FitResult) -> Estimate:
     """N0/N = A_TF / (A_TF + A_thermal) from a bimodal fit's component areas, ± SE by the delta
     method on the fitted parameters' covariance (so the areas' correlation is counted). nan for
     a failed fit or a model without a condensate part. The fraction is of the counts the
-    histogram holds: a cropped box or window crops the thermal wings more than the condensate."""
+    histogram holds: a cropped box or window crops the thermal wings more than the condensate.
+    On a slice model (``FitModel.slice``: TF^{3/2}, g_2) it is the slice's fraction, not the
+    cloud's (a thin central slice holds relatively more condensate); the fit's notes say so
+    (``SLICE_NOTE``)."""
     areas = fit.model.areas
     if areas is None or not fit.ok or CONDENSATE_AREA not in areas(fit.values):
         return Estimate(math.nan, math.nan)
@@ -880,6 +894,91 @@ def condensate_fraction(fit: FitResult) -> Estimate:
         total = sum(parts.values())
         return parts[CONDENSATE_AREA] / total if total > 0 else math.nan
     return fit.derived(fraction)
+
+
+# Is there a condensate? The bimodal TF + Bose fits fix the thermal part's z at 1 (saturated), so
+# on a cloud above Tc they invent one: a thermal cloud at z = 0.3 came out with N0/N = 0.15 ± 0.01 and
+# σ 7 % wide (the review's probe). ``fit_condensate`` therefore always fits the free-z Bose
+# profile beside the bimodal one, and reports the condensate only when the bimodal fit's χ² is lower
+# by at least CONDENSATE_DELTA_CHI2 = 9 (the data are described clearly better by a condensate on a
+# saturated cloud than by any ideal thermal cloud, z ≤ 1) and either
+#   - the free-z fit saturates, z ≥ FUGACITY_SATURATED (at or below Tc), or
+#   - the bimodal fit is better by at least CONDENSATE_STRONG_DELTA_CHI2 = 25 (5σ for one parameter).
+# The second branch is there because the z condition alone fails real, strong condensates: with a
+# condensate of 2/3 of the peak the free-z profile follows the condensate with a narrow σ and z =
+# 0.44 ± 0.20, while the bimodal fit is better by Δχ² ≈ 150 (tests/test_bose_fits.py). Measured
+# (session notes): above Tc, true z of 0.3, 0.7, 0.95 gave Δχ² of about −340, −130, −9 at 400 000
+# events (the z = 1 bimodal can't follow an unsaturated cloud) and at most 12 at 20 000; at z = 1,
+# at most 11; condensates of 5–70 % were found in 5/5 runs each from 400 000 events and 30–70 % from
+# 20 000 (5 % in 2/5 there), N0/N within 0.005 from 400 000 events. False condensates: 1 in 60 thermal clouds of 20 000
+# events (at z = 1, i.e. at Tc), none in 120 from 400 000 up (proposed, for Tony).
+# Both fits are Poisson maximum-likelihood fits (``_reweight``) whose χ² uses the model's own
+# variance, so the χ² difference is the likelihood-ratio statistic to second order. The bimodal has
+# one more free parameter than the free-z profile (condensate amplitude and R/σ for z), so for one
+# extra degree of freedom Δχ² ≥ 9 is a 3σ improvement (p ≈ 0.003); the models aren't nested, so the
+# level is a convention, not an exact test (proposed, for Tony). For a smoothed-curve fit the χ² uses
+# the smoothed bins' variances as if independent, which overstates Δχ²: treat its decision as loose.
+# Otherwise the free-z fit is the result, with "no condensate (z = …)".
+CONDENSATE_DELTA_CHI2 = 9.0
+CONDENSATE_STRONG_DELTA_CHI2 = 25.0
+
+
+@dataclass(frozen=True)
+class CondensateChoice:
+    """``fit_condensate``'s outcome: the fit to report (the bimodal one or the free-z thermal one),
+    both fits, whether a condensate is reported, the χ² difference (thermal − bimodal) and why."""
+    fit: FitResult
+    bimodal: FitResult
+    thermal: FitResult
+    condensate: bool
+    delta_chi2: float
+    note: str
+
+
+def bose_order(power: float) -> float:
+    """The Bose order that integrates the same axes as the TF exponent: 5/2 for p = 2, 2 for 3/2."""
+    return power + 0.5
+
+
+def choose_condensate(bimodal: FitResult, thermal: FitResult) -> CondensateChoice:
+    """Decide between a bimodal TF + Bose (z = 1) fit and a free-z Bose fit of the same bins (see
+    the comment above ``CONDENSATE_DELTA_CHI2``)."""
+    delta = thermal.chi2 - bimodal.chi2 if bimodal.ok and thermal.ok else math.nan
+    if not thermal.ok:
+        if bimodal.ok:
+            return CondensateChoice(bimodal, bimodal, thermal, True, delta,
+                                    f"condensate not checked: the free-z thermal fit failed ({thermal.failure})")
+        return CondensateChoice(bimodal, bimodal, thermal, False, delta, "")
+    z = thermal[FUGACITY]
+    saturated = z.value >= FUGACITY_SATURATED
+    z_text = "1" if saturated else z.text()
+    if not bimodal.ok:
+        return CondensateChoice(thermal, bimodal, thermal, False, delta,
+                                f"no condensate (z = {z_text}; the bimodal fit failed: {bimodal.failure})")
+    if not delta >= (CONDENSATE_DELTA_CHI2 if saturated else CONDENSATE_STRONG_DELTA_CHI2):
+        where = "at about Tc" if saturated else "above Tc"
+        return CondensateChoice(thermal, bimodal, thermal, False, delta,
+                                f"no condensate (z = {z_text}: {where}; the bimodal fit is not better by "
+                                f"Δχ² ≥ {CONDENSATE_DELTA_CHI2 if saturated else CONDENSATE_STRONG_DELTA_CHI2:g}: "
+                                f"{delta:.3g})")
+    if saturated:
+        why = f"the free-z thermal fit saturates (z = 1) and the bimodal fit is better by Δχ² {delta:.3g}"
+    else:
+        why = (f"the bimodal fit is better by Δχ² {delta:.3g}; the free-z thermal fit can't follow the "
+               f"condensate (its z = {z_text} means nothing here)")
+    return CondensateChoice(bimodal, bimodal, thermal, True, delta, f"condensate: {why}")
+
+
+def fit_condensate(centres: npt.ArrayLike, counts: npt.ArrayLike, power: float = 2.0, **options: Any
+                   ) -> CondensateChoice:
+    """Fit the bimodal TF^p + Bose g_{p+1/2} (z = 1) and the free-z Bose g_{p+1/2} profile to the
+    same histogram (``options`` go to both ``fit_histogram`` calls; ``max_radius_ratio`` to the
+    bimodal only) and ``choose_condensate``."""
+    order = bose_order(power)
+    thermal_options = {key: value for key, value in options.items() if key != "max_radius_ratio"}
+    bimodal = fit_histogram(centres, counts, f"bimodal_tf{_power_text(power)}_g{_power_text(order)}", **options)
+    thermal = fit_histogram(centres, counts, f"bose_g{_power_text(order)}", **thermal_options)
+    return choose_condensate(bimodal, thermal)
 
 
 # The arrival-time ("Yavin") thermal profile. With z up and the detector a distance h below

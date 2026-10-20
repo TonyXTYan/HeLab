@@ -12,9 +12,9 @@ import numpy as np
 import pytest
 import scipy.constants as codata
 
-from helab.analysis import bec, constant_layers, physics
+from helab.analysis import bec, constant_layers, fits, physics
 from helab.analysis.estimates import Estimate
-from helab.analysis.fits import bin_centres, fit_histogram
+from helab.analysis.fits import MODELS, bin_centres, fit_histogram
 from helab.analysis.physics import DEFAULTS, resolve
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -206,8 +206,10 @@ def test_from_fit_recovers_the_condensate_and_the_qe() -> None:
     axis: Y is the trap's long one), 20 shots: N, N0, T and the QE its TF radius implies come back
     within their SEs."""
     constants = resolve(folder={"trap_axial_axis": 3.0, "trap_radial": 500.0, "trap_axial": 50.0})
-    qe, shots, condensed, thermal, temperature = 0.1, 20, 3e5, 4e5, 0.6e-6
+    qe, shots, condensed, temperature = 0.1, 20, 3e5, 0.6e-6
     trap = bec.Trap.from_constants(constants)
+    # A saturated ideal thermal cloud: ζ(3)(k_B T/ħω̄)³ atoms (1.9·10⁵ here).
+    thermal = bec.ZETA3 * (constants.k_B * temperature / (constants.hbar * trap.mean)) ** 3
     a_ho = trap.oscillator_length(constants)
     mu = 0.5 * constants.hbar * trap.mean * (15 * condensed * constants.scattering_length / a_ho) ** 0.4
     r0 = math.sqrt(2 * mu / (constants.mass * trap.radial ** 2))
@@ -229,8 +231,11 @@ def test_from_fit_recovers_the_condensate_and_the_qe() -> None:
     assert abs(check.in_trap.value - r0) < 3 * check.in_trap.se
     assert abs(check.implied_qe.value - qe) < 3 * check.implied_qe.se
     assert abs(check.condensed.value - condensed) < 3 * check.condensed.se
+    assert abs(found.saturated_thermal.value - thermal) < 3 * found.saturated_thermal.se
+    assert abs(found.implied_qe_thermal.value - qe) < 3 * found.implied_qe_thermal.se
     text = " | ".join(found.notes)
-    for words in ("detector QE unconfirmed", "saturate", "per shot"):
+    for words in ("detector QE unconfirmed", "saturate", "per shot", "QE^−1/3", "QE^−2/5", "QE from the thermal",
+                  "jitter"):
         assert words in text
     assert "trap frequencies" not in text
     json.dumps(found.as_record(), allow_nan=False)
@@ -250,3 +255,25 @@ def test_from_fit_without_a_fit_says_why() -> None:
                                                              ).astype(np.float64), "bose_g2_5")
     above = bec.from_fit(thermal, "Y", DEFAULTS, 1e-4, 10)
     assert above.condensed.value == 0 and math.isfinite(above.tc.value) and math.isnan(above.chemical_potential.value)
+
+
+def test_a_slice_fit_gives_t_and_r0_only() -> None:
+    """A thin slice (TF^3/2 + g_2) holds part of the cloud: no N, N0/N, Tc, μ, n0 or implied QE,
+    only T and R(0), with the slice note."""
+    constants = resolve(folder={"trap_axial_axis": 3.0})  # X radial
+    model = MODELS["bimodal_tf1_5_g2"]
+    edges = np.linspace(-0.04, 0.04, 161)
+    truth = model.function(bin_centres(edges), 300.0, 0.0, 0.8, 150.0, 0.0147, 1.0)
+    counts = np.random.default_rng(3).poisson(truth).astype(np.float64)
+    fit = fit_histogram(bin_centres(edges), counts, model)
+    assert fit.ok and fits.SLICE_NOTE in fit.notes
+    found = bec.from_fit(fit, "X", constants, float(edges[1] - edges[0]), 1)
+    for name in ("atoms", "condensed", "fraction", "tc", "t_over_tc", "chemical_potential", "peak_density",
+                 "implied_qe_thermal"):
+        assert math.isnan(getattr(found, name).value), name
+    assert math.isfinite(found.temperature.value) and found.temperature.se > 0
+    assert found.from_radius is not None and math.isfinite(found.from_radius.in_trap.value)
+    for value in (found.from_radius.implied_qe, found.from_radius.condensed, found.from_radius.chemical_potential):
+        assert math.isnan(value.value)
+    assert fits.SLICE_NOTE in found.notes and not any("no atoms" in note for note in found.notes)
+    json.dumps(found.as_record(), allow_nan=False)

@@ -95,7 +95,7 @@ def test_the_g2_profile_fits_a_slice() -> None:
     edges = np.linspace(-5e-3, 5e-3, 101)
     counts = rng.poisson(bose_counts(edges, 1e5, 1.2e-3, 0.9, order=2.0, centre=3e-4)).astype(np.float64)
     fit = fit_histogram(bin_centres(edges), counts, "bose_g2")
-    assert fit.ok and not fit.notes
+    assert fit.ok and fit.notes == (fits.SLICE_NOTE,)  # a slice holds part of the cloud
     assert abs(fit["sigma"].value - 1.2e-3) < 3 * fit["sigma"].se
     assert abs(fit["centre"].value - 3e-4) < 3 * fit["centre"].se
 
@@ -191,18 +191,78 @@ def test_the_new_models_are_offered_with_their_caveats() -> None:
         assert words in profiles.TF_EXPONENT_TIP
 
 
-def test_fit_axis_takes_the_axis_cap_when_asked() -> None:
+def test_fit_axis_takes_the_axis_cap_by_default() -> None:
     from helab.analysis import bec, physics
     constants = physics.resolve(folder={"trap_axial_axis": 2.0})  # X is the trap's long axis
     edges = np.linspace(-6e-3, 6e-3, 161)
     expected = tf_counts(edges, 5e4, 1.5e-3) + bose_counts(edges, 1e5, 1e-3, 1.0)
     counts = np.random.default_rng(4).poisson(expected).astype(np.float64)
-    along_x = fit_axis("X", edges, counts, profiles.BIMODAL_BOSE, constants, max_radius_ratio=None)
-    along_y = fit_axis("Y", edges, counts, profiles.BIMODAL_BOSE, constants, max_radius_ratio=None)
+    along_x = fit_axis("X", edges, counts, profiles.BIMODAL, constants)
+    along_y = fit_axis("Y", edges, counts, profiles.BIMODAL, constants)
     caps = bec.axis_caps(constants)
     assert along_x.fit.options["max_radius_ratio"] == caps["X"] < 0.4
     assert along_y.fit.options["max_radius_ratio"] == caps["Y"] == pytest.approx(2.0, rel=0.01)
+    assert fit_axis("X", edges, counts, profiles.BIMODAL, constants, max_radius_ratio=3.0).fit.options[
+        "max_radius_ratio"] == 3.0
+    # Constants that give no cap fall back to fits.MAX_RADIUS_RATIO.
+    assert profiles.axis_cap("Z", constants) == fits.MAX_RADIUS_RATIO
     # R/σ = 1.5 is beyond an axial cap: the capped fit says it can't describe the cloud.
     assert along_x.fit["ratio"].value <= caps["X"]
     assert any("at its limit" in note or "doesn't describe" in note for note in along_x.notes)
     assert along_y.ok and not any("doesn't describe" in note for note in along_y.notes)
+
+
+# Is there a condensate? (fits.fit_condensate / choose_condensate, profiles.fit_axis)
+
+@pytest.mark.parametrize("fugacity", [0.3, 0.7])
+def test_a_thermal_cloud_above_tc_gets_no_condensate(fugacity: float) -> None:
+    """The z = 1 bimodal alone invents a condensate here (N0/N ≈ 0.1–0.15); with the free-z check
+    the result is the thermal fit, with "no condensate (z = …)", and its σ is right."""
+    edges = np.linspace(-5e-3, 5e-3, 161)
+    for seed in range(3):
+        counts = np.random.default_rng(seed).poisson(bose_counts(edges, 4e5, 1e-3, fugacity)).astype(np.float64)
+        decision = fits.fit_condensate(bin_centres(edges), counts, 2.0)
+        assert not decision.condensate and decision.fit is decision.thermal
+        assert decision.note.startswith("no condensate (z = 0.") and "above Tc" in decision.note
+        assert condensate_fraction(decision.bimodal).value > 0.02  # what z = 1 alone would have said
+        fitted = fit_axis("X", edges, counts, profiles.BIMODAL_BOSE, DEFAULTS)
+        assert fitted.ok and fitted.fit.model.key == "bose_g2_5"
+        assert any(note.startswith("no condensate (z = ") for note in fitted.notes)
+        assert "no condensate" in fitted.text()
+        assert abs(fitted.width.value - 1e-3) < 3 * fitted.width.se
+
+
+@pytest.mark.parametrize("fraction", [0.05, 0.3, 0.7])
+def test_real_mixtures_still_recover_n0_over_n(fraction: float) -> None:
+    edges = np.linspace(-5e-3, 5e-3, 121)
+    expected = tf_counts(edges, fraction * 4e5, 1.2e-3) + bose_counts(edges, (1 - fraction) * 4e5, 1e-3, 1.0)
+    counts = np.random.default_rng(int(fraction * 100)).poisson(expected).astype(np.float64)
+    fitted = fit_axis("X", edges, counts, profiles.BIMODAL_BOSE, DEFAULTS, max_radius_ratio=3.0)
+    assert fitted.ok and fitted.fit.model.key == "bimodal_tf2_g2_5"
+    assert any(note.startswith("condensate: ") for note in fitted.notes)
+    found = condensate_fraction(fitted.fit)
+    assert abs(found.value - fraction) < 3 * found.se
+
+
+def test_a_strong_condensate_counts_even_when_the_free_z_fit_does_not_saturate() -> None:
+    """A condensate of 2/3 of the peak: the free-z profile follows it with a narrow σ and z well
+    below 1, but the bimodal fit is better by far more than CONDENSATE_STRONG_DELTA_CHI2."""
+    model = MODELS["bimodal_tf1_5_g2"]
+    edges = np.linspace(-6e-3, 6e-3, 161)
+    truth = model.function(bin_centres(edges), 300.0, 0.0, 1.4, 150.0, 1.1e-3, 1.0)
+    counts = np.random.default_rng(9).poisson(truth).astype(np.float64)
+    decision = fits.fit_condensate(bin_centres(edges), counts, 1.5)
+    assert decision.condensate and decision.thermal["fugacity"].value < fits.FUGACITY_SATURATED
+    assert decision.delta_chi2 > fits.CONDENSATE_STRONG_DELTA_CHI2
+    assert "can't follow the condensate" in decision.note
+
+
+def test_choose_condensate_without_one_of_the_fits() -> None:
+    edges = np.linspace(-5e-3, 5e-3, 121)
+    counts = np.random.default_rng(2).poisson(bose_counts(edges, 1e5, 1e-3, 0.5)).astype(np.float64)
+    thermal = fit_histogram(bin_centres(edges), counts, "bose_g2_5")
+    failed = fit_histogram([], [], "bimodal_tf2_g2_5")
+    only_thermal = fits.choose_condensate(failed, thermal)
+    assert only_thermal.fit is thermal and not only_thermal.condensate and "bimodal fit failed" in only_thermal.note
+    neither = fits.choose_condensate(failed, fit_histogram([], [], "bose_g2_5"))
+    assert not neither.condensate and not neither.fit.ok

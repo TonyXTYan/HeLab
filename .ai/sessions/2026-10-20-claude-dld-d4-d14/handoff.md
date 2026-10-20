@@ -27,9 +27,12 @@ Numbers are per shot (the histogram's events / shots / QE).
 
 ## Wiring into the histograms plot (`basic_plots.py`, the next step)
 
-1. **Pass `max_radius_ratio=None`** to `fit_axis` for every fit (or a plot setting "μ/k_B T at
-   most", default 2, through `bec.axis_caps(constants, mu)[axis]`): the cap then follows the
-   trap-axis mapping. Today's calls pass nothing, so the cap is still 2 everywhere.
+1. **Caps:** `fit_axis` now defaults to `max_radius_ratio=None`, the per-axis cap from the
+   constants (`profiles.axis_cap`), so today's calls already use it. A plot setting "μ/k_B T at
+   most" (default 2) can pass `bec.axis_caps(constants, mu)[axis]`.
+   **Condensate check:** the TF + Bose choices fit the free-z Bose profile too and fall back to it
+   with "no condensate (z = …)" in `AxisFit.notes` (`fits.choose_condensate`; rule in notes.md,
+   "Review fixes"). Show that note on the fit line. Slice models carry `fits.SLICE_NOTE`.
 2. **Constants:** add `"trap_radial", "trap_axial", "trap_axial_axis", "detector_qe",
    "scattering_length", "hbar"` to `CONSTANT_KEYS` (so a change marks the plot) and the folder
    ones (`trap_radial`, `trap_axial`, `trap_axial_axis`) to the plot's `constants_specs` when a
@@ -66,4 +69,4 @@ Numbers are per shot (the histogram's events / shots / QE).
 - New: `tests/test_bose_fits.py`, `tests/test_bec.py`; updated: `tests/test_physics.py`,
   `tests/test_lab_parameters.py` (row lists).
 - `mypy --strict helab tests`, `pyright helab tests`: 0 errors. `git diff --check`: clean.
-- Full suite (`-n 2 --reruns 5 --reruns-delay 1 -rR`): `2 failed, 1780 passed, 7 skipped, 2 xfailed, 2 warnings, 10 rerun in 227.82s`. The two failures are the root-only ones (`test_constants.py::test_read_only_saved_folder_is_replaced`, `test_cache_mover.py::test_recovery_isnt_usable_after_a_failed_settings_write`), and all 10 reruns are theirs (5 each): no other test needed a rerun.
+- Full suite before the review fixes (`-n 2 --reruns 5 --reruns-delay 1 -rR`): `2 failed, 1780 passed, 7 skipped, 2 xfailed, 2 warnings, 10 rerun in 227.82s`. The two failures are the root-only ones (`test_constants.py::test_read_only_saved_folder_is_replaced`, `test_cache_mover.py::test_recovery_isnt_usable_after_a_failed_settings_write`), and all 10 reruns are theirs (5 each): no other test needed a rerun.
