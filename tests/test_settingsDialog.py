@@ -42,7 +42,7 @@ def test_settings_dialog_tab_widget(qtbot: QtBot, settings_dialog: SettingsDialo
     assert settings_dialog.tabs is not None
     
     # Verify default tabs
-    expected_tabs = ["General", "Scripts", "Cache", "Data roots"]
+    expected_tabs = ["General", "Lab parameters", "Scripts", "Cache", "Data roots"]
     assert [settings_dialog.tabs.tabText(i) for i in range(settings_dialog.tabs.count())] == expected_tabs
 
 def test_cache_tab_controls(qtbot: QtBot, settings_dialog: SettingsDialog) -> None:

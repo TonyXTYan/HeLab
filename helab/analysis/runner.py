@@ -13,6 +13,7 @@ import logging
 import queue
 import threading
 import time
+from types import MappingProxyType
 from typing import Any, Mapping, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -42,8 +43,12 @@ class AnalysisRunner(QObject):
         self._ids = itertools.count(1)
 
     def submit(self, script: DatasetAnalysis, metadata: ScriptMetadata, action: str,
-               view: DatasetView, values: Optional[Mapping[str, Any]] = None) -> AnalysisContext:
-        """Queue ``action`` on ``view`` with ``values`` validated against its declared parameters.
+               view: DatasetView, values: Optional[Mapping[str, Any]] = None,
+               constants: Optional[Mapping[str, Mapping[str, float]]] = None) -> AnalysisContext:
+        """Queue ``action`` on ``view`` with ``values`` validated against its declared parameters,
+        and the lab and folder layers of the constants taken now (``constants``: {"lab": …,
+        "folder": …}; GUI thread). An analysis that uses constants gets them resolved with its own
+        values now too (``DatasetAnalysis.run_constants``), in its context and its result.
         The run's coverage is the shots the script says it uses (all of them if it can't say).
         Raises ``RuntimeError`` while the runner is stopping (until its worker has exited)."""
         parameters = effective(script.parameters(action), values)
@@ -52,8 +57,15 @@ class AnalysisRunner(QObject):
         except Exception:
             logging.exception("Coverage of %s: all shots", metadata.name)
             coverage = Coverage.of(view)
+        layers = MappingProxyType({name: MappingProxyType(dict(values))
+                                  for name, values in (constants or {}).items()})
+        try:
+            resolved = script.run_constants(action, parameters, layers) if script.constant_keys(action) else None
+        except Exception:
+            logging.exception("Constants of %s: none resolved", metadata.name)
+            resolved = None
         context = AnalysisContext(f"a{next(self._ids)}", action, view, parameters, metadata.identity(),
-                                  coverage=coverage)
+                                  coverage=coverage, constants=layers, resolved_constants=resolved)
         with self._lock:
             if self._stopping:
                 raise RuntimeError("The analysis runner is stopping")

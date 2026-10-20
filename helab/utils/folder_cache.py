@@ -17,6 +17,7 @@ import numpy.typing as npt
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 
+from helab.analysis.constant_layers import clean_layer, folder_layer
 from helab.utils.ram_buffers import Buffers, dataset_buffers
 from helab.utils import large_folder
 from helab.utils.cache_store import APPROVAL_SHARE, KINDS, store_root
@@ -145,6 +146,11 @@ class FolderCache(QObject):
     folderPrefsChanged = pyqtSignal(str)
     # A flag couldn't be saved (path, why, the owner that set it); memory shows the saved state again.
     folderPrefsFailed = pyqtSignal(str, str, str)
+    # Constants the analyses use changed: a folder's own (its path; its subfolders inherit them),
+    # or the lab's ("").
+    constantsChanged = pyqtSignal(str)
+    # (path, message, owner): a folder's constants couldn't be saved; the saved ones show again.
+    folderConstantsFailed = pyqtSignal(str, str, str)
     subtreeChanged = pyqtSignal(str)
     savedRefreshed = pyqtSignal(str)
     mountWarningChanged = pyqtSignal(str)
@@ -226,6 +232,21 @@ class FolderCache(QObject):
         self._confirmed_prefs: dict[str, dict[str, Any]] = {}
         # Flag saves in flight: job owner → (path, the choice's set_at, who set it).
         self._pref_writes: dict[str, tuple[str, float, str]] = {}
+        # Constants (F0b): the lab's (Settings → Lab parameters, set by the main window), and each
+        # folder's own, as the store or this session last said: {"values": {key: float}, "set_at"}.
+        # Folders with no disk cache keep theirs for the session only (``constants_session_only``).
+        self.lab_constants: dict[str, float] = {}
+        self.folder_constant_records: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._confirmed_constants: dict[str, dict[str, Any]] = {}
+        self._constant_writes: dict[str, tuple[str, float, str]] = {}
+        # Folders a helper found no disk cache for when saving their constants: session only, why.
+        self.constants_unsaved: dict[str, str] = {}
+        # Folders whose values this session holds in RAM only (no disk cache when they were set):
+        # sent to a helper once the folder has one (a root found or decided, volumes verified).
+        self._session_constants: set[str] = set()
+        # Those whose automatic save (``_constants_roots_moved``) failed: why; tried again at the
+        # next root change, and still RAM only meanwhile.
+        self._constants_save_failed: dict[str, str] = {}
         self.service = service
         self.snapshots: OrderedDict[str, FolderSnapshot] = OrderedDict()
         self.datasets: OrderedDict[tuple[str, str, int], Dataset] = OrderedDict()
@@ -308,6 +329,12 @@ class FolderCache(QObject):
         self._cleanup = ""
         self._root_verify_owner = ""
         self._volume_verify_owner = ""
+        # Roots found, decided or verified: session-only constants may be saved now, and the
+        # folders whose inheritance stops at a root (``constants_root``) changed.
+        self.dataRootsChanged.connect(self._constants_roots_moved)
+        self.rootDecided.connect(self._constants_roots_decided)
+        self.rootDuplicatesChanged.connect(lambda: self._constants_roots_moved(""))
+        self.volumesVerified.connect(lambda: self._constants_roots_moved(""))
         # The local mounts (path, device) whose volume IDs this session's last verification
         # checked: the only hints a cached read trusts, besides the system volume's.
         self._verified_volumes: tuple[tuple[str, str], ...] = ()
@@ -873,6 +900,174 @@ class FolderCache(QObject):
                 self.prefs[path] = dict(saved)
             self.folderPrefsChanged.emit(path)
         self.folderPrefsFailed.emit(path, message, owner)
+
+    # Constants (F0b; helab/analysis/constant_layers.py). Memory only: runs resolve from these.
+
+    def set_lab_constants(self, values: object) -> None:
+        """The lab's values (Settings → Lab parameters), as saved; plots hear of a change."""
+        cleaned = clean_layer(values)
+        if cleaned != self.lab_constants:
+            self.lab_constants = cleaned
+            self.constantsChanged.emit("")
+
+    def folder_constants(self, path: str) -> dict[str, float]:
+        """The values this folder sets itself (never its parent's)."""
+        record = self.folder_constant_records.get(path) or {}
+        return clean_layer(record.get("values"))
+
+    def constants_root(self, path: str) -> str | None:
+        """The folder inheritance stops at: the data root seen at or above ``path``, else None (the top)."""
+        root = self.root_of(path)
+        return root[0] if root is not None else None
+
+    def inherited_constants(self, path: str) -> dict[str, tuple[float, str]]:
+        """Each constant some folder at or above ``path`` sets, with the nearest such folder: the
+        folder's own values, else its parent's, and so on up to its data root (inclusive; the
+        top of the drive for a folder without one). From memory only."""
+        found: dict[str, tuple[float, str]] = {}
+        stop = self.constants_root(path)
+        folder, previous = path, ""
+        while folder and folder != previous:
+            for key, value in self.folder_constants(folder).items():
+                found.setdefault(key, (value, folder))
+            if folder == stop:
+                break
+            folder, previous = os.path.dirname(folder), folder
+        return found
+
+    def effective_folder_constants(self, path: str) -> dict[str, float]:
+        """The folder layer a run on ``path`` uses: ``inherited_constants``' values (``folder_layer``:
+        a fall time set above the folder that sets the fall distance is derived instead)."""
+        return folder_layer(self.inherited_constants(path))
+
+    def constants_session_only(self, path: str) -> str:
+        """Why this folder's constants last only this session ("" if a helper saves them)."""
+        if not store_options():
+            return "the disk cache is off for this session"
+        if self.no_root(path) is not None:
+            return "no .helab-root found here or above"
+        if self.pending_root(path) is not None:
+            return "this .helab-root is also at another location: answer Review… first"
+        if path in self._constants_save_failed:
+            return f"couldn't be saved ({self._constants_save_failed[path]})"
+        return self.constants_unsaved.get(path, "")
+
+    def remember_constants(self, path: str, record: object, *, known: bool = True,
+                           confirmed: bool = True) -> None:
+        """Keep a folder's own constants; a later choice (``set_at``) wins. ``known=False`` (a
+        listing that found none saved) only fills in a folder this session knows nothing about.
+        ``confirmed``: what the store said (not this session's unsaved choice)."""
+        if not isinstance(record, dict):
+            return
+        given: dict[str, Any] = {}
+        if record:
+            try:
+                set_at = float(record.get("set_at") or 0.0)
+            except (TypeError, ValueError):
+                return
+            given = {"values": clean_layer(record.get("values")), "set_at": set_at}
+        if confirmed and given:
+            saved = self._confirmed_constants.get(path)
+            if saved is None or float(saved["set_at"]) <= given["set_at"]:
+                self._confirmed_constants[path] = dict(given)
+        current = self.folder_constant_records.get(path)
+        if not given:
+            if current is not None and not known:
+                return
+            given = {"values": {}, "set_at": 0.0}
+        elif current is not None and float(current.get("set_at", 0)) > given["set_at"]:
+            return
+        before = self.folder_constants(path)
+        self.folder_constant_records[path] = given
+        self.folder_constant_records.move_to_end(path)
+        while len(self.folder_constant_records) > self.MAX_ENTRIES:
+            # Folders that set nothing go first: a value set is never forgotten while HeLab runs.
+            empty = next((folder for folder, kept in self.folder_constant_records.items() if not kept["values"]), None)
+            if empty is None:
+                break
+            del self.folder_constant_records[empty]
+        if self.folder_constants(path) != before:
+            self.constantsChanged.emit(path)
+
+    def set_folder_constants(self, path: str, values: dict[str, float], *, owner: str = "") -> bool:
+        """The user's constants for one folder (all it sets; a key left out goes back to inheriting):
+        shown at once, then saved by a helper. If saving fails, the saved ones show again and
+        ``folderConstantsFailed`` says why. Kept for the session only when the folder has no disk
+        cache (``constants_session_only``)."""
+        set_at = time.time()
+        self.remember_constants(path, {"values": clean_layer(values), "set_at": set_at}, confirmed=False)
+        self._constants_save_failed.pop(path, None)  # The user's choice is tried now.
+        if self.constants_session_only(path):
+            self._session_constants.add(path)
+            return True
+        self._session_constants.discard(path)
+        job = self.cache_admin("constants", path=path, values=self.folder_constants(path), set_at=set_at)
+        if not job:
+            self._constants_not_saved(path, set_at, "HeLab's work queue is full", owner)
+            return False
+        self._constant_writes[job] = (path, set_at, owner)
+        return True
+
+    def _constants_roots_decided(self, paths: list[str]) -> None:
+        for path in paths:
+            self._constants_roots_moved(str(path))
+
+    def _constants_roots_moved(self, path: str) -> None:
+        """A data root at ``path`` was found, changed or decided ("": any, e.g. volumes verified):
+        a helper's earlier "no data root" answer at or below it is stale, plots below it may
+        inherit differently (``constantsChanged``), and values this session held in RAM only
+        are saved now where the folder has a disk cache (proposed: the choice was the user's)."""
+        def below(folder: str) -> bool:
+            return not path or folder == path or folder.startswith(path.rstrip("/\\") + os.sep)
+        # Only "no data root" answers: an unsupported mount stays one whatever roots are found.
+        for folder in [folder for folder, reason in self.constants_unsaved.items()
+                       if below(folder) and reason == NO_ROOT_CONSTANTS]:
+            del self.constants_unsaved[folder]
+        if path:
+            self.constantsChanged.emit(path)
+        if self.quitting or self.service.closed:
+            return  # No new folder work while quitting.
+        for folder in sorted(self._session_constants):
+            failed = self._constants_save_failed.pop(folder, None)  # Tried again now.
+            if self.constants_session_only(folder):
+                if failed is not None:
+                    self._constants_save_failed[folder] = failed
+                continue
+            self._session_constants.discard(folder)
+            record = self.folder_constant_records.get(folder) or {}
+            set_at = float(record.get("set_at") or time.time())
+            job = self.cache_admin("constants", path=folder, values=self.folder_constants(folder), set_at=set_at)
+            if job:
+                self._constant_writes[job] = (folder, set_at, AUTOMATIC_SAVE)
+            else:
+                self._automatic_save_failed(folder, "HeLab's work queue is full")
+
+    def _automatic_save_failed(self, folder: str, message: str) -> None:
+        """An automatic save of session-only values failed: they stay in RAM (still "RAM only",
+        saying why) and are tried again at the next root change; no tab asked, so it is logged."""
+        logging.warning("Folder constants of %s not saved: %s; kept for this session", folder, message)
+        self._session_constants.add(folder)
+        self._constants_save_failed[folder] = message
+        self.constantsChanged.emit(folder)
+
+    def _constants_not_saved(self, path: str, set_at: float, message: str, owner: str) -> None:
+        current = self.folder_constant_records.get(path)
+        if current is not None and float(current.get("set_at", 0)) == set_at:
+            # Still this choice (not a newer one): show what the store last confirmed again.
+            saved = self._confirmed_constants.get(path)
+            before = self.folder_constants(path)
+            if saved is None:
+                del self.folder_constant_records[path]
+            else:
+                self.folder_constant_records[path] = dict(saved)
+            if self.folder_constants(path) != before:
+                self.constantsChanged.emit(path)
+        self.folderConstantsFailed.emit(path, message, owner)
+
+    def _remember_constant_folders(self, folders: object, *, known: bool) -> None:
+        if isinstance(folders, dict):
+            for folder, record in folders.items():
+                self.remember_constants(str(folder), record, known=known)
 
     def load_file(self, path: str) -> str:
         """The TXY file a running load of ``path`` is reading now ("" if none), from memory."""
@@ -1831,6 +2026,17 @@ class FolderCache(QObject):
         if kind == "folder_prefs":
             self.remember_prefs(event["path"], event["prefs"])
             return
+        if kind == "folder_constants":
+            write = self._constant_writes.get(producer.owner)
+            for folder, reason in dict(event.get("session_only") or {}).items():
+                # No data root after all: kept for this session, and said so (until it has one).
+                self.constants_unsaved[str(folder)] = str(reason)
+                self._session_constants.add(str(folder))
+                if write is not None and write[0] == folder:
+                    del self._constant_writes[producer.owner]
+                self.constantsChanged.emit(str(folder))
+            self._remember_constant_folders(event.get("folders"), known=True)
+            return
         if kind == "prefs_cleared":
             # As of the Clear's own time: a choice saved after it (arriving first) stays.
             cleared = {"no_cache": False, "no_auto_load": False, "set_at": float(event.get("set_at", 0))}
@@ -1908,6 +2114,13 @@ class FolderCache(QObject):
             if write is not None and kind != "done":
                 self._prefs_not_saved(write[0], write[1], str(event.get("message") or "the save was cancelled"),
                                       write[2])
+            constants_write = self._constant_writes.pop(producer.owner, None)
+            if constants_write is not None and kind != "done":
+                message = str(event.get("message") or "the save was cancelled")
+                if constants_write[2] == AUTOMATIC_SAVE:
+                    self._automatic_save_failed(constants_write[0], message)
+                else:
+                    self._constants_not_saved(*constants_write[:2], message, constants_write[2])
             if producer.owner == self._budget_owner:
                 self._budget_owner = ""
                 if kind != "done":
@@ -2153,6 +2366,9 @@ class FolderCache(QObject):
             if kind == "folder_prefs":
                 self.remember_prefs(event["path"], event["prefs"], known=False)
                 return
+            if kind == "folder_constants":
+                self._remember_constant_folders(event.get("folders"), known=False)
+                return
             if kind == "cache_mismatch":
                 # Its cached shots aren't all in the folder now. A folder not cached by choice
                 # never shows its cached data, so it needs no answer.
@@ -2187,6 +2403,8 @@ class FolderCache(QObject):
                         self.remember_subtree(entry["path"], entry["subtree"], notify=False)
                     if "prefs" in entry:
                         self.remember_prefs(entry["path"], entry["prefs"], known=False)
+                    if "constants" in entry:
+                        self.remember_constants(entry["path"], entry["constants"], known=False)
                     if "disk_cached" in entry and not self._cleared_since(job, entry["path"]):
                         self._observe_cache(entry["path"], entry)
                 if event.get("replace"):
@@ -2429,6 +2647,10 @@ RAM_ONLY = "RAM only · no .helab-root found here or above"
 RAM_ONLY_TOOLTIP = ("No .helab-root at or above this folder, so its statuses, settings and loaded data stay in "
                     "RAM for this session.\nTo use the disk cache: right-click the top folder of this drive "
                     "or share › " + PLACE_ROOT_ACTION)
+# A helper's answer when saving a folder's constants finds no data root (``io_helper.cache_admin``).
+NO_ROOT_CONSTANTS = "no .helab-root found here or above"
+# The "owner" of a save of session-only constants made when the folder gained a disk cache.
+AUTOMATIC_SAVE = "automatic"
 NEEDS_ROOT_TOOLTIP = "No .helab-root found here or above: " + PLACE_ROOT_ACTION + " first"
 # A location whose .helab-root is also elsewhere, until Same folder or Copy (D4).
 PENDING_ROOT = "RAM only · this .helab-root is also at another location · Review…"
