@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import base64
 import contextlib
+import errno
+import functools
 import hashlib
 import math
 import os
@@ -45,6 +47,69 @@ def _read_gate(filename: str) -> None:
     go = os.path.join(READ_GATE, os.path.basename(filename) + ".go")
     while not os.path.exists(go):
         time.sleep(READ_GATE_POLL)
+
+
+# Test seam: with HELAB_TEST_SOURCE_GUARD=<dir> (tests/conftest.py), tests never touch real data. A
+# source path on a mounted volume or share, in cloud storage or in one of the developers' data folders
+# (``constants.DEV_POTENTIAL_DATA_PATHS``) is refused before it is touched (``SourceRefused``) unless
+# it is inside the temp folder or this checkout, and noted in <dir>/<pid>.txt, which fails the test.
+# Decided by the path's text alone: resolving it would touch it. Unset in production: nothing is checked.
+SOURCE_GUARD = os.environ.get("HELAB_TEST_SOURCE_GUARD") or None
+MOUNT_TOPS = ("/Volumes", "/Network", "/net", "/media", "/mnt", "/run/media")  # Anything below is a mount
+
+
+class SourceRefused(PermissionError):
+    """A test's source path that could be real data (``SOURCE_GUARD``): refused, never touched."""
+
+
+def _normal(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _within(path: str, folder: str) -> bool:
+    """Whether ``path`` is ``folder`` or inside it (normalised paths; different drives: not)."""
+    try:
+        return os.path.commonpath([path, folder]) == folder
+    except ValueError:
+        return False
+
+
+@functools.cache
+def _guard_rules() -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """(allowed, denied, mount tops): inside an allowed folder is always fine; a denied folder and
+    anything inside it is refused, as is anything below a mount top (the top itself is fine)."""
+    import tempfile
+    from helab.utils.constants import DEV_POTENTIAL_DATA_PATHS
+    temp = tempfile.gettempdir()
+    checkout = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    allowed = tuple(dict.fromkeys(_normal(path) for path in (temp, os.path.realpath(temp), checkout)))
+    data = [_normal(path) for path in DEV_POTENTIAL_DATA_PATHS if path]
+    denied = tuple(path for path in data if not any(_within(path, folder) for folder in allowed))
+    tops = [*MOUNT_TOPS, os.path.expanduser("~/Library/CloudStorage")] if sys.platform != "win32" else []
+    return allowed, denied, tuple(_normal(top) for top in tops)
+
+
+def _guard(path: str) -> None:
+    """Under tests (``SOURCE_GUARD``), refuse ``path`` if it could be real data; else nothing."""
+    if SOURCE_GUARD is None or not path:
+        return
+    target = _normal(path)
+    allowed, denied, tops = _guard_rules()
+    if any(_within(target, folder) for folder in allowed):
+        return
+    if sys.platform == "win32":
+        drives = {os.path.splitdrive(folder)[0] for folder in allowed}
+        refused = target.startswith("\\\\") or os.path.splitdrive(target)[0] not in drives
+    else:
+        refused = any(_within(target, top) and target != top for top in tops)
+    if not (refused or any(_within(target, folder) for folder in denied)):
+        return
+    try:
+        with open(os.path.join(SOURCE_GUARD, f"{os.getpid()}.txt"), "a", encoding="utf-8") as note:
+            note.write(path + "\n")
+    except OSError:
+        pass
+    raise SourceRefused(errno.EACCES, "Tests never touch real data", path)
 
 
 # The I/O trace (Help › Record I/O trace, this session): every operation a helper makes on a source
@@ -121,6 +186,7 @@ def _traced_error(op: str, path: str, reason: str, exc: BaseException) -> None:
 
 def _stat(path: str, reason: str, *, follow_symlinks: bool = True) -> os.stat_result:
     """``os.stat`` of a source path, traced."""
+    _guard(path)
     if TRACE is None:
         return os.stat(path) if follow_symlinks else os.stat(path, follow_symlinks=False)
     op = "stat" if follow_symlinks else "lstat"
@@ -135,6 +201,7 @@ def _stat(path: str, reason: str, *, follow_symlinks: bool = True) -> os.stat_re
 
 def _lstat(path: str, reason: str) -> os.stat_result:
     """``os.lstat`` of a source path, traced."""
+    _guard(path)
     if TRACE is None:
         return os.lstat(path)
     try:
@@ -148,6 +215,7 @@ def _lstat(path: str, reason: str) -> os.stat_result:
 
 def _isdir(path: str, reason: str) -> bool:
     """``os.path.isdir`` of a source path (one stat), traced."""
+    _guard(path)
     found = os.path.isdir(path)
     if TRACE is not None:
         _trace("stat", path, reason, isdir=found)
@@ -158,6 +226,7 @@ def _entry_stat(entry: os.DirEntry[str], reason: str) -> os.stat_result:
     """A listed entry's ``stat()``, traced. One more call on macOS and Linux; on Windows the
     listing already has it (``syscall`` False), unless the entry is a link (not probed: asking
     would be a call the untraced helper doesn't make)."""
+    _guard(entry.path)
     if TRACE is None:
         return entry.stat()
     syscall = sys.platform != "win32"
@@ -203,6 +272,7 @@ class _TracedListing:
 
 def _scandir(path: str, reason: str) -> contextlib.AbstractContextManager[Iterator[os.DirEntry[str]]]:
     """``os.scandir`` of a source folder, traced."""
+    _guard(path)
     return os.scandir(path) if TRACE is None else _TracedListing(path, reason)
 
 
@@ -220,6 +290,7 @@ def _read_marker(folder: str, reason: str) -> Marker:
     ``marker_open``, ``marker_fstat``, ``marker_read`` (bytes); a failure after a step is
     ``marker_error`` (``after`` it), and a failed open is ``marker_open`` with its error."""
     from helab.utils import data_roots
+    _guard(folder)
     if TRACE is None:
         return data_roots.read_marker(folder)
     path = os.path.join(folder, data_roots.MARKER_NAME)
@@ -245,6 +316,7 @@ def _read_txy_file(filename: str, reason: str) -> Any:
     import io
     import numpy as np
     import pandas as pd
+    _guard(filename)
     try:
         with open(filename, "rb") as stream:
             raw = stream.read()
@@ -3028,6 +3100,12 @@ CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_adm
               "root_reassign", "root_remove")
 
 
+# Requests acting on the source folder they name (``path``, or an icon batch's ``paths``), which
+# ``_guard`` checks first under tests; the others name a folder only as a cache key.
+SOURCE_OPERATIONS = frozenset({"list", "icons", "scan", "details", "load", "root_create", "root_reassign",
+                               "root_remove"})
+
+
 def main() -> None:
     started = time.monotonic()
     try:
@@ -3037,6 +3115,9 @@ def main() -> None:
         _start_trace(request)
         if operation in CACHE_ONLY and not request.get("cache"):
             raise ValueError("The disk cache is off for this session")
+        if SOURCE_GUARD is not None and operation in SOURCE_OPERATIONS:
+            for path in [request.get("path", ""), *request.get("paths", [])]:
+                _guard(str(path))
         if operation == "drives":
             if sys.platform == "win32":
                 import ctypes
