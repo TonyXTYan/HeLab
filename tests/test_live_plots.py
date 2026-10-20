@@ -1220,3 +1220,26 @@ def test_a_following_plot_keeps_following_in_every_library_and_after_switching(
     qtbot.waitUntil(lambda: shown_revision(instance) == 3, timeout=10_000)
     assert drawn(instance, drawn_type(script, other)) is not None
     assert "Drawn with " + other in source(instance).toolTip()
+
+
+@pytest.mark.parametrize("backend", ["PyQtGraph", "Plotly", "Matplotlib"])
+def test_transfer_fractions_highlight_follows_lives_newest_shot(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot, backend: str) -> None:
+    """The T histogram's highlighted shot is Live's latest one, in place in every library."""
+    from helab.analysis.backends import BACKEND, DRAWING_GROUP
+    window.view = window.live_feed.publish(lab_revision([1, 2]))
+    instance = plot(window, qtbot, transfer_fractions.TransferFractions())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    set_live(instance, DELAY, 0.0)
+    assert instance.parameter_root is not None
+    instance.parameter_root.child(DRAWING_GROUP, BACKEND).setValue(backend)
+    parameter_of(instance.parameter_root, transfer_fractions.HIGHLIGHT).setValue(True)
+    instance.run()
+    qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
+    content = instance._content
+    for shot in (3, 4):
+        window.live_feed.publish(lab_revision(range(1, shot + 1)))
+        qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == shot,
+                        timeout=10_000)
+        assert instance._content is content  # In place.
+    assert "newest shot in red" in source(instance).text()

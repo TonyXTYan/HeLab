@@ -19,6 +19,7 @@ from helab.analysis.parameters import effective
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.scripts.base import DatasetAnalysis
 from helab.scripts.standard import basic_plots, scatter_3d, transfer_fractions
+from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset
 
 CENTRE, SPACING = 2.1375, 0.0125
@@ -267,3 +268,62 @@ def test_opengl_scatter_updates_its_points_in_place(qtbot: QtBot) -> None:
     assert built.earlier_points is points and len(points.pos) == len(newer.data.points)
     assert len(built.newest_points.pos) == len(newer.data.newest)
     assert built.opts["distance"] == camera["distance"] and built.opts["azimuth"] == camera["azimuth"]
+
+
+def test_transfer_fractions_highlight_the_newest_shot_in_the_t_histogram() -> None:
+    """Off by default; on, the newest chosen shot's T (in the XY box) in the histogram's bins."""
+    script = transfer_fractions.TransferFractions()
+    data = view()
+    plain = result_of(script, data).data
+    assert plain.newest_shot is None and len(plain.newest) == 0
+    lit = result_of(script, data, {"highlight_newest": True, "newest_colour": "magenta"}).data
+    assert lit.newest_shot == 6 and not lit.newest_left_out and lit.colour != plain.colour
+    edges = lit.histogram[0]
+    expected = np.histogram(transfer_fractions.in_box(np.asarray(data.shots[6]), 0.03)[:, 0], bins=edges)[0]
+    assert lit.newest.tolist() == expected.astype(float).tolist()
+    assert "newest shot in magenta" in script.describe_run("Plot", {**result_of(script, data).parameters,
+                                                                    "highlight_newest": True,
+                                                                    "newest_colour": "magenta"}, data)[1]
+    # A newest shot Minimum counts left out (a bad shot) is still shown, and says so.
+    shots = {shot: np.asarray(data.shots[shot]) for shot in data.shot_numbers}
+    shots[7] = shots[6][:30]
+    fingerprint = [[shot, 100 + shot, 1_000 + shot] for shot in shots]
+    weak = build_view(Dataset("/data/root/run_1", "sig-2", shots, {"fingerprint": fingerprint, "source": "files",
+                                                                   "loaded_at": 1_700_000_000.0}, 0))
+    left_out = result_of(script, weak, {"highlight_newest": True}).data
+    assert left_out.newest_shot == 7 and left_out.newest_left_out and 7 not in left_out.shots.tolist()
+    assert 0 < left_out.newest.sum() <= 30
+    assert "left out: ≤ 50 counts" in transfer_fractions.times_title(left_out)
+
+
+@pytest.mark.parametrize("backend", backends.BACKENDS)
+def test_transfer_fractions_draw_the_newest_shot_in_every_library(backend: str, qtbot: QtBot) -> None:
+    script = transfer_fractions.TransferFractions()
+    result = result_of(script, view(), {"highlight_newest": True})
+    widget: Any = script.draw(result, backend)
+    qtbot.addWidget(widget)
+    if backend == PYQTGRAPH:
+        assert widget.newest_view is not None
+        assert list(widget.newest_view.curve.yData) == result.data.newest.tolist()
+        assert widget.times_plot.getAxis("right").isVisible()
+    elif backend == PLOTLY:
+        snapshot = dash_server.snapshot(widget.plot_id)
+        assert snapshot is not None
+        newest = [trace for trace in cast(Any, snapshot.figure).data if str(trace.name).startswith("shot 6")]
+        assert len(newest) == 1 and list(newest[0].customdata[:-1]) == result.data.newest.tolist()
+    else:
+        times = widget.figure.axes[1]
+        right = next(axes for axes in widget.figure.axes if getattr(axes, backends.FOLLOWER, False))
+        scale = transfer_fractions.newest_scale(result.data.histogram[1], result.data.newest)
+        assert right.get_ylim()[1] == pytest.approx(times.get_ylim()[1] / scale)
+    # Live's next shot: in place, the highlight moving to it.
+    newer = result_of(script, view(range(1, 8)), {"highlight_newest": True})
+    assert script.update(widget, newer) and newer.data.newest_shot == 7
+    if backend == PYQTGRAPH:
+        assert list(widget.newest_view.curve.yData) == newer.data.newest.tolist()
+        assert widget.newest_view._ratio == pytest.approx(
+            transfer_fractions.newest_scale(newer.data.histogram[1], newer.data.newest))
+        # The highlight off, or another colour: another layout, drawn anew.
+        assert not script.update(widget, result_of(script, view(), {}))
+        assert not script.update(widget, result_of(script, view(), {"highlight_newest": True,
+                                                                    "newest_colour": "magenta"}))
