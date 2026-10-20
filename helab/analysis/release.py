@@ -183,6 +183,48 @@ def layer_origin(constants: ResolvedConstants) -> tuple[float, float] | None:
     return constants.trap_x, constants.trap_y
 
 
+@dataclass(frozen=True)
+class RunVelocitySource:
+    """What a plot's run converts TXY to velocities with (``run_velocity_source``): ``release``
+    (t_r; check ``release.ok``), where it came from (``release_source``: the layer, "lab",
+    "folder" or "plot", or "detected"; ``release_from``: "release_time" by hand,
+    "arrival_time" a saved t_a − this run's t_f, or "data"), the run's ``detection`` (None
+    when the layers set both t_r and the origin), and the XY ``origin`` with ``origin_how``
+    and, for "manual", the layer that set it (``origin_source``)."""
+    release: ReleaseTime
+    release_source: str
+    release_from: str
+    detection: ReleaseTime | None
+    origin: tuple[float, float]
+    origin_how: OriginSource
+    origin_source: str = ""
+
+    @property
+    def detected(self) -> bool:
+        return self.release_source == "detected"
+
+
+def run_velocity_source(constants: ResolvedConstants, detect: Callable[[], ReleaseTime]) -> RunVelocitySource:
+    """t_r and the XY origin for one run, the one rule every velocity plot follows: t_r from the
+    layers (``layer_release_time``), else ``detect()``'s; the origin from the layers
+    (``layer_origin``), else the same detection's, else assumed (0, 0) (``velocity_origin``).
+    ``detect`` (the plot's own detection of its chosen events, which may reuse one it kept) is
+    called once, only when the layers leave t_r or the origin unset. Never another plot's t_r:
+    a saved arrival gives t_r with *this* run's t_f."""
+    given = layer_release_time(constants)
+    manual_origin = layer_origin(constants)
+    detection = detect() if given is None or manual_origin is None else None
+    if given is not None:
+        how = "arrival_time" if math.isfinite(given.arrival.value) else "release_time"
+        release, source = given, constants.origins[how]
+    else:
+        assert detection is not None
+        release, source, how = detection, "detected", "data"
+    origin, origin_how = velocity_origin(detection, manual_origin)
+    return RunVelocitySource(release, source, how, detection, origin, origin_how,
+                             constants.origins["trap_x"] if origin_how == "manual" else "")
+
+
 def velocity_origin(release: ReleaseTime | None, manual: tuple[float, float] | None = None
                     ) -> tuple[tuple[float, float], OriginSource]:
     """The XY origin for ``velocity.txy_to_velocity`` and where it came from: ``manual`` when

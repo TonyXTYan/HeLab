@@ -574,7 +574,7 @@ def test_bundled_analyses_declare_identity_and_file_hash() -> None:
     names = {metadata.name: metadata for metadata in manager.get_scripts_in_group(group.NAME)}
     assert set(names) == {"3D scatter", "Counts per shot", "Density images", "Shot times", "Shot trends",
                           "T, X, Y histograms", "Mean X, Y against T", "T spectrum", "Transfer fractions",
-                          "Release time", "Velocity distributions"}
+                          "Release time", "Velocity distributions", "Correlations"}
     scatter = names["3D scatter"]
     expected = hashlib.sha256(open(scatter_3d.__file__, "rb").read()).hexdigest()
     assert (scatter.analysis_id, scatter.version, scatter.file_hash) == ("helab.scatter_3d", "4", expected)
