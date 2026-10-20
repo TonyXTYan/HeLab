@@ -187,6 +187,37 @@ until a browser feature needs it.
    tracks.
 3. **Pin dependencies** with a lock file.
 
+Then "defaults" to the follow-up questions, for the unsupervised run:
+
+1. **Branches:** one per track, each from `agent/refactor-prep` (slice A and
+   the lock go there first): `agent/refactor-plot-ui` (B → C → E),
+   `agent/refactor-io` (F → G), `agent/refactor-basic-plots` (D). A commit per
+   slice.
+2. **Push** each branch after every slice that passes the full suite and
+   typing; the container may be reclaimed overnight.
+3. **No merging** into `dev/v0.0.6` and no PRs; a handoff note for the morning.
+4. **Packages:** `helab/views/plots/` (from `ScriptTreeSelector`) and
+   `helab/io_ops/` (helper operations). No re-export shims: every import and
+   test patch target moves to the new home. `helab/io_helper.py` stays as the
+   process entry and dispatcher.
+5. **Lock:** a universal `requirements.lock` (`uv pip compile`, macOS,
+   Windows, Linux, Python 3.13) at today's newest versions. CI's required 3.13
+   jobs and the README setup install from it, and the README gets a refresh
+   command. The 3.11/3.12/3.14 compatibility jobs stay unpinned. Delete
+   `requirements-pip.txt` and complete `setup.py`'s `install_requires`. No
+   `pyproject.toml` move.
+6. **Settings factory** for the main window (tests use a tmp ini), with slice
+   E. Profiles stay for later.
+7. **Slice H skipped**, except, if time is left, the low-risk parts:
+   `FolderExplorer`'s load-state dataclass and a `LiveController`.
+8. **Behaviour-preserving only.** `AnalysisRunner.stop()` on quit and the
+   Basic-plots typed widgets go into the handoff as proposals.
+9. **Review:** a separate Opus reviewer subagent reads each slice's diff before
+   the push; findings and fixes recorded here.
+10. **Docs:** path references in `AGENTS.md` and `roadmaps/refactoring.md` are
+    updated on each track's branch with the move; any other roadmap edits are
+    proposals in the handoff.
+
 ## Proposed doc changes (for the coordinator)
 
 - `roadmaps/refactoring.md`: under milestone 2, list slices A–H and the three
