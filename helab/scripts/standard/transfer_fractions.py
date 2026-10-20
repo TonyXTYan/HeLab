@@ -33,16 +33,21 @@ from __future__ import annotations
 import html
 import math
 from dataclasses import dataclass, field
-from typing import Any, List, Mapping, Optional, cast
+from typing import Any, List, Mapping, Optional, Sequence, cast
 
 import numpy as np
 import numpy.typing as npt
+import plotly.graph_objs as go
 import pyqtgraph as pg
+from plotly.subplots import make_subplots
 from PyQt6.QtWidgets import QWidget
 from scipy.signal import find_peaks
 
 from helab.analysis.dataset_view import DatasetView, txy
+from helab.analysis.backends import (MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane, mpl_colour, mpl_figure,
+                                     rgb)
 from helab.analysis.empty import empty_pane, empty_text
+from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import SHOT_SPECS, select_shots, selection_text, shots_brief, shots_text
@@ -430,30 +435,34 @@ class TransferFractions(DatasetAnalysis):
                          (float(times.min()), float(times.max())) if len(times) else (math.nan, math.nan),
                          jumped)
 
+    def backends(self, action_name: str) -> Sequence[str]:
+        return (PYQTGRAPH, PLOTLY, MATPLOTLIB)
+
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
+        return self.draw(result, PYQTGRAPH, parent)
+
+    def update(self, widget: QWidget, result: AnalysisResult) -> bool:
+        """A rerun (e.g. Live's next shots) updates a Plotly page in place: zoom and pan stay."""
+        if not isinstance(widget, PlotlyPane) or empty_reason(result.data):
+            return False
+        widget.update_figure(plotly_figure(result))
+        return True
+
+    def draw(self, result: AnalysisResult, backend: str, parent: Optional[QWidget] = None) -> QWidget:
         data: Fractions = result.data
         orders = data.orders
-        if not len(data.shots):
-            text = empty_text(data.total_shots, data.chosen, data.events)  # No events: nothing to add
-            said = () if text else data.notes
-            text = text or f"No shot has more than {data.minimum:,} counts in the XY box (Counting settings)"
-            return empty_pane(" · ".join((text, *said)), parent)
-        if not data.counts.any():
-            first, last = data.extent
-            text = (f"No events in the orders' windows: order 0 at {orders.centre:.6g} s, spacing "
-                    f"{orders.spacing * 1e3:.4g} ms, and the events counted are at T {first:.6g}–{last:.6g} s "
-                    f"(Orders settings)")
-            return empty_pane(" · ".join((text, *data.notes)), parent)
+        if text := empty_reason(data):
+            return empty_pane(text, parent)
+        if backend == PLOTLY:
+            return PlotlyPane(plotly_figure(result), parent=parent)
+        if backend == MATPLOTLIB:
+            return MatplotlibPane(matplotlib_figure(result), parent)
         widget: Any = pg.GraphicsLayoutWidget(parent)
         widget.setBackground("w")
-        found = "found" if data.auto else "set"
-        title = (f"{result.input.short()} · {shots_text(data.shots.tolist(), data.total_shots)} · order 0 at "
-                 f"{orders.centre:.6g} s, spacing {orders.spacing * 1e3:.4g} ms, window ±{orders.half_width * 1e3:.3g} ms "
-                 f"({found})")
         notes = ' · '.join(data.notes)
         notes = f'<br><span style="color: #b06000">{html.escape(notes)}</span>' if notes else ""
-        widget.addLabel(html.escape(title) + notes, row=0, col=0)
-        colours = [pg.intColor(i, hues=len(orders.numbers), values=1, maxValue=200) for i in range(len(orders.numbers))]
+        widget.addLabel(html.escape(fractions_title(result)) + notes, row=0, col=0)
+        colours = [pg.mkColor(colour) for colour in order_colours(orders)]
         plot = widget.addPlot(row=1, col=0)
         plot.setLabel("bottom", "Shot number")
         plot.setLabel("left", "Transfer fraction")
@@ -481,3 +490,114 @@ class TransferFractions(DatasetAnalysis):
         widget.ci.layout.setRowStretchFactor(1, 3)
         widget.ci.layout.setRowStretchFactor(2, 2)
         return cast(QWidget, widget)
+
+
+def empty_reason(data: Fractions) -> str:
+    """Why there is nothing to draw ("" when there is)."""
+    orders = data.orders
+    if not len(data.shots):
+        text = empty_text(data.total_shots, data.chosen, data.events)  # No events: nothing to add
+        said = () if text else data.notes
+        text = text or f"No shot has more than {data.minimum:,} counts in the XY box (Counting settings)"
+        return " · ".join((text, *said))
+    if not data.counts.any():
+        first, last = data.extent
+        text = (f"No events in the orders' windows: order 0 at {orders.centre:.6g} s, spacing "
+                f"{orders.spacing * 1e3:.4g} ms, and the events counted are at T {first:.6g}–{last:.6g} s "
+                f"(Orders settings)")
+        return " · ".join((text, *data.notes))
+    return ""
+
+
+def fractions_title(result: AnalysisResult) -> str:
+    data: Fractions = result.data
+    orders = data.orders
+    found = "found" if data.auto else "set"
+    return (f"{result.input.short()} · {shots_text(data.shots.tolist(), data.total_shots)} · order 0 at "
+            f"{orders.centre:.6g} s, spacing {orders.spacing * 1e3:.4g} ms, window ±{orders.half_width * 1e3:.3g} ms "
+            f"({found})")
+
+
+def order_colours(orders: Orders) -> list[tuple[int, int, int]]:
+    """One colour per order, the same in every library."""
+    count = len(orders.numbers)
+    return [cast(tuple[int, int, int], tuple(pg.intColor(i, hues=count, values=1, maxValue=200).getRgb()[:3]))
+            for i in range(count)]
+
+
+def plotly_figure(result: AnalysisResult) -> go.Figure:
+    data: Fractions = result.data
+    orders = data.orders
+    colours = order_colours(orders)
+    figure = make_subplots(rows=2, cols=1, row_heights=[0.6, 0.4], vertical_spacing=0.12,
+                           subplot_titles=("", "T around the orders, with their windows"))
+    fractions = data.fractions
+    for column, order in enumerate(orders.numbers):
+        colour = rgb(colours[column])
+        figure.add_trace(go.Scatter(x=data.shots, y=fractions[:, column], mode="lines+markers",
+                                    name=f"order {order_label(order)}", line=dict(color=colour, width=1.5),
+                                    marker=dict(size=5, color=colour), connectgaps=False,
+                                    hovertemplate=f"shot %{{x}}<br>order {order_label(order)}: %{{y:.3f}}"
+                                                  f"<extra></extra>"),
+                         row=1, col=1)
+    edges, counts = data.histogram
+    if len(counts):
+        figure.add_trace(go.Scatter(x=edges, y=np.append(counts, counts[-1]), mode="lines", showlegend=False,
+                                    line=dict(shape="hv", color="rgb(60, 60, 60)", width=1), fill="tozeroy",
+                                    fillcolor="rgba(60, 60, 60, 0.25)",
+                                    hovertemplate="T %{x:.6g} s<br>%{y:,} events<extra></extra>"),
+                         row=2, col=1)
+    top = float(counts.max()) if len(counts) else 1.0
+    for column, order in enumerate(orders.numbers):
+        low, high = orders.window(order)
+        cast(Any, figure).add_vrect(x0=low, x1=high, fillcolor=rgb(colours[column]), opacity=0.2, line_width=0,
+                                    row=2, col=1)
+        figure.add_annotation(x=orders.centre + order * orders.spacing, y=top, text=order_label(order),
+                              showarrow=False, yanchor="bottom", font=dict(color=rgb(colours[column])),
+                              row=2, col=1)
+    figure.update_xaxes(title_text="Shot number", row=1, col=1)
+    figure.update_yaxes(title_text="Transfer fraction", row=1, col=1)
+    figure.update_xaxes(title_text="T (s)", row=2, col=1)
+    figure.update_yaxes(title_text="Events", row=2, col=1)
+    notes = " · ".join(data.notes)
+    title = html.escape(fractions_title(result))
+    if notes:
+        title += f'<br><span style="color: #b06000; font-size: 11px">{html.escape(notes)}</span>'
+    figure.update_layout(title=dict(text=title, x=0.01, font=dict(size=13)), template="plotly_white",
+                         margin=dict(l=60, r=20, t=90 if notes else 60, b=40), uirevision="helab.transfer_fractions")
+    return figure
+
+
+def matplotlib_figure(result: AnalysisResult) -> Any:
+    data: Fractions = result.data
+    orders = data.orders
+    colours = order_colours(orders)
+    figure = mpl_figure()
+    shares, times = figure.subplots(2, 1, height_ratios=[3, 2])
+    fractions = data.fractions
+    for column, order in enumerate(orders.numbers):
+        shares.plot(data.shots, fractions[:, column], "-o", color=mpl_colour(colours[column]), linewidth=1.5,
+                    markersize=3, label=f"order {order_label(order)}")
+    shares.set_xlabel("Shot number", fontsize=8)
+    shares.set_ylabel("Transfer fraction", fontsize=8)
+    shares.grid(True, alpha=0.3)
+    shares.legend(fontsize=7, loc="upper right")
+    edges, counts = data.histogram
+    if len(counts):
+        times.stairs(counts, edges, fill=True, color=(60 / 255, 60 / 255, 60 / 255, 0.25),
+                     edgecolor=(60 / 255, 60 / 255, 60 / 255))
+    top = float(counts.max()) if len(counts) else 1.0
+    for column, order in enumerate(orders.numbers):
+        times.axvspan(*orders.window(order), color=mpl_colour(colours[column], 0.2), linewidth=0)
+        times.text(orders.centre + order * orders.spacing, top, order_label(order), ha="center", va="bottom",
+                   color=mpl_colour(colours[column]), fontsize=8)
+    times.set_title("T around the orders, with their windows", fontsize=8)
+    times.set_xlabel("T (s)", fontsize=8)
+    times.set_ylabel("Events", fontsize=8)
+    for axes in (shares, times):
+        axes.tick_params(labelsize=7)
+    title = fractions_title(result)
+    figure.suptitle(title, fontsize=9, wrap=True)
+    if data.notes:
+        shares.set_title(" · ".join(data.notes), fontsize=7, color=(0.69, 0.38, 0.0), wrap=True)
+    return figure
