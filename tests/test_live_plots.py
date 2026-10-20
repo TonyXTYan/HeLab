@@ -1138,3 +1138,82 @@ def test_an_error_stopping_live_checks_catches_plots_up(
     explorer.stop_live(save=False)
     window.close_plots()
     explorer.close_cleanup()
+
+
+def lab_revision(shots: range | list[int]) -> Dataset:
+    """Like ``revision``, with events every bundled plot draws: orders −2…+2 in T, a cloud in X, Y."""
+    numbers = list(shots)
+    data = {}
+    for shot in numbers:
+        rng = np.random.default_rng(shot)
+        times = np.concatenate([rng.normal(2.1375 + order * 0.0125, 0.001, count)
+                                for order, count in {-2: 20, -1: 100, 0: 600, 1: 250, 2: 30}.items()])
+        data[shot] = np.column_stack((times, rng.normal(0, 0.005, (len(times), 2))))
+    return Dataset(PATH, f"sig-lab-{numbers[-1] if numbers else 0}", data, {
+        "fingerprint": [[shot, 100 + shot, 1_000 + shot] for shot in numbers], "source": "updated",
+        "loaded_at": time.time()}, 0)
+
+
+def drawn_type(script: DatasetAnalysis, backend: str) -> type[QWidget]:
+    from helab.analysis.backends import MATPLOTLIB, PLOTLY, MatplotlibPane
+    if backend == PLOTLY:
+        return PlotlyPane
+    if backend == MATPLOTLIB:
+        return MatplotlibPane
+    if isinstance(script, scatter_3d.Scatter3D):
+        return QLabel  # PyQtGraph's 3D view needs OpenGL, which Qt's offscreen platform lacks: it says so.
+    return cast(type[QWidget], pg.PlotWidget if isinstance(script, basic_plots.CountsPerShot)
+                else pg.GraphicsLayoutWidget)
+
+
+def drawn(instance: AnalysisInstance, kind: type[QWidget]) -> Optional[QWidget]:
+    content = instance._content
+    if content is None or sip.isdeleted(content):
+        return None
+    return content if isinstance(content, kind) else content.findChild(kind)
+
+
+@pytest.mark.parametrize("script_class", [basic_plots.CountsPerShot, basic_plots.TxyHistograms,
+                                          scatter_3d.Scatter3D, transfer_fractions.TransferFractions],
+                         ids=lambda script_class: script_class.__name__)
+@pytest.mark.parametrize("backend", ["PyQtGraph", "Plotly", "Matplotlib"])
+def test_a_following_plot_keeps_following_in_every_library_and_after_switching(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot, script_class: Any, backend: str) -> None:
+    """Each library follows Live: a Plotly page is updated in place (its zoom stays), the others are
+    drawn anew and their old drawing freed. Switching library mid-Live draws the shown revision
+    with the new one, and the next revisions follow in it."""
+    from helab.analysis.backends import BACKEND, DRAWING_GROUP, PLOTLY
+    script = cast(DatasetAnalysis, script_class())
+    window.view = window.live_feed.publish(lab_revision([1, 2]))
+    instance = plot(window, qtbot, script)
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    set_live(instance, DELAY, 0.0)
+    assert instance.parameter_root is not None
+    library = instance.parameter_root.child(DRAWING_GROUP, BACKEND)
+    library.setValue(backend)
+    kind = drawn_type(script, backend)
+    first = drawn(instance, kind)
+    assert first is not None and shown_revision(instance) == 1  # Drawn again, not rerun.
+    figure = weakref.ref(cast(Any, first).figure) if hasattr(first, "figure") else None
+    old = weakref.ref(first)
+    window.live_feed.publish(lab_revision([1, 2, 3]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
+    now = drawn(instance, kind)
+    assert now is not None and "rev 2" in source(instance).text()
+    if backend == PLOTLY:
+        assert now is first  # The same page: the figure swapped in place.
+    else:
+        assert now is not first
+        del first, now
+        refs = [old] + ([figure] if figure is not None else [])
+        # Matplotlib's canvas lets go of its figure on an event after the deferred delete, as the
+        # app's event loop delivers both: wait for them, not one pass.
+        qtbot.waitUntil(lambda: freed(refs) or (QApplication.processEvents() and False), timeout=5_000)
+    # Another library while Live goes on: the next revisions follow in it.
+    other = next(name for name in ("Matplotlib", "Plotly", "PyQtGraph") if name != backend)
+    library.setValue(other)
+    assert drawn(instance, drawn_type(script, other)) is not None and shown_revision(instance) == 2
+    window.live_feed.publish(lab_revision([1, 2, 3, 4]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 3, timeout=10_000)
+    assert drawn(instance, drawn_type(script, other)) is not None
+    assert "Drawn with " + other in source(instance).toolTip()
