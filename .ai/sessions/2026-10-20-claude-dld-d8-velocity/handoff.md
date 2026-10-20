@@ -38,3 +38,8 @@ The conversion is one call once t_r and the origin are known, so other plots can
 (`test_constants.py::test_read_only_saved_folder_is_replaced`,
 `test_cache_mover.py::test_recovery_isnt_usable_after_a_failed_settings_write`; 10 of the reruns).
 One other rerun: `test_dash_server.py::test_stop_frees_the_port`, passed on its rerun.
+
+## Full suite after the review round
+
+At `1908b95`: 2 failed, 1988 passed, 7 skipped, 2 xfailed, 10 rerun in 419.76 s. The two failures
+(and all 10 reruns) are the known root-only ones; no other test needed a rerun.
