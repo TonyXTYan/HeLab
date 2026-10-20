@@ -45,6 +45,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from helab.resources.icons import StatusIcons, ToolIcons, IconsInitUtil
 from helab.utils.constants import *
+from helab.utils.settings_store import app_settings
 from helab.views.HelabMainWindow import HelabMainWindow
 
 
@@ -69,7 +70,7 @@ def _start_cache() -> str:
     """Resolve a leftover cache move and register this instance; what was repaired ("" if nothing)."""
     import time
     from helab.utils.cache_locks import startup
-    settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+    settings = app_settings()
     waiting: list[QMessageBox] = []
 
     def wait() -> None:

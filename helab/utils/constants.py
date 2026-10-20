@@ -13,6 +13,7 @@ from helab.build_info import get_build_info
 from typing import Optional
 
 from PyQt6.QtCore import QSettings, QDir, QDirIterator
+from helab.utils.settings_store import app_settings
 # from PyQt6.QtGui import QFontDatabase, QFont
 
 from joblib.externals.loky.process_executor import MAX_DEPTH
@@ -79,9 +80,6 @@ def get_git_commit_hash() -> str:
 APP_VERSION = get_version()
 APP_COMMIT_HASH = get_git_commit_hash()
 
-
-QSETTINGS_ORG_NAME = "ANU_HE_BEC_GROUP"
-QSETTINGS_APP_NAME = "HeLab"
 
 # What happens to a folder's load when another folder is selected.
 LOAD_MODE_SETTING = "load_on_select_mode"
@@ -307,7 +305,7 @@ def get_path_from_setting_or_use_default(key: str, candidates: List[str], settin
     """
 
     if settings is None:
-        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        settings = app_settings()
     value = settings.value(key, type=str)
     if value and isinstance(value, str):
         # A path saved under another account (e.g. an elevated session) may exist but be read-only.
@@ -343,7 +341,7 @@ def migrate_legacy_temp_dir(key: str, kind: str, settings: Optional[QSettings] =
     stays in use and the move is retried next launch.
     """
     if settings is None:
-        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        settings = app_settings()
     value = settings.value(key, type=str)
     if not value or not isinstance(value, str) or not os.path.isdir(value):
         return

@@ -25,9 +25,13 @@ Each module's imports were pruned to what it uses (`ruff --select F`); the old
 file's unused imports (`numpy`, `QFileDialog` etc. where unused, the
 `FolderExplorer` TYPE_CHECKING import, `Union`, `no_type_check`) went with it.
 
-Only `script_tree` imports `helab.scripts` (both groups, and through them Dash,
-Matplotlib and QtWebEngine); `instance` still pulls QtWebEngine in through
-`helab.analysis.backends` → `panes`.
+Only `script_tree` loads QtWebEngine (through `helab.scripts`, with Dash and Matplotlib).
+`instance`, `dock`, `settings_panel` and `pictures` import none of it (correction after
+review: an earlier version of this note said `instance` pulled it in through `backends`;
+`backends` doesn't import `panes`). So an entry point or test that imports only those
+modules and then creates the QApplication would load QtWebEngine too late if it later
+imports the scripts; the app is fine because `main.py` imports `HelabMainWindow`, which
+imports `QWebEngineView`, before the QApplication exists.
 
 ### Patch targets moved
 
@@ -157,3 +161,45 @@ names `AnalysisQueue` in `runner_core.py` and the new guard. Docstrings of `foll
 - Pre-existing lint (not touched): unused `RamBudget` import in `test_plot_ram_budget.py`,
   unused `IORequest`/`PLOTLY` and ruff F821 on a lambda reading `widget` before `del widget` in
   `test_live_plots.py`.
+
+## Slice E1: one settings factory
+
+- New `helab/utils/settings_store.py`: `app_settings()` and the org/app names
+  (`QSETTINGS_ORG_NAME`, `QSETTINGS_APP_NAME`, moved from `constants.py`, where nothing
+  else used them). QtCore only and nothing of HeLab's, because `constants.py` imports it and
+  reads settings while it is imported. Not in `constants.py`, to stay import-light.
+- All nine native constructions go through it: `main.py` (1), `constants.py` (2: the
+  defaults of `get_path_from_setting_or_use_default` and `migrate_legacy_temp_dir`),
+  `HelabMainWindow.py` (5), `SettingsDialog.py` (1). Production is identical: a new
+  `QSettings(org, app)` per call, as before (native format, user scope).
+- `cache_setting.open_settings` (helpers reopening the store from `settings_spec`) is left
+  alone: it reopens whatever store the app named, ini or native.
+- **Seam:** `HELAB_TEST_SETTINGS_FILE=<file.ini>` makes `app_settings()` open that ini. An env
+  var, read per call, like the repo's other `HELAB_TEST_*` seams. `tests/conftest.py`'s
+  autouse `private_settings` sets one per test, in a `tmp_path_factory` folder apart from
+  `tmp_path` (tests list `tmp_path`). The profiles plan (`roadmaps/agent-workflow.md`) names
+  `HELAB_SETTINGS_OVERRIDE` for a user-chosen file: that's a feature for later, so the seam
+  stays test-only by name.
+- **constants' import-time read:** under pytest the `HELAB_DIR_*_OVERRIDE` variables mean it
+  never reads settings at import; in the app it now reads through `app_settings()` (native,
+  as before). Conftest's order is unchanged.
+- `tests/test_load_queue.py`: the three `monkeypatch.setattr("helab.views.HelabMainWindow.QSettings", …)`
+  are gone; one test writes its value to `app_settings()` (the test's ini).
+- `tests/test_settings_store.py`: an AST check that no `helab/` module but the factory and
+  `cache_setting.py` constructs a `QSettings` other than an ini (`QSettings()` included),
+  with a sample proving the check catches `QSettings(org, app)` and `QSettings()`; the seam
+  gives an ini of the test's own; without it the factory asks for `(org, app)`, checked by
+  recording the constructor (no native store is opened in tests).
+- AGENTS.md: Settings persistence (the factory, the seam, the known issue now resolved), the
+  test-seam list (now "these test seams", since it already named four), and, from the slice B
+  review, `helab/views/plots/` in Package layout.
+
+Proposals (not made: roadmap edits are Tony's):
+- `roadmaps/_readme.md` known issue "Tests that build a real `HelabMainWindow` read the
+  developer's native QSettings…": tick it (done by the factory and the per-test ini).
+- `roadmaps/agent-workflow.md`, "One settings factory": mark done (`app_settings()`,
+  `tests/test_settings_store.py`); profiles can make `app_settings()` return the profile's
+  file (`HELAB_SETTINGS_OVERRIDE`) in that one place.
+
+Validation (E1): tests that build the main window or settings (22 files): 510 passed,
+1 skipped; strict mypy `helab`, `tests` and pyright clean.

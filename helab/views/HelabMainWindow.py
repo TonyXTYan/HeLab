@@ -34,6 +34,7 @@ from helab.views.plots.settings_panel import PlotSettingsPanel
 from helab.resources.icons import ToolIcons
 from helab.utils.constants import *
 from helab.utils.number_format import byte_size, fnum
+from helab.utils.settings_store import app_settings
 from helab.views.CacheDialogs import CacheDialogs
 from helab.views.CentralHint import CentralHint
 from helab.views.ElidedLabel import ElidedLabel
@@ -133,7 +134,7 @@ class HelabMainWindow(QMainWindow):
         self.root_duplicates = RootDuplicatesWindow(cache, self)
         self.roots_button.clicked.connect(lambda: self.review_root(None))
         cache.rootDuplicatesChanged.connect(self._update_roots_button)
-        self.setup_ram_budget(cache, QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME))
+        self.setup_ram_budget(cache, app_settings())
 
         # Create Left Panel (File Tree View)
         self.tab_widget.currentChanged.connect(self.on_current_tab_changed)
@@ -393,7 +394,7 @@ class HelabMainWindow(QMainWindow):
             self.view_toggle_status_bar.triggered.connect(lambda: self.status_bar.setVisible(not self.status_bar.isVisible()))
             menu_view.addAction(self.view_toggle_status_bar)
 
-            settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+            settings = app_settings()
             self.view_toggle_thread_status = QAction('Toggle Thread Status Auto Pop-up', self)
             self.view_toggle_thread_status.setCheckable(True)
             self.view_toggle_thread_status.setChecked(settings.value("view_toggle_thread_status", type=bool, defaultValue=True))
@@ -643,7 +644,7 @@ class HelabMainWindow(QMainWindow):
             self.settings_dialog.show_purge()
         self.settings_dialog.exec()
         self._set_root_window_modality(Qt.WindowModality.NonModal)  # Review… from Settings made it modal.
-        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        settings = app_settings()
         self.apply_load_mode(read_load_mode(settings))
         get_io_service().configure_concurrency(
             read_io_concurrency(settings))
@@ -1618,7 +1619,7 @@ class HelabMainWindow(QMainWindow):
             self.set_tools_and_tabs_enable()
 
     def set_load_mode(self, mode: str) -> None:
-        QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME).setValue(LOAD_MODE_SETTING, mode)
+        app_settings().setValue(LOAD_MODE_SETTING, mode)
         self.apply_load_mode(mode)
 
     def apply_load_mode(self, mode: str) -> None:
@@ -1638,7 +1639,7 @@ class HelabMainWindow(QMainWindow):
                 explorer.auto_load_ram = toggled_on
 
     def set_auto_scan_visible(self, enabled: bool) -> None:
-        QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME).setValue(AUTO_SCAN_VISIBLE_SETTING, enabled)
+        app_settings().setValue(AUTO_SCAN_VISIBLE_SETTING, enabled)
         self.apply_auto_scan_visible(enabled)
 
     def apply_auto_scan_visible(self, enabled: bool) -> None:
