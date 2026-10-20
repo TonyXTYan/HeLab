@@ -26,10 +26,17 @@ UNCONFIRMED_TIP = "A value borrowed from the legacy code, not yet checked on the
 def constant_editor(constant: Constant, value: float) -> UnitSpinBox:
     """A spin box for one constant: its unit, lengths always in mm and times in ms (grouped, as the
     plots show them), an SI prefix for Hz, scientific notation otherwise; steps of a tenth of the
-    value's decade, positive values only."""
+    value's decade, positive values only (at most the row's maximum). A coded row (the trap's axial
+    axis) takes its codes, whole numbers, with their labels in the tooltip (a drop-down: proposed)."""
     box = UnitSpinBox()
+    if constant.choices:
+        box.setOpts(value=int(value), int=True, step=1, bounds=[min(constant.choices), max(constant.choices)])
+        box.setToolTip(constant.source)
+        fit_width(box)
+        return box
     box.setOpts(value=value, suffix=constant.unit, siPrefix=constant.unit in SI_UNITS, dec=True, step=0.1,
-                minStep=LIMITS[0], decimals=8, bounds=list(LIMITS), fixedPrefix=FIXED_PREFIX.get(constant.unit))
+                minStep=LIMITS[0], decimals=8, bounds=[LIMITS[0], min(LIMITS[1], constant.maximum)],
+                fixedPrefix=FIXED_PREFIX.get(constant.unit))
     box.setToolTip(constant.source)
     fit_width(box)
     box.sigValueChanged.connect(lambda *_: fit_width(box))

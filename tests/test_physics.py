@@ -29,12 +29,16 @@ def test_table_values_and_metadata() -> None:
     assert (TABLE["dld_trigger"].value, TABLE["dld_acquisition"].value) == (20.5, 2.0)
     assert TABLE["dld_trigger"].shown_only and TABLE["dld_acquisition"].shown_only
     for constant in physics.CONSTANTS:
-        assert constant.title and constant.unit and constant.source
+        # Dimensionless rows (the QE, the coded trap axis) have no unit.
+        assert constant.title and constant.source
+        assert constant.unit or constant.key in ("detector_qe", "trap_axial_axis")
         assert constant.level in ("lab", "folder")
     assert {key for key, constant in TABLE.items() if constant.unconfirmed} == {
-        "fall_distance", "fall_time", "trap_radial", "trap_axial", "dld_trigger", "dld_acquisition"}
+        "fall_distance", "fall_time", "trap_radial", "trap_axial", "detector_qe", "trap_axial_axis", "dld_trigger",
+        "dld_acquisition"}
     assert {key for key, constant in TABLE.items() if constant.level == "folder"} == {
-        "fall_distance", "fall_time", "trap_radial", "trap_axial"}
+        "fall_distance", "fall_time", "trap_radial", "trap_axial", "trap_axial_axis"}
+    assert TABLE["detector_qe"].level == "lab" and TABLE["detector_qe"].maximum == 1.0
 
 
 def test_fall_time_is_derived_from_the_distance() -> None:
@@ -74,7 +78,7 @@ def test_bad_values_are_refused(layers: dict[str, dict[str, float]]) -> None:
 
 def test_unconfirmed_follows_what_was_set() -> None:
     assert set(DEFAULTS.unconfirmed) == {"fall_distance", "fall_time", "trap_radial", "trap_axial",
-                                         "dld_trigger", "dld_acquisition"}
+                                         "detector_qe", "trap_axial_axis", "dld_trigger", "dld_acquisition"}
     measured = resolve(folder={"fall_distance": 0.85})
     assert "fall_distance" not in measured.unconfirmed and "fall_time" not in measured.unconfirmed
 

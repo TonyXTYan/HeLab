@@ -40,7 +40,7 @@ LIMITS = (1e-60, 1e60)
 SYMBOLS: Mapping[str, str] = {
     "hbar": "ħ", "k_B": "k_B", "u": "u", "mass": "m", "g": "g", "scattering_length": "a",
     "fall_distance": "h", "fall_time": "t_f", "trap_radial": "f_r", "trap_axial": "f_z",
-    "dld_trigger": "trigger", "dld_acquisition": "acquisition"}
+    "detector_qe": "QE", "trap_axial_axis": "axial axis", "dld_trigger": "trigger", "dld_acquisition": "acquisition"}
 
 
 def value_name(key: str) -> str:
@@ -84,8 +84,16 @@ def constants_specs(keys: Sequence[str], *, group: str = GROUP, page: str = "") 
         specs.append(ParameterSpec(source_name(key), constant.title, "choice", USE_LAYERS, choices=CHOICES,
                                    group=group, page=page,
                                    tip=f"Where the run takes {constant.title} from. {tip}"))
+        if constant.choices:  # a coded row: its code, a whole number (its labels are in the tip)
+            labels = ", ".join(f"{code:g} = {label}" for code, label in constant.choices.items())
+            specs.append(ParameterSpec(value_name(key), f"{constant.title}, this plot", "int", int(default_value(key)),
+                                       limits=(min(constant.choices), max(constant.choices)), group=group,
+                                       page=page, when=(source_name(key), SET_HERE),
+                                       tip=f"This plot's own value: {labels}. {tip}"))
+            continue
         specs.append(ParameterSpec(value_name(key), f"{constant.title}, this plot", "float", default_value(key),
-                                   limits=LIMITS, suffix=constant.unit, group=group, page=page,
+                                   limits=(LIMITS[0], min(LIMITS[1], constant.maximum)), suffix=constant.unit,
+                                   group=group, page=page,
                                    when=(source_name(key), SET_HERE), si=constant.unit in SI_UNITS,
                                    # Times in ms and lengths in mm, as in the plots (Tony, 2026-10-20).
                                    unit_prefix=FIXED_PREFIX.get(constant.unit),
@@ -101,7 +109,8 @@ def constant_keys(specs: Iterable[ParameterSpec]) -> tuple[str, ...]:
 
 def clean_layer(values: object, keys: Iterable[str] | None = None) -> dict[str, float]:
     """A layer's values that ``resolve`` accepts: known keys (of ``keys``, if given) with finite,
-    positive numbers. Anything else (a newer HeLab's key, text, nan) is left out."""
+    positive numbers that the row allows (at most its maximum; a coded row's codes). Anything else
+    (a newer HeLab's key, text, nan, a QE above 1) is left out."""
     if not isinstance(values, Mapping):
         return {}
     allowed = set(TABLE if keys is None else keys) & set(TABLE)
@@ -113,7 +122,7 @@ def clean_layer(values: object, keys: Iterable[str] | None = None) -> dict[str, 
             number = float(value)
         except (TypeError, ValueError, OverflowError):
             continue
-        if math.isfinite(number) and number > 0:
+        if TABLE[str(key)].allows(number):
             cleaned[str(key)] = number
     return cleaned
 
@@ -149,6 +158,8 @@ def value_text(key: str, value: float) -> str:
     6.64648e-27 kg: lengths in mm and times in ms (``FIXED_PREFIX``, as the plots and the settings
     show them), Hz with an SI prefix, the others in scientific form."""
     unit = TABLE[key].unit
+    if TABLE[key].choices:
+        return TABLE[key].label(value) or f"{value:g}"
     if unit == "s":
         return time_text(value)
     if unit == "m":
