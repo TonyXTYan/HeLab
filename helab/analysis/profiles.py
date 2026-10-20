@@ -171,6 +171,9 @@ TF_EXPONENT_TIP = (
     "≈ (π/2)(ω_z/ω_⊥)√(2μ/k_B T) along its long axis, so the cap depends on the axis (which detector axis "
     "is the trap's long one: the Trap axial axis constant). A fit that ends at the cap says so: its T and "
     "N0/N are then bounds.")
+# How ``fits.choose_condensate``'s notes start (``AxisFit.decision``).
+CONDENSATE, NO_CONDENSATE, POSSIBLE = "condensate: ", "no condensate", "possible condensate"
+DECISIONS = (CONDENSATE, NO_CONDENSATE, POSSIBLE)
 UNSMOOTHED, SMOOTHED = "unsmoothed counts", "smoothed curve (model smoothed too)"
 CURVE_POINTS = 600  # the drawn fit's samples across the range
 
@@ -224,13 +227,24 @@ class AxisFit:
                  f"T {self.temperature.text(unit='K')}"]
         if bimodal and "radius" in self.fit.estimates:
             parts.insert(2, f"R {estimate_text(self.axis, self.fit['radius'])}")
+        fugacity = self.fit[FUGACITY].text() if FUGACITY in self.fit.estimates else ""
         if bimodal and "radius" in self.fit.estimates:
             parts.append(f"N0/N{' (slice)' if self.fit.model.slice else ''} {condensate_fraction(self.fit).text()}")
         elif bimodal:
-            parts.append("no condensate")
-        if FUGACITY in self.fit.estimates:
-            parts.append(f"z {self.fit[FUGACITY].text()}")
+            # The TF + Bose choices' free-z thermal fit, kept (``fits.choose_condensate``): z says why.
+            possible = self.decision.startswith(POSSIBLE)
+            parts.append(("possible condensate, not reported" if possible else "no condensate")
+                         + (f" (z = {fugacity})" if fugacity else ""))
+            fugacity = ""
+        if fugacity:
+            parts.append(f"z {fugacity}")
         return f"{self.choice}{' ⊗ smoothing' if self.on_smoothed else ''}: " + " · ".join(parts)
+
+    @property
+    def decision(self) -> str:
+        """The condensate decision's note (``fits.choose_condensate``: "condensate: …", "no
+        condensate (…)" or "possible condensate (…), not reported: …"); "" for a model without one."""
+        return next((note for note in self.notes if note.startswith(DECISIONS)), "")
 
     def as_record(self) -> dict[str, Any]:
         """Strict JSON: the fit's record and the numbers derived from it."""

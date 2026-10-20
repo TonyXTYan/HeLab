@@ -2,14 +2,14 @@
 
 A ``choice`` parameter picks one of its ``choices`` and a ``text`` one holds free text the
 analysis reads itself (e.g. mask circles, ``masks``); another parameter can say it applies
-only under one of them (``when``), so the parameter tree shows it only then and the dock's
+only under one of them (``when``, and ``shown_with`` for a condition on several), so the parameter tree shows it only then and the dock's
 source line leaves it out otherwise. ``group`` names the tree section it sits in, and
 ``page`` the settings tab (a plot whose parameters name more than one page gets a tab each).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Literal, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Callable, Literal, Mapping, Sequence
 
 from helab.analysis.display_units import number_text
 
@@ -37,6 +37,9 @@ class ParameterSpec:
     # in m in mm), its digits grouped by thousands (``display_units``). The value stays in the base
     # unit, so saved settings keep their meaning. None: the prefix follows the value.
     unit_prefix: str | None = None
+    # A further condition on the values, beside ``when``, for what one choice can't say (e.g. "a fit
+    # with a bimodal model is on"): the parameter applies only while it holds too. Not compared.
+    shown_with: Callable[[Mapping[str, Any]], bool] | None = field(default=None, compare=False, repr=False)
 
     def coerce(self, value: Any) -> Value:
         """``value`` as this parameter's type, clamped to its limits (a choice outside
@@ -56,7 +59,9 @@ class ParameterSpec:
 
     def applies(self, values: Mapping[str, Any]) -> bool:
         """Whether this parameter is in use under ``values`` (its ``when`` holds, or it has none)."""
-        return self.when is None or str(values.get(self.when[0])) == self.when[1]
+        if self.when is not None and str(values.get(self.when[0])) != self.when[1]:
+            return False
+        return self.shown_with is None or bool(self.shown_with(values))
 
     def tree_item(self, value: Any = None) -> dict[str, Any]:
         """A pyqtgraph ``Parameter`` definition."""
@@ -126,3 +131,10 @@ def tree_children(specs: Sequence[ParameterSpec]) -> list[dict[str, Any]]:
             children.append(group)
         group["children"].append(item)
     return children
+
+
+def unused_parameters(specs: Sequence[ParameterSpec], values: Mapping[str, Any]) -> frozenset[str]:
+    """The names of the parameters not in use under ``values`` (``ParameterSpec.applies``: hidden by
+    their ``when`` or ``shown_with``), which a result's reuse key leaves out (a setting the run
+    didn't use never makes its result look different)."""
+    return frozenset(spec.name for spec in specs if not spec.applies(values))

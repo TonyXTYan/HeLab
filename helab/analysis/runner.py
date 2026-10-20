@@ -19,7 +19,7 @@ from typing import Any, Mapping, Optional
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from helab.analysis.dataset_view import DatasetView
-from helab.analysis.parameters import effective
+from helab.analysis.parameters import effective, unused_parameters
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, Coverage, RamResults, State
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 
@@ -69,7 +69,13 @@ class AnalysisRunner(QObject):
         except Exception:
             logging.exception("Constants of %s: none resolved", metadata.name)
             resolved = None
+        if resolved is not None:
+            try:  # The keys this run uses; all the analysis declares if it can't say.
+                keys = tuple(script.run_constant_keys(action, parameters))
+            except Exception:
+                logging.exception("Constant keys of %s: all of them", metadata.name)
         context = AnalysisContext(f"a{next(self._ids)}", action, view, parameters, metadata.identity(),
+                                  unused=unused_parameters(script.parameters(action), parameters),
                                   coverage=coverage, constants=layers, resolved_constants=resolved,
                                   constant_keys=keys if resolved is not None else (), owner=owner, live=live)
         with self._lock:

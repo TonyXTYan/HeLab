@@ -18,7 +18,7 @@ from helab.analysis import constant_layers, display_units, fits, physics, profil
 from helab.analysis.dataset_view import DatasetView, build_view
 from helab.analysis.fits import MODELS, arrival_time_model, bin_centres, fit_histogram
 from helab.analysis.parameter_tree import apply_visibility, build_tree, parameter_of, settings_widget
-from helab.analysis.parameters import effective
+from helab.analysis.parameters import effective, unused_parameters
 from helab.analysis.physics import DEFAULTS, ResolvedConstants
 from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.profiles import (ARRIVAL, BIMODAL, GAUSSIAN, RATE, SMOOTHED, fit_axis,
@@ -72,8 +72,9 @@ def run(view: DatasetView, values: dict[str, Any] | None = None,
     parameters = effective(script.parameters("Plot"), values)
     resolved = script.run_constants("Plot", parameters, layers or {})
     context = AnalysisContext("a1", "Plot", view, parameters, script.get_metadata().identity(),
+                              unused=unused_parameters(script.parameters("Plot"), parameters),
                               constants=layers or {}, resolved_constants=resolved,
-                              constant_keys=script.constant_keys("Plot") if resolved is not None else ())
+                              constant_keys=script.run_constant_keys("Plot", parameters) if resolved is not None else ())
     data = script.compute("Plot", context)
     return AnalysisResult.of(context, "completed", data, found=script.result_found("Plot", data))
 

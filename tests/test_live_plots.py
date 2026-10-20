@@ -519,7 +519,7 @@ def test_the_scatter_highlights_the_newest_shot(qtbot: QtBot) -> None:
     assert len(traces) == 2 and traces[1].marker.color == "rgb(200, 30, 180)" and traces[1].name == "shot 3 (newest)"
     assert "shot 3 highlighted (2 events)" in scatter_3d.note_text(data)
     assert script.describe_run("Plot", lit.parameters, view)[1].endswith("newest shot in magenta")
-    assert script.get_metadata().version == "4" and basic_plots.TxyHistograms().get_metadata().version == "6"
+    assert script.get_metadata().version == "4" and basic_plots.TxyHistograms().get_metadata().version == "7"
 
 
 def test_the_display_cap_keeps_the_newest_shot_whole() -> None:
@@ -735,10 +735,10 @@ def test_a_following_plot_highlights_lives_newest_shot(
 
 def test_scatter_declares_a_live_policy_others_rerun_on_every_shot() -> None:
     assert scatter_3d.Scatter3D().live_policy("Plot") == LivePolicy(min_delay=5.0)
-    for slower in (density_images.DensityImages(), mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum()):
+    # The histograms too: their bimodal fits take seconds on a large folder.
+    for slower in (density_images.DensityImages(), mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum(),
+                   basic_plots.TxyHistograms()):
         assert slower.live_policy("Plot") == LivePolicy(min_delay=2.0)
-    # The histograms: at most one rerun a second (their fits take a while on a large folder).
-    assert basic_plots.TxyHistograms().live_policy("Plot") == LivePolicy(min_delay=1.0)
     for script in (basic_plots.CountsPerShot(), transfer_fractions.TransferFractions(), shot_times.ShotTimesPlot(),
                    shot_trends.ShotTrends()):
         assert script.live_policy("Plot") == LivePolicy()

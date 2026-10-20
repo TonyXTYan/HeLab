@@ -429,7 +429,7 @@ def test_a_constants_record_holds_only_the_analysis_s_keys() -> None:
         return AnalysisResult.of(context, "completed").reuse_key()["constants"]
 
     plain, saved = key({}), key({"arrival_time": 20.4, "trap_x": 0.003})
-    assert plain == saved and set(plain["values"]) == set(keys) and plain["layers"]["folder"] == {}
+    assert plain == saved and set(plain["values"]) == set(keys) and plain["layers"] == {}  # Empty layers left out.
     assert key({"fall_distance": 0.85}) != plain
 
 
