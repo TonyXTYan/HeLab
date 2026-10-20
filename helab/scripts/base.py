@@ -15,6 +15,11 @@ from helab.analysis.selection import SHOTS, select_shots
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QWidget
 
+# A plot's least size in its dock (width, height; Qt's logical pixels), below which it can't be
+# read: about a fifth of a 1080-pixel screen's height. Scripts with more in a plot (stacked
+# plots, long titles) ask for more (``DatasetAnalysis.minimum_size``); not a user setting.
+PLOT_MINIMUM_SIZE = (200, 200)
+
 @dataclass
 class ScriptMetadata:
     """Metadata for a HeLab analysis script"""
@@ -174,6 +179,12 @@ class DatasetAnalysis(HelabAnalysisScript):
         """Lines a completed run adds to the plot dock's record (its tooltip), after the
         parameters, from the result's ``found``. Default: its ``record_lines``, if any."""
         return [str(line) for line in result.found.get("record_lines", ())]
+
+    def minimum_size(self, action_name: str) -> tuple[int, int]:
+        """The least size (width, height; logical pixels) of the action's plot in its dock, with
+        its source lines, whatever it shows (the plot, its picture, an empty or failed run). Set
+        by the script's design, not by the user. Default: ``PLOT_MINIMUM_SIZE``."""
+        return PLOT_MINIMUM_SIZE
 
     def detected_parameters(self, action_name: str, result: AnalysisResult) -> dict[str, Any]:
         """Parameter values a completed run found in the data (e.g. where peaks are), which the

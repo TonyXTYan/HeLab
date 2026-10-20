@@ -586,6 +586,30 @@ def test_histogram_log_y_renders_without_empty_bins(qtbot: QtBot) -> None:
     assert np.isnan(ys).sum() == 8 and np.nansum(ys) == 3
 
 
+@pytest.mark.parametrize("script", [basic_plots.CountsPerShot(), basic_plots.TxyHistograms(),
+                                    transfer_fractions.TransferFractions()], ids=lambda script: type(script).__name__)
+def test_long_titles_wrap_inside_a_narrow_plot(script: DatasetAnalysis, qtbot: QtBot) -> None:
+    # PyQtGraph's titles hold the layout at their text's full width: a long one (the newest
+    # shot's line, a plot's notes) ran the plot off the widget's right edge.
+    rng = np.random.default_rng(3)
+    times = np.concatenate([rng.normal(2.1375 + order * 0.015, 0.001, 300) for order in (-1, 0, 1)])
+    shots = {shot: np.column_stack((times, rng.normal(0, 0.005, (len(times), 2)))) for shot in range(1, 4)}
+    view = build_view(dataset(path="/data/root/a folder with a rather long name for its title/run_1", shots=shots))
+    names = {spec.name for spec in script.parameters("Plot")}
+    values = {name: value for name, value in {"highlight_newest": True, "orders_each_side": 6,
+                                              "half_width": 0.02}.items() if name in names}
+    result = AnalysisResult.of(context(view, script, values), "completed",
+                               script.compute("Plot", context(view, script, values)))
+    widget: Any = script.render(result)
+    qtbot.addWidget(widget)
+    widget.resize(260, 500)
+    widget.show()
+    qtbot.waitExposed(widget)
+    layout = widget.ci if hasattr(widget, "ci") else widget.getPlotItem()
+    qtbot.waitUntil(lambda: layout.geometry().width() <= widget.width())
+    assert layout.minimumWidth() < widget.width()
+
+
 # Analyses
 
 def scripts_manager() -> ScriptsManager:

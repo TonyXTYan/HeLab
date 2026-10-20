@@ -32,7 +32,7 @@ from helab.analysis.results import AnalysisContext, AnalysisResult, Coverage
 from helab.analysis.runner import AnalysisRunner
 from helab.io_helper import list_folder, live_check, load
 from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
-from helab.scripts.base import DatasetAnalysis, ScriptMetadata
+from helab.scripts.base import PLOT_MINIMUM_SIZE, DatasetAnalysis, ScriptMetadata
 from helab.scripts.dld import (correlations_plot, density_images, mean_position, release_time, shot_times,
                                shot_trends, t_spectrum, velocity_distributions)
 from helab.scripts.dld import basic_plots as dld_plots, scatter_3d as dld_scatter
@@ -180,6 +180,31 @@ def set_live(instance: AnalysisInstance, name: str, value: Any) -> None:
 
 
 # The view's revisions
+
+
+
+@pytest.mark.parametrize("script", [basic_plots.CountsPerShot(), basic_plots.TxyHistograms(),
+                                    transfer_fractions.TransferFractions(), scatter_3d.Scatter3D()],
+                         ids=lambda script: type(script).__name__)
+def test_each_plot_keeps_its_scripts_minimum_size(window: Window, qtbot: QtBot, script: DatasetAnalysis) -> None:
+    # A plot's least size is the script's design (default PLOT_MINIMUM_SIZE), not a setting: its
+    # dock and window can't be made smaller, whatever the plot shows.
+    window.view = window.live_feed.publish(revision(range(1, 4)))
+    instance = plot(window, qtbot, script)
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    dock = instance.dock_widget
+    assert isinstance(dock, AnalysisDock)
+    width, height = script.minimum_size("Plot")
+    assert (width, height) >= PLOT_MINIMUM_SIZE
+    body = dock.widget()
+    assert body is not None
+    area = body.parentWidget()
+    assert area is not None and (area.minimumWidth(), area.minimumHeight()) == (width, height)
+    hint = dock.minimumSizeHint()
+    assert hint.width() >= width and hint.height() >= height
+    dock.setFloating(True)
+    dock.resize(50, 50)
+    qtbot.waitUntil(lambda: area.width() >= width and area.height() >= height)
 
 
 def test_a_newer_dataset_of_the_folder_is_the_next_revision() -> None:
