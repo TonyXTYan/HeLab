@@ -709,11 +709,11 @@ class TxyHistograms(DatasetAnalysis):
         return data.record() if isinstance(data, Histograms) and (data.fitted() or data.bec is not None) else {}
 
     def live_policy(self, action_name: str) -> LivePolicy:
-        # Measured on 293k events (D4 wiring): Gaussian fits on three axes 0.1 s, the BEC readout a
-        # few ms, but a bimodal TF + Bose fit 0.6 s on a condensate and 2.4 s on a thermal axis (it
-        # fits the free-z partner too): 5.3 s with all three. A run is never cancelled for new data
-        # and the analysis worker is shared, so 2 s apart, as the other heavy plots (the policy is
-        # per plot, fits on or off; its Live settings can lower it).
+        # Measured on 294k events (D4 wiring, whole compute): Gaussian fits on three axes 0.3 s, a
+        # bimodal TF + Bose fit 0.6–2.4 s per axis (it fits the free-z partner too; slowest on a
+        # thermal axis), 2.0 s with one and 3.3 s with three, the BEC readout ~2 ms. A run is never
+        # cancelled for new data and the analysis worker is shared, so 2 s apart, as the other heavy
+        # plots (the policy is per plot, fits on or off; its Live settings can lower it).
         return LivePolicy(min_delay=2.0)
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
