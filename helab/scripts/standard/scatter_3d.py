@@ -1,14 +1,17 @@
-"""The 3D scatter of a loaded folder's T/X/Y events (Plotly, served by the Dash server)."""
+"""The 3D scatter of a loaded folder's T/X/Y events: Plotly (served by the Dash server) by
+default, or Matplotlib's 3D axes, or PyQtGraph's OpenGL view (Drawing › Library)."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, List, Mapping, Optional
+from typing import Any, List, Mapping, Optional, Sequence, cast
 
 import numpy as np
 import numpy.typing as npt
 import plotly.graph_objs as go
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from helab.analysis.backends import (MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane, mpl_colour, mpl_figure,
+                                     opengl_available)
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.follow import LivePolicy
 from helab.analysis.panes import PlotlyPane
@@ -150,10 +153,23 @@ class Scatter3D(DatasetAnalysis):
         return ScatterData(crop, points, shots, len(context.view.shots), cap, range_warnings(values), newest,
                            fresh, newest_colour(values))
 
+    def backends(self, action_name: str) -> Sequence[str]:
+        return (PLOTLY, PYQTGRAPH, MATPLOTLIB)
+
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
+        return self.draw(result, PLOTLY, parent)
+
+    def draw(self, result: AnalysisResult, backend: str, parent: Optional[QWidget] = None) -> QWidget:
         data: ScatterData = result.data
         if not data.crop.total:
             return empty_pane(empty_text(data.total_shots, len(data.shots), 0), parent)
+        if backend == MATPLOTLIB:
+            return noted(MatplotlibPane(matplotlib_figure(result, data)), data, parent)
+        if backend == PYQTGRAPH:
+            if not opengl_available():
+                return empty_pane("PyQtGraph's 3D view needs OpenGL, which this PC can't provide: choose Plotly "
+                                  "or Matplotlib (Drawing › Library)", parent)
+            return noted(opengl_view(result, data), data, parent)
         pane = PlotlyPane(figure(result, data), note_text(data), parent)
         pane.note.setToolTip(f"{sample_text(data)}\n{crop_text(data.crop, data.warnings)}")
         return pane
@@ -195,3 +211,82 @@ def figure(result: AnalysisResult, data: ScatterData) -> go.Figure:
         uirevision=UI_REVISION, showlegend=data.newest_shot is not None,
         legend=dict(x=0.99, xanchor="right", y=0.99))
     return go.Figure(data=traces, layout=layout)
+
+
+def noted(plot: QWidget, data: ScatterData, parent: Optional[QWidget]) -> QWidget:
+    """``plot`` under the note line the Plotly pane has (sample, crop and shots)."""
+    widget = QWidget(parent)
+    layout = QVBoxLayout(widget)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
+    note = QLabel(note_text(data), widget)
+    note.setObjectName("plot_note")
+    note.setToolTip(f"{sample_text(data)}\n{crop_text(data.crop, data.warnings)}")
+    layout.addWidget(note)
+    plot.setParent(widget)
+    layout.addWidget(plot, 1)
+    return widget
+
+
+def matplotlib_figure(result: AnalysisResult, data: ScatterData) -> Any:
+    """Matplotlib's 3D axes: X, Y across, T up, as in the Plotly figure. Slow to turn with many
+    points: lower the display cap if it lags."""
+    points, crop = data.points, data.crop
+    size = float(result.parameters.get(POINT_SIZE.name, POINT_SIZE.default))
+    opacity = float(result.parameters.get(OPACITY.name, OPACITY.default))
+    figure = mpl_figure()
+    axes = figure.add_subplot(projection="3d")
+    # Matplotlib's marker size is an area in points²; Plotly's a diameter in pixels.
+    axes.scatter(points[:, 1], points[:, 2], points[:, 0], s=size ** 2, alpha=opacity, linewidths=0,
+                 depthshade=False, label="earlier shots")
+    if data.newest_shot is not None:
+        fresh = data.newest
+        axes.scatter(fresh[:, 1], fresh[:, 2], fresh[:, 0], s=size ** 2, alpha=max(opacity, 0.8), linewidths=0,
+                     depthshade=False, color=mpl_colour(data.colour), label=f"shot {data.newest_shot} (newest)")
+        axes.legend(loc="upper right", fontsize=8)
+    for index, (label, limits) in enumerate(((axes.set_xlabel, axes.set_xlim), (axes.set_ylabel, axes.set_ylim),
+                                             (axes.set_zlabel, axes.set_zlim))):
+        axis = (1, 2, 0)[index]
+        label(f"{AXES[axis]} ({UNITS[axis]})", fontsize=8)
+        if crop.lower[axis] < crop.upper[axis]:
+            limits(crop.lower[axis], crop.upper[axis])
+    axes.tick_params(labelsize=7)
+    figure.suptitle(f"{result.input.short()} · {result.analysis.short()} · {shots_text(data.shots, data.total_shots)}",
+                    fontsize=9, wrap=True)
+    return figure
+
+
+def unit_box(points: npt.NDArray[np.float64], crop: CropBox) -> npt.NDArray[np.float32]:
+    """``points`` (T, X, Y) as (X, Y, T) in a unit cube spanning the crop: OpenGL draws one scale
+    for all three axes, and T (s) and X, Y (m) have unrelated ranges."""
+    order = (1, 2, 0)
+    lower = np.array([crop.lower[i] for i in order], dtype=np.float64)
+    span = np.array([crop.upper[i] - crop.lower[i] for i in order], dtype=np.float64)
+    span[span <= 0] = 1.0
+    return ((points[:, order] - lower) / span - 0.5).astype(np.float32)
+
+
+def opengl_view(result: AnalysisResult, data: ScatterData) -> QWidget:
+    """PyQtGraph's OpenGL view: fast to turn with many points. Its axes span the crop, each scaled
+    to the same length (labelled with their ranges)."""
+    import pyqtgraph.opengl as gl
+
+    size = float(result.parameters.get(POINT_SIZE.name, POINT_SIZE.default))
+    opacity = float(result.parameters.get(OPACITY.name, OPACITY.default))
+    view = gl.GLViewWidget()
+    view.setBackgroundColor("w")
+    view.setCameraPosition(distance=2.2, elevation=20, azimuth=45)
+    view.addItem(gl.GLScatterPlotItem(pos=unit_box(data.points, data.crop), size=size,
+                                      color=(40 / 255, 90 / 255, 170 / 255, opacity), pxMode=True))
+    if data.newest_shot is not None and len(data.newest):
+        view.addItem(gl.GLScatterPlotItem(pos=unit_box(data.newest, data.crop), size=size,
+                                          color=mpl_colour(data.colour, max(opacity, 0.8)), pxMode=True))
+    box = gl.GLBoxItem(color=(0, 0, 0, 80))
+    box.setSize(1, 1, 1)
+    box.translate(-0.5, -0.5, -0.5)
+    view.addItem(box)
+    crop = data.crop
+    for axis, position in ((1, (0.0, -0.6, -0.55)), (2, (-0.6, 0.0, -0.55)), (0, (-0.6, -0.6, 0.0))):
+        view.addItem(gl.GLTextItem(pos=position, text=axis_text(axis, crop.lower[axis], crop.upper[axis]),
+                                   color=(0, 0, 0, 255)))
+    return cast(QWidget, view)

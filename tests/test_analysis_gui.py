@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterator, List, Optional, cast
 
 import numpy as np
+import pyqtgraph as pg
 import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6 import sip
@@ -16,6 +17,7 @@ from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QTabBar, QTabWidget, QWidget
 
+from helab.analysis.backends import BACKEND, DRAWING_GROUP, MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane
 from helab.analysis.dataset_view import build_view
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameter_tree import parameter_of
@@ -419,6 +421,43 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     # The record lists every parameter, those not in use included.
     assert "Parameters: Shots all, From shot (0 = first) 0, Last N 50, To shot (0 = last) 0, Range auto-crop, " \
            "Auto-crop: keep 99 %, T min 0 s, T max 0 s," in label.toolTip()
+    plot_id = pane.plot_id
+    instance.dock_widget.close()
+    qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None)
+    QApplication.processEvents()
+
+
+def test_another_library_draws_the_plot_again_without_a_rerun(
+        window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path) -> None:
+    """Drawing › Library: the plot shown is drawn again from its result (same run), and the record
+    says which library drew it; a rerun then draws with the library chosen."""
+    run = folder(tmp_path, "run_K", 2)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 30, 2: 40})
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = basic_plots.TxyHistograms()
+    instance = panel.run_analysis(script.get_metadata(), script, "Plot")
+    assert instance is not None and instance.dock_widget is not None and instance.parameter_root is not None
+    qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
+    first = instance.result
+    assert first is not None and instance.backend() == PYQTGRAPH
+    assert instance.dock_widget.findChild(pg.GraphicsLayoutWidget) is not None
+    assert BACKEND not in first.parameters  # The plot's choice, not the analysis's.
+    library = instance.parameter_root.child(DRAWING_GROUP, BACKEND)
+    library.setValue(MATPLOTLIB)
+    QApplication.processEvents()
+    assert instance.result is first and not instance.job_id  # No rerun.
+    assert instance.dock_widget.findChild(MatplotlibPane) is not None
+    assert instance.dock_widget.findChild(pg.GraphicsLayoutWidget) is None
+    assert "Drawn with Matplotlib" in source_label(instance.dock_widget).toolTip()
+    library.setValue(PLOTLY)
+    QApplication.processEvents()
+    pane = instance.dock_widget.findChild(PlotlyPane)
+    assert pane is not None and dash_server.snapshot(pane.plot_id) is not None
+    instance.rerun_button.click()
+    qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
+    assert instance.dock_widget.findChild(PlotlyPane) is pane  # Updated in place: the page stays.
     plot_id = pane.plot_id
     instance.dock_widget.close()
     qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None)
