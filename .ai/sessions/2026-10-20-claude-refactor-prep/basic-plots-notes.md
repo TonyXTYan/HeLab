@@ -113,3 +113,14 @@ varied): all 240 `Fractions` were field-for-field identical (arrays with
 - this notes file
 
 Not pushed, not merged (per the common brief; the coordinator reviews and pushes).
+
+## Review (coordinator, 2026-10-20)
+
+An independent reviewer subagent read `9cf8782..5f4f7be`, comparing definitions by
+AST against the originals, and found no correctness issues: verbatim moves (`jump`
+differs only by `CENTRE.default` → `DEFAULT_CENTRE`, the same value), identical
+`half_maximum_width`/`refine` (neither reads a module constant), no stale patch
+targets, DLD untouched, `orders` loads no Qt or plotting library, docs accurate.
+One nit fixed by the coordinator: three triple blank lines in `orders.py` left where
+removed functions had been (E303). Targeted tests (61) and strict mypy re-run after
+the fix.

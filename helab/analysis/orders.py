@@ -111,7 +111,6 @@ def smooth(counts: npt.NDArray[np.float64], sigma: float = SMOOTHING_BINS) -> np
     return cast(npt.NDArray[np.float64], np.convolve(counts, kernel / kernel.sum(), mode="same"))
 
 
-
 def detect(times: npt.NDArray[np.float64], lower: float, upper: float, each_side: int,
            reference: float) -> Detection:
     """Order 0 at the tallest peak of the smoothed T histogram, refined to the mean time near
@@ -172,7 +171,6 @@ def guided_spacing(times: npt.NDArray[np.float64], centre: float, sides: Sequenc
     return estimate if offsets else None
 
 
-
 def count_orders(times: npt.NDArray[np.float64], orders: Orders) -> npt.NDArray[np.int64]:
     """Events per order window, each window half-open [low, high), so windows that touch never
     share an event."""
@@ -191,7 +189,6 @@ def window_half(half_width: float, spacing: float) -> tuple[float, str]:
         return spacing / 2, (f"Window ± {half_width * 1e3:.3g} ms is over half the spacing: using "
                              f"{spacing / 2 * 1e3:.3g} ms, so neighbouring windows touch without sharing events")
     return half_width or spacing / 2, ""
-
 
 
 def jump(previous: float, centre: float, spacing: float, each_side: int) -> int:
