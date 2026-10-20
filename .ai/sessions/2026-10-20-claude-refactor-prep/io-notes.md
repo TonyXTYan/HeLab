@@ -242,3 +242,25 @@ replays `loaded`, `entries`, `status`…), which would need the same shapes.
   reruns.
 - Full suite (`-n 2 --reruns 5 --reruns-delay 1`): 2187 passed, 9 skipped,
   2 xfailed in 5 min 42 s, **no reruns** (the same 2 pyqtgraph warnings).
+
+## Reviews (coordinator, 2026-10-20)
+
+Separate reviewer subagents read each slice's commits.
+
+- **F (`a05d135`):** no correctness findings. 101 definitions are AST-identical;
+  13 differ only by a bare name becoming `module.name`, plus `_guard_rules`'s
+  extra `dirname`. Ruff finds no undefined names on any platform branch. All
+  mutable state lives once, in `infra`. Patch targets all go through their
+  defining module. Three low items: the import guard covered only browse/scan
+  (fixed in `a7029f1`); the AGENTS.md patch rule was too broad (fixed in
+  `a7029f1`); `SOURCE_GUARD` is imported by value (harmless, see above).
+- **G (`a7029f1`, `8ae9173`):** no runtime change. The trees are compared with
+  annotations and casts removed. Every conditional spread moved to a local
+  reads only plain variables, `saved_root` overrides nothing else, and
+  `result.update` keeps key and evaluation order. The AST-scan test is sound
+  for today's code, with three known blind spots: kinds built outside `io_ops`,
+  comparisons against named sets or `match`, and GUI code outside
+  views/utils/models/main. A nit (the `GUI_KINDS` comment named only
+  `IOService`) is fixed by the coordinator. Low: the three casts let mypy trust
+  `MoveCheckFields`, which must be kept in step with
+  `cache_move.check_target` by hand.

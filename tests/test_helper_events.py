@@ -27,7 +27,7 @@ NOT_EVENTS = {
     ("loading.py", "file_kinds.TXY.name"),  # A cached dataset's ``info``: its file kind.
 }
 
-# Kinds the app makes itself (``IOService``), never sent by a helper.
+# Kinds the app makes itself (``IOService``; ``FolderCache`` also makes ``queued`` and ``cancelled``), never sent by a helper.
 GUI_KINDS = {
     "queued",  # A request waiting for a slot, or requeued for a retry.
     "started",  # Its helper started.
