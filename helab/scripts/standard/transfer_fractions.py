@@ -4,8 +4,8 @@ state), against shot number, with the orders found in the arrival-time histogram
 Ported from ``monitor_momentum.m`` and ``lib/fraction_calc.m`` in the lab's MATLAB analysis,
 https://github.com/HeBECANU/Momentum_Bells_test (``legacy/Momentum_Bells_test``). There the
 time windows of the states were typed into the script; here they are found from the data:
-the tallest peak of the T histogram is order 0, the nearest clear side peak gives the spacing,
-and order k's window is ``centre + k·spacing ± half-width`` (+k arrives later). Switching
+the tallest peak of the T histogram is order 0, the clear side peaks near whole multiples of the
+Reference spacing (15 ms, as in those windows) give the spacing, and order k's window is ``centre + k·spacing ± half-width`` (+k arrives later). Switching
 Orders to manual starts from the last detection, which can then be edited. Like
 ``fraction_calc``, a shot counts only events inside the XY box and only when it has more than
 the minimum counts there; each fraction is the order's count over the sum of all the orders'.
@@ -60,15 +60,20 @@ from helab.scripts.standard import group
 AUTO, MANUAL = "auto", "manual"
 ORDERS_GROUP = "Orders"
 MODE = ParameterSpec("orders_mode", "Orders", "choice", AUTO, choices=(AUTO, MANUAL), group=ORDERS_GROUP,
-                     tip="Auto finds order 0 (the tallest peak in T) and the spacing (the nearest clear side "
-                         "peak) on each run; manual uses the centre and spacing below, which each auto run "
+                     tip="Auto finds order 0 (the tallest peak in T) and the spacing (the clear side peaks "
+                         "near multiples of the reference spacing) on each run; manual uses the centre and spacing below, which each auto run "
                          "fills in (not the centre when order 0 jumped a whole order: the plot warns).")
 EACH_SIDE = ParameterSpec("orders_each_side", "Orders each side", "int", 2, (1, 6), group=ORDERS_GROUP,
                           tip="Orders −N…+N are counted; +1 arrives later than 0.")
 CENTRE = ParameterSpec("centre", "Order 0 at", "float", 2.1375, (0.0, 100.0), " s", group=ORDERS_GROUP,
                        when=(MODE.name, MANUAL), si=True, tip="Arrival time of order 0.")
-SPACING = ParameterSpec("spacing", "Spacing", "float", 0.0125, (1e-6, 10.0), " s", group=ORDERS_GROUP,
+SPACING = ParameterSpec("spacing", "Spacing", "float", 0.015, (1e-6, 10.0), " s", group=ORDERS_GROUP,
                         when=(MODE.name, MANUAL), si=True, tip="Time between neighbouring orders.")
+REFERENCE = ParameterSpec("reference_spacing", "Reference spacing", "float", 0.015, (1e-6, 10.0), " s",
+                          group=ORDERS_GROUP, when=(MODE.name, AUTO), si=True,
+                          tip="Roughly the time between neighbouring orders. Auto takes order ±k only from a clear "
+                              "peak within 30 % of a spacing from k spacings away (starting from this one, then "
+                              "the spacing found so far), so a bump between the orders isn't taken for one.")
 HALF_WIDTH = ParameterSpec("half_width", "Window ± (0 = half spacing)", "float", 0.0, (0.0, 10.0), " s",
                            group=ORDERS_GROUP, si=True,
                            tip="Each order's window is its time ± this; 0 makes neighbouring windows touch. Over "
@@ -88,7 +93,7 @@ XY_HALF = ParameterSpec("xy_half", "XY box ±", "float", 0.03, (0.0, 1.0), " m",
 MIN_COUNTS = ParameterSpec("min_counts", "Minimum counts", "int", 50, (0, 10_000_000), group=BOX_GROUP,
                            tip="Shots with no more events than this in the XY box are left out.")
 HIGHLIGHT, NEWEST_COLOUR = newest_specs("T histogram")
-PARAMETERS = (*SHOT_SPECS, MODE, EACH_SIDE, CENTRE, SPACING, HALF_WIDTH, SEARCH_MIN, SEARCH_MAX, XY_HALF,
+PARAMETERS = (*SHOT_SPECS, MODE, EACH_SIDE, CENTRE, SPACING, REFERENCE, HALF_WIDTH, SEARCH_MIN, SEARCH_MAX, XY_HALF,
               MIN_COUNTS, HIGHLIGHT, NEWEST_COLOUR)
 MAX_DETECTION_BINS = 20_000
 MIN_DETECTION_BINS = 50
@@ -99,6 +104,7 @@ COARSE_FACTOR = 4  # bins still this many times wider than wanted are too coarse
 SIDE_PEAK_SHARE = 0.02  # a side peak's least prominence, as a share of order 0's height …
 SIDE_PEAK_COUNTS = 4.0  # … and in (smoothed) events per bin, against noise in sparse bins
 SIDE_PEAK_FWHMS = 0.5  # how far a side peak must be from order 0, in order 0's full widths
+REFERENCE_SLACK = 0.3  # order k's peak is within this many spacings of k spacings from order 0
 UNSURE_SHARE = 0.5  # another order with at least this share of order 0's events makes order 0 unsure
 JUMP_SLACK = 0.3  # a centre within this many spacings of a whole number (≥ 1) from the last one has jumped
 
@@ -192,13 +198,15 @@ def half_maximum_width(smoothed: npt.NDArray[np.float64], top: int) -> float:
     return 2 * max(min(distances), 0.5) if distances else float(len(smoothed))
 
 
-def detect(times: npt.NDArray[np.float64], lower: float, upper: float, each_side: int) -> Detection:
+def detect(times: npt.NDArray[np.float64], lower: float, upper: float, each_side: int,
+           reference: float) -> Detection:
     """Order 0 at the tallest peak of the smoothed T histogram, refined to the mean time near
-    it; the spacing from the clear side peaks (beyond half of order 0's full width), as their
-    offsets over their order. The bins are half the shortest interval holding a tenth of the
-    events, which lies inside the tallest peak whatever the spread of stray events, between
-    MIN_DETECTION_BINS and MAX_DETECTION_BINS over [lower, upper]; past the cap, over the
-    shortest interval holding DENSE_SHARE of the events instead."""
+    it; the spacing from the clear side peaks (beyond half of order 0's full width) that
+    ``guided_spacing`` takes for orders, guided by the ``reference`` spacing. The bins are half
+    the shortest interval holding a tenth of the events, which lies inside the tallest peak
+    whatever the spread of stray events, between MIN_DETECTION_BINS and MAX_DETECTION_BINS over
+    [lower, upper]; past the cap, over the shortest interval holding DENSE_SHARE of the events
+    instead."""
     densest_low, densest_high = shortest_range(times, DENSEST_SHARE)
     width = (densest_high - densest_low) / 2
     wanted = math.ceil((upper - lower) / width) if width > 0 else MIN_DETECTION_BINS
@@ -216,22 +224,38 @@ def detect(times: npt.NDArray[np.float64], lower: float, upper: float, each_side
     fwhm = half_maximum_width(smoothed, top) * step
     coarse = wanted > COARSE_FACTOR * MAX_DETECTION_BINS
     prominence = max(float(smoothed[top]) * SIDE_PEAK_SHARE, SIDE_PEAK_COUNTS)
-    peaks, _ = find_peaks(smoothed, prominence=prominence)
+    peaks, properties = find_peaks(smoothed, prominence=prominence)
     centre = refine(times, float(middles[top]), fwhm)
-    sides = [float(middles[p]) for p in peaks if abs(middles[p] - centre) > SIDE_PEAK_FWHMS * fwhm]
-    if not sides:
-        return Detection(centre, None, edges, counts.astype(np.float64), fwhm, coarse)
-    nearest = min(abs(side - centre) for side in sides)
-    offsets, weights = [], []
-    for side in sides:
-        order = round((side - centre) / nearest)
-        if order == 0 or abs(order) > each_side:
-            continue
-        near = times[np.abs(times - side) <= min(nearest / 4, fwhm)]
-        offsets.append((refine(times, side, min(nearest / 4, fwhm)) - centre) / order)
-        weights.append(len(near))
-    spacing = float(np.average(offsets, weights=weights)) if offsets and sum(weights) else nearest
+    sides = [(float(middles[p]), float(strength)) for p, strength in zip(peaks, properties["prominences"])
+             if abs(middles[p] - centre) > SIDE_PEAK_FWHMS * fwhm]
+    spacing = guided_spacing(times, centre, sides, reference, each_side, fwhm)
     return Detection(centre, spacing, edges, counts.astype(np.float64), fwhm, coarse)
+
+
+def guided_spacing(times: npt.NDArray[np.float64], centre: float, sides: Sequence[tuple[float, float]],
+                   reference: float, each_side: int, fwhm: float) -> float | None:
+    """The spacing from the side peaks ``sides`` ((time, prominence)), working outwards from
+    order 0: order ±k is the most prominent peak within REFERENCE_SLACK spacings of k spacings
+    away, the spacing being the reference for ±1 and then the weighted mean of the offsets over
+    their order found so far. None when no peak is near any order (a bump between the orders,
+    say 5 ms from order 0 with a 15 ms reference, is never one). The nearest peak alone would
+    take such a bump, and the real ±1 at 15 ms would then count as ±3 of a 5 ms spacing."""
+    estimate = reference
+    offsets: list[float] = []
+    weights: list[int] = []
+    for step in range(1, each_side + 1):
+        for order in (step, -step):
+            target, slack = centre + order * estimate, REFERENCE_SLACK * estimate
+            near = [(strength, side) for side, strength in sides if abs(side - target) <= slack]
+            if not near:
+                continue
+            reach = min(estimate / 4, fwhm)
+            side = refine(times, max(near)[1], reach)
+            offsets.append((side - centre) / order)
+            weights.append(int(np.count_nonzero(np.abs(times - side) <= reach)))
+        if offsets:
+            estimate = float(np.average(offsets, weights=weights)) if sum(weights) else float(np.mean(offsets))
+    return estimate if offsets else None
 
 
 def refine(times: npt.NDArray[np.float64], position: float, reach: float) -> float:
@@ -333,7 +357,7 @@ class TransferFractions(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.transfer_fractions",
-            version="7",
+            version="8",
         )
 
     def get_actions(self) -> List[str]:
@@ -344,10 +368,12 @@ class TransferFractions(DatasetAnalysis):
 
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
         each = int(values[EACH_SIDE.name])
-        how = "auto orders" if values[MODE.name] == AUTO else "manual orders"
+        how = f"manual orders ±{each}"
+        if values[MODE.name] == AUTO:
+            how = f"auto orders ±{each} ~{float(values[REFERENCE.name]) * 1e3:.3g} ms"
         half = float(values[XY_HALF.name])
         box = f"XY ±{half * 1e3:g} mm" if half > 0 else "no XY limit"
-        settings = (shots_brief(values), f"{how} ±{each}", box, f"> {int(values[MIN_COUNTS.name]):,} counts",
+        settings = (shots_brief(values), how, box, f"> {int(values[MIN_COUNTS.name]):,} counts",
                     newest_brief(values))
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
@@ -400,12 +426,14 @@ class TransferFractions(DatasetAnalysis):
             searched = times[(times >= low) & (times <= high)]
             if len(searched):
                 lower, upper = float(searched.min()), float(searched.max())
-                found = detect(searched, lower, upper if upper > lower else lower + 1e-6, each_side)
+                reference = float(values[REFERENCE.name])
+                found = detect(searched, lower, upper if upper > lower else lower + 1e-6, each_side, reference)
                 centre, detected = found.centre, True
                 if found.spacing is None:
                     coarse = (f"; T bins of {found.edges[1] - found.edges[0]:.2g} s are coarse for order 0, narrow "
                               f"Search T") if found.coarse else ""
-                    notes.append(f"no side peak found beyond order 0's width ({found.fwhm * 1e3:.3g} ms): "
+                    notes.append(f"no side peak found beyond order 0's width ({found.fwhm * 1e3:.3g} ms) within "
+                                 f"{REFERENCE_SLACK * 100:.0f} % of k × the reference spacing ({reference * 1e3:.3g} ms): "
                                  f"spacing as set{coarse}")
                 else:
                     spacing = found.spacing
