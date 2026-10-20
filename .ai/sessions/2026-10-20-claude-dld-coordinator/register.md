@@ -35,10 +35,8 @@ branch. Every branch's `handoff.md` and `notes.md` are in
 | `agent/dld-d8-release` | 206d69c | 7ff350b | Optional constants; Release time plot (Use for this folder…) |
 | `agent/dld-d8-velocity` | 335d2d1 | dbc79bf | Velocity distributions plot; `recoil_wavelength` row |
 | `agent/dld-d4-wiring` | b24d435 | e14843f | Condensate decisions and BEC properties on the histograms; `bec_readout.py` |
-| `agent/dld-docs` | (this commit) | | AGENTS.md, the plan, `_readme.md`, MANUAL_TODO, this register |
-
-Still open: `agent/dld-d12-plot` (the Correlations plot, D12/D13), being finished
-from 7ff350b. TODO(docs): add its row and its checks once it merges.
+| `agent/dld-d12-plot` | 215c026 | 5bd62ee | Correlations plot (D12 g², D13 back-to-back); `release.run_velocity_source`; `correlate(errors="jackknife")` |
+| `agent/dld-docs` | 34a2488 and this commit | | AGENTS.md, the plan, `_readme.md`, MANUAL_TODO, this register; `release_time.py` docstring |
 
 Each final head ran the full suite (`-n 2 --reruns 5 --reruns-delay 1`); the only
 failures were the two tests that fail as root
@@ -51,7 +49,8 @@ volume, SMB timing, real data.
 ## What Tony should check first
 
 1. **Look on macOS:** open a run, then T, X, Y histograms (Fits on), Density images,
-   Shot times, Shot trends, Release time and Velocity distributions in a narrow dock:
+   Shot times, Shot trends, Release time, Velocity distributions and Correlations in a
+   narrow dock:
    ms/mm axes with grouped digits, titles wrapped, amber warnings, zoom kept in Live.
    Settings → Lab parameters and right-click › Folder constants….
 2. **Lab Side PC paint:** the same plots paint without QtWebEngine.
@@ -60,7 +59,7 @@ volume, SMB timing, real data.
    Use for this folder… → Velocity distributions with the cloud at rest at v = 0.
 4. **D7 on the share:** an I/O trace of an uncached load (one `load: shot time` per
    shot read, none on a cached reload) and the first-load time of a ~10k-shot folder.
-5. **Answer the open decisions** in the plan (32, each built as proposed); the
+5. **Answer the open decisions** in the plan (33, each built as proposed); the
    constants first: fall distance, trap frequencies and axial axis, QE, recoil
    wavelength.
 
@@ -84,9 +83,6 @@ Everything else proposed by the workers is an open decision in the plan.
   store. Pre-existing; listed in `roadmaps/_readme.md` Known issues.
 - `HelabMainWindow` reads the native QSettings at construction, so tests that build a
   real window see the developer's settings (Known issues).
-- `helab/scripts/standard/release_time.py`'s module docstring still says Use for this
-  folder… saves t_r and that the bootstrap defaults to 200; the code saves t_a and
-  the plot defaults to 100 (`N_BOOT_DEFAULT`).
 - In a worktree, bare `pytest` tests the main checkout (the editable install);
   `python -m pytest` tests the worktree. `tests/test_typing.py` needs the venv's
   `bin` first on PATH (a system mypy without NumPy fails it).

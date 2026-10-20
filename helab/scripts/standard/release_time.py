@@ -5,7 +5,8 @@ detector, from one cloud released at rest (roadmaps/dld-front-panel-port.md, Dec
 The chosen shots' events within Search T go to ``release.bootstrap_release_time``: the tallest T
 peak is the cloud, its arrival is fitted with the arrival-time profile (a Gaussian, then the mean,
 as fallbacks, noted), the fall time t_f = √(2h/g) (the run's constants: h, g or a t_f set by hand)
-is subtracted, and the shot bootstrap (``N_BOOT`` resamples of whole shots, 200 by default) gives
+is subtracted, and the shot bootstrap (``N_BOOT`` resamples of whole shots, ``N_BOOT_DEFAULT`` = 100
+by default; ``release.RELEASE_N_BOOT`` is 200 for other callers) gives
 the error over shots, the shot-to-shot jitter included; the fit's own (within-run) SE is in the
 record. The same cloud's mean X and Y, within an XY window about their median, is the trap's
 origin on the detector, with the background's share.
@@ -17,9 +18,11 @@ cloud's T slice with the origin and its window. The title says ``release t_r = 2
 −2.00 ± 0.04) mm · background 0.2 %``, then the notes (unsure, a fit's fallback, the skew of a
 wide cloud, few shots) in amber.
 
-**Use for this folder…** saves t_r and the origin as the folder's constants (Folder constants…:
-``FolderCache.set_folder_constants``, merged with what the folder sets already), after the user
-confirms, so the velocity plots use them; never automatically. A folder that sets them still
+**Use for this folder…** saves the arrival at rest t_a (not t_r) and the origin as the folder's
+constants (Folder constants…: ``FolderCache.set_folder_constants``, merged with what the folder sets
+already, dropping a t_r set by hand there), after the user confirms, so the velocity plots use them,
+each taking t_r = t_a − t_f with its own fall time (``release.layer_release_time``); never
+automatically. A folder that sets them still
 shows this plot's detection (the plot always detects: it is how they are measured).
 """
 from __future__ import annotations

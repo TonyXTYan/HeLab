@@ -190,8 +190,10 @@ collected in the [manual to-do](../.ai/MANUAL_TODO.md#dld-front-panel-port-added
   `shot_means`), used by Release time and the g² errors.
 - **D12** ([numerics](../.ai/sessions/2026-10-20-claude-dld-d12-numerics/handoff.md)): `correlations.py` (1D and radial
   g², collinear and back-to-back, in-shot over between-shot pairs, free baseline,
-  bootstrap and jackknife errors, `PairCounts` for Live, time budget, cancellation).
-  TODO(docs): the Correlations plot (`agent/dld-d12-plot`), once merged.
+  bootstrap and jackknife errors, `PairCounts` for Live, time budget, cancellation)
+  and the Correlations plot ([plot](../.ai/sessions/2026-10-20-claude-dld-d12-plot/handoff.md)): 1D or radial,
+  collinear or back-to-back (D13) about v₀, Re-centre each shot, Live counting only new
+  shots, t_r and origin by `release.run_velocity_source` as in Velocity distributions.
 - Shared: [polish](../.ai/sessions/2026-10-20-claude-dld-polish/handoff.md) (wrapped titles, one amber, in-place updates).
 
 Left to do on what is built:
@@ -232,7 +234,7 @@ checked before they are ported. Several are wrong in the MATLAB code
 | D9 | Hot-spot masks per plot: circles that keep or cut, from presets (the earlier detector's, moved to HeLab's unrotated frame; the current detector's from D15). **Built** (the current detector's preset is empty). | `masktxy_2d_circle`, `hotspot_mask` |
 | D10 | Error bars by resampling shots (bootstrap), standard error of a weighted mean. **Built**; error bars on fits and trends to do. | `bootstrap_se`, `sewm` |
 | D11 | Raw-pulse diagnostics: time sums, corner differences, pulse spacing, ghost counts. Needs HeLab to load raw `d*.txt` files (scripts still do no I/O), so it comes after the TXY converter port. The conversion itself is not in this plan. Not started. | `ghost_counts_analysis`, `pulse_corrs` |
-| D12 | g² correlations, collinear: 1D-windowed and radial, in velocity space; in-shot over between-shot pairs, Gaussian fit, shot bootstrap errors. To do when built: a time budget, cancellation inside the pair loop, and per-shot reuse in Live. Numerics **built**; the plot is being finished. | `correlations/calc_any_g2_type`, `corr_1d_cart`, `corr_radial` |
+| D12 | g² correlations, collinear: 1D-windowed and radial, in velocity space; in-shot over between-shot pairs, Gaussian fit, shot bootstrap errors. To do when built: a time budget, cancellation inside the pair loop, and per-shot reuse in Live. **Built.** | `correlations/calc_any_g2_type`, `corr_1d_cart`, `corr_radial` |
 | D13 | Back-to-back correlations for halos (needs per-shot halo centring). Back-to-back pairs built in D12; per-shot halo centring not built. | `correlations` BB modes, `Momentum_Bells_test` |
 | D14 | BEC properties beside D4: Tc (ideal, finite-size, interacting), μ, TF radii, peak density, from N and the trap frequencies. **Built.** | `bec_cals/bec_properties` |
 | D15 | Hot-spot finder. First a placeholder (bins above a multiple of the summed XY image's median, offered as circles); the real finder is designed later on data from the current detector. Placeholder **built**. | new; feeds D9 |
@@ -240,8 +242,8 @@ checked before they are ported. Several are wrong in the MATLAB code
 ## Proposed order
 
 1. Built 2026-10-20: F0, then D1, D3 and D7; D2, D9 with the D15 placeholder, D5
-   and D6; D4 with D14, D8 and D10; D12's numerics.
-2. D12's Correlations plot (being finished), then D13's per-shot halo centring.
+   and D6; D4 with D14, D8 and D10; D12 with D13's back-to-back pairs.
+2. D13's per-shot halo centring (Correlations' Re-centre each shot stands in).
 3. The left-to-do items under Built, after Tony's on-screen and real-data checks.
 4. D11, after the TXY converter port ([Live L4](live-monitoring.md#stages)).
 
@@ -356,8 +358,13 @@ Plots:
 30. g² numerics: free baseline, the 1D window as a half-width per transverse axis,
     banded reference off; a cloud-matched reference later; a larger simulation for
     the ~0.8 % high g²(0) ([d12-numerics](../.ai/sessions/2026-10-20-claude-dld-d12-numerics/notes.md)).
-    TODO(docs): the Correlations plot's proposals (kept detection within its SE,
-    settings in mm/s, defaults), once `agent/dld-d12-plot` merges.
-31. Titles renamed, group names kept ([polish](../.ai/sessions/2026-10-20-claude-dld-polish/notes.md#8-naming-titles-only-keys-unchanged-so-saved-settings-stay-valid)).
-32. Hooks: which events and actions, when they are built (a later round); the hub
+31. Correlations plot: per-mode defaults (collinear ±3 mm/s, 60 bins, window
+    ±0.3 mm/s; back-to-back ±20 mm/s, 40 bins, ±2 mm/s; free baseline, 200
+    resamples, 30 s budget, all-shots reference); a detection within its SE of the
+    plot's previous one kept; velocity settings in mm/s whatever the drawing unit;
+    Live ≥ 5 s with jackknife errors instead of the bootstrap; the back-to-back
+    detected-t_r note skipped when shots are re-centred; refits warm-started
+    ([d12-plot](../.ai/sessions/2026-10-20-claude-dld-d12-plot/notes.md#open--proposed-for-tony)).
+32. Titles renamed, group names kept ([polish](../.ai/sessions/2026-10-20-claude-dld-polish/notes.md#8-naming-titles-only-keys-unchanged-so-saved-settings-stay-valid)).
+33. Hooks: which events and actions, when they are built (a later round); the hub
     (`helab/utils/events.py`) is ready for them.

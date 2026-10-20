@@ -265,7 +265,7 @@ on-screen list; the items below gather them. Record results in `.ai/sessions/`.
 **On a lab PC:**
 - [ ] Every new plot paints on the Lab Side PC (PyQtGraph, no QtWebEngine): T, X, Y
   histograms with fits and BEC properties, Density images, Mean X, Y, T spectrum,
-  Shot times, Shot trends, Release time, Velocity distributions.
+  Shot times, Shot trends, Release time, Velocity distributions, Correlations.
 - [ ] Live with heavy plots open (bimodal fits, Release time, Velocity distributions)
   keeps up on a real run: reruns 2–5 s apart, the GUI responsive.
 
@@ -302,10 +302,17 @@ on-screen list; the items below gather them. Record results in `.ai/sessions/`.
 - [ ] Hot spots on the current detector: Find hot spots on a flat field or an
   atom-free T window, and a real run without hot spots (none offered); the circles
   become the "current detector" preset ([d9-d15](sessions/2026-10-20-claude-dld-d9-d15/handoff.md#on-screen-checklist-native-ui)).
-- [ ] g² on real data: a thermal cloud just above T_c (radial g²(0) near 2, less
-  with resolution), a BEC (≈ 1), a halo back-to-back with re-centring; speed on a
-  few hundred shots. TODO(docs): link the Correlations plot's checklist once
-  `agent/dld-d12-plot` merges.
+- [ ] g² on real data (Correlations): a thermal cloud just above T_c (radial g²(0)
+  near 2, less with detector resolution and the window; σ against ħ/(m·σ_x)); a BEC
+  (≈ 1); a halo back-to-back along each axis with re-centring (the peak at 0 and its
+  width; set the folder's origin from a BEC run, since a halo's is "unsure"); speed on
+  a few hundred shots (try neighbouring shots if all-pairs is slow); are the per-mode
+  defaults right ([d12-plot](../.ai/sessions/2026-10-20-claude-dld-d12-plot/handoff.md#real-data-checks-proposed)).
+- [ ] Correlations on screen: the title lines, points with bars, red fit and dashed
+  baseline, pairs panel, in a 560 px dock; ħk units; Live reruns ≥ 5 s with
+  "N shots held, 1 counted" and jackknife bars, one bootstrap rerun when Live stops;
+  a 1 s time budget stopping and Rerun continuing
+  ([d12-plot](../.ai/sessions/2026-10-20-claude-dld-d12-plot/handoff.md#on-screen-checklist-for-tony)).
 
 ## v0.0.5a: cache rebuild (native checks, added 2026-10-11)
 

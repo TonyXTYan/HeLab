@@ -170,15 +170,15 @@ still to choose (Tony, with the coordinator's proposal).
   2026-10-19; T in ms and X/Y in mm since 2026-10-20) and shot selection
   ([plan](analysis-workflow.md#standard-analyses)) (2026-10-08).
 - [ ] Features from the old MATLAB DLD front panel. Built 2026-10-20 (F0, D1–D10,
-  D12 numerics, D14, D15 placeholder), on `agent/dld-front-panel-port`: constants at
+  D12, D14, D15 placeholder), on `agent/dld-front-panel-port`: constants at
   three levels (Settings → Lab parameters, folder constants, plot overrides) with
   bounded fits ± SE; fits, Bose/bimodal condensate fits and BEC properties on the
   T/X/Y histograms; density images; mean X/Y against T and the T spectrum; shot times
   from the raw files; Shot trends with an opt-in low-count notification in Live;
   hot-spot masks with a placeholder finder; Release time and Velocity distributions;
-  g² numerics. T in ms and X/Y in mm everywhere (Tony, 2026-10-20). Next: the
-  Correlations plot (being finished), D13's per-shot halo centring, then the plan's
-  left-to-do list; raw-pulse diagnostics after the TXY converter port. 32 open
+  g² and back-to-back Correlations. T in ms and X/Y in mm everywhere (Tony, 2026-10-20). Next: D13's
+  per-shot halo centring, then the plan's
+  left-to-do list; raw-pulse diagnostics after the TXY converter port. 33 open
   decisions, each built as proposed, and on-screen and real-data checks
   ([plan](dld-front-panel-port.md#open-decisions),
   [register](../.ai/sessions/2026-10-20-claude-dld-coordinator/register.md),
