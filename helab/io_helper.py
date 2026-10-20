@@ -463,6 +463,7 @@ def _cache_store(root: str, source_paths: list[str] | None = None,
             store.close()
         raise StoreError(f"Mount information is unavailable: {exc}") from exc
     store._path_key = resolver.key
+    store._unverified_mounts = held
     store._source_path = resolver.source
     store._location_key = resolver.location
     store._location_source = lambda location: (paths.source(location) if location.startswith("smb://")
@@ -513,9 +514,17 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                     old_key = store._path_key(path)
                 except NoDataRoot:
                     pass
-            store.record_root(location, marker.uuid,
-                              "smb" if location.startswith("smb://") else "vol",
-                              marker.label, decision=decision)
+            new_key = f"root://{marker.uuid}"
+            moved: list[str] = []
+            # One transaction: a re-key that fails (a busy store, a table it can't read) leaves no
+            # root record either, so the next listing finds the marker new again and retries it;
+            # otherwise the rows below would stay under the outer root's key for good.
+            with store.transaction():
+                store.record_root(location, marker.uuid,
+                                  "smb" if location.startswith("smb://") else "vol",
+                                  marker.label, decision=decision)
+                if old_key and old_key != new_key:
+                    moved = store.rekey_subtree(old_key, new_key)
             changed = old is None or old[0] != marker.uuid or old[2] != decision
             if decision == "pending":
                 # Hints for the user's answer (D4): where else it is, and each marker file's details.
@@ -528,12 +537,10 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                       "uuid": marker.uuid, "label": marker.label, "other_locations": duplicates,
                       "marker": _marker_hint(path), "others": others})
                 return changed
-            if old_key and old_key != f"root://{marker.uuid}":
-                moved = store.rekey_subtree(old_key, f"root://{marker.uuid}")
-                if moved:
-                    sources = [store._source_path(key) for key in moved]
-                    send({"kind": "removed", "kinds": list(KINDS), "paths": sources})
-                    send({"kind": "root_rekeyed", "path": path, "count": len(moved)})
+            if moved:
+                sources = [store._source_path(key) for key in moved]
+                send({"kind": "removed", "kinds": list(KINDS), "paths": sources})
+                send({"kind": "root_rekeyed", "path": path, "count": len(moved)})
             send({"kind": "root_changed" if old and old[0] != marker.uuid else "root_found",
                   "path": path, "location": location, "uuid": marker.uuid, "label": marker.label})
             return changed
@@ -694,9 +701,10 @@ def _read_saved(store: CacheStore, paths: list[str], send: Emit) -> dict[str, di
             entry["prefs"] = prefs[path].value or {}
         if constants[path].failed:
             errors.append(constants[path].error)
-        else:
-            # The folder's own constants; its subfolders inherit them (the app decides).
-            entry["constants"] = constants[path].value or {}
+        elif constants[path].value is not None:
+            # The folder's own constants; its subfolders inherit them (the app decides). Only when
+            # set: with ``saved_read``, no key means none set (most folders: a smaller listing).
+            entry["constants"] = constants[path].value
         dataset = datasets[path]
         if dataset.failed:
             errors.append(dataset.error)
@@ -751,7 +759,8 @@ def _send_saved(store: CacheStore | None, path: str, send: Emit) -> tuple[Any, d
 def _send_constants(store: CacheStore, path: str, saved: dict[str, Any], send: Emit) -> None:
     """The folder's own constants and those of the folders above it (with keys in this store), which
     it inherits: the app needs them even when it never listed those folders (a tab's top folder).
-    One read; a folder whose record can't be read is left out (unknown, never "none set")."""
+    One read; only folders that set some (a folder whose record can't be read is left out too:
+    unknown, never "none set")."""
     folders: dict[str, Any] = {path: saved["constants"]} if "constants" in saved else {}
     above: list[str] = []
     child, parent = path, os.path.dirname(path)
@@ -759,7 +768,7 @@ def _send_constants(store: CacheStore, path: str, saved: dict[str, Any], send: E
         above.append(parent)
         child, parent = parent, os.path.dirname(parent)
     found = store.read_constants(above, keyed_only=True) if above else {}
-    folders.update({folder: read.value or {} for folder, read in found.items() if not read.failed})
+    folders.update({folder: read.value for folder, read in found.items() if read.value is not None})
     if any(read.failed for read in found.values()):
         send({"kind": "cache_warning", "message": next(read.error for read in found.values() if read.failed)})
     if folders:
@@ -2514,6 +2523,12 @@ def _removed_event(removal: Any) -> dict[str, Any]:
             "datasets": removal.datasets, "bytes": removal.dataset_bytes}
 
 
+# Why a folder's constants weren't saved (``cache_admin`` "constants"; the app keeps them for the
+# session, and saves them again when a root is found or volumes are verified). FolderCache has
+# the same texts (it doesn't import this module).
+NO_ROOT_CONSTANTS = "no .helab-root found here or above"
+UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
+
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
                  "constants", "forget_root", "root_same", "clear_root")
 
@@ -2743,7 +2758,11 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     old: list[str] = []
     if action == "sweep":
         old = remove_old_caches(os.path.dirname(os.path.abspath(root)), Heartbeat(send, "cleaning up"))
-    with _cache_store(root, local_lane=True) as store:
+    # A constants write trusts only the volume hints this session verified, like the other local
+    # writes keyed by a source folder (scan history, subfolder status); the other actions name
+    # no source folder.
+    verified_volumes = params.get("verified_volumes") if action == "constants" else None
+    with _cache_store(root, local_lane=True, verified_volumes=verified_volumes) as store:
         if (budget is not None and budget_set_at is not None and not store.read_only
                 and action not in ("trim", "budget")):
             # Every job tells the store the app's budget, so running loads save within it.
@@ -2822,16 +2841,20 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 send(_removed_event(flag_removal))
         elif action == "constants":
             # A folder's own constants (Folder constants…): every value it sets, newest choice wins.
-            from helab.utils.cache_paths import UnresolvedRemotePath
+            from helab.utils.cache_paths import UnresolvedRemotePath, _inside, _normal
             from helab.utils.data_roots import NoDataRoot
             path = str(params["path"])
             try:
                 saved_constants = store.set_constants(path, dict(params.get("values") or {}),
                                                       float(params.get("set_at") or time.time()))
             except UnresolvedRemotePath as exc:
-                # No disk cache for this folder (no data root, an unsupported mount): the app keeps
-                # its values for the session only.
-                reason = "no .helab-root found here or above" if isinstance(exc, NoDataRoot) else str(exc)
+                # No disk cache for this folder (no data root, an unsupported mount), or not yet
+                # (its volume not verified this session): the app keeps its values for the session
+                # only, and saves them again when roots are found or volumes verified.
+                unverified = isinstance(exc, NoDataRoot) and any(
+                    _inside(_normal(path), _normal(mount)) for mount in store._unverified_mounts)
+                reason = (UNVERIFIED_CONSTANTS if unverified
+                          else NO_ROOT_CONSTANTS if isinstance(exc, NoDataRoot) else str(exc))
                 send({"kind": "folder_constants", "folders": {}, "session_only": {path: reason}})
             else:
                 send({"kind": "folder_constants", "folders": {path: saved_constants}})
