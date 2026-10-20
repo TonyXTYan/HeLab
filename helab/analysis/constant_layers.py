@@ -37,12 +37,13 @@ SI_UNITS = ("m", "s", "Hz")
 # Of those, the ones always shown in one prefix, as the plots' axes (ms and mm: Tony, 2026-10-20).
 FIXED_PREFIX = {"s": "m", "m": "m"}
 LIMITS = (1e-60, 1e60)
-SIGNED_LIMITS = (-1e60, 1e60)  # a signed row's (``Constant.signed``: times and positions)
+SIGNED_LIMITS = (-1e60, 1e60)  # a signed row's (``Constant.signed``: the origin's positions)
+OPTIONAL_LIMITS = (0.0, 1e60)  # an optional time's: 0 until a value is typed
 # Short symbols for a plot's source line.
 SYMBOLS: Mapping[str, str] = {
     "hbar": "ħ", "k_B": "k_B", "u": "u", "mass": "m", "g": "g", "scattering_length": "a",
     "fall_distance": "h", "fall_time": "t_f", "trap_radial": "f_r", "trap_axial": "f_z",
-    "dld_trigger": "trigger", "dld_acquisition": "acquisition", "release_time": "t_r", "trap_x": "x₀",
+    "dld_trigger": "trigger", "dld_acquisition": "acquisition", "release_time": "t_r", "arrival_time": "t_a", "trap_x": "x₀",
     "trap_y": "y₀"}
 
 
@@ -63,8 +64,11 @@ def default_value(key: str) -> float:
 
 
 def limits(key: str) -> tuple[float, float]:
-    """The values an editor of ``key`` allows: any for a signed row, else positive ones."""
-    return SIGNED_LIMITS if TABLE[key].signed else LIMITS
+    """The values an editor of ``key`` allows: any for a signed row, else positive ones; for an
+    optional time also 0, which shows it has no value yet (``clean_layer`` leaves 0 out)."""
+    if TABLE[key].signed:
+        return SIGNED_LIMITS
+    return OPTIONAL_LIMITS if TABLE[key].optional else LIMITS
 
 
 def is_constant(spec: ParameterSpec) -> bool:

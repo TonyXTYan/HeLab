@@ -675,7 +675,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._submit(self.follow.latest)
 
     def _submit(self, view: DatasetView, values: Optional[Dict[str, Any]] = None, *, reloading: bool = False,
-                constants: Optional[Mapping[str, Mapping[str, float]]] = None) -> None:
+                constants: Optional[Mapping[str, Mapping[str, float]]] = None, live: bool = False) -> None:
         self._follow_timer.stop()
         if not reloading:
             self._reload_note = ""
@@ -684,7 +684,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             constants = self.constant_layers(view.identity.source_path)
         try:
             context = self.runner.submit(self.script, self.metadata, self.action, view, values, constants,
-                                         owner=self.instance_id)
+                                         owner=self.instance_id, live=live)
         except RuntimeError as error:  # The runner is stopping: HeLab is closing.
             self.status_label.setText(str(error))
             return
@@ -921,7 +921,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         view, wait = self.follow.due(time.monotonic())
         if view is not None:
-            self._submit(view)
+            # While Live watches the folder (not the catch-up once it stops: the feed has dropped it).
+            self._submit(view, live=self.live() is not None)
             return
         if wait > 0:
             self._follow_timer.start(max(1, math.ceil(wait * 1000)))

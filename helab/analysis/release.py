@@ -152,10 +152,25 @@ def manual_release_time(release_time: float, constants: ResolvedConstants) -> Re
 
 
 def layer_release_time(constants: ResolvedConstants) -> ReleaseTime | None:
-    """The release time a layer sets (the lab, a folder, e.g. by the Release time plot's "Use for
-    this folder", or the plot), as ``manual_release_time``; None when none does (origin "detected"):
-    the run detects it then (``bootstrap_release_time``)."""
-    if not constants.is_set("release_time"):
+    """The release time the layers give, as a manual ``ReleaseTime`` (its SE unknown); None when
+    none does (both "detected"): the run detects it then (``bootstrap_release_time``).
+
+    A t_r set by hand (``release_time``) is used as it is. A saved arrival of the cloud at rest
+    (``arrival_time``, what the Release time plot's "Use for this folder" saves) gives
+    t_r = t_a − t_f with *these* constants' fall time, so a plot with its own h, g or t_f still
+    puts that cloud at v_z = 0 (``arrival`` holds t_a, and a note says so). When both are set, the
+    more specific layer wins (plot, then folder, then lab), and t_r by hand on a tie."""
+    rank = {"lab": 1, "folder": 2, "plot": 3}
+    by_hand, saved = constants.is_set("release_time"), constants.is_set("arrival_time")
+    if saved and (not by_hand or rank.get(constants.origins["arrival_time"], 0)
+                  > rank.get(constants.origins["release_time"], 0)):
+        arrival = constants.arrival_time
+        found = manual_release_time(arrival - constants.fall_time, constants)
+        if not found.ok:
+            return found
+        return replace(found, arrival=Estimate(arrival),
+                       notes=(f"t_r from the saved arrival ({constants.origins['arrival_time']}) − this run's t_f",))
+    if not by_hand:
         return None
     return manual_release_time(constants.release_time, constants)
 

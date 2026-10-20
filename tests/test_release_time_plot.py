@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import time
 from typing import Any
 
 import numpy as np
@@ -17,6 +18,7 @@ from helab.analysis import constant_layers
 from helab.analysis.constant_layers import (clean_layer, constants_specs, describe_constants, record_text,
                                            value_and_origin, value_text)
 from helab.analysis.dataset_view import DatasetView, build_view
+from helab.analysis.display_units import time_text
 from helab.analysis.parameters import effective
 from helab.analysis.physics import DEFAULTS, TABLE, ResolvedConstants, resolve
 from helab.analysis.release import layer_origin, layer_release_time
@@ -37,14 +39,16 @@ SCRIPT = ReleaseTimePlot()
 # Optional rows: from the data unless a layer sets them
 
 def test_optional_rows_resolve_as_detected_when_unset() -> None:
-    for key in ("release_time", "trap_x", "trap_y"):
+    for key in ("release_time", "arrival_time", "trap_x", "trap_y"):
         assert math.isnan(DEFAULTS.value(key)) and DEFAULTS.origins[key] == "detected" and not DEFAULTS.is_set(key)
         assert key not in DEFAULTS.unconfirmed
     folder = resolve(folder={"release_time": 20.03, "trap_x": -0.003, "trap_y": 0.0})
     assert (folder.release_time, folder.origins["release_time"]) == (20.03, "folder")
     assert (folder.trap_x, folder.trap_y) == (-0.003, 0.0) and folder.is_set("trap_y")  # Signed: 0 and below.
     assert resolve(lab={"trap_x": 0.001}, plot={"trap_x": 0.002}).origins["trap_x"] == "plot"
-    for bad in ({"release_time": math.nan}, {"trap_x": math.inf}, {"g": -9.8}):
+    # Times are positive (0 s is no release time); the origin's positions may be 0 or negative.
+    for bad in ({"release_time": math.nan}, {"release_time": 0.0}, {"arrival_time": -1.0}, {"trap_x": math.inf},
+                {"g": -9.8}):
         with pytest.raises(ValueError):
             resolve(folder=bad)
     # Equal resolutions compare and hash equal, nan and all.
@@ -59,10 +63,9 @@ def test_records_of_optional_rows_are_json_and_round_trip() -> None:
     folder = resolve(folder={"release_time": 20.03, "trap_x": -0.003})
     assert ResolvedConstants.from_record(json.loads(json.dumps(folder.as_record()))) == folder
     # An older record, from before these rows: they read back as unset.
-    older = {"values": {key: value for key, value in record["values"].items() if key not in ("release_time", "trap_x",
-                                                                                              "trap_y")},
-             "origins": {key: value for key, value in record["origins"].items() if key not in ("release_time",
-                                                                                               "trap_x", "trap_y")}}
+    new = ("release_time", "arrival_time", "trap_x", "trap_y")
+    older = {"values": {key: value for key, value in record["values"].items() if key not in new},
+             "origins": {key: value for key, value in record["origins"].items() if key not in new}}
     assert ResolvedConstants.from_record(older) == DEFAULTS
     for broken in ({"values": {**record["values"], "release_time": 1.0}, "origins": record["origins"]},
                    {"values": record["values"], "origins": {**record["origins"], "release_time": "folder"}},
@@ -72,8 +75,8 @@ def test_records_of_optional_rows_are_json_and_round_trip() -> None:
 
 
 def test_layers_text_and_changes_of_optional_rows() -> None:
-    assert clean_layer({"trap_x": -0.003, "release_time": 20.0, "trap_y": "x", "g": -1.0, "fall_distance": 0.0}) == {
-        "trap_x": -0.003, "release_time": 20.0}
+    assert clean_layer({"trap_x": -0.003, "release_time": 20.0, "trap_y": "x", "g": -1.0, "fall_distance": 0.0,
+                        "arrival_time": 0.0}) == {"trap_x": -0.003, "release_time": 20.0}
     assert value_text("release_time", math.nan) == "from the data"
     assert value_text("release_time", 20.0312) == "20,031.2 ms" and value_text("trap_x", -0.003) == "−3 mm"
     assert value_and_origin(DEFAULTS, "trap_x") == "from the data"
@@ -84,11 +87,16 @@ def test_layers_text_and_changes_of_optional_rows() -> None:
     assert record_text(folder, ("release_time", "trap_x")) == "t_r = 20,031.2 ms (folder), x₀ from the data"
     assert constant_layers.changed_keys(DEFAULTS, resolve()) == []
     assert constant_layers.changed_keys(DEFAULTS, folder) == ["release_time"]
-    # A plot's own value of an optional row starts at 0 and may be negative.
+    # A plot's own value of an optional row starts at 0 (the origin's may be negative; a time of 0 is
+    # no value, so the layers' is used until one is typed).
     specs = {spec.name: spec for spec in constants_specs(("release_time", "trap_x"))}
     value = specs[constant_layers.value_name("trap_x")]
     assert value.default == 0.0 and value.limits == constant_layers.SIGNED_LIMITS and value.unit_prefix == "m"
-    assert specs[constant_layers.value_name("release_time")].unit_prefix == "m"  # ms, as the plots
+    own = specs[constant_layers.value_name("release_time")]
+    assert own.unit_prefix == "m" and own.limits == constant_layers.OPTIONAL_LIMITS  # ms, as the plots
+    chosen = {constant_layers.source_name("release_time"): constant_layers.SET_HERE,
+              constant_layers.value_name("release_time"): 0.0}
+    assert constant_layers.resolve_for_run(chosen, folder={"release_time": 20.0}).origins["release_time"] == "folder"
 
 
 def test_layer_release_time_and_origin_for_the_velocity_plots() -> None:
@@ -98,6 +106,20 @@ def test_layer_release_time_and_origin_for_the_velocity_plots() -> None:
     assert given is not None and given.source == "manual" and given.value.value == 20.0312 and given.error == "none"
     assert layer_origin(folder) == (0.003, -0.002)
     assert layer_origin(resolve(folder={"trap_x": 0.003})) is None  # One axis alone isn't an origin.
+    # A saved arrival gives t_r with the consumer's own fall time: a cloud at rest stays at rest.
+    saved = resolve(folder={"arrival_time": 20.4473})
+    own_fall = resolve(folder={"arrival_time": 20.4473}, plot={"fall_distance": 0.8529})
+    for constants in (saved, own_fall):
+        found = layer_release_time(constants)
+        assert found is not None and found.ok and found.arrival.value == 20.4473
+        assert found.value.value == pytest.approx(20.4473 - constants.fall_time, abs=1e-12)
+        assert "saved arrival (folder)" in found.notes[0]
+    assert layer_release_time(own_fall).value.value < layer_release_time(saved).value.value  # type: ignore[union-attr]
+    # Both set: the more specific layer wins, t_r by hand on a tie.
+    tie = layer_release_time(resolve(folder={"arrival_time": 20.4473, "release_time": 20.03}))
+    assert tie is not None and tie.value.value == 20.03
+    newer = layer_release_time(resolve(lab={"release_time": 20.03}, folder={"arrival_time": 20.4473}))
+    assert newer is not None and newer.arrival.value == 20.4473
 
 
 def test_the_folder_dialog_and_editors_show_unset_rows(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -110,16 +132,37 @@ def test_the_folder_dialog_and_editors_show_unset_rows(qtbot: QtBot, monkeypatch
     monkeypatch.setattr(service, "_dispatch", lambda: None)
     cache = FolderCache(service)
     try:
-        assert {"release_time", "trap_x", "trap_y"} <= {row.key for row in FOLDER_ROWS}
+        assert {"release_time", "arrival_time", "trap_x", "trap_y"} <= {row.key for row in FOLDER_ROWS}
         cache.remember_constants(PATH, {"values": {"trap_x": -0.003}, "set_at": 1.0})
         dialog = FolderConstantsDialog(PATH, cache)
         qtbot.addWidget(dialog)
         assert dialog.source_text("release_time") == "from the data (Release time plot)"
-        assert dialog.editors["release_time"].value() == 0.0 and not dialog.editors["release_time"].isEnabled()
+        assert not dialog.editors["release_time"].isEnabled() and "0 ms" in dialog.editors["release_time"].text()
         assert dialog.source_text("trap_x") == "this folder" and dialog.editors["trap_x"].value() == -0.003
+        assert dialog.save_button is not None and dialog.save_button.isEnabled()
+        # Set here with nothing to start from: Save waits for a typed value (the box's 0 means nothing).
         dialog.set_here["release_time"].setChecked(True)
+        assert dialog.untyped() == ["release_time"] and not dialog.save_button.isEnabled()
+        assert "Type a value for Release time t_r" in dialog.notes_label.text()
+        assert dialog.values() == {"trap_x": -0.003}
+        dialog.save()
+        assert not any(r.operation == "cache_admin" for r in service.pending)  # Refused: nothing sent.
         dialog.editors["release_time"].setValue(20.0312)
+        assert dialog.untyped() == [] and dialog.save_button.isEnabled()
         assert dialog.values() == {"trap_x": -0.003, "release_time": 20.0312}
+        dialog.editors["release_time"].setValue(0.0)  # 0 s is no release time: waits again.
+        assert dialog.untyped() == ["release_time"]
+        dialog.editors["release_time"].setValue(20.0312)
+        # Cleared and set again, it waits again; an origin of 0 mm is a value (signed).
+        dialog.restore("release_time")
+        dialog.set_here["release_time"].setChecked(True)
+        assert dialog.untyped() == ["release_time"]
+        dialog.restore("release_time")
+        dialog.set_here["trap_y"].setChecked(True)
+        assert dialog.untyped() == ["trap_y"]
+        dialog.editors["trap_y"].setValue(0.0005)
+        dialog.editors["trap_y"].setValue(0.0)
+        assert dialog.untyped() == [] and dialog.values()["trap_y"] == 0.0
         box = constant_editor(TABLE["trap_y"], 0.0)
         box.setValue(-0.002)
         assert box.value() == -0.002 and "mm" in box.text()
@@ -152,9 +195,10 @@ def cloud_view(shots: int = 20, count: int = 1500, jitter: float = 50e-6, backgr
     return build_view(Dataset(PATH, "sig-release", data, {"fingerprint": prints}, 0)), releases
 
 
-def run(view: DatasetView, values: dict[str, Any] | None = None, cancelled: bool = False) -> AnalysisResult:
+def run(view: DatasetView, values: dict[str, Any] | None = None, cancelled: bool = False,
+        live: bool = False) -> AnalysisResult:
     context = AnalysisContext("r1", "Plot", view, effective(SCRIPT.parameters("Plot"), values or {}),
-                              SCRIPT.get_metadata().identity())
+                              SCRIPT.get_metadata().identity(), live=live)
     if cancelled:
         context.cancel_event.set()
     data = SCRIPT.compute("Plot", context)
@@ -239,7 +283,7 @@ class FakeCache(QObject):
     def __init__(self) -> None:
         super().__init__()
         self.lab_constants: dict[str, float] = {}
-        self.own: dict[str, float] = {"fall_distance": 0.85, "trap_x": 0.0}
+        self.own: dict[str, float] = {"fall_distance": 0.85, "trap_x": 0.0, "release_time": 20.0}
         self.saved: list[tuple[str, dict[str, float], str]] = []
 
     def effective_folder_constants(self, path: str) -> dict[str, float]:
@@ -265,29 +309,128 @@ def test_use_for_this_folder_saves_only_once_confirmed(qtbot: QtBot, monkeypatch
     assert isinstance(widget, ReleasePlot) and widget.use_button.isEnabled()
     cache = FakeCache()
     widget.cache = cache  # type: ignore[assignment]
-    asked: list[str] = []
+    asked: list[tuple[str, bool]] = []
     answer = False
 
     def confirm(text: str, unsure: bool) -> bool:
-        asked.append(text)
+        asked.append((text, unsure))
         return answer
 
     monkeypatch.setattr(widget, "confirm", confirm)
     assert not widget.use_for_folder() and cache.saved == []  # Cancelled: nothing written.
-    assert "Release time t_r: 20,031." in asked[0] and "(now: from the data)" in asked[0]
-    assert "Trap origin X x₀: " in asked[0] and "(now: 0 mm (folder))" in asked[0]
+    text, careful = asked[0]
+    assert "Arrival at rest t_a: 20,447." in text and "(now: from the data)" in text
+    assert "Trap origin X x₀: " in text and "(now: 0 mm (folder))" in text
+    # The folder's h (850 mm) isn't this run's (the default 848 mm): its plots get another t_r, and
+    # the question says so, with Cancel the default.
+    after = resolve(folder={"fall_distance": 0.85})
+    assert f"t_r = t_a − t_f = {time_text(found.arrival.value - after.fall_time)}" in text
+    assert "⚠ This run's fall time isn't the folder's" in text and careful
+    assert "It replaces the folder's release time set by hand (20,000 ms (folder))" in text
     answer = True
     widget.use_button.click()
     assert len(cache.saved) == 1
     path, values, owner = cache.saved[0]
     assert path == PATH and owner == widget.owner
-    assert values == {"fall_distance": 0.85, "release_time": found.value.value, "trap_x": found.origin[0].value,
-                      "trap_y": found.origin[1].value}  # Merged with what the folder sets.
+    # Merged with what the folder sets, the arrival (not t_r) saved, the t_r by hand dropped.
+    assert values == {"fall_distance": 0.85, "arrival_time": found.arrival.value, "trap_x": found.origin[0].value,
+                      "trap_y": found.origin[1].value}
     assert widget.status.text().startswith("Set for this folder")
     cache.folderConstantsFailed.emit(PATH, "disk full", "another")
     assert "Couldn't" not in widget.status.text()
     cache.folderConstantsFailed.emit(PATH, "disk full", widget.owner)
     assert "Couldn't save the constants for this folder: disk full" in widget.status.text()
+    # The same fall time as the folder's, a sure detection: no warning, Save the default.
+    cache.own = {}
+    widget.use_for_folder()
+    text, careful = asked[-1]
+    assert "isn't the folder's" not in text and "replaces" not in text and not careful
+
+
+def frozen_cache(monkeypatch: pytest.MonkeyPatch) -> Any:
+    from helab.utils.folder_cache import FolderCache
+    from helab.utils.io_service import IOService
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_dispatch", lambda: None)
+    return service, FolderCache(service)
+
+
+def test_use_for_this_folder_with_the_real_cache(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+                                                 jittered: tuple[AnalysisResult, list[float]]) -> None:
+    """Saved for the session only (no .helab-root): said so; refused while quitting: the plot's
+    failure line."""
+    result, _ = jittered
+    service, cache = frozen_cache(monkeypatch)
+    try:
+        widget = SCRIPT.render(result)
+        qtbot.addWidget(widget)
+        assert isinstance(widget, ReleasePlot)
+        widget.cache = cache
+        monkeypatch.setattr(widget, "confirm", lambda text, unsure: True)
+        cache._remember_unrooted(PATH, "no .helab-root found here or above")
+        assert widget.use_for_folder()
+        assert set(cache.folder_constants(PATH)) == {"arrival_time", "trap_x", "trap_y"}
+        assert widget.status.text() == ("Set for this folder · RAM only, for this session: no .helab-root found "
+                                        "here or above")
+        found = layer_release_time(resolve(folder=cache.effective_folder_constants(PATH)))
+        assert found is not None and found.value.value == pytest.approx(result.data.release.value.value, abs=1e-12)
+        cache.quitting = True
+        assert not widget.use_for_folder()
+        assert widget.status.text() == "⚠ Couldn't save the constants for this folder: HeLab is quitting. Try again."
+    finally:
+        service.shutdown()
+
+
+def test_a_live_rerun_skips_the_bootstrap(jittered: tuple[AnalysisResult, list[float]]) -> None:
+    """Following Live, one detection (the fit's SE, said so); a deliberate run keeps the bootstrap."""
+    view, _ = cloud_view()
+    live = run(view, {"n_boot": 100}, live=True)
+    found = live.data.release
+    assert found.ok and found.error == "within run" and found.bootstrap is None and live.data.live_skipped
+    assert release_time.LIVE_NOTE in live.data.all_notes()
+    lines = release_time.titles(live, live.data)
+    assert "ms (within run)" in lines[1] and any(line.startswith("⚠ Live rerun: shot bootstrap skipped")
+                                                  for line in lines)
+    assert live.reuse_key()["found"] == {"bootstrap_skipped": True}
+    deliberate, _ = jittered
+    assert deliberate.data.release.error == "shot bootstrap" and deliberate.reuse_key()["found"] == {
+        "bootstrap_skipped": False}
+    started = time.perf_counter()
+    run(view, {"n_boot": 100}, live=True)
+    assert time.perf_counter() - started < 5.0  # One detection, not a hundred (the bootstrap takes ~2 s here).
+
+
+def test_the_runner_marks_live_reruns(qtbot: QtBot) -> None:
+    from helab.analysis.runner import AnalysisRunner
+    runner = AnalysisRunner()
+    try:
+        view, _ = cloud_view(shots=3, count=200)
+        ended: list[AnalysisResult] = []
+        runner.finished.connect(ended.append)
+        context = runner.submit(SCRIPT, SCRIPT.get_metadata(), "Plot", view, {"n_boot": 10}, live=True)
+        assert context.live and not runner.submit(SCRIPT, SCRIPT.get_metadata(), "Plot", view, {"n_boot": 10}).live
+        qtbot.waitUntil(lambda: len(ended) == 2, timeout=20_000)
+        assert [result.data.live_skipped for result in ended] == [True, False]
+    finally:
+        runner.stop()
+
+
+def test_a_constants_record_holds_only_the_analysis_s_keys() -> None:
+    """A folder's saved arrival and origin never change another plot's reuse key."""
+    view, _ = cloud_view(shots=2, count=100)
+    keys = SCRIPT.constant_keys("Plot")
+
+    def key(folder: dict[str, float]) -> Any:
+        values = effective(SCRIPT.parameters("Plot"), {})
+        layers = {"lab": {}, "folder": folder}
+        context = AnalysisContext("r1", "Plot", view, values, SCRIPT.get_metadata().identity(), constants=layers,
+                                  resolved_constants=SCRIPT.run_constants("Plot", values, layers), constant_keys=keys)
+        return AnalysisResult.of(context, "completed").reuse_key()["constants"]
+
+    plain, saved = key({}), key({"arrival_time": 20.4, "trap_x": 0.003})
+    assert plain == saved and set(plain["values"]) == set(keys) and plain["layers"]["folder"] == {}
+    assert key({"fall_distance": 0.85}) != plain
 
 
 def test_registered_with_constants_and_a_slow_live_policy() -> None:

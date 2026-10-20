@@ -104,6 +104,11 @@ class AnalysisContext:
     # for (tests, scripts). An analysis may keep per-plot state under it (dropped in
     # ``DatasetAnalysis.plot_closed``); it is not part of the result's reuse key.
     owner: str = ""
+    # A rerun following Live (the plot's newest revision while Live watches its folder), not one the
+    # user asked for: a costly analysis may do less then and say so (the Release time plot skips its
+    # bootstrap). Not part of the result's reuse key unless the script puts what it did in
+    # ``found["reuse"]``.
+    live: bool = False
 
     @property
     def covered(self) -> Coverage:
@@ -158,12 +163,15 @@ class AnalysisResult:
     def constants_record(self) -> dict[str, Any] | None:
         """The constants the run used, as JSON values: for an analysis that declares constants
         (``DatasetAnalysis.constant_keys``), its lab and folder layers and what it resolved
-        (``ResolvedConstants.as_record``); None for one that doesn't, so a lab or folder change
-        never makes its results look different."""
+        (``ResolvedConstants.as_record``), of its ``constant_keys`` only (all without); None for one
+        that doesn't, so a lab or folder change of a value it doesn't use never makes its results
+        look different."""
         if self.resolved_constants is None:
             return None
-        layers = {name: dict(values) for name, values in self.constant_layers.items()}
-        return {"layers": layers, **self.resolved_constants.as_record()}
+        keys = set(self.constant_keys) or None
+        layers = {name: {key: value for key, value in values.items() if keys is None or key in keys}
+                  for name, values in self.constant_layers.items()}
+        return {"layers": layers, **self.resolved_constants.as_record(self.constant_keys or None)}
 
     def reuse_key(self) -> dict[str, Any]:
         """What a later reuse of this result must match (result caching rule 5), as JSON values:

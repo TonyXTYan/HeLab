@@ -36,8 +36,8 @@ from PyQt6 import sip
 from PyQt6.QtCore import Qt, pyqtSlot
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
-from helab.analysis.constant_layers import (constants_specs, describe_constants, origin_text, resolve_for_run,
-                                           value_and_origin)
+from helab.analysis.constant_layers import (clean_layer, constants_specs, describe_constants, origin_text,
+                                           resolve_for_run, value_and_origin)
 from helab.analysis.dataset_view import DatasetView, txy
 from helab.analysis.display_units import (LENGTH_SCALE, T_SCALE, WIDTH_DIGITS, axis_label, group_digits, length_text,
                                           number_text, range_text, time_text)
@@ -79,7 +79,9 @@ N_BOOT = ParameterSpec("n_boot", "Shot bootstrap resamples (0 = off)", "int", N_
 CONSTANT_KEYS = ("fall_distance", "fall_time", "g")
 CONSTANTS = tuple(constants_specs(CONSTANT_KEYS))
 PARAMETERS = (*SHOT_SPECS, SEARCH_MIN, SEARCH_MAX, N_BOOT, *CONSTANTS)
-FOLDER_KEYS = ("release_time", "trap_x", "trap_y")
+FOLDER_KEYS = ("arrival_time", "trap_x", "trap_y")  # what Use for this folder saves
+LIVE_NOTE = ("Live rerun: shot bootstrap skipped, so the SE is the fit's alone (within run), without the "
+             "shot-to-shot jitter; Rerun (or Live's end) runs it")
 
 OVERVIEW_BINS = 400
 MAX_ZOOM_BINS = 600
@@ -115,6 +117,7 @@ class ReleaseData:
     curve: tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]] = field(default_factory=no_histogram)
     x_hist: Histogram = field(default_factory=no_histogram)
     y_hist: Histogram = field(default_factory=no_histogram)
+    live_skipped: bool = False  # a Live rerun: the bootstrap was skipped (``LIVE_NOTE``)
 
     @property
     def ok(self) -> bool:
@@ -287,25 +290,52 @@ def _slices(events: npt.NDArray[np.float64], found: ReleaseTime) -> tuple[Histog
 
 
 def folder_values(found: ReleaseTime) -> dict[str, float]:
-    """What "Use for this folder" saves: t_r (s) and, when found, the origin (m)."""
-    if not found.ok:
+    """What "Use for this folder" saves: the arrival of the cloud at rest (s), not t_r, so each plot
+    takes t_r = t_a − t_f with its own fall time (``release.layer_release_time``), and when found,
+    the origin (m)."""
+    if not found.ok or not math.isfinite(found.arrival.value):
         return {}
-    values = {"release_time": found.value.value}
+    values = {"arrival_time": found.arrival.value}
     if found.origin_found:
         values |= {"trap_x": found.origin[0].value, "trap_y": found.origin[1].value}
     return values
 
 
-def confirmation_text(path: str, found: ReleaseTime, now: ResolvedConstants) -> str:
-    """The question "Use for this folder" asks, with what each value is now."""
+def merged_values(own: Mapping[str, float], found: ReleaseTime) -> dict[str, float]:
+    """The folder's constants after "Use for this folder": its own, without a t_r set by hand (the
+    saved arrival replaces it: a t_r by hand would win over it), with ``folder_values``."""
+    return {**{key: value for key, value in own.items() if key != "release_time"}, **folder_values(found)}
+
+
+FALL_KEYS = ("fall_distance", "g", "fall_time")
+
+
+def fall_differs(plot: ResolvedConstants, folder: ResolvedConstants) -> bool:
+    """Whether the run's fall time (its h, g or t_f, maybe this plot's own) isn't the folder's."""
+    return not math.isclose(plot.fall_time, folder.fall_time, rel_tol=1e-9)
+
+
+def confirmation_text(path: str, found: ReleaseTime, now: ResolvedConstants, after: ResolvedConstants,
+                      plot: ResolvedConstants, replaces_by_hand: bool) -> str:
+    """The question "Use for this folder" asks: each value and what it is now, the t_r this folder's
+    plots get from it (with the folder's fall time, ``after``), and warnings: the run's fall time
+    isn't the folder's (``plot``), unsure, or a within-run error."""
     name = os.path.basename(path.rstrip("/\\")) or path
     values = folder_values(found)
     lines = [f"Save these as constants of {name} (and of its subfolders that don't set their own)?", ""]
     for key, value in values.items():
-        text = time_text(value) if key == "release_time" else length_text(value)
+        text = time_text(value) if key == "arrival_time" else length_text(value)
         lines.append(f"{TABLE[key].title}: {text}   (now: {value_and_origin(now, key)})")
     if not found.origin_found:
         lines.append("The trap origin wasn't found: the folder's stays as it is.")
+    t_r = found.arrival.value - after.fall_time
+    lines += ["", f"Plots of this folder then take t_r = t_a − t_f = {time_text(t_r)} with their own fall time "
+                  f"(this folder's: {fall_text(after)})."]
+    if replaces_by_hand:
+        lines.append(f"It replaces the folder's release time set by hand ({value_and_origin(now, 'release_time')}).")
+    if fall_differs(plot, after):
+        lines += ["", f"⚠ This run's fall time isn't the folder's: {fall_text(plot)} here, so its t_r "
+                      f"{time_text(found.value.value)} differs from what the folder's plots will use."]
     if found.unsure:
         lines += ["", "⚠ The detection is unsure: another peak may be the cloud released at rest."]
     if found.error != "shot bootstrap":
@@ -414,11 +444,13 @@ class ReleasePlot(QWidget):
         return self.cache
 
     def confirm(self, text: str, unsure: bool) -> bool:
-        """Ask before saving (Cancel the default when the detection is unsure)."""
+        """Ask before saving (Cancel the default when the detection is unsure or the fall times
+        differ). False if the plot closed meanwhile."""
         box = QMessageBox(QMessageBox.Icon.Question, "Use for this folder", text,
                           QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel, self)
         box.setDefaultButton(QMessageBox.StandardButton.Cancel if unsure else QMessageBox.StandardButton.Save)
-        return box.exec() == QMessageBox.StandardButton.Save
+        answer = box.exec()
+        return not sip.isdeleted(self) and answer == QMessageBox.StandardButton.Save
 
     @pyqtSlot()
     def use_for_folder(self) -> bool:
@@ -429,14 +461,23 @@ class ReleasePlot(QWidget):
         if found is None or not values or not self.path:
             return False
         cache = self.folder_cache()
-        now = resolve(lab=cache.lab_constants, folder=cache.effective_folder_constants(self.path))
-        if not self.confirm(confirmation_text(self.path, found, now), found.unsure):
+        folder = clean_layer(cache.effective_folder_constants(self.path))
+        now = resolve(lab=clean_layer(cache.lab_constants), folder=folder)
+        own = cache.folder_constants(self.path)
+        replaces = "release_time" in own
+        after = resolve(lab=clean_layer(cache.lab_constants),
+                        folder={**{key: value for key, value in folder.items() if key != "release_time" or not replaces},
+                                **values})
+        assert self.data is not None
+        differs = fall_differs(self.data.constants, after)
+        text = confirmation_text(self.path, found, now, after, self.data.constants, replaces)
+        if not self.confirm(text, found.unsure or differs):
             return False
         if not self._listening:
             cache.folderConstantsFailed.connect(self._failed)
             self._listening = True
-        own = cache.folder_constants(self.path)
-        if not cache.set_folder_constants(self.path, {**own, **values}, owner=self.owner):
+        own = cache.folder_constants(self.path)  # Again: the question may have waited a while.
+        if not cache.set_folder_constants(self.path, merged_values(own, found), owner=self.owner):
             return False
         session = cache.constants_session_only(self.path)
         self._say(f"Set for this folder · RAM only, for this session: {session}" if session
@@ -477,7 +518,8 @@ class ReleaseTimePlot(DatasetAnalysis):
         return CONSTANT_KEYS
 
     def live_policy(self, action_name: str) -> LivePolicy:
-        # Each bootstrap resample is a detection (100 by default): at most one rerun every 5 s.
+        # Live reruns skip the bootstrap (``LIVE_NOTE``): one detection, under a second on 500,000
+        # events; still at most one every 5 s.
         return LivePolicy(min_delay=5.0)
 
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
@@ -499,7 +541,9 @@ class ReleaseTimePlot(DatasetAnalysis):
         if not isinstance(data, ReleaseData) or data.release is None:
             return {}
         return {"release": data.release.as_record(), "brief": brief(data), "record_lines": record_lines(data),
-                "constants": describe_constants(data.constants, CONSTANT_KEYS, every=True)}
+                "constants": describe_constants(data.constants, CONSTANT_KEYS, every=True),
+                # A Live rerun's result (no bootstrap) is no reuse for a deliberate run's.
+                "reuse": {"bootstrap_skipped": data.live_skipped}}
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         values, view = context.parameters, context.view
@@ -524,13 +568,17 @@ class ReleaseTimePlot(DatasetAnalysis):
         searched = events[inside]
         context.check()
         notes: tuple[str, ...] = ()
-        if boots > 0 and len(shots) >= 2:
+        # A Live rerun skips the bootstrap: n_boot detections each time would keep the one analysis
+        # worker busy (31 s a run on 100 shots × 5,000 events). Rerun, or Live's end, runs it.
+        skipped = context.live and boots > 0 and len(shots) >= 2
+        if boots > 0 and len(shots) >= 2 and not skipped:
             found = bootstrap_release_time(per_shot, constants, lower, upper, n_boot=boots,
                                            cancelled=context.cancelled)
         else:
             found = detect_release_time(times, constants, lower, upper, positions=events[:, 1:3])
             if found.ok:
-                notes = ("one shot: no shot bootstrap, so the SE is the fit's alone (within run)" if boots
+                notes = (LIVE_NOTE if skipped else
+                         "one shot: no shot bootstrap, so the SE is the fit's alone (within run)" if boots
                          else "shot bootstrap off: the SE is the fit's alone (within run), without the shot-to-shot "
                               "jitter",)
         context.check()
@@ -538,7 +586,7 @@ class ReleaseTimePlot(DatasetAnalysis):
         high = float(searched[:, 0].max()) if len(searched) else math.nan
         if found.ok:
             low = min(low, found.value.value)
-        data = replace(data, searched=len(searched), release=found, notes=notes,
+        data = replace(data, searched=len(searched), release=found, notes=notes, live_skipped=skipped,
                        overview=_histogram(searched[:, 0], low, high, OVERVIEW_BINS))
         if not found.ok:
             return data

@@ -10,12 +10,12 @@ defaults to trust). Values are layered (F0b builds the settings that fill the la
 3. **folder** settings (per data root, in HeLab's store);
 4. **plot** overrides.
 
-A few rows have no default: they come "from the data" (``Constant.optional``: the release time
-and the trap's XY origin, which the Release time plot detects). Unset in every layer, they
-resolve to nan with the origin "detected": a plot then detects the value itself, or assumes one
-(the origin: 0, 0), and records which (``helab.analysis.release``). Set in a layer, they resolve
-like any other row. They and other ``Constant.signed`` rows (times and positions) take any
-finite value, zero and negative included; the others must be positive.
+A few rows have no default: they come "from the data" (``Constant.optional``: the release time,
+the arrival of the cloud at rest and the trap's XY origin, which the Release time plot detects).
+Unset in every layer, they resolve to nan with the origin "detected": a plot then detects the
+value itself, or assumes one (the origin: 0, 0), and records which (``helab.analysis.release``).
+Set in a layer, they resolve like any other row. ``Constant.signed`` rows (the origin's
+positions) take any finite value, zero and negative included; the others must be positive.
 
 ``resolve`` merges them when a run starts (compute does no I/O) into a frozen
 ``ResolvedConstants`` that the run records in its result (``as_record``, JSON values only).
@@ -28,7 +28,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, fields
 from types import MappingProxyType
-from typing import Any, Literal, Mapping, cast, get_args
+from typing import Any, Iterable, Literal, Mapping, cast, get_args
 
 import scipy.constants as codata
 
@@ -104,11 +104,16 @@ CONSTANTS: tuple[Constant, ...] = (
     Constant("dld_acquisition", "DLD acquisition", "s", 2.0,
              "monitor_momentum.m, 2026-09; a shot whose last count is earlier is incomplete", "lab",
              unconfirmed=True, shown_only=True),
-    # D8: from the data (the Release time plot), or set by hand; its "Use for this folder" sets them.
+    # D8: from the data (the Release time plot), or set by hand. Its "Use for this folder" saves the
+    # arrival and the origin, not t_r: each plot then takes t_r = t_a − t_f with its own fall time
+    # (helab.analysis.release.layer_release_time), so a cloud at rest stays at v_z = 0.
     Constant("release_time", "Release time t_r", "s", math.nan,
              "From the data: one cloud's arrival − t_f (the Release time plot), in DLD time; set by hand to "
-             "fix it. The front panel's switch-off, 22.954 s, is out of date", "folder", optional=True,
-             signed=True),
+             "fix it (it then wins over a saved arrival at the same level). The front panel's switch-off, "
+             "22.954 s, is out of date", "folder", optional=True),
+    Constant("arrival_time", "Arrival at rest t_a", "s", math.nan,
+             "From the data: when the cloud released at rest arrives, in DLD time (the Release time plot's Use "
+             "for this folder); plots take t_r = t_a − t_f with their own fall time", "folder", optional=True),
     Constant("trap_x", "Trap origin X x₀", "m", math.nan,
              "From the data: the X of the cloud released at rest (the Release time plot); unset and not "
              "detected, 0 (the trap above X = 0)", "folder", optional=True, signed=True),
@@ -145,6 +150,7 @@ class ResolvedConstants:
     dld_trigger: float
     dld_acquisition: float
     release_time: float
+    arrival_time: float
     trap_x: float
     trap_y: float
     origins: Mapping[str, Origin] = field(hash=False)
@@ -193,13 +199,18 @@ class ResolvedConstants:
                 f"but √(2h/g) is {time_text(expected)} for h {length_text(self.fall_distance)} "
                 f"({self.origins['fall_distance']}) and g {self.g:.6g} m/s² ({self.origins['g']})",)
 
-    def as_record(self) -> dict[str, Any]:
+    def as_record(self, keys: Iterable[str] | None = None) -> dict[str, Any]:
         """JSON values only, for a result's record:
         ``{"values": …, "origins": …, "unconfirmed": […], "notes": […]}``; an unset optional
-        row's value is None."""
-        return {"values": {key: self.value(key) if self.is_set(key) else None for key in TABLE},
-                "origins": dict(self.origins),
-                "unconfirmed": list(self.unconfirmed), "notes": list(self.notes)}
+        row's value is None. With ``keys``, only those (table order; the fall-time note only with
+        ``fall_time``), so rows an analysis doesn't use never change its record; ``from_record``
+        reads back the whole record only."""
+        wanted = set(TABLE if keys is None else keys)
+        chosen = [key for key in TABLE if key in wanted]
+        return {"values": {key: self.value(key) if self.is_set(key) else None for key in chosen},
+                "origins": {key: self.origins[key] for key in chosen},
+                "unconfirmed": [key for key in self.unconfirmed if key in wanted],
+                "notes": list(self.notes) if "fall_time" in wanted else []}
 
     @classmethod
     def from_record(cls, record: Mapping[str, Any]) -> ResolvedConstants:

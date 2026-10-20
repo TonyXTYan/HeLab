@@ -416,6 +416,19 @@ def test_a_following_scatter_updates_its_page_in_place(
     qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None, timeout=10_000)  # Freed with the pane.
 
 
+def test_live_reruns_are_marked_so_the_release_time_skips_its_bootstrap(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """The plot's first run is deliberate (bootstrap); Live's next revision is a Live rerun."""
+    window.view = window.live_feed.publish(revision([1, 2]))
+    instance = plot(window, qtbot, release_time.ReleaseTimePlot())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    assert instance.shown is not None and not instance.shown.data.live_skipped
+    set_live(instance, DELAY, 0.0)
+    window.live_feed.publish(revision([1, 2, 3]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
+    assert instance.shown is not None and instance.shown.data.live_skipped
+
+
 def test_a_following_shot_times_plot_updates_in_place(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
     """Live's next shot joins the shot-times plots already drawn (zoom and pan stay), with its time."""
