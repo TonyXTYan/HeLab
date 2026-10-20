@@ -18,9 +18,11 @@ from helab.utils.constants import DEFAULT_LOAD_MODE, LOAD_MODE_LABELS, LOAD_MODE
 from helab.utils.constants import AUTO_SCAN_VISIBLE_SETTING, SIMULTANEOUS_IO_SETTING, read_disk_budget
 from helab.utils.folder_cache import FolderCache, get_folder_cache, store_options
 from helab.utils.io_service import IORequest, IOService
+from helab.utils.settings_store import app_settings
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.HelabMainWindow import HelabMainWindow
+from helab.views.plots.workspace import PlotWorkspace
 from helab.views.SettingsDialog import SettingsDialog
 
 
@@ -286,6 +288,7 @@ class CancelTestWindow(HelabMainWindow):
     def __init__(self) -> None:
         QMainWindow.__init__(self)
         self._closing = False
+        self.plots = PlotWorkspace(self)  # Settings applies the RAM budget's (none here).
         self._setup_left_toolbar()
         self.tab_widget = FolderTabWidget(self)
         self.setCentralWidget(self.tab_widget)
@@ -386,9 +389,8 @@ def test_folder_status_toolbar_keeps_scope_cancel_and_up_out_of_path_row(
 def test_folder_io_menu_and_settings_apply_to_existing_and_new_tabs(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    settings = app_settings()  # The test's own ini (tests/conftest.py, ``private_settings``).
     settings.setValue(SIMULTANEOUS_IO_SETTING, 2)
-    monkeypatch.setattr("helab.views.HelabMainWindow.QSettings", lambda *args: settings)
     service = service_for_test(monkeypatch)
     monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)
     monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
@@ -461,8 +463,6 @@ def test_folder_io_menu_and_settings_apply_to_existing_and_new_tabs(
 def test_cancel_controls_target_current_tab_only(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, control: str,
 ) -> None:
-    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
-    monkeypatch.setattr("helab.views.HelabMainWindow.QSettings", lambda *args: settings)
     service, cache, first, (a, b, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "cancel")
     monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)
     second = explorer_for_test(qtbot, b)
@@ -509,8 +509,6 @@ def test_cancel_controls_target_current_tab_only(
 def test_escape_closes_dialog_without_cancelling_load(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
-    monkeypatch.setattr("helab.views.HelabMainWindow.QSettings", lambda *args: settings)
     service, cache, explorer, (a, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "cancel")
     monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)
     select(explorer, a)

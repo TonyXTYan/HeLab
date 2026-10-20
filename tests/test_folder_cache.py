@@ -177,8 +177,8 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     tabs.addTab(first, "First")
     # Exercise Folder details and the plot-area hint with real widgets, without creating
     # native settings, a watchdog, or a full main window and its startup jobs.
-    window: Any = SimpleNamespace(_closing=False, tab_widget=tabs, central_placeholder=CentralHint(parent=tabs),
-                                  folder_details=FolderDetailsPanel(tabs), dock_widgets=[])
+    window: Any = SimpleNamespace(_closing=False, tab_widget=tabs, folder_details=FolderDetailsPanel(tabs),
+                                  plots=SimpleNamespace(central_placeholder=CentralHint(parent=tabs), dock_widgets=[]))
     now = [100.0]
     monkeypatch.setattr("helab.utils.load_clock.monotonic", lambda: now[0])
     qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
@@ -195,8 +195,8 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     HelabMainWindow._update_folder_details(window)
     assert window.folder_details.text("state") == "Queued"
     assert window.folder_details.text("time") == ""  # Queued time is not running time.
-    assert window.central_placeholder.text() == f"Queued {tmp_path.name}…"
-    assert window.central_placeholder.hint.toolTip() == first.loading_tooltip
+    assert window.plots.central_placeholder.text() == f"Queued {tmp_path.name}…"
+    assert window.plots.central_placeholder.hint.toolTip() == first.loading_tooltip
     service.pending.remove(request)
     service.resultReady.emit(request, {"kind": "started"})
     assert first.loading_message == "Preparing…"
@@ -223,7 +223,7 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     note_owners, note = cache.load_note(request)
     assert first.model.owner in note_owners and "d_txy_forc124.txt" in note
     service.resultReady.emit(request, {"kind": "file_finished", "filename": str(tmp_path / "d_txy_forc124.txt")})
-    assert window.central_placeholder.text() == f"Loading {tmp_path.name}…"
+    assert window.plots.central_placeholder.text() == f"Loading {tmp_path.name}…"
     second = explorer_for_test(qtbot, path)
     qtbot.waitUntil(lambda: second.loading)
     assert second.loading_message == message  # Join an already-running shared load.
@@ -273,7 +273,7 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     service.resultReady.emit(request, {"kind": "paused"})
     HelabMainWindow._update_folder_details(window)
     assert window.folder_details.text("state") == "Paused · Verifying files… 2"
-    assert window.central_placeholder.text() == f"Loading paused: {tmp_path.name}…"
+    assert window.plots.central_placeholder.text() == f"Loading paused: {tmp_path.name}…"
     third.close_cleanup()
     fourth.close_cleanup()
     first.close_cleanup()

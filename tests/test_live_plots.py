@@ -17,14 +17,13 @@ import numpy as np
 import pyqtgraph as pg
 import pytest
 from PyQt6 import sip
-from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QTabWidget, QWidget
 from pytestqt.qtbot import QtBot
 
 from helab.analysis.dataset_view import DatasetView, build_view, revise, view_of
-from helab.analysis.follow import (DELAY, EVERY, FOLLOW, Follow, LiveFeed, LivePolicy, live_specs, newer,
-                                   policy_of)
+from helab.analysis.follow import DELAY, EVERY, FOLLOW, Follow, LivePolicy, live_specs, newer, policy_of
+from helab.analysis.live_feed import LiveFeed
 from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec, effective
@@ -33,7 +32,9 @@ from helab.analysis.runner import AnalysisRunner
 from helab.io_ops.browse import list_folder
 from helab.io_ops.live import live_check
 from helab.io_ops.loading import load
-from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
+from helab.views.plots.dock import AnalysisDock
+from helab.views.plots.instance import AnalysisInstance
+from helab.views.plots.script_tree import TreePanelWidget
 from helab.scripts.base import PLOT_MINIMUM_SIZE, DatasetAnalysis, ScriptMetadata
 from helab.scripts.dld import (correlations_plot, density_images, mean_position, release_time, shot_times,
                                shot_trends, t_spectrum, velocity_distributions)
@@ -43,9 +44,9 @@ from helab.scripts.standard import basic_plots, scatter_3d, transfer_fractions
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest, IOService
-from helab.views.CentralHint import CentralHint
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.HelabMainWindow import HelabMainWindow
+from helab.views.plots.workspace import PlotWorkspace
 
 PATH = "/data/root/run_L"
 
@@ -97,39 +98,45 @@ class Gated(DatasetAnalysis):
         return label
 
 
-class Window(HelabMainWindow):
-    """The main window's plot-dock parts and the Live feed, around an optional tab."""
+class Plots(PlotWorkspace):
+    """The plot area; a new plot runs on the window's ``view`` when set, else on the tab's data."""
 
-    def __init__(self, explorer: Optional[FolderExplorer] = None) -> None:
-        QMainWindow.__init__(self)
-        self.middle_mainwindow = QMainWindow()
-        self.central_placeholder = CentralHint("Select a data folder to begin")
-        self.middle_mainwindow.setCentralWidget(self.central_placeholder)
-        self.dock_widgets: List[QDockWidget] = []
-        self.tab_widget = QTabWidget()  # type: ignore[assignment]
-        self.panel_right_top_plot_settings = PlotSettingsPanel(self)
-        self.live_feed = LiveFeed(self)
-        self.view: Optional[DatasetView] = None  # The data a new plot runs on (else the tab's).
-        if explorer is not None:
-            self.tab_widget.addTab(explorer, "tab")
-            explorer.liveChanged.connect(lambda: self.follow_live(explorer))
-            explorer.dataLoaded.connect(lambda _: self.follow_live(explorer))
+    def __init__(self, window: Window) -> None:
+        super().__init__(window, current_explorer=window.current_explorer, explorers=window.explorers)
+        self.window = window
 
     def current_dataset_view(self) -> DatasetView | None:
-        return self.view if self.view is not None else HelabMainWindow.current_dataset_view(self)
+        return self.window.view if self.window.view is not None else super().current_dataset_view()
 
-    def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
-        pass
 
-    def closeEvent(self, a0: QCloseEvent | None) -> None:
-        QMainWindow.closeEvent(self, a0)
+class Window(QMainWindow):
+    """A window with the plot area (``plots``: docks, Settings panel, Live feed) around an
+    optional tab."""
+
+    def __init__(self, explorer: Optional[FolderExplorer] = None) -> None:
+        super().__init__()
+        self.tab_widget = QTabWidget()
+        self.view: Optional[DatasetView] = None  # The data a new plot runs on (else the tab's).
+        self.plots = Plots(self)
+        if explorer is not None:
+            self.tab_widget.addTab(explorer, "tab")
+            explorer.liveChanged.connect(lambda: self.plots.follow_live(explorer))
+            explorer.dataLoaded.connect(lambda _: self.plots.follow_live(explorer))
+
+    def current_explorer(self) -> FolderExplorer | None:
+        current = self.tab_widget.currentWidget()
+        return current if isinstance(current, FolderExplorer) else None
+
+    def explorers(self) -> List[FolderExplorer]:
+        return [widget for index in range(self.tab_widget.count())
+                if isinstance(widget := self.tab_widget.widget(index), FolderExplorer)]
 
 
 @pytest.fixture
 def runner(monkeypatch: pytest.MonkeyPatch) -> Iterator[AnalysisRunner]:
     """A runner of the test's own, so its job counts are this test's."""
     made = AnalysisRunner()
-    monkeypatch.setattr("helab.models.ScriptTreeSelector.get_analysis_runner", lambda: made)
+    monkeypatch.setattr("helab.views.plots.instance.get_analysis_runner", lambda: made)
     yield made
     made.stop()
 
@@ -139,17 +146,17 @@ def window(qtbot: QtBot, runner: AnalysisRunner) -> Iterator[Window]:
     made = Window()
     qtbot.addWidget(made)
     yield made
-    made.close_plots()
-    if not sip.isdeleted(made.middle_mainwindow):
-        made.middle_mainwindow.close()
-        made.middle_mainwindow.deleteLater()
+    made.plots.close_plots()
+    if not sip.isdeleted(made.plots.middle_mainwindow):
+        made.plots.middle_mainwindow.close()
+        made.plots.middle_mainwindow.deleteLater()
     # Delete the docks now, web views among them: deleted later, by another test's event loop
     # or at exit, a QWebEngineView outliving its test crashes Qt (macOS CI's coverage run).
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
 
 
 def plot(window: Window, qtbot: QtBot, script: DatasetAnalysis) -> AnalysisInstance:
-    panel = TreePanelWidget(window)
+    panel = TreePanelWidget(window.plots)
     qtbot.addWidget(panel)
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")
     assert isinstance(instance, AnalysisInstance)
@@ -194,7 +201,7 @@ def set_live(instance: AnalysisInstance, name: str, value: Any) -> None:
 def test_each_plot_keeps_its_scripts_minimum_size(window: Window, qtbot: QtBot, script: DatasetAnalysis) -> None:
     # A plot's least size is the script's design (default PLOT_MINIMUM_SIZE), not a setting: its
     # dock and window can't be made smaller, whatever the plot shows.
-    window.view = window.live_feed.publish(revision(range(1, 4)))
+    window.view = window.plots.live_feed.publish(revision(range(1, 4)))
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     dock = instance.dock_widget
@@ -430,7 +437,7 @@ def test_a_following_scatter_updates_its_page_in_place(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
     """Live's next revision updates the scatter's Plotly page in place (same pane and page, the
     figure swapped by the page's poll), so the camera stays; its figure keeps uirevision."""
-    window.view = window.live_feed.publish(revision([1, 2]))
+    window.view = window.plots.live_feed.publish(revision([1, 2]))
     instance = plot(window, qtbot, scatter_3d.Scatter3D())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     set_live(instance, DELAY, 0.0)
@@ -439,7 +446,7 @@ def test_a_following_scatter_updates_its_page_in_place(
     assert pane is not None
     before = dash_server.snapshot(pane.plot_id)
     assert before is not None and before.figure.to_dict()["layout"]["uirevision"] == scatter_3d.UI_REVISION
-    window.live_feed.publish(revision([1, 2, 3]))
+    window.plots.live_feed.publish(revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
     assert dock.findChild(PlotlyPane) is pane  # Not drawn anew: no page reload.
     after = dash_server.snapshot(pane.plot_id)
@@ -449,19 +456,19 @@ def test_a_following_scatter_updates_its_page_in_place(
     assert figure["layout"]["uirevision"] == scatter_3d.UI_REVISION and len(updated.data[0].x) == 6
     assert "rev 2" in figure["layout"]["title"]["text"] and pane.note.text().endswith("3 shots")
     plot_id = pane.plot_id
-    window.close_plots()
+    window.plots.close_plots()
     qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None, timeout=10_000)  # Freed with the pane.
 
 
 def test_live_reruns_are_marked_so_the_release_time_skips_its_bootstrap(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
     """The plot's first run is deliberate (bootstrap); Live's next revision is a Live rerun."""
-    window.view = window.live_feed.publish(revision([1, 2]))
+    window.view = window.plots.live_feed.publish(revision([1, 2]))
     instance = plot(window, qtbot, release_time.ReleaseTimePlot())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     assert instance.shown is not None and not instance.shown.data.live_skipped
     set_live(instance, DELAY, 0.0)
-    window.live_feed.publish(revision([1, 2, 3]))
+    window.plots.live_feed.publish(revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
     assert instance.shown is not None and instance.shown.data.live_skipped
 
@@ -482,7 +489,7 @@ def test_a_following_correlations_plot_counts_only_new_shots_and_skips_its_boots
     """The Correlations plot's Live rerun counts only the new shot and skips the bootstrap; closing
     the plot drops its pair counts."""
     held = correlations_plot.held_states()
-    window.view = window.live_feed.publish(cloud_revision([1, 2, 3]))
+    window.view = window.plots.live_feed.publish(cloud_revision([1, 2, 3]))
     instance = plot(window, qtbot, correlations_plot.Correlations())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=20_000)
     assert instance.shown is not None
@@ -490,13 +497,13 @@ def test_a_following_correlations_plot_counts_only_new_shots_and_skips_its_boots
     assert first.result is not None and not first.live_skipped, first.failure
     assert correlations_plot.held_states() == held + 1
     set_live(instance, DELAY, 0.0)
-    window.live_feed.publish(cloud_revision([1, 2, 3, 4]))
+    window.plots.live_feed.publish(cloud_revision([1, 2, 3, 4]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=20_000)
     assert instance.shown is not None
     data = instance.shown.data
     assert data.live_skipped and data.result is not None and data.result.se_method == "delete-one-shot jackknife"
     assert (data.reused, data.added) == (3, 1), (data.reused, data.added, data.release_how)
-    window.close_plots()
+    window.plots.close_plots()
     qtbot.waitUntil(lambda: correlations_plot.held_states() == held, timeout=10_000)
 
 
@@ -505,7 +512,7 @@ def test_a_following_shot_times_plot_updates_in_place(
     """Live's next shot joins the shot-times plots already drawn (zoom and pan stay), with its time."""
     first = revision([1, 2])
     first.metadata["raw_times"] = [[1, 1_000 * 10**9], [2, 1_060 * 10**9]]
-    window.view = window.live_feed.publish(first)
+    window.view = window.plots.live_feed.publish(first)
     instance = plot(window, qtbot, shot_times.ShotTimesPlot())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     set_live(instance, DELAY, 0.0)
@@ -514,7 +521,7 @@ def test_a_following_shot_times_plot_updates_in_place(
     assert widget is not None
     later = revision([1, 2, 3])
     later.metadata["raw_times"] = [*first.metadata["raw_times"], [3, 1_180 * 10**9]]
-    window.live_feed.publish(later)
+    window.plots.live_feed.publish(later)
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
     assert dock.findChild(shot_times.ShotTimesWidget) is widget  # Updated, not drawn anew.
     result = cast(AnalysisResult, instance.shown)
@@ -524,14 +531,14 @@ def test_a_following_shot_times_plot_updates_in_place(
 
 def test_a_following_density_image_draws_in_place(window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
     """Live's next revision redraws the density image in the same widget (its zoom stays)."""
-    window.view = window.live_feed.publish(revision([1, 2]))
+    window.view = window.plots.live_feed.publish(revision([1, 2]))
     instance = plot(window, qtbot, density_images.DensityImages())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     set_live(instance, DELAY, 0.0)
     dock = cast(QDockWidget, instance.dock_widget)
     drawn = dock.findChild(density_images.DensityPlot)
     assert drawn is not None
-    window.live_feed.publish(revision([1, 2, 3]))
+    window.plots.live_feed.publish(revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
     assert dock.findChild(density_images.DensityPlot) is drawn and "3 shots" in drawn.title.text
     assert instance.shown is not None and instance.shown.data.total == 6
@@ -554,7 +561,7 @@ def test_following_position_and_spectrum_plots_draw_in_place(
     """Live's next revision redraws them in the same widget (zoom stays); the dock's settings
     line ends with what the run found (the automatic bin width, the spectrum's Δf and Nyquist)."""
     kind = mean_position.PositionPlot if isinstance(script, mean_position.MeanPositionVsT) else t_spectrum.SpectrumPlot
-    window.view = window.live_feed.publish(spread([1, 2]))
+    window.view = window.plots.live_feed.publish(spread([1, 2]))
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     set_live(instance, DELAY, 0.0)
@@ -563,7 +570,7 @@ def test_following_position_and_spectrum_plots_draw_in_place(
     assert drawn is not None
     settings = dock.property("plotSourceSettings")
     assert "(auto" in settings and ("Nyquist" in settings) == (kind is t_spectrum.SpectrumPlot)
-    window.live_feed.publish(spread([1, 2, 3]))
+    window.plots.live_feed.publish(spread([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
     assert dock.findChild(kind) is drawn and "3 shots" in cast(Any, drawn).title.text
 
@@ -735,7 +742,7 @@ def test_a_following_histograms_old_drawing_is_freed_when_redrawn(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
     """Live's next revision updates the histograms in place; a rerun with another layout (log Y)
     draws them anew, and the old drawing's plot, overlay and counts go with the widget it replaced."""
-    window.view = window.live_feed.publish(revision([1, 2]))
+    window.view = window.plots.live_feed.publish(revision([1, 2]))
     instance = plot(window, qtbot, basic_plots.TxyHistograms())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     assert instance.parameter_root is not None
@@ -744,7 +751,7 @@ def test_a_following_histograms_old_drawing_is_freed_when_redrawn(
     qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
     content = instance._content
     refs = histogram_refs(content)
-    window.live_feed.publish(revision([1, 2, 3]))
+    window.plots.live_feed.publish(revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2 and instance.shown is not None
                     and instance.shown.data.newest_shot == 3, timeout=10_000)
     assert instance._content is content  # In place: zoom and pan stay.
@@ -761,7 +768,7 @@ def test_a_following_dld_histograms_plot_updates_in_place_keeping_its_zoom(
     """Live's next revision sets the histograms' data in the plots already drawn: a zoom stays,
     and the newest shot's overlay follows the newest shot. Another log Y draws them anew, and
     the old drawing's plot, overlay and counts go with the widget it replaced."""
-    window.view = window.live_feed.publish(spread([1, 2]))
+    window.view = window.plots.live_feed.publish(spread([1, 2]))
     instance = plot(window, qtbot, dld_plots.TxyHistograms())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     set_live(instance, DELAY, 0.0)
@@ -774,7 +781,7 @@ def test_a_following_dld_histograms_plot_updates_in_place_keeping_its_zoom(
     x_plot = widget.plots[1]
     x_plot.vb.setRange(xRange=(-0.5, 0.5), yRange=(0.0, 3.0), padding=0)  # The user zooms.
     zoomed = x_plot.vb.viewRange()
-    window.live_feed.publish(spread([1, 2, 3]))
+    window.plots.live_feed.publish(spread([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2 and instance.shown is not None
                     and instance.shown.data.newest_shot == 3, timeout=10_000)
     assert instance._content is widget and widget.plots[1] is x_plot  # Updated, not drawn anew.
@@ -796,7 +803,7 @@ def test_a_following_dld_counts_plot_updates_in_place_keeping_its_zoom(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
     """Counts per shot: Live's next shot joins the plot already drawn, the user's zoom stays, and
     the highlighted newest shot moves to it."""
-    window.view = window.live_feed.publish(revision([1, 2]))
+    window.view = window.plots.live_feed.publish(revision([1, 2]))
     instance = plot(window, qtbot, dld_plots.CountsPerShot())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     set_live(instance, DELAY, 0.0)
@@ -808,7 +815,7 @@ def test_a_following_dld_counts_plot_updates_in_place_keeping_its_zoom(
     widget: Any = instance._content
     widget.getPlotItem().vb.setRange(xRange=(0.0, 10.0), yRange=(0.0, 5.0), padding=0)
     zoomed = widget.getPlotItem().vb.viewRange()
-    window.live_feed.publish(revision([1, 2, 3]))
+    window.plots.live_feed.publish(revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2 and instance.shown is not None
                     and instance.shown.data.newest_shot == 3, timeout=10_000)
     assert instance._content is widget and np.allclose(widget.getPlotItem().vb.viewRange(), zoomed)
@@ -821,7 +828,7 @@ def test_a_following_dld_transfer_fractions_plot_updates_in_place_keeping_its_zo
     """The DLD port's Transfer fractions: Live's next shot joins the plots already drawn, the
     user's zoom of either plot stays, and the highlighted newest shot moves to it, its real counts
     on the right axis; switching the highlight off draws it anew."""
-    window.view = window.live_feed.publish(lab_revision([1, 2]))
+    window.view = window.plots.live_feed.publish(lab_revision([1, 2]))
     instance = plot(window, qtbot, dld_fractions.TransferFractions())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     set_live(instance, DELAY, 0.0)
@@ -834,7 +841,7 @@ def test_a_following_dld_transfer_fractions_plot_updates_in_place_keeping_its_zo
     widget.fractions_plot.vb.setRange(xRange=(0.0, 10.0), yRange=(0.0, 0.5), padding=0)  # The user zooms.
     widget.times_plot.vb.setRange(xRange=(2_130.0, 2_145.0), padding=0)
     fractions_zoom, times_zoom = widget.fractions_plot.vb.viewRange(), widget.times_plot.vb.viewRange()
-    window.live_feed.publish(lab_revision([1, 2, 3]))
+    window.plots.live_feed.publish(lab_revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2 and instance.shown is not None
                     and instance.shown.data.newest_shot == 3, timeout=10_000)
     assert instance._content is widget  # Updated, not drawn anew.
@@ -853,14 +860,14 @@ def test_a_following_dld_transfer_fractions_plot_updates_in_place_keeping_its_zo
 
 def test_a_following_plot_highlights_lives_newest_shot(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
-    window.view = window.live_feed.publish(revision([1, 2]))
+    window.view = window.plots.live_feed.publish(revision([1, 2]))
     instance = plot(window, qtbot, basic_plots.TxyHistograms())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     assert instance.parameter_root is not None
     parameter_of(instance.parameter_root, basic_plots.HIGHLIGHT).setValue(True)
     instance.run()
     qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
-    window.live_feed.publish(revision([1, 2, 3]))
+    window.plots.live_feed.publish(revision([1, 2, 3]))
     qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 3, timeout=10_000)
 
 
@@ -884,16 +891,16 @@ def test_scatter_declares_a_live_policy_others_rerun_on_every_shot() -> None:
 def test_shots_arriving_faster_than_a_run_give_one_rerun_on_the_newest(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
     ended = results_of(runner)
-    window.view = window.live_feed.publish(revision([1]))
+    window.view = window.plots.live_feed.publish(revision([1]))
     script = Gated()
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     assert "rev 1 · following Live · tests.gated v1" in source(instance).text()
     script.go.clear()
-    window.live_feed.publish(revision([1, 2]))
+    window.plots.live_feed.publish(revision([1, 2]))
     qtbot.waitUntil(lambda: script.started == [1, 2], timeout=10_000)
     for n in (3, 4, 5):
-        window.live_feed.publish(revision(range(1, n + 1)))
+        window.plots.live_feed.publish(revision(range(1, n + 1)))
         assert runner.running() == 1  # The run in flight only: nothing queued behind it.
     pending = instance.follow.pending
     assert pending is not None and pending.revision == 5 and instance.follow.waiting() == 3
@@ -906,7 +913,7 @@ def test_shots_arriving_faster_than_a_run_give_one_rerun_on_the_newest(
     assert instance.follow.pending is None and runner.running() == 0
     assert source(instance).text().startswith("Data source: run_L · rev 5 · following Live · tests.gated v1")
     assert instance.input_label.text() == "Input: run_L · rev 5 · following Live"
-    assert window.panel_right_top_plot_settings.chooser.itemText(0) == "Gated (1) · run_L · rev 5"
+    assert window.plots.panel_right_top_plot_settings.chooser.itemText(0) == "Gated (1) · run_L · rev 5"
     assert cast(AnalysisResult, instance.shown).coverage.shots == (1, 2, 3, 4, 5)
 
 
@@ -920,7 +927,7 @@ def test_a_plot_made_before_live_catches_up_with_changed_data(
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     old = instance.view
-    live = window.live_feed.publish(changed(before, 2, "sig-changed"))  # Live starts on it.
+    live = window.plots.live_feed.publish(changed(before, 2, "sig-changed"))  # Live starts on it.
     assert live.identity != old.identity and live.shot_numbers == old.shot_numbers == (1, 2)
     qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.input == live.key, timeout=10_000)
     assert script.started == [1, 1] and instance.follow.pending is None
@@ -931,30 +938,30 @@ def test_a_plot_made_before_live_catches_up_with_changed_data(
 
 def test_a_plot_reruns_every_n_shots_as_its_script_declares(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
-    window.view = window.live_feed.publish(revision([1]))
+    window.view = window.plots.live_feed.publish(revision([1]))
     script = Gated(LivePolicy(every_shots=3))
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     assert instance.live_values() == {FOLLOW: True, EVERY: 3, DELAY: 0.0}  # The script's defaults.
-    window.live_feed.publish(revision([1, 2]))
-    window.live_feed.publish(revision([1, 2, 3]))
+    window.plots.live_feed.publish(revision([1, 2]))
+    window.plots.live_feed.publish(revision([1, 2, 3]))
     assert script.started == [1] and instance.follow_text() == "following Live · 2 new shots waiting (runs every 3)"
-    window.live_feed.publish(revision([1, 2, 3, 4]))
+    window.plots.live_feed.publish(revision([1, 2, 3, 4]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 4, timeout=10_000)
     assert script.started == [1, 4]
     # Changed in the plot's settings: from now on every new shot.
     set_live(instance, EVERY, 1)
-    window.live_feed.publish(revision(range(1, 6)))
+    window.plots.live_feed.publish(revision(range(1, 6)))
     qtbot.waitUntil(lambda: shown_revision(instance) == 5, timeout=10_000)
 
 
 def test_a_plot_waits_its_delay_after_a_run(window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
-    window.view = window.live_feed.publish(revision([1]))
+    window.view = window.plots.live_feed.publish(revision([1]))
     script = Gated(LivePolicy(min_delay=0.4))
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     ended_at = instance.follow.finished_at
-    window.live_feed.publish(revision([1, 2]))
+    window.plots.live_feed.publish(revision([1, 2]))
     assert script.started == [1] and instance.follow_text() == "following Live · 1 new shot waiting (runs 0.4 s after the last run)"
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
     assert script.started_at[1] - ended_at >= 0.39
@@ -962,7 +969,7 @@ def test_a_plot_waits_its_delay_after_a_run(window: Window, runner: AnalysisRunn
 
 def test_two_plots_of_one_folder_follow_with_their_own_policies(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
-    window.view = window.live_feed.publish(revision([1]))
+    window.view = window.plots.live_feed.publish(revision([1]))
     every, third = Gated(name="Every"), Gated(LivePolicy(every_shots=3), name="Third")
     first, second = plot(window, qtbot, every), plot(window, qtbot, third)
     other = Gated(name="Other")
@@ -970,7 +977,7 @@ def test_two_plots_of_one_folder_follow_with_their_own_policies(
     elsewhere = plot(window, qtbot, other)
     qtbot.waitUntil(lambda: all(shown_revision(i) == 1 for i in (first, second, elsewhere)), timeout=10_000)
     for n in (2, 3, 4):
-        window.live_feed.publish(revision(range(1, n + 1)))
+        window.plots.live_feed.publish(revision(range(1, n + 1)))
         qtbot.waitUntil(lambda: shown_revision(first) == n, timeout=10_000)
     qtbot.waitUntil(lambda: shown_revision(second) == 4, timeout=10_000)
     assert every.started == [1, 2, 3, 4] and third.started == [1, 4]
@@ -979,13 +986,13 @@ def test_two_plots_of_one_folder_follow_with_their_own_policies(
 
 def test_follow_live_off_pins_the_plot_and_on_again_catches_up(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
-    window.view = window.live_feed.publish(revision([1]))
+    window.view = window.plots.live_feed.publish(revision([1]))
     script = Gated()
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     set_live(instance, FOLLOW, False)
-    window.live_feed.publish(revision([1, 2]))
-    window.live_feed.publish(revision([1, 2, 3]))
+    window.plots.live_feed.publish(revision([1, 2]))
+    window.plots.live_feed.publish(revision([1, 2, 3]))
     assert script.started == [1] and instance.follow_text() == "pinned (Follow Live off) · 2 newer shots"
     assert "rev 1 · pinned (Follow Live off) · 2 newer shots" in source(instance).text()
     assert instance.input_label.text() == "Input: run_L · rev 1 (stays with this plot)"
@@ -1002,12 +1009,12 @@ def test_pinning_during_a_live_rerun_keeps_the_pinned_revision(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
     """Follow Live off while a rerun on newer data runs: that run ends, but its result isn't the
     pinned plot's (dropped, not drawn), and Rerun stays on the pinned revision."""
-    window.view = window.live_feed.publish(revision([1]))
+    window.view = window.plots.live_feed.publish(revision([1]))
     script = Gated()
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     script.go.clear()
-    window.live_feed.publish(revision([1, 2]))
+    window.plots.live_feed.publish(revision([1, 2]))
     qtbot.waitUntil(lambda: script.started == [1, 2], timeout=10_000)
     set_live(instance, FOLLOW, False)
     assert instance.follow.ran.revision == 1 and instance.job_id  # Pinned at rev 1; rev 2 still runs.
@@ -1029,14 +1036,14 @@ def test_pinning_during_a_live_rerun_keeps_the_pinned_revision(
 
 def test_a_failed_rerun_keeps_the_last_plot_and_following_goes_on(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
-    window.view = window.live_feed.publish(revision([1]))
+    window.view = window.plots.live_feed.publish(revision([1]))
     script = Gated()
     script.fail = {2}
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     dock = cast(QDockWidget, instance.dock_widget)
     assert not error_line(instance).isVisibleTo(dock)
-    window.live_feed.publish(revision([1, 2]))
+    window.plots.live_feed.publish(revision([1, 2]))
     qtbot.waitUntil(lambda: instance.result is not None and instance.result.state == "failed", timeout=10_000)
     plotted = dock.findChild(QLabel, "gated_plot")
     assert plotted is not None and plotted.text() == "rev 1 · 1 shots"  # The last good plot stays.
@@ -1044,10 +1051,10 @@ def test_a_failed_rerun_keeps_the_last_plot_and_following_goes_on(
     assert error_line(instance).text() == "⚠ rev 2 failed: bad rev 2 · showing rev 1"
     # The settings name what the plot shows, not the failed run's data.
     assert instance.input_label.text() == "Input: run_L · rev 1 · following Live"
-    assert window.panel_right_top_plot_settings.chooser.itemText(0) == "Gated (1) · run_L · rev 1"
+    assert window.plots.panel_right_top_plot_settings.chooser.itemText(0) == "Gated (1) · run_L · rev 1"
     assert "#b26a00" in error_line(instance).styleSheet()
     assert source(instance).text().startswith("Data source: run_L · rev 1 · following Live")
-    window.live_feed.publish(revision([1, 2, 3]))
+    window.plots.live_feed.publish(revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 3, timeout=10_000)
     assert not error_line(instance).isVisibleTo(dock) and instance.error == ""
 
@@ -1058,16 +1065,16 @@ def test_a_floating_plot_runs_and_follows_with_its_settings_in_its_window(
     Live, Rerun and unapplied edits) moves with it, its header names its settings, and closing
     it while floating and running cancels the run and leaves nothing behind."""
     ended = results_of(runner)
-    window.middle_mainwindow.show()
-    window.view = window.live_feed.publish(revision([1]))
+    window.plots.middle_mainwindow.show()
+    window.view = window.plots.live_feed.publish(revision([1]))
     script = Gated()
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     dock = cast(AnalysisDock, instance.dock_widget)
     page = cast(QWidget, instance.param_tab)
-    settings = window.panel_right_top_plot_settings
+    settings = window.plots.panel_right_top_plot_settings
     script.go.clear()
-    window.live_feed.publish(revision([1, 2]))
+    window.plots.live_feed.publish(revision([1, 2]))
     qtbot.waitUntil(lambda: script.started == [1, 2], timeout=10_000)
     dock.setFloating(True)  # While the Live rerun runs.
     dock.show()
@@ -1075,14 +1082,14 @@ def test_a_floating_plot_runs_and_follows_with_its_settings_in_its_window(
     assert dock.settings.page is page and settings.stack.currentWidget() is settings.away
     toggle = dock.settings.toggle
     assert toggle.name == "Gated (1) · run_L · rev 1" and toggle.summary == dock.property("plotSourceSettings")
-    window.live_feed.publish(revision([1, 2, 3]))  # Waits for the run in flight.
+    window.plots.live_feed.publish(revision([1, 2, 3]))  # Waits for the run in flight.
     script.go.set()
     qtbot.waitUntil(lambda: shown_revision(instance) == 3, timeout=10_000)
     assert script.started == [1, 2, 3] and toggle.name == "Gated (1) · run_L · rev 3"
     assert source(instance).text().startswith("Data source: run_L · rev 3 · following Live")
     # Its Live settings, in its window: Follow Live off pins it.
     set_live(instance, FOLLOW, False)
-    window.live_feed.publish(revision(range(1, 5)))
+    window.plots.live_feed.publish(revision(range(1, 5)))
     assert instance.follow_text() == "pinned (Follow Live off) · 1 newer shot"
     # Unapplied edits and Rerun stay with the page, floating and docked again.
     root = cast(Any, instance.parameter_root)
@@ -1100,8 +1107,8 @@ def test_a_floating_plot_runs_and_follows_with_its_settings_in_its_window(
     script.go.clear()
     instance.rerun_button.click()
     qtbot.waitUntil(lambda: len(script.started) == 5, timeout=10_000)
-    window.close_plots()  # As closing the main window does.
-    assert instance.is_closed and settings.plots() == [] and not window.dock_widgets
+    window.plots.close_plots()  # As closing the main window does.
+    assert instance.is_closed and settings.plots() == [] and not window.plots.dock_widgets
     script.go.set()
     qtbot.waitUntil(lambda: runner.running() == 0, timeout=10_000)
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
@@ -1110,7 +1117,7 @@ def test_a_floating_plot_runs_and_follows_with_its_settings_in_its_window(
 
 
 def test_a_first_run_that_fails_shows_why(window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
-    window.view = window.live_feed.publish(revision([1]))
+    window.view = window.plots.live_feed.publish(revision([1]))
     script = Gated()
     script.fail = {1}
     instance = plot(window, qtbot, script)
@@ -1118,7 +1125,7 @@ def test_a_first_run_that_fails_shows_why(window: Window, runner: AnalysisRunner
     assert instance.shown is None and instance.status_label.text() == "Failed: bad rev 1"
     texts = [label.text() for label in cast(QDockWidget, instance.dock_widget).findChildren(QLabel)]
     assert "Gated failed: bad rev 1" in texts
-    window.live_feed.publish(revision([1, 2]))  # Still following: the next revision is plotted.
+    window.plots.live_feed.publish(revision([1, 2]))  # Still following: the next revision is plotted.
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
 
 
@@ -1127,15 +1134,15 @@ def test_live_off_catches_up_at_once_then_stays(
         window: Window, runner: AnalysisRunner, qtbot: QtBot, held_by: str) -> None:
     """Shots the policy held back run once more as soon as Live stops, whatever the policy;
     then the plot stays at that revision."""
-    window.view = window.live_feed.publish(revision([1]))
+    window.view = window.plots.live_feed.publish(revision([1]))
     policy = LivePolicy(every_shots=5) if held_by == "every N shots" else LivePolicy(min_delay=60.0)
     script = Gated(policy)
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
-    window.live_feed.publish(revision([1, 2]))
-    window.live_feed.publish(revision([1, 2, 3]))
+    window.plots.live_feed.publish(revision([1, 2]))
+    window.plots.live_feed.publish(revision([1, 2, 3]))
     assert script.started == [1] and instance.follow.waiting() == 2  # Held back.
-    window.live_feed.stop(PATH)  # Live off (or another tab, or an error).
+    window.plots.live_feed.stop(PATH)  # Live off (or another tab, or an error).
     qtbot.waitUntil(lambda: shown_revision(instance) == 3, timeout=10_000)
     assert script.started == [1, 3]  # One catch-up, on the last revision, at once.
     assert not instance._follow_timer.isActive() and instance.follow.pending is None
@@ -1147,15 +1154,15 @@ def test_live_off_catches_up_at_once_then_stays(
 
 def test_live_off_during_a_run_catches_up_after_it(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
-    window.view = window.live_feed.publish(revision([1]))
+    window.view = window.plots.live_feed.publish(revision([1]))
     script = Gated(LivePolicy(every_shots=5))
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     script.go.clear()
     instance.run()  # A run in flight (Rerun with these settings).
     qtbot.waitUntil(lambda: script.started == [1, 1], timeout=10_000)
-    window.live_feed.publish(revision([1, 2]))
-    window.live_feed.stop(PATH)
+    window.plots.live_feed.publish(revision([1, 2]))
+    window.plots.live_feed.stop(PATH)
     assert instance.follow_text() == "Live off · 1 new shot waiting"  # Never cancels the run.
     script.go.set()
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
@@ -1164,13 +1171,13 @@ def test_live_off_during_a_run_catches_up_after_it(
 
 def test_a_pinned_plot_doesnt_catch_up_when_live_stops(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
-    window.view = window.live_feed.publish(revision([1]))
+    window.view = window.plots.live_feed.publish(revision([1]))
     script = Gated(LivePolicy(every_shots=5))
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
-    window.live_feed.publish(revision([1, 2]))
+    window.plots.live_feed.publish(revision([1, 2]))
     set_live(instance, FOLLOW, False)
-    window.live_feed.stop(PATH)
+    window.plots.live_feed.stop(PATH)
     qtbot.wait(50)
     assert script.started == [1] and shown_revision(instance) == 1
 
@@ -1256,8 +1263,8 @@ def test_a_plot_follows_live_from_an_empty_folder_to_its_first_shots(
     window = Window(explorer)
     qtbot.addWidget(window)
     assert explorer.start_live()
-    start = window.live_feed.latest(path)
-    assert start is not None and start.shots == {} and window.current_dataset_view() is start
+    start = window.plots.live_feed.latest(path)
+    assert start is not None and start.shots == {} and window.plots.current_dataset_view() is start
     instance = plot(window, qtbot, basic_plots.CountsPerShot())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     dock = cast(QDockWidget, instance.dock_widget)
@@ -1282,14 +1289,14 @@ def test_a_plot_follows_live_from_an_empty_folder_to_its_first_shots(
     session = explorer.live
     assert session is not None
     explorer._live_halt(session, "Folder not found — is its drive connected?")
-    assert window.live_feed.latest(path) is None and "following Live" not in source(instance).text()
+    assert window.plots.live_feed.latest(path) is None and "following Live" not in source(instance).text()
     explorer.resume_live()
-    assert window.live_feed.latest(path) is not None and instance.follow_text() == "following Live"
+    assert window.plots.live_feed.latest(path) is not None and instance.follow_text() == "following Live"
     # Live off (as switching tabs does): the plot keeps its revision and stops following.
     explorer.stop_live(save=False)
-    assert window.live_feed.latest(path) is None and shown_revision(instance) == 3
+    assert window.plots.live_feed.latest(path) is None and shown_revision(instance) == 3
     assert "following Live" not in source(instance).text() and instance.follow_text() == ""
-    window.close_plots()
+    window.plots.close_plots()
     explorer.close_cleanup()
 
 
@@ -1306,7 +1313,7 @@ def test_auto_orders_are_found_again_on_each_rerun_and_manual_fixes_them(
         return Dataset(PATH, f"orders-{centre}-{shots.stop}", data, {
             "fingerprint": [[shot, 100 + shot, 1_000 + shot] for shot in shots]}, 0)
 
-    window.view = window.live_feed.publish(orders(2.0, range(1, 3)))
+    window.view = window.plots.live_feed.publish(orders(2.0, range(1, 3)))
     instance = plot(window, qtbot, transfer_fractions.TransferFractions())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     first = cast(AnalysisResult, instance.shown).data
@@ -1314,7 +1321,7 @@ def test_auto_orders_are_found_again_on_each_rerun_and_manual_fixes_them(
     # The orders move (shots 3–4 arrive later in T): auto finds them again in the new data.
     moved = orders(2.0, range(1, 3))
     later = orders(2.004, range(3, 5))
-    window.live_feed.publish(Dataset(PATH, "orders-moved", {**moved.data, **later.data},
+    window.plots.live_feed.publish(Dataset(PATH, "orders-moved", {**moved.data, **later.data},
                                      {"fingerprint": moved.metadata["fingerprint"] + later.metadata["fingerprint"]}, 0))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
     second = cast(AnalysisResult, instance.shown).data
@@ -1324,7 +1331,7 @@ def test_auto_orders_are_found_again_on_each_rerun_and_manual_fixes_them(
     assert root is not None
     parameter_of(root, transfer_fractions.MODE).setValue(transfer_fractions.MANUAL)
     manual_centre = parameter_of(root, transfer_fractions.CENTRE).value()
-    window.live_feed.publish(Dataset(PATH, "orders-more", {**moved.data, **later.data, **orders(2.01, range(5, 6)).data},
+    window.plots.live_feed.publish(Dataset(PATH, "orders-more", {**moved.data, **later.data, **orders(2.01, range(5, 6)).data},
                                      {"fingerprint": [[shot, 100 + shot, 1_000 + shot] for shot in range(1, 6)]}, 0))
     qtbot.waitUntil(lambda: shown_revision(instance) == 3, timeout=10_000)
     third = cast(AnalysisResult, instance.shown).data
@@ -1342,21 +1349,21 @@ def test_the_main_window_feeds_its_live_tab_to_the_plots(qtbot: QtBot, runner: A
     assert isinstance(explorer, FolderExplorer)
     path = explorer.selected_path_globally
     ended: list[str] = []
-    window.live_feed.ended.connect(ended.append)
+    window.plots.live_feed.ended.connect(ended.append)
     first = revision([1], path)
     explorer.displayed_dataset = first
     explorer.live = LiveSession(path, time.time(), {1}, first)
     explorer.liveChanged.emit()
-    view = window.live_feed.latest(path)
+    view = window.plots.live_feed.latest(path)
     assert view is not None and view.shot_numbers == (1,)
     explorer.displayed_dataset = revision([1, 2], path)
     explorer.dataLoaded.emit(path)
-    newest = window.live_feed.latest(path)
+    newest = window.plots.live_feed.latest(path)
     assert newest is not None and newest.revision == view.revision + 1
-    assert window.current_dataset_view() is newest
+    assert window.plots.current_dataset_view() is newest
     explorer.live = None
     explorer.liveChanged.emit()
-    assert window.live_feed.latest(path) is None and ended == [path]
+    assert window.plots.live_feed.latest(path) is None and ended == [path]
     explorer.displayed_dataset = None
     window._quit_now = True
 
@@ -1406,7 +1413,7 @@ def test_an_error_stopping_live_checks_catches_plots_up(
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
     assert script.started == [1, 2] and cast(AnalysisResult, instance.shown).coverage.shots == (1, 2)
     explorer.stop_live(save=False)
-    window.close_plots()
+    window.plots.close_plots()
     explorer.close_cleanup()
 
 
@@ -1454,7 +1461,7 @@ def test_a_following_plot_keeps_following_in_every_library_and_after_switching(
     follow in it."""
     from helab.analysis.backends import BACKEND, DRAWING_GROUP, PLOTLY
     script = cast(DatasetAnalysis, script_class())
-    window.view = window.live_feed.publish(lab_revision([1, 2]))
+    window.view = window.plots.live_feed.publish(lab_revision([1, 2]))
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     set_live(instance, DELAY, 0.0)
@@ -1465,7 +1472,7 @@ def test_a_following_plot_keeps_following_in_every_library_and_after_switching(
     first = drawn(instance, kind)
     assert first is not None and shown_revision(instance) == 1  # Drawn again, not rerun.
     old = weakref.ref(first)
-    window.live_feed.publish(lab_revision([1, 2, 3]))
+    window.plots.live_feed.publish(lab_revision([1, 2, 3]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
     now = drawn(instance, kind)
     assert now is not None and "rev 2" in source(instance).text()
@@ -1479,7 +1486,7 @@ def test_a_following_plot_keeps_following_in_every_library_and_after_switching(
     other = next(name for name in ("Matplotlib", "Plotly", "PyQtGraph") if name != backend)
     library.setValue(other)
     assert drawn(instance, drawn_type(script, other)) is not None and shown_revision(instance) == 2
-    window.live_feed.publish(lab_revision([1, 2, 3, 4]))
+    window.plots.live_feed.publish(lab_revision([1, 2, 3, 4]))
     qtbot.waitUntil(lambda: shown_revision(instance) == 3, timeout=10_000)
     assert drawn(instance, drawn_type(script, other)) is not None
     assert "Drawn with " + other in source(instance).toolTip()
@@ -1490,7 +1497,7 @@ def test_transfer_fractions_highlight_follows_lives_newest_shot(
         window: Window, runner: AnalysisRunner, qtbot: QtBot, backend: str) -> None:
     """The T histogram's highlighted shot is Live's latest one, in place in every library."""
     from helab.analysis.backends import BACKEND, DRAWING_GROUP
-    window.view = window.live_feed.publish(lab_revision([1, 2]))
+    window.view = window.plots.live_feed.publish(lab_revision([1, 2]))
     instance = plot(window, qtbot, transfer_fractions.TransferFractions())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     set_live(instance, DELAY, 0.0)
@@ -1501,7 +1508,7 @@ def test_transfer_fractions_highlight_follows_lives_newest_shot(
     qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
     content = instance._content
     for shot in (3, 4):
-        window.live_feed.publish(lab_revision(range(1, shot + 1)))
+        window.plots.live_feed.publish(lab_revision(range(1, shot + 1)))
         qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == shot,
                         timeout=10_000)
         assert instance._content is content  # In place.

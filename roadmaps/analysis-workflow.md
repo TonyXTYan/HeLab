@@ -12,7 +12,7 @@ before expanding the script catalogue.
 ## Current foundation
 
 Script discovery and action buttons exist in `ScriptsManager` and
-`ScriptTreeSelector` (the right-hand panel). `helab/scripts/` is this analysis
+`TreePanelWidget` (the right-hand panel, `helab/views/plots/script_tree.py`). `helab/scripts/` is this analysis
 script system: the panel lists the bundled analyses in `standard/` (group
 "Plots": 3D scatter, counts per shot, T/X/Y histograms, 2026-10-19) and any
 folder loaded with Load Scripts…; `legacy_plotly/` holds the lab's older Plotly figures.

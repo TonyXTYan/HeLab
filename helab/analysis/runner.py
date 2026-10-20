@@ -4,164 +4,59 @@ A local, in-process first step towards the shared job runner
 (``roadmaps/analysis-job-runner.md``): each job gets an immutable ``AnalysisContext`` when
 it is submitted, so nothing that happens in the browser afterwards changes its input. One
 daemon thread computes (NumPy releases the GIL for the heavy parts); results come back on
-the GUI thread through ``finished`` and are kept in RAM (``RamResults``).
+the GUI thread through ``finished`` and are kept in RAM (``RamResults``). The queue, worker
+and cancellation are Qt-free (``helab.analysis.runner_core.AnalysisQueue``); ``AnalysisRunner``
+adds the signals.
 """
 from __future__ import annotations
 
-import itertools
-import logging
-import queue
-import threading
-import time
-from types import MappingProxyType
 from typing import Any, Mapping, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from helab.analysis.dataset_view import DatasetView
-from helab.analysis.parameters import effective, unused_parameters
-from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, Coverage, RamResults, State
+from helab.analysis.results import AnalysisContext, AnalysisResult, RamResults
+from helab.analysis.runner_core import AnalysisQueue
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-
-_Job = tuple[DatasetAnalysis, AnalysisContext]
 
 
 class AnalysisRunner(QObject):
+    """The app's analysis runner: an ``AnalysisQueue`` (``core``) whose job starts and ends are
+    Qt signals. They are emitted on the worker thread, as the core calls them, and Qt delivers
+    them to receivers on the GUI thread."""
     # (job_id) when a job starts computing; (AnalysisResult) when it ends, however it ends.
     started = pyqtSignal(str)
     finished = pyqtSignal(object)
 
     def __init__(self, results: Optional[RamResults] = None, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
-        self.results = results if results is not None else RamResults()
-        self._queue: queue.Queue[_Job | None] = queue.Queue()
-        self._contexts: dict[str, AnalysisContext] = {}
-        self._lock = threading.Lock()
-        # The worker stays registered until it has exited, so there is never a second one.
-        self._thread: threading.Thread | None = None
-        self._stopping = False
-        self._ids = itertools.count(1)
+        self.core = AnalysisQueue(results, self._started, self._finished)
+        self.results = self.core.results
+
+    def _started(self, job_id: str) -> None:
+        self.started.emit(job_id)
+
+    def _finished(self, result: AnalysisResult) -> None:
+        self.finished.emit(result)
 
     def submit(self, script: DatasetAnalysis, metadata: ScriptMetadata, action: str,
                view: DatasetView, values: Optional[Mapping[str, Any]] = None,
                constants: Optional[Mapping[str, Mapping[str, float]]] = None, owner: str = "",
                live: bool = False) -> AnalysisContext:
-        """Queue ``action`` on ``view`` with ``values`` validated against its declared parameters,
-        and the lab and folder layers of the constants taken now (``constants``: {"lab": …,
-        "folder": …}; GUI thread). An analysis that uses constants gets them resolved with its own
-        values now too (``DatasetAnalysis.run_constants``), in its context and its result.
-        The run's coverage is the shots the script says it uses (all of them if it can't say).
-        ``owner``: the plot asking (``AnalysisContext.owner``); ``live``: a rerun following Live
-        (``AnalysisContext.live``).
-        Raises ``RuntimeError`` while the runner is stopping (until its worker has exited)."""
-        parameters = effective(script.parameters(action), values)
-        try:
-            coverage = Coverage.of(view, script.covered_shots(action, parameters, view))
-        except Exception:
-            logging.exception("Coverage of %s: all shots", metadata.name)
-            coverage = Coverage.of(view)
-        layers = MappingProxyType({name: MappingProxyType(dict(values))
-                                  for name, values in (constants or {}).items()})
-        keys: tuple[str, ...] = ()
-        try:
-            keys = tuple(script.constant_keys(action))
-            resolved = script.run_constants(action, parameters, layers) if keys else None
-        except Exception:
-            logging.exception("Constants of %s: none resolved", metadata.name)
-            resolved = None
-        if resolved is not None:
-            try:  # The keys this run uses; all the analysis declares if it can't say.
-                keys = tuple(script.run_constant_keys(action, parameters))
-            except Exception:
-                logging.exception("Constant keys of %s: all of them", metadata.name)
-        context = AnalysisContext(f"a{next(self._ids)}", action, view, parameters, metadata.identity(),
-                                  unused=unused_parameters(script.parameters(action), parameters),
-                                  coverage=coverage, constants=layers, resolved_constants=resolved,
-                                  constant_keys=keys if resolved is not None else (), owner=owner, live=live)
-        with self._lock:
-            if self._stopping:
-                raise RuntimeError("The analysis runner is stopping")
-            self._contexts[context.job_id] = context
-            if self._thread is None:
-                self._thread = threading.Thread(target=self._work, name="AnalysisWorker", daemon=True)
-                self._thread.start()
-        self._queue.put((script, context))
-        return context
+        """Queue ``action`` on ``view`` (GUI thread; ``AnalysisQueue.submit``). Raises
+        ``RuntimeError`` while the runner is stopping (until its worker has exited)."""
+        return self.core.submit(script, metadata, action, view, values, constants, owner=owner, live=live)
 
     def cancel(self, job_id: str) -> None:
         """Ask a queued or running job to stop; it ends as ``cancelled`` (cooperatively)."""
-        with self._lock:
-            context = self._contexts.get(job_id)
-        if context is not None:
-            context.cancel_event.set()
+        self.core.cancel(job_id)
 
     def running(self) -> int:
-        with self._lock:
-            return len(self._contexts)
+        return self.core.running()
 
     def stop(self, timeout: float = 5.0) -> bool:
-        """Cancel every job and end the worker; True once it has exited. A computation that
-        ignores cancellation may outlast ``timeout``: the worker then stays registered and
-        submissions are refused until it exits (it then frees the runner for a new worker)."""
-        with self._lock:
-            contexts, thread = list(self._contexts.values()), self._thread
-            if thread is not None and not self._stopping:
-                self._stopping = True
-                self._queue.put(None)
-        for context in contexts:
-            context.cancel_event.set()
-        if thread is not None:
-            thread.join(timeout=timeout)
-            return not thread.is_alive()
-        return True
-
-    def _work(self) -> None:
-        try:
-            self._run_jobs()
-        finally:
-            with self._lock:
-                self._thread, self._stopping = None, False
-
-    def _run_jobs(self) -> None:
-        while (job := self._queue.get()) is not None:
-            self._run(*job)
-            # Nothing of the job stays referenced while the worker waits for the next one: a plot
-            # released to free RAM must free its input (``helab.analysis.budget``).
-            del job
-
-    @staticmethod
-    def _found(script: DatasetAnalysis, context: AnalysisContext, data: Any) -> dict[str, Any]:
-        """The run's ``found`` record; a script whose record fails still has its result (the
-        plot draws, without those record lines), and the error is logged."""
-        try:
-            return script.result_found(context.action, data)
-        except Exception:
-            logging.exception("Analysis %s: its record of what the run found failed", context.analysis.short())
-            return {}
-
-    def _run(self, script: DatasetAnalysis, context: AnalysisContext) -> None:
-        started = time.time()
-        if context.cancelled():
-            result = AnalysisResult.of(context, "cancelled", started_at=started)
-        else:
-            self.started.emit(context.job_id)
-            try:
-                data = script.compute(context.action, context)
-                state: State = "cancelled" if context.cancelled() else "completed"
-                found = self._found(script, context, data) if state == "completed" else {}
-                result = AnalysisResult.of(context, state, data if state == "completed" else None,
-                                           started_at=started, found=found)
-            except Cancelled:
-                result = AnalysisResult.of(context, "cancelled", started_at=started)
-            except Exception as error:
-                logging.exception("Analysis %s failed", context.analysis.short())
-                result = AnalysisResult.of(context, "failed", error=str(error) or type(error).__name__,
-                                           started_at=started)
-        with self._lock:
-            self._contexts.pop(context.job_id, None)
-        if result.state == "completed":
-            self.results.add(result)
-        self.finished.emit(result)
+        """Cancel every job and end the worker; True once it has exited (``AnalysisQueue.stop``)."""
+        return self.core.stop(timeout)
 
 
 _runner: AnalysisRunner | None = None

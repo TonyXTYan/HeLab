@@ -69,6 +69,14 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 @pytest.fixture(autouse=True)
+def private_settings(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each test's app settings are an ini file of its own (``settings_store.app_settings``), never
+    the machine's native store. In a folder apart from ``tmp_path``, which tests list."""
+    folder = tmp_path_factory.mktemp("settings")
+    monkeypatch.setenv("HELAB_TEST_SETTINGS_FILE", str(folder / "helab-settings.ini"))
+
+
+@pytest.fixture(autouse=True)
 def no_real_data(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """New tabs start in an empty temp folder; a test whose helpers were refused a source path
     that could be real data (``io_ops.infra._guard``) fails, naming it. A refusal noted after its
@@ -195,8 +203,8 @@ def default_budget_is_newest(monkeypatch: pytest.MonkeyPatch) -> None:
 def default_constants() -> None:
     """Plots that use constants start from the table's defaults: the app-wide FolderCache keeps
     lab and folder values for the worker's whole run, and a test building a real
-    ``HelabMainWindow`` fills the lab's from the machine's own saved Lab parameters (its native
-    QSettings). Only an existing app-wide cache is reset (none is created here)."""
+    ``HelabMainWindow`` fills the lab's from its settings' saved Lab parameters. Only an existing
+    app-wide cache is reset (none is created here)."""
     from helab.utils import io_service
     service = io_service._service
     cache = service.folder_cache if service is not None else None
