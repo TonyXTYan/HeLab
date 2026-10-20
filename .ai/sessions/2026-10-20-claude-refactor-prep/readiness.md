@@ -176,6 +176,17 @@ until a browser feature needs it.
 4. **Package names:** `helab/views/plots/` and `helab/io_ops/` (proposed), or
    others.
 
+### Tony's answers (2026-10-20)
+
+1. **"Basic plots" is the group we keep developing.** The DLD group is a
+   legacy port kept for reference. It will later be broken up into modernised
+   code and features, then disabled. So slice D modernises Basic plots only.
+   DLD scripts get mechanical import updates when code they use moves, and
+   nothing else: no fixes ported to them and no dedupe into them.
+2. **Start** with slice A and the dependency lock, then the plot-UI and I/O
+   tracks.
+3. **Pin dependencies** with a lock file.
+
 ## Proposed doc changes (for the coordinator)
 
 - `roadmaps/refactoring.md`: under milestone 2, list slices A–H and the three
