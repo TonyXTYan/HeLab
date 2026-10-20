@@ -27,4 +27,13 @@ pushed. What changed and the judgement calls: [notes.md](notes.md) ("Proposed, f
 
 ## Validation
 
-See the commit messages; full-suite lines are recorded below.
+- `mypy --strict helab tests`, `pyright helab tests`: 0 errors; `git diff --check` clean.
+- Full suite before the merge (`594a652`, `-n 2 --reruns 5 --reruns-delay 1 -rR`):
+  `2 failed, 1954 passed, 7 skipped, 2 xfailed, 4 warnings, 10 rerun in 450.92s`.
+- Full suite after merging `7ff350b` (`4b7848e`): `2 failed, 1975 passed, 7 skipped, 2 xfailed,
+  4 warnings, 10 rerun in 470.58s`.
+- Both times the two failures are the root-only ones
+  (`test_constants.py::test_read_only_saved_folder_is_replaced`,
+  `test_cache_mover.py::test_recovery_isnt_usable_after_a_failed_settings_write`) and all 10
+  reruns are theirs (5 each): no other test needed a rerun.
+- Cost on 294k events: notes.md, "Cost".
