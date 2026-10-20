@@ -1,14 +1,17 @@
 """Right-click › Folder constants…: the values a folder sets for the analyses (fall distance and
-time, trap frequencies), kept in HeLab's store by the folder's data root, never next to the data.
+time, trap frequencies, release time and trap origin), kept in HeLab's store by the folder's data
+root, never next to the data.
 
 A folder's values apply to it and to its subfolders that don't set their own, up to its data
 root (proposed, for Tony). Each row says where its value comes from now: this folder, a folder
-above (inherited), the lab (Settings → Lab parameters), derived (the fall time) or the table's
-default. A folder without a disk cache keeps its values for this session only, and says so.
+above (inherited), the lab (Settings → Lab parameters), derived (the fall time), the table's
+default, or "from the data" (the release time and trap origin, which plots detect unless set). A
+folder without a disk cache keeps its values for this session only, and says so.
 
 Memory only: what FolderCache knows; saving goes through a helper (``set_folder_constants``)."""
 from __future__ import annotations
 
+import math
 import os
 
 from PyQt6.QtCore import Qt
@@ -26,6 +29,7 @@ FOLDER_ROWS: tuple[Constant, ...] = tuple(constant for constant in CONSTANTS if 
 INHERITANCE_NOTE = ("A folder's values apply to it and to its subfolders that don't set their own, up to its "
                     "data root. Plots can still override any value in their own settings.")
 DERIVED = "derived, √(2h/g)"
+FROM_THE_DATA = "from the data (Release time plot)"
 
 
 def short_name(path: str) -> str:
@@ -61,7 +65,9 @@ class FolderConstantsDialog(QDialog):
             check = QCheckBox("Set by hand" if constant.key == "fall_time" else "Set here")
             check.setChecked(constant.key in own)
             check.setToolTip("Set the fall time by hand instead of deriving it, √(2h/g), from the fall distance"
-                             if constant.key == "fall_time" else "This folder's own value")
+                             if constant.key == "fall_time" else
+                             "This folder's own value, instead of taking it from the data" if constant.optional
+                             else "This folder's own value")
             self.set_here[constant.key] = check
             box = constant_editor(constant, own.get(constant.key, 1.0))
             self.editors[constant.key] = box
@@ -120,6 +126,8 @@ class FolderConstantsDialog(QDialog):
             return f"inherited from {short_name(self._found()[key][1])}"
         if origin == "derived":
             return DERIVED
+        if origin == "detected":
+            return FROM_THE_DATA
         return "lab" if origin == "lab" else "default"
 
     def restore(self, key: str) -> None:
@@ -134,8 +142,10 @@ class FolderConstantsDialog(QDialog):
             box.setEnabled(check.isChecked())
             if not check.isChecked():
                 # The value it would have without this folder's own: what checking it starts from.
+                # An optional row with no value (from the data) starts from 0.
+                value = self.resolved(without=key).value(key)
                 box.blockSignals(True)
-                box.setValue(self.resolved(without=key).value(key))
+                box.setValue(value if math.isfinite(value) else 0.0)
                 box.blockSignals(False)
         resolved = self.resolved()
         for key, check in self.set_here.items():

@@ -30,17 +30,20 @@ SET_HERE = "this plot"
 CHOICES = (USE_LAYERS, SET_HERE)
 # Shown beside a value: where it came from.
 ORIGIN_TEXT: Mapping[Origin, str] = {"default": "default", "lab": "lab", "folder": "folder",
-                                     "plot": "this plot", "derived": "derived"}
+                                     "plot": "this plot", "derived": "derived", "detected": "from the data"}
+FROM_THE_DATA = ORIGIN_TEXT["detected"]
 # Units whose values are shown with SI prefixes (4 mm, 416 ms); the others in scientific form.
 SI_UNITS = ("m", "s", "Hz")
 # Of those, the ones always shown in one prefix, as the plots' axes (ms and mm: Tony, 2026-10-20).
 FIXED_PREFIX = {"s": "m", "m": "m"}
 LIMITS = (1e-60, 1e60)
+SIGNED_LIMITS = (-1e60, 1e60)  # a signed row's (``Constant.signed``: times and positions)
 # Short symbols for a plot's source line.
 SYMBOLS: Mapping[str, str] = {
     "hbar": "ħ", "k_B": "k_B", "u": "u", "mass": "m", "g": "g", "scattering_length": "a",
     "fall_distance": "h", "fall_time": "t_f", "trap_radial": "f_r", "trap_axial": "f_z",
-    "dld_trigger": "trigger", "dld_acquisition": "acquisition"}
+    "dld_trigger": "trigger", "dld_acquisition": "acquisition", "release_time": "t_r", "trap_x": "x₀",
+    "trap_y": "y₀"}
 
 
 def value_name(key: str) -> str:
@@ -54,8 +57,14 @@ def source_name(key: str) -> str:
 
 
 def default_value(key: str) -> float:
-    """The table's value of ``key`` (the fall time derived from the defaults)."""
-    return DEFAULTS.value(key)
+    """The table's value of ``key`` (the fall time derived from the defaults); 0 for an optional
+    row, which has none (what a plot's own value starts from)."""
+    return DEFAULTS.value(key) if DEFAULTS.is_set(key) else 0.0
+
+
+def limits(key: str) -> tuple[float, float]:
+    """The values an editor of ``key`` allows: any for a signed row, else positive ones."""
+    return SIGNED_LIMITS if TABLE[key].signed else LIMITS
 
 
 def is_constant(spec: ParameterSpec) -> bool:
@@ -85,7 +94,7 @@ def constants_specs(keys: Sequence[str], *, group: str = GROUP, page: str = "") 
                                    group=group, page=page,
                                    tip=f"Where the run takes {constant.title} from. {tip}"))
         specs.append(ParameterSpec(value_name(key), f"{constant.title}, this plot", "float", default_value(key),
-                                   limits=LIMITS, suffix=constant.unit, group=group, page=page,
+                                   limits=limits(key), suffix=constant.unit, group=group, page=page,
                                    when=(source_name(key), SET_HERE), si=constant.unit in SI_UNITS,
                                    # Times in ms and lengths in mm, as in the plots (Tony, 2026-10-20).
                                    unit_prefix=FIXED_PREFIX.get(constant.unit),
@@ -100,8 +109,9 @@ def constant_keys(specs: Iterable[ParameterSpec]) -> tuple[str, ...]:
 
 
 def clean_layer(values: object, keys: Iterable[str] | None = None) -> dict[str, float]:
-    """A layer's values that ``resolve`` accepts: known keys (of ``keys``, if given) with finite,
-    positive numbers. Anything else (a newer HeLab's key, text, nan) is left out."""
+    """A layer's values that ``resolve`` accepts: known keys (of ``keys``, if given) with finite
+    numbers, positive unless the row is signed (``Constant.accepts``). Anything else (a newer
+    HeLab's key, text, nan) is left out."""
     if not isinstance(values, Mapping):
         return {}
     allowed = set(TABLE if keys is None else keys) & set(TABLE)
@@ -113,7 +123,7 @@ def clean_layer(values: object, keys: Iterable[str] | None = None) -> dict[str, 
             number = float(value)
         except (TypeError, ValueError, OverflowError):
             continue
-        if math.isfinite(number) and number > 0:
+        if TABLE[str(key)].accepts(number):
             cleaned[str(key)] = number
     return cleaned
 
@@ -147,8 +157,11 @@ def resolve_for_run(values: Mapping[str, Any], lab: Mapping[str, float] | None =
 def value_text(key: str, value: float) -> str:
     """``value`` with its unit, short: 848 mm, 416.101 ms, 20,500 ms, 9.79602 m/s², 500 Hz,
     6.64648e-27 kg: lengths in mm and times in ms (``FIXED_PREFIX``, as the plots and the settings
-    show them), Hz with an SI prefix, the others in scientific form."""
+    show them), Hz with an SI prefix, the others in scientific form; "from the data" for an
+    optional row without a value (nan)."""
     unit = TABLE[key].unit
+    if math.isnan(value) and TABLE[key].optional:
+        return FROM_THE_DATA
     if unit == "s":
         return time_text(value)
     if unit == "m":
@@ -164,17 +177,27 @@ def origin_text(constants: ResolvedConstants, key: str) -> str:
     return f"{text}, unconfirmed" if key in constants.unconfirmed else text
 
 
+def value_and_origin(constants: ResolvedConstants, key: str) -> str:
+    """``848 mm (folder)``; ``from the data`` for an optional row no layer set."""
+    if not constants.is_set(key):
+        return FROM_THE_DATA
+    return f"{value_text(key, constants.value(key))} ({origin_text(constants, key)})"
+
+
 def describe_constants(constants: ResolvedConstants, keys: Iterable[str], *, every: bool = False) -> str:
     """``h 0.85 m (folder) · t_f 0.416 s (derived)``: the ``keys`` a plot uses, for its source line.
     Without ``every``, only values not from the table's defaults (the record has them all)."""
-    shown = [f"{SYMBOLS.get(key, key)} {value_text(key, constants.value(key))} ({origin_text(constants, key)})"
+    shown = [f"{SYMBOLS.get(key, key)} {value_and_origin(constants, key)}"
              for key in keys if every or not from_defaults(constants, key)]
     return " · ".join(shown)
 
 
 def from_defaults(constants: ResolvedConstants, key: str) -> bool:
-    """Whether ``key`` is the table's default (a derived fall time: when its distance and g are)."""
+    """Whether ``key`` is the table's default (a derived fall time: when its distance and g are; an
+    optional row no layer set, which a run takes from the data: yes)."""
     origin = constants.origins[key]
+    if origin == "detected":
+        return True
     if origin == "derived":
         return all(constants.origins[other] == "default" for other in ("fall_distance", "g"))
     return origin == "default"
@@ -183,12 +206,16 @@ def from_defaults(constants: ResolvedConstants, key: str) -> bool:
 def record_text(constants: ResolvedConstants, keys: Iterable[str] | None = None) -> str:
     """The constants an analysis uses (``keys``; every constant without), each with its origin, one
     line, for a result's record (the tooltip), then any notes."""
-    text = ", ".join(f"{SYMBOLS.get(key, key)} = {value_text(key, constants.value(key))} "
-                     f"({origin_text(constants, key)})" for key in (TABLE if keys is None else keys))
+    text = ", ".join(f"{SYMBOLS.get(key, key)} " + (f"= {value_and_origin(constants, key)}" if constants.is_set(key)
+                                                    else FROM_THE_DATA)
+                     for key in (TABLE if keys is None else keys))
     return text + "".join(f"\nNote: {note}" for note in constants.notes)
 
 
 def changed_keys(old: ResolvedConstants, new: ResolvedConstants, keys: Iterable[str] | None = None) -> list[str]:
-    """The keys (all, or of ``keys``) whose value or origin differs."""
-    return [key for key in (TABLE if keys is None else keys)
-            if old.value(key) != new.value(key) or old.origins[key] != new.origins[key]]
+    """The keys (all, or of ``keys``) whose value or origin differs (two unset optional rows, nan
+    both, don't)."""
+    def same(key: str) -> bool:
+        before, after = old.value(key), new.value(key)
+        return (before == after or (math.isnan(before) and math.isnan(after))) and old.origins[key] == new.origins[key]
+    return [key for key in (TABLE if keys is None else keys) if not same(key)]

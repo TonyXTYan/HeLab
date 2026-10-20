@@ -80,6 +80,7 @@ ORIGIN_WINDOW = 3.0  # … and within this many robust σ (1.4826 MAD) of their 
 ORIGIN_BACKGROUND_NOTE = 0.05  # a background share of the origin's events above this: noted
 ORIGIN_MOST = 0.5  # the window covering more than this share of the slice's XY extent: share unknown
 NO_ORIGIN = (Estimate(math.nan), Estimate(math.nan))
+XYWindow = tuple[tuple[float, float], tuple[float, float]]  # ((X low, X high), (Y low, Y high))
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,11 @@ class ReleaseTime:
     origin: tuple[Estimate, Estimate] = NO_ORIGIN  # the rest cloud's (X, Y) centre (m)
     origin_events: int = 0  # events the origin came from
     origin_background: float = math.nan  # the background's estimated share of them
+    # What a plot draws: the fit's T window, the origin's T slice (arrival ± this half-width) and
+    # its XY window ((X low, X high), (Y low, Y high)), all nan when not found.
+    fit_window: tuple[float, float] = (math.nan, math.nan)
+    origin_half: float = math.nan
+    origin_window: XYWindow = ((math.nan, math.nan), (math.nan, math.nan))
 
     @property
     def ok(self) -> bool:
@@ -130,7 +136,10 @@ class ReleaseTime:
                 "within_run_se": finite_or_none(self.within_run_se),
                 "bootstrap": self.bootstrap.as_record() if self.bootstrap is not None else None,
                 "origin": {"x": self.origin[0].as_record(), "y": self.origin[1].as_record(),
-                           "events": self.origin_events, "background": finite_or_none(self.origin_background)}}
+                           "events": self.origin_events, "background": finite_or_none(self.origin_background),
+                           "half": finite_or_none(self.origin_half),
+                           "window": [[finite_or_none(end) for end in axis] for axis in self.origin_window]},
+                "fit_window": [finite_or_none(end) for end in self.fit_window]}
 
 
 def manual_release_time(release_time: float, constants: ResolvedConstants) -> ReleaseTime:
@@ -140,6 +149,23 @@ def manual_release_time(release_time: float, constants: ResolvedConstants) -> Re
         return ReleaseTime(Estimate(math.nan), "manual", constants.fall_time,
                            failure="the release time set by hand isn't a number", error="none")
     return ReleaseTime(Estimate(value), "manual", constants.fall_time, error="none")
+
+
+def layer_release_time(constants: ResolvedConstants) -> ReleaseTime | None:
+    """The release time a layer sets (the lab, a folder, e.g. by the Release time plot's "Use for
+    this folder", or the plot), as ``manual_release_time``; None when none does (origin "detected"):
+    the run detects it then (``bootstrap_release_time``)."""
+    if not constants.is_set("release_time"):
+        return None
+    return manual_release_time(constants.release_time, constants)
+
+
+def layer_origin(constants: ResolvedConstants) -> tuple[float, float] | None:
+    """The trap's XY origin the layers set (``trap_x``, ``trap_y``), for ``velocity_origin``'s
+    ``manual``; None unless both are set (one alone isn't an origin)."""
+    if not (constants.is_set("trap_x") and constants.is_set("trap_y")):
+        return None
+    return constants.trap_x, constants.trap_y
 
 
 def velocity_origin(release: ReleaseTime | None, manual: tuple[float, float] | None = None
@@ -221,11 +247,15 @@ def detect_release_time(times: npt.ArrayLike, constants: ResolvedConstants, lowe
         notes.append(f"the cloud is wide (σ_t {width.value * 1e3:.3g} ms): its arrival is skewed, so the "
                      f"centre may be off by up to {skew * 1e6:.3g} µs")
     origin, origin_events, background = NO_ORIGIN, 0, math.nan
+    half, window = math.nan, ((math.nan, math.nan), (math.nan, math.nan))
     if xy is not None:
-        origin, origin_events, background = _origin(values, xy, arrival.value, width.value, reach, notes)
+        origin, origin_events, background, half, window = _origin_drawn(values, xy, arrival.value, width.value,
+                                                                        reach, notes)
     return ReleaseTime(Estimate(arrival.value - t_f, arrival.se), "detected", t_f, arrival, width, "",
                        tuple(notes), len(values), search.peaks, fit, within_run_se=arrival.se, origin=origin,
-                       origin_events=origin_events, origin_background=background)
+                       origin_events=origin_events, origin_background=background,
+                       fit_window=(cloud.position - reach, cloud.position + reach), origin_half=half,
+                       origin_window=window)
 
 
 def _split(shot: npt.ArrayLike) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64] | None]:
@@ -337,10 +367,18 @@ def _mean_arrival(near: npt.NDArray[np.float64], reach: float, reason: str, note
 
 def _origin(values: npt.NDArray[np.float64], xy: npt.NDArray[np.float64], arrival: float, width: float,
             reach: float, notes: list[str]) -> tuple[tuple[Estimate, Estimate], int, float]:
+    """``_origin_drawn`` without what a plot draws."""
+    origin, events, share, _, _ = _origin_drawn(values, xy, arrival, width, reach, notes)
+    return origin, events, share
+
+
+def _origin_drawn(values: npt.NDArray[np.float64], xy: npt.NDArray[np.float64], arrival: float, width: float,
+                  reach: float, notes: list[str]
+                  ) -> tuple[tuple[Estimate, Estimate], int, float, float, XYWindow]:
     """(the rest cloud's (X, Y) centre ± s/√n (within run), its events, the background's
-    estimated share of them), from the events within ``ORIGIN_SIGMAS`` σ_t of its arrival
-    (and the fit window) with finite X and Y, kept to an XY window: ±``ORIGIN_WINDOW`` robust
-    σ (1.4826 MAD) of the median, then again about the kept events' median and spread. The
+    estimated share of them, the T slice's half-width, the XY window), from the events within
+    ``ORIGIN_SIGMAS`` σ_t of its arrival (and the fit window) with finite X and Y, kept to an XY
+    window: ±``ORIGIN_WINDOW`` robust σ (1.4826 MAD) of the median, then again about the kept events' median and spread. The
     window keeps a uniform background and another cloud in the same T slice (a horizontal
     Bragg order) out of the mean unless they fall inside it. The background's share is its
     density in a frame around the window (out to twice its half-widths) times the window's
@@ -362,10 +400,12 @@ def _origin(values: npt.NDArray[np.float64], xy: npt.NDArray[np.float64], arriva
             break
         low, high = window(chosen)
         chosen = near[np.all((near >= low) & (near <= high), axis=1)]
+    unfound = ((math.nan, math.nan), (math.nan, math.nan))
     if len(chosen) < 2:
         notes.append(f"no XY origin: {len(chosen)} event{'' if len(chosen) == 1 else 's'} with finite X and Y "
                      "near the cloud's arrival")
-        return NO_ORIGIN, len(chosen), math.nan
+        return NO_ORIGIN, len(chosen), math.nan, half, unfound
+    window_xy = ((float(low[0]), float(high[0])), (float(low[1]), float(high[1])))
     root = math.sqrt(len(chosen))
     x, y = (Estimate(float(chosen[:, axis].mean()), float(np.std(chosen[:, axis], ddof=1)) / root)
             for axis in (0, 1))
@@ -383,10 +423,10 @@ def _origin(values: npt.NDArray[np.float64], xy: npt.NDArray[np.float64], arriva
                "would pull the origin towards its own centre" if most else
                "the frame around its window reaches past the T slice's events")
         notes.append(f"XY origin: background share unknown ({why})")
-        return (x, y), len(chosen), math.nan
+        return (x, y), len(chosen), math.nan, half, window_xy
     frame = near[np.all(np.abs(near - middle) <= 2 * reach_xy, axis=1)]
     share = min((len(frame) - len(chosen)) / 3 / len(chosen), 1.0)
     if share > ORIGIN_BACKGROUND_NOTE:
         notes.append(f"XY origin: about {share:.0%} of its {len(chosen):,} events are background (the density "
                      "outside its window), pulling it towards the background's centre")
-    return (x, y), len(chosen), share
+    return (x, y), len(chosen), share, half, window_xy

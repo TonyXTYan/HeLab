@@ -18,8 +18,8 @@ from helab.analysis.parameters import effective
 from helab.analysis.plot_text import AMBER, WrapLabel, line_html, notes_html, short_note
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.scripts.base import DatasetAnalysis
-from helab.scripts.standard import (basic_plots, density_images, mean_position, shot_times, t_spectrum,
-                                    transfer_fractions)
+from helab.scripts.standard import (basic_plots, density_images, mean_position, release_time, shot_times,
+                                    t_spectrum, transfer_fractions)
 from helab.utils import colours
 from helab.utils.folder_cache import Dataset
 
@@ -81,6 +81,7 @@ PLOTS: list[tuple[str, DatasetAnalysis, dict[str, Any]]] = [
     ("T spectrum", t_spectrum.TProfileSpectrum(), {"spectrum_scale": "power", "padding": 4}),
     ("shot times", shot_times.ShotTimesPlot(), {"highlight_newest": True}),
     ("transfer fractions", transfer_fractions.TransferFractions(), {}),
+    ("release time", release_time.ReleaseTimePlot(), {"n_boot": 20}),
 ]
 
 

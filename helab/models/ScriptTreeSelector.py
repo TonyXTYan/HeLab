@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 )
 from pyqtgraph.parametertree import Parameter
 
-from helab.analysis.constant_layers import (changed_keys, describe_constants, origin_text, source_name, value_text,
+from helab.analysis.constant_layers import (changed_keys, describe_constants, source_name, value_and_origin,
                                            without_constants)
 from helab.analysis.physics import TABLE, ResolvedConstants
 from helab.analysis.budget import RELOAD_GRACE, RamBudget, Restored, hollow, restore, shots_list, view_buffers
@@ -886,7 +886,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             if spec is None:
                 continue
             parameter = parameter_of(root, spec)
-            title = f"{TABLE[key].title}: {value_text(key, constants.value(key))} ({origin_text(constants, key)})"
+            title = f"{TABLE[key].title}: {value_and_origin(constants, key)}"
             if parameter.opts.get("title") != title:
                 parameter.setOpts(title=title)
 

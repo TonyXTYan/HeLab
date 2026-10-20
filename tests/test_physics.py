@@ -34,7 +34,10 @@ def test_table_values_and_metadata() -> None:
     assert {key for key, constant in TABLE.items() if constant.unconfirmed} == {
         "fall_distance", "fall_time", "trap_radial", "trap_axial", "dld_trigger", "dld_acquisition"}
     assert {key for key, constant in TABLE.items() if constant.level == "folder"} == {
-        "fall_distance", "fall_time", "trap_radial", "trap_axial"}
+        "fall_distance", "fall_time", "trap_radial", "trap_axial", "release_time", "trap_x", "trap_y"}
+    assert physics.OPTIONAL == ("release_time", "trap_x", "trap_y")
+    for key in physics.OPTIONAL:
+        assert TABLE[key].optional and TABLE[key].signed and not TABLE[key].derived and not TABLE[key].unconfirmed
 
 
 def test_fall_time_is_derived_from_the_distance() -> None:
