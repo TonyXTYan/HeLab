@@ -153,11 +153,18 @@ def folder_layer(found: Mapping[str, tuple[float, str]]) -> dict[str, float]:
     """The folder layer from inherited values (each key's value and the nearest folder at or above
     that sets it, as paths): their values, except a fall time set further up than the nearest fall
     distance. That one isn't paired with a distance set below it (as ``resolve`` keeps a lab fall
-    time from a folder's distance): the run derives it, √(2h/g), instead."""
+    time from a folder's distance): the run derives it, √(2h/g), instead. Likewise a release time
+    by hand and a saved arrival at rest (two ways of giving t_r) set in different folders: the
+    nearer folder's is kept, so a subfolder's "Use for this folder" wins over a t_r set above it
+    (``release.layer_release_time`` breaks a tie in one folder for the t_r by hand)."""
     values = {key: value for key, (value, _) in found.items()}
     if "fall_time" in found and "fall_distance" in found and (
             len(found["fall_distance"][1]) > len(found["fall_time"][1])):
         del values["fall_time"]
+    if "release_time" in found and "arrival_time" in found:
+        by_hand, saved = len(found["release_time"][1]), len(found["arrival_time"][1])
+        if by_hand != saved:
+            del values["release_time" if saved > by_hand else "arrival_time"]
     return values
 
 

@@ -18,6 +18,7 @@ from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QTabWidget, QWidget
 
 from helab.analysis import constant_layers as layers
+from helab.analysis import release
 from helab.analysis.dataset_view import DatasetView, build_view, view_of
 from helab.analysis.follow import LiveFeed
 from helab.analysis.parameter_tree import build_tree, parameter_of, tree_values
@@ -135,6 +136,24 @@ def test_a_fall_time_set_above_the_distances_folder_is_derived_again() -> None:
     assert layers.folder_layer(found) == {"fall_distance": 0.9}
     found["fall_time"] = (0.417, "/data/root/run")  # The same folder sets both: kept.
     assert layers.folder_layer(found) == {"fall_distance": 0.9, "fall_time": 0.417}
+
+
+def test_the_nearer_folders_release_time_or_saved_arrival_is_kept() -> None:
+    # A t_r by hand above, a subfolder's "Use for this folder" arrival below: the arrival wins.
+    found = {"release_time": (0.01, "/data/root"), "arrival_time": (0.43, "/data/root/run")}
+    assert layers.folder_layer(found) == {"arrival_time": 0.43}
+    resolved = resolve(folder=layers.folder_layer(found))
+    given = release.layer_release_time(resolved)
+    assert given is not None and given.arrival.value == pytest.approx(0.43)
+    assert given.value.value == pytest.approx(0.43 - resolved.fall_time)
+    # The other way round: a t_r by hand in the subfolder wins over an arrival saved above.
+    found = {"release_time": (0.01, "/data/root/run"), "arrival_time": (0.43, "/data/root")}
+    assert layers.folder_layer(found) == {"release_time": 0.01}
+    # Both in one folder: both kept, and the t_r by hand wins the tie.
+    found = {"release_time": (0.01, "/data/root/run"), "arrival_time": (0.43, "/data/root/run")}
+    assert layers.folder_layer(found) == {"release_time": 0.01, "arrival_time": 0.43}
+    given = release.layer_release_time(resolve(folder=layers.folder_layer(found)))
+    assert given is not None and given.value.value == pytest.approx(0.01)
 
 
 def test_the_result_records_the_constants_it_ran_with(qtbot: QtBot) -> None:
