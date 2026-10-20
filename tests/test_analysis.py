@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import QLabel, QTabWidget, QWidget
 from pyqtgraph.parametertree import ParameterTree
 
 from helab.analysis.dataset_view import DatasetView, ViewKey, build_view, root_key, view_of
-from helab.analysis import selection
+from helab.analysis import display_units, selection
 from helab.analysis.parameter_tree import UnitSpinBox, build_tree, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import ParameterSpec, describe, effective, tree_children
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
@@ -383,9 +383,10 @@ def test_short_settings_for_the_dock() -> None:
     manual = {"range_mode": "manual", "t_min": 3.84, "t_max": 3.87, "x_min": -0.002, "x_max": 0.0035,
               "y_min": 1.0, "y_max": 1.0}
     # Only the axes actually set: Y (min = max) is its full extent and left out.
-    assert selection.range_brief(manual) == "T 3.84–3.87 s, X −2–3.5 mm"
+    assert selection.range_brief(manual) == "T 3,840–3,870 ms, X −2–3.5 mm"  # T in ms, X/Y in mm
     assert selection.range_brief({**manual, "x_min": 0.01, "x_max": 0.0, "t_max": 0.0}) == "manual range: full extent"
-    assert selection.range_text(1, -4e-6, 2e-6) == "X −4–2 µm" and selection.range_text(0, 0.0, 0.0) == "T 0–0 s"
+    assert display_units.range_text(1, -4e-6, 2e-6) == "X −0.004–0.002 mm" and display_units.range_text(0, 0.0, 0.0) == "T 0–0 ms"
+    assert display_units.range_text(0, 20.4501234, 20.55) == "T 20,450.1234–20,550 ms"
     view = build_view(dataset(shots={shot: np.ones((1, 3)) for shot in range(1, 61)}))
     scatter, histograms, counts = scatter_3d.Scatter3D(), basic_plots.TxyHistograms(), basic_plots.CountsPerShot()
 
@@ -393,7 +394,7 @@ def test_short_settings_for_the_dock() -> None:
         return script.describe_run("Plot", effective(script.parameters("Plot"), values), view)
     assert run_text(histograms, {"shots": "last N", "last_shots": 10, "log_y": True}) == (
         "shots 51–60 (10 of 60)", "last 10 shots · auto-crop 99 % · bins auto · log Y")
-    assert run_text(histograms, {**manual, "bins": 80}) == ("60 shots", "T 3.84–3.87 s, X −2–3.5 mm · bins 80")
+    assert run_text(histograms, {**manual, "bins": 80}) == ("60 shots", "T 3,840–3,870 ms, X −2–3.5 mm · bins 80")
     assert run_text(scatter, {"display_cap": 20_000, "point_size": 2}) == (
         "60 shots", "auto-crop 99 % · points 2 px, opacity 0.5, cap 20,000")
     assert run_text(counts, {}) == ("60 shots", "")
@@ -519,7 +520,10 @@ def test_scatter_and_histograms_take_shots_and_manual_ranges() -> None:
     fig: Any = scatter_3d.figure(result, data)
     trace: Any = fig.data[0]
     assert (trace.marker.size, trace.marker.opacity) == (3.0, 0.2) and len(trace.x) == 1000
-    assert tuple(fig.layout.scene.zaxis.range) == (-1.0, 1.0)
+    assert tuple(fig.layout.scene.zaxis.range) == (-1000.0, 1000.0)  # T in ms
+    assert fig.layout.scene.zaxis.title.text == "T (ms)" and fig.layout.scene.xaxis.title.text == "X (mm)"
+    assert fig.layout.scene.zaxis.tickformat == ",~f" and "%{z:,.4f} ms" in trace.hovertemplate
+    assert list(trace.z) == pytest.approx(list(data.points[:, 0] * 1e3))
     assert "shots 9–10 (2 of 10)" in fig.layout.title.text
     histograms = basic_plots.TxyHistograms()
     items = histograms.compute("Plot", context(view, histograms, {**values, "bins": 5})).items
@@ -601,7 +605,7 @@ def test_scatter_samples_for_display_only() -> None:
     assert len(trace.x) == 100_000
     assert "run_1 · rev 1" in fig.layout.title.text and text in fig.layout.title.text
     assert "Auto-crop (heuristic box) keeps 99.0%" in fig.layout.title.text
-    assert tuple(fig.layout.scene.zaxis.range) == (data.crop.lower[0], data.crop.upper[0])
+    assert tuple(fig.layout.scene.zaxis.range) == (data.crop.lower[0] * 1e3, data.crop.upper[0] * 1e3)
 
 
 def test_scatter_without_crop_shows_every_event() -> None:

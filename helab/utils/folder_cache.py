@@ -1336,6 +1336,9 @@ class FolderCache(QObject):
         if base:
             payload = {**payload, "memory": [list(entry) for entry in base.metadata["fingerprint"]
                                              if entry[0] in base.data],
+                       # Their times: the helper never stats an unchanged shot's raw file again.
+                       "memory_raw_times": [list(entry) for entry in base.metadata.get("raw_times") or ()
+                                            if entry and entry[0] in base.data],
                        "base_signature": base.signature}
             if self.verified(base) and base.metadata.get("listed_at") and base.metadata.get("identity"):
                 # The quick check of the data in RAM when no cached dataset has one (``io_helper``).
@@ -1522,6 +1525,7 @@ class FolderCache(QObject):
         job.base = Dataset(job.path, "", data, metadata, job.epoch)
         memory = [list(entry) for shot, entry in fingerprints.items() if shot in data]
         producer.payload["memory"] = memory
+        producer.payload["memory_raw_times"] = list(metadata["raw_times"])
         job.payload = dict(producer.payload)
 
     def _cleared_since(self, job: SharedJob, path: str) -> bool:

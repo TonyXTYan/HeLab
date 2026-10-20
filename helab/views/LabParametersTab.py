@@ -12,7 +12,7 @@ from typing import Any
 from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import QGridLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
-from helab.analysis.constant_layers import LIMITS, SI_UNITS
+from helab.analysis.constant_layers import FIXED_PREFIX, LIMITS, SI_UNITS
 from helab.analysis.parameter_tree import UnitSpinBox
 from helab.analysis.physics import Constant
 from helab.utils.lab_parameters import editable, lab_rows, read_lab_constants, write_lab_constants
@@ -23,11 +23,12 @@ UNCONFIRMED_TIP = "A value borrowed from the legacy code, not yet checked on the
 
 
 def constant_editor(constant: Constant, value: float) -> UnitSpinBox:
-    """A spin box for one constant: its unit, SI prefixes for m, s and Hz (scientific notation
-    otherwise), steps of a tenth of the value's decade, positive values only."""
+    """A spin box for one constant: its unit, lengths always in mm and times in ms (grouped, as the
+    plots show them), an SI prefix for Hz, scientific notation otherwise; steps of a tenth of the
+    value's decade, positive values only."""
     box = UnitSpinBox()
     box.setOpts(value=value, suffix=constant.unit, siPrefix=constant.unit in SI_UNITS, dec=True, step=0.1,
-                minStep=LIMITS[0], decimals=8, bounds=list(LIMITS))
+                minStep=LIMITS[0], decimals=8, bounds=list(LIMITS), fixedPrefix=FIXED_PREFIX.get(constant.unit))
     box.setToolTip(constant.source)
     return box
 

@@ -59,13 +59,16 @@ class AnalysisRunner(QObject):
             coverage = Coverage.of(view)
         layers = MappingProxyType({name: MappingProxyType(dict(values))
                                   for name, values in (constants or {}).items()})
+        keys: tuple[str, ...] = ()
         try:
-            resolved = script.run_constants(action, parameters, layers) if script.constant_keys(action) else None
+            keys = tuple(script.constant_keys(action))
+            resolved = script.run_constants(action, parameters, layers) if keys else None
         except Exception:
             logging.exception("Constants of %s: none resolved", metadata.name)
             resolved = None
         context = AnalysisContext(f"a{next(self._ids)}", action, view, parameters, metadata.identity(),
-                                  coverage=coverage, constants=layers, resolved_constants=resolved)
+                                  coverage=coverage, constants=layers, resolved_constants=resolved,
+                                  constant_keys=keys if resolved is not None else ())
         with self._lock:
             if self._stopping:
                 raise RuntimeError("The analysis runner is stopping")

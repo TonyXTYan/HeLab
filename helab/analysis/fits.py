@@ -527,10 +527,13 @@ def thomas_fermi_model(power: float) -> FitModel:
 # and a Gaussian sum to a shape close to either alone: on a purely thermal cloud the fit
 # invented a condensate wider than the Gaussian (R/σ 2–4, N0/N up to 0.15), and on a pure
 # condensate the "thermal" part became a narrow spike inside the TF.
-# The cap follows the physics: after a time of flight t both widths grow with t,
-# σ_th = √(k_B T/m)·t and R = √(2μ/m)·t (a TF cloud expands at its sound-speed scale), so
-# R/σ_th = √(2μ/k_B T). The default 2 allows μ ≤ 2 k_B T: clouds near Tc down to roughly
-# 0.4 Tc. Colder, deep condensates (T ≈ 0.1–0.3 Tc) often have μ/k_B T of 3–10, a ratio of
+# The cap follows the physics: after a long time of flight t the thermal width grows as
+# σ_th = √(k_B T/m)·t, and a TF radius as its expansion velocity (Castin–Dum) times t, which
+# depends on the axis and the trap: along the radial axes of a cigar trap R ≈ √(2μ/m)·t, so
+# R/σ_th = √(2μ/k_B T); in an isotropic trap √(4μ/3k_B T); along a cigar's axis only
+# ≈ (π/2)(ω_z/ω_⊥)√(2μ/k_B T), much less. So the cap is axis-dependent (D4 will set it per
+# axis; ``profiles.fit_axis`` passes it through). With √(2μ/k_B T), the default 2 allows
+# μ ≤ 2 k_B T: clouds near Tc down to roughly 0.4 Tc. Colder, deep condensates (T ≈ 0.1–0.3 Tc) often have μ/k_B T of 3–10, a ratio of
 # 2.5–4.5: raise the cap for them (a run that ends at the cap says so, and its T and N0/N
 # are then bounds, not values). A higher cap brings back some of the ambiguity above, so
 # raise it only when the data call for it. Each part's shape parameters are gated by its

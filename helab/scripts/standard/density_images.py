@@ -6,7 +6,7 @@ third axis acts as a window) are binned with ``np.histogram2d``, optionally blur
 Gaussian (σ in bins; the total is kept) and shown as counts per bin or as a rate per shot
 (counts / shots / bin area). Range compression (sqrt, log, power) is in the colour map only:
 the image stays linear and the colour bar reads real values. X and Y are shown in mm, T in
-ms or s, chosen from the range (``time_unit``). Unlike the old GUI: no X/Y rotation, the bin
+ms (``display_units``). Unlike the old GUI: no X/Y rotation, the bin
 area divides by the real bin count, and an empty range says so instead of crashing."""
 from __future__ import annotations
 
@@ -23,9 +23,11 @@ from PyQt6.QtWidgets import QVBoxLayout, QWidget
 from scipy.ndimage import gaussian_filter
 
 from helab.analysis.dataset_view import DatasetView
+from helab.analysis.display_units import LENGTH_UNIT, T_UNIT, axis_label, axis_scale, axis_unit
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.follow import LivePolicy
 from helab.analysis.parameters import ParameterSpec
+from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, newest_brief, newest_colour,
                                       newest_events, newest_shot, newest_specs, range_brief, range_specs,
@@ -57,7 +59,7 @@ BLUR = ParameterSpec("blur", "Blur σ", "float", 0.0, (0.0, 50.0), " bins", grou
 COUNTS, PER_SHOT = "counts per bin", "rate per shot"
 QUANTITY = ParameterSpec("quantity", "Show", "choice", COUNTS, choices=(COUNTS, PER_SHOT), group=IMAGE_GROUP,
                          tip="Counts per bin, or a rate per shot: counts / number of shots chosen / bin area "
-                             "(per mm² for XY; per mm per ms, or per s, for XT and YT).")
+                             "(per mm² for XY; per mm per ms for XT and YT).")
 COLOUR_GROUP = "Colour"
 LINEAR, SQRT, LOG, POWER = "linear", "sqrt", "log", "power γ"
 SCALE = ParameterSpec("colour_scale", "Colour scale", "choice", LINEAR, choices=(LINEAR, SQRT, LOG, POWER),
@@ -75,17 +77,6 @@ HIGHLIGHT, NEWEST_COLOUR = newest_specs(IMAGE_GROUP)
 NEWEST_BLUR = 2.0  # the newest shot's contour: its image blurred at least this many bins
 COLOUR_MAP = "viridis"
 LUT_SIZE = 1024  # colour map samples: fine enough for the steepest compression near 0
-
-# Display scales from the TXY columns (s, m): X and Y in mm; T in ms or s (``time_unit``).
-LENGTH_UNIT, LENGTH_SCALE = "mm", 1e3
-
-
-def time_unit(lower: float, upper: float) -> tuple[str, float]:
-    """T's display unit and scale from its range: ms while both ends are under 10 s (T is
-    typically 0.3–0.5 s after the trigger), else s."""
-    largest = max(abs(lower), abs(upper))
-    return ("ms", 1e3) if math.isfinite(largest) and largest < 10.0 else ("s", 1.0)
-
 
 def compress(position: npt.NDArray[np.float64], scale: str, gamma: float = 0.5, decades: int = 3
              ) -> npt.NDArray[np.float64]:
@@ -137,7 +128,6 @@ class DensityImage:
     per_shot: bool = False
     blur: float = 0.0
     automatic_bins: bool = True
-    time_unit: str = "ms"
     warnings: tuple[str, ...] = ()  # settings not followed as given (``range_warnings``)
     # The highlighted newest shot (None: off): its image on the same bins, for a contour.
     newest_shot: int | None = None
@@ -160,13 +150,13 @@ class DensityImage:
         return PROJECTIONS[self.projection]
 
     def scale(self, axis: int) -> float:
-        return (1e3 if self.time_unit == "ms" else 1.0) if axis == 0 else LENGTH_SCALE
+        return axis_scale(axis)
 
     def unit(self, axis: int) -> str:
-        return self.time_unit if axis == 0 else LENGTH_UNIT
+        return axis_unit(axis)
 
     def rect(self) -> QRectF:
-        """The image's place in display units (mm, ms or s)."""
+        """The image's place in display units (mm, ms)."""
         (h, v), eh, ev = self.axes, self.edges_h, self.edges_v
         sh, sv = self.scale(h), self.scale(v)
         return QRectF(eh[0] * sh, ev[0] * sv, (eh[-1] - eh[0]) * sh, (ev[-1] - ev[0]) * sv)
@@ -176,7 +166,7 @@ class DensityImage:
         if not self.per_shot:
             return "Events per bin" + (" (blurred)" if self.blur else "")
         h, v = self.axes
-        area = f"{LENGTH_UNIT}²" if h != 0 and v != 0 else f"({LENGTH_UNIT}·{self.time_unit})"
+        area = f"{LENGTH_UNIT}²" if h != 0 and v != 0 else f"({LENGTH_UNIT}·{T_UNIT})"
         return f"Events / {area} / shot" + (" (blurred)" if self.blur else "")
 
 
@@ -269,7 +259,8 @@ class DensityPlot(QWidget):
         self.graphics.setBackground("w")
         layout.addWidget(self.graphics)
         self.title: Any = self.graphics.addLabel("", row=0, col=0, colspan=2)
-        self.plot: Any = self.graphics.addPlot(row=1, col=0)
+        self.plot: Any = self.graphics.addPlot(row=1, col=0, axisItems={"bottom": GroupedAxis("bottom"),
+                                                                        "left": GroupedAxis("left")})
         self.image: Any = pg.ImageItem(axisOrder="col-major")
         self.image.setLookupTable(viridis_lut())
         self.plot.addItem(self.image)
@@ -278,17 +269,16 @@ class DensityPlot(QWidget):
         self.contour.setParentItem(self.image)
         self.bar: Any = None
         self.projection = ""
-        self.time_unit = ""
         self.scale_key: tuple[str, float, int] = ("", 0.0, 0)
 
     def show_data(self, result: AnalysisResult, data: DensityImage) -> None:
         values = result.parameters
         h, v = data.axes
-        self.projection, self.time_unit = data.projection, data.time_unit
+        self.projection = data.projection
         first, second = image_title(data)
         self.title.setText(f"{html.escape(result.input.short())} · {html.escape(first)}<br>{html.escape(second)}")
-        self.plot.setLabel("bottom", f"{AXES[h]} ({data.unit(h)})")
-        self.plot.setLabel("left", f"{AXES[v]} ({data.unit(v)})")
+        self.plot.setLabel("bottom", axis_label(h))
+        self.plot.setLabel("left", axis_label(v))
         self.plot.setAspectLocked(data.projection == "XY")  # X and Y both in mm: their true shape
         peak = float(data.image.max()) if data.image.size else 0.0
         levels = (0.0, peak if peak > 0 else 1.0)
@@ -387,12 +377,11 @@ class DensityImages(DatasetAnalysis):
             warnings += (f"blur σ {asked:g} bins is over a quarter of the image's {max(counts.shape):,} bins: "
                          f"using {sigma:g}",)
         image = blurred(counts, sigma)
-        unit = time_unit(box.lower[0], box.upper[0])[0]
         per_shot = values.get(QUANTITY.name) == PER_SHOT
         data = DensityImage(projection, box, edges_h, edges_v, image, shots, len(view.shots), per_shot, sigma,
-                            bins == 0, unit, warnings)
+                            bins == 0, warnings)
         if per_shot:
-            # The bin area in display units (mm², or mm · ms or s), from the real bin count.
+            # The bin area in display units (mm², or mm · ms), from the real bin count.
             area = float(edges_h[1] - edges_h[0]) * data.scale(h) * float(edges_v[1] - edges_v[0]) * data.scale(v)
             data = replace(data, image=image / (len(shots) * area))
         newest = newest_shot(values, shots)
@@ -418,11 +407,9 @@ class DensityImages(DatasetAnalysis):
 
     def update(self, widget: QWidget, result: AnalysisResult) -> bool:
         """A rerun (e.g. Live's next shots) draws in place, keeping the zoom and pan, while the
-        projection and (when it shows T) T's unit stay; otherwise (or to or from an empty plot) it is drawn anew."""
+        projection stays; otherwise (or to or from an empty plot) it is drawn anew."""
         data: DensityImage = result.data
         if not isinstance(widget, DensityPlot) or empty_reason(data) or widget.projection != data.projection:
-            return False
-        if 0 in data.axes and widget.time_unit != data.time_unit:  # Only a plot showing T relabels it.
             return False
         widget.show_data(result, data)
         return True

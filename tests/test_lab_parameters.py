@@ -36,6 +36,15 @@ def test_values_persist_and_bad_ones_are_ignored(tmp_path: Path) -> None:
     assert again.value(setting_key("g")) is None and read_lab_constants(again) == {}
 
 
+def test_times_and_lengths_show_in_ms_and_mm_as_in_the_plots(qtbot: QtBot) -> None:
+    from helab.views.LabParametersTab import constant_editor
+    for key, value, text in (("dld_trigger", 20.5, "20,500 ms"), ("fall_distance", 0.848, "848 mm"),
+                             ("trap_radial", 500.0, "500 Hz")):
+        box = constant_editor(TABLE[key], value)
+        qtbot.addWidget(box)
+        assert box.text() == text and box.value() == pytest.approx(value)
+
+
 def test_the_tab_edits_restores_and_saves(qtbot: QtBot, tmp_path: Path) -> None:
     settings = ini(tmp_path)
     write_lab_constants(settings, {"g": 9.8})

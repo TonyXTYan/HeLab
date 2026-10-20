@@ -1463,7 +1463,7 @@ def load(path: str, output: str, send: Emit = emit,
          expected: str = "", *, limits: dict[str, Any] | None = None, allow_large: bool = False,
          no_cache: bool = False, full_check: bool = False, cache_base: bool = False,
          check_level: str = DEFAULT_CHECK_LEVEL, allow_missing: bool = False,
-         memory_check: dict[str, Any] | None = None) -> None:
+         memory_check: dict[str, Any] | None = None, memory_raw_times: list[list[int]] | None = None) -> None:
     """Load converted TXY files, reusing unchanged shots from RAM and disk cache.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for shots the caller already holds
@@ -1478,6 +1478,8 @@ def load(path: str, output: str, send: Emit = emit,
     Shots cached or held that the folder no longer lists stop the load with ``shots_missing``
     before any file is read, unless ``allow_missing``. ``memory_check``: what the held data's own
     load saw (listing time, names, identity), for its quick check when no cached dataset has one.
+    ``memory_raw_times``: the held shots' times (``[shot, raw mtime_ns]``), so a held shot whose TXY
+    file is unchanged never has its raw file stat'ed again (not even when the cache save reads it).
     After its scan phase (saved as the folder's summary), a load whose new data is large
     (``limits``) stops with ``too_large`` before reading anything, unless ``allow_large``.
     A folder the user chose not to cache (``no_cache``, or its saved flag) is read into RAM
@@ -1508,7 +1510,7 @@ def load(path: str, output: str, send: Emit = emit,
               (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
               limits=limits, allow_large=allow_large, no_cache=no_cache, no_cache_reason=no_cache_reason,
               full_check=full_check, cache_base=cache_base, check_level=check_level,
-              allow_missing=allow_missing, memory_check=memory_check)
+              allow_missing=allow_missing, memory_check=memory_check, memory_raw_times=memory_raw_times)
     finally:
         if store is not None:
             store.close()
@@ -1519,7 +1521,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           budget_set_at: float | None = None, *, limits: dict[str, Any] | None = None,
           allow_large: bool = False, no_cache: bool = False, no_cache_reason: str = "",
           full_check: bool = False, cache_base: bool = False, check_level: str = DEFAULT_CHECK_LEVEL,
-          allow_missing: bool = False, memory_check: dict[str, Any] | None = None) -> None:
+          allow_missing: bool = False, memory_check: dict[str, Any] | None = None,
+          memory_raw_times: list[list[int]] | None = None) -> None:
     from helab.utils.cache_store import StoreError
     held_from = "memory"  # Where the shots counted as held are: the caller's RAM, or its cached read.
     if cache_base and not memory and not no_cache and store is not None:
@@ -1622,9 +1625,17 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     listed = found.get(file_kinds.TXY.name, set())
     held = {int(entry[0]) for entry in memory or ()}
     missing_checked = False
-    # Shot times (raw files' mtimes): the cache's, else stat'ed from the listing (``raw_time``).
+    # Shot times (raw files' mtimes): the caller's or the cache's, else stat'ed from the listing
+    # (``raw_time``). Raw d<N>.txt files are never rewritten (Tony, 2026-10-20): a shot's time is
+    # stat'ed once, and again only when its TXY fingerprint changed, which may be another run's
+    # shot of that number (a folder copied over this one). That check is free (the fingerprint
+    # comes with the listing) and covers the copy; a raw file is never re-stat'ed while its TXY
+    # file is unchanged.
     raw_times: dict[int, int] = {}
     saved_raw: dict[int, int] = {}
+    if held_from == "memory":  # The caller's times of the shots it holds unchanged.
+        raw_times.update({shot: value for shot, value in file_kinds.raw_times(memory_raw_times).items()
+                          if shot in in_memory})
 
     def raw_time(shot: int) -> None:
         if shot not in raw_times and (found_time := _raw_mtime(raw_entries.get(shot), "load: shot time")) is not None:
@@ -1665,8 +1676,9 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             if saved_fingerprint is not None:
                 baseline = {shot: (size, modified) for shot, size, modified in saved_fingerprint}
             if row is not None:
-                # Only for shots whose TXY file is unchanged: a changed one may be another run's
-                # shot of that number (a folder copied over this one), so its raw file is stat'ed.
+                # Only for shots whose TXY file is unchanged (raw files are never rewritten): a
+                # changed one may be another run's shot of that number (a folder copied over this
+                # one), so its raw file is stat'ed.
                 saved_raw = {shot: value for shot, value in _saved_raw_times(row).items()
                              if shot in current and baseline.get(shot) == current[shot]}
                 raw_times.update(saved_raw)
@@ -3073,7 +3085,8 @@ def main() -> None:
                  allow_large=bool(request.get("allow_large")), no_cache=bool(request.get("no_cache")),
                  full_check=bool(request.get("full_check")), cache_base=bool(request.get("cache_base")),
                  check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL),
-                 allow_missing=bool(request.get("allow_missing")), memory_check=request.get("memory_check"))
+                 allow_missing=bool(request.get("allow_missing")), memory_check=request.get("memory_check"),
+                 memory_raw_times=request.get("memory_raw_times"))
         elif operation == "cached":
             read_cached(request["path"], request["output"], cache_options=request.get("cache"),
                         limits=request.get("limits"), allow_large=bool(request.get("allow_large")),
