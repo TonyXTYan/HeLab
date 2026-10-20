@@ -13,6 +13,7 @@ from typing import Any, Mapping
 import numpy as np
 import numpy.typing as npt
 import pytest
+import scipy.constants as codata
 from pytestqt.qtbot import QtBot
 
 from helab.analysis import correlations
@@ -156,6 +157,10 @@ def test_a_thermal_source_reads_g2_zero_of_two(thermal: DatasetView) -> None:
     recoil = data_of(run(thermal, {**RADIAL, "velocity_unit": "ħk"}))
     assert recoil.result is not None and np.array_equal(recoil.result.in_counts, found.in_counts)
     assert recoil.unit_value == pytest.approx(0.0920, rel=0.01)
+    # 1 ħk = h/(λ m), with the run's recoil wavelength, in the dock's velocity line.
+    one = codata.h / (recoil.constants.recoil_wavelength * recoil.constants.mass)
+    assert recoil.unit_value == pytest.approx(one, rel=1e-9)
+    assert f"1 ħk = {correlations_plot.velocity_text(one)}" in correlations_plot.velocity_line(recoil)
     assert any("unconfirmed" in note for note in recoil.notes)
 
 
@@ -177,8 +182,8 @@ def test_an_uncorrelated_source_has_no_peak_and_g2_near_one() -> None:
 
 
 def test_back_to_back_pairs_peak_at_zero_with_the_trap_origin(monkeypatch: pytest.MonkeyPatch) -> None:
-    values = {"corr_mode": "back-to-back", "corr_axis": "v_x", "corr_range": 0.1 * SCALE, "corr_bins": 40,
-              "corr_window": 0.01 * SCALE, "keep_percent": 100.0, "n_boot": 100}
+    values = {"corr_mode": "back-to-back", "corr_axis": "v_x", "bb_range": 0.1 * SCALE, "bb_bins": 40,
+              "bb_window": 0.01 * SCALE, "keep_percent": 100.0, "n_boot": 100}
     events = pair_velocities(7)
     view = txy_view(events)
     data = data_of(run(view, values))
@@ -214,10 +219,17 @@ def test_back_to_back_pairs_peak_at_zero_with_the_trap_origin(monkeypatch: pytes
     assert centred.result is not None and centred.result.fit is not None
     assert abs(centred.result.fit["centre"].value) < 0.003 * SCALE
     assert correlations_plot.separation_name(centred.kind, centred.source) == "v_x₁ + v_x₂ − 2v₀"
-    # Re-centring each shot does the same, from each shot's own centre.
+    # Re-centring each shot does the same, from each shot's own centre: the peak back at 0.
     recentred = data_of(run(moving, {**values, "recentre": True}))
     assert recentred.result is not None and recentred.result.fit is not None
     assert abs(recentred.result.fit["centre"].value) < 0.003 * SCALE
+    assert abs(off.result.fit["centre"].value) > 10 * abs(recentred.result.fit["centre"].value)
+    assert correlations_plot.BB_DETECTED_NOTE not in recentred.notes  # t_r from the folder
+    # A t_r detected from the tallest T peak: the back-to-back run says it may be a kicked cloud's.
+    monkeypatch.undo()
+    detected_t = data_of(run(view, values, folder={}))
+    assert detected_t.release_how == "detected" and correlations_plot.BB_DETECTED_NOTE in detected_t.notes
+    assert correlations_plot.BB_DETECTED_NOTE not in data_of(run(view, {**values, "recentre": True}, folder={})).notes
 
 
 def test_the_release_time_is_detected_when_unset_and_kept_while_within_its_se() -> None:
@@ -273,7 +285,12 @@ def test_live_adds_a_shot_without_counting_the_old_ones_again(monkeypatch: pytes
     assert "12 shots held, 1 counted" in correlations_plot.counts_line(second)
     # The Live rerun skipped the bootstrap (said so); a deliberate run keeps it.
     assert second.live_skipped and correlations_plot.LIVE_NOTE in second.notes
-    assert second.result.se_method.startswith("pair counting")
+    # Its bars (and fit weights) are the delete-one-shot jackknife's, not pair counting's (too small).
+    assert second.result.se_method == "delete-one-shot jackknife"
+    jackknife = second.result.jackknife_se
+    finite = np.isfinite(jackknife)
+    assert finite.any() and np.array_equal(second.result.se[finite], jackknife[finite])
+    assert np.nanmean(second.result.counting_se[finite] / jackknife[finite]) < 1
     assert not first.live_skipped and first.result is not None and first.result.se_method == "shot bootstrap"
     assert fresh.result.se_method == "shot bootstrap"
     # A rerun of the same data counts nothing; a binning change counts every shot again.
@@ -407,8 +424,19 @@ def test_settings_lines_and_registration() -> None:
     assert settings == ("auto-crop 99 % · back-to-back 1D v_z · ± 20 mm/s · 40 bins · window ± 2 mm/s · "
                         "v₀ (1, 0, 0) mm/s · reference ± 10 shots · bootstrap 200 · budget 30 s")
     names = {spec.name: spec for spec in SCRIPT.parameters("Plot")}
-    for name in ("corr_range", "corr_window", "bb_vz", "release_search_min", "const.trap_x"):
+    for name in ("corr_range", "corr_window", "bb_range", "bb_window", "bb_vz", "release_search_min",
+                 "const.trap_x"):
         assert names[name].unit_prefix == "m", name
+    # Defaults per mode (bunching is narrow, halos' pairs broad); the window only for 1D.
+    collinear = effective(SCRIPT.parameters("Plot"), {})
+    assert correlations_plot.scales_of(collinear) == (0.003, 60, 0.0003)
+    assert not names["bb_range"].applies(collinear) and names["corr_window"].applies(collinear)
+    assert correlations_plot.scales_of(values)[:2] == (0.02, 40) and not names["corr_range"].applies(values)
+    assert names["bb_window"].applies(values)
+    radial = effective(SCRIPT.parameters("Plot"), {"corr_type": "radial"})
+    assert not names["corr_window"].applies(radial) and math.isnan(correlations_plot.scales_of(radial)[2])
+    assert "σ_c ≈ ħ/(2mσ₀)" in names["corr_window"].tip and "0.24 mm/s" in names["bb_range"].tip
+    assert "mask the BECs first" in names["recentre"].tip
     assert SCRIPT.constant_keys("Plot") == correlations_plot.CONSTANT_KEYS
     assert SCRIPT.live_policy("Plot").min_delay == 5.0
     assert correlations_plot in standard.MODULES

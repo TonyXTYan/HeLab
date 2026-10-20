@@ -57,13 +57,12 @@ from helab.analysis.parameters import ParameterSpec
 from helab.analysis.physics import ResolvedConstants
 from helab.analysis.plot_axes import grouped_axes
 from helab.analysis.plot_text import add_label, lines_html, short_note
-from helab.analysis.release import (ReleaseTime, detect_release_time, layer_origin,
-                                    layer_release_time, velocity_origin)
+from helab.analysis.release import ReleaseTime, detect_release_time, layer_release_time, run_velocity_source
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
                                       range_warnings, select_shots, selection_text, shots_brief, shots_text)
 from helab.analysis.stats import CropBox, crop_box
-from helab.analysis.velocity import (RECOIL_WAVELENGTH, RECOIL_WAVELENGTH_UNCONFIRMED, VELOCITY_AXES,
+from helab.analysis.velocity import (RECOIL_WAVELENGTH_UNCONFIRMED, VELOCITY_AXES,
                                      effective_fall_distance, txy_to_velocity, unit_velocity)
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
@@ -90,18 +89,49 @@ MODE = ParameterSpec("corr_mode", "Pairs", "choice", COLLINEAR, choices=(COLLINE
 AXIS = ParameterSpec("corr_axis", "Axis", "choice", VELOCITY_AXES[0], choices=VELOCITY_AXES, group=KIND_GROUP,
                      page=G2_PAGE, when=(TYPE.name, ONE_D),
                      tip="The velocity component histogrammed (v_z up; v_x, v_y along the detector's X and Y).")
-REACH = ParameterSpec("corr_range", "Range (max |Δ|)", "float", 0.02, (1e-6, 10.0), " m/s", group=KIND_GROUP,
-                      page=G2_PAGE, si=True, unit_prefix="m",
-                      tip="The separations histogrammed: from −range to +range (1D), or 0 to range (radial), in mm/s "
-                          "whatever the plot's unit. Make it at least 3× the correlation length, or the fit finds "
-                          "a slope, not a peak.")
-BINS = ParameterSpec("corr_bins", "Bins", "int", 40, (2, 1000), group=KIND_GROUP, page=G2_PAGE,
-                     tip="Bins over the range.")
-WINDOW = ParameterSpec("corr_window", "Window ± (other components)", "float", 0.002, (1e-7, 10.0), " m/s",
-                       group=KIND_GROUP, page=G2_PAGE, si=True, unit_prefix="m", when=(TYPE.name, ONE_D),
-                       tip="1D: pairs count only when each other component of Δ is within ± this (a half-width). "
-                           "Much narrower than the correlation length, or the peak is diluted (by about "
-                           "1 − w²/6σ² per windowed axis).")
+
+
+@dataclass(frozen=True)
+class _ModeSpec(ParameterSpec):
+    """A parameter of one Pairs mode (``when``) that may also need a Type (``also``)."""
+    also: tuple[str, str] | None = None
+
+    def applies(self, values: Mapping[str, Any]) -> bool:
+        return super().applies(values) and (self.also is None or str(values.get(self.also[0])) == self.also[1])
+
+
+# The scales (proposed, for Tony): a thermal cloud's bunching length is σ_c ≈ ħ/(2mσ₀) per axis
+# (σ₀ the trap's in-situ size): at 1 µK about 0.55 mm/s radially and 0.055 mm/s axially, while
+# the detector's XY resolution (~100 µm) is ~0.24 mm/s in v_x, v_y after the fall. A window of
+# ±2 mm/s keeps only ~0.31 of the bump per windowed axis, so collinear pairs get a narrow range
+# and window; back-to-back pairs on a halo are broader (the halo's own width).
+SCALES_TIP = ("Scales: a thermal cloud's bunching length σ_c ≈ ħ/(2mσ₀) (σ₀ its in-situ size) is about "
+              "0.55 mm/s radially and 0.055 mm/s axially at 1 µK; the XY resolution (~100 µm) is ~0.24 mm/s "
+              "in v_x, v_y.")
+RANGE_TIP = ("The separations histogrammed: from −range to +range (1D), or 0 to range (radial), in mm/s "
+             "whatever the plot's unit. Make it at least 3× the correlation length, or the fit finds a slope, "
+             "not a peak. ")
+WINDOW_TIP = ("1D: pairs count only when each other component of Δ is within ± this (a half-width). Much "
+              "narrower than the correlation length, or the peak is diluted (by about 1 − w²/6σ_c² per windowed "
+              "axis). ")
+
+
+def _mode_specs(mode: str, prefix: str, reach: float, bins: int, window: float
+                ) -> tuple[_ModeSpec, _ModeSpec, _ModeSpec]:
+    when = (MODE.name, mode)
+    return (_ModeSpec(f"{prefix}_range", "Range (max |Δ|)", "float", reach, (1e-6, 10.0), " m/s", group=KIND_GROUP,
+                      page=G2_PAGE, si=True, unit_prefix="m", when=when, tip=RANGE_TIP + SCALES_TIP),
+            _ModeSpec(f"{prefix}_bins", "Bins", "int", bins, (2, 1000), group=KIND_GROUP, page=G2_PAGE, when=when,
+                      tip="Bins over the range."),
+            _ModeSpec(f"{prefix}_window", "Window ± (other components)", "float", window, (1e-7, 10.0), " m/s",
+                      group=KIND_GROUP, page=G2_PAGE, si=True, unit_prefix="m", when=when, also=(TYPE.name, ONE_D),
+                      tip=WINDOW_TIP + SCALES_TIP))
+
+
+# Defaults per mode (proposed, for Tony): collinear ±3 mm/s, 60 bins, window ±0.3 mm/s (bunching of a
+# thermal cloud); back-to-back ±20 mm/s, 40 bins, window ±2 mm/s (a halo's pairs).
+REACH, BINS, WINDOW = _mode_specs(COLLINEAR, "corr", 0.003, 60, 0.0003)
+BB_REACH, BB_BINS, BB_WINDOW = _mode_specs(BACK_TO_BACK, "bb", 0.02, 40, 0.002)
 EQUAL_WIDTH, EQUAL_VOLUME = "equal width", "equal volume"
 SHELLS = ParameterSpec("corr_shells", "Radial bins", "choice", EQUAL_WIDTH, choices=(EQUAL_WIDTH, EQUAL_VOLUME),
                        group=KIND_GROUP, page=G2_PAGE, when=(TYPE.name, RADIAL),
@@ -120,8 +150,9 @@ SOURCE_V = tuple(ParameterSpec(f"bb_v{name[2:]}", f"v₀ {name}", "float", 0.0, 
 RECENTRE = ParameterSpec("recentre", "Re-centre each shot", "bool", False, group=KIND_GROUP, page=G2_PAGE,
                          tip="Move each shot's robust centre (its events within 3 robust σ of the median) to 0 "
                              "before pairing: takes out pointing jitter (a moving cloud reads as a broad bump "
-                             "otherwise) and stands in for a halo's per-shot centring (not built yet). g² near 0 "
-                             "then dips by about 1.5/n (n events per shot).")
+                             "otherwise) and stands in for a halo's per-shot centring (not built yet). The centre "
+                             "follows the densest structure: for halos, mask the BECs first (Mask), or it centres "
+                             "on a condensate. g² near 0 then dips by about 1.5/n (n events per shot).")
 REFERENCE_GROUP = "Reference and fit"
 ALL_SHOTS, NEIGHBOURS = "all shots", "neighbouring shots"
 PARTNERS = ParameterSpec("partners", "Between-shot pairs", "choice", ALL_SHOTS, choices=(ALL_SHOTS, NEIGHBOURS),
@@ -160,9 +191,14 @@ SEARCH_MIN = ParameterSpec("release_search_min", "Release search T from (0 = fir
 SEARCH_MAX = ParameterSpec("release_search_max", "Release search T to (0 = last)", "float", 0.0, (0.0, 100.0), " s",
                            group=VELOCITY_GROUP, page=VELOCITY_PAGE, si=True, unit_prefix="m",
                            tip="See Release search T from.")
-CONSTANT_KEYS = ("fall_distance", "fall_time", "g", "release_time", "arrival_time", "trap_x", "trap_y")
-CONSTANTS = tuple(constants_specs(CONSTANT_KEYS, page=VELOCITY_PAGE))
-PARAMETERS = (*SHOT_SPECS, *RANGE, *MASK_SPECS, TYPE, MODE, AXIS, REACH, BINS, WINDOW, SHELLS, SOURCE, *SOURCE_V,
+# The constants the plot may set for itself, and all it uses (ħ and the mass for the recoil unit), so a
+# lab or folder change of any of them marks the plot (as the Velocity distributions plot).
+VELOCITY_KEYS = ("fall_distance", "fall_time", "g", "release_time", "arrival_time", "trap_x", "trap_y")
+OWN_KEYS = (*VELOCITY_KEYS, "recoil_wavelength")
+CONSTANT_KEYS = (*OWN_KEYS, "mass", "hbar")
+CONSTANTS = tuple(constants_specs(OWN_KEYS, page=VELOCITY_PAGE))
+PARAMETERS = (*SHOT_SPECS, *RANGE, *MASK_SPECS, TYPE, MODE, AXIS, REACH, BINS, WINDOW, BB_REACH, BB_BINS, BB_WINDOW,
+              SHELLS, SOURCE, *SOURCE_V,
               RECENTRE, PARTNERS, PARTNERS_K, BASELINE, N_BOOT, BUDGET, UNIT, SEARCH_MIN, SEARCH_MAX, *CONSTANTS)
 
 POINT_COLOUR = (40, 90, 170)
@@ -171,8 +207,12 @@ REFERENCE_COLOUR = (120, 120, 120)
 CURVE_POINTS = 400
 CLOCK = time.monotonic  # the time budget's clock (tests replace it)
 CLOSED_LIMIT = 4096  # owners of closed plots remembered, so a late run doesn't bring their state back
-LIVE_NOTE = ("Live rerun: shot bootstrap skipped, so the bars are pair counting's (too small: pairs share events) "
-             "and g²(0)'s error the delete-one-shot jackknife's; Rerun (or Live's end) runs it")
+LIVE_NOTE = ("Live rerun: shot bootstrap skipped, so the bars and g²(0)'s error are the delete-one-shot "
+             "jackknife's; Rerun (or Live's end) runs it")
+LIVE_COUNTING_NOTE = ("Live rerun: shot bootstrap skipped, and too many shots for the jackknife's shot-pair matrix, so "
+                      "the bars are pair counting's (too small: pairs share events); Rerun (or Live's end) runs it")
+BB_DETECTED_NOTE = ("back-to-back with t_r from the tallest T peak (a cloud at rest?): a Bragg-kicked cloud there puts "
+                    "v_z off by its velocity; set t_r from a rest-cloud run, or re-centre each shot")
 
 
 # ---- per-plot state (Live) ----
@@ -269,6 +309,14 @@ def velocity_text(value: float, digits: int = WIDTH_DIGITS) -> str:
     return f"{number_text(value / MM_S, digits)} mm/s"
 
 
+def scales_of(values: Mapping[str, Any]) -> tuple[float, int, float]:
+    """The mode's (range, bins, window), in m/s; the window nan for radial."""
+    reach, bins, window = (BB_REACH, BB_BINS, BB_WINDOW) if values.get(MODE.name) == BACK_TO_BACK else (REACH, BINS,
+                                                                                                         WINDOW)
+    width = float(values.get(window.name, window.default)) if window.applies(values) else math.nan
+    return float(values.get(reach.name, reach.default)), int(values.get(bins.name, bins.default)), width
+
+
 def kind_of(values: Mapping[str, Any]) -> tuple[str, str, int]:
     axis = VELOCITY_AXES.index(str(values.get(AXIS.name, AXIS.default)))
     return str(values.get(TYPE.name, TYPE.default)), str(values.get(MODE.name, MODE.default)), axis
@@ -308,7 +356,7 @@ def kind_text(data: CorrelationData) -> str:
 def spec_for(values: Mapping[str, Any], events_key: str) -> CorrelationSpec:
     """The numerics' spec for the settings (edges in m/s)."""
     geometry, mode, axis = kind_of(values)
-    reach, bins = float(values[REACH.name]), int(values[BINS.name])
+    reach, bins, window = scales_of(values)
     if geometry == ONE_D:
         edges = linear_edges(-reach, reach, bins)
     elif values.get(SHELLS.name) == EQUAL_VOLUME:
@@ -317,7 +365,7 @@ def spec_for(values: Mapping[str, Any], events_key: str) -> CorrelationSpec:
         edges = linear_edges(0.0, reach, bins)
     partners = int(values[PARTNERS_K.name]) if values.get(PARTNERS.name) == NEIGHBOURS else None
     return CorrelationSpec("1d" if geometry == ONE_D else "radial", edges, "bb" if mode == BACK_TO_BACK else "cl",
-                           axis, float(values[WINDOW.name]) if geometry == ONE_D else math.inf,
+                           axis, window if geometry == ONE_D else math.inf,
                            source_of(values), partners, events_key, bool(values.get(RECENTRE.name, False)))
 
 
@@ -369,49 +417,49 @@ def steady_detection(new: ReleaseTime, held: ReleaseTime | None, uses_time: bool
 
 def velocities_for(events: Events, constants: ResolvedConstants, values: Mapping[str, Any],
                    held: tuple[str, ReleaseTime] | None, key: str) -> VelocitySource:
-    """t_r and the origin for this run (module docstring): the layers', else one detection of
-    ``events`` (the chosen shots' masked TXY events) in Release search T, kept from ``held`` (the
-    plot's previous detection under the same ``key``) when within its SE."""
-    given = layer_release_time(constants)
-    manual_origin = layer_origin(constants)
+    """t_r and the origin for this run (``release.run_velocity_source``, the rule the velocity
+    plots share): the layers', else one detection of ``events`` (the chosen shots' masked TXY
+    events) in Release search T, kept from ``held`` (the plot's previous detection under the same
+    ``key``) when within its SE."""
     lower, upper, warnings = search_range(values)
     notes: list[str] = []
-    detection: ReleaseTime | None = None
     kept = False
-    if given is None or manual_origin is None:
-        new = detect_release_time(events[:, 0], constants, lower, upper, positions=events[:, 1:3]) \
-            if len(events) else None
-        if new is not None:
-            steady = steady_detection(new, held[1] if held is not None and held[0] == key else None,
-                                      uses_time=given is None)
-            detection, kept = (steady, True) if steady is not None else (new, False)
-    if given is not None and not given.ok:
-        return VelocitySource(None, "", (0.0, 0.0), "", failure=f"no release time: {given.failure}")
-    if given is None:
-        if detection is None or not detection.ok:
-            why = detection.failure if detection is not None else "no events"
+    uses_time = layer_release_time(constants) is None
+
+    def detect() -> ReleaseTime:
+        nonlocal kept
+        if not len(events):
+            return ReleaseTime(Estimate(math.nan), "detected", constants.fall_time, failure="no events")
+        new = detect_release_time(events[:, 0], constants, lower, upper, positions=events[:, 1:3])
+        steady = steady_detection(new, held[1] if held is not None and held[0] == key else None, uses_time)
+        kept = steady is not None
+        return steady if steady is not None else new
+    source = run_velocity_source(constants, detect)
+    detection = source.detection
+    release = source.release
+    if not release.ok:
+        if not source.detected:
             return VelocitySource(None, "", (0.0, 0.0), "", warnings=warnings,
-                              failure=f"no release time: none set, and none detected ({why}). Set it for the folder "
-                                      "with the Release time plot (Use for this folder…), or for this plot "
-                                      "(Constants)")
-        release, how = detection, "detected, kept" if kept else "detected"
-        notes.append(f"t_r detected in this run (SE {time_text(detection.value.se, WIDTH_DIGITS)} within run): "
+                                  failure=f"no release time: {release.failure}")
+        return VelocitySource(None, "", (0.0, 0.0), "", warnings=warnings,
+                              failure=f"no release time: none set, and none detected ({release.failure}). Set it "
+                                      "for the folder with the Release time plot (Use for this folder…), or for "
+                                      "this plot (Constants)")
+    if source.detected:
+        how = "detected, kept" if kept else "detected"
+        notes.append(f"t_r detected in this run (SE {time_text(release.value.se, WIDTH_DIGITS)} within run): "
                      "the Release time plot's Use for this folder… sets it for every plot")
     else:
-        release = given
-        how = (constants.origins["arrival_time"] if math.isfinite(given.arrival.value)
-               else constants.origins["release_time"])
-    found = detection if detection is not None and detection.ok else None
-    origin, origin_how = velocity_origin(found, manual_origin)
-    how_origin: str = origin_how
+        how = source.release_source
+    origin_how: str = source.origin_how
     if origin_how.startswith("detected") and kept:
-        how_origin += ", kept"
+        origin_how += ", kept"
     if kept:
         notes.append("t_r and the origin kept from this plot's previous detection (this run's is within its SE), so "
                      "the pairs counted stay valid")
-    if origin_how == "detected (unsure)":
+    if source.origin_how == "detected (unsure)":
         warnings += ("the origin's detection is unsure: another T peak may be the cloud at rest",)
-    return VelocitySource(release, how, origin, how_origin, tuple(notes), warnings, "", detection)
+    return VelocitySource(release, how, source.origin, origin_how, tuple(notes), warnings, "", detection)
 
 
 # ---- the view range ----
@@ -460,7 +508,7 @@ def compute_correlations(context: AnalysisContext) -> CorrelationData:
     kind = kind_of(values)
     data = CorrelationData(shots, len(view.shots), total, constants, unit, unit_value(unit, constants), masked,
                            warnings=(*range_warnings(values), *mask_warnings(values)), kind=kind,
-                           window=float(values[WINDOW.name]) if kind[0] == ONE_D else math.nan,
+                           window=scales_of(values)[2],
                            source=source_of(values), recentred=bool(values.get(RECENTRE.name, False)))
     if unit != MM_PER_S and not math.isfinite(data.unit_value):
         data = replace(data, unit=MM_PER_S, unit_value=MM_S,
@@ -484,7 +532,7 @@ def compute_correlations(context: AnalysisContext) -> CorrelationData:
     context.check()
     # t_r and the origin.
     lower_t, upper_t, _ = search_range(values)
-    detection_key = json.dumps({"constants": constants.as_record(CONSTANT_KEYS), "search": [lower_t, upper_t],
+    detection_key = json.dumps({"constants": constants.as_record(VELOCITY_KEYS), "search": [lower_t, upper_t],
                                 "mask": mask_record(mask)}, sort_keys=True)
     found_velocities = velocities_for(chosen, constants, values, state.detection, detection_key)
     data = replace(data, warnings=data.warnings + found_velocities.warnings, box=box, box_kept=box_kept,
@@ -527,15 +575,17 @@ def compute_correlations(context: AnalysisContext) -> CorrelationData:
     skipped = context.live and boots > 0  # Live reruns skip the costly bootstrap, as the Release time plot does.
     result = correlate(shot_events, spec, cache=state.cache, state=state.counts, cancelled=context.cancelled,
                        budget=budget if budget > 0 else None, clock=CLOCK, n_boot=0 if skipped else boots,
-                       baseline=baseline)
+                       baseline=baseline, errors="jackknife")
     notes = list(data.notes)
     if skipped:
-        notes.append(LIVE_NOTE)
+        notes.append(LIVE_NOTE if "jackknife" in result.se_method else LIVE_COUNTING_NOTE)
+    if kind[1] == BACK_TO_BACK and found_velocities.release_how.startswith("detected") and not spec.recentre:
+        notes.append(BB_DETECTED_NOTE)
     if not result.complete:
         notes.append("Rerun or Live's next shots continue counting from the shots counted")
     if unit != MM_PER_S and RECOIL_WAVELENGTH_UNCONFIRMED:
-        notes.append(f"{unit} from He* at {number_text(RECOIL_WAVELENGTH * 1e9, 6)} nm: unconfirmed which beams set "
-                     "the recoil unit")
+        notes.append(f"{unit} from He* at {number_text(constants.recoil_wavelength * 1e9, 6)} nm: unconfirmed which "
+                     "beams set the recoil unit")
     return replace(data, result=result, reused=reused, added=len(result.shots_used) - reused,
                    seconds=time.monotonic() - started, notes=tuple(notes), live_skipped=skipped)
 
@@ -645,7 +695,7 @@ def velocity_record(data: CorrelationData) -> dict[str, Any]:
             "origin": list(data.origin), "origin_from": data.origin_how,
             "fall_distance": finite_or_none(effective_fall_distance(data.constants)), "g": data.constants.g,
             "unit": data.unit, "unit_m_per_s": finite_or_none(data.unit_value),
-            "recoil_wavelength": RECOIL_WAVELENGTH if data.unit != MM_PER_S else None,
+            "recoil_wavelength": data.constants.recoil_wavelength if data.unit != MM_PER_S else None,
             "view_range": ({"lower": list(data.box.lower), "upper": list(data.box.upper), "manual": data.box.manual,
                             "kept": data.box_kept} if data.box is not None else None),
             "events": data.events, "masked": data.masked, "inside": data.inside, "used": data.used}
@@ -766,14 +816,14 @@ class Correlations(DatasetAnalysis):
 
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
         geometry, mode, axis = kind_of(values)
-        reach = float(values[REACH.name])
+        reach, bins, window = scales_of(values)
         parts = [shots_brief(values), range_brief(values), mask_brief(values),
                  f"{'back-to-back ' if mode == BACK_TO_BACK else ''}"
                  f"{f'1D {VELOCITY_AXES[axis]}' if geometry == ONE_D else 'radial'}",
                  f"± {velocity_text(reach)}" if geometry == ONE_D else f"0–{velocity_text(reach)}",
-                 f"{int(values[BINS.name]):,} bins"
+                 f"{bins:,} bins"
                  + (" (equal volume)" if geometry == RADIAL and values.get(SHELLS.name) == EQUAL_VOLUME else ""),
-                 f"window ± {velocity_text(float(values[WINDOW.name]))}" if geometry == ONE_D else ""]
+                 f"window ± {velocity_text(window)}" if geometry == ONE_D else ""]
         source = source_of(values)
         if source is not None and any(source):
             parts.append("v₀ (" + ", ".join(number_text(v / MM_S, WIDTH_DIGITS) for v in source) + ") mm/s")

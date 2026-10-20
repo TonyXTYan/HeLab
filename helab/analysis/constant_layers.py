@@ -18,8 +18,8 @@ from __future__ import annotations
 import math
 from typing import Any, Iterable, Mapping, Sequence
 
-from helab.analysis.display_units import length_text, si_text, time_text
-from helab.analysis.parameters import ParameterSpec
+from helab.analysis.display_units import length_text, number_text, si_text, time_text
+from helab.analysis.parameters import SI_FACTORS, ParameterSpec
 from helab.analysis.physics import DEFAULTS, TABLE, Origin, ResolvedConstants, resolve
 
 PREFIX = "const."
@@ -36,6 +36,8 @@ FROM_THE_DATA = ORIGIN_TEXT["detected"]
 SI_UNITS = ("m", "s", "Hz")
 # Of those, the ones always shown in one prefix, as the plots' axes (ms and mm: Tony, 2026-10-20).
 FIXED_PREFIX = {"s": "m", "m": "m"}
+# Rows shown in another fixed prefix than their unit's: a wavelength in nm.
+KEY_PREFIX: Mapping[str, str] = {"recoil_wavelength": "n"}
 LIMITS = (1e-60, 1e60)
 SIGNED_LIMITS = (-1e60, 1e60)  # a signed row's (``Constant.signed``: the origin's positions)
 OPTIONAL_LIMITS = (0.0, 1e60)  # an optional time's: 0 until a value is typed
@@ -44,7 +46,14 @@ SYMBOLS: Mapping[str, str] = {
     "hbar": "ħ", "k_B": "k_B", "u": "u", "mass": "m", "g": "g", "scattering_length": "a",
     "fall_distance": "h", "fall_time": "t_f", "trap_radial": "f_r", "trap_axial": "f_z",
     "detector_qe": "QE", "trap_axial_axis": "axial axis", "dld_trigger": "trigger", "dld_acquisition": "acquisition",
-    "release_time": "t_r", "arrival_time": "t_a", "trap_x": "x₀", "trap_y": "y₀"}
+    "release_time": "t_r", "arrival_time": "t_a", "trap_x": "x₀", "trap_y": "y₀",
+    "recoil_wavelength": "λ"}
+
+
+def fixed_prefix(key: str) -> str | None:
+    """The one SI prefix ``key``'s values are shown and typed in (mm, ms; a wavelength in nm), or
+    None when the prefix follows the value."""
+    return KEY_PREFIX.get(key, FIXED_PREFIX.get(TABLE[key].unit))
 
 
 def value_name(key: str) -> str:
@@ -109,7 +118,7 @@ def constants_specs(keys: Sequence[str], *, group: str = GROUP, page: str = "") 
                                    limits=limits(key), suffix=constant.unit, group=group, page=page,
                                    when=(source_name(key), SET_HERE), si=constant.unit in SI_UNITS,
                                    # Times in ms and lengths in mm, as in the plots (Tony, 2026-10-20).
-                                   unit_prefix=FIXED_PREFIX.get(constant.unit),
+                                   unit_prefix=fixed_prefix(key),
                                    tip=f"This plot's own value. {tip}"))
     return specs
 
@@ -169,13 +178,16 @@ def resolve_for_run(values: Mapping[str, Any], lab: Mapping[str, float] | None =
 def value_text(key: str, value: float) -> str:
     """``value`` with its unit, short: 848 mm, 416.101 ms, 20,500 ms, 9.79602 m/s², 500 Hz,
     6.64648e-27 kg: lengths in mm and times in ms (``FIXED_PREFIX``, as the plots and the settings
-    show them), Hz with an SI prefix, the others in scientific form; "from the data" for an
-    optional row without a value (nan)."""
+    show them), a wavelength in nm (``KEY_PREFIX``: 1,083.331 nm), Hz with an SI prefix, the
+    others in scientific form; "from the data" for an optional row without a value (nan)."""
     unit = TABLE[key].unit
     if math.isnan(value) and TABLE[key].optional:
         return FROM_THE_DATA
     if TABLE[key].choices:
         return TABLE[key].label(value) or f"{value:g}"
+    if key in KEY_PREFIX:
+        prefix = KEY_PREFIX[key]
+        return f"{number_text(value / SI_FACTORS[prefix], 7)} {prefix}{unit}"
     if unit == "s":
         return time_text(value)
     if unit == "m":

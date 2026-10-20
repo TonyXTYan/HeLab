@@ -102,7 +102,7 @@ import json
 import math
 import time
 from collections.abc import Hashable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Literal, MutableMapping, Sequence, cast
 
 import numpy as np
@@ -111,7 +111,7 @@ from scipy.spatial import KDTree
 
 from helab.analysis.bootstrap import DEFAULT_N_BOOT, DEFAULT_SEED, BootstrapResult, bootstrap_shots
 from helab.analysis.estimates import Estimate, finite_or_none
-from helab.analysis.fits import FitModel, FitResult, ModelParameter, Role, fit_histogram
+from helab.analysis.fits import MAX_EVALUATIONS, FitModel, FitResult, ModelParameter, Role, fit_histogram
 from helab.analysis.results import Cancelled
 
 Array = npt.NDArray[np.float64]
@@ -129,6 +129,7 @@ MIN_PAIRS = 100  # fewer in-shot pairs in range than this: a note (g² is mostly
 # this many numbers (64 MB): S²·bins, so 400 shots of 50 bins. Beyond it the state drops it.
 MATRIX_LIMIT = 8_000_000
 FIT_RESAMPLES = 200  # bootstrap replicates refitted for g²(0)'s SE
+REFIT_EVALUATIONS = 1000  # per refit of a resampled curve, started from the fit (``_warm``)
 SLOPE_WIDTH = 1 / 3  # a fitted σ above this share of the reach is a slope, not a peak
 BASELINE_SE = 2.0  # a fitted baseline this many SEs from 1 gets a note
 JACKKNIFE_REFITS = 100  # up to this many shots, g²(0)'s SE also refits the delete-one curves
@@ -615,6 +616,7 @@ class PairCounts:
 
 
 Baseline = Literal["free", "fixed"]
+NoBootErrors = Literal["counting", "jackknife"]  # the per-bin SE without a bootstrap
 
 
 def _peak_names(spec: CorrelationSpec, baseline: Baseline) -> tuple[str, ...]:
@@ -676,11 +678,23 @@ def _shell_weight(r: Array) -> Array:
     return r * r
 
 
-def fit_peak(spec: CorrelationSpec, model: FitModel, g2: npt.ArrayLike, sigma: npt.ArrayLike) -> FitResult:
+def fit_peak(spec: CorrelationSpec, model: FitModel, g2: npt.ArrayLike, sigma: npt.ArrayLike,
+             max_evaluations: int = MAX_EVALUATIONS) -> FitResult:
     """Fit ``model`` to g² per bin, averaged over each of ``spec``'s bins (exact edges; r²
     weights over radial shells)."""
-    return fit_histogram(spec.centres, g2, model, sigma=sigma, edges=spec.edges,
+    return fit_histogram(spec.centres, g2, model, sigma=sigma, edges=spec.edges, max_evaluations=max_evaluations,
                          binned=_shell_weight if spec.geometry == "radial" else True)
+
+
+def _warm(model: FitModel, fitted: FitResult) -> FitModel:
+    """``model`` started from ``fitted``'s parameters: refits of resampled curves (g²(0)'s
+    error) are small perturbations of the fit, and starting each from scratch made noisy,
+    sparse curves take ~0.8 s a refit (hundreds of them per run)."""
+    start = fitted.values
+
+    def guesses(x: Array, y: Array, errors: Array) -> list[Array]:
+        return [start.copy()]
+    return replace(model, guesses=guesses)
 
 
 def _peak_value(fit: FitResult, baseline: Baseline) -> float:
@@ -821,13 +835,14 @@ def _zero_error(fitted: FitResult, model: FitModel, baseline: Baseline, boot: Bo
     fall short with few shots (scatter/SE 1.16 at 40 shots, 1.29 at 4 before this), so below
     ``ROUGH_SHOTS`` it is noted as rough. Without a bootstrap, the covariance's, said so."""
     held = boot.shots if boot is not None else (len(curves) if curves is not None else 0)
+    model = _warm(model, fitted)
     parts: list[str] = []
     errors: list[float] = []
     if boot is not None and len(boot.replicates):
         replicas = []
         for row in boot.replicates[:FIT_RESAMPLES]:
             _check(cancelled)
-            refit = fit_peak(spec, model, row, sigma)
+            refit = fit_peak(spec, model, row, sigma, REFIT_EVALUATIONS)
             replicas.append(_peak_value(refit, baseline) if refit.ok else math.nan)
         found = np.array(replicas)
         found = found[np.isfinite(found)]
@@ -841,7 +856,7 @@ def _zero_error(fitted: FitResult, model: FitModel, baseline: Baseline, boot: Bo
         leave_out = []
         for row in curves:
             _check(cancelled)
-            refit = fit_peak(spec, model, row, sigma)
+            refit = fit_peak(spec, model, row, sigma, REFIT_EVALUATIONS)
             leave_out.append(_peak_value(refit, baseline) if refit.ok else math.nan)
         values = np.array(leave_out)
         if np.all(np.isfinite(values)):
@@ -875,7 +890,8 @@ def _near_zero(spec: CorrelationSpec, h_in: Counts, p_in: int, h_between: Counts
         weights = h_between[bins].astype(np.float64)
         rows = boot.replicates[:, bins]
         finite = np.isfinite(rows)
-        pooled = (np.where(finite, rows, 0.0) * weights).sum(axis=1) / (finite * weights).sum(axis=1)
+        with np.errstate(divide="ignore", invalid="ignore"):  # a replicate with none of these bins: nan, dropped
+            pooled = (np.where(finite, rows, 0.0) * weights).sum(axis=1) / (finite * weights).sum(axis=1)
         pooled = pooled[np.isfinite(pooled)]
         se = float(np.std(pooled, ddof=1)) if len(pooled) >= 2 else math.nan
     else:
@@ -885,9 +901,12 @@ def _near_zero(spec: CorrelationSpec, h_in: Counts, p_in: int, h_between: Counts
 
 def g2_from_counts(state: PairCounts, *, shots_total: int | None = None, n_boot: int = DEFAULT_N_BOOT,
                    seed: int | None = DEFAULT_SEED, fit: bool = True, baseline: Baseline = "free",
-                   cancelled: Cancel = None, notes: Sequence[str] = ()) -> CorrelationResult:
+                   cancelled: Cancel = None, notes: Sequence[str] = (),
+                   errors: NoBootErrors = "counting") -> CorrelationResult:
     """g², its errors and the peak fit from a state's counts. ``n_boot`` 0 skips the
-    bootstrap (the counting SE is used, and g²(0)'s SE comes from the fit's covariance).
+    bootstrap: the counting SE is used (or with ``errors`` "jackknife" the delete-one-shot
+    jackknife's, where the shot-pair matrix gives it; ``se_method`` says which), and g²(0)'s SE
+    comes from the jackknife refits, else the fit's covariance.
     ``baseline`` "free" (default) fits b + A·Gaussian and reports (b + A)/b; "fixed" fits
     1 + A·Gaussian, as the legacy code did (a reference that doesn't match the shots then
     shows as a peak)."""
@@ -938,6 +957,9 @@ def g2_from_counts(state: PairCounts, *, shots_total: int | None = None, n_boot:
             if not exact:
                 noted.append("too many shots for the shot-pair matrix: the bootstrap keeps each shot's reference "
                              "against all the others, so its error is optimistic, notably below ~10 shots")
+        elif errors == "jackknife" and exact and np.isfinite(jackknife).any():
+            se = np.where(np.isfinite(jackknife), jackknife, counting)
+            method = "delete-one-shot jackknife"
     centres = spec.centres
     fitted: FitResult | None = None
     zero, level, zero_method = Estimate(math.nan), Estimate(1.0, 0.0), ""
@@ -991,7 +1013,8 @@ def correlate(shots: Sequence[ShotEvents], spec: CorrelationSpec, *,
               cache: MutableMapping[CacheKey, InShot] | None = None, state: PairCounts | None = None,
               cancelled: Cancel = None, budget: float | None = None,
               clock: Callable[[], float] = time.monotonic, n_boot: int = DEFAULT_N_BOOT,
-              seed: int | None = DEFAULT_SEED, fit: bool = True, baseline: Baseline = "free") -> CorrelationResult:
+              seed: int | None = DEFAULT_SEED, fit: bool = True, baseline: Baseline = "free",
+              errors: NoBootErrors = "counting") -> CorrelationResult:
     """g² of ``shots`` (see the module docstring). Pass the ``state`` of the previous run
     (same ``spec``) to update it instead of starting again (Live), and a ``cache`` to reuse
     in-shot counts by fingerprint; ``budget`` limits the time spent adding shots."""
@@ -1003,7 +1026,7 @@ def correlate(shots: Sequence[ShotEvents], spec: CorrelationSpec, *,
         state.cache = cache
     state.update(shots, cancelled, budget, clock)
     return g2_from_counts(state, shots_total=len(shots), n_boot=n_boot, seed=seed, fit=fit, baseline=baseline,
-                          cancelled=cancelled)
+                          cancelled=cancelled, errors=errors)
 
 
 def linear_edges(low: float, high: float, bins: int) -> tuple[float, ...]:
