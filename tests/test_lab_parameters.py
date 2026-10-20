@@ -45,6 +45,19 @@ def test_times_and_lengths_show_in_ms_and_mm_as_in_the_plots(qtbot: QtBot) -> No
         assert box.text() == text and box.value() == pytest.approx(value)
 
 
+def test_editors_are_wide_enough_for_their_values(qtbot: QtBot) -> None:
+    """A spin box is at least as wide as its value shown, and grows for a longer one."""
+    from helab.views.LabParametersTab import constant_editor
+    box = constant_editor(TABLE["fall_time"], 0.41609078)
+    qtbot.addWidget(box)
+    box.show()
+    assert box.text() == "416.09078 ms"
+    assert box.minimumWidth() >= box.fontMetrics().horizontalAdvance("416.09078 ms") + 20
+    narrow = box.minimumWidth()
+    box.setValue(123456.123456)  # A much longer number.
+    assert box.minimumWidth() >= box.fontMetrics().horizontalAdvance(box.text()) and box.minimumWidth() >= narrow
+
+
 def test_the_tab_edits_restores_and_saves(qtbot: QtBot, tmp_path: Path) -> None:
     settings = ini(tmp_path)
     write_lab_constants(settings, {"g": 9.8})

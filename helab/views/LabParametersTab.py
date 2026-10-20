@@ -10,14 +10,15 @@ from __future__ import annotations
 from typing import Any
 
 from PyQt6.QtCore import QSettings, Qt
-from PyQt6.QtWidgets import QGridLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QGridLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from helab.analysis.constant_layers import FIXED_PREFIX, LIMITS, SI_UNITS
 from helab.analysis.parameter_tree import UnitSpinBox
 from helab.analysis.physics import Constant
+from helab.utils.colours import AMBER
 from helab.utils.lab_parameters import editable, lab_rows, read_lab_constants, write_lab_constants
 
-AMBER = "#c77700"
+__all__ = ["AMBER", "LabParametersTab", "UNCONFIRMED", "UNCONFIRMED_TIP", "constant_editor", "name_label", "number"]
 UNCONFIRMED = "unconfirmed"
 UNCONFIRMED_TIP = "A value borrowed from the legacy code, not yet checked on the current setup"
 
@@ -30,7 +31,35 @@ def constant_editor(constant: Constant, value: float) -> UnitSpinBox:
     box.setOpts(value=value, suffix=constant.unit, siPrefix=constant.unit in SI_UNITS, dec=True, step=0.1,
                 minStep=LIMITS[0], decimals=8, bounds=list(LIMITS), fixedPrefix=FIXED_PREFIX.get(constant.unit))
     box.setToolTip(constant.source)
+    fit_width(box)
+    box.sigValueChanged.connect(lambda *_: fit_width(box))
     return box
+
+
+# The widest a constant's value usually shows: grouped digits, decimals and a sign, in the box's unit.
+WIDE_NUMBER = "−0,000.000000"
+EDITOR_EXTRA = 40  # px: the spin buttons and the frame
+
+
+def fit_width(box: UnitSpinBox) -> None:
+    """At least wide enough for the value shown and for ``WIDE_NUMBER`` with the unit, so a number
+    is never cut ("3.09078 ms" for 416.09078 ms); it only grows."""
+    metrics = box.fontMetrics()
+    unit = f" {box.opts.get('fixedPrefix') or ''}{box.opts.get('suffix') or ''}"
+    widest = max(metrics.horizontalAdvance(box.text()), metrics.horizontalAdvance(WIDE_NUMBER + unit))
+    box.setMinimumWidth(max(box.minimumWidth(), widest + EDITOR_EXTRA))
+
+
+def name_label(constant: Constant) -> QLabel:
+    """A constant's name over its source, wrapped, wide enough for a few words a line (a narrow
+    column wrapped the source a word a line and cut it off)."""
+    label = QLabel(f"{constant.title}<br><small>{constant.source}</small>")
+    label.setTextFormat(Qt.TextFormat.RichText)
+    label.setWordWrap(True)
+    label.setToolTip(constant.source)
+    label.setMinimumWidth(label.fontMetrics().horizontalAdvance("M" * 14))
+    label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+    return label
 
 
 def number(box: UnitSpinBox) -> float:
@@ -56,12 +85,9 @@ class LabParametersTab(QWidget):
         self.restore_buttons: dict[str, QPushButton] = {}
         self.read_only: dict[str, QLabel] = {}
         for row, constant in enumerate(lab_rows()):
-            name = QLabel(f"{constant.title}<br><small>{constant.source}</small>")
-            name.setTextFormat(Qt.TextFormat.RichText)
-            name.setWordWrap(True)
-            name.setToolTip(constant.source)
-            grid.addWidget(name, row, 0)
+            grid.addWidget(name_label(constant), row, 0)
             status = QLabel()
+            status.setWordWrap(True)
             self.status[constant.key] = status
             grid.addWidget(status, row, 2)
             if not editable(constant):
@@ -75,7 +101,7 @@ class LabParametersTab(QWidget):
             box.sigValueChanged.connect(lambda *_, key=constant.key: self._update(key))
             self.editors[constant.key] = box
             grid.addWidget(box, row, 1)
-            restore = QPushButton("Restore default")
+            restore = QPushButton("Restore")
             restore.setToolTip(f"Default: {constant.value:.10g} {constant.unit}")
             restore.clicked.connect(lambda _=False, key=constant.key: self.restore(key))
             self.restore_buttons[constant.key] = restore

@@ -12,14 +12,15 @@ from __future__ import annotations
 import os
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QGridLayout, QLabel, QPushButton, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QGridLayout, QLabel, QLayout, QPushButton,
+                             QVBoxLayout, QWidget)
 
 from helab.analysis.constant_layers import folder_layer
 from helab.analysis.parameter_tree import UnitSpinBox
 from helab.analysis.physics import CONSTANTS, Constant, ResolvedConstants, resolve
 from helab.utils.folder_cache import FolderCache
-from helab.views.LabParametersTab import AMBER, UNCONFIRMED_TIP, constant_editor, number
+from helab.utils.colours import AMBER as AMBER
+from helab.views.LabParametersTab import UNCONFIRMED_TIP, constant_editor, name_label, number
 
 FOLDER_ROWS: tuple[Constant, ...] = tuple(constant for constant in CONSTANTS if constant.level == "folder")
 INHERITANCE_NOTE = ("A folder's values apply to it and to its subfolders that don't set their own, up to its "
@@ -37,6 +38,7 @@ class FolderConstantsDialog(QDialog):
         self.path, self.cache, self.owner = path, cache, owner
         self.setWindowTitle(f"Folder constants · {short_name(path)}")
         layout = QVBoxLayout(self)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)  # Never smaller than its content.
         heading = QLabel(path)
         heading.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(heading)
@@ -55,10 +57,7 @@ class FolderConstantsDialog(QDialog):
         self.restore_buttons: dict[str, QPushButton] = {}
         own = cache.folder_constants(path)
         for row, constant in enumerate(FOLDER_ROWS):
-            name = QLabel(f"{constant.title}<br><small>{constant.source}</small>")
-            name.setTextFormat(Qt.TextFormat.RichText)
-            name.setWordWrap(True)
-            grid.addWidget(name, row, 0)
+            grid.addWidget(name_label(constant), row, 0)
             check = QCheckBox("Set by hand" if constant.key == "fall_time" else "Set here")
             check.setChecked(constant.key in own)
             check.setToolTip("Set the fall time by hand instead of deriving it, √(2h/g), from the fall distance"
@@ -90,6 +89,7 @@ class FolderConstantsDialog(QDialog):
             check.toggled.connect(lambda *_: self._update())
         for box in self.editors.values():
             box.sigValueChanged.connect(lambda *_: self._update())
+        self.adjustSize()  # Sized to its content once the values (and their widths) are in.
 
     def _above(self) -> dict[str, tuple[float, str]]:
         """What the folder inherits: the nearest folder above it (never itself) setting each value."""

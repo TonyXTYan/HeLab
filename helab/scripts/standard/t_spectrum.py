@@ -37,6 +37,7 @@ from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.follow import LivePolicy
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.plot_axes import GroupedAxis
+from helab.analysis.plot_text import add_label, lines_html
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_box, range_brief, range_specs,
                                       range_warnings, select_shots, selection_text, shots_brief, shots_text)
@@ -65,7 +66,7 @@ SPECTRUM_GROUP = "Spectrum"
 WINDOW = window_spec(SPECTRUM_GROUP)
 SCALE = ParameterSpec("spectrum_scale", "Spectrum", "choice", AMPLITUDE, choices=(AMPLITUDE, POWER),
                       group=SPECTRUM_GROUP, tip="Amplitude, or power (the amplitude squared; not per Hz).")
-LOG = ParameterSpec("spectrum_log", "Log scale", "bool", True, group=SPECTRUM_GROUP,
+LOG = ParameterSpec("spectrum_log", "Log Y", "bool", True, group=SPECTRUM_GROUP,
                     tip="Logarithmic amplitude (or power) axis.")
 PADDING = ParameterSpec(
     "padding", "Zero padding ×", "int", 1, (1, MAX_PADDING), group=SPECTRUM_GROUP,
@@ -116,7 +117,7 @@ class ProfileSpectrum:
 
     @property
     def unit(self) -> str:
-        return "kHz/shot" if self.per_shot else "events"
+        return "kHz per shot" if self.per_shot else "events"
 
 
 def bin_width(events: int, span: float, given: float) -> tuple[float, bool, str, str]:
@@ -161,7 +162,9 @@ def empty_reason(data: ProfileSpectrum) -> str:
 
 def value_unit(data: ProfileSpectrum) -> str:
     power = data.spectrum is not None and data.spectrum.power
-    return f"({data.unit})²" if power else data.unit
+    if not power:
+        return data.unit
+    return "kHz² per shot²" if data.per_shot else "events²"
 
 
 def peak_lines(data: ProfileSpectrum) -> list[str]:
@@ -173,7 +176,9 @@ def peak_lines(data: ProfileSpectrum) -> list[str]:
             f"{peak.prominence:.3g} {data.unit}" for rank, peak in enumerate(spectrum.peaks, start=1)]
 
 
-def titles(result: AnalysisResult, data: ProfileSpectrum) -> tuple[str, str]:
+def titles(result: AnalysisResult, data: ProfileSpectrum) -> tuple[str, ...]:
+    """The figure's title lines: what it shows, its bins and spectrum, then one line per note and
+    warning."""
     first = (f"{result.input.short()} · {shots_text(data.shots, data.total_shots)} · {data.events:,} of "
              f"{data.total:,} events in range")
     second = [f"{len(data.counts):,} T bins of {time_text(data.width, WIDTH_DIGITS)} "
@@ -183,8 +188,7 @@ def titles(result: AnalysisResult, data: ProfileSpectrum) -> tuple[str, str]:
         second.append(spectrum_text(spectrum))
         second.append(f"{spectrum.window} window" + (f", zero padding ×{spectrum.padding}" if spectrum.padding > 1
                                                      else ""))
-    second += [*data.notes, *(f"⚠ {warning}" for warning in data.warnings)]
-    return first, " · ".join(second)
+    return (first, " · ".join(second), *data.notes, *(f"⚠ {warning}" for warning in data.warnings))
 
 
 def result_brief(data: ProfileSpectrum) -> str:
@@ -229,7 +233,7 @@ class SpectrumPlot(QWidget):
         layout.addWidget(self.graphics)
         self.key = key
         log, power, per_shot = key
-        self.title: Any = self.graphics.addLabel("", row=0, col=0)
+        self.title: Any = add_label(self.graphics, row=0, col=0)
         self.profile_plot: Any = self.graphics.addPlot(row=1, col=0, title="T profile, summed over the shots",
                                                        axisItems={"bottom": GroupedAxis("bottom")})
         self.profile_plot.setLabel("bottom", axis_label("T"))
@@ -242,8 +246,8 @@ class SpectrumPlot(QWidget):
                                                         axisItems={"left": GroupedAxis("left")})
         self.spectrum_plot.setLabel("bottom", "Frequency", units="Hz")
         quantity = "Power" if power else "Amplitude"
-        self.spectrum_plot.setLabel("left", f"{quantity} ({'kHz/shot' if per_shot else 'events'}"
-                                            f"{')²' if power else ')'}")
+        unit = ("kHz² per shot²" if power else "kHz per shot") if per_shot else ("events²" if power else "events")
+        self.spectrum_plot.setLabel("left", f"{quantity} ({unit})")
         self.spectrum_plot.showGrid(x=True, y=True, alpha=0.3)
         if log:
             self.spectrum_plot.setLogMode(x=False, y=True)
@@ -253,14 +257,13 @@ class SpectrumPlot(QWidget):
         self.markers: Any = self.spectrum_plot.plot([], [], pen=None, symbol="o", symbolSize=7,
                                                     symbolBrush=None, symbolPen=pg.mkPen(PEAK_COLOUR, width=1.5))
         self.labels: list[Any] = []
-        self.peaks_label: Any = self.graphics.addLabel("", row=3, col=0, justify="left")
+        self.peaks_label: Any = add_label(self.graphics, row=3, col=0, justify="left")
         self.graphics.ci.layout.setRowStretchFactor(1, 2)
         self.graphics.ci.layout.setRowStretchFactor(2, 3)
 
     def show_data(self, result: AnalysisResult, data: ProfileSpectrum) -> None:
         log = self.key[0]
-        first, second = titles(result, data)
-        self.title.setText(f"{html.escape(first)}<br>{html.escape(second)}")
+        self.title.setText(lines_html(titles(result, data)))
         self.profile.setData(data.centres * T_SCALE, data.profile)
         for label in self.labels:
             self.spectrum_plot.removeItem(label)
@@ -284,7 +287,8 @@ class SpectrumPlot(QWidget):
         if lines:
             text = "Peaks: " + "<br>".join(html.escape(line) for line in lines)
         elif spectrum.threshold:
-            text = html.escape(f"No peak with a prominence of {spectrum.threshold:.3g} {value_unit(data)} or more "
+            # The threshold is in amplitude, also for power (Peak prominence's tip).
+            text = html.escape(f"No peak with a prominence of {spectrum.threshold:.3g} {data.unit} or more "
                                f"(Peaks settings)")
         else:
             text = ""

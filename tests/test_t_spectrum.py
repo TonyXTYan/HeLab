@@ -73,8 +73,8 @@ def test_finds_the_pulse_rate_modulation_within_one_bin() -> None:
     assert spectrum.enbw == pytest.approx(1.5) and spectrum.resolution == pytest.approx(30.0, rel=1e-6)
     top = spectrum.peaks[0]
     assert abs(top.frequency - F0) <= 0.05 * spectrum.bin_spacing
-    # Rate per shot: 20,000 events in 50 ms is 400 kHz per shot, modulated by 20 %: 80 kHz/shot.
-    assert data.profile.mean() == pytest.approx(400.0, rel=1e-3) and data.unit == "kHz/shot"
+    # Rate per shot: 20,000 events in 50 ms is 400 kHz per shot, modulated by 20 %: 80 kHz per shot.
+    assert data.profile.mean() == pytest.approx(400.0, rel=1e-3) and data.unit == "kHz per shot"
     assert top.value == pytest.approx(80.0, rel=0.05) and top.prominence > 0.5 * top.value
     assert spectrum.peaks == (top,)  # the noise lists nothing else
     text = SCRIPT.describe_result("Plot", result)
@@ -133,7 +133,7 @@ def test_counts_power_and_peaks_above() -> None:
     # 4 shots × 20,000 events over 5,000 bins: 16 per bin, modulated by 20 %.
     assert counts.spectrum.peaks[0].value == pytest.approx(16 * DEPTH, rel=0.15)
     power = run(view, {**FULL, "t_bin": 10e-6, "profile_units": "counts", "spectrum_scale": "power"}).data
-    assert power.spectrum.power and t_spectrum.value_unit(power) == "(events)²"
+    assert power.spectrum.power and t_spectrum.value_unit(power) == "events²"
     assert power.spectrum.peaks[0].value == pytest.approx(counts.spectrum.peaks[0].value ** 2, rel=1e-9)
     assert power.spectrum.peaks[0].frequency == counts.spectrum.peaks[0].frequency
     above = run(view, {**FULL, "t_bin": 10e-6, "peaks_above": 2500.0}).data.spectrum
@@ -225,7 +225,7 @@ def test_drawn_with_its_peak_list_and_updated_in_place(qtbot: QtBot) -> None:
     assert isinstance(widget, t_spectrum.SpectrumPlot)
     assert widget.profile_plot.getAxis("bottom").labelText == "T (ms)"
     assert widget.spectrum_plot.getAxis("bottom").labelUnits == "Hz"
-    assert widget.spectrum_plot.getAxis("left").labelText == "Amplitude (kHz/shot)"
+    assert widget.spectrum_plot.getAxis("left").labelText == "Amplitude (kHz per shot)"
     assert isinstance(widget.spectrum_plot.getAxis("left"), GroupedAxis)
     assert "Peaks: 1. 2 kHz" in widget.peaks_label.text and len(widget.labels) == len(widget.markers.getData()[0])
     assert "bin spacing Δf 20 Hz, resolution ≈ 30 Hz (ENBW 1.5), Nyquist 50 kHz" in widget.title.text

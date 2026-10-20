@@ -231,7 +231,8 @@ def test_rendering_draws_an_image_of_the_right_shape(qtbot: QtBot, projection: s
     # The image draws its compressed copy over plain viridis (levels 0…1); the result stays linear.
     assert image.levels.tolist() == [0.0, 1.0] and image.image.max() == 1.0
     assert np.allclose(image.image, np.sqrt(result.data.image / result.data.image.max()))
-    assert widget.bar.getAxis("left").labelText == "Events per bin"
+    # The colours are compressed (sqrt), the bar's numbers are real counts: its label says both.
+    assert widget.bar.getAxis("left").labelText == "Events per bin · colours sqrt, values linear"
     assert widget.contour.data is None  # No highlight by default.
     assert widget.plot.getViewBox().state["aspectLocked"] == (1 if projection == "XY" else False)
 
@@ -284,10 +285,10 @@ def test_counts_to_rate_per_shot_in_place_relabels_the_bar(qtbot: QtBot) -> None
     qtbot.addWidget(widget)
     assert isinstance(widget, DensityPlot)
     bar = widget.bar
-    assert bar.getAxis("left").labelText == "Events per bin"
+    assert bar.getAxis("left").labelText.startswith("Events per bin")
     rate = run(view, {**MANUAL, "bins": 10, "quantity": density_images.PER_SHOT})
     assert SCRIPT.update(widget, rate) and widget.bar is bar
-    assert bar.getAxis("left").labelText == "Events / mm² / shot"
+    assert bar.getAxis("left").labelText.startswith("Events / mm² / shot")
     assert bar.levels() == (0.0, float(rate.data.image.max())) and rate.data.image.max() < counts.data.image.max()
 
 
