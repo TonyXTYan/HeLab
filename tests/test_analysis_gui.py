@@ -428,7 +428,8 @@ def test_find_hot_spots_from_the_panel(window: Window, browser: FolderExplorer, 
     qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
     assert instance.result is not None and instance.result.state == "completed", instance.status_label.text()
     assert isinstance(instance.result.data, density_images.HotSpots)
-    assert "bins 0.5 mm · above 5 × median" in source_label(instance.dock_widget).text()
+    assert "bins 0.5 mm · background σ 1 mm · 0.01 false spots per image · 0 hot spots found" in \
+        source_label(instance.dock_widget).text()
 
 
 def test_histogram_fits_go_in_the_docks_record(window: Window, browser: FolderExplorer, qtbot: QtBot,

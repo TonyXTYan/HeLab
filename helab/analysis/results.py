@@ -19,6 +19,7 @@ from typing import Any, Iterable, Literal, Mapping
 from helab.analysis.constant_layers import record_text
 from helab.analysis.dataset_view import DatasetView, Fingerprint, ViewKey
 from helab.analysis.identity import AnalysisIdentity
+from helab.analysis.masks import mask_key
 from helab.analysis.physics import ResolvedConstants
 
 State = Literal["completed", "failed", "cancelled"]
@@ -168,7 +169,8 @@ class AnalysisResult:
                 "file_hash": self.analysis.file_hash, "action": self.action, "root_key": identity.root_key,
                 "signature": identity.signature, "input_signature": self.input_signature,
                 "parameters": dict(self.parameters), "coverage": self.coverage.to_json(),
-                **({"constants": record} if (record := self.constants_record) is not None else {})}
+                **({"constants": record} if (record := self.constants_record) is not None else {}),
+                **mask_key(self.parameters)}
 
     def describe(self, parameters_text: str = "") -> str:
         """The record, one item per line, for a plot dock's tooltip."""

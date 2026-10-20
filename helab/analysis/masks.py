@@ -22,6 +22,7 @@ don't change. The current detector's preset is empty until the hot-spot finder (
 """
 from __future__ import annotations
 
+import functools
 import math
 import re
 from dataclasses import dataclass
@@ -120,7 +121,18 @@ MASK_MODE = ParameterSpec(
     tip="Circles in XY that keep or cut events before the plot uses them: none, a preset (a detector's "
         "hot spots), or circles typed below. An event stays when it is inside every keep circle and outside "
         "every cut circle; one exactly on a circle counts as outside. T is never masked.")
-MASK_PRESET = ParameterSpec(
+@dataclass(frozen=True)
+class PresetSpec(ParameterSpec):
+    """The preset choice, whose record text also lists the preset's circles (in mm), so a plot's
+    record says what was masked even if a preset changes later."""
+
+    def text(self, value: Any) -> str:
+        circles = PRESETS.get(str(value), ())
+        listed = "; ".join(circle.text() for circle in circles) or "no circles"
+        return f"{super().text(value)} ({listed})"
+
+
+MASK_PRESET = PresetSpec(
     "mask_preset", "Preset", "choice", EARLIER, choices=tuple(PRESETS), group=MASK_GROUP,
     when=(MASK_MODE.name, PRESET),
     tip=f"{EARLIER}: the lab's hot-spot mask for the earlier detector (Core hotspot_mask.m, 2020-06-14): a keep "
@@ -153,6 +165,10 @@ def parse_circles(text: str) -> tuple[Circle, ...]:
             continue
         fields = [field.strip() for field in item.replace("−", "-").split(",")]
         where = f"Mask circle “{item}”"
+        polarity = len(fields) == 4 and fields[3] in ("0", "1")  # the lab's 1 = keep, 0 = cut
+        if len(fields) > 3 and not polarity and all(_number(field) for field in fields[3:]):
+            # "1,5, 2, 3": a decimal comma, as German writes it.
+            raise MaskError(f"{where}: use “.” for decimals: “,” separates x, y, r (and keep or cut)")
         if len(fields) not in (3, 4):
             raise MaskError(f"{where}: needs x, y and r in mm, then optionally keep or cut, separated by "
                             f"commas (decimals with \".\")")
@@ -176,6 +192,14 @@ def parse_circles(text: str) -> tuple[Circle, ...]:
     return tuple(circles)
 
 
+def _number(text: str) -> bool:
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True
+
+
 def format_circles(circles: Sequence[Circle]) -> str:
     """Circles as the custom text reads them, one per line."""
     return "\n".join(circle.text() for circle in circles)
@@ -194,16 +218,34 @@ class Mask:
         return bool(self.circles)
 
     def keeps(self, events: Events) -> npt.NDArray[np.bool_]:
-        """Which of ``events`` (T/X/Y rows, in s and m) the mask keeps."""
+        """Which of ``events`` (T/X/Y rows, in s and m) the mask keeps: from the mask's lookup grid
+        (``raster``), with the exact test only for events in cells a circle's edge crosses (and
+        for non-finite positions). The same answer as ``keeps_exactly``, much faster."""
         events = np.asarray(events)
-        kept = np.ones(len(events), dtype=bool)
         if not self.circles or not len(events):
-            return kept
+            return np.ones(len(events), dtype=bool)
         x, y = events[:, 1], events[:, 2]
-        for circle in self.circles:
-            inside = circle.inside(x, y)
-            kept &= inside if circle.keep else ~inside
+        grid = raster(self.circles)
+        with np.errstate(invalid="ignore"):
+            ix = np.floor((x - grid.x0) / grid.cell)
+            iy = np.floor((y - grid.y0) / grid.cell)
+        on_grid = (ix >= 0) & (ix < grid.nx) & (iy >= 0) & (iy < grid.ny)  # False for nan
+        kept = np.full(len(events), grid.outside_kept)
+        status = grid.status[ix[on_grid].astype(np.intp), iy[on_grid].astype(np.intp)]
+        kept[on_grid] = status == KEPT
+        exact = np.zeros(len(events), dtype=bool)
+        exact[on_grid] = status == EDGE
+        exact |= ~(np.isfinite(x) & np.isfinite(y))
+        if exact.any():
+            kept[exact] = _keeps(self.circles, x[exact], y[exact])
         return kept
+
+    def keeps_exactly(self, events: Events) -> npt.NDArray[np.bool_]:
+        """``keeps`` by testing every event against every circle (the reference)."""
+        events = np.asarray(events)
+        if not self.circles or not len(events):
+            return np.ones(len(events), dtype=bool)
+        return _keeps(self.circles, events[:, 1], events[:, 2])
 
     def apply(self, events: Events) -> tuple[Events, int]:
         """(the events kept, how many were masked out); ``events`` as they are with no circles."""
@@ -229,6 +271,61 @@ class Mask:
         return f"mask: {self.source}, {what}" if self.source != CUSTOM else f"mask: {what}"
 
 
+def _keeps(circles: Sequence[Circle], x: npt.NDArray[np.float64], y: npt.NDArray[np.float64]
+           ) -> npt.NDArray[np.bool_]:
+    kept = np.ones(len(x), dtype=bool)
+    for circle in circles:
+        inside = circle.inside(x, y)
+        kept &= inside if circle.keep else ~inside
+    return kept
+
+
+# The lookup grid: each cell is dropped, kept, or crossed by a circle's edge (tested exactly).
+DROPPED, KEPT, EDGE = 0, 1, 2
+GRID_CELL = 0.1e-3  # m (0.05 mm: 4× the cells to build, no faster to look up)
+MAX_CELLS = 4_000_000  # coarser cells beyond (the edge cells are tested exactly anyway)
+MARGIN = 1e-9  # m: a cell is decided only this far from a circle's edge (rounding in the cell index)
+
+
+@dataclass(frozen=True)
+class Raster:
+    x0: float
+    y0: float
+    cell: float
+    nx: int
+    ny: int
+    status: npt.NDArray[np.int8]  # (nx, ny): DROPPED, KEPT or EDGE
+    outside_kept: bool  # off the grid (outside every circle): kept unless there are keep circles
+
+
+@functools.lru_cache(maxsize=16)
+def raster(circles: tuple[Circle, ...]) -> Raster:
+    """The circles' lookup grid over their bounding box (made once per set of circles)."""
+    x0 = min(circle.x - circle.r for circle in circles)
+    y0 = min(circle.y - circle.r for circle in circles)
+    width = max(circle.x + circle.r for circle in circles) - x0
+    height = max(circle.y + circle.r for circle in circles) - y0
+    cell = max(GRID_CELL, math.sqrt(width * height / MAX_CELLS))
+    nx, ny = int(width / cell) + 1, int(height / cell) + 1
+    low_x, low_y = x0 + cell * np.arange(nx), y0 + cell * np.arange(ny)
+    high_x, high_y = low_x + cell, low_y + cell
+    dropped = np.zeros((nx, ny), dtype=bool)
+    edge = np.zeros((nx, ny), dtype=bool)
+    for circle in circles:
+        near_x = np.maximum.reduce([low_x - circle.x, np.zeros(nx), circle.x - high_x])
+        near_y = np.maximum.reduce([low_y - circle.y, np.zeros(ny), circle.y - high_y])
+        far_x = np.maximum(np.abs(low_x - circle.x), np.abs(high_x - circle.x))
+        far_y = np.maximum(np.abs(low_y - circle.y), np.abs(high_y - circle.y))
+        nearest = np.sqrt(near_x[:, None] ** 2 + near_y[None, :] ** 2)
+        farthest = np.sqrt(far_x[:, None] ** 2 + far_y[None, :] ** 2)
+        inside = farthest < circle.r - MARGIN  # every point of the cell strictly inside
+        outside = nearest >= circle.r + MARGIN  # no point of the cell inside
+        dropped |= outside if circle.keep else inside
+        edge |= ~(inside | outside)
+    status = np.where(dropped, DROPPED, np.where(edge, EDGE, KEPT)).astype(np.int8)
+    return Raster(x0, y0, cell, nx, ny, status, not any(circle.keep for circle in circles))
+
+
 def mask_from(values: Mapping[str, Any]) -> Mask:
     """The mask the parameters set; raises ``MaskError`` for custom circles that can't be read."""
     mode = values.get(MASK_MODE.name, NONE)
@@ -239,6 +336,15 @@ def mask_from(values: Mapping[str, Any]) -> Mask:
     if mode == CUSTOM:
         return Mask(parse_circles(str(values.get(MASK_CIRCLES.name, ""))), CUSTOM)
     return Mask()
+
+
+def mask_key(values: Mapping[str, Any]) -> dict[str, Any]:
+    """For a result's reuse key: a preset's circles as used (x, y, r in m, keep), so a changed
+    preset never matches an older result; {} without a preset."""
+    if values.get(MASK_MODE.name) != PRESET:
+        return {}
+    name = str(values.get(MASK_PRESET.name, MASK_PRESET.default))
+    return {"mask_preset_circles": [[circle.x, circle.y, circle.r, circle.keep] for circle in PRESETS.get(name, ())]}
 
 
 def mask_brief(values: Mapping[str, Any]) -> str:

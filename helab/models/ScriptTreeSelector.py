@@ -28,7 +28,7 @@ from helab.analysis.physics import TABLE, ResolvedConstants
 from helab.analysis.budget import RELOAD_GRACE, RamBudget, Restored, hollow, restore, shots_list, view_buffers
 from helab.analysis.dataset_view import DatasetView, ViewKey
 from helab.analysis.follow import FOLLOW, Follow, LiveFeed, changes, live_specs, policy_of, shots_text
-from helab.analysis.parameter_tree import build_tree, parameter_of, settings_widget, tree_values
+from helab.analysis.parameter_tree import build_tree, commit_pending_text, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import describe
 from helab.analysis.results import AnalysisResult
 from helab.analysis.runner import AnalysisRunner, get_analysis_runner
@@ -663,6 +663,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         it follows Live, else its own); a run in flight is cancelled, its settings are old."""
         if self.is_closed:
             return
+        commit_pending_text()  # Text being typed (e.g. mask circles) counts for a deliberate run.
         if self.released is not None and not self.job_id:
             # Its data was released: drawn again from RAM or the disk cache, with these settings.
             if self._reload_owner:

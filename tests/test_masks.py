@@ -15,7 +15,7 @@ from pytestqt.qtbot import QtBot
 from helab.analysis import hotspots, masks
 from helab.analysis.dataset_view import DatasetView, build_view
 from helab.analysis.masks import CUSTOM, CURRENT, EARLIER, NONE, PRESET, Circle, Mask, MaskError, parse_circles
-from helab.analysis.parameter_tree import build_tree, parameter_of, tree_values
+from helab.analysis.parameter_tree import CommitTextEdit, build_tree, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import ParameterSpec, effective
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.scripts.base import DatasetAnalysis
@@ -70,6 +70,23 @@ def test_several_circles_are_anded() -> None:
     assert mask.counts() == (2, 1)
 
 
+def test_the_lookup_grid_answers_as_the_exact_test() -> None:
+    rng = np.random.default_rng(4)
+    preset = masks.mask_from({"mask_mode": PRESET, "mask_preset": EARLIER})
+    custom = Mask((Circle(1e-3, 2e-3, 3e-3), Circle(1.02e-3, 2e-3, 0.05e-3, keep=True), Circle(5.0, 5.0, 0.01)))
+    for mask in (preset, custom, Mask((Circle(0.0, 0.0, 1e-3, keep=True),))):
+        events = np.column_stack([np.zeros(200_000), rng.normal(0, 0.03, (200_000, 2))])
+        # Points exactly on each circle (strictly inside is the rule), at its centre, and not a number.
+        angles = rng.uniform(0, 2 * np.pi, 50)
+        rims = [np.column_stack([np.zeros(50), c.x + c.r * np.cos(angles), c.y + c.r * np.sin(angles)])
+                for c in mask.circles]
+        odd = np.array([[0, np.nan, 0.0], [0, 0.0, np.inf], [0, 1e9, -1e9]])
+        events = np.concatenate([events, *rims, odd])
+        assert np.array_equal(mask.keeps(events), mask.keeps_exactly(events))
+    grid = masks.raster(preset.circles)
+    assert grid.cell == masks.GRID_CELL and (grid.status == masks.EDGE).mean() < 0.02
+
+
 def test_custom_circles_parse_with_defaults_and_round_trip() -> None:
     circles = parse_circles(" 0, 0, 38, keep; 30.5,5,4.5\n-2.48, −34.8, 2, cut ;; 1,2,3,0\n")
     assert circles == (Circle(0.0, 0.0, 38 * MM, True), Circle(30.5 * MM, 5 * MM, 4.5 * MM),
@@ -83,8 +100,10 @@ def test_custom_circles_parse_with_defaults_and_round_trip() -> None:
 
 @pytest.mark.parametrize("text, message", [
     ("1, 2", "needs x, y and r"),
-    ("1, 2, 3, 4, 5", "needs x, y and r"),
-    ("1,5, 2, 3", "fourth value must be keep or cut, not “3”"),
+    ("1, 2, 3, 4, 5", "use “.” for decimals"),
+    ("1, 2, 3, keep, 5", "needs x, y and r"),
+    ("1,5, 2, 3", "use “.” for decimals: “,” separates x, y, r"),
+    ("1,5, 2,5, 3", "use “.” for decimals"),
     ("a, 2, 3", "must be numbers in mm"),
     ("1, 2, 0", "radius must be above 0"),
     ("1, 2, -3", "radius must be above 0"),
@@ -140,6 +159,16 @@ def test_rotation_round_trip_and_the_labs_matrix() -> None:
     assert preset[0] == Circle(0.0, 0.0, 38e-3, True)  # the origin doesn't move
     assert len(preset) == 14 and sum(not circle.keep for circle in preset) == 13
     assert masks.PRESETS[CURRENT] == ()
+
+
+def test_the_presets_circles_are_in_the_record_and_reuse_key() -> None:
+    assert masks.MASK_PRESET.text(EARLIER).startswith("Preset earlier detector (2020) (0, 0, 38, keep; 25.144, ")
+    assert masks.MASK_PRESET.text(CURRENT) == "Preset current detector (no circles)"
+    view, _ = spotted_view(1)
+    result = run(basic_plots.CountsPerShot(), view, {"mask_mode": PRESET})
+    circles = result.reuse_key()["mask_preset_circles"]
+    assert len(circles) == 14 and circles[0] == [0.0, 0.0, 0.038, True]
+    assert "mask_preset_circles" not in run(basic_plots.CountsPerShot(), view, MASK).reuse_key()
 
 
 def test_the_preset_cuts_an_event_on_a_hot_spot_in_heLabs_frame() -> None:
@@ -240,6 +269,11 @@ def test_density_xy_draws_the_masks_circles_dashed(qtbot: QtBot) -> None:
     widget = script.render(result)
     qtbot.addWidget(widget)
     assert isinstance(widget, DensityPlot) and len(widget.circle_items) == 14
+    # The circles (out to ±45 mm) don't widen the view: it stays the image's.
+    widget.plot.vb.autoRange(padding=0)
+    (x_low, x_high), _ = widget.plot.vb.viewRange()
+    image = widget.image.mapRectToParent(widget.image.boundingRect())
+    assert math.isclose(x_low, image.left(), abs_tol=0.01) and math.isclose(x_high, image.right(), abs_tol=0.01)
     pens = [item.pen() for item in widget.circle_items]
     assert all(pen.style() == Qt.PenStyle.DashLine for pen in pens)
     assert pens[0].color().getRgb()[:3] == density_images.KEEP_COLOUR
@@ -273,6 +307,27 @@ def test_text_parameters_in_the_tree(qtbot: QtBot) -> None:
     values = tree_values(root, specs)
     assert values["mask_mode"] == CUSTOM and values["mask_circles"] == "1, 2, 3"
     assert parameter_of(root, spec).opts["visible"] and not parameter_of(root, masks.MASK_PRESET).opts["visible"]
+
+
+def test_typed_circles_count_only_when_the_edit_ends(qtbot: QtBot) -> None:
+    specs = DensityImages().parameters(PLOT)
+    root = build_tree(specs)
+    tree = settings_widget(root, specs)
+    qtbot.addWidget(tree)
+    parameter = parameter_of(root, masks.MASK_CIRCLES)
+    parameter.setValue("1, 2, 3")
+    edits = tree.findChildren(CommitTextEdit)
+    assert len(edits) == 1
+    edit = edits[0]
+    assert edit.toPlainText() == "1, 2, 3"
+    edit.setPlainText("1, 2")  # half typed: a Live rerun still reads the last committed text
+    assert parameter.value() == "1, 2, 3"
+    edit.setPlainText("1, 2, 4")
+    edit.commit()
+    assert parameter.value() == "1, 2, 4"
+    edit.setPlainText("7, 8, 9")
+    qtbot.keyClick(edit, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)  # type: ignore[no-untyped-call]
+    assert parameter.value() == "7, 8, 9" and edit.toPlainText() == "7, 8, 9"
 
 
 # The hot-spot finder (D15 placeholder)
@@ -312,33 +367,104 @@ def test_the_finder_recovers_planted_spots_on_a_smooth_background() -> None:
 
 @pytest.mark.parametrize("per_shot", [50_000, 500])
 def test_the_finder_ignores_noise(per_shot: int) -> None:
-    # A dense flat field (median ~14 per bin) and a sparse one (most bins empty): Poisson noise only.
+    # A dense flat field (~14 events per bin) and a sparse one (most bins empty): Poisson noise only.
     data = run(DensityImages(), flat_field(per_shot=per_shot, spots=()), action=FIND).data
     assert data.search is not None and data.search.spots == () and data.search.flagged == 0
-    sparse = per_shot < 1000
-    assert ("most bins empty" in " ".join(data.search.notes)) == sparse
     assert density_images.spots_title(data)[1].startswith("No hot spots")
 
 
+def disc(rng: np.random.Generator, n: int, radius: float = 0.04) -> np.ndarray:
+    r = radius * np.sqrt(rng.uniform(0, 1, n))
+    a = rng.uniform(0, 2 * np.pi, n)
+    return np.column_stack([r * np.cos(a), r * np.sin(a)])
+
+
+def detector_view(seed: int, gain: bool = False, cloud: int = 0, spots: tuple[tuple[float, float], ...] = (),
+                  shots: int = 40) -> DatasetView:
+    """A round detector (r 40 mm): ``gain``, uneven (the centre 2.5 × the edge, and a bright rim);
+    ``cloud`` events per shot of an atom cloud (σ 3 mm); a few events per shot on each spot."""
+    rng = np.random.default_rng(seed)
+    arrays = {}
+    for shot in range(1, shots + 1):
+        dark = disc(rng, 2000 if gain else 400)
+        if gain:
+            r = np.hypot(dark[:, 0], dark[:, 1])
+            dark = dark[rng.uniform(0, 1, len(dark)) < 0.4 + 0.6 * np.exp(-(r / 0.015) ** 2)]
+            angle = rng.uniform(0, 2 * np.pi, 60)
+            rim = rng.normal(0.0395, 0.0004, 60)
+            dark = np.concatenate([dark, np.column_stack([rim * np.cos(angle), rim * np.sin(angle)])])
+        parts = [dark, rng.normal((0.0005, -0.001), 0.003, (cloud, 2))]
+        parts += [rng.normal((x * MM, y * MM), 0.4 * MM, (rng.poisson(8), 2)) for x, y in spots]
+        positions = np.concatenate(parts)
+        arrays[shot] = np.column_stack([rng.uniform(0.38, 0.46, len(positions)), positions])
+    return view_of(arrays)
+
+
+DETECTOR_SPOTS = ((25.14, 25.87), (16.0, -30.35), (-10.0, 5.0))  # mm: two at the edge, one inside
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_the_finder_offers_nothing_on_uneven_gain_or_a_clouds_wings(seed: int) -> None:
+    for view in (detector_view(seed, gain=True), detector_view(seed, cloud=3000)):
+        search = run(DensityImages(), view, action=FIND).data.search
+        assert isinstance(search, hotspots.HotSpotSearch)
+        assert search.spots == (), hotspots.search_lines(search)
+
+
+def test_the_finder_still_finds_spots_on_a_cloud_and_the_edge() -> None:
+    for view in (detector_view(5, cloud=3000, spots=DETECTOR_SPOTS), detector_view(6, spots=DETECTOR_SPOTS),
+                 detector_view(7, gain=True, spots=DETECTOR_SPOTS)):
+        search = run(DensityImages(), view, action=FIND).data.search
+        assert isinstance(search, hotspots.HotSpotSearch)
+        assert len(search.spots) == 3, hotspots.search_lines(search)
+        for x, y in DETECTOR_SPOTS:
+            assert any(math.hypot(spot.circle.x - x * MM, spot.circle.y - y * MM) < 0.5 * MM < spot.circle.r
+                       for spot in search.spots)
+
+
 def test_the_finders_rule() -> None:
-    assert hotspots.threshold_of(14.0, 5.0) == 70.0
-    assert hotspots.threshold_of(1.0, 5.0) == 6.0  # the noise floor: 1 + 5 √1
-    assert hotspots.threshold_of(0.0, 5.0) == 1.0
-    image = np.zeros((10, 10))
-    image[2, 2] = image[2, 3] = image[3, 3] = 50.0  # touching (a corner too): one spot
-    image[7, 7] = 40.0
-    image += 2.0
-    search = hotspots.find_hot_spots(np.empty(0), np.empty(0), (0.0, 0.01), (0.0, 0.01), 0.001)
-    assert search.spots == ()
-    edges = np.arange(11) * 1e-3
-    x, y = np.meshgrid((edges[:-1] + edges[1:]) / 2, (edges[:-1] + edges[1:]) / 2, indexing="ij")
+    """A local background, a Poisson tail under α / bins tested, spots grown over touching
+    unlikely bins, and the minimum for one-bin spots."""
+    rng = np.random.default_rng(9)
+    width = 1e-3
+    image = rng.poisson(20.0, (40, 40)).astype(float)
+    image[:, 20:] = rng.poisson(60.0, (40, 20))  # a step in gain: not a spot
+    image[10, 10] += 80.0  # one bin, 80 over 20: very unlikely
+    image[30, 30] += 60.0
+    image[30, 31] += 60.0  # two touching bins
+    image[5, 35] += 30  # one bin, 30 over 60: within the noise
+    centres = (np.arange(40) + 0.5) * width
+    grid_x, grid_y = np.meshgrid(centres, centres, indexing="ij")
     reps = image.astype(int).ravel()
-    found = hotspots.find_hot_spots(np.repeat(x.ravel(), reps), np.repeat(y.ravel(), reps), (0.0, 0.01),
-                                    (0.0, 0.01), 0.001)
-    assert [spot.bins for spot in found.spots] == [3, 1] and found.background == 2.0
-    big = found.spots[0].circle
-    centres = [((i + 0.5) * MM, (j + 0.5) * MM) for i, j in ((2, 2), (2, 3), (3, 3))]
-    assert all(math.hypot(cx - big.x, cy - big.y) < big.r for cx, cy in centres)
+    x = np.asarray(grid_x, dtype=np.float64)
+    y = np.asarray(grid_y, dtype=np.float64)
+    search = hotspots.find_hot_spots(np.repeat(x.ravel(), reps), np.repeat(y.ravel(), reps), (0.0, 0.04),
+                                     (0.0, 0.04), width, scale=2e-3)
+    # The filled area: all but the corners, where the smoothed occupancy falls under half.
+    assert 1550 < search.tested <= 1600 and math.isclose(search.p_limit, 0.01 / search.tested)
+    assert sorted(spot.bins for spot in search.spots) == [1, 2]
+    assert {(round(spot.circle.x / width - 0.5), round(spot.circle.y / width - 0.5)) for spot in search.spots
+            if spot.bins == 1} == {(10, 10)}
+    two = next(spot for spot in search.spots if spot.bins == 2)
+    # Between the two bins' centres, nearer the one with more excess.
+    assert math.isclose(two.circle.x, 30.5e-3, abs_tol=1e-9) and 30.5e-3 < two.circle.y < 31.5e-3
+    assert two.circle.r >= 0.5e-3 + math.hypot(width, width) / 2 - 1e-9
+    # A higher minimum leaves the one-bin spot out (counted), not the two-bin one.
+    strict = hotspots.find_hot_spots(np.repeat(x.ravel(), reps), np.repeat(y.ravel(), reps), (0.0, 0.04),
+                                     (0.0, 0.04), width, scale=2e-3, min_excess=1000)
+    assert [spot.bins for spot in strict.spots] == [2] and strict.dropped == 1
+    assert "1 one-bin spot under the minimum excess left out" in hotspots.search_lines(strict)[0]
+    assert "2 bins," in hotspots.search_lines(strict)[1] and "1 bins" not in " ".join(hotspots.search_lines(search))
+    empty = hotspots.find_hot_spots(np.empty(0), np.empty(0), (0.0, 0.01), (0.0, 0.01), 0.001)
+    assert empty.spots == () and empty.tested == 0
+
+
+def test_the_finders_notes_are_plain_not_warnings() -> None:
+    view = view_of({1: np.array([[0.4, 0.0, 0.0], [0.4, 2.0, 2.0]])})  # 2 m apart: bins widened
+    data = run(DensityImages(), view, action=FIND).data
+    assert data.search is not None and data.search.notes and not data.density.warnings
+    second = density_images.spots_title(data)[1]
+    assert "bins widened" in second and "⚠" not in second
 
 
 def test_the_finder_never_applies_its_circles(qtbot: QtBot) -> None:

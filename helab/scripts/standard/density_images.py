@@ -32,7 +32,8 @@ from helab.analysis.display_units import (LENGTH_UNIT, T_UNIT, WIDTH_DIGITS, axi
                                          axis_unit)
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.follow import LivePolicy
-from helab.analysis.hotspots import DEFAULT_BIN, DEFAULT_FACTOR, HotSpotSearch, find_hot_spots, search_lines
+from helab.analysis.hotspots import (DEFAULT_ALPHA, DEFAULT_BIN, DEFAULT_MIN_EXCESS, DEFAULT_SCALE, HotSpotSearch,
+                                     find_hot_spots, plural, search_lines)
 from helab.analysis.masks import (MASK_SPECS, Circle, Mask, all_masked_text, mask_brief, mask_from, mask_warnings,
                                   masked_text)
 from helab.analysis.parameters import ParameterSpec
@@ -102,11 +103,20 @@ FIND_RANGE = tuple(replace(spec, default=100.0) if spec.name == keep_spec("").na
 FIND_BIN = ParameterSpec("spot_bin", "Bin width", "float", DEFAULT_BIN, (1e-5, 0.01), " m", group=FIND_GROUP,
                          si=True, unit_prefix="m",
                          tip="The XY image's bins, square. A spot is found when one bin of it stands out.")
-FIND_FACTOR = ParameterSpec(
-    "spot_factor", "Above", "float", DEFAULT_FACTOR, (1.5, 1000.0), " × median", group=FIND_GROUP,
-    tip="A bin is flagged when it holds more than this many times the image's median (with most bins empty, "
-        "the median of the others) and more than median + 5 √median, so noise isn't. Touching flagged bins "
-        "make one spot, offered as a circle covering them.")
+FIND_SCALE = ParameterSpec(
+    "spot_background", "Background scale σ", "float", DEFAULT_SCALE, (1e-4, 0.05), " m", group=FIND_GROUP,
+    si=True, unit_prefix="m",
+    tip="Each bin is compared with its local background: the image smoothed with a Gaussian of this σ over the "
+        "detector's filled area, leaving out spots already found. Uneven gain, the detector's edge and a cloud's "
+        "wings then set their own level; spots much wider than this are found only at their edges.")
+FIND_ALPHA = ParameterSpec(
+    "spot_alpha", "False spots per image", "float", DEFAULT_ALPHA, (1e-9, 1.0), group=FIND_GROUP,
+    tip="How many spots pure noise may produce per image: a bin is significant when P(N ≥ n | its background) "
+        "(Poisson) is below this divided by the bins tested. Touching bins with P < 0.001 join its spot.")
+FIND_MIN_EXCESS = ParameterSpec(
+    "spot_min_excess", "Minimum excess (one bin)", "int", DEFAULT_MIN_EXCESS, (0, 1_000_000), " events",
+    group=FIND_GROUP, tip="A spot of a single bin is offered only with at least this many events above its "
+                          "background; spots of 2 bins or more always are.")
 
 def compress(position: npt.NDArray[np.float64], scale: str, gamma: float = 0.5, decades: int = 3
              ) -> npt.NDArray[np.float64]:
@@ -368,7 +378,7 @@ class DensityPlot(QWidget):
             item = QGraphicsEllipseItem(QRectF(circle.x * scale - r, circle.y * scale - r, 2 * r, 2 * r))
             item.setPen(pg.mkPen(colour, width=2, style=Qt.PenStyle.DashLine))
             item.setZValue(10)  # Over the image and the newest shot's contour.
-            self.plot.addItem(item)
+            self.plot.addItem(item, ignoreBounds=True)  # The view's auto-range stays the image's.
             self.circle_items.append(item)
 
 
@@ -391,12 +401,12 @@ def spots_title(data: HotSpots) -> tuple[str, str]:
     if search is None:
         return first, ""
     width = float(search.edges_x[1] - search.edges_x[0])
-    rule = (f"bins of {axis_text('X', width, WIDTH_DIGITS)} above {search.threshold:,.3g} events "
-            f"({search.factor:g} × median {search.background:,.3g})")
-    found = len(search.spots) + search.left_out
-    second = (f"{found:,} hot spot{'' if found == 1 else 's'} (amber, to review): {rule}" if found
-              else f"No hot spots: no {rule}")
-    return first, second + "".join(f" · ⚠ {warning}" for warning in data.density.warnings)
+    rule = (f"bins of {axis_text('X', width, WIDTH_DIGITS)}, P < {search.alpha:g} / {search.tested:,} against a "
+            f"local background (σ {axis_text('X', search.scale, WIDTH_DIGITS)})")
+    second = (f"{plural(search.found, 'hot spot')} (amber, to review) · {rule}" if search.found
+              else f"No hot spots · {rule}")
+    notes = "".join(f" · {note}" for note in search.notes)  # Plain: how the bins were chosen.
+    return first, second + notes + "".join(f" · ⚠ {warning}" for warning in data.density.warnings)
 
 
 class HotSpotsPlot(DensityPlot):
@@ -451,7 +461,8 @@ class DensityImages(DatasetAnalysis):
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
         if action_name == FIND:
-            return [*SHOT_SPECS, *FIND_RANGE, *MASK_SPECS, FIND_BIN, FIND_FACTOR, SCALE, GAMMA, DECADES]
+            return [*SHOT_SPECS, *FIND_RANGE, *MASK_SPECS, FIND_BIN, FIND_SCALE, FIND_ALPHA, FIND_MIN_EXCESS, SCALE,
+                    GAMMA, DECADES]
         return [*SHOT_SPECS, PROJECTION, *RANGE, *MASK_SPECS, BINS, BLUR, QUANTITY, HIGHLIGHT, NEWEST_COLOUR, SCALE,
                 GAMMA, DECADES]
 
@@ -474,7 +485,8 @@ class DensityImages(DatasetAnalysis):
             settings: tuple[str, ...] = (
                 shots_brief(values), range_brief(values), mask_brief(values),
                 f"bins {axis_text('X', float(values[FIND_BIN.name]), WIDTH_DIGITS)}",
-                f"above {float(values[FIND_FACTOR.name]):g} × median", self._scale_brief(values))
+                f"background σ {axis_text('X', float(values[FIND_SCALE.name]), WIDTH_DIGITS)}",
+                f"{float(values[FIND_ALPHA.name]):g} false spots per image", self._scale_brief(values))
             return selection_text(view, values), " · ".join(part for part in settings if part)
         bins = int(values[BINS.name])
         blur = float(values[BLUR.name])
@@ -576,9 +588,10 @@ class DensityImages(DatasetAnalysis):
             return HotSpots(replace(empty, box=box))
         inside = events[box.contains(events)]
         search = find_hot_spots(inside[:, 1], inside[:, 2], span(box, 1), span(box, 2),
-                                float(values[FIND_BIN.name]), float(values[FIND_FACTOR.name]))
+                                float(values[FIND_BIN.name]), float(values[FIND_SCALE.name]),
+                                float(values[FIND_ALPHA.name]), int(values[FIND_MIN_EXCESS.name]))
         image = DensityImage("XY", box, search.edges_x, search.edges_y, search.image, shots, len(view.shots),
-                             automatic_bins=False, warnings=range_warnings(values) + search.notes, masked=masked,
+                             automatic_bins=False, warnings=range_warnings(values), masked=masked,
                              circles=mask.circles, found=search.circles)
         return HotSpots(image, search)
 
