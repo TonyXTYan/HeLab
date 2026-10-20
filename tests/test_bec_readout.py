@@ -22,7 +22,7 @@ from helab.analysis.parameter_tree import build_tree, parameter_of
 from helab.analysis.physics import ResolvedConstants, resolve
 from helab.analysis.profiles import BIMODAL_BOSE, BIMODAL_SLICE, GAUSSIAN
 from helab.analysis.results import AnalysisResult
-from helab.scripts.standard import basic_plots
+from helab.scripts.dld import basic_plots
 from helab.utils.colours import AMBER
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -269,4 +269,4 @@ def test_the_trap_constants_are_used_only_with_a_bimodal_fit_or_the_readout() ->
 def test_the_readout_chooses_by_condensate_projection_and_role() -> None:
     """``choose`` without a usable fit says why."""
     assert bec_readout.choose({}, CONSTANTS) == ("", "need a fit: turn on Fit T, X or Y")
-    assert basic_plots.TxyHistograms().get_metadata().version == "7"
+    assert basic_plots.TxyHistograms().get_metadata().version == "1"

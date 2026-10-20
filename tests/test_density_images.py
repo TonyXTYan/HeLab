@@ -17,8 +17,8 @@ from helab.analysis.parameters import effective
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled
 from helab.analysis.stats import freedman_diaconis_bins
 from helab.scripts.scripts_manager import ScriptsManager
-from helab.scripts.standard import density_images, group
-from helab.scripts.standard.density_images import DensityImage, DensityImages, DensityPlot
+from helab.scripts.dld import density_images, group
+from helab.scripts.dld.density_images import DensityImage, DensityImages, DensityPlot
 from helab.utils.folder_cache import Dataset
 from helab.utils.ram_buffers import arrays_in, buffers
 

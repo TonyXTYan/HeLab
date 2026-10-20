@@ -16,7 +16,7 @@ from helab.analysis.estimates import Estimate, format_fixed
 from helab.analysis.parameter_tree import UnitSpinBox, build_tree, parameter_of, settings_widget, tree_values
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.plot_axes import GroupedAxis, grouped_axes
-from helab.scripts.standard import (basic_plots, correlations_plot, mean_position, release_time, shot_trends, t_spectrum,
+from helab.scripts.dld import (basic_plots, correlations_plot, mean_position, release_time, shot_trends, t_spectrum,
                                     transfer_fractions, velocity_distributions)
 
 GERMAN = QLocale(QLocale.Language.German, QLocale.Country.Germany)
@@ -139,8 +139,9 @@ def test_a_fixed_prefix_box_shows_minus_and_extremes(qtbot: QtBot) -> None:
 
 def test_view_range_bounds_show_ms_and_mm_and_keep_si_values(qtbot: QtBot) -> None:
     """The manual T bounds show in ms (X/Y in mm), grouped; the values stay in s and m, so saved
-    settings keep their meaning."""
-    specs = list(selection.range_specs("tip"))
+    settings keep their meaning. (The DLD port's plots, ``fixed``; "Basic plots v1" keeps SI prefixes.)"""
+    assert all(spec.unit_prefix is None for spec in selection.range_specs("tip"))
+    specs = list(selection.range_specs("tip", fixed=True))
     t_min, x_max = (next(spec for spec in specs if spec.name == name) for name in ("t_min", "x_max"))
     assert t_min.unit_prefix == "m" and t_min.tree_item(20.45)["fixedPrefix"] == "m"
     root = build_tree(specs)

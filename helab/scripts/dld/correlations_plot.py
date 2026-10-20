@@ -65,7 +65,7 @@ from helab.analysis.stats import CropBox, crop_box
 from helab.analysis.velocity import (RECOIL_WAVELENGTH_UNCONFIRMED, VELOCITY_AXES,
                                      effective_fall_distance, txy_to_velocity, unit_velocity)
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import group
+from helab.scripts.dld import group
 
 Array = npt.NDArray[np.float64]
 MM_S = 1e-3  # one mm/s in m/s
@@ -73,7 +73,7 @@ MM_S = 1e-3  # one mm/s in m/s
 RANGE = range_specs(
     "The TXY box holding this share of the chosen shots' events (after the mask): only events inside it are "
     "paired. An auto-crop box is kept from this plot's earlier run while the new one fits well inside it, so "
-    "Live's next shots don't start the count again.")
+    "Live's next shots don't start the count again.", fixed=True)
 
 G2_PAGE = "g²"
 KIND_GROUP = "Correlation"
@@ -817,7 +817,7 @@ class Correlations(DatasetAnalysis):
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
         geometry, mode, axis = kind_of(values)
         reach, bins, window = scales_of(values)
-        parts = [shots_brief(values), range_brief(values), mask_brief(values),
+        parts = [shots_brief(values), range_brief(values, fixed=True), mask_brief(values),
                  f"{'back-to-back ' if mode == BACK_TO_BACK else ''}"
                  f"{f'1D {VELOCITY_AXES[axis]}' if geometry == ONE_D else 'radial'}",
                  f"± {velocity_text(reach)}" if geometry == ONE_D else f"0–{velocity_text(reach)}",

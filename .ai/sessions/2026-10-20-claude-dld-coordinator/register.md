@@ -75,6 +75,17 @@ volume, SMB timing, real data.
 
 Everything else proposed by the workers is an open decision in the plan.
 
+## Merge of `dev/v0.0.6` (plot libraries)
+
+`agent/dld-merge-dev` merges `dev/v0.0.6` (919ff11: Drawing › Library, in-place
+updates in every library) into the port. By Tony's decision the port's plots moved to
+their own group, "DLD Front Panel Port" (`helab/scripts/dld/`; the port's versions of
+the four Basic plots v1 plots have ids `helab.dld.*`, version 1), and Basic plots v1
+(`helab/scripts/standard/`) is `dev/v0.0.6`'s, unchanged. Session notes paths above
+that name `helab/scripts/standard/<plot>.py` for a port plot now read
+`helab/scripts/dld/<plot>.py`. Details:
+[merge notes](../2026-10-20-claude-dld-merge-dev/notes.md).
+
 ## Also found
 
 - `tests/test_cache_tab.py::test_saves_restored_from_the_store_ask_with_its_numbers`

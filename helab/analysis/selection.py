@@ -8,7 +8,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from helab.analysis.dataset_view import DatasetView, Events, txy
-from helab.analysis.display_units import range_text
+from helab.analysis.display_units import range_text as fixed_range_text
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.stats import AXES, DEFAULT_KEEP, UNITS, CropBox
 
@@ -129,14 +129,27 @@ RANGE_GROUP = "View range"
 RANGE_MODE = ParameterSpec("range_mode", "Range", "choice", AUTO, choices=(AUTO, MANUAL), group=RANGE_GROUP,
                            tip="Auto-crop finds the range holding most events; manual uses the T, X "
                                "and Y bounds below.")
-BOUNDS: tuple[tuple[ParameterSpec, ParameterSpec], ...] = tuple(
-    (ParameterSpec(f"{axis.lower()}_min", f"{axis} min", "float", 0.0, None, f" {UNITS[i]}", group=RANGE_GROUP,
-                   when=(RANGE_MODE.name, MANUAL), si=True, unit_prefix="m",
-                   tip=f"Lower bound of {axis}. Leave min and max equal for {axis}'s full extent; a min "
-                       f"above the max also uses the full extent, and the plot says so."),
-     ParameterSpec(f"{axis.lower()}_max", f"{axis} max", "float", 0.0, None, f" {UNITS[i]}", group=RANGE_GROUP,
-                   when=(RANGE_MODE.name, MANUAL), si=True, unit_prefix="m", tip=f"Upper bound of {axis}."))
-    for i, axis in enumerate(AXES))
+Bounds = tuple[tuple[ParameterSpec, ParameterSpec], ...]
+
+
+def bounds_specs(unit_prefix: str | None) -> Bounds:
+    """Each axis's manual (min, max), in s and m: shown with the prefix that suits the value (None),
+    or always with ``unit_prefix`` ("m": T in ms, X and Y in mm, digits grouped)."""
+    return tuple(
+        (ParameterSpec(f"{axis.lower()}_min", f"{axis} min", "float", 0.0, None, f" {UNITS[i]}", group=RANGE_GROUP,
+                       when=(RANGE_MODE.name, MANUAL), si=True, unit_prefix=unit_prefix,
+                       tip=f"Lower bound of {axis}. Leave min and max equal for {axis}'s full extent; a min "
+                           f"above the max also uses the full extent, and the plot says so."),
+         ParameterSpec(f"{axis.lower()}_max", f"{axis} max", "float", 0.0, None, f" {UNITS[i]}", group=RANGE_GROUP,
+                       when=(RANGE_MODE.name, MANUAL), si=True, unit_prefix=unit_prefix,
+                       tip=f"Upper bound of {axis}."))
+        for i, axis in enumerate(AXES))
+
+
+# The same parameters (names, values in s and m) either way: "Basic plots v1" shows them with SI
+# prefixes, the DLD front panel port in ms and mm (``fixed``).
+BOUNDS: Bounds = bounds_specs(None)
+FIXED_BOUNDS: Bounds = bounds_specs("m")
 
 
 def keep_spec(tip: str) -> ParameterSpec:
@@ -145,8 +158,10 @@ def keep_spec(tip: str) -> ParameterSpec:
                          tip, group=RANGE_GROUP, when=(RANGE_MODE.name, AUTO))
 
 
-def range_specs(keep_tip: str) -> tuple[ParameterSpec, ...]:
-    return (RANGE_MODE, keep_spec(keep_tip), *(spec for pair in BOUNDS for spec in pair))
+def range_specs(keep_tip: str, fixed: bool = False) -> tuple[ParameterSpec, ...]:
+    """The View range group; ``fixed``: its bounds shown in ms and mm (the DLD port's plots)."""
+    bounds = FIXED_BOUNDS if fixed else BOUNDS
+    return (RANGE_MODE, keep_spec(keep_tip), *(spec for pair in bounds for spec in pair))
 
 
 def manual(values: Mapping[str, Any]) -> bool:
@@ -167,12 +182,30 @@ def manual_bounds(values: Mapping[str, Any]) -> tuple[tuple[float, float] | None
     return tuple(bounds)
 
 
-def range_brief(values: Mapping[str, Any]) -> str:
+SI_PREFIXES = ((1.0, ""), (1e-3, "m"), (1e-6, "µ"), (1e-9, "n"))
+
+
+def range_text(axis: int, low: float, high: float) -> str:
+    """``T 3.84–3.87 s``, ``X −2–3.5 mm``: one prefix for both ends, from the larger magnitude
+    ("Basic plots v1"; the DLD port's plots use ``display_units.range_text``, always ms and mm)."""
+    largest = max(abs(low), abs(high))
+    factor, prefix = next(((f, p) for f, p in SI_PREFIXES if largest >= f), SI_PREFIXES[-1])
+    if largest == 0:
+        factor, prefix = SI_PREFIXES[0]
+
+    def number(value: float) -> str:
+        return f"{value / factor:.4g}".replace("-", "−")
+    return f"{AXES[axis]} {number(low)}–{number(high)} {prefix}{UNITS[axis]}"
+
+
+def range_brief(values: Mapping[str, Any], fixed: bool = False) -> str:
     """The view range in a few words: ``auto-crop 99 %``, or the manual axes actually set
-    (``T 3,840–3,870 ms``, ``display_units.range_text``); unset and full-extent axes are left out."""
+    (``T 3.84–3.87 s``; ``fixed``: ``T 3,840–3,870 ms``, ``display_units.range_text``); unset and
+    full-extent axes are left out."""
     if not manual(values):
         return f"auto-crop {keep_fraction(values) * 100:g} %"
-    parts = [range_text(axis, *bounds) for axis, bounds in enumerate(manual_bounds(values)) if bounds is not None]
+    text = fixed_range_text if fixed else range_text
+    parts = [text(axis, *bounds) for axis, bounds in enumerate(manual_bounds(values)) if bounds is not None]
     return ", ".join(parts) if parts else "manual range: full extent"
 
 

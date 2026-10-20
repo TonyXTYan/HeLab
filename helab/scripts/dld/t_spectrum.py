@@ -47,11 +47,11 @@ from helab.analysis.spectrum import (AMPLITUDE, MAX_PADDING, POWER, Spectrum, am
                                      window_spec)
 from helab.analysis.stats import CropBox, crop_box
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import group
+from helab.scripts.dld import group
 
 RANGE = range_specs(
     "The box holding this share of the events, as the 3D scatter's auto-crop: the T profile spans its T range "
-    "and only events inside it count. 100 % keeps every event.")
+    "and only events inside it count. 100 % keeps every event.", fixed=True)
 PROFILE_GROUP = "T profile"
 BIN_WIDTH = ParameterSpec(
     "t_bin", "T bin width (0 = auto)", "float", 0.0, (0.0, 10.0), " s", group=PROFILE_GROUP, si=True,
@@ -326,7 +326,7 @@ class TProfileSpectrum(DatasetAnalysis):
         width = float(values[BIN_WIDTH.name])
         padding = int(values[PADDING.name])
         spectrum = f"{values[WINDOW.name]} window" + (f", ×{padding} padding" if padding > 1 else "")
-        settings = (shots_brief(values), range_brief(values), mask_brief(values),
+        settings = (shots_brief(values), range_brief(values, fixed=True), mask_brief(values),
                     f"T bins {time_text(width, WIDTH_DIGITS)}" if width else "",
                     "counts" if values[UNITS.name] == COUNTS else "", spectrum,
                     "power" if values[SCALE.name] == POWER else "", "log" if values[LOG.name] else "",

@@ -18,7 +18,7 @@ from helab.analysis.parameters import effective
 from helab.analysis.plot_text import AMBER, WrapLabel, line_html, notes_html, short_note
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.scripts.base import DatasetAnalysis
-from helab.scripts.standard import (basic_plots, correlations_plot, density_images, mean_position, release_time,
+from helab.scripts.dld import (basic_plots, correlations_plot, density_images, mean_position, release_time,
                                     shot_times, t_spectrum, transfer_fractions, velocity_distributions)
 from helab.utils import colours
 from helab.utils.folder_cache import Dataset
@@ -202,7 +202,7 @@ def test_counts_per_shot_marks_the_newest_shot(qtbot: QtBot) -> None:
     assert lit.newest.opts["symbolBrush"].color().getRgb()[:3] == (200, 30, 180)
     assert lit.newest.opts["symbolSize"] == basic_plots.NEWEST_SIZE
     assert script.describe_run("Plot", result.parameters, view)[1].endswith("newest shot in magenta")
-    assert script.get_metadata().version == "4"
+    assert script.get_metadata().version == "1"
 
 
 def test_shot_times_marks_the_newest_shot_in_both_plots(qtbot: QtBot) -> None:

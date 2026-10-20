@@ -24,7 +24,7 @@ from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.profiles import (ARRIVAL, BIMODAL, GAUSSIAN, RATE, SMOOTHED, fit_axis,
                                      Smoothing, rate_factor, smooth, smoothing_bins)
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
-from helab.scripts.standard import basic_plots
+from helab.scripts.dld import basic_plots
 from helab.utils.folder_cache import Dataset
 
 Array = npt.NDArray[np.float64]

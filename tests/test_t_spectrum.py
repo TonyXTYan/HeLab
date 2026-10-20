@@ -18,7 +18,7 @@ from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
 from helab.analysis.spectrum import (FLAT_TOP, MAX_PADDED, WINDOWS, SpectrumPeak, amplitude_spectrum, find_spectrum_peaks,
                                      padding_for, refine)
-from helab.scripts.standard import t_spectrum
+from helab.scripts.dld import t_spectrum
 from helab.utils.folder_cache import Dataset
 
 PATH = "/data/root/run_D6"

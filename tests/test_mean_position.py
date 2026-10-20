@@ -18,7 +18,7 @@ from helab.analysis.parameters import effective
 from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
 from helab.analysis.spectrum import FLAT_TOP, NO_WINDOW
-from helab.scripts.standard import mean_position
+from helab.scripts.dld import mean_position
 from helab.utils.folder_cache import Dataset
 
 PATH = "/data/root/run_D5"

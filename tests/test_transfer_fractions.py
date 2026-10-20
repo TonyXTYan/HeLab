@@ -2,16 +2,14 @@
 the T histogram, counted per shot inside the XY box, and editable from the detection."""
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
-import pyqtgraph as pg
 import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6.QtWidgets import QLabel, QWidget
 
 from helab.analysis.dataset_view import DatasetView, build_view
-from helab.analysis.display_units import time_text
 from helab.analysis.parameter_tree import build_tree, tree_values
 from helab.analysis.parameters import effective
 from helab.analysis.results import AnalysisContext, AnalysisResult
@@ -107,14 +105,6 @@ def test_render_and_detected_values_fill_the_settings(run: DatasetView, qtbot: Q
     widget = script.render(result)
     qtbot.addWidget(widget)
     assert isinstance(widget, QWidget)
-    # The T histogram around the orders is in ms, its ticks grouped; its windows in ms too.
-    times: Any = cast(Any, widget).getItem(2, 0)
-    axis = times.getAxis("bottom")
-    assert axis.labelText == "T (ms)" and axis.tickStrings([2_130.0, 2_140.0], 1.0, 10.0) == ["2,130", "2,140"]
-    region = next(item for item in times.items if isinstance(item, pg.LinearRegionItem))
-    orders = result.data.orders
-    first = orders.window(orders.numbers[0])
-    assert region.getRegion() == pytest.approx((first[0] * 1e3, first[1] * 1e3))
     empty = view({})
     nothing = AnalysisResult.of(context(empty), "completed", script.compute("Plot", context(empty)))
     qtbot.addWidget(script.render(nothing))
@@ -343,8 +333,8 @@ def test_a_centre_outside_the_data_says_where_the_events_are(qtbot: QtBot) -> No
     outside = fractions(data, values)
     assert not outside.counts.any() and len(outside.shots) == 3
     text = pane_text(rendered(data, values, qtbot))
-    assert text.startswith("No events in the orders' windows: order 0 at 5,000 ms, spacing 12.5 ms, and the events "
-                           "counted are at T 2,1") and text.endswith(" ms (Orders settings)")
+    assert text.startswith("No events in the orders' windows: order 0 at 5 s, spacing 12.5 ms, and the events counted "
+                           "are at T 2.1") and text.endswith(" s (Orders settings)")
 
 
 def test_shots_with_no_events_in_the_windows_have_no_fractions(qtbot: QtBot) -> None:
@@ -445,7 +435,7 @@ def test_order_0_jumping_a_whole_order_from_the_last_detection_warns_until_settl
         data = result.data
         assert data.jumped == 1 and data.orders.centre == pytest.approx(CENTRE + SPACING, abs=3e-4)
         moved = [note for note in data.notes if note.startswith("⚠ order 0 moved by +1 order from the last detection")]
-        accept = f"set Order 0 at {time_text(data.orders.centre)} in manual mode, Rerun, then back to Auto"
+        accept = f"set Order 0 at {data.orders.centre:.6g} s in manual mode, Rerun, then back to Auto"
         assert len(moved) == 1 and moved[0].endswith(accept)
         # The last detection's centre stays in the settings, so the next rerun warns again.
         assert script.detected_parameters("Plot", result) == {"spacing": data.orders.spacing}
@@ -498,7 +488,7 @@ def test_a_wrong_first_pick_fixed_by_search_t_updates_the_centre() -> None:
     fixed = run({**last, **AROUND_0})
     assert fixed.data.orders.centre == pytest.approx(CENTRE, abs=2e-4) and fixed.data.jumped == 0
     assert not [note for note in fixed.data.notes if note.startswith("⚠")]
-    assert (f"order 0 now at {time_text(fixed.data.orders.centre)}; the last detection, {time_text(last['centre'])}, was "
+    assert (f"order 0 now at {fixed.data.orders.centre:.6g} s; the last detection, {last['centre']:.6g} s, was "
             f"outside Search T") in fixed.data.notes
     filled = script.detected_parameters("Plot", fixed)
     assert filled["centre"] == fixed.data.orders.centre
@@ -523,7 +513,7 @@ def test_search_t_around_the_wrong_peak_says_what_it_replaced() -> None:
     data = fractions(shots_of(transferred(0.9), seed=1), {**last, **around_plus_1})
     assert data.orders.centre == pytest.approx(CENTRE + SPACING, abs=3e-4) and data.jumped == 0
     assert not [note for note in data.notes if note.startswith("⚠") or "(outside Search T)" in note]
-    assert (f"order 0 now at {time_text(data.orders.centre)}; the last detection, {time_text(last['centre'])}, was outside "
+    assert (f"order 0 now at {data.orders.centre:.6g} s; the last detection, {last['centre']:.6g} s, was outside "
             f"Search T") in data.notes
     # No last detection (the default centre): nothing replaced, no line.
     assert not [note for note in fractions(shots_of(transferred(0.9)), around_plus_1).notes

@@ -68,15 +68,19 @@ def test_script_loading(script_folder: Path) -> None:
 
 
 def test_tree_panel_lists_only_working_scripts(qtbot: QtBot) -> None:
-    """HeLab's bundled analyses, each with its Plot button (Density images also Find hot spots); no
+    """HeLab's bundled analyses in two groups, the first shown: Basic plots v1, and the DLD front
+    panel port's plots; each with its Plot button (Density images also Find hot spots); no
     placeholder groups."""
     widget = TreePanelWidget(cast(HelabMainWindow, MockHelabMainWindow()))
     qtbot.addWidget(widget)
-    assert [widget.group_selector.itemText(i) for i in range(widget.group_selector.count())] == ["Basic plots v1"]
+    assert [widget.group_selector.itemText(i) for i in range(widget.group_selector.count())] == [
+        "Basic plots v1", "DLD Front Panel Port"]
     assert group_items(widget) == {"Basic plots v1": ["3D scatter", "Counts per shot", "T, X, Y histograms",
-                                                     "Mean X, Y against T", "T spectrum", "Density images",
-                                                     "Shot times", "Shot trends", "Transfer fractions",
-                                                     "Release time", "Velocity distributions", "Correlations"]}
+                                                     "Transfer fractions"]}
+    widget.group_selector.setCurrentText("DLD Front Panel Port")
+    assert group_items(widget) == {"DLD Front Panel Port": [
+        "3D scatter", "Counts per shot", "T, X, Y histograms", "Mean X, Y against T", "T spectrum", "Density images",
+        "Shot times", "Shot trends", "Transfer fractions", "Release time", "Velocity distributions", "Correlations"]}
     plots = widget.tree_widget.topLevelItem(0)
     assert plots is not None
     for i in range(plots.childCount()):
@@ -97,7 +101,8 @@ def test_load_scripts_adds_a_working_group(qtbot: QtBot, script_folder: Path,
     qtbot.addWidget(widget)
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(script_folder))
     widget.load_dir_button.click()
-    assert sorted(widget.group_selector.itemText(i) for i in range(widget.group_selector.count())) == ["Basic plots v1", "Lab"]
+    assert sorted(widget.group_selector.itemText(i) for i in range(widget.group_selector.count())) == [
+        "Basic plots v1", "DLD Front Panel Port", "Lab"]
     widget.group_selector.setCurrentText("Lab")
     assert group_items(widget) == {"Lab": ["Logged"]}
     lab = widget.tree_widget.topLevelItem(0)

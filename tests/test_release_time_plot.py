@@ -23,9 +23,9 @@ from helab.analysis.parameters import effective
 from helab.analysis.physics import DEFAULTS, TABLE, ResolvedConstants, resolve
 from helab.analysis.release import layer_origin, layer_release_time
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled
-from helab.scripts import standard
-from helab.scripts.standard import release_time
-from helab.scripts.standard.release_time import ReleasePlot, ReleaseTimePlot
+from helab.scripts import dld
+from helab.scripts.dld import release_time
+from helab.scripts.dld.release_time import ReleasePlot, ReleaseTimePlot
 from helab.utils.colours import AMBER
 from helab.utils.folder_cache import Dataset
 
@@ -434,10 +434,10 @@ def test_a_constants_record_holds_only_the_analysis_s_keys() -> None:
 
 
 def test_registered_with_constants_and_a_slow_live_policy() -> None:
-    assert release_time in standard.MODULES
+    assert release_time in dld.MODULES
     metadata = SCRIPT.get_metadata()
     assert (metadata.name, metadata.analysis_id, metadata.version, metadata.group) == (
-        "Release time", "helab.release_time", "1", "Basic plots v1")
+        "Release time", "helab.release_time", "1", "DLD Front Panel Port")
     assert SCRIPT.constant_keys("Plot") == ("fall_distance", "fall_time", "g")
     assert SCRIPT.live_policy("Plot").min_delay >= 3
     specs = {spec.name: spec for spec in SCRIPT.parameters("Plot")}

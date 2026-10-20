@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterator, List, Optional, cast
 
 import numpy as np
+import pyqtgraph as pg
 import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6 import sip
@@ -16,6 +17,7 @@ from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QTabBar, QTabWidget, QWidget
 
+from helab.analysis.backends import BACKEND, DRAWING_GROUP, MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane
 from helab.analysis.dataset_view import build_view
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameter_tree import parameter_of
@@ -25,7 +27,8 @@ from helab.analysis.runner import get_analysis_runner
 from helab.io_helper import list_folder, scan
 from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import basic_plots, density_images, group
+from helab.scripts.dld import basic_plots as dld_plots, density_images
+from helab.scripts.standard import basic_plots, group
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest, IOService
@@ -377,7 +380,7 @@ def test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab(
     instance.rerun_button.click()
     qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
     label = source_label(instance.dock_widget)
-    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v7\n"
+    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v3\n"
                             "manual range: full extent · bins auto · ⚠ X: min > max, using full extent")
     assert "Warning: X: min > max, using full extent" in label.toolTip()
     assert instance.status_label.text() == "⚠ X: min > max, using full extent"
@@ -392,7 +395,7 @@ def test_a_mask_from_the_settings_tab_and_its_errors(window: Window, browser: Fo
     load(browser, qtbot, run, {1: 3, 2: 4})  # shot N's events at T, X, Y = N (s, m)
     panel = TreePanelWidget(window)
     qtbot.addWidget(panel)
-    script = basic_plots.CountsPerShot()
+    script = dld_plots.CountsPerShot()
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")
     assert instance is not None and instance.dock_widget is not None and instance.parameter_root is not None
     qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
@@ -404,7 +407,7 @@ def test_a_mask_from_the_settings_tab_and_its_errors(window: Window, browser: Fo
     qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
     assert instance.result is not None and instance.result.data.total == 4 and instance.result.data.masked == 3
     label = source_label(instance.dock_widget)
-    assert label.text().endswith("helab.counts_per_shot v4\nmask: 1 cut circle")
+    assert label.text().endswith("helab.dld.counts_per_shot v1\nmask: 1 cut circle")
     assert "Circles (mm) 1000, 1000, 1, cut" in label.toolTip()
     parameter_of(instance.parameter_root, specs["mask_circles"]).setValue("1000, 1000")
     shown = instance.result
@@ -441,7 +444,7 @@ def test_histogram_fits_go_in_the_docks_record(window: Window, browser: FolderEx
     load(browser, qtbot, run, {1: 3, 2: 4})
     panel = TreePanelWidget(window)
     qtbot.addWidget(panel)
-    script = basic_plots.TxyHistograms()
+    script = dld_plots.TxyHistograms()
     instance = panel.run_analysis(script.get_metadata(), script, "Plot")
     assert instance is not None and instance.dock_widget is not None and instance.parameter_root is not None
     qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
@@ -461,6 +464,9 @@ def test_histogram_fits_go_in_the_docks_record(window: Window, browser: FolderEx
     assert ("\nConstants: h = 848 mm (default, unconfirmed), t_f = 416.0908 ms (derived, unconfirmed), "
             "g = 9.79602 m/s² (default), m = ") in record
     assert "constants:" not in label.text()
+    # The DLD port's plots draw with PyQtGraph only: no Drawing › Library choice, no "Drawn with".
+    assert instance.backend() == "" and "Drawn with" not in record
+    assert DRAWING_GROUP not in [child.name() for child in instance.parameter_root.children()]
     assert instance.result is not None and instance.result.reuse_key()["constants"]["values"]["fall_distance"] == 0.848
 
 
@@ -493,13 +499,50 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     assert pane.note.toolTip().startswith("Showing all 70 events in the range")
     label = source_label(instance.dock_widget)
     # Two lines: source (folder, revision, shots, analysis), then the settings in short form.
-    assert label.text() == ("Data source: run_D · rev 1 · 2 shots · helab.scatter_3d v4\n"
+    assert label.text() == ("Data source: run_D · rev 1 · 2 shots · helab.scatter_3d v3\n"
                             "auto-crop 99 % · points 1.5 px, opacity 0.5")
     assert not label.wordWrap() and label.contentsMargins().top() == 0
     assert metadata.file_hash[:12] in label.toolTip()
     # The record lists every parameter, those not in use included.
     assert "Parameters: Shots all, From shot (0 = first) 0, Last N 50, To shot (0 = last) 0, Range auto-crop, " \
-           "Auto-crop: keep 99 %, T min 0 ms, T max 0 ms," in label.toolTip()
+           "Auto-crop: keep 99 %, T min 0 s, T max 0 s," in label.toolTip()
+    plot_id = pane.plot_id
+    instance.dock_widget.close()
+    qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None)
+    QApplication.processEvents()
+
+
+def test_another_library_draws_the_plot_again_without_a_rerun(
+        window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path) -> None:
+    """Drawing › Library: the plot shown is drawn again from its result (same run), and the record
+    says which library drew it; a rerun then draws with the library chosen."""
+    run = folder(tmp_path, "run_K", 2)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 30, 2: 40})
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = basic_plots.TxyHistograms()
+    instance = panel.run_analysis(script.get_metadata(), script, "Plot")
+    assert instance is not None and instance.dock_widget is not None and instance.parameter_root is not None
+    qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
+    first = instance.result
+    assert first is not None and instance.backend() == PYQTGRAPH
+    assert instance.dock_widget.findChild(pg.GraphicsLayoutWidget) is not None
+    assert BACKEND not in first.parameters  # The plot's choice, not the analysis's.
+    library = instance.parameter_root.child(DRAWING_GROUP, BACKEND)
+    library.setValue(MATPLOTLIB)
+    QApplication.processEvents()
+    assert instance.result is first and not instance.job_id  # No rerun.
+    assert instance.dock_widget.findChild(MatplotlibPane) is not None
+    assert instance.dock_widget.findChild(pg.GraphicsLayoutWidget) is None
+    assert "Drawn with Matplotlib" in source_label(instance.dock_widget).toolTip()
+    library.setValue(PLOTLY)
+    QApplication.processEvents()
+    pane = instance.dock_widget.findChild(PlotlyPane)
+    assert pane is not None and dash_server.snapshot(pane.plot_id) is not None
+    instance.rerun_button.click()
+    qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
+    assert instance.dock_widget.findChild(PlotlyPane) is pane  # Updated in place: the page stays.
     plot_id = pane.plot_id
     instance.dock_widget.close()
     qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None)

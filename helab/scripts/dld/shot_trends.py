@@ -47,16 +47,16 @@ from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_
                                       range_warnings, select_shots, selection_text, shots_brief, shots_text)
 from helab.analysis.stats import AXES, MAX_BINS, shortest_range
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import group
-from helab.scripts.standard.basic_plots import source_title
-from helab.scripts.standard.shot_times import fallback_text
+from helab.scripts.dld import group
+from helab.scripts.dld.basic_plots import source_title
+from helab.scripts.dld.shot_times import fallback_text
 from helab.utils import events
 from helab.utils.colours import AMBER
 
 RANGE = range_specs(
     "Counts and the per-shot estimates use the events inside the shortest range holding this share of "
     "each axis's events (all chosen shots), rounded out to a twentieth of its width and kept while the "
-    "events stay inside it, so that it stays put while Live adds shots.")
+    "events stay inside it, so that it stays put while Live adds shots.", fixed=True)
 
 PLOT_GROUP = "Plot"
 SHOT_NUMBER, SHOT_TIME = "shot number", "shot time"
@@ -630,7 +630,7 @@ class ShotTrends(DatasetAnalysis):
         rules = trends.LowFlags(np.empty(0, dtype=bool), np.empty(0, dtype=bool), np.empty(0, dtype=bool),
                                 np.empty(0), absolute, fraction,
                                 int(values.get(WINDOW.name, WINDOW.default))).rules_text()
-        settings = (shots_brief(values), range_brief(values), mask_brief(values),
+        settings = (shots_brief(values), range_brief(values, fixed=True), mask_brief(values),
                     method_text(method, float(values.get(FRACTION.name, FRACTION.default)) / 100),
                     "against shot time" if values.get(X_AXIS.name) == SHOT_TIME else "",
                     f"window {int(values.get(WINDOW.name, WINDOW.default)):,}",

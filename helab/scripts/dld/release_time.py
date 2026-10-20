@@ -55,7 +55,7 @@ from helab.analysis.release import ReleaseTime, bootstrap_release_time, detect_r
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import SHOT_SPECS, select_shots, selection_text, shots_brief, shots_text
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import group
+from helab.scripts.dld import group
 from helab.utils.colours import AMBER
 
 if TYPE_CHECKING:

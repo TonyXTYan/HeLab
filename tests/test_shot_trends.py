@@ -26,8 +26,8 @@ from helab.analysis.plot_axes import GroupedAxis
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.runner import AnalysisRunner
 from helab.models.ScriptTreeSelector import AnalysisInstance, PlotSettingsPanel, TreePanelWidget
-from helab.scripts.standard import shot_trends
-from helab.scripts.standard.shot_trends import ShotTrends, Trends
+from helab.scripts.dld import shot_trends
+from helab.scripts.dld.shot_trends import ShotTrends, Trends
 from helab.utils import events
 from helab.utils.folder_cache import Dataset
 from helab.views.CentralHint import CentralHint
@@ -560,8 +560,8 @@ def test_a_plot_following_live_notifies_once_for_a_low_new_shot(
 
 
 def test_registration_and_live_policy() -> None:
-    from helab.scripts import standard
-    assert shot_trends in standard.MODULES
+    from helab.scripts import dld
+    assert shot_trends in dld.MODULES
     metadata = SCRIPT.get_metadata()
     assert (metadata.name, metadata.analysis_id, metadata.version) == ("Shot trends", "helab.shot_trends", "2")
     assert SCRIPT.live_policy("Plot") == LivePolicy()

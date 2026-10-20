@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 )
 from pyqtgraph.parametertree import Parameter
 
+from helab.analysis.backends import BACKEND, backend_specs
 from helab.analysis.constant_layers import (changed_keys, describe_constants, source_name, value_and_origin,
                                            without_constants)
 from helab.analysis.physics import TABLE, ResolvedConstants
@@ -32,7 +33,7 @@ from helab.analysis.parameter_tree import build_tree, commit_pending_text, param
 from helab.analysis.parameters import describe
 from helab.analysis.results import AnalysisResult
 from helab.analysis.runner import AnalysisRunner, get_analysis_runner
-from helab.scripts import standard
+from helab.scripts import dld, standard
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.utils.constants import QDOCKWIDGET_STYLESHEET
 from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache, store_options
@@ -572,6 +573,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._job_view: Optional[DatasetView] = None
         self._shown_view: Optional[DatasetView] = None
         self._content: Optional[QWidget] = None  # The plot drawn (``render``), updated in place if it can
+        self._drawn_with = ""  # The library ``_content`` was drawn with (``backend``)
         self.error = ""  # The last run's failure, while the plot before it stays
         self.policy = script.live_policy(action)
         self.follow = Follow(view, self.policy)
@@ -626,8 +628,12 @@ class AnalysisInstance(LinkedAnalysisInstance):
         """Open the dock and its settings page, then run with the defaults."""
         self.setup_dock_widget(self._message(f"Running {self.name} on {self.view.key.short()}…"))
         specs = self.script.parameters(self.action)
-        live = live_specs(self.policy, specs[0].page if specs else "")
-        self.parameter_root = build_tree([*specs, *live])
+        page = specs[0].page if specs else ""
+        drawing = backend_specs(self.script.backends(self.action), page)
+        live = live_specs(self.policy, page)
+        self.parameter_root = build_tree([*specs, *drawing, *live])
+        for spec in drawing:
+            parameter_of(self.parameter_root, spec).sigValueChanged.connect(self._backend_changed)
         for spec in live:
             parameter_of(self.parameter_root, spec).sigValueChanged.connect(self._live_settings_changed)
         tab = QWidget()
@@ -636,7 +642,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         layout.setSpacing(0)
         self.input_label.setToolTip(self.path)
         layout.addWidget(self.input_label)
-        layout.addWidget(settings_widget(self.parameter_root, [*specs, *live]), 1)
+        layout.addWidget(settings_widget(self.parameter_root, [*specs, *drawing, *live]), 1)
         self.rerun_button = QPushButton("Rerun with these settings")
         self.rerun_button.setEnabled(bool(specs))
         self.rerun_button.clicked.connect(self.run)
@@ -653,6 +659,14 @@ class AnalysisInstance(LinkedAnalysisInstance):
         """The analysis's parameters as set (not the plot's Live settings)."""
         root = self.parameter_root
         return tree_values(root, self.script.parameters(self.action)) if root is not None else {}
+
+    def backend(self) -> str:
+        """The library the plot is drawn with (Drawing › Library), "" when the script names none."""
+        specs = backend_specs(self.script.backends(self.action))
+        root = self.parameter_root
+        if not specs:
+            return ""
+        return str(tree_values(root, specs)[BACKEND]) if root is not None else str(specs[0].default)
 
     def live_values(self) -> Dict[str, Any]:
         root = self.parameter_root
@@ -728,7 +742,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             try:
                 content = self._updated(result)
                 if content is None:
-                    content = self.script.render(result)
+                    content = self._draw(result)
             except Exception as exc:
                 logging.exception("Could not draw %s", self.name)
                 error = f"could not draw it: {exc}"
@@ -774,9 +788,33 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def _updated(self, result: AnalysisResult) -> Optional[QWidget]:
         """The plot drawn, showing ``result`` in place (the script's ``update``), or None."""
         drawn = self._content
-        if self.shown is None or self.released is not None or drawn is None or sip.isdeleted(drawn):
+        if (self.shown is None or self.released is not None or drawn is None or sip.isdeleted(drawn)
+                or self._drawn_with != self.backend()):
             return None
         return drawn if self.script.update(drawn, result) else None
+
+    def _draw(self, result: AnalysisResult) -> QWidget:
+        """``result``'s plot drawn anew, with the library chosen."""
+        backend = self.backend()
+        content = self.script.draw(result, backend) if backend else self.script.render(result)
+        self._drawn_with = backend
+        return content
+
+    def _backend_changed(self) -> None:
+        """Another library: the plot shown is drawn again with it, from its result (no rerun). A
+        released plot is drawn with it when it reloads."""
+        result = self.shown
+        if self.is_closed or result is None or self.released is not None or self._drawn_with == self.backend():
+            return
+        specs = self.script.parameters(self.action)
+        warnings = "; ".join(self._hook("parameter_warnings", [], result.parameters))
+        try:
+            content = self._draw(result)
+        except Exception as exc:
+            logging.exception("Could not draw %s with %s", self.name, self.backend())
+            self.status_label.setText(f"Failed: could not draw it with {self.backend()}: {exc}")
+            return
+        self._show_content(content, result, specs, warnings)
 
     def _show_content(self, content: QWidget, result: AnalysisResult, specs: List[Any], warnings: str) -> None:
         self._content = content
@@ -795,6 +833,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
             found = self._hook("result_record", [], result) if result.state == "completed" else []
             if found:
                 record = "\n".join((record, *found))
+            if self._drawn_with:
+                record = f"{record}\nDrawn with {self._drawn_with}"
             if result.state == "completed":
                 settings = " · ".join(filter(None, (settings, self._hook("describe_result", "", result))))
             if warnings:
@@ -1327,7 +1367,7 @@ class TreePanelWidget(QWidget):
     - Action buttons for each script
     
     Key concepts:
-    - Groups: HeLab's bundled analyses ("Basic plots v1", `helab.scripts.standard.group`) and those of scripts loaded from a folder
+    - Groups: HeLab's bundled analyses ("Basic plots v1", `helab.scripts.standard.group`; "DLD Front Panel Port", `helab.scripts.dld.group`) and those of scripts loaded from a folder
     - Actions: Each script can have up to 2 executable actions
     """
     
@@ -1409,8 +1449,8 @@ class TreePanelWidget(QWidget):
             logging.debug(f"Registered group: {name} (type: {group_type})")
 
     def _load_default_scripts(self) -> None:
-        """Register HeLab's bundled analyses (``helab.scripts.standard``) and show the first group."""
-        for module in standard.MODULES:
+        """Register HeLab's bundled analyses (``helab.scripts.standard``, then the DLD front panel port, ``helab.scripts.dld``) and show the first group."""
+        for module in (*standard.MODULES, *dld.MODULES):
             try:
                 self.script_manager.load_module(module)
             except Exception as e:

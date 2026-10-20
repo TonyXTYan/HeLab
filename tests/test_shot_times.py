@@ -20,7 +20,7 @@ from helab.analysis.dataset_view import DatasetView, build_view, revise
 from helab.analysis.parameters import effective
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.io_helper import live_check, load, read_cached, save_held
-from helab.scripts.standard import shot_times
+from helab.scripts.dld import shot_times
 from helab.utils.folder_cache import Dataset, FolderCache, dataset_raw_times
 from helab.utils.io_service import IOService
 

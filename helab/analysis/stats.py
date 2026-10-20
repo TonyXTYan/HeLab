@@ -253,3 +253,9 @@ def histogram(values: npt.NDArray[np.float64], axis: str, keep: float = DEFAULT_
     counts, edges = np.histogram(values, bins=count, range=(lower, upper))
     counts = counts.astype(np.int64)
     return Histogram(axis, edges, counts, total, total - int(counts.sum()), bins <= 0)
+
+
+def axis_text(index: int, lower: float, upper: float) -> str:
+    """``T 2.1…2.2 s``: one axis's range in s and m, as the "Basic plots v1" plots show it (the DLD
+    port's plots use ``display_units.range_text``, in ms and mm)."""
+    return f"{AXES[index]} {lower:.6g}…{upper:.6g} {UNITS[index]}"

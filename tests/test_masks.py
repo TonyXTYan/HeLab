@@ -19,9 +19,9 @@ from helab.analysis.parameter_tree import CommitTextEdit, build_tree, parameter_
 from helab.analysis.parameters import ParameterSpec, effective
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.scripts.base import DatasetAnalysis
-from helab.scripts.standard import (basic_plots, density_images, mean_position, scatter_3d, shot_times, shot_trends,
+from helab.scripts.dld import (basic_plots, density_images, mean_position, scatter_3d, shot_times, shot_trends,
                                     t_spectrum, transfer_fractions)
-from helab.scripts.standard.density_images import FIND, PLOT, DensityImages, DensityPlot, HotSpots, HotSpotsPlot
+from helab.scripts.dld.density_images import FIND, PLOT, DensityImages, DensityPlot, HotSpots, HotSpotsPlot
 from helab.utils.folder_cache import Dataset
 
 MM = 1e-3

@@ -10,6 +10,11 @@ Review, legacy bugs and the detailed specs:
 [session notes](../.ai/sessions/2026-10-20-claude-dld-front-panel-review/notes.md).
 Branches, merge order and what to check first:
 [coordinator register](../.ai/sessions/2026-10-20-claude-dld-coordinator/register.md).
+Code: `helab/scripts/dld/`, the Scripts panel group "DLD Front Panel Port" (Tony,
+2026-10-20, at the merge of `dev/v0.0.6`): the port's own Counts per shot, T, X, Y
+histograms, 3D scatter and Transfer fractions (ids `helab.dld.*`) beside its other
+plots, while "Basic plots v1" (`helab/scripts/standard/`) keeps `dev/v0.0.6`'s four
+plots unchanged ([merge notes](../.ai/sessions/2026-10-20-claude-dld-merge-dev/notes.md)).
 
 ## What HeLab already covers
 

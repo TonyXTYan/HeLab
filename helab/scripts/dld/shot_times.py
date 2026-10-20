@@ -26,8 +26,8 @@ from helab.analysis.selection import (SHOT_SPECS, newest_brief, newest_colour, n
                                       selection_text, shots_brief, shots_text)
 from helab.analysis.stats import counts_per_shot
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import group
-from helab.scripts.standard.basic_plots import NEWEST_SIZE, source_title
+from helab.scripts.dld import group
+from helab.scripts.dld.basic_plots import NEWEST_SIZE, source_title
 
 BOTH, COUNTS, GAPS = "counts and gaps", "counts", "gaps"
 PLOT_GROUP = "Plot"

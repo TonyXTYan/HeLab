@@ -407,7 +407,7 @@ def test_the_histograms_fits_are_keyed_on_constants_and_marked_when_one_changes(
     """D1 uses F0b's Constants group: with a fit on, its runs resolve the fall distance and time, g,
     the mass and k_B, its key carries them, the constants appear once in the record, and a lab
     change marks the plot until Rerun; without a fit it uses none (no key, no mark)."""
-    from helab.scripts.standard import basic_plots
+    from helab.scripts.dld import basic_plots
     window.view = window.live_feed.publish(revision([1, 2]))
     script = basic_plots.TxyHistograms()
     panel = TreePanelWidget(window)

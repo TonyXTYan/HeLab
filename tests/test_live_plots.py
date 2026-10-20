@@ -33,9 +33,11 @@ from helab.analysis.runner import AnalysisRunner
 from helab.io_helper import list_folder, live_check, load
 from helab.models.ScriptTreeSelector import AnalysisDock, AnalysisInstance, PlotSettingsPanel, TreePanelWidget
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import (basic_plots, correlations_plot, density_images, mean_position, release_time,
-                                    scatter_3d, shot_times, shot_trends, t_spectrum, transfer_fractions,
-                                    velocity_distributions)
+from helab.scripts.dld import (correlations_plot, density_images, mean_position, release_time, shot_times,
+                               shot_trends, t_spectrum, velocity_distributions)
+from helab.scripts.dld import basic_plots as dld_plots, scatter_3d as dld_scatter
+from helab.scripts.dld import transfer_fractions as dld_fractions
+from helab.scripts.standard import basic_plots, scatter_3d, transfer_fractions
 from helab.utils.dash_server import dash_server
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest, IOService
@@ -318,12 +320,13 @@ def test_coverage_records_the_shots_used_and_diffs_a_later_revision() -> None:
 
 
 @pytest.mark.parametrize("script", [basic_plots.CountsPerShot(), basic_plots.TxyHistograms(),
-                                    scatter_3d.Scatter3D(), density_images.DensityImages(),
+                                    scatter_3d.Scatter3D(), transfer_fractions.TransferFractions(),
+                                    dld_plots.CountsPerShot(), dld_plots.TxyHistograms(), dld_scatter.Scatter3D(), density_images.DensityImages(),
                                     mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum(),
-                                    transfer_fractions.TransferFractions(), shot_times.ShotTimesPlot(),
+                                    dld_fractions.TransferFractions(), shot_times.ShotTimesPlot(),
                                     shot_trends.ShotTrends(), release_time.ReleaseTimePlot(),
                                     velocity_distributions.VelocityDistributions(), correlations_plot.Correlations()],
-                         ids=lambda script: type(script).__name__)
+                         ids=lambda script: f"{type(script).__module__.split('.')[-2]}.{type(script).__name__}")
 def test_every_result_records_coverage_and_a_json_reuse_key(qtbot: QtBot, script: DatasetAnalysis) -> None:
     """Completed, failed and cancelled runs alike; the Shots settings decide the coverage."""
     runner = AnalysisRunner()
@@ -364,12 +367,13 @@ def test_failed_and_cancelled_results_record_coverage_too(qtbot: QtBot) -> None:
 
 
 @pytest.mark.parametrize("script", [basic_plots.CountsPerShot(), basic_plots.TxyHistograms(),
-                                    scatter_3d.Scatter3D(), density_images.DensityImages(),
+                                    scatter_3d.Scatter3D(), transfer_fractions.TransferFractions(),
+                                    dld_plots.CountsPerShot(), dld_plots.TxyHistograms(), dld_scatter.Scatter3D(), density_images.DensityImages(),
                                     mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum(),
-                                    transfer_fractions.TransferFractions(), shot_trends.ShotTrends(),
-                                    release_time.ReleaseTimePlot(), velocity_distributions.VelocityDistributions(),
-                                    correlations_plot.Correlations()],
-                         ids=lambda script: type(script).__name__)
+                                    dld_fractions.TransferFractions(),
+                                    shot_trends.ShotTrends(), release_time.ReleaseTimePlot(),
+                                    velocity_distributions.VelocityDistributions(), correlations_plot.Correlations()],
+                         ids=lambda script: f"{type(script).__module__.split('.')[-2]}.{type(script).__name__}")
 @pytest.mark.parametrize("case", ["no shots yet", "none chosen", "no events"])
 def test_bundled_plots_say_why_they_are_empty(qtbot: QtBot, script: DatasetAnalysis, case: str) -> None:
     if case == "no shots yet":
@@ -555,7 +559,8 @@ def test_the_scatter_highlights_the_newest_shot(qtbot: QtBot) -> None:
     assert len(traces) == 2 and traces[1].marker.color == "rgb(200, 30, 180)" and traces[1].name == "shot 3 (newest)"
     assert "shot 3 highlighted (2 events)" in scatter_3d.note_text(data)
     assert script.describe_run("Plot", lit.parameters, view)[1].endswith("newest shot in magenta")
-    assert script.get_metadata().version == "4" and basic_plots.TxyHistograms().get_metadata().version == "7"
+    assert script.get_metadata().version == "3" and basic_plots.TxyHistograms().get_metadata().version == "3"
+    assert (dld_scatter.Scatter3D().get_metadata().version, dld_plots.TxyHistograms().get_metadata().version) == ("1", "1")
 
 
 def test_the_display_cap_keeps_the_newest_shot_whole() -> None:
@@ -696,20 +701,45 @@ def test_a_highlighted_histogram_is_freed_with_its_widget(qtbot: QtBot, log_y: b
     assert freed(refs)
 
 
-def test_a_following_histograms_plot_updates_in_place_keeping_its_zoom(
+def test_a_following_histograms_old_drawing_is_freed_when_redrawn(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """Live's next revision updates the histograms in place; a rerun with another layout (log Y)
+    draws them anew, and the old drawing's plot, overlay and counts go with the widget it replaced."""
+    window.view = window.live_feed.publish(revision([1, 2]))
+    instance = plot(window, qtbot, basic_plots.TxyHistograms())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    assert instance.parameter_root is not None
+    parameter_of(instance.parameter_root, basic_plots.HIGHLIGHT).setValue(True)
+    instance.run()
+    qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
+    content = instance._content
+    refs = histogram_refs(content)
+    window.live_feed.publish(revision([1, 2, 3]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2 and instance.shown is not None
+                    and instance.shown.data.newest_shot == 3, timeout=10_000)
+    assert instance._content is content  # In place: zoom and pan stay.
+    del content
+    parameter_of(instance.parameter_root, basic_plots.LOG_Y).setValue(True)
+    shown = instance.shown
+    instance.run()
+    qtbot.waitUntil(lambda: instance.shown is not shown, timeout=10_000)
+    assert freed(refs)
+
+
+def test_a_following_dld_histograms_plot_updates_in_place_keeping_its_zoom(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
     """Live's next revision sets the histograms' data in the plots already drawn: a zoom stays,
     and the newest shot's overlay follows the newest shot. Another log Y draws them anew, and
     the old drawing's plot, overlay and counts go with the widget it replaced."""
     window.view = window.live_feed.publish(spread([1, 2]))
-    instance = plot(window, qtbot, basic_plots.TxyHistograms())
+    instance = plot(window, qtbot, dld_plots.TxyHistograms())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     set_live(instance, DELAY, 0.0)
     assert instance.parameter_root is not None
-    parameter_of(instance.parameter_root, basic_plots.HIGHLIGHT).setValue(True)
+    parameter_of(instance.parameter_root, dld_plots.HIGHLIGHT).setValue(True)
     instance.run()
     qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
-    assert isinstance(instance._content, basic_plots.HistogramsWidget)
+    assert isinstance(instance._content, dld_plots.HistogramsWidget)
     widget: Any = instance._content
     x_plot = widget.plots[1]
     x_plot.vb.setRange(xRange=(-0.5, 0.5), yRange=(0.0, 3.0), padding=0)  # The user zooms.
@@ -725,26 +755,26 @@ def test_a_following_histograms_plot_updates_in_place_keeping_its_zoom(
                for overlay, counts in zip(widget.newest_views, newest))
     assert x_plot.getAxis("right").labelText == "shot 3 events"
     refs = histogram_refs(widget)
-    parameter_of(instance.parameter_root, basic_plots.LOG_Y).setValue(True)
+    parameter_of(instance.parameter_root, dld_plots.LOG_Y).setValue(True)
     instance.run()
     qtbot.waitUntil(lambda: instance._content is not widget, timeout=10_000)
     del widget, x_plot
     assert freed(refs)
 
 
-def test_a_following_counts_plot_updates_in_place_keeping_its_zoom(
+def test_a_following_dld_counts_plot_updates_in_place_keeping_its_zoom(
         window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
     """Counts per shot: Live's next shot joins the plot already drawn, the user's zoom stays, and
     the highlighted newest shot moves to it."""
     window.view = window.live_feed.publish(revision([1, 2]))
-    instance = plot(window, qtbot, basic_plots.CountsPerShot())
+    instance = plot(window, qtbot, dld_plots.CountsPerShot())
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     set_live(instance, DELAY, 0.0)
     assert instance.parameter_root is not None
-    parameter_of(instance.parameter_root, basic_plots.COUNTS_HIGHLIGHT).setValue(True)
+    parameter_of(instance.parameter_root, dld_plots.COUNTS_HIGHLIGHT).setValue(True)
     instance.run()
     qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
-    assert isinstance(instance._content, basic_plots.CountsPlot)
+    assert isinstance(instance._content, dld_plots.CountsPlot)
     widget: Any = instance._content
     widget.getPlotItem().vb.setRange(xRange=(0.0, 10.0), yRange=(0.0, 5.0), padding=0)
     zoomed = widget.getPlotItem().vb.viewRange()
@@ -771,13 +801,16 @@ def test_a_following_plot_highlights_lives_newest_shot(
 
 def test_scatter_declares_a_live_policy_others_rerun_on_every_shot() -> None:
     assert scatter_3d.Scatter3D().live_policy("Plot") == LivePolicy(min_delay=5.0)
-    # The histograms too: their bimodal fits take seconds on a large folder.
-    for slower in (density_images.DensityImages(), mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum(),
-                   basic_plots.TxyHistograms()):
-        assert slower.live_policy("Plot") == LivePolicy(min_delay=2.0)
-    for script in (basic_plots.CountsPerShot(), transfer_fractions.TransferFractions(), shot_times.ShotTimesPlot(),
-                   shot_trends.ShotTrends()):
+    for script in (basic_plots.CountsPerShot(), basic_plots.TxyHistograms(), transfer_fractions.TransferFractions()):
         assert script.live_policy("Plot") == LivePolicy()
+    # The DLD port's: the histograms too wait, their bimodal fits take seconds on a large folder.
+    assert dld_scatter.Scatter3D().live_policy("Plot") == LivePolicy(min_delay=5.0)
+    for slower in (density_images.DensityImages(), mean_position.MeanPositionVsT(), t_spectrum.TProfileSpectrum(),
+                   dld_plots.TxyHistograms()):
+        assert slower.live_policy("Plot") == LivePolicy(min_delay=2.0)
+    for ported in (dld_plots.CountsPerShot(), dld_fractions.TransferFractions(), shot_times.ShotTimesPlot(),
+                   shot_trends.ShotTrends()):
+        assert ported.live_policy("Plot") == LivePolicy()
 
 
 # Plots following the feed
@@ -1310,3 +1343,101 @@ def test_an_error_stopping_live_checks_catches_plots_up(
     explorer.stop_live(save=False)
     window.close_plots()
     explorer.close_cleanup()
+
+
+def lab_revision(shots: range | list[int]) -> Dataset:
+    """Like ``revision``, with events every bundled plot draws: orders −2…+2 in T, a cloud in X, Y."""
+    numbers = list(shots)
+    data = {}
+    for shot in numbers:
+        rng = np.random.default_rng(shot)
+        times = np.concatenate([rng.normal(2.1375 + order * 0.0125, 0.001, count)
+                                for order, count in {-2: 20, -1: 100, 0: 600, 1: 250, 2: 30}.items()])
+        data[shot] = np.column_stack((times, rng.normal(0, 0.005, (len(times), 2))))
+    return Dataset(PATH, f"sig-lab-{numbers[-1] if numbers else 0}", data, {
+        "fingerprint": [[shot, 100 + shot, 1_000 + shot] for shot in numbers], "source": "updated",
+        "loaded_at": time.time()}, 0)
+
+
+def drawn_type(script: DatasetAnalysis, backend: str) -> type[QWidget]:
+    from helab.analysis.backends import MATPLOTLIB, PLOTLY, MatplotlibPane
+    if backend == PLOTLY:
+        return PlotlyPane
+    if backend == MATPLOTLIB:
+        return MatplotlibPane
+    if isinstance(script, scatter_3d.Scatter3D):
+        return QLabel  # PyQtGraph's 3D view needs OpenGL, which Qt's offscreen platform lacks: it says so.
+    return cast(type[QWidget], pg.PlotWidget if isinstance(script, basic_plots.CountsPerShot)
+                else pg.GraphicsLayoutWidget)
+
+
+def drawn(instance: AnalysisInstance, kind: type[QWidget]) -> Optional[QWidget]:
+    content = instance._content
+    if content is None or sip.isdeleted(content):
+        return None
+    return content if isinstance(content, kind) else content.findChild(kind)
+
+
+@pytest.mark.parametrize("script_class", [basic_plots.CountsPerShot, basic_plots.TxyHistograms,
+                                          scatter_3d.Scatter3D, transfer_fractions.TransferFractions],
+                         ids=lambda script_class: script_class.__name__)
+@pytest.mark.parametrize("backend", ["PyQtGraph", "Plotly", "Matplotlib"])
+def test_a_following_plot_keeps_following_in_every_library_and_after_switching(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot, script_class: Any, backend: str) -> None:
+    """Each library follows Live in place (a zoom or pan stays): the same page, plot or figure.
+    Switching library mid-Live draws the shown revision with the new one, and the next revisions
+    follow in it."""
+    from helab.analysis.backends import BACKEND, DRAWING_GROUP, PLOTLY
+    script = cast(DatasetAnalysis, script_class())
+    window.view = window.live_feed.publish(lab_revision([1, 2]))
+    instance = plot(window, qtbot, script)
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    set_live(instance, DELAY, 0.0)
+    assert instance.parameter_root is not None
+    library = instance.parameter_root.child(DRAWING_GROUP, BACKEND)
+    library.setValue(backend)
+    kind = drawn_type(script, backend)
+    first = drawn(instance, kind)
+    assert first is not None and shown_revision(instance) == 1  # Drawn again, not rerun.
+    old = weakref.ref(first)
+    window.live_feed.publish(lab_revision([1, 2, 3]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
+    now = drawn(instance, kind)
+    assert now is not None and "rev 2" in source(instance).text()
+    if kind is not QLabel:
+        assert now is first  # In place: the same page, plot or figure.
+    else:  # Offscreen, PyQtGraph's 3D view says it needs OpenGL: that message is drawn anew.
+        assert now is not first
+        del first, now
+        assert freed([old])
+    # Another library while Live goes on: the next revisions follow in it.
+    other = next(name for name in ("Matplotlib", "Plotly", "PyQtGraph") if name != backend)
+    library.setValue(other)
+    assert drawn(instance, drawn_type(script, other)) is not None and shown_revision(instance) == 2
+    window.live_feed.publish(lab_revision([1, 2, 3, 4]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 3, timeout=10_000)
+    assert drawn(instance, drawn_type(script, other)) is not None
+    assert "Drawn with " + other in source(instance).toolTip()
+
+
+@pytest.mark.parametrize("backend", ["PyQtGraph", "Plotly", "Matplotlib"])
+def test_transfer_fractions_highlight_follows_lives_newest_shot(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot, backend: str) -> None:
+    """The T histogram's highlighted shot is Live's latest one, in place in every library."""
+    from helab.analysis.backends import BACKEND, DRAWING_GROUP
+    window.view = window.live_feed.publish(lab_revision([1, 2]))
+    instance = plot(window, qtbot, transfer_fractions.TransferFractions())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    set_live(instance, DELAY, 0.0)
+    assert instance.parameter_root is not None
+    instance.parameter_root.child(DRAWING_GROUP, BACKEND).setValue(backend)
+    parameter_of(instance.parameter_root, transfer_fractions.HIGHLIGHT).setValue(True)
+    instance.run()
+    qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == 2, timeout=10_000)
+    content = instance._content
+    for shot in (3, 4):
+        window.live_feed.publish(lab_revision(range(1, shot + 1)))
+        qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.data.newest_shot == shot,
+                        timeout=10_000)
+        assert instance._content is content  # In place.
+    assert "newest shot in red" in source(instance).text()

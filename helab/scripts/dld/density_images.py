@@ -46,7 +46,7 @@ from helab.analysis.selection import (SHOT_SPECS, keep_fraction, keep_spec, manu
                                       shots_text)
 from helab.analysis.stats import AXES, CropBox, crop_box, freedman_diaconis_bins
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import group
+from helab.scripts.dld import group
 from helab.utils.colours import AMBER
 
 # Projections: (horizontal axis, vertical axis) as T/X/Y column indices. T runs along the
@@ -58,7 +58,7 @@ PROJECTION = ParameterSpec("projection", "Projection", "choice", "XY", choices=t
 RANGE = range_specs(
     "The image covers a box over T, X and Y holding at least this share of the events, found as the 3D "
     "scatter finds its crop (a heuristic, not the narrowest box). Its third axis is a window: events "
-    "outside it are left out. 100 % covers every event.")
+    "outside it are left out. 100 % covers every event.", fixed=True)
 IMAGE_GROUP = "Image"
 MAX_IMAGE_BINS = 1000  # per axis: 1000 × 1000 float64 is 8 MB
 AUTO_BINS_CAP = 400  # automatic bins per axis stop here (Freedman–Diaconis grows with the events)
@@ -99,7 +99,7 @@ FIND_GROUP = "Find hot spots"
 FIND_RANGE = tuple(replace(spec, default=100.0) if spec.name == keep_spec("").name else spec for spec in range_specs(
     "The image covers a box over T, X and Y holding at least this share of the events. 100 % (the default here) "
     "keeps every event, so spots near the detector's edge stay in. Set T by hand to a window without atoms: "
-    "a cloud is bright too."))
+    "a cloud is bright too.", fixed=True))
 FIND_BIN = ParameterSpec("spot_bin", "Bin width", "float", DEFAULT_BIN, (1e-5, 0.01), " m", group=FIND_GROUP,
                          si=True, unit_prefix="m",
                          tip="The XY image's bins, square. A spot is found when one bin of it stands out.")
@@ -483,14 +483,14 @@ class DensityImages(DatasetAnalysis):
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
         if action_name == FIND:
             settings: tuple[str, ...] = (
-                shots_brief(values), range_brief(values), mask_brief(values),
+                shots_brief(values), range_brief(values, fixed=True), mask_brief(values),
                 f"bins {axis_text('X', float(values[FIND_BIN.name]), WIDTH_DIGITS)}",
                 f"background σ {axis_text('X', float(values[FIND_SCALE.name]), WIDTH_DIGITS)}",
                 f"{float(values[FIND_ALPHA.name]):g} false spots per image", self._scale_brief(values))
             return selection_text(view, values), " · ".join(part for part in settings if part)
         bins = int(values[BINS.name])
         blur = float(values[BLUR.name])
-        settings = (str(values[PROJECTION.name]), shots_brief(values), range_brief(values), mask_brief(values),
+        settings = (str(values[PROJECTION.name]), shots_brief(values), range_brief(values, fixed=True), mask_brief(values),
                     f"bins {bins:,}" if bins else "bins auto", f"blur {blur:g}" if blur else "",
                     "per shot" if values[QUANTITY.name] == PER_SHOT else "", self._scale_brief(values),
                     newest_brief(values))

@@ -25,9 +25,9 @@ from helab.analysis.physics import resolve
 from helab.analysis.release import ReleaseTime
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled
 from helab.analysis.velocity import arrival_time
-from helab.scripts import standard
-from helab.scripts.standard import correlations_plot
-from helab.scripts.standard.correlations_plot import CorrelationData, CorrelationPlot, Correlations
+from helab.scripts import dld
+from helab.scripts.dld import correlations_plot
+from helab.scripts.dld.correlations_plot import CorrelationData, CorrelationPlot, Correlations
 from helab.utils.folder_cache import Dataset
 
 Array = npt.NDArray[np.float64]
@@ -439,7 +439,7 @@ def test_settings_lines_and_registration() -> None:
     assert "mask the BECs first" in names["recentre"].tip
     assert SCRIPT.constant_keys("Plot") == correlations_plot.CONSTANT_KEYS
     assert SCRIPT.live_policy("Plot").min_delay == 5.0
-    assert correlations_plot in standard.MODULES
+    assert correlations_plot in dld.MODULES
     metadata = SCRIPT.get_metadata()
     assert (metadata.analysis_id, metadata.version, metadata.name) == ("helab.correlations", "1", "Correlations")
     assert SCRIPT.parameter_warnings("Plot", {**values, "release_search_min": 2.0, "release_search_max": 1.0})

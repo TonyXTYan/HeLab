@@ -188,6 +188,17 @@ class DatasetAnalysis(HelabAnalysisScript):
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         """The plot for a completed result (GUI thread)."""
 
+    def backends(self, action_name: str) -> Sequence[str]:
+        """The plotting libraries (``helab.analysis.backends``) this action's plot can be drawn
+        with, the default first; the plot's settings choose one (Drawing › Library) when there are
+        two or more. Default: none named, ``render`` alone draws it."""
+        return ()
+
+    def draw(self, result: AnalysisResult, backend: str, parent: Optional[QWidget] = None) -> QWidget:
+        """The plot for a completed result, drawn with ``backend`` (one of ``backends``; GUI
+        thread). Default: ``render``."""
+        return self.render(result, parent)
+
     def update(self, widget: QWidget, result: AnalysisResult) -> bool:
         """Show a newer result in the plot already drawn (``widget``, from ``render``), in place,
         keeping what the user did to the view (e.g. a 3D scatter's camera); GUI thread. Whether

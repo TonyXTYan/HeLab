@@ -64,9 +64,9 @@ from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_
 from helab.analysis.stats import MAX_BINS, CropBox, crop_box, histogram, shortest_range
 from helab.analysis.velocity import VELOCITY_AXES, recoil_velocity, valid_velocities
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.scripts.standard import group
-from helab.scripts.standard.basic_plots import OverlayView, overlay_newest, update_newest
-from helab.scripts.standard.density_images import (DECADES, GAMMA, LINEAR, SCALE, automatic_bins, colour_map,
+from helab.scripts.dld import group
+from helab.scripts.dld.basic_plots import OverlayView, overlay_newest, update_newest
+from helab.scripts.dld.density_images import (DECADES, GAMMA, LINEAR, SCALE, automatic_bins, colour_map,
                                                    display_image, viridis_lut)
 
 Array = npt.NDArray[np.float64]
@@ -74,7 +74,7 @@ Array = npt.NDArray[np.float64]
 RANGE = range_specs(
     "The events converted are those inside a box over T, X and Y holding at least this share of them (found "
     "as the density images find theirs). Set T by hand to pick one cloud or Bragg order. 100 % converts "
-    "every event.")
+    "every event.", fixed=True)
 VELOCITY_GROUP = "Velocity"
 MM_S, M_S, RECOIL, BRAGG = "mm/s", "m/s", "ħk/m", "2ħk/m"
 UNIT = ParameterSpec("velocity_unit", "Unit", "choice", MM_S, choices=(MM_S, M_S, RECOIL, BRAGG),
@@ -698,7 +698,7 @@ class VelocityDistributions(DatasetAnalysis):
                   else f"T from {time_text(lower)}" if lower is not None
                   else f"T to {time_text(upper)}" if upper is not None else "")
         keep = float(values.get(KEEP.name, KEEP.default))
-        settings = (shots_brief(values), range_brief(values), mask_brief(values), str(values.get(UNIT.name, MM_S)),
+        settings = (shots_brief(values), range_brief(values, fixed=True), mask_brief(values), str(values.get(UNIT.name, MM_S)),
                     f"histograms {number_text(keep, 3)} %" if keep < 100 else "histograms 100 %",
                     f"bins {bins:,}" if bins else "bins auto", newest_brief(values), "fit Gaussians" if values.get(FIT.name) else "",
                     f"density {density}" if density != OFF else "", f"search {search}" if search else "")

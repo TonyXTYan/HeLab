@@ -17,9 +17,9 @@ from helab.analysis.physics import DEFAULTS, TABLE, ResolvedConstants, resolve
 from helab.analysis.dataset_view import DatasetView, build_view
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.velocity import RECOIL_WAVELENGTH, arrival_time, recoil_velocity, txy_to_velocity, valid_velocities
-from helab.scripts import standard
-from helab.scripts.standard import velocity_distributions
-from helab.scripts.standard.velocity_distributions import VelocityData, VelocityDistributions, VelocityWidget
+from helab.scripts import dld
+from helab.scripts.dld import velocity_distributions
+from helab.scripts.dld.velocity_distributions import VelocityData, VelocityDistributions, VelocityWidget
 from helab.utils.colours import AMBER
 from helab.utils.folder_cache import Dataset
 
@@ -298,10 +298,10 @@ def test_amber_notes_density_and_in_place_updates(qtbot: QtBot) -> None:
 
 
 def test_registered_with_its_constants_and_live_policy() -> None:
-    assert velocity_distributions in standard.MODULES
+    assert velocity_distributions in dld.MODULES
     metadata = SCRIPT.get_metadata()
     assert (metadata.name, metadata.analysis_id, metadata.version, metadata.group) == (
-        "Velocity distributions", "helab.velocity_distributions", "1", "Basic plots v1")
+        "Velocity distributions", "helab.velocity_distributions", "1", "DLD Front Panel Port")
     assert SCRIPT.constant_keys("Plot") == ("fall_distance", "fall_time", "g", "release_time", "arrival_time",
                                             "trap_x", "trap_y", "recoil_wavelength", "mass", "k_B", "hbar")
     assert SCRIPT.live_policy("Plot").min_delay == 5.0
