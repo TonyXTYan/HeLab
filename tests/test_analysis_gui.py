@@ -377,10 +377,37 @@ def test_reversed_manual_bounds_are_reported_in_the_dock_and_settings_tab(
     instance.rerun_button.click()
     qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
     label = source_label(instance.dock_widget)
-    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v3\n"
+    assert label.text() == ("Data source: run_R · rev 1 · 2 shots · helab.txy_histograms v4\n"
                             "manual range: full extent · bins auto · ⚠ X: min > max, using full extent")
     assert "Warning: X: min > max, using full extent" in label.toolTip()
     assert instance.status_label.text() == "⚠ X: min > max, using full extent"
+
+
+def test_histogram_fits_go_in_the_docks_record(window: Window, browser: FolderExplorer, qtbot: QtBot,
+                                               tmp_path: Path) -> None:
+    """D1: each fit and the constants it used (where each came from, unconfirmed ones flagged)
+    are lines of the dock's record, after the parameters; the settings line names the fits."""
+    run = folder(tmp_path, "run_F", 2)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 3, 2: 4})
+    panel = TreePanelWidget(window)
+    qtbot.addWidget(panel)
+    script = basic_plots.TxyHistograms()
+    instance = panel.run_analysis(script.get_metadata(), script, "Plot")
+    assert instance is not None and instance.dock_widget is not None and instance.parameter_root is not None
+    qtbot.waitUntil(lambda: instance.result is not None, timeout=10_000)
+    assert "\nFit T:" not in source_label(instance.dock_widget).toolTip()
+    specs = script.parameters("Plot")
+    parameter_of(instance.parameter_root, next(spec for spec in specs if spec.name == "fit_t")).setValue(True)
+    first = instance.result
+    instance.rerun_button.click()
+    qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
+    label = source_label(instance.dock_widget)
+    assert label.text().endswith("bins auto · fit T Gaussian")
+    record = label.toolTip()
+    assert "\nFit T: Gaussian" in record  # 7 events: a fit or why there is none
+    assert "\nConstants: fall distance 0.848 m (default, unconfirmed) · fall time 0.416091 s (derived, " \
+           "unconfirmed) · g 9.79602 m/s² (default)" in record
 
 
 def test_run_without_data_says_so(window: Window, qtbot: QtBot) -> None:

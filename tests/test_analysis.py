@@ -711,6 +711,36 @@ def test_runner_records_identity_input_and_parameters(qtbot: QtBot, harness: Har
     assert runner.results.get(job.job_id) is result and runner.results.for_input(view.key) == [result]
 
 
+class Finding(Blocking):
+    """Records what it found; ``broken`` makes that record fail."""
+
+    def __init__(self, broken: bool) -> None:
+        super().__init__()
+        self.broken = broken
+        self.release.set()
+
+    def result_found(self, action_name: str, data: Any) -> dict[str, Any]:
+        if self.broken:
+            raise ValueError("no record")
+        return {"events": data, "record_lines": [f"Found {data} events"]}
+
+
+def test_runner_keeps_what_a_run_found_and_survives_a_failing_record(
+        qtbot: QtBot, harness: Harness, caplog: pytest.LogCaptureFixture) -> None:
+    view = build_view(dataset())
+    script = Finding(broken=False)
+    result = harness.finished(qtbot, harness.runner.submit(script, script.get_metadata(), "Plot", view).job_id)
+    assert dict(result.found) == {"events": 6, "record_lines": ["Found 6 events"]}
+    assert script.result_record("Plot", result) == ["Found 6 events"]
+    assert RamResults().released(result).found == result.found
+    broken = Finding(broken=True)
+    with caplog.at_level("ERROR"):
+        kept = harness.finished(qtbot, harness.runner.submit(broken, broken.get_metadata(), "Plot", view).job_id)
+    assert kept.state == "completed" and kept.data == 6 and dict(kept.found) == {}
+    assert broken.result_record("Plot", kept) == []
+    assert "its record of what the run found failed" in caplog.text
+
+
 def test_runner_reports_failure_and_cancellation(qtbot: QtBot, harness: Harness) -> None:
     runner = harness.runner
     script = Blocking()

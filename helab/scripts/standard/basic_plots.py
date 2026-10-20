@@ -1,9 +1,14 @@
 """Counts per shot and T/X/Y histograms of a loaded folder (PyQtGraph: native Qt drawing,
-fast to redraw when Live adds shots, and painted on lab PCs that can't paint QtWebEngine)."""
+fast to redraw when Live adds shots, and painted on lab PCs that can't paint QtWebEngine).
+
+The histograms show X and Y in mm and T in ms or s (``profiles.display_unit``), as counts or
+a rate per shot, optionally smoothed, and can fit each axis (D1: off by default, so the plot
+stays fast) for its centre, width and temperature (``helab.analysis.profiles``)."""
 from __future__ import annotations
 
+import html
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, List, Mapping, Optional, cast
 
 import numpy as np
@@ -14,13 +19,17 @@ from PyQt6.QtWidgets import QWidget
 
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.parameters import ParameterSpec
+from helab.analysis.physics import ResolvedConstants, resolve
+from helab.analysis.profiles import (COUNTS, RATE, SMOOTHED, T_MODELS, UNSMOOTHED, XY_MODELS, AxisFit,
+                                     constants_text, display_unit, fit_axis, rate_factor, si_text, smooth,
+                                     smoothing_bins, unit_of, value_label)
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.dataset_view import DatasetView
 from helab.analysis.selection import (SHOT_SPECS, keep_fraction, manual, manual_bounds, newest_brief, newest_colour,
                                       newest_events, newest_shot, newest_specs, range_brief, range_specs,
                                       range_warnings, reversed_axes, select_shots, selection_text, shots_brief,
                                       shots_text)
-from helab.analysis.stats import AXES, MAX_BINS, UNITS, Histogram, counts_per_shot, histogram
+from helab.analysis.stats import AXES, MAX_BINS, Histogram, counts_per_shot, histogram, shortest_range
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.standard import group
 
@@ -30,11 +39,67 @@ RANGE = range_specs(
 BINS_GROUP = "Histogram"
 BINS = ParameterSpec(
     "bins", "Bins", "int", 0, (0, MAX_BINS), "", group=BINS_GROUP,
-    tip="0 = automatic: the bin count comes from the data (Freedman–Diaconis: width 2·IQR·n^-1/3).")
+    tip="0 = automatic: the bin count comes from the data (Freedman–Diaconis: width 2·IQR·n^-1/3). "
+        "Smoothing sets its own bins (σ/5).")
 LOG_Y = ParameterSpec("log_y", "Log Y", "bool", False, group=BINS_GROUP,
                       tip="Logarithmic event axis; empty bins are left out.")
+VALUES = ParameterSpec("units", "Units", "choice", COUNTS, choices=(COUNTS, RATE), group=BINS_GROUP,
+                       tip="Counts per bin, or a rate per shot: counts / bin width / number of shots, T in kHz "
+                           "per shot (counts per ms) and X and Y per mm per shot (the front panel's units, with "
+                           "X and Y divided by the number of shots too).")
+BOX = ParameterSpec("box_first", "Only events inside all three ranges", "bool", False, group=BINS_GROUP,
+                    tip="Each histogram counts only the events inside the other two axes' ranges as well (the "
+                        "box, as the front panel did): X and Y only from T's window, say. Off: each axis "
+                        "counts every event in its own range.")
+SMOOTH_GROUP = "Smoothing"
+SMOOTH = ParameterSpec("smooth", "Smooth", "bool", False, group=SMOOTH_GROUP,
+                       tip="Smooth each histogram with a Gaussian of σ, over bins of σ/5 (the front panel's "
+                           "profiles). Fits still use the unsmoothed counts unless Fit to says otherwise.")
+SMOOTH_T = ParameterSpec("smooth_t", "σ, T", "float", 1e-4, (1e-9, 10.0), " s", group=SMOOTH_GROUP,
+                         when=(SMOOTH.name, "True"), si=True, tip="The smoothing Gaussian's σ along T.")
+SMOOTH_XY = ParameterSpec("smooth_xy", "σ, X and Y", "float", 2e-4, (1e-9, 1.0), " m", group=SMOOTH_GROUP,
+                          when=(SMOOTH.name, "True"), si=True, tip="The smoothing Gaussian's σ along X and Y.")
 HIGHLIGHT, NEWEST_COLOUR = newest_specs(BINS_GROUP)
+
+FITS_PAGE = FITS_GROUP = "Fits"
+TEMPERATURE_TIP = ("The temperature is the ideal-gas, pure-expansion one (the initial cloud size is neglected): "
+                   "σ_v = g σ along T, σ / t_f along X and Y, and T = m σ_v² / k_B, with the Constants below.")
+FIT_SPECS: dict[str, tuple[ParameterSpec, ParameterSpec]] = {}
+for _axis, _models, _extra in (
+        ("T", T_MODELS, " Arrival-time thermal: the exact profile of atoms falling the fall distance with "
+                        "Maxwell–Boltzmann vertical velocities (skewed, not a Gaussian), its centre the arrival "
+                        "of v = 0."),
+        ("X", XY_MODELS, ""), ("Y", XY_MODELS, "")):
+    _toggle = ParameterSpec(f"fit_{_axis.lower()}", f"Fit {_axis}", "bool", False, group=FITS_GROUP, page=FITS_PAGE,
+                            tip=f"Fit the {_axis} histogram: its centre, width and temperature ± SE, drawn over "
+                                f"it. {TEMPERATURE_TIP}")
+    FIT_SPECS[_axis] = (_toggle, ParameterSpec(
+        f"fit_{_axis.lower()}_model", f"{_axis} model", "choice", _models[0], choices=_models, group=FITS_GROUP,
+        page=FITS_PAGE, when=(_toggle.name, "True"),
+        tip="Gaussian + offset; bimodal Thomas–Fermi (1 − u²)² + Gaussian with one centre, its temperature from "
+            "the thermal σ (the condensate fraction is the BEC fit's, later)." + _extra))
+FIT_DATA = ParameterSpec("fit_data", "Fit to", "choice", UNSMOOTHED, choices=(UNSMOOTHED, SMOOTHED),
+                         group=FITS_GROUP, page=FITS_PAGE, when=(SMOOTH.name, "True"),
+                         tip="The unsmoothed counts (Poisson weights; the default), or the smoothed curve (as the "
+                             "front panel did), with the same smoothing applied to the model: the results are "
+                             "the unsmoothed profile's (no correction for the smoothing), and their SEs count "
+                             "that smoothed bins share counts. Shown while Smooth is on; it applies to every fit.")
+CONSTANTS_GROUP = "Constants"
+FALL_DISTANCE = ParameterSpec(
+    "fall_distance", "Fall distance (0 = default)", "float", 0.0, (0.0, 100.0), " m", group=CONSTANTS_GROUP,
+    page=FITS_PAGE, si=True,
+    tip="This plot's fall distance from the trap to the detector; 0 uses the lab's or folder's (for now the "
+        "default, 0.848 m: borrowed, unconfirmed).")
+FALL_TIME = ParameterSpec(
+    "fall_time", "Fall time (0 = from distance)", "float", 0.0, (0.0, 100.0), " s", group=CONSTANTS_GROUP,
+    page=FITS_PAGE, si=True,
+    tip="This plot's fall time, set by hand; 0 derives it, √(2h/g). X and Y temperatures use it. The "
+        "arrival-time model on T is built from the fall distance and g alone (a fall is √(2h/g) long in it), "
+        "so a hand-set fall time that disagrees isn't used there; the plot notes the disagreement.")
 COLOUR = (40, 90, 170)
+SMOOTH_COLOUR = (20, 50, 120)  # the smoothed curve, darker than the bars behind it
+FIT_COLOUR = (0, 0, 0)
+NOTE_COLOUR = "#b06000"  # amber, as Transfer fractions' notes
 
 
 class DecadeLogAxis(pg.AxisItem):  # type: ignore[misc]
@@ -139,6 +204,53 @@ class Histograms:
     newest_shot: int | None = None
     newest: tuple[npt.NDArray[np.int64], ...] = ()
     colour: tuple[int, int, int] = (214, 39, 40)
+    units: str = COUNTS
+    # Per item: what turns its counts into the values shown (1 for counts, ``rate_factor``).
+    factors: tuple[float, ...] = ()
+    # Per item, with smoothing on: the smoothed counts (per bin) and the σ (s or m); else empty.
+    smoothed: tuple[npt.NDArray[np.float64], ...] = ()
+    smoothing: tuple[float, ...] = ()
+    # Per item: its fit (None: not fitted) and notes on its bins (widened for smoothing).
+    fits: tuple[AxisFit | None, ...] = ()
+    bin_notes: tuple[tuple[str, ...], ...] = ()
+    box: bool = False  # each histogram counts only the events inside the other axes' ranges
+    constants: ResolvedConstants | None = field(default=None, compare=False)
+
+    def factor(self, index: int) -> float:
+        return self.factors[index] if index < len(self.factors) else 1.0
+
+    def fit(self, index: int) -> AxisFit | None:
+        return self.fits[index] if index < len(self.fits) else None
+
+    def fitted(self) -> bool:
+        return any(fit is not None for fit in self.fits)
+
+    def record(self) -> dict[str, Any]:
+        """Strict JSON for the result's record: each fit's (``AxisFit.as_record``, with the
+        ``FitResult``'s) and, with any fit, the constants the run used (``as_record``)."""
+        fits = {item.axis: fit.as_record() for item, fit in zip(self.items, self.fits) if fit is not None}
+        record: dict[str, Any] = {"units": self.units, "box": self.box, "fits": fits,
+                                  "smoothing": {item.axis: sigma for item, sigma in zip(self.items, self.smoothing)}}
+        if fits and self.constants is not None:
+            record["constants"] = self.constants.as_record()
+        record["record_lines"] = self.record_lines()
+        return record
+
+    def record_lines(self) -> list[str]:
+        """For the dock's record: each fit (its numbers, reduced χ² and notes) and, with any,
+        the constants used, with where each came from and which are still unconfirmed."""
+        lines = []
+        for item, fit in zip(self.items, self.fits):
+            if fit is None:
+                continue
+            chi2 = fit.fit.reduced_chi2
+            extra = f" · reduced χ² {chi2:.3g}" if fit.ok and math.isfinite(chi2) else ""
+            notes = f" · notes: {'; '.join(fit.notes)}" if fit.notes else ""
+            lines.append(f"Fit {item.axis}: {fit.text()}{extra}{notes}")
+        if lines and self.constants is not None:
+            lines.append(f"Constants: {constants_text(self.constants)}")
+            lines += [f"Constants note: {note}" for note in self.constants.notes]
+        return lines
 
 
 def counts_title(data: ShotCounts) -> str:
@@ -148,9 +260,11 @@ def counts_title(data: ShotCounts) -> str:
     return title
 
 
-def histogram_title(item: Histogram, reversed_range: bool = False) -> str:
+def histogram_title(item: Histogram, reversed_range: bool = False, how: str = "") -> str:
+    """``T · 40 bins (set) · 1,000 of 1,020 events · 20 outside the range``; ``how`` says how the
+    bins were chosen when not by the Bins setting (smoothing's σ/5)."""
     bins = len(item.counts)
-    how = "automatic, Freedman–Diaconis" if item.automatic_bins else "set"
+    how = how or ("automatic, Freedman–Diaconis" if item.automatic_bins else "set")
     title = f"{item.axis} · {bins:,} bins ({how}) · {item.total - item.outside:,} of {item.total:,} events"
     title += f" · {item.outside:,} outside the range" if item.outside else ""
     return title + (" · ⚠ min > max, using full extent" if reversed_range else "")
@@ -201,27 +315,71 @@ class CountsPerShot(DatasetAnalysis):
         return cast(QWidget, plot)
 
 
+def plot_constants(values: Mapping[str, Any], layers: Mapping[str, Mapping[str, float]]) -> ResolvedConstants:
+    """The constants a run uses: the lab and folder layers it was given (``AnalysisContext.constants``;
+    none until F0b), then this plot's fall distance and fall time where set (0 = not set)."""
+    plot = {spec.name: float(values[spec.name]) for spec in (FALL_DISTANCE, FALL_TIME)
+            if float(values.get(spec.name, 0.0)) > 0}
+    return resolve(lab=layers.get("lab"), folder=layers.get("folder"), plot=plot)
+
+
+def _inside_others(events: npt.NDArray[np.float64], ranges: list[tuple[float, float] | None],
+                   axis: int) -> npt.NDArray[np.bool_]:
+    """The events inside every other axis's range (an axis without one keeps all)."""
+    inside = np.ones(len(events), dtype=bool)
+    for other, bounds in enumerate(ranges):
+        if other != axis and bounds is not None:
+            inside &= (events[:, other] >= bounds[0]) & (events[:, other] <= bounds[1])
+    return inside
+
+
+def fits_brief(values: Mapping[str, Any]) -> str:
+    """``fit T arrival-time thermal, X Gaussian`` for the dock's settings line; "" without fits."""
+    parts = [f"{axis} {values.get(model.name, model.default)}" for axis, (toggle, model) in FIT_SPECS.items()
+             if values.get(toggle.name)]
+    return f"fit {', '.join(parts)}" if parts else ""
+
+
+def notes_html(notes: Any) -> str:
+    """Notes in amber, escaped, on a line of their own ("" for none)."""
+    text = " · ".join(str(note) for note in notes if note)
+    return f'<br><span style="color: {NOTE_COLOUR}">{html.escape(text)}</span>' if text else ""
+
+
 class TxyHistograms(DatasetAnalysis):
     def get_metadata(self) -> ScriptMetadata:
         return self.create_metadata(
             name="T, X, Y histograms",
-            description="Distributions of the loaded events' T, X and Y",
+            description="Distributions of the loaded events' T, X and Y, with optional fits and temperatures",
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.txy_histograms",
-            version="3",
+            version="4",
         )
 
     def get_actions(self) -> List[str]:
         return ["Plot"]
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
-        return [*SHOT_SPECS, *RANGE, BINS, LOG_Y, HIGHLIGHT, NEWEST_COLOUR]
+        fits = [spec for pair in FIT_SPECS.values() for spec in pair]
+        return [*SHOT_SPECS, *RANGE, BINS, LOG_Y, VALUES, BOX, HIGHLIGHT, NEWEST_COLOUR, SMOOTH, SMOOTH_T, SMOOTH_XY,
+                *fits, FIT_DATA, FALL_DISTANCE, FALL_TIME]
 
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
         bins = int(values[BINS.name])
-        settings = (shots_brief(values), range_brief(values), f"bins {bins:,}" if bins else "bins auto",
-                    "log Y" if values[LOG_Y.name] else "", newest_brief(values))
+        smoothing = bool(values.get(SMOOTH.name))
+        fitted = fits_brief(values)
+        overrides = [f"{label} {si_text(float(values[spec.name]), unit)}"
+                     for spec, label, unit in ((FALL_DISTANCE, "h", "m"), (FALL_TIME, "t_f", "s"))
+                     if fitted and float(values.get(spec.name, 0.0)) > 0]
+        settings = (shots_brief(values), range_brief(values),
+                    "" if smoothing else (f"bins {bins:,}" if bins else "bins auto"),
+                    f"smoothed σ {si_text(float(values[SMOOTH_T.name]), 's')} / "
+                    f"{si_text(float(values[SMOOTH_XY.name]), 'm')}" if smoothing else "",
+                    RATE if values.get(VALUES.name) == RATE else "", "box" if values.get(BOX.name) else "",
+                    "log Y" if values[LOG_Y.name] else "", newest_brief(values), fitted,
+                    "on the smoothed curve" if fitted and smoothing and values.get(FIT_DATA.name) == SMOOTHED else "",
+                    *overrides)
         return selection_text(view, values), " · ".join(part for part in settings if part)
 
     def parameter_warnings(self, action_name: str, values: Mapping[str, Any]) -> List[str]:
@@ -233,23 +391,62 @@ class TxyHistograms(DatasetAnalysis):
         events = context.view.events(shots)
         keep = keep_fraction(values)
         bins = int(values[BINS.name])
-        bounds = manual_bounds(values) if manual(values) else (None,) * len(AXES)
-        items = []
+        is_manual = manual(values)
+        bounds = manual_bounds(values) if is_manual else (None,) * len(AXES)
+        box = bool(values.get(BOX.name, False))
+        units = str(values.get(VALUES.name, COUNTS))
+        smoothing = bool(values.get(SMOOTH.name, False))
+        on_smoothed = smoothing and values.get(FIT_DATA.name) == SMOOTHED
         newest = newest_shot(values, shots)
         fresh = newest_events(context.view, newest)
-        newest_counts = []
+        constants = plot_constants(values, context.constants)
+        # Each axis's range first (the manual bounds, its full extent, or auto-crop's shortest
+        # range): with the box on, every histogram counts only events inside the others' ranges.
+        ranges: list[tuple[float, float] | None] = []
+        for i in range(len(AXES)):
+            context.check()
+            column = events[:, i]
+            given = bounds[i]
+            if given is None and len(column):
+                given = (float(column.min()), float(column.max())) if is_manual else shortest_range(column, keep)
+            ranges.append(given)
+        items, newest_counts, factors, smoothed, sigmas, bin_notes = [], [], [], [], [], []
+        fits: list[AxisFit | None] = []
         for i, axis in enumerate(AXES):
             context.check()
-            column = np.ascontiguousarray(events[:, i])
-            given = bounds[i]
-            if manual(values) and given is None and len(column):
-                given = (float(column.min()), float(column.max()))
-            item = histogram(column, axis, keep, bins, given)
+            column, fresh_column = events[:, i], fresh[:, i]
+            if box:
+                column, fresh_column = column[_inside_others(events, ranges, i)], \
+                    fresh_column[_inside_others(fresh, ranges, i)]
+            sigma = float(values[(SMOOTH_T if axis == "T" else SMOOTH_XY).name]) if smoothing else None
+            count, note = bins, ""
+            if sigma is not None and ranges[i] is not None:
+                count, note = smoothing_bins(*cast(tuple[float, float], ranges[i]), sigma, unit_of(axis))
+            item = histogram(np.ascontiguousarray(column), axis, keep, count, ranges[i])
             items.append(item)
+            bin_notes.append((note,) if note else ())
+            width = float(item.edges[1] - item.edges[0])
+            factors.append(rate_factor(width, len(shots)) if units == RATE else 1.0)
+            if sigma is not None:
+                smoothed.append(smooth(item.counts, sigma / width))
+                sigmas.append(sigma)
             if newest is not None:
-                newest_counts.append(np.histogram(fresh[:, i], bins=item.edges)[0].astype(np.int64))
+                newest_counts.append(np.histogram(fresh_column, bins=item.edges)[0].astype(np.int64))
+            toggle, model = FIT_SPECS[axis]
+            if values.get(toggle.name):
+                context.check()
+                fits.append(fit_axis(axis, item.edges, item.counts, str(values.get(model.name, model.default)),
+                                     constants, smoothing=sigma if on_smoothed else None))
+            else:
+                fits.append(None)
         return Histograms(tuple(items), shots, len(context.view.shots), reversed_axes(values), newest,
-                          tuple(newest_counts), newest_colour(values))
+                          tuple(newest_counts), newest_colour(values), units, tuple(factors), tuple(smoothed),
+                          tuple(sigmas), tuple(fits), tuple(bin_notes), box, constants)
+
+    def result_found(self, action_name: str, data: Any) -> dict[str, Any]:
+        """With any fit: ``Histograms.record()`` (each fit's record and the constants used),
+        whose ``record_lines`` the dock's record shows."""
+        return data.record() if isinstance(data, Histograms) and data.fitted() else {}
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Histograms = result.data
@@ -262,45 +459,77 @@ class TxyHistograms(DatasetAnalysis):
         events = f"{items[0].total:,} events" if items else ""
         newest = (f" · shot {data.newest_shot} highlighted ({int(data.newest[0].sum()):,} in range, right axis)"
                   if data.newest_shot is not None and data.newest else "")
-        widget.addLabel(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}{newest}"),
-                        row=0, col=0)
+        header = html.escape(source_title(result, f"{shots_text(data.shots, data.total_shots)} · {events}{newest}"))
+        if data.fitted() and data.constants is not None:
+            header += f"<br>Fits with {html.escape(constants_text(data.constants))}"
+            header += notes_html(data.constants.notes)
+        widget.addLabel(header, row=0, col=0)
         overlays = []
         for row, item in enumerate(items, start=1):
-            highlighted = data.newest_shot is not None and row - 1 < len(data.newest)
+            index = row - 1
+            highlighted = data.newest_shot is not None and index < len(data.newest)
             # A right axis only for the newest shot's counts (pyqtgraph shows any axis it is given).
             axes = ({"left": DecadeLogAxis("left"), **({"right": DecadeLogAxis("right")} if highlighted else {})}
                     if log_y else None)
-            plot = widget.addPlot(row=row, col=0, title=histogram_title(item, item.axis in data.reversed),
-                                  axisItems=axes)
-            plot.setLabel("bottom", f"{item.axis} ({UNITS[AXES.index(item.axis)]})")
-            plot.setLabel("left", "Events")
+            x_factor, x_unit = display_unit(item.axis, float(item.edges[0]), float(item.edges[-1]))
+            sigma = data.smoothing[index] if index < len(data.smoothing) else None
+            how = (f"σ/5 for smoothing σ {si_text(sigma, unit_of(item.axis))}"
+                   if sigma is not None else "")
+            title = html.escape(histogram_title(item, item.axis in data.reversed, how))
+            fit = data.fit(index)
+            notes: list[str] = list(data.bin_notes[index]) if index < len(data.bin_notes) else []
+            if fit is not None and fit.ok:
+                title += "<br>" + html.escape(fit.text())
+                notes = [*fit.notes, *notes]
+            elif fit is not None:  # Why there is no fit, in amber.
+                notes = [fit.text(), *fit.notes, *notes]
+            title += notes_html(notes)
+            plot = widget.addPlot(row=row, col=0, title=title, axisItems=axes)
+            plot.setLabel("bottom", f"{item.axis} ({x_unit})")
+            label = value_label(item.axis, data.units)
+            plot.setLabel("left", label)
+            edges = item.edges * x_factor
+            y_factor = data.factor(index)
+            shown = item.counts.astype(np.float64) * y_factor
+            smoothed = data.smoothed[index] * y_factor if sigma is not None else None
+            # With smoothing, the bars are faint behind the smoothed curve.
+            pen, brush = (pg.mkPen((*COLOUR, 45)), (*COLOUR, 30)) if smoothed is not None else \
+                (pg.mkPen(COLOUR), (*COLOUR, 90))
             if log_y:
                 # Empty bins have no logarithm: they are left out of the bars.
-                counts = item.counts.astype(np.float64)
-                counts[counts <= 0] = np.nan
+                bars = np.where(shown > 0, shown, np.nan)
                 plot.setLogMode(x=False, y=True)
-                plot.addItem(pg.PlotDataItem(item.edges, counts, stepMode="center", connect="finite",
-                                             pen=pg.mkPen(COLOUR)))
+                plot.addItem(pg.PlotDataItem(edges, bars, stepMode="center", connect="finite", pen=pen))
             else:
-                plot.addItem(pg.PlotDataItem(item.edges, item.counts, stepMode="center", fillLevel=0,
-                                             pen=pg.mkPen(COLOUR), brush=(*COLOUR, 90)))
+                plot.addItem(pg.PlotDataItem(edges, shown, stepMode="center", fillLevel=0, pen=pen, brush=brush))
+            centres = (edges[:-1] + edges[1:]) / 2
+            if smoothed is not None:
+                curve = np.where(smoothed > 0, smoothed, np.nan) if log_y else smoothed
+                plot.addItem(pg.PlotDataItem(centres, curve, connect="finite", pen=pg.mkPen(SMOOTH_COLOUR, width=2)))
+            if fit is not None and fit.ok and len(fit.x):
+                line = fit.y * y_factor
+                if log_y:
+                    line = np.where(line > 0, line, np.nan)
+                plot.addItem(pg.PlotDataItem(fit.x * x_factor, line, connect="finite",
+                                             pen=pg.mkPen(FIT_COLOUR, width=2)))
             if highlighted:
                 # One shot is a small share of all: drawn to the histogram's scale (its total over
                 # the shot's), its shape compares; its own axis on the right reads its real counts.
                 left = plot.getAxis("left")
                 left.setPen(pg.mkPen(COLOUR))
                 left.setTextPen(pg.mkPen(COLOUR))
-                plot.setLabel("left", "Events (all)", color=pg.mkColor(COLOUR).name())
-                counts_new = data.newest[row - 1]
-                scale = float(item.counts.sum()) / float(counts_new.sum()) if counts_new.sum() > 0 else 1.0
+                plot.setLabel("left", value_label(item.axis, data.units, every=True),
+                              color=pg.mkColor(COLOUR).name())
+                counts_new = data.newest[index]
+                scale = float(shown.sum()) / float(counts_new.sum()) if counts_new.sum() > 0 else 1.0
                 # The scaled line, transparent (hidden items don't count), keeps the plot's own range
                 # (and its Auto) holding the overlay.
                 scaled = counts_new * scale
                 if log_y:
                     scaled = np.where(scaled > 0, scaled, np.nan)
-                plot.addItem(pg.PlotDataItem(item.edges, scaled, stepMode="center", connect="finite",
+                plot.addItem(pg.PlotDataItem(edges, scaled, stepMode="center", connect="finite",
                                              pen=pg.mkPen((0, 0, 0, 0))))
-                overlays.append(overlay_newest(plot, item.edges, counts_new, scale, data.colour, log_y,
+                overlays.append(overlay_newest(plot, edges, counts_new, scale, data.colour, log_y,
                                                f"shot {data.newest_shot}"))
         widget.newest_views = overlays  # Kept with the widget (they live in its scene).
         return cast(QWidget, widget)

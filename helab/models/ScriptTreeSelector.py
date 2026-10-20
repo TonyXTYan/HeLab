@@ -790,6 +790,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 used = describe_constants(constants, self.constant_keys)
                 settings = " · ".join(filter(None, (settings, used and f"constants: {used}",
                                                     *(f"⚠ {note}" for note in constants.notes))))
+            found = self.script.result_record(self.action, result) if result.state == "completed" else []
+            if found:
+                record = "\n".join((record, *found))
             if warnings:
                 settings = " · ".join(filter(None, (settings, f"⚠ {warnings}")))
                 record = f"{record}\nWarning: {warnings}"

@@ -128,14 +128,20 @@ class AnalysisResult:
     # The run's constant layers and what it resolved from them (``AnalysisContext``'s).
     constant_layers: Mapping[str, Mapping[str, float]] = field(default_factory=lambda: MappingProxyType({}))
     resolved_constants: ResolvedConstants | None = None
+    # What the run found or used beyond its parameters, as JSON values (``DatasetAnalysis.result_found``:
+    # fit results, the constants used). Part of the record, kept when the plot is released.
+    # Read-only at the top level only (a MappingProxyType over a copy of the script's dict): the
+    # lists and dicts inside are shared, so readers must not change them.
+    found: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
     @classmethod
     def of(cls, context: AnalysisContext, state: State, data: Any = None, error: str = "",
-           started_at: float = 0.0) -> AnalysisResult:
+           started_at: float = 0.0, found: Mapping[str, Any] | None = None) -> AnalysisResult:
         return cls(context.job_id, context.action, context.analysis, context.view.key,
                    MappingProxyType(dict(context.parameters)), state, data, error,
                    started_at, time.time(), coverage=context.covered, input_signature=context.view.signature,
-                   constant_layers=context.constants, resolved_constants=context.resolved_constants)
+                   constant_layers=context.constants, resolved_constants=context.resolved_constants,
+                   found=MappingProxyType(dict(found or {})))
 
     @property
     def constants_record(self) -> dict[str, Any] | None:

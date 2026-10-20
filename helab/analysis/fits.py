@@ -27,10 +27,11 @@ How a fit runs:
 
 Models are derived from the physics, not copied from the MATLAB code (which has bugs:
 roadmaps/dld-front-panel-port.md). Registered now: Gaussian + offset, the Thomas–Fermi
-projection (1 − u²)^p + offset, and bimodal TF^p + Gaussian with a shared centre. D1/D4 add
-the arrival-time ("Yavin") thermal profile and the Bose-enhanced g_{5/2} part with
-``register``. Pure NumPy/SciPy, no Qt. Fits run in the analysis worker thread, so nothing
-here changes warning filters per call (``warnings.catch_warnings`` isn't thread-safe).
+projection (1 − u²)^p + offset, bimodal TF^p + Gaussian with a shared centre, and the exact
+arrival-time ("Yavin") thermal profile on T (``arrival_time_model``: D1). D4 adds the
+Bose-enhanced g_{5/2} part with ``register``. Pure NumPy/SciPy, no Qt. Fits run in the
+analysis worker thread, so nothing here changes warning filters per call
+(``warnings.catch_warnings`` isn't thread-safe).
 """
 from __future__ import annotations
 
@@ -46,6 +47,7 @@ from scipy.optimize import OptimizeWarning, curve_fit
 from scipy.special import gammaln
 
 from helab.analysis.estimates import Estimate, finite_or_none, propagate
+from helab.analysis.physics import DEFAULTS
 
 Array = npt.NDArray[np.float64]
 Role = Literal["position", "width", "height", "shape"]
@@ -105,6 +107,9 @@ class FitModel:
     areas: Callable[[Array], dict[str, float]] | None = None
     min_bins: int = 3  # fewer bins with counts than this: too few to fit a width
     extras: tuple[Extra, ...] = ()
+    # Constants built into the model (the arrival-time profile's fall distance and g),
+    # recorded with each fit of it.
+    fixed: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}))
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -184,7 +189,8 @@ class FitResult:
         return {"model": self.model.key, "failure": self.failure, "notes": list(self.notes),
                 "estimates": {name: estimate.as_record() for name, estimate in self.estimates.items()},
                 "chi2": finite_or_none(self.chi2), "dof": self.dof, "points": self.points,
-                "reduced_chi2": finite_or_none(self.reduced_chi2), "options": dict(self.options)}
+                "reduced_chi2": finite_or_none(self.reduced_chi2), "options": dict(self.options),
+                "fixed": dict(self.model.fixed)}
 
 
 def bin_centres(edges: npt.ArrayLike) -> Array:
@@ -195,7 +201,8 @@ def bin_centres(edges: npt.ArrayLike) -> Array:
 def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | FitModel = "gaussian", *,
                   weights: Weights = "poisson", sigma: npt.ArrayLike | None = None,
                   max_evaluations: int = MAX_EVALUATIONS,
-                  max_radius_ratio: float = MAX_RADIUS_RATIO) -> FitResult:
+                  max_radius_ratio: float = MAX_RADIUS_RATIO,
+                  covariance_of: Callable[[Array, Array, Array], Array] | None = None) -> FitResult:
     """Fit ``model`` (a ``MODELS`` key or a ``FitModel``) to a histogram's bin centres and
     raw counts. ``sigma``, when given, is each bin's error (absolute) and replaces
     ``weights``: pass it for anything that isn't raw counts. Bins with a non-finite centre,
@@ -203,7 +210,13 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
 
     ``max_radius_ratio`` caps R/σ_th in models with a ``ratio`` parameter (bimodal; see
     ``bimodal_model`` for why 2, and when to raise it). A fit that ends at the cap says so;
-    the cap goes in the result's ``options`` and record."""
+    the cap goes in the result's ``options`` and record.
+
+    ``covariance_of(x, values, fitted)``, when given, replaces the fitted parameters' covariance
+    (data units, from the weights alone) before anything reads it: the SEs, the "consistent
+    with 0" gating and its notes, the undetermined check and the extras. For data whose bins
+    are correlated (a smoothed curve: ``profiles.fit_smoothed``), where only the caller knows
+    the real spread; ``x`` are the bins fitted."""
     fit_model = MODELS[model] if isinstance(model, str) else model
     has_ratio = RATIO in fit_model.names
     if has_ratio and not max_radius_ratio > MIN_RADIUS_RATIO:
@@ -306,7 +319,9 @@ def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | Fi
 
     chi2, found, covariance_n = best
     values = to_data(found)
-    covariance = covariance_n * np.outer(scale, scale)
+    fitted_covariance = covariance_n * np.outer(scale, scale)
+    covariance = fitted_covariance if covariance_of is None else np.asarray(
+        covariance_of(x, values, fitted_covariance), dtype=np.float64)
     dof = len(x) - count
     finite_covariance = bool(np.all(np.isfinite(covariance)))
     variances = np.diag(covariance) if finite_covariance else np.full(count, math.nan)
@@ -570,3 +585,63 @@ def bimodal_model(power: float) -> FitModel:
 for _power in (2.0, 1.5):
     register(thomas_fermi_model(_power))
     register(bimodal_model(_power))
+
+
+# The arrival-time ("Yavin") thermal profile. With z up and the detector a distance h below
+# the trap, an atom released at t = 0 with vertical velocity v is at z(t) = h + v t − ½ g t²
+# and reaches the detector (z = 0) at the positive root of ½ g t² − v t − h = 0:
+#   t(v) = (v + √(v² + 2 g h)) / g,  or inversely  v(t) = g t / 2 − h / t.
+# v(t) rises monotonically from −∞ (t → 0) to +∞, so each arrival time has exactly one
+# velocity. With Maxwell–Boltzmann velocities, p(v) ∝ exp(−v²/2σ_v²) with σ_v² = k_B T/m,
+# the detector's arrival-time distribution (atoms crossing z = 0) is
+#   p(t) = p(v(t)) · dv/dt,   dv/dt = g/2 + h/t²,
+# the Jacobian making it more than a Gaussian: it skews the profile (the early, fast-downward
+# side is compressed, the late side stretched). A v = 0 atom arrives at t_f = √(2h/g), where
+# dv/dt = g. In data time T (since the DLD trigger, not since release) t = T − T₀ + t_f, with
+# T₀ the arrival time of v = 0 (the "centre"), and the model is
+#   A · (g/2 + h/t²)/g · exp(−v(t)²/2(g s)²) + offset   for t > 0 (else the offset),
+# with s = σ_v/g, a time like the Gaussian's σ_t: to first order in s/t_f the profile is the
+# Gaussian of width s, so both give T = m (g s)²/k_B. Its area is A s √(2π) (∫ p(v) dv / g),
+# as the Gaussian's. Assumed: a point source (an initial size σ_z0 adds about σ_z0/(g t_f) to
+# the width: 2.5 µs for 10 µm, negligible against the ~5 ms of 1 µK), no mean vertical
+# velocity (a launch velocity v₀ shifts T₀ by about v₀/g, and the two can't be told apart, so
+# T₀ absorbs it), every atom reaching the detector, and h and g the run's constants
+# (``arrival_time_model`` builds the model with them).
+
+
+def arrival_time(x: Array, amplitude: float, centre: float, sigma: float, offset: float, fall_distance: float,
+                 g: float) -> Array:
+    t_f = math.sqrt(2 * fall_distance / g)
+    t = x - centre + t_f
+    positive = t > 0
+    safe = np.where(positive, t, t_f)
+    velocity = g * safe / 2 - fall_distance / safe
+    jacobian = (g / 2 + fall_distance / safe ** 2) / g
+    with np.errstate(over="ignore", under="ignore"):
+        profile = jacobian * np.exp(-0.5 * (velocity / (g * sigma)) ** 2)
+    return np.where(positive, amplitude * profile, 0.0) + offset
+
+
+def arrival_time_model(fall_distance: float, g: float) -> FitModel:
+    """The arrival-time thermal profile for atoms falling ``fall_distance`` under ``g`` (the
+    run's constants, recorded as the model's ``fixed``). Its parameters are the Gaussian's:
+    amplitude, centre T₀ (the arrival time of v = 0), σ (= σ_v/g) and offset."""
+    if not (fall_distance > 0 and g > 0 and math.isfinite(fall_distance * g)):
+        raise ValueError("the arrival-time model needs a positive, finite fall distance and g")
+
+    def function(x: Array, amplitude: float, centre: float, sigma: float, offset: float) -> Array:
+        return arrival_time(x, amplitude, centre, sigma, offset, fall_distance, g)
+
+    return FitModel(
+        "arrival_time", "Arrival-time thermal profile + offset",
+        (ModelParameter("amplitude", "Amplitude", "height"),
+         ModelParameter("centre", "Centre T₀ (v = 0)", "position"),
+         ModelParameter("sigma", "σ_v / g", "width"), ModelParameter("offset", "Offset", "height")),
+        function, _gaussian_guesses, _gaussian_bounds,
+        areas=lambda p: {"thermal": gaussian_area(float(p[0]), float(p[2]))},
+        fixed=MappingProxyType({"fall_distance": float(fall_distance), "g": float(g)}))
+
+
+# Registered with the default constants; a run fits the one ``arrival_time_model`` builds
+# from its own.
+register(arrival_time_model(DEFAULTS.fall_distance, DEFAULTS.g))
