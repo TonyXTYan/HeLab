@@ -66,9 +66,10 @@ hook, landing): [.ai/maestri-setup.md](../.ai/maestri-setup.md).
      `pythonpath = .` in a pytest config, so `pytest` and `python -m pytest`
      both test the checkout they run in; helpers already follow the GUI's
      checkout via `PYTHONPATH`), and the app runs as `python -m helab`, not
-     the `helab` entry point. A branch that changes `requirements.txt` gets a
-     fresh venv instead (`uv venv --seed --python 3.13 venv && uv pip install
-     -r requirements.txt -e .`, 16 s measured 2026-10-15 with uv's cache), so
+     the `helab` entry point. A branch that changes dependencies
+     (`requirements.txt` and its refreshed `requirements.lock`) gets a fresh
+     venv instead (`uv venv --seed --python 3.13 venv && uv pip install
+     -r requirements.lock -e .`, 16 s measured 2026-10-15 with uv's cache), so
      it never installs into ground's venv.
    - **Profile**: a private settings/app/cache folder for the floor (below).
    - **Stale bytecode**: delete the copied `__pycache__` folders, which carry Ground's
@@ -137,11 +138,13 @@ app folder (caches, temps, locks, `cache-move.json`):
   variable (name to decide, e.g. `HELAB_PROFILE_DIR`) can set settings, caches,
   temps and app folder from one root, and the existing `HELAB_DIR_*` and
   `HELAB_APP_DIR_OVERRIDE` variables keep working.
-- **One settings factory.** Replace the direct `QSettings(QSETTINGS_ORG_NAME,
-  QSETTINGS_APP_NAME)` calls (`main.py`, `constants.py`, `HelabMainWindow.py`,
-  `SettingsDialog.py`) with one function returning the profile's settings;
-  helpers already open settings from `settings_spec`. A test fails if anything
-  else constructs the native store.
+- **One settings factory.** **Done 2026-10-21** (TonyXTYan/HeLab#7): `app_settings()`
+  (`helab/utils/settings_store.py`) replaces the direct `QSettings(org, app)` calls
+  in `main.py`, `constants.py`, `HelabMainWindow.py` and `SettingsDialog.py`, and
+  `tests/test_settings_store.py` fails if anything else constructs the native store.
+  Tests get a private ini through `HELAB_TEST_SETTINGS_FILE`. Left: make it return
+  the profile's settings (`HELAB_SETTINGS_OVERRIDE`); helpers already open settings
+  from `settings_spec`.
 - The packaged release behaves as now, plus Restore default and default-value
   tooltips from the defaults table.
 

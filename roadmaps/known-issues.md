@@ -60,8 +60,9 @@ How to use it:
 
 ## Fixed
 
-On `agent/ci-robustness` unless said (2026-10-21,
-[notes](../.ai/sessions/2026-10-21-claude-ci-robustness/notes.md)):
+Landed in `dev/v0.0.6` with TonyXTYan/HeLab#7 (squash `17f7bcb`, 2026-10-21); the commits named
+are on its branch, `agent/ci-robustness`, unless said
+([notes](../.ai/sessions/2026-10-21-claude-ci-robustness/notes.md)):
 
 - [x] A known `.helab-root` that turned invalid was forgotten in the store but not reported,
   so tabs kept the old root for the session; it now sends `root_changed` like a removed one

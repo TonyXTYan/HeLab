@@ -29,6 +29,7 @@ still to choose (Tony, with the coordinator's proposal).
   the pytest `pythonpath` guard, a hard-coded settings-defaults table (also for
   Restore default and tooltips in the release) and per-checkout share/isolated
   profiles, with `HELAB_SETTINGS_OVERRIDE` ([plan](agent-workflow.md)) (2026-10-15).
+  The settings factory (`app_settings()`) landed in TonyXTYan/HeLab#7 (2026-10-21).
 
 - [ ] Native checks for v0.0.5a1 on macOS and a Windows lab PC: data roots,
   cache first and remounts on `/Volumes/dld_output`, the packaged app and the
@@ -71,7 +72,9 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
   without changing current behaviour. Feature-driven: the dataset view first,
   then splits where work collides ([plan](refactoring.md)) (2026-10-13;
   revised 2026-10-15). Milestone 1 (dataset view) and the two-floor pilot
-  done (2026-10-19).
+  done (2026-10-19). Milestone 2 mostly done (TonyXTYan/HeLab#7, 2026-10-21): `io_ops`,
+  `views/plots`, the Qt-free analysis core, `PlotWorkspace`, `LiveController`; left: the
+  explorer's load logic, `FolderCache`'s stores, `_on_event`.
 
 - [ ] Apply other tabs' finished status checks during Refresh without source
   I/O ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#cross-tab-status-results)) (2026-10-08).
