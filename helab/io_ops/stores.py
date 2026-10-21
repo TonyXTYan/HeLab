@@ -71,7 +71,7 @@ def _store_or_off(cache_options: dict[str, Any] | None, send: Emit, path: str,
     if not cache_options:
         return None, False
     from helab.utils.cache_paths import UnresolvedRemotePath
-    from helab.utils.cache_store import StoreError
+    from helab.utils.cache_store import OPEN_FAILED, StoreError
     from helab.utils.data_roots import VolumeUnverified
     try:
         return _cache_store(cache_options["directory"], [path], local_lane=local_lane,
@@ -83,8 +83,10 @@ def _store_or_off(cache_options: dict[str, Any] | None, send: Emit, path: str,
             {"path": exc.mount_path, "type": exc.mount_type, "detail": str(exc)}]})
         return None, True
     except (StoreError, OSError) as exc:
-        # Optional cache metadata must not prevent browsing source folders.
-        send({"kind": "cache_warning", "message": f"Disk cache could not be opened: {exc}"})
+        # Optional cache metadata must not prevent browsing source folders. (The prefix once: the
+        # store's own open errors already carry it.)
+        message = str(exc) if str(exc).startswith(OPEN_FAILED) else f"{OPEN_FAILED}: {exc}"
+        send({"kind": "cache_warning", "message": message})
         return None, False
 
 

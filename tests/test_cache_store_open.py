@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from helab.io_ops import stores
 from helab.utils import cache_store
 from helab.utils.cache_store import CacheStore, StoreError
 
@@ -116,3 +117,20 @@ def test_an_attempt_that_failed_after_opening_closes_its_connection(
         assert store.store_id
     with pytest.raises(sqlite3.ProgrammingError):  # The first attempt's connection is closed.
         opened[0].execute("SELECT 1")
+
+
+@pytest.mark.parametrize(("error", "message"), [
+    (StoreError("Disk cache could not be opened: disk I/O error"), "Disk cache could not be opened: disk I/O error"),
+    (StoreError("Mount information is unavailable: no mounts"),
+     "Disk cache could not be opened: Mount information is unavailable: no mounts"),
+    (PermissionError("denied"), "Disk cache could not be opened: denied"),
+], ids=["the store's own", "another store error", "an OS error"])
+def test_the_warning_says_could_not_be_opened_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception, message: str,
+) -> None:
+    def refuse(*args: Any, **kwargs: Any) -> CacheStore:
+        raise error
+    monkeypatch.setattr(stores, "_cache_store", refuse)
+    events: list[Any] = []
+    assert stores._store_or_off({"directory": str(tmp_path)}, events.append, str(tmp_path)) == (None, False)
+    assert events == [{"kind": "cache_warning", "message": message}]

@@ -37,6 +37,7 @@ BUSY_TIMEOUT = 30.0
 OPEN_ATTEMPTS = 5
 OPEN_RETRY_SECONDS = 0.1
 _sleep = time.sleep  # (Tests replace it.)
+OPEN_FAILED = "Disk cache could not be opened"
 # Retired dataset files outlive any reader that looked up their row.
 RETIRE_GRACE = 600.0
 # A file still open (Windows) is retried this much later.
@@ -383,7 +384,7 @@ class CacheStore:
                 if _transient_io_error(exc) and attempt + 1 < OPEN_ATTEMPTS:
                     _sleep(OPEN_RETRY_SECONDS * 2 ** attempt)
                     continue
-                raise StoreError(f"Disk cache could not be opened: {exc}") from exc
+                raise StoreError(f"{OPEN_FAILED}: {exc}") from exc
 
     # Opening and transactions
 
