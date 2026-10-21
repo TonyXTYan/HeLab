@@ -178,6 +178,9 @@ BROKEN: dict[str, tuple[str, str]] = {
     "constructor needs arguments": (analysis(body="\n    def __init__(self, size: int) -> None:\n"
                                                   "        self.size = size\n"), "missing 1 required positional"),
     "not a file": ("", "Failed to load script: "),
+    # A script that forgot a method is abstract: the error names it and what it lacks.
+    "a method missing": (analysis().replace("    def render", "    def draw_it"),
+                         "No complete script: abstract Counts (missing render)"),
 }
 
 
@@ -327,7 +330,7 @@ class Widths(LabBase):
     write(folder, "shared.py", base, concrete)
     manager = ScriptsManager()
     manager.load_directory(str(folder))
-    # Today: Counts (named before LabBase) loads, Widths (after it) doesn't.
+    # The abstract LabBase is skipped, so the scripts named after it load too.
     assert names(manager, "Lab") == ["Counts", "Widths"]
 
 
