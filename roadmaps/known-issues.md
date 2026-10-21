@@ -53,8 +53,10 @@ How to use it:
   (2026-10-21).
 - [ ] `test_plot_settings_panel.py::test_activation_sources` reran once on macOS CI; it didn't
   fail in 60 local runs under load (2026-10-21).
-- [ ] `test_dash_server.py::test_stop_frees_the_port` reruns when suites run at once on one
-  machine (port 8050 contention) (2026-10-21).
+- [ ] `test_dash_server.py::test_stop_frees_the_port` reruns: when suites run at once on one
+  machine (port 8050 contention), and 3 times in one Ubuntu CI job on its own (`c127469`), so
+  contention isn't the whole cause; the port may not be free at once after the server stops
+  (2026-10-21).
 
 ## Fixed
 
