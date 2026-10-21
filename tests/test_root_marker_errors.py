@@ -63,6 +63,14 @@ def refuse(target: Path, error: int = errno.EACCES) -> Callable[[Callable[..., A
     return wrap
 
 
+def rewrite(path: Path, text: str) -> None:
+    """Replace an existing marker's text in place. ``root_create`` hides the marker, and Windows
+    refuses to open a hidden file for a truncating write ("w")."""
+    with open(path, "r+", encoding="utf-8") as stream:
+        stream.write(text)
+        stream.truncate()
+
+
 def marker_text(identifier: str, *, version: int = 1, label: str = "share") -> str:
     return json.dumps({"helab": "root", "version": version, "uuid": identifier, "label": label,
                        "created_at": "2026-10-18T00:00:00Z"})
@@ -153,7 +161,7 @@ def test_a_created_marker_the_store_cant_record_is_found_by_the_next_listing(
 def test_a_known_marker_made_invalid_is_forgotten_with_a_warning(share: Path, tmp_path: Path) -> None:
     identifier = placed(share, tmp_path)
     assert root_rows(tmp_path) == {LOCATION: (identifier, "share", "confirmed")}
-    (share / ".helab-root").write_text("{broken", encoding="utf-8")
+    rewrite(share / ".helab-root", "{broken")
     events: Events = []
     list_folder(str(share), events.append, options(tmp_path))
     warnings = [event["message"] for event in events if event["kind"] == "cache_warning"]
@@ -168,7 +176,7 @@ def test_a_known_marker_made_invalid_is_forgotten_with_a_warning(share: Path, tm
     "RAM state for the session"))
 def test_a_known_marker_made_invalid_is_reported_gone_like_a_removed_one(share: Path, tmp_path: Path) -> None:
     placed(share, tmp_path)
-    (share / ".helab-root").write_text("{broken", encoding="utf-8")
+    rewrite(share / ".helab-root", "{broken")
     events: Events = []
     list_folder(str(share), events.append, options(tmp_path))
     assert any(event["kind"] == "root_changed" and event["path"] == str(share) and "uuid" not in event
@@ -285,11 +293,11 @@ def test_delete_goes_by_the_uuid_not_the_label(share: Path, tmp_path: Path) -> N
     and one with another UUID is not, whatever its label."""
     identifier = placed(share, tmp_path)
     marker = share / ".helab-root"
-    marker.write_text(marker_text(str(uuid.uuid4()), label="share"), encoding="utf-8")
+    rewrite(marker, marker_text(str(uuid.uuid4()), label="share"))
     with pytest.raises(ValueError, match="changed since HeLab found it"):
         remove_root(str(share), options(tmp_path), identifier, LOCATION, lambda _: None)
     assert marker.exists()
-    marker.write_text(marker_text(identifier, label="renamed"), encoding="utf-8")
+    rewrite(marker, marker_text(identifier, label="renamed"))
     events: Events = []
     remove_root(str(share), options(tmp_path), identifier, LOCATION, events.append)
     assert not marker.exists() and events[-1]["kind"] == "root_removed"
