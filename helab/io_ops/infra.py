@@ -318,6 +318,12 @@ def _read_txy_file(filename: str, reason: str) -> Any:
         _traced_error("read", filename, reason, exc)
         raise
     _trace("read", filename, reason, bytes=len(raw))
+    # pandas would take a row's extra leading numbers as its index, silently shifting t, x and y,
+    # so a file whose rows aren't three numbers fails as unreadable (a later row with a different
+    # count than the first already does). An empty file is a shot with no events.
+    fields = next((line.count(b",") + 1 for line in io.BytesIO(raw) if line.strip()), 3)
+    if fields != 3:
+        raise ValueError(f"TXY rows have 3 numbers (t, x, y); this file's first row has {fields}")
     return pd.read_csv(io.BytesIO(raw), sep=",", names=["t", "x", "y"], dtype=np.float64)
 
 
