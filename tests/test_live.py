@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import uuid
 import time
+import warnings
 from types import SimpleNamespace
 from typing import Any, Iterator
 
@@ -175,7 +176,9 @@ def cached_shots(path: str, tmp_path: Path) -> list[int]:
     try:
         read_cached(path, str(output), events.append, store_options())
     except ValueError as exc:
-        # The helper says why the store didn't open (a ``cache_warning``): keep it in the failure.
+        # The helper says why the store didn't open (a ``cache_warning``): keep it in the failure,
+        # and warn too, since a rerun that passes drops the failure (the warning stays in the log).
+        warnings.warn(f"cached_shots: {exc}; helper events: {events}", stacklevel=2)
         raise AssertionError(f"{exc}; helper events: {events}") from exc
     return sorted(event["shot"] for event in events if event["kind"] == "shot")
 
