@@ -50,7 +50,10 @@ def test_the_check_finds_a_native_store(tmp_path: Path) -> None:
 def test_tests_get_an_ini_file_of_their_own() -> None:
     settings = app_settings()
     assert settings.format() == QSettings.Format.IniFormat
-    assert settings.fileName() == os.environ["HELAB_TEST_SETTINGS_FILE"]
+    # Qt gives the path with "/" on Windows too: compare as paths, not strings.
+    def normal(path: str) -> str:
+        return os.path.normcase(os.path.normpath(path))
+    assert normal(settings.fileName()) == normal(os.environ["HELAB_TEST_SETTINGS_FILE"])
     settings.setValue("probe", 1)
     assert app_settings().value("probe", type=int) == 1
 
