@@ -172,7 +172,11 @@ def cached_shots(path: str, tmp_path: Path) -> list[int]:
     output = tmp_path / f"cached-{time.monotonic_ns()}"
     output.mkdir()
     events: list[Any] = []
-    read_cached(path, str(output), events.append, store_options())
+    try:
+        read_cached(path, str(output), events.append, store_options())
+    except ValueError as exc:
+        # The helper says why the store didn't open (a ``cache_warning``): keep it in the failure.
+        raise AssertionError(f"{exc}; helper events: {events}") from exc
     return sorted(event["shot"] for event in events if event["kind"] == "shot")
 
 
