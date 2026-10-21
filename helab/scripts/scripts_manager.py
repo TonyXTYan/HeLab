@@ -86,9 +86,11 @@ class ScriptsManager:
 
     def _clear_directory_scripts(self, directory: str) -> None:
         """Remove all scripts from the specified directory"""
+        # By the file each was loaded from (its id's first part), not the path its metadata
+        # gives, which a script may set to anything.
         to_remove = [
-            script_id for script_id, metadata in self._metadata.items()
-            if os.path.dirname(metadata.file_path) == directory
+            script_id for script_id in self._metadata
+            if os.path.dirname(script_id.rpartition("::")[0]) == directory
         ]
 
         for script_id in to_remove:
@@ -122,8 +124,11 @@ class ScriptsManager:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             self._register_module(module, file_path, digest)
-        except Exception as e:
-            raise ScriptLoadError(f"Failed to load script: {e}")
+        except (Exception, SystemExit) as e:
+            # SystemExit too: a script that exits at import (sys.exit, argparse on HeLab's argv)
+            # fails alone, never Load Scripts… or HeLab.
+            raise ScriptLoadError(f"Failed to load script: {e!r}" if isinstance(e, SystemExit)
+                                  else f"Failed to load script: {e}")
 
     def load_module(self, module: ModuleType) -> None:
         """Register the scripts of an already imported module (HeLab's bundled analyses,
@@ -142,6 +147,7 @@ class ScriptsManager:
             if (inspect.isclass(obj) and
                 issubclass(obj, HelabAnalysisScript) and
                 obj != HelabAnalysisScript and
+                not inspect.isabstract(obj) and  # A helper base class the file's scripts share.
                 obj.__module__ == module.__name__):
 
                 # Create instance to get metadata

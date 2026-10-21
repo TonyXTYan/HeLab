@@ -284,13 +284,8 @@ def test_removing_an_unknown_script_does_nothing() -> None:
     assert manager.get_groups() == []
 
 
-# Findings: each marked xfail with the behaviour wanted.
+# Findings of this file's first version, fixed in scripts_manager.py.
 
-@pytest.mark.xfail(strict=True, reason=(
-    "A script whose metadata file_path isn't its own file (e.g. a bare name) is never cleared "
-    "when its folder is loaded again (_clear_directory_scripts matches metadata.file_path, "
-    "helab/scripts/scripts_manager.py:91), so it is listed in its group once more each time "
-    "(append at :167) and stays after its file is deleted"))
 def test_a_script_naming_another_file_is_replaced_too(folder: Path) -> None:
     path = write(folder, "named.py", analysis(file_path="'named.py'"))
     manager = ScriptsManager()
@@ -302,10 +297,6 @@ def test_a_script_naming_another_file_is_replaced_too(folder: Path) -> None:
     assert manager.get_groups() == []
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Every HelabAnalysisScript subclass in a file is instantiated (scripts_manager.py:148), "
-    "abstract helper base classes included: the first one ends the file, so a file sharing "
-    "code through one loads none of the scripts named after it"))
 def test_an_abstract_base_class_in_a_file_is_not_a_script(folder: Path) -> None:
     base = '''
 class LabBase(DatasetAnalysis):
@@ -340,10 +331,6 @@ class Widths(LabBase):
     assert names(manager, "Lab") == ["Counts", "Widths"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "load_directory catches Exception only (scripts_manager.py:84), so a script that exits at "
-    "import (sys.exit, or argparse on HeLab's argv) raises SystemExit out of Load Scripts… and "
-    "stops the rest of the folder loading"))
 def test_a_script_that_exits_at_import_is_skipped(folder: Path) -> None:
     write(folder, "good.py", analysis("Good", "Good"))
     write(folder, "exits.py", "import sys\nsys.exit(2)\n")
