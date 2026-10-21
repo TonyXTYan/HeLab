@@ -11,7 +11,8 @@ import pytest
 from pytestqt.qtbot import QtBot
 from PyQt6 import QtWebEngineWidgets  # noqa: F401  Shared worker cleanup imports WebEngine; preload before QApplication.
 
-from helab.io_helper import load, scan
+from helab.io_ops.loading import load
+from helab.io_ops.scanning import scan
 from helab.utils.folder_cache import FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService
 from helab.views.MissingShotsWindow import CANCEL_TIP, LOAD_TIP, SKIP_ALL_TIP, SKIP_TIP, MissingShotsWindow
@@ -171,7 +172,7 @@ def test_helper_scan_reports_cached_shots_the_folder_no_longer_has(tmp_path: Pat
     output = tmp_path / "artifacts"
     output.mkdir()
     load(str(source), str(output), lambda event: None, options)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(source), events.append, options)
     assert not any(event["kind"] == "cache_mismatch" for event in events)
     # Another folder moved to this path: its shot 1 is gone; shot 3 is new (not a mismatch).

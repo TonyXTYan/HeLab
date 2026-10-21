@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import uuid
 import time
+import warnings
 from types import SimpleNamespace
 from typing import Any, Iterator
 
@@ -19,15 +20,20 @@ from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QDialog
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
-from helab.io_helper import list_folder, live_check, load, read_cached, save_held, scan
+from helab.io_ops import fingerprints
+from helab.io_ops.browse import list_folder
+from helab.io_ops.live import live_check
+from helab.io_ops.loading import load, read_cached
+from helab.io_ops.save_held import save_held
+from helab.io_ops.scanning import scan
 from helab.utils.constants import (
     DEFAULT_LIVE_AUTOSAVE, DEFAULT_LIVE_INTERVAL, LIVE_AUTOSAVE_SETTING, LIVE_INTERVAL_SETTING, read_live_autosave,
     read_live_interval,
 )
 from helab.utils.folder_cache import FolderCache, SharedJob, store_options
 from helab.utils.io_service import FOREGROUND, IORequest, IOService
-from helab.views.FolderExplorer import FolderExplorer, LiveSession
+from helab.views.FolderExplorer import FolderExplorer
+from helab.views.explorer_live import LiveSession
 from helab.views.HelabMainWindow import HelabMainWindow
 from helab.views.QuitSaveDialog import QuitSaveDialog
 
@@ -71,7 +77,7 @@ def run_helper(cache: FolderCache, path: str, tmp_path: Path,
     payload = request.payload
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     try:
         if operation == "list":
             list_folder(path, events.append, payload.get("cache"))
@@ -166,8 +172,14 @@ def checks(qtbot: QtBot, explorer: FolderExplorer, path: str, tmp_path: Path, co
 def cached_shots(path: str, tmp_path: Path) -> list[int]:
     output = tmp_path / f"cached-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
-    read_cached(path, str(output), events.append, store_options())
+    events: list[Any] = []
+    try:
+        read_cached(path, str(output), events.append, store_options())
+    except ValueError as exc:
+        # The helper says why the store didn't open (a ``cache_warning``): keep it in the failure,
+        # and warn too, since a rerun that passes drops the failure (the warning stays in the log).
+        warnings.warn(f"cached_shots: {exc}; helper events: {events}", stacklevel=2)
+        raise AssertionError(f"{exc}; helper events: {events}") from exc
     return sorted(event["shot"] for event in events if event["kind"] == "shot")
 
 
@@ -203,7 +215,7 @@ def test_live_adds_new_shots_saves_every_n_and_when_it_stops(
     events = replay(cache, path, tmp_path)
     assert events[0]["kind"] == "live_unchanged" and not events[0]["live_listed"]
     # At least once a minute it lists the folder anyway (a network drive may report its mtime late).
-    session.listed_at -= explorer.LIVE_LIST_SECONDS
+    session.listed_at -= explorer.live_control.LIVE_LIST_SECONDS
     check = next_request(qtbot, explorer, path)
     assert check.payload["live_since"] is None
     assert replay(cache, path, tmp_path)[0]["live_listed"]
@@ -249,7 +261,7 @@ def test_live_adds_new_shots_saves_every_n_and_when_it_stops(
     explorer._update_activity()
     assert explorer.folder_freshness_label.text() == "Live updates off · saving 1 shot"
     replay(cache, path, tmp_path)
-    qtbot.waitUntil(lambda: not explorer._live_sessions)
+    qtbot.waitUntil(lambda: not explorer.live_control._live_sessions)
     assert cached_shots(path, tmp_path) == [1, 2, 3, 4, 5]
     assert sorted(explorer.folder_opened_data or {}) == [1, 2, 3, 4, 5]
     explorer._update_activity()
@@ -292,10 +304,10 @@ def test_live_shots_keep_their_raw_times_through_the_app_and_its_save(
     save = next_request(qtbot, explorer, path)
     assert save.payload["held_raw_times"] == shown.metadata["raw_times"]
     replay(cache, path, tmp_path)
-    qtbot.waitUntil(lambda: not explorer._live_sessions)
+    qtbot.waitUntil(lambda: not explorer.live_control._live_sessions)
     output = tmp_path / "cached-times"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     read_cached(path, str(output), events.append, store_options())
     loaded = next(event for event in events if event["kind"] == "loaded")
     assert loaded["raw_times"] == shown.metadata["raw_times"]
@@ -309,7 +321,7 @@ def test_files_still_being_written_wait_and_are_counted(
     explorer = open_loaded(qtbot, service, run, tmp_path)
     cache = explorer.model.cache
     assert explorer.start_live()
-    monkeypatch.setattr(io_helper, "SETTLE_SECONDS", 5.0)
+    monkeypatch.setattr(fingerprints, "SETTLE_SECONDS", 5.0)
     write_shot(run, 3, age=0)
     age_folder(run, 60)
     checks(qtbot, explorer, path, tmp_path)
@@ -397,7 +409,7 @@ def test_a_shot_live_read_recently_that_changes_is_read_again_and_said(
     assert not session.error and path not in cache.mismatched and session.shots == {1, 2, 3, 4}
     np.testing.assert_array_equal((explorer.folder_opened_data or {})[3], [[3, 2, 3], [3, 4, 5]])
     note = "Shot 3 changed after it was read (writer paused > 5 s?): read again"
-    text, tooltip, stopped = explorer.live_line(session)
+    text, tooltip, stopped = explorer.live_control.live_line(session)
     assert note in text and not stopped and "old and new size and mtime" in tooltip
     panel = FolderDetailsPanel(explorer)
     panel.show_explorer(explorer, service)
@@ -408,11 +420,11 @@ def test_a_shot_live_read_recently_that_changes_is_read_again_and_said(
     assert f"size 9 → {partial.stat().st_size:,} bytes" in message
     assert {3, 4} <= session.unsaved  # (Its new data is saved with the next save.)
     # The note lasts a minute.
-    text, at = explorer._reread_notes[path]
-    explorer._reread_notes[path] = (text, at - explorer.LIVE_REREAD_NOTE_SECONDS)
-    assert explorer.live_reread_note(path) == "" and note not in explorer.live_line(session)[0]
+    text, at = explorer.live_control._reread_notes[path]
+    explorer.live_control._reread_notes[path] = (text, at - explorer.live_control.LIVE_REREAD_NOTE_SECONDS)
+    assert explorer.live_reread_note(path) == "" and note not in explorer.live_control.live_line(session)[0]
     # Shot 4, read by Live but longer ago than the window, changes: Live stops as mismatched.
-    session.read_at[4] = time.time() - explorer.LIVE_REREAD_SECONDS - 1
+    session.read_at[4] = time.time() - explorer.live_control.LIVE_REREAD_SECONDS - 1
     (run / "d_txy_forc4.txt").write_text("4,9,9\n")
     os.utime(run / "d_txy_forc4.txt", (old, old))
     write_shot(run, 5)
@@ -469,12 +481,12 @@ def test_the_save_at_live_off_reads_a_recently_read_shot_again_and_saves_it(
     assert cached_shots(path, tmp_path) == [1, 2, 3]
     output = tmp_path / f"cached-{time.monotonic_ns()}"
     output.mkdir()
-    found: list[dict[str, Any]] = []
+    found: list[Any] = []
     read_cached(path, str(output), found.append, store_options())
     shot = next(event for event in found if event["kind"] == "shot" and event["shot"] == 3)
     np.testing.assert_array_equal(np.load(shot["artifact"]), [[3, 2, 3], [3, 4, 5]])
     note = "Shot 3 changed after it was read (writer paused > 5 s?): read again"
-    qtbot.waitUntil(lambda: not explorer._live_sessions)  # (Its save ended: the session is done.)
+    qtbot.waitUntil(lambda: not explorer.live_control._live_sessions)  # (Its save ended: the session is done.)
     assert explorer.live_reread_note(path) == note
     panel = FolderDetailsPanel(explorer)
     panel.show_explorer(explorer, service)
@@ -535,7 +547,7 @@ def test_a_save_older_than_the_folders_listing_keeps_the_listing_and_still_saves
     assert "checked_at" not in dataset.metadata and not cache.counts_as_checked(dataset)
     np.testing.assert_array_equal((explorer.folder_opened_data or {})[3], [[3, 2, 3], [3, 4, 5]])
     assert cached_shots(path, tmp_path) == [1, 2, 3]
-    qtbot.waitUntil(lambda: not explorer._live_sessions)  # (The save ended: not cancelled.)
+    qtbot.waitUntil(lambda: not explorer.live_control._live_sessions)  # (The save ended: not cancelled.)
     explorer.close_cleanup()
 
 
@@ -550,7 +562,7 @@ def test_shots_gone_from_the_folder_stop_live(qtbot: QtBot, service: IOService, 
     assert explorer.live is not None and explorer.live.error == "1 shot missing from the folder"
     assert path in cache.mismatched
     explorer.stop_live()  # Nothing to save, and its cached data may not be this folder's.
-    assert job_of(cache, path) is None and not explorer._live_sessions
+    assert job_of(cache, path) is None and not explorer.live_control._live_sessions
     explorer.close_cleanup()
 
 
@@ -587,7 +599,7 @@ def test_another_folder_at_the_same_path_stops_live_and_is_never_merged(
     assert session.error == expected and path in cache.mismatched
     assert explorer.folder_opened_data is data and sorted(data or {}) == [1, 2]  # Kept, never merged.
     explorer.stop_live()  # Its cached data may not be this folder's: nothing is saved.
-    assert job_of(cache, path) is None and not explorer._live_sessions
+    assert job_of(cache, path) is None and not explorer.live_control._live_sessions
     explorer.close_cleanup()
 
 
@@ -663,7 +675,7 @@ def test_live_starts_on_a_folder_with_no_shots_yet(qtbot: QtBot, service: IOServ
     save = next_request(qtbot, explorer, path)
     assert save.payload.get("save")
     replay(cache, path, tmp_path)
-    qtbot.waitUntil(lambda: not explorer._live_sessions)
+    qtbot.waitUntil(lambda: not explorer.live_control._live_sessions)
     assert cached_shots(path, tmp_path) == [1, 2]
     explorer.close_cleanup()
 
@@ -734,7 +746,7 @@ def test_rules_that_stop_saving_show_on_the_line(
     assert "3 not cached (Don't cache)" in explorer.folder_freshness_label.text()
     assert "Not saved: you chose Don't cache for this folder" in explorer.folder_freshness_label.toolTip()
     explorer.stop_live()
-    assert not explorer._live_sessions and job_of(cache, path) is None
+    assert not explorer.live_control._live_sessions and job_of(cache, path) is None
     explorer.close_cleanup()
 
 
@@ -803,7 +815,7 @@ def test_a_save_waits_for_the_folders_running_save(
         cache.service.resultReady.emit(save, event)
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
     replay(cache, path, tmp_path)
-    qtbot.waitUntil(lambda: not explorer._live_sessions)
+    qtbot.waitUntil(lambda: not explorer.live_control._live_sessions)
     assert cached_shots(path, tmp_path) == [1, 2, 3, 4, 5]
     explorer.close_cleanup()
 
@@ -814,7 +826,7 @@ def run_helper_events(cache: FolderCache, path: str, tmp_path: Path) -> list[dic
     payload = request.payload
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(path, str(output), events.append, payload.get("cache"), payload.get("memory"),
          payload.get("base_signature", ""), payload.get("signature", ""), limits=payload.get("limits"))
     events.append({"kind": "done"})
@@ -837,7 +849,7 @@ def test_a_save_never_joins_another_load_and_quit_waits_for_it(
     checks(qtbot, explorer, path, tmp_path)
     assert cache.submit("other tab", 0, path, "load", {"cache": store_options(), "no_cache": True})
     explorer.stop_live()
-    session = explorer._live_sessions[path]
+    session = explorer.live_control._live_sessions[path]
     ordinary = cache.jobs[("load", path)]
     assert session.request == "save" and not ordinary.saves() and not ordinary.payload.get("save")
     assert cache.quit_saves() == [path]  # Waiting for the ordinary load, still a save to quit for.

@@ -4,7 +4,8 @@ The product overview, priority list and index of the feature plans in this folde
 Horizons describe sequencing, not promised dates. Feature scope and implementation
 details remain drafts until resolved during design.
 
-Manual work lives in [.ai/MANUAL_TODO.md](../.ai/MANUAL_TODO.md); review history and
+Manual work lives in [.ai/MANUAL_TODO.md](../.ai/MANUAL_TODO.md) and known issues in
+[known-issues.md](known-issues.md); review history and
 validation evidence live in `.ai/sessions/`; settled decisions live in `.ai/memory/results/`.
 
 How to use it:
@@ -53,51 +54,7 @@ still to choose (Tony, with the coordinator's proposal).
 
 ## Known issues
 
-- [ ] `test_gui_responsiveness.py::test_output_close_failure_cannot_leave_dead_helper_in_active_queue`
-  needed one rerun on the RSPE Windows PC on three branches (2026-10-19);
-  investigate if it fails outright.
-- [ ] `test_folder_cache.py::test_two_tabs_share_snapshot_arrays_and_default_resolution`
-  needed one rerun in each of three full runs on the RSPE Windows PC
-  (2026-10-19); investigate if it fails outright.
-- [ ] Folders with over 100,000 entries record a scan failure.
-- [ ] The temp folder (`DIR_TEMPS`, Settings → General) is created and can be
-  changed, but nothing uses it: helpers' private folders go to the system temp
-  dir (`tempfile.mkdtemp` in `IOService`). Remove the setting, or move helper
-  folders into it (2026-10-15).
-- [x] Quitting cancels cache writes still running in the background (a finished
-  load's `disk_cache_pending` save), so the next check redoes them. Fixed by the
-  quit window (`QuitSaveDialog`, with Quit now) in Live L1 (2026-10-19).
-- [x] Files still being written: settle age only, by Tony's decision (2026-10-20);
-  Live re-reads a recently read shot that changes. The converter's temp-name
-  rename remains the real fix.
-- [ ] SMB audit leftovers (2026-10-20): a Windows-suited "seen twice" interval
-  (Windows caches attributes 10 s); details scans for visible rows only; icons kept
-  across Refresh; the startup "database is locked" on a fresh store; refuse a
-  network or synced temp folder at startup, as the cache folder is.
-- [ ] Tests that build a real `HelabMainWindow` read the developer's native
-  QSettings (budgets, check level, Live, Lab parameters), so they can fail on a
-  machine with saved settings: give the window a settings factory that tests
-  point at a tmp ini (DLD decisions, 2026-10-20).
-- [ ] `tests/test_cache_tab.py::test_saves_restored_from_the_store_ask_with_its_numbers`
-  fails when `tests/test_io_trace.py::test_a_live_save_keeps_dont_cache_and_the_budget`
-  ran earlier on the same xdist worker: a pending save left in the shared test
-  store ([register](../.ai/sessions/2026-10-20-claude-dld-coordinator/register.md)) (2026-10-20).
-- [ ] Main-window tests resolve the default data path, which is
-  `/Volumes/dld_output` when it is mounted: tests should never touch the real
-  volume (2026-10-19).
-- [x] `tests/test_live_io.py`'s pause test assumed a 3000-file background load
-  was still running after setup. Fixed with `HELAB_TEST_READ_GATE`; both Live
-  I/O tests now run on Windows too (Plots v1 polish, 2026-10-19).
-- [ ] With the default of one background lane, folder details and status checks
-  (including manual ones) wait for the selected load. As planned; revisit if
-  it feels slow.
-- [ ] When a tab's shown data is dropped while it is shown (a folder status check finds
-  the folder mismatched, or its cache is cleared), the tab keeps its arrays and later
-  plots on screen; a load finding missing shots clears them. Clear the analysis view
-  or mark it stale, once plotting exists (Tony, 2026-10-14).
-- [ ] `test_two_step_browse::test_refresh_cancels_only_automatic_subscriptions_and_suppresses_new_checks`
-  needed one rerun on macOS CI in 2 of 4 runs (2026-10-18); it doesn't reproduce
-  locally. Investigate if it fails outright.
+Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues.md).
 
 ## Near term: useful analysis from loaded data
 

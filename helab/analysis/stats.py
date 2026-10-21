@@ -13,7 +13,7 @@ from helab.analysis.dataset_view import DatasetView, Events
 from helab.analysis.results import Cancelled
 
 AXES = ("T", "X", "Y")
-# TXY columns as the helper reads them (``io_helper.read_txy``): seconds and metres.
+# TXY columns as the helper reads them (``io_ops.infra._read_txy_file``): seconds and metres.
 UNITS = ("s", "m", "m")
 DISPLAY_CAP = 100_000
 DEFAULT_KEEP = 0.99

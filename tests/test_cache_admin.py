@@ -10,8 +10,11 @@ from typing import Any, Callable
 import pytest
 from pytestqt.qtbot import QtBot
 
-from helab.io_helper import cache_admin, list_folder, load, scan
-from helab import io_helper
+from helab.io_ops import stores
+from helab.io_ops.admin import cache_admin
+from helab.io_ops.browse import list_folder
+from helab.io_ops.loading import load
+from helab.io_ops.scanning import scan
 from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.utils.cache_store import (
     APPROVAL_SHARE, ORPHAN_MIN_AGE, PENDING_MAX_AGE, RETIRE_GRACE, CacheStore, DatasetRecord, SaveRejected,
@@ -238,7 +241,7 @@ def run_load(source: Path, tmp_path: Path, options: dict[str, Any],
     output.mkdir()
     events: list[dict[str, Any]] = []
 
-    def collect(event: dict[str, Any]) -> None:
+    def collect(event: Any) -> None:
         events.append(event)
         if send is not None:
             send(event)
@@ -247,7 +250,7 @@ def run_load(source: Path, tmp_path: Path, options: dict[str, Any],
 
 
 def admin(options: dict[str, Any], action: str, **params: Any) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(options, action, events.append, **params)
     return events
 
@@ -271,7 +274,7 @@ def test_load_that_does_not_fit_is_held_and_make_room_adopts_it(tmp_path: Path) 
     final = result[-1]
     assert final["kind"] == "admin_result" and final["adopted"] and final["path"] == str(second)
     assert final["cache_info"]["signature"] and final["next_deadline"] is not None
-    with io_helper._cache_store(options["directory"], [str(second)]) as store:
+    with stores._cache_store(options["directory"], [str(second)]) as store:
         assert dataset_paths(store) == {store._path_key(str(second))}
 
 
@@ -302,7 +305,7 @@ def test_inventory_clear_purge_trim_and_discard_through_the_helper(tmp_path: Pat
 
 def removal_during(kind: str, options: dict[str, Any], path: str) -> None:
     if kind == "invalidate":
-        with io_helper._cache_store(options["directory"], [path]) as store:
+        with stores._cache_store(options["directory"], [path]) as store:
             store.remove(("datasets",), [path])
     elif kind == "clear":
         admin(options, "clear", kinds=["datasets", "summaries"])
@@ -313,7 +316,7 @@ def removal_during(kind: str, options: dict[str, Any], path: str) -> None:
         admin(options, "trim", budget=0)
     elif kind == "make room":
         # Make room for another folder takes this one's dataset.
-        with io_helper._cache_store(options["directory"], [path]) as store:
+        with stores._cache_store(options["directory"], [path]) as store:
             other = str(Path(path).parent / f"elsewhere-{time.monotonic_ns()}")
             guard = store.start_dataset_job(other)
             budget = store.usage()
@@ -349,7 +352,7 @@ def test_removal_while_a_load_runs_or_saves_does_not_come_back(
         monkeypatch.undo()
         assert done, moment
         assert not any(event["kind"] == "cache_saved" for event in events), moment
-        with io_helper._cache_store(options["directory"], [path]) as store:
+        with stores._cache_store(options["directory"], [path]) as store:
             assert store.read_dataset_row(path).missing, moment
         run_load(source, tmp_path, options)  # Cached again for the next moment.
 
@@ -358,17 +361,17 @@ def test_removal_while_a_load_runs_or_saves_does_not_come_back(
 def test_removal_while_a_scan_runs_does_not_come_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, removal: str,
 ) -> None:
-    from helab import io_helper
+    from helab.io_ops import scanning
     source = source_folder(tmp_path)
     path, options = str(source), options_for(tmp_path)
     scan(path, lambda event: None, options)
-    original = io_helper._scan
+    original = scanning._scan
 
-    def remove_then_scan(*args: Any) -> dict[str, Any]:
+    def remove_then_scan(*args: Any) -> Any:
         removal_during(removal, options, path)
         return original(*args)
-    monkeypatch.setattr(io_helper, "_scan", remove_then_scan)
-    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(scanning, "_scan", remove_then_scan)
+    events: list[Any] = []
     scan(path, events.append, options, manual=True)
     assert any(event["kind"] == "status" for event in events)
     with CacheStore(options["directory"]) as store:
@@ -505,7 +508,7 @@ def test_listing_and_scan_badges_are_cleared_after_a_helper_removal(tmp_path: Pa
     run_load(source, tmp_path, options)
     admin(options, "clear", kinds=["datasets"])
     for helper in (list_folder, scan):
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         helper(str(tmp_path), events.append, options)
         entry = next(e for event in events if event["kind"] == "entries" for e in event["entries"]
                      if e["path"] == str(source))
@@ -639,7 +642,7 @@ def test_scan_history_helper_uses_the_scan_guard(tmp_path: Path) -> None:
     import sys
     options = options_for(tmp_path)
     path = str(tmp_path)
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    with stores._cache_store(options["directory"], [path]) as store:
         guard = store.guard([path], ("summaries", "histories"))
         store.remove(("histories",))
     request = {"operation": "scan_history", "path": path, "cache": options,
@@ -885,7 +888,7 @@ def test_failed_listing_history_write_keeps_the_listing_guard(
     try:
         assert cache.submit("tab", 0, path, "list", {"cache": options})
         request = next(r for r in service.pending if r.operation == "list")
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         with pytest.raises(OSError):
             list_folder(path, events.append, options)
         assert events[0]["kind"] == "save_guard"
@@ -895,14 +898,14 @@ def test_failed_listing_history_write_keeps_the_listing_guard(
     finally:
         service.shutdown()
     # The user forgets scan failures before the queued writer runs: it saves nothing.
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    with stores._cache_store(options["directory"], [path]) as store:
         store.remove(("histories",))
     completed = subprocess.run([sys.executable, "-m", "helab.io_helper"],
                                input=json.dumps({"operation": "scan_history", "path": path, **writer.payload}) + "\n",
                                capture_output=True, text=True, timeout=60, check=True)
     assert json.loads(completed.stdout.strip().splitlines()[-1])["message"] == \
         "Cache was cleared before saving completed"
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    with stores._cache_store(options["directory"], [path]) as store:
         assert store.read_record("histories", path).missing
 
 
@@ -942,7 +945,7 @@ def test_make_room_removes_exactly_the_folders_it_named_or_nothing(store: CacheS
     other = save(store, "other", 4000, last_used=2.0)
     assert other.saved
     later = save(store, "later", 5000, budget=store.usage() + 1000)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin({"directory": store.root, "budget": store.usage() + 1000}, "adopt", events.append,
                 pending_id=later.pending_id, make_room=True, room_paths=["nowhere"])
     assert events[-1]["adopted"] is False and dataset_paths(store) == {"new", "other"}

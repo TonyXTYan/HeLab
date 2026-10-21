@@ -14,6 +14,7 @@ from helab.analysis import backends
 from helab.analysis.backends import (BACKEND, MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane, backend_specs,
                                      opengl_available)
 from helab.analysis.dataset_view import DatasetView, build_view
+from helab.analysis.orders import in_box
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import effective
 from helab.analysis.results import AnalysisContext, AnalysisResult
@@ -294,7 +295,7 @@ def test_transfer_fractions_highlight_the_newest_shot_in_the_t_histogram() -> No
     lit = result_of(script, data, {"highlight_newest": True, "newest_colour": "magenta"}).data
     assert lit.newest_shot == 6 and not lit.newest_left_out and lit.colour != plain.colour
     edges = lit.histogram[0]
-    expected = np.histogram(transfer_fractions.in_box(np.asarray(data.shots[6]), 0.03)[:, 0], bins=edges)[0]
+    expected = np.histogram(in_box(np.asarray(data.shots[6]), 0.03)[:, 0], bins=edges)[0]
     assert lit.newest.tolist() == expected.astype(float).tolist()
     assert "newest shot in magenta" in script.describe_run("Plot", {**result_of(script, data).parameters,
                                                                     "highlight_newest": True,

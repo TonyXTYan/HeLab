@@ -10,10 +10,11 @@ from pytestqt.qtbot import QtBot
 from PyQt6.QtWidgets import QLabel, QWidget
 
 from helab.analysis.dataset_view import DatasetView, build_view
+from helab.analysis.orders import Fractions, Orders, count_orders, jump
 from helab.analysis.parameter_tree import build_tree, tree_values
 from helab.analysis.parameters import effective
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.models.ScriptTreeSelector import AnalysisInstance
+from helab.views.plots.instance import AnalysisInstance
 from helab.scripts.standard import transfer_fractions as tf
 from helab.utils.folder_cache import Dataset
 
@@ -56,7 +57,7 @@ def run(request: pytest.FixtureRequest) -> DatasetView:
 def test_orders_are_found_and_counted_inside_the_box(run: DatasetView) -> None:
     script = tf.TransferFractions()
     data = script.compute("Plot", context(run))
-    assert isinstance(data, tf.Fractions) and data.auto
+    assert isinstance(data, Fractions) and data.auto
     assert data.orders.centre == pytest.approx(CENTRE, abs=2e-4)
     assert data.orders.spacing == pytest.approx(SPACING, rel=0.02)
     assert data.orders.half_width == pytest.approx(data.orders.spacing / 2)
@@ -78,7 +79,7 @@ def test_manual_orders_shots_and_no_box(run: DatasetView) -> None:
     values = {"orders_mode": tf.MANUAL, "centre": CENTRE, "spacing": SPACING, "half_width": 0.003,
               "orders_each_side": 1, "xy_half": 0.0, "shots": "range", "first_shot": 3, "last_shot": 5}
     data = script.compute("Plot", context(run, values))
-    assert not data.auto and data.orders == tf.Orders(CENTRE, SPACING, 0.003, 1)
+    assert not data.auto and data.orders == Orders(CENTRE, SPACING, 0.003, 1)
     assert data.shots.tolist() == [3, 4, 5] and data.notes == ()
     assert int(data.counts[0, 1]) > 900  # order 0 now holds the hot spot too
     assert script.detected_parameters("Plot", AnalysisResult.of(context(run, values), "completed", data)) == {}
@@ -133,9 +134,9 @@ def shots_of(populations: dict[int, int], count: int = 3, seed: int = 0, **order
     return view({shot: orders_events(rng, populations, **orders) for shot in range(1, count + 1)})
 
 
-def fractions(data: DatasetView, values: dict[str, Any] | None = None) -> tf.Fractions:
+def fractions(data: DatasetView, values: dict[str, Any] | None = None) -> Fractions:
     result = tf.TransferFractions().compute("Plot", context(data, values))
-    assert isinstance(result, tf.Fractions)
+    assert isinstance(result, Fractions)
     return result
 
 
@@ -153,7 +154,7 @@ def pane_text(widget: QWidget) -> str:
     return widget.text()
 
 
-def unsure_notes(data: tf.Fractions) -> list[str]:
+def unsure_notes(data: Fractions) -> list[str]:
     return [note for note in data.notes if "order 0 unsure" in note]
 
 
@@ -356,9 +357,9 @@ def test_a_window_wider_than_half_the_spacing_is_clipped_and_said(qtbot: QtBot) 
 
 
 def test_a_window_edge_on_an_event_counts_it_once() -> None:
-    orders = tf.Orders(1.0, 0.5, 0.25, 1)  # windows [0.25, 0.75), [0.75, 1.25), [1.25, 1.75)
+    orders = Orders(1.0, 0.5, 0.25, 1)  # windows [0.25, 0.75), [0.75, 1.25), [1.25, 1.75)
     times = np.array([0.25, 0.75, 1.25, 1.75, 1.0])
-    assert tf.count_orders(times, orders).tolist() == [1, 2, 1]
+    assert count_orders(times, orders).tolist() == [1, 2, 1]
 
 
 def test_a_centre_outside_the_data_says_where_the_events_are(qtbot: QtBot) -> None:
@@ -482,11 +483,11 @@ def test_order_0_jumping_a_whole_order_from_the_last_detection_warns_until_settl
 
 
 def test_no_jump_from_the_default_centre_part_of_an_order_or_in_manual_mode() -> None:
-    assert tf.jump(float(tf.CENTRE.default), CENTRE + SPACING, SPACING, 2) == 0  # the default is no detection
-    assert tf.jump(CENTRE, CENTRE + 0.5 * SPACING, SPACING, 2) == 0
-    assert tf.jump(CENTRE + 1e-4, CENTRE + 1e-4 - 1.25 * SPACING, SPACING, 2) == -1
-    assert tf.jump(CENTRE + 1e-4, CENTRE + 1e-4 + 3 * SPACING, SPACING, 2) == 3
-    assert tf.jump(CENTRE + 1e-4, CENTRE + 1e-4 + 4 * SPACING, SPACING, 2) == 0  # beyond the orders counted
+    assert jump(float(tf.CENTRE.default), CENTRE + SPACING, SPACING, 2) == 0  # the default is no detection
+    assert jump(CENTRE, CENTRE + 0.5 * SPACING, SPACING, 2) == 0
+    assert jump(CENTRE + 1e-4, CENTRE + 1e-4 - 1.25 * SPACING, SPACING, 2) == -1
+    assert jump(CENTRE + 1e-4, CENTRE + 1e-4 + 3 * SPACING, SPACING, 2) == 3
+    assert jump(CENTRE + 1e-4, CENTRE + 1e-4 + 4 * SPACING, SPACING, 2) == 0  # beyond the orders counted
     manual = fractions(shots_of(transferred(0.9)), {"orders_mode": tf.MANUAL, "centre": CENTRE - SPACING})
     assert manual.jumped == 0 and manual.notes == ()
 

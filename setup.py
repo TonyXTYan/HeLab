@@ -38,7 +38,23 @@ setup(
         "pytablericons>=1.0.1",
         "Pympler>=1.1",
         "packaging",
-        # Add other dependencies from requirements-pip.txt
+        # What helab imports at runtime; requirements.lock pins the tested versions, and
+        # requirements.txt adds the development and build tools.
+        "PyQt6-WebEngine",
+        "blosc",
+        "coloredlogs",
+        "dash",
+        "joblib",
+        "matplotlib",
+        "numpy",
+        "pandas",
+        "pillow",
+        "plotly",
+        "psutil",
+        "pyqtgraph",
+        "scipy",
+        "uncertainties",
+        "werkzeug",
     ],
     entry_points={
         "console_scripts": [

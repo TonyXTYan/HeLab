@@ -77,12 +77,12 @@ def io_trace_folder(temps: str) -> str:
 
 def io_trace_refused(temps: str, problem: str) -> str:
     """Why the trace isn't recorded: the temp folder ``temps`` is ``problem`` (on a network or synced
-    folder, where it would add traffic; ``io_helper.trace_check`` finds out)."""
+    folder, where it would add traffic; ``io_ops.trace_check.trace_check`` finds out)."""
     return f"HeLab's temp folder {temps} is {problem}: choose a local one in Settings → General and restart HeLab."
 
 
 def delete_io_traces(recordings: list[dict[str, Any]]) -> list[str]:
-    """Delete these earlier recordings (``io_helper.trace_check``'s ``earlier``: their trace files, then
+    """Delete these earlier recordings (``io_ops.trace_check.trace_check``'s ``earlier``: their trace files, then
     each emptied folder); the files that couldn't be deleted and were kept (Windows refuses one a
     running helper still has open). Only in the temp folder, once the check found it local."""
     kept = []
@@ -215,7 +215,7 @@ class IOService(QObject):
     def start_io_trace(self, temps: str) -> str:
         """Record every helper's operations on source folders from now on, in a new recording folder
         in the temp folder ``temps`` (``io_trace_folder``), one file per helper; its path. The caller
-        checks ``temps`` first, off the GUI thread (``io_helper.trace_check``): it must not be on a
+        checks ``temps`` first, off the GUI thread (``io_ops.trace_check.trace_check``): it must not be on a
         network or synced folder."""
         folder = io_trace_folder(temps)
         os.makedirs(folder, exist_ok=True)
@@ -318,7 +318,7 @@ class IOService(QObject):
 
     @staticmethod
     def live(request: IORequest) -> bool:
-        """A Live check of the folder a tab watches (``io_helper.live_check``)."""
+        """A Live check of the folder a tab watches (``io_ops.live.live_check``)."""
         return request.operation == "load" and bool(request.payload.get("live"))
 
     def _foreground_busy(self, now: float) -> bool:

@@ -2,7 +2,7 @@
 
 TXY files are written once and never deleted, so shots HeLab cached (or loaded) that a folder no
 longer has mean another folder now sits at that path, or files were deleted or renamed. A load
-stops before reading anything (``io_helper.load``'s ``shots_missing``) and a scan reports it
+stops before reading anything (``io_ops.loading.load``'s ``shots_missing``) and a scan reports it
 (``cache_mismatch``); ``FolderCache.mismatched`` keeps them for the session. New folders are added
 to this window as they are found, instead of one popup each. When the session's count reaches
 2, 4, 8…, loads and scans are held (``IOService.mismatch_hold``) until the user resumes, cancels

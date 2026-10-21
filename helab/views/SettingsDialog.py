@@ -13,6 +13,7 @@ from PyQt6.QtCore import QSettings, QUrl
 from helab.utils.folder_cache import FolderCache, store_options
 from helab.utils.number_format import fnum
 from helab.utils.constants import *
+from helab.utils.settings_store import app_settings
 from helab.views.DataRootsTab import DataRootsTab
 from helab.views.CacheTab import CacheTab
 from helab.views.LabParametersTab import LabParametersTab
@@ -22,7 +23,7 @@ class SettingsDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None, *, settings: QSettings | None = None,
                  cache: FolderCache | None = None) -> None:
         super().__init__(parent)
-        self.settings = settings if settings is not None else QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        self.settings = settings if settings is not None else app_settings()
         self.cache = cache
         self.mover: Any = None  # CacheMover, made on the first Change…
         self.setWindowTitle("Settings")

@@ -13,8 +13,11 @@ from typing import Any
 
 import pytest
 
-from helab import io_helper
-from helab.io_helper import cache_admin, list_folder, load, read_cached, scan
+from helab.io_ops import stores
+from helab.io_ops.admin import cache_admin
+from helab.io_ops.browse import list_folder
+from helab.io_ops.loading import load, read_cached
+from helab.io_ops.scanning import scan
 from helab.utils import cache_location, file_kinds
 from helab.utils.cache_location import cache_location_problem
 from helab.utils.cache_store import LAYOUT_VERSION, OLD_CACHE_DIRS, CacheStore, DatasetRow
@@ -34,16 +37,16 @@ def options_for(tmp_path: Path) -> dict[str, Any]:
     return {"directory": str(tmp_path / "caches" / "store-v2")}
 
 
-def run_load(source: Path, tmp_path: Path, options: dict[str, Any] | None, **kwargs: Any) -> list[dict[str, Any]]:
+def run_load(source: Path, tmp_path: Path, options: dict[str, Any] | None, **kwargs: Any) -> list[Any]:
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append, options, **kwargs)
     return events
 
 
 def dataset_row(options: dict[str, Any], path: str) -> DatasetRow:
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    with stores._cache_store(options["directory"], [path]) as store:
         found = store.read_dataset_row(path)
     assert found.value is not None
     return found.value
@@ -68,13 +71,13 @@ def test_scan_saves_per_kind_counts_and_txy_size(tmp_path: Path) -> None:
     source = data_folder(tmp_path)
     (source / "d3.txt").write_text("raw only\n")
     options = options_for(tmp_path)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(source), events.append, options)
     txy_bytes = sum((source / f"d_txy_forc{shot}.txt").stat().st_size for shot in (1, 2))
     status = next(event for event in events if event["kind"] == "status")
     assert status["files"] == {"raw": {"count": 3}, "txy": {"count": 2, "bytes": txy_bytes}}
     assert status["status"] == "fixable"  # Classification still works from the counts.
-    with io_helper._cache_store(options["directory"], [str(source)]) as store:
+    with stores._cache_store(options["directory"], [str(source)]) as store:
         saved = store.read_record("summaries", str(source)).value
     assert saved is not None and saved["files"] == status["files"]
     assert (saved["raw_count"], saved["txy_count"]) == (3, 2)
@@ -144,7 +147,7 @@ def test_invalidate_removes_the_dataset_through_the_helper(tmp_path: Path) -> No
     assert json.loads(completed.stdout.strip().splitlines()[-1]) == {"kind": "done"}
     with CacheStore(options["directory"]) as store:
         assert store.read_dataset_row(path).missing
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(source.parent), events.append, options)
     entry = next(e for event in events if event["kind"] == "entries" for e in event["entries"] if e["path"] == path)
     assert entry["disk_cached"] is False and entry["cache_info"] == {}
@@ -163,7 +166,7 @@ def test_startup_cleanup_deletes_old_diskcache_folders_and_sweeps(tmp_path: Path
         stale = store.write_dataset_file(b"replaced")
         with store.transaction():
             store._retire(stale, time.time() - 3600)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(options, "sweep", events.append)
     swept = events[-1]
     assert swept["kind"] == "swept" and sorted(swept["old_caches"]) == sorted(OLD_CACHE_DIRS)
@@ -307,7 +310,7 @@ def test_unreadable_saved_records_are_unknown_not_missing(
             return original(self, kind, paths)
         monkeypatch.setattr(CacheStore, "read_records", failing_summaries)
     for helper in (list_folder, scan):
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         helper(str(source.parent), events.append, options)
         entry = next(e for event in events if event["kind"] == "entries" for e in event["entries"] if e["path"] == path)
         # Left out, so the GUI keeps what it knew; never "not cached" or "no summary".
@@ -385,7 +388,7 @@ def test_cache_that_cannot_open_is_unknown_not_missing(monkeypatch: pytest.Monke
         raise StoreError("Disk cache could not be opened: database is locked")
     monkeypatch.setattr(CacheStore, "__init__", cannot_open)
     for helper in (list_folder, scan):
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         helper(str(source.parent), events.append, options)
         status = next(event for event in events if event["kind"] == "status")
         entry = next(e for event in events if event["kind"] == "entries" for e in event["entries"])
@@ -414,8 +417,8 @@ def test_clear_while_a_load_starts_up_is_not_undone(monkeypatch: pytest.MonkeyPa
         # The load is already running, initialising pandas, when the folder's cache is cleared.
         if name == "pandas" and not cleared:
             cleared.append(True)
-            from helab import io_helper
-            with io_helper._cache_store(options["directory"], [path]) as store:
+            from helab.io_ops import stores
+            with stores._cache_store(options["directory"], [path]) as store:
                 store.remove(("datasets",), [path])
         return original_import(name, *args, **kwargs)
     monkeypatch.setattr(builtins, "__import__", clear_while_importing)
@@ -426,27 +429,27 @@ def test_clear_while_a_load_starts_up_is_not_undone(monkeypatch: pytest.MonkeyPa
     assert not any(event["kind"] == "cache_saved" for event in events)
     failed = next(event for event in events if event["kind"] == "cache_save_failed")
     assert failed["message"] == "Cache was cleared before saving completed"
-    from helab import io_helper
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    from helab.io_ops import stores
+    with stores._cache_store(options["directory"], [path]) as store:
         assert store.read_dataset_row(path).missing
 
 
 def test_clear_while_a_scan_reads_saved_results_is_not_undone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    from helab import io_helper
+    from helab.io_ops import metadata
     source = data_folder(tmp_path)
     path, options = str(source), options_for(tmp_path)
     scan(path, lambda event: None, options)
-    original = io_helper._send_saved
+    original = metadata._send_saved
 
     def clear_while_restoring(*args: Any) -> Any:
         # The scan is already running, restoring saved results, when they are cleared.
         with CacheStore(options["directory"]) as store:
             store.remove(("summaries", "histories"))
         return original(*args)
-    monkeypatch.setattr(io_helper, "_send_saved", clear_while_restoring)
-    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(metadata, "_send_saved", clear_while_restoring)
+    events: list[Any] = []
     scan(path, events.append, options, manual=True)
     assert any(event["kind"] == "status" for event in events)
     assert any(e["kind"] == "scan_history_warning" and "cleared" in e["message"] for e in events)

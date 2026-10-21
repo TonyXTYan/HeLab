@@ -116,7 +116,7 @@ def test_missing_default_folder_is_created(cleanup_settings: Callable[[], QSetti
     assert target.is_dir() and settings.value("dir_caches") == str(target)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="chmod cannot make a Windows folder read-only")
+@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="needs POSIX permissions")
 def test_read_only_saved_folder_is_replaced(cleanup_settings: Callable[[], QSettings], tmp_path: Path) -> None:
     # E.g. a cache path saved by an elevated session; it used to crash HeLab at import.
     locked, fallback = tmp_path / "locked", tmp_path / "fallback"

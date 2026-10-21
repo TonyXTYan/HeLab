@@ -31,7 +31,8 @@ jobs:
     name: Tests
     if: inputs.enabled
     runs-on: ${{ inputs.os }}-latest
-    timeout-minutes: 15
+    # The suite takes about 3-10 min by OS and runner; the limit catches a hang, with headroom.
+    timeout-minutes: 20
     continue-on-error: ${{ inputs.experimental }}
     env:
       QT_QPA_PLATFORM: offscreen
@@ -84,7 +85,13 @@ jobs:
             source venv/bin/activate
           fi
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          # Python 3.13 (required) installs the pinned lock; compatibility jobs, and a recovery
+          # build of a tag older than the lock, install requirements.txt unpinned.
+          if [ "${{ inputs.python-minor }}" = "13" ] && [ -f requirements.lock ]; then
+            pip install -r requirements.lock
+          else
+            pip install -r requirements.txt
+          fi
           pip install -e .
 
       - name: Run Tests
@@ -95,7 +102,9 @@ jobs:
           else
             source venv/bin/activate
           fi
-          pytest -n 4 --verbose --cache-clear --cov=helab --junitxml=junit.xml -o junit_family=legacy --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
+          # One run gives the results and the coverage (pytest-cov merges the xdist workers' data);
+          # macOS uploads its coverage.xml below.
+          pytest -n 4 --verbose -rR --cache-clear --cov=helab --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
@@ -103,12 +112,6 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           report_type: test_results
-
-      - name: Run test with code coverage report
-        if: inputs.python-minor == '13' && inputs.os == 'macos'
-        run: |
-          source venv/bin/activate
-          pytest --cov=helab --cov-report=xml --cov-report=term --ignore=tests/test_typing.py --cache-clear --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
 
       - name: Upload Code Coverage Report
         if: inputs.python-minor == '13' && inputs.os == 'macos'

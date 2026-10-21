@@ -13,7 +13,7 @@ from pytestqt.qtbot import QtBot
 from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QDialog, QMessageBox, QWidget
 
-from helab.io_helper import cache_admin
+from helab.io_ops.admin import cache_admin
 from helab.utils.cache_store import CacheStore, DatasetRecord, _record_bytes, trim_estimate
 from helab.utils.constants import (
     DISK_BUDGET_SETTING, RAM_BUDGET_SETTING, read_disk_budget, read_io_concurrency, read_ram_budget,
@@ -415,7 +415,7 @@ def test_the_helper_records_a_lower_budget_only_if_the_data_fits(tmp_path: Path)
     set_at = time.time()
     options: dict[str, Any] = {"directory": root, "budget": GB, "budget_set_at": set_at - 60}
     for budget, recorded in ((usage - 1000, False), (usage + 1000, True)):
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         cache_admin(options, "budget", events.append, budget=budget, budget_set_at=set_at, fit=True)
         assert events[-1]["recorded"] is recorded and events[-1]["usage"] == usage
         with CacheStore(root) as store:
@@ -695,7 +695,7 @@ def test_saves_restored_from_the_store_ask_with_its_numbers(
     monkeypatch.setattr("helab.utils.folder_cache._disk_budget", budget)
     # Set now: newer than any budget an earlier test recorded in this worker's store.
     monkeypatch.setattr("helab.utils.folder_cache._disk_budget_set_at", time.time())
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(store_options(), "inventory", events.append)
     service, cache = frozen_cache(monkeypatch)
     parent = QWidget()
@@ -848,7 +848,7 @@ def test_helpers_report_usage_with_results(tmp_path: Path) -> None:
             "ram_bytes": 1, "rows": 1, "shots": 1, "fingerprint": [], "problematic": [], "info": {}}, guard)
         usage = store.usage()
     for action, params in (("sweep", {}), ("trim", {"budget": GB}), ("discard", {"pending_id": "none"})):
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         cache_admin(options, action, events.append, **params)
         result = events[-1]
         assert result["usage"] == usage and result["usage_seq"][0] == store.store_id, action
@@ -866,7 +866,7 @@ def test_a_slow_inventory_never_undoes_a_newer_clear(
             "ram_bytes": 1, "rows": 1, "shots": 1, "fingerprint": [], "problematic": [], "info": {}},
             store.start_dataset_job("/a"))
         slow = store.inventory(budget)  # Measured now; its helper is still sizing files.
-    cleared: list[dict[str, Any]] = []
+    cleared: list[Any] = []
     cache_admin(options, "clear", cleared.append)
     after = cleared[-1]["usage"]
     assert slow["usage"] >= 0.8 * budget > after
@@ -894,7 +894,7 @@ def test_a_running_load_saves_within_a_budget_lowered_after_it_started(tmp_path:
         usage = store.usage()
     started = time.time() - 60  # The load's request, with the old, large budget.
     lowered = usage + 50_000
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin({"directory": root, "budget": lowered, "budget_set_at": started + 30}, "budget", events.append)
     assert events[-1]["budget"] == lowered
     with CacheStore(root) as store:
@@ -950,7 +950,7 @@ def test_a_trim_records_its_budget_only_if_it_runs(tmp_path: Path, monkeypatch: 
             cache_admin(options, "trim", lambda event: None, budget=5000, budget_set_at=set_at)
     with CacheStore(root) as store:
         assert store.record_budget(GB, set_at - 30) == GB  # Not recorded.
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(options, "trim", events.append, budget=5000, budget_set_at=set_at)
     with CacheStore(root) as store:
         assert store.record_budget(GB, set_at - 30) == 5000 and store.usage() > 5000 > 0

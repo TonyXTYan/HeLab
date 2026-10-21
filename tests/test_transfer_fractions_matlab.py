@@ -33,6 +33,7 @@ import numpy.typing as npt
 import pytest
 
 from helab.analysis.dataset_view import DatasetView, build_view
+from helab.analysis.orders import Fractions, Orders
 from helab.analysis.parameters import effective
 from helab.analysis.results import AnalysisContext
 from helab.scripts.standard import transfer_fractions as tf
@@ -78,17 +79,17 @@ def view(shots: dict[int, npt.NDArray[np.float64]]) -> DatasetView:
                               {"fingerprint": fingerprint, "source": "files", "loaded_at": 1_700_000_000.0}, 0))
 
 
-def helab(shots: dict[int, npt.NDArray[np.float64]], values: dict[str, Any]) -> tf.Fractions:
+def helab(shots: dict[int, npt.NDArray[np.float64]], values: dict[str, Any]) -> Fractions:
     script = tf.TransferFractions()
     data = view(shots)
     context = AnalysisContext("a1", "Plot", data, effective(script.parameters("Plot"), values),
                               script.get_metadata().identity())
     result = script.compute("Plot", context)
-    assert isinstance(result, tf.Fractions)
+    assert isinstance(result, Fractions)
     return result
 
 
-def matlab_windows(orders: tf.Orders) -> list[tuple[float, float]]:
+def matlab_windows(orders: Orders) -> list[tuple[float, float]]:
     """HeLab's order windows, then the wide window from the first one's start to the last one's end."""
     windows = [orders.window(order) for order in orders.numbers]
     return [*windows, (windows[0][0], windows[-1][1])]
@@ -162,7 +163,7 @@ def test_shots_are_left_out_by_the_counting_box_not_the_import_box() -> None:
 
 
 def test_an_event_on_a_window_edge() -> None:
-    orders = tf.Orders(CENTRE, SPACING, SPACING / 2, 1)
+    orders = Orders(CENTRE, SPACING, SPACING / 2, 1)
     edge = orders.window(0)[1]  # order 0's end, order +1's start
     events = np.column_stack((np.concatenate(([edge], np.full(60, CENTRE))), np.zeros((61, 2))))
     ours = helab({1: events}, manual(minimum=0) | {"orders_each_side": 1})

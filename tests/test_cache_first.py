@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 
-from helab.io_helper import load, read_cached
+from helab.io_ops.loading import load, read_cached
 from helab.utils.folder_cache import FolderCache
 from helab.utils.io_service import FOREGROUND, LOCAL, IORequest, IOService
 from helab.views.FolderExplorer import FolderExplorer
@@ -32,7 +32,7 @@ def source_folder(tmp_path: Path, shots: int = 2) -> Path:
 def run_load(source: Path, tmp_path: Path, **kwargs: Any) -> list[dict[str, Any]]:
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append, cache_options(tmp_path), **kwargs)
     return events
 
@@ -71,7 +71,7 @@ def test_cached_read_never_touches_the_source_folder(monkeypatch: pytest.MonkeyP
     first = loaded(run_load(source, tmp_path))
     output = tmp_path / "cached"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     with monkeypatch.context() as patched:
         guard_source(patched, source, folder_stat=False)
         read_cached(str(source), str(output), events.append, cache_options(tmp_path))
@@ -91,7 +91,7 @@ def test_cached_partial_load_progress_counts_unreadable_files(tmp_path: Path) ->
     assert first["files"] == 1 and first["failed_files"] == 1
     output = tmp_path / "cached"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     read_cached(str(source), str(output), events.append, cache_options(tmp_path))
     progress = [event for event in events if event["kind"] == "progress"]
     assert progress[-1] == {"kind": "progress", "progress": 1.0, "checked_files": 2,
@@ -180,7 +180,7 @@ def test_full_check_finds_a_file_rewritten_in_place(tmp_path: Path) -> None:
 def test_files_still_being_written_are_left_for_the_next_load(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, newline: str | None,
 ) -> None:
-    monkeypatch.setattr("helab.io_helper.SETTLE_SECONDS", 60.0)
+    monkeypatch.setattr("helab.io_ops.fingerprints.SETTLE_SECONDS", 60.0)
     source = source_folder(tmp_path)
     settled_file = source / "d_txy_forc1.txt"
     settled_file.write_text("1,2,3\n", newline=newline)
@@ -204,7 +204,7 @@ def test_files_still_being_written_are_left_for_the_next_load(
     assert saved["unsettled"] == 1
     output = tmp_path / "cached-unsettled"
     output.mkdir()
-    cached_events: list[dict[str, Any]] = []
+    cached_events: list[Any] = []
     read_cached(str(source), str(output), cached_events.append, cache_options(tmp_path))
     cached_progress = [event for event in cached_events if event["kind"] == "progress"][-1]
     # Cached reads give the same counts; they read no TXY files, so they have no read counters.
@@ -220,10 +220,10 @@ def test_files_still_being_written_are_left_for_the_next_load(
 
 
 def test_file_growing_while_read_is_not_kept(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from helab import io_helper
+    from helab.io_ops import infra
     source = source_folder(tmp_path)
     growing = source / "d_txy_forc2.txt"
-    read_file = io_helper._read_txy_file
+    read_file = infra._read_txy_file
 
     def append_after_read(filename: str, reason: str) -> Any:
         frame = read_file(filename, reason)
@@ -232,7 +232,7 @@ def test_file_growing_while_read_is_not_kept(monkeypatch: pytest.MonkeyPatch, tm
                 file.write("4,5,6\n")
         return frame
 
-    monkeypatch.setattr(io_helper, "_read_txy_file", append_after_read)
+    monkeypatch.setattr(infra, "_read_txy_file", append_after_read)
     events = run_load(source, tmp_path)
     result = loaded(events)
     assert [event["shot"] for event in events if event["kind"] == "shot"] == [1]
@@ -398,12 +398,12 @@ def test_selecting_a_cached_folder_with_saved_counts_does_not_list_it(
 def test_scan_and_load_agree_while_a_file_is_still_being_written(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    from helab.io_helper import scan
-    monkeypatch.setattr("helab.io_helper.SETTLE_SECONDS", 60.0)
+    from helab.io_ops.scanning import scan
+    monkeypatch.setattr("helab.io_ops.fingerprints.SETTLE_SECONDS", 60.0)
     source = source_folder(tmp_path)
     old = time.time() - 120
     os.utime(source / "d_txy_forc1.txt", (old, old))
-    statuses: list[dict[str, Any]] = []
+    statuses: list[Any] = []
     scan(str(source), lambda event: statuses.append(event) if event["kind"] == "status" else None)
     # Otherwise the scan would report a change and drop the data just loaded.
     assert statuses[0]["txy"] == [1, 2] and statuses[0]["unsettled"] == 1
@@ -530,7 +530,7 @@ def test_check_waiting_for_a_failed_cached_read_loads_the_files_instead(
     ("high", 50, 12), ("high", 1000, 32), ("high", 5, 5),
 ])
 def test_check_levels_sample_the_ends_and_random_files(level: str, count: int, checked: int) -> None:
-    from helab.io_helper import _sample_indices
+    from helab.io_ops.fingerprints import _sample_indices
     first = _sample_indices(count, level)
     assert first is not None and len(first) == checked and len(set(first)) == checked
     assert count - 1 in first and (level == "swift" or 0 in first)
@@ -538,9 +538,9 @@ def test_check_levels_sample_the_ends_and_random_files(level: str, count: int, c
 
 
 def test_helper_default_check_level_matches_the_settings_default() -> None:
-    from helab import io_helper
+    from helab.io_ops import fingerprints
     from helab.utils import constants
-    assert io_helper.DEFAULT_CHECK_LEVEL == constants.DEFAULT_CHECK_LEVEL
+    assert fingerprints.DEFAULT_CHECK_LEVEL == constants.DEFAULT_CHECK_LEVEL
 
 
 def test_full_check_level_always_lists_the_folder(tmp_path: Path) -> None:

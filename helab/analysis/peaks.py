@@ -1,12 +1,13 @@
 """Peaks in a histogram of arrival times (T), for the release-time detection (D8).
 
-The method is Transfer fractions' order detection's (``transfer_fractions.detect``): bins
+The method is Transfer fractions' order detection's (``helab.analysis.orders.detect``): bins
 half the shortest T interval holding a tenth of the events (inside the tallest peak, whatever
 the spread of stray events), a light Gaussian smoothing, ``scipy.signal.find_peaks`` with a
 prominence floor, each peak's full width at half maximum on its nearer side, and its position
 refined to the mean time of the events near it. It is written here on its own rather than
-imported, so the plot keeps its behaviour and its module; Transfer fractions could switch to
-it later (proposed for Tony: the only part the two may share). Where it differs:
+imported, so the plot keeps its behaviour; Transfer fractions could switch to it later
+(proposed for Tony: the only part the two may share). ``orders`` already takes this module's
+``half_maximum_width`` and ``refine`` (the same code). Where it differs:
 - few events: the bins are half the shortest interval holding ``DENSEST_EVENTS``, and
   ``MIN_BINS`` gives way to ``MIN_EVENTS_PER_BIN``, so a sparse cloud's top still clears the
   prominence floor;

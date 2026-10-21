@@ -31,6 +31,13 @@ ROOT_LAYOUT_VERSION = LAYOUT_VERSION
 ROOT_STORE_DIRNAME = STORE_DIRNAME
 DATASET_FORMAT = "blosc-pickle-1"
 BUSY_TIMEOUT = 30.0
+# Opening while another process's last connection closes (and removes the WAL files) can fail with
+# SQLite's "disk I/O error" on Windows, which the busy timeout doesn't cover: try again shortly,
+# 5 attempts over about 1.5 s.
+OPEN_ATTEMPTS = 5
+OPEN_RETRY_SECONDS = 0.1
+_sleep = time.sleep  # (Tests replace it.)
+OPEN_FAILED = "Disk cache could not be opened"
 # Retired dataset files outlive any reader that looked up their row.
 RETIRE_GRACE = 600.0
 # A file still open (Windows) is retried this much later.
@@ -358,17 +365,26 @@ class CacheStore:
         # ``verified_volumes``): a folder there has no key until they are verified.
         self._unverified_mounts: list[str] = []
         self._writing = False
-        try:
-            self._conn = self._open(busy_timeout)
-            # (A read-only store may lack the column or the table: it then has no raw times, and
-            # no folder sets constants.)
-            self._raw_times = "raw_times" if _has_raw_times(self._conn) else "'[]'"
-            self._constants_table = _has_table(self._conn, "folder_constants")
-            meta = self._meta()
-        except sqlite3.Error as exc:
-            raise StoreError(f"Disk cache could not be opened: {exc}") from exc
-        self.layout_version = int(meta["layout_version"])
-        self.store_id = str(meta["store_id"])
+        for attempt in range(OPEN_ATTEMPTS):
+            conn: sqlite3.Connection | None = None
+            self.read_only = False  # (An attempt that failed may have set it.)
+            try:
+                self._conn = conn = self._open(busy_timeout)
+                # (A read-only store may lack the column or the table: it then has no raw times, and
+                # no folder sets constants.)
+                self._raw_times = "raw_times" if _has_raw_times(self._conn) else "'[]'"
+                self._constants_table = _has_table(self._conn, "folder_constants")
+                meta = self._meta()
+                self.layout_version = int(meta["layout_version"])
+                self.store_id = str(meta["store_id"])
+                break
+            except sqlite3.Error as exc:
+                if conn is not None:
+                    conn.close()
+                if _transient_io_error(exc) and attempt + 1 < OPEN_ATTEMPTS:
+                    _sleep(OPEN_RETRY_SECONDS * 2 ** attempt)
+                    continue
+                raise StoreError(f"{OPEN_FAILED}: {exc}") from exc
 
     # Opening and transactions
 
@@ -1687,6 +1703,14 @@ def _has_raw_times(conn: sqlite3.Connection) -> bool:
 
 def _has_table(conn: sqlite3.Connection, name: str) -> bool:
     return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone() is not None
+
+
+def _transient_io_error(exc: sqlite3.Error) -> bool:
+    """SQLite's SQLITE_IOERR ("disk I/O error"), by its code when Python gives it, else its text."""
+    code = getattr(exc, "sqlite_errorcode", None)
+    if isinstance(code, int):
+        return code & 0xFF == sqlite3.SQLITE_IOERR
+    return "disk I/O error" in str(exc)
 
 
 def _migrate(conn: sqlite3.Connection) -> None:

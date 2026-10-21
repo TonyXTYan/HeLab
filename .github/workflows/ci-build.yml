@@ -97,7 +97,13 @@ jobs:
             source venv/bin/activate
           fi
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          # Python 3.13 (required) installs the pinned lock; compatibility jobs, and a recovery
+          # build of a tag older than the lock, install requirements.txt unpinned.
+          if [ "${{ inputs.python-minor }}" = "13" ] && [ -f requirements.lock ]; then
+            pip install -r requirements.lock
+          else
+            pip install -r requirements.txt
+          fi
           pip install -e .
 
       - name: Test the older tagged commit before rebuilding recovery assets

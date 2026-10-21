@@ -86,9 +86,11 @@ class ScriptsManager:
 
     def _clear_directory_scripts(self, directory: str) -> None:
         """Remove all scripts from the specified directory"""
+        # By the file each was loaded from (its id's first part), not the path its metadata
+        # gives, which a script may set to anything.
         to_remove = [
-            script_id for script_id, metadata in self._metadata.items()
-            if os.path.dirname(metadata.file_path) == directory
+            script_id for script_id in self._metadata
+            if os.path.normcase(os.path.dirname(script_id.rpartition("::")[0])) == os.path.normcase(directory)
         ]
 
         for script_id in to_remove:
@@ -122,8 +124,11 @@ class ScriptsManager:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             self._register_module(module, file_path, digest)
-        except Exception as e:
-            raise ScriptLoadError(f"Failed to load script: {e}")
+        except (Exception, SystemExit) as e:
+            # SystemExit too: a script that exits at import (sys.exit, argparse on HeLab's argv)
+            # fails alone, never Load Scripts… or HeLab.
+            raise ScriptLoadError(f"Failed to load script: {e!r}" if isinstance(e, SystemExit)
+                                  else f"Failed to load script: {e}")
 
     def load_module(self, module: ModuleType) -> None:
         """Register the scripts of an already imported module (HeLab's bundled analyses,
@@ -138,11 +143,16 @@ class ScriptsManager:
         # Find HelabAnalysisScript subclasses. A single file may define
         # more than one script class, so all matches are loaded.
         found_any = False
+        abstract: List[str] = []
         for name, obj in inspect.getmembers(module):
             if (inspect.isclass(obj) and
                 issubclass(obj, HelabAnalysisScript) and
                 obj != HelabAnalysisScript and
                 obj.__module__ == module.__name__):
+                if inspect.isabstract(obj):
+                    # A helper base class the file's scripts share, or a script missing a method.
+                    abstract.append(f"{obj.__qualname__} (missing {', '.join(sorted(obj.__abstractmethods__))})")
+                    continue
 
                 # Create instance to get metadata
                 script = obj()
@@ -169,7 +179,10 @@ class ScriptsManager:
                 logging.info(f"Loaded script {metadata.name} from {file_path}")
 
         if not found_any:
-            raise ScriptLoadError("No HelabAnalysisScript subclass found")
+            raise ScriptLoadError("No HelabAnalysisScript subclass found" if not abstract
+                                  else f"No complete script: abstract {'; '.join(abstract)}")
+        if abstract:
+            logging.info(f"Skipped abstract classes in {file_path}: {'; '.join(abstract)}")
 
     def get_groups(self) -> List[str]:
         """Get list of all script groups"""

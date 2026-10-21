@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import math
+import gc
 import threading
+import weakref
 import time
 from pathlib import Path
 from typing import Any, List, Optional
@@ -838,7 +840,7 @@ def test_stop_keeps_a_blocked_worker_registered(qtbot: QtBot, harness: Harness) 
         runner.submit(script, script.get_metadata(), "Plot", view)
     script.release.set()
     assert harness.finished(qtbot, first.job_id).state == "cancelled"
-    qtbot.waitUntil(lambda: runner._thread is None, timeout=5_000)
+    qtbot.waitUntil(lambda: runner.core._thread is None, timeout=5_000)
     # Exited: the runner takes work again, on one new worker.
     again = runner.submit(script, script.get_metadata(), "Plot", view)
     assert harness.finished(qtbot, again.job_id).state == "completed"
@@ -859,3 +861,42 @@ def test_ram_results_drop_least_recent_unpinned() -> None:
     store.add(made("b"))
     store.add(made("c"))
     assert store.get("a") is not None and store.get("b") is None and len(store) == 2
+
+
+def test_an_idle_runner_is_freed_without_the_cyclic_gc() -> None:
+    """Its queue holds its signal-emitting methods weakly: dropping the last reference frees it
+    at once, on this thread, as before the queue was split out (no cycle for a later GC pass,
+    on whatever thread runs it, to collect)."""
+    gc.disable()
+    try:
+        runner = AnalysisRunner()
+        gone = weakref.ref(runner)
+        del runner
+        assert gone() is None
+    finally:
+        gc.enable()
+
+
+def test_a_running_worker_keeps_its_runner_alive(qtbot: QtBot) -> None:
+    """A runner whose job is computing stays alive with nothing else holding it (its worker does,
+    as before) and reports the job; once stopped it is freed."""
+    script = Blocking()
+    results: list[AnalysisResult] = []
+    runner = AnalysisRunner()
+    runner.finished.connect(results.append)
+    job = runner.submit(script, script.get_metadata(), "Plot", build_view(dataset()))
+    assert script.entered.wait(5)
+    alive = weakref.ref(runner)
+    del runner
+    gc.collect()
+    assert alive() is not None
+    script.release.set()
+    qtbot.waitUntil(lambda: [result.job_id for result in results] == [job.job_id], timeout=10_000)
+    held = alive()
+    assert held is not None and held.stop() is True
+    del held
+
+    def freed() -> bool:
+        gc.collect()  # (Only for what the test itself left behind: the runner has no cycle.)
+        return alive() is None
+    qtbot.waitUntil(freed, timeout=5_000)

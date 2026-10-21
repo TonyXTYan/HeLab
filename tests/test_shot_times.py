@@ -15,11 +15,13 @@ import pytest
 from PyQt6.QtWidgets import QLabel
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
+from helab.io_ops import fingerprints
+from helab.io_ops.live import live_check
+from helab.io_ops.loading import load, read_cached
+from helab.io_ops.save_held import save_held
 from helab.analysis.dataset_view import DatasetView, build_view, revise
 from helab.analysis.parameters import effective
 from helab.analysis.results import AnalysisContext, AnalysisResult
-from helab.io_helper import live_check, load, read_cached, save_held
 from helab.scripts.dld import shot_times
 from helab.utils.folder_cache import Dataset, FolderCache, dataset_raw_times
 from helab.utils.io_service import IOService
@@ -71,7 +73,7 @@ def cache_options(tmp_path: Path) -> dict[str, Any]:
 def run_load(run: Path, tmp_path: Path, **kwargs: Any) -> list[dict[str, Any]]:
     output = tmp_path / f"load-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(run), str(output), events.append, cache_options(tmp_path), **kwargs)
     return events
 
@@ -79,7 +81,7 @@ def run_load(run: Path, tmp_path: Path, **kwargs: Any) -> list[dict[str, Any]]:
 def run_cached(run: Path, tmp_path: Path) -> list[dict[str, Any]]:
     output = tmp_path / f"cached-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     read_cached(str(run), str(output), events.append, cache_options(tmp_path))
     return events
 
@@ -112,14 +114,14 @@ def dataset(path: Path, event: dict[str, Any], events: list[dict[str, Any]],
 def shot_time_stats(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """The raw files stat'ed for shot times."""
     names: list[str] = []
-    real = io_helper._raw_mtime
+    real = fingerprints._raw_mtime
 
     def counted(entry: os.DirEntry[str] | None, reason: str) -> int | None:
         if entry is not None:
             names.append(entry.name)
         return real(entry, reason)
 
-    monkeypatch.setattr(io_helper, "_raw_mtime", counted)
+    monkeypatch.setattr(fingerprints, "_raw_mtime", counted)
     return names
 
 
@@ -222,7 +224,7 @@ def test_another_run_copied_over_the_folder_gets_its_own_times(
 def test_a_raw_file_still_being_written_gets_its_time_later(
         monkeypatch: pytest.MonkeyPatch, run: Path, tmp_path: Path) -> None:
     set_mtime(run / "d2.txt", time.time())
-    monkeypatch.setattr(io_helper, "SETTLE_SECONDS", 30.0)
+    monkeypatch.setattr(fingerprints, "SETTLE_SECONDS", 30.0)
     first = loaded(run_load(run, tmp_path, no_cache=True))
     assert times(first) == {1: raw_at(1)}
     set_mtime(run / "d2.txt", raw_at(2))
@@ -235,7 +237,7 @@ def test_a_held_shot_without_a_time_gets_it_from_a_later_update_from_ram(
     later update from RAM (the shot unchanged, held, no disk cache) stats that raw file again,
     and only it: a held shot with a time is never stat'ed again."""
     set_mtime(run / "d2.txt", time.time())
-    monkeypatch.setattr(io_helper, "SETTLE_SECONDS", 30.0)
+    monkeypatch.setattr(fingerprints, "SETTLE_SECONDS", 30.0)
     first_events = run_load(run, tmp_path, no_cache=True)
     first = loaded(first_events)
     base = dataset(run, first, first_events)
@@ -313,7 +315,7 @@ def test_live_reads_new_shots_times_and_its_save_keeps_them(
     def check(**kwargs: Any) -> list[dict[str, Any]]:
         output = tmp_path / f"live-{time.monotonic_ns()}"
         output.mkdir()
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         live_check(str(run), str(output), events.append, memory, **kwargs)
         return events
 
@@ -331,7 +333,7 @@ def test_live_reads_new_shots_times_and_its_save_keeps_them(
     for shot, array in live.data.items():
         np.save(held / f"{shot}.npy", array, allow_pickle=False)
     shot_time_stats.clear()
-    saved: list[dict[str, Any]] = []
+    saved: list[Any] = []
     save_held(str(run), saved.append, cache_options(tmp_path), live.metadata["fingerprint"], [], str(held),
               raw_times=live.metadata["raw_times"])
     assert any(item["kind"] == "cache_saved" for item in saved), saved

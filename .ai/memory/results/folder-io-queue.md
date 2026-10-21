@@ -9,7 +9,7 @@ metadata:
 ---
 How the active folder browser schedules filesystem I/O, and why. Code:
 `helab/utils/io_service.py` (`IOService`), `helab/io_helper.py` (isolated
-helper processes), `helab/utils/folder_cache.py` (shared jobs per tab).
+helper processes; operations in `helab/io_ops/`), `helab/utils/folder_cache.py` (shared jobs per tab).
 
 ## Cache first (2026-10-08)
 

@@ -1,15 +1,14 @@
 import hashlib
 from pathlib import Path
-from typing import List, cast
 
 import pytest
-from PyQt6.QtWidgets import QDockWidget, QFileDialog, QMainWindow, QPushButton, QTreeWidgetItem
+from PyQt6.QtWidgets import QFileDialog, QMainWindow, QPushButton, QTreeWidgetItem
 from pytestqt.qtbot import QtBot
 
 from helab.scripts.scripts_manager import ScriptsManager
-from helab.models import TreePanelWidget
-from helab.models.ScriptTreeSelector import PlotSettingsPanel
-from helab.views.HelabMainWindow import HelabMainWindow
+from helab.views.plots.script_tree import TreePanelWidget
+from helab.views.plots.settings_panel import PlotSettingsPanel
+from helab.views.plots.workspace import PlotWorkspace
 
 # A user's script folder: an older-style script with plain actions.
 USER_SCRIPT = '''
@@ -29,12 +28,9 @@ class Logged(HelabAnalysisScript):
         CALLS.append(action_name)
 '''
 
-# Mock HelabMainWindow for testing
-class MockHelabMainWindow(QMainWindow):
-    def __init__(self) -> None:
-        super().__init__()
-        self.middle_mainwindow = QMainWindow()
-        self.dock_widgets: List[QDockWidget] = []
+def plot_area() -> PlotWorkspace:
+    """A plot area of its own window, for the Scripts panel."""
+    return PlotWorkspace(QMainWindow())
 
 
 @pytest.fixture
@@ -71,7 +67,7 @@ def test_tree_panel_lists_only_working_scripts(qtbot: QtBot) -> None:
     """HeLab's bundled analyses in two groups, the first shown: Basic plots v1, and the DLD front
     panel port's plots; each with its Plot button (Density images also Find hot spots); no
     placeholder groups."""
-    widget = TreePanelWidget(cast(HelabMainWindow, MockHelabMainWindow()))
+    widget = TreePanelWidget(plot_area())
     qtbot.addWidget(widget)
     assert [widget.group_selector.itemText(i) for i in range(widget.group_selector.count())] == [
         "Basic plots v1", "DLD Front Panel Port"]
@@ -97,7 +93,7 @@ def test_tree_panel_lists_only_working_scripts(qtbot: QtBot) -> None:
 
 def test_load_scripts_adds_a_working_group(qtbot: QtBot, script_folder: Path,
                                            monkeypatch: pytest.MonkeyPatch) -> None:
-    widget = TreePanelWidget(cast(HelabMainWindow, MockHelabMainWindow()))
+    widget = TreePanelWidget(plot_area())
     qtbot.addWidget(widget)
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(script_folder))
     widget.load_dir_button.click()
