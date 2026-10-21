@@ -43,7 +43,12 @@ def producer(cache: FolderCache, path: str, operation: str) -> IORequest:
 
 def replay(qtbot: QtBot, cache: FolderCache, path: str, operation: str,
            helper: Callable[[Callable[[Any], None]], None]) -> None:
-    """Send a real helper's events for the queued request, then wait for tab delivery."""
+    """Send a real helper's events for the queued request, then wait for tab delivery.
+
+    Some requests are submitted from a posted call (Refresh's details, ``QTimer.singleShot(0)``),
+    so wait for the request first."""
+    qtbot.waitUntil(lambda: (operation, path) in cache.jobs and any(
+        r.owner == cache.jobs[(operation, path)].owner for r in cache.service.pending))
     request = producer(cache, path, operation)
 
     def send(event: Any) -> None:
@@ -424,8 +429,8 @@ def test_refresh_cancels_only_automatic_subscriptions_and_suppresses_new_checks(
     assert ("details", child) not in cache.jobs
     replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
     assert not explorer.model.refreshing
-    # The details Refresh cancelled run again once it finishes.
-    assert cache.has_request(explorer.model.owner, "details", child)
+    # The details Refresh cancelled run again once it finishes (from a posted call).
+    qtbot.waitUntil(lambda: cache.has_request(explorer.model.owner, "details", child))
     cache.cancel(explorer.model.owner, "details", child)
     service.max_operations = 2  # The surviving manual check still occupies one slot.
     explorer._check_visible_folders()
