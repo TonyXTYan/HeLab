@@ -169,18 +169,25 @@ def test_a_known_marker_made_invalid_is_forgotten_with_a_warning(share: Path, tm
     assert not root_rows(tmp_path) and (share / ".helab-root").read_text() == "{broken"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "helab/io_ops/markers.py:46-50 forgets a known root whose marker turned invalid but sends only a "
-    "cache_warning, not the root_changed a removed marker gets (:36-40), so FolderCache "
-    "(helab/utils/folder_cache.py:2215, _root_gone) keeps the folder in data_roots and the old root's "
-    "RAM state for the session"))
 def test_a_known_marker_made_invalid_is_reported_gone_like_a_removed_one(share: Path, tmp_path: Path) -> None:
+    """``FolderCache`` drops a root, its badge and the RAM state under it only on ``root_changed``
+    (``folder_cache.py``, ``_root_gone``): an invalid marker must say so as a removed one does."""
     placed(share, tmp_path)
     rewrite(share / ".helab-root", "{broken")
     events: Events = []
     list_folder(str(share), events.append, options(tmp_path))
-    assert any(event["kind"] == "root_changed" and event["path"] == str(share) and "uuid" not in event
-               for event in events)
+    assert [(event["path"], event["location"], event["reason"]) for event in events
+            if event["kind"] == "root_changed"] == [(str(share), LOCATION, "marker invalid")]
+    events.clear()
+    list_folder(str(share), events.append, options(tmp_path))  # Already forgotten: said once.
+    assert not [event for event in events if event["kind"] == "root_changed"]
+
+
+def test_an_invalid_marker_never_known_changes_no_root(share: Path, tmp_path: Path) -> None:
+    (share / ".helab-root").write_text("{broken", encoding="utf-8")
+    events: Events = []
+    list_folder(str(share), events.append, options(tmp_path))
+    assert not [event for event in events if event["kind"] == "root_changed"] and not root_rows(tmp_path)
 
 
 # root_reassign

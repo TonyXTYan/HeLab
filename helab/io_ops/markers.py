@@ -44,9 +44,12 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                 send({"kind": "cache_warning", "message": f"Cannot read {path}/.helab-root: {exc}"})
                 return False
             except ValueError as exc:
-                if old is not None:
-                    store.forget_root(location)
                 send({"kind": "cache_warning", "message": f"Invalid {path}/.helab-root: {exc}"})
+                if old is not None:
+                    # Gone like a removed marker: the app drops the root and what RAM holds under it.
+                    store.forget_root(location)
+                    send({"kind": "root_changed", "path": path, "location": location,
+                          "reason": "marker invalid"})
                 return old is not None
             duplicates = store.other_root_locations(marker.uuid, location)
             decision: Literal["confirmed", "pending"] = (

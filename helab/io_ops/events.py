@@ -583,7 +583,7 @@ class RootFoundEvent(TypedDict):
 
 
 class RootChangedEvent(TypedDict):
-    """A location's root forgotten: its marker removed or deleted, or the user forgot it."""
+    """A location's root forgotten: its marker removed, deleted or made invalid, or the user forgot it."""
     kind: Literal["root_changed"]
     path: str
     location: str
