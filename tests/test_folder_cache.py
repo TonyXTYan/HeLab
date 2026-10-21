@@ -116,6 +116,8 @@ def test_two_tabs_share_snapshot_arrays_and_default_resolution(
     assert first.folder_opened_data is not None
     second = explorer_for_test(qtbot, path)
     qtbot.waitUntil(lambda: second.folder_opened_data is not None)
+    # Its listing and data come from replays in posted batches: let them all arrive.
+    qtbot.waitUntil(lambda: not cache._deliveries)
     assert not service.pending
     assert second.folder_opened_data is not None
     assert first.folder_opened_data is not second.folder_opened_data
