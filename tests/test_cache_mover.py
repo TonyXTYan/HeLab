@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator, TypeVar
 
 import psutil
 import pytest
@@ -102,6 +102,19 @@ def hold_in_another_process(path: str, seconds: float = 30) -> subprocess.Popen[
     return process
 
 
+T = TypeVar("T")
+
+
+def free_soon(take: Callable[[], T], seconds: float = 10.0) -> T:
+    """``take()`` once it succeeds. Windows releases a killed process's file locks a little
+    after the process ends ("depends upon available system resources", LockFileEx), so a lock
+    may still be held right after ``wait()``; POSIX releases it at once."""
+    deadline = time.monotonic() + seconds
+    while not (result := take()) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return result
+
+
 def test_a_lock_is_exclusive_and_released_when_its_process_ends(tmp_path: Path) -> None:
     path = str(tmp_path / "cache.lock")
     first, second = FileLock(path), FileLock(path)
@@ -116,7 +129,7 @@ def test_a_lock_is_exclusive_and_released_when_its_process_ends(tmp_path: Path) 
     finally:
         other.kill()
         other.wait()
-    assert first.try_lock()
+    assert free_soon(first.try_lock)
     first.unlock()
 
 
@@ -130,6 +143,7 @@ def test_a_move_is_refused_while_another_helab_or_a_move_helper_runs(tmp_path: P
     finally:
         other.kill()
         other.wait()
+    assert free_soon(lambda: other_instances(app) == [])
     # A move helper still running (e.g. deleting the old folder) blocks the next move.
     helper = hold_in_another_process(cache_locks.move_lock(app).path)
     try:
@@ -138,8 +152,8 @@ def test_a_move_is_refused_while_another_helab_or_a_move_helper_runs(tmp_path: P
     finally:
         helper.kill()
         helper.wait()
-    lock, reason = lock_for_move(app, "move")
-    assert lock is not None and not reason and other_instances(app) == []
+    lock = free_soon(lambda: lock_for_move(app, "move")[0])
+    assert lock is not None and other_instances(app) == []
     lock.unlock()
 
 
