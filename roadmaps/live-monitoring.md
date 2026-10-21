@@ -59,7 +59,7 @@ Decided by Tony 2026-10-13; periodic saves decided 2026-10-15:
   either way: the source files remain, so the next check reads only the shots
   that weren't saved. A crash is the same. The same quit save applies to an
   ordinary finished load's background save (`disk_cache_pending`), today
-  cancelled at quit ([known issue](_readme.md#known-issues)).
+  cancelled at quit ([known issue](known-issues.md)).
 - Auto-saves obey the disk budget, the folder's Don't cache flag and the
   pending-save questions like any load's save.
 

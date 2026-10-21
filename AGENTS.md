@@ -16,6 +16,7 @@ Two repos exist: this one (`TonyXTYan/HeLab`) is the development branch; `HeBECA
 
 - `.ai/coding-workspace.md` — shared AI-workspace conventions for Tony's repos (what goes in memory vs sessions, working rules).
 - `roadmaps/_readme.md` — the product overview, single priority/completion list and feature-plan index. Add new product items there, not to README or memory.
+- `roadmaps/known-issues.md` — bugs, gaps and flaky tests (a test that needed a `RERUN` stays listed until its cause is found), open and recently fixed with their commits.
 - `roadmaps/` — ongoing feature documents: purpose, scope, dependencies, acceptance criteria and open decisions. Link each from `_readme.md`; do not duplicate its priority/completion checklist. Session-specific investigations and validation evidence stay in `.ai/sessions/`.
 - `.ai/maestri-setup.md` — human guide to setting up Maestri (coordinator, floors, setup hook, landing) for the [agent workflow](roadmaps/agent-workflow.md).
 - `.ai/MANUAL_TODO.md` — ongoing manual-action list, including native UI checks, real-volume testing and release validation. Detailed results and evidence belong in `.ai/sessions/`, linked from the item.

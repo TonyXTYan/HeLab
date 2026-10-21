@@ -1,8 +1,8 @@
 # HeLab Manual To-do
 
 The ongoing list of work requiring manual action, including native UI checks,
-real-volume testing and release validation. Product features and known issues
-belong in the [roadmap overview](../roadmaps/_readme.md).
+real-volume testing and release validation. Product features belong in the
+[roadmap overview](../roadmaps/_readme.md), known issues in [known-issues.md](../roadmaps/known-issues.md).
 
 Keep items concise and tick them when completed. Record detailed results, tested
 commit, OS/build and reproductions in `.ai/sessions/`, linked from the item.

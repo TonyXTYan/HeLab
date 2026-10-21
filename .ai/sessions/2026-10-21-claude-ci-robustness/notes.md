@@ -54,3 +54,10 @@ reran once on Windows, and passed.
 5. Proposed for `roadmaps/_readme.md` Known issues:
    - tick the two-tabs and two-step-browse flakes (fixed);
    - add the Windows quitting-test flake (diagnostics in place), the Matplotlib transfer-fractions worker crash on dev, and the marker decision above.
+
+## Tony's answers (2026-10-21)
+
+1. **Invalid `.helab-root`:** fix it. It now sends `root_changed` (reason `marker invalid`), as a removed marker does (`7b0f95b`).
+2. **`helab/utils/synchronised_dict.py`:** keep it. It isn't for multi-machine work. It is a vendored thread-safe dict (B3W/Synchronized-Dict, MIT) that tracked the old browser's worker threads, then held the Dash server's plots until `d33bb61` (2026-10-19) replaced it with atomic per-plot snapshots. It has been unused since.
+3. **Doubled prefix:** patch it. The prefix is said once now (`95f2309`).
+4. **Known issues:** a dedicated `roadmaps/known-issues.md`, moved out of `_readme.md`, with this session's findings, its fixes (with commits) and the flakes left open. `_readme.md`, AGENTS.md, MANUAL_TODO, MEMORY and `live-monitoring.md` point to it.

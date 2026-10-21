@@ -24,4 +24,4 @@ See `.ai/coding-workspace.md` for what belongs here vs `.ai/sessions/`.
 
 ## TODO
 
-Open work, known issues and planned features: [roadmap overview](../../roadmaps/_readme.md).
+Open work and planned features: [roadmap overview](../../roadmaps/_readme.md); bugs and flaky tests: [known issues](../../roadmaps/known-issues.md).
