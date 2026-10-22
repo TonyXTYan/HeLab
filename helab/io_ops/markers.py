@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sqlite3
 import sys
 from typing import Any, Literal, TYPE_CHECKING
 
@@ -95,7 +96,8 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
     except UnresolvedRemotePath:
         # The subsequent optional-cache open reports the typed skip once.
         return False
-    except StoreError as exc:
+    except (StoreError, sqlite3.Error) as exc:
+        # A write's own statement or commit failing is SQLite's error, not the store's.
         send({"kind": "cache_warning", "message": f"Data root could not be recorded: {exc}"})
         return False
 

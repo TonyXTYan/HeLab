@@ -25,6 +25,18 @@ def _mount_fingerprint() -> list[list[str]] | None:
         return None
 
 
+def _may_have_root(store: CacheStore | None, path: str) -> bool:
+    """Whether this location may have a root row to forget: unknown without a store, or when its
+    roots can't be read (``_discover_root`` then says why)."""
+    from helab.utils.cache_store import StoreError
+    if store is None:
+        return True
+    try:
+        return store.root_at(store._location_key(path)) is not None
+    except StoreError:
+        return True
+
+
 def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = None) -> None:
     """Browse step 1: names only, so a slow volume shows subfolders and counts first.
 
@@ -106,8 +118,7 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
         after_key = before_key
         # A marker seen only now, or one removed (its row is forgotten). Without one, a store
         # already open tells whether this location has a row to forget.
-        if (marker_present != marker_before or not marker_present and (
-                store is None or store.root_at(store._location_key(path)) is not None)) and (
+        if (marker_present != marker_before or not marker_present and _may_have_root(store, path)) and (
                 markers._discover_root(path, marker_present, cache_options, send)):
             if store is not None:
                 store.close()

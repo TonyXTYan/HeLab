@@ -476,14 +476,21 @@ class CacheStore:
                 for location, identifier, kind, label, first, last, decision in rows]
 
     def root_at(self, location: str) -> tuple[str, str, str] | None:
-        row = self._conn.execute(
-            "SELECT uuid, label, decision FROM roots WHERE location=?", (location,)).fetchone()
+        try:
+            row = self._conn.execute(
+                "SELECT uuid, label, decision FROM roots WHERE location=?", (location,)).fetchone()
+        except sqlite3.Error as exc:
+            raise StoreError(f"Data roots could not be read: {exc}") from exc
         return (str(row[0]), str(row[1]), str(row[2])) if row is not None else None
 
     def other_root_locations(self, identifier: str, location: str) -> list[str]:
-        return [str(row[0]) for row in self._conn.execute(
-            "SELECT location FROM roots WHERE uuid=? AND location<>? AND decision='confirmed'",
-            (identifier, location))]
+        try:
+            rows = self._conn.execute(
+                "SELECT location FROM roots WHERE uuid=? AND location<>? AND decision='confirmed'",
+                (identifier, location)).fetchall()
+        except sqlite3.Error as exc:
+            raise StoreError(f"Data roots could not be read: {exc}") from exc
+        return [str(row[0]) for row in rows]
 
     def volume_locations(self) -> list[tuple[str, str, str]]:
         """Mounted-volume hints captured earlier by source helpers."""
