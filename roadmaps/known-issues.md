@@ -33,25 +33,10 @@ How to use it:
 - [ ] `roots_verify` is missing from `io_helper.CACHE_ONLY`, though `IOService.CACHE_OPERATIONS`
   lists it: sent without a cache it would fail with a vague `KeyError`. `FolderCache` always
   sends one, so it can't happen today (2026-10-21).
-- [ ] A server clock more than `SETTLE_SECONDS` (5 s) ahead of this PC's holds every new shot
-  back as still being written for the whole skew, in loads, scans, Live and saves; a folder whose
-  shots are all that young fails with "TXY files are still being written — Retry" (R-22,
-  [review](../.ai/sessions/2026-10-22-claude-codebase-review/handoff.md)) (2026-10-22). Decided (Tony, 2026-10-22): the rule stays, a file with a future
-  mtime is still being written. A clock-out-of-sync popup that stops Live is in progress on
-  `agent/codebase-review`.
-- [ ] Two HeLabs share `<app folder>/logs/helab.log`: past 2 MB, on Windows the instance that
-  loses the rollover drops its records (a traceback to stderr for each); on macOS/Linux the other
-  keeps writing into `helab.log.1` (R-11) (2026-10-22). Tony chose per-instance names
-  (`helab-<pid>.log`, 2026-10-22): in progress on `agent/codebase-review`.
 - [ ] With a server clock more than 2 s off ours, a change in the same mtime step right after a
   listing (FAT and some shares keep 2 s) isn't seen by the quick check until the folder's next
   change (the next shot) or a Retry / Refresh (R-1's residual, agreed with the reviewer)
   (2026-10-22).
-- [ ] The packaged app lacks `helab/resources/ai-icon.icns` (`HeLab.spec`'s `datas` lists only
-  `menu-right.svg`), so it logs "Icon file not found" (the bundle has its own icon) (R-12)
-  (2026-10-22). In progress on `agent/codebase-review`.
-- [ ] joblib is in `requirements.txt` with no importer left in `helab/` (R-20, `a1b75b2`)
-  (2026-10-22). In progress on `agent/codebase-review`.
 
 ## Tests and CI
 
@@ -61,6 +46,19 @@ How to use it:
   runs passed. CI now prints rerun reasons: read them at its next rerun (2026-10-22).
 
 ## Fixed
+
+Landed in `dev/v0.0.6` from the Codebase Review floor's follow-up (merge `855bdaf`, 2026-10-22):
+
+- [x] A server clock more than `SETTLE_SECONDS` (5 s) ahead of this PC's holds every new shot back
+  as still being written for the whole skew (R-22). Tony kept the rule (a file with a future mtime
+  is still being written); beyond 2 s ahead, helpers now send `clock_skew` and HeLab says the
+  computers' clocks are out of sync, once per share or volume per session (`ClockSkewWarning`),
+  and Live stops like an error stop (`cdc255f`, `bf05b59`).
+- [x] Two HeLabs shared `<app folder>/logs/helab.log` and lost records at rollover; each now writes
+  `helab-<pid>.log` (R-11, `752c638`). Nothing deletes old sessions' files yet.
+- [x] The packaged app and wheels lacked `ai-icon.icns` ("Icon file not found") (R-12, `4c9f2a8`,
+  `be12b7d`).
+- [x] joblib stayed in the requirements with no importer (R-20, `ccce741`).
 
 Landed in `dev/v0.0.6` from the Codebase Review floor (merge `0ee6ca2`, 2026-10-22); the
 commits are on `agent/codebase-review` ([handoff](../.ai/sessions/2026-10-22-claude-codebase-review/handoff.md)):

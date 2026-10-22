@@ -44,7 +44,7 @@ helab              # via entry point
 python -m helab    # via module
 ```
 
-HeLab logs to `<app folder>/logs/helab.log` (INFO and up, rotated at 2 MB, 4 older files; macOS `~/Library/Caches/HeLab/logs/`, Windows `%LOCALAPPDATA%\HeLab\logs\`). An unhandled exception, on any thread, is logged with its traceback and HeLab carries on, with a status-bar note "Unexpected error, logged: …"; the same one is logged at most once a minute, its repeats counted (`helab/utils/app_log.py`, started first in `main()`). Two HeLabs share the file today; per-instance names (`helab-<pid>.log`, Tony, 2026-10-22) are pending on `agent/codebase-review`.
+Each HeLab logs to its own `<app folder>/logs/helab-<pid>.log` (INFO and up, rotated at 2 MB, 4 older files; macOS `~/Library/Caches/HeLab/logs/`, Windows `%LOCALAPPDATA%\HeLab\logs\`). An unhandled exception, on any thread, is logged with its traceback and HeLab carries on, with a status-bar note "Unexpected error, logged: …"; the same one is logged at most once a minute, its repeats counted (`helab/utils/app_log.py`, started first in `main()`). A source file dated more than 2 s ahead of this PC's clock makes helpers send `clock_skew`: HeLab says the computers' clocks are out of sync, once per share or volume per session (`ClockSkewWarning`), and Live on that folder stops like an error stop. Nothing deletes old sessions' files.
 
 ## Testing
 
