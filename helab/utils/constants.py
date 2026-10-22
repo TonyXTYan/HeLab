@@ -8,7 +8,7 @@ from helab.build_info import get_build_info
 
 from typing import Optional
 
-from PyQt6.QtCore import QSettings, QDir, QDirIterator
+from PyQt6.QtCore import QSettings, QDir
 from helab.utils.settings_store import app_settings
 # Settings' keys (re-exported: they were defined here) and defaults: helab/utils/settings_defaults.py.
 from helab.utils.settings_defaults import (
