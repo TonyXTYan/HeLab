@@ -235,3 +235,19 @@ the recreated-store path, each reproduced with a store recreated at the same tes
    `_remember_preset` compares `set_at` across unrelated stores (A p="old" set_at=100, B
    p="replacement" set_at=10: RAM keeps "old"). On identity change drop the previous store's saved
    rows, keep this session's unsaved changes, then merge B.
+
+## Round 9 (Flint, 393d2af..3ba07eb)
+
+Round-8 probes pass. Suite 2586 passed, no RERUN; mypy/pyright clean. Two P2s, reproduced with real
+helper output and a store recreated at the same path:
+
+1. [P2] Interleaved retired/current write replies can leave quit waiting forever with no jobs left
+   (`helab/utils/folder_cache.py:1267-1268`, `:1285`, `:1316`): A's write held; store recreated as
+   B; p saved to B; A's presets event, then B's, then each job's admin_result/done. A skips its
+   rewrite because B is still writing; B skips clearing `presets_unsaved` because A is still
+   writing; neither done handler settles it. B holds p="second", `_preset_jobs` empty, yet
+   `quit_saves()==["Presets"]` and nothing is left to time out.
+2. [P2] A replacement store's failed read inherits the previous store's successful-read flag
+   (`folder_cache.py:1272-1281`): on A→B `presets_read` stays true, so B's error ("no such column:
+   kind") still shows "(none saved)" and lets `set_presets` bypass PRESETS_WAIT_READ. Reset name
+   knowledge on identity change until that store supplies rows.

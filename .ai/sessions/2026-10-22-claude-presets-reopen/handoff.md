@@ -502,3 +502,79 @@ path, so it has a new `store_id`).
 
 Checks: full suite 2586 passed, 2 skipped, 2 xfailed, **no RERUN**; mypy --strict (helab, tests)
 and pyright clean.
+
+## Review fixes, round 9 (Flint on `393d2af..3ba07eb`, round 8 accepted): the commit after `3ba07eb`, not pushed
+
+Rounds 7–9 were all edge cases of one piece of bookkeeping: which preset changes are still
+unsaved. Each round patched one answer order. This round replaces the patches with one rule that
+holds whatever order helpers answer in. The rule is written above the presets section of
+`helab/utils/folder_cache.py`, and is this:
+
+1. **RAM follows one store, the current one** (`_presets_store`).
+   - An answer from a store replaced since (`_presets_retired`) changes nothing.
+   - An answer from another store makes it current, **as at a fresh start**:
+     - everything the last store said goes, whatever its times;
+     - the new store's names are unknown (`presets_read` False) until it sends its rows, so an
+       error from it leaves them unknown;
+     - this session's unsaved changes stay, and are checked against the new store's names like
+       any change made before a first read (a name it holds is kept: `PRESET_FOUND`).
+2. **A change is written only once the current store's names are known, and only to that store.**
+   - Every write names its store (`store` in the job's params).
+   - A helper that opens another store (one recreated since) writes nothing there. It only reads
+     that store and answers with its rows and id (`helab/io_ops/admin.py`).
+   - Until the names are known, a change waits (`PRESETS_WAIT_READ`).
+3. **A change is cleared only by the current store.** That is, the current store holds that
+   change (its row with the change's `set_at`) or a later choice of that preset, whichever job's
+   answer says so.
+   - Each job records the exact changes it carries (`_preset_jobs`: key → `set_at`).
+   - Nothing defers any more to "another job writes it too" (`_preset_writing` is gone).
+4. **When a job ends**, take each change it carried that is still unsaved and that no other job
+   carries:
+   - if the job's answer came from a replaced store, the change is written again to the current
+     store, or waits for that store's names;
+   - otherwise its save failed, and the change says why ("couldn't be saved (…)") until the next
+     read tries again.
+
+So a change shown as being saved always has a job in flight that will settle it. `presets_saving`
+(and so `quit_saves`) also requires a preset job in flight, as a backstop.
+
+Flint's two findings under this rule:
+
+- **(1)** Interleaved retired/current replies. B's answer settles p by itself; A's answer is
+  ignored; at A's end p is no longer A's change. Nothing is left waiting, and quitting doesn't
+  hang.
+- **(2)** On A→B, `presets_read` is reset. B's failed read shows "⚠ Saved presets can't be read",
+  the inspector and menu say "(none known yet)", and a change waits for B's names
+  (`PRESETS_WAIT_READ`, only a read asked) instead of being written.
+
+One behaviour changed beyond the findings: a write meant for A that finds B no longer lands in
+B. Under the old code it could replace a preset in B whose name this session had never seen,
+which is the round-7 P1 over again.
+
+Tests, in `tests/test_presets_store.py`:
+
+- `test_rows_meant_for_another_store_are_never_written`: the helper's action, with a real store.
+  It is given another store's id, and no id.
+- `test_interleaved_answers_from_the_retired_and_the_current_store_leave_nothing_waiting`:
+  Flint's order, run with frozen helpers whose stores are simulated (`Stores`).
+- `test_every_order_of_the_three_writes_answers_settles_every_change`: all 90 interleavings of
+  the three write jobs (to A, and two to B). Every job's presets event comes before its end. Each
+  step checks that nothing is shown as saving without a job in flight. At the end every change is
+  settled and B holds the newest.
+- `test_a_retired_stores_answer_after_its_change_was_superseded_writes_nothing_again`.
+- `test_a_write_meant_for_the_old_store_that_finds_a_new_one_writes_nothing_there`: B's p is kept,
+  with the conflict said, and q is written.
+- `test_a_replacement_stores_failed_read_leaves_its_names_unknown`: Flint's (2), down to the
+  inspector's lines and the quit window.
+
+Six tests fail on `3ba07eb`. Flint's order fails there with p stuck as "being written"; the
+others fail on the old code's ordering or because writes didn't name a store. Two existing
+helper-action tests now pass the store's id.
+
+Proposed AGENTS.md addition, under Caching (for the Coordinator), after the folder constants
+sentence: "Presets (`presets` table) follow the same rule, and one more for a store recreated
+while HeLab runs (new `store_id`): RAM follows the current store; another store's answer is a
+fresh start (names unknown until it sends rows; unsaved changes kept and checked against them); a
+write names its store and a helper finding another writes nothing; a change is cleared only by the
+current store holding it or a later choice; a change left unsaved when its job ends is written
+again if a replaced store answered it, else said not saved (`FolderCache` presets section)."

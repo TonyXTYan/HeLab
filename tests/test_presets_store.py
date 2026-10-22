@@ -124,17 +124,36 @@ def test_a_read_only_store_without_the_table_reads_as_none_and_is_left_as_it_was
     [answered] = [event for event in events if event["kind"] == "presets"]
     assert answered["saved"] == [] and answered["rows"] == []
     with pytest.raises(StoreReadOnly):
-        cache_admin({"directory": str(directory)}, "presets", events.append, rows=[row("run", "{}", 1.0)])
+        cache_admin({"directory": str(directory)}, "presets", events.append, rows=[row("run", "{}", 1.0)],
+                    store=answered["store"])
 
 
 def test_the_helpers_action_writes_then_reads_every_preset(tmp_path: Path) -> None:
     options = {"directory": str(tmp_path / "store")}
     events: list[Any] = []
-    cache_admin(options, "presets", events.append, rows=[row("a", "{}", 5.0), row("b", None, 6.0)])
+    cache_admin(options, "presets", events.append)
+    store_id = events[0]["store"]
+    events.clear()
+    cache_admin(options, "presets", events.append, rows=[row("a", "{}", 5.0), row("b", None, 6.0)], store=store_id)
     [answer] = [event for event in events if event["kind"] == "presets"]
-    assert answer["saved"] == [row("a", "{}", 5.0), row("b", None, 6.0)]
+    assert answer["saved"] == [row("a", "{}", 5.0), row("b", None, 6.0)] and answer["store"] == store_id
     assert sorted(answer["rows"], key=lambda entry: entry["name"]) == answer["saved"]
     assert events[-1]["kind"] == "admin_result" and events[-1]["action"] == "presets"
+
+
+def test_rows_meant_for_another_store_are_never_written(tmp_path: Path) -> None:
+    """A write names the store whose names the app read: in another (recreated since), it could
+    replace a preset unasked, so the helper only reads that one, and says which it is."""
+    options = {"directory": str(tmp_path / "store")}
+    with CacheStore(options["directory"]) as store:
+        store.write_presets([row("p", '"theirs"', 1.0)])
+        store_id = store.store_id
+    for named in ("another-store", None):
+        events: list[Any] = []
+        cache_admin(options, "presets", events.append, rows=[row("p", '"mine"', 5.0)],
+                    **({"store": named} if named else {}))
+        [answer] = [event for event in events if event["kind"] == "presets"]
+        assert answer["saved"] == [] and answer["rows"] == [row("p", '"theirs"', 1.0)] and answer["store"] == store_id
 
 
 # FolderCache, through real helpers
@@ -480,3 +499,193 @@ def test_a_store_recreated_at_the_same_folder_is_read_as_itself(qtbot: QtBot, se
     cache.read_presets()
     settled(qtbot, cache)
     assert cache.preset_records(ARR) == {("", "p"): '"replacement"'} and not cache.presets_unsaved
+
+
+# Review round 9 (Flint, 393d2af..3ba07eb): one rule, whatever order helpers answer in. A store
+# change is a fresh start (its names unknown until it sends its rows; unsaved changes kept), a
+# change is settled only by the current store holding it (or a later choice), and a change left
+# unsaved and unwritten when a job ends is written again to the current store.
+
+
+class Stores:
+    """What frozen helpers' stores, by id, would answer: a job's rows are written only to the
+    store it names (as the helper's action does), the newest choice winning each."""
+
+    def __init__(self) -> None:
+        self.held: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def answer(self, store: str, request: Any) -> dict[str, Any]:
+        held = self.held.setdefault(store, {})
+        params = request.payload["params"]
+        saved = []
+        for entry in params["rows"] if params.get("store") == store else ():
+            found = held.get(entry["name"])
+            if found is None or found["set_at"] <= entry["set_at"]:
+                held[entry["name"]] = dict(entry)
+            saved.append(dict(held[entry["name"]]))
+        return {"kind": "presets", "saved": saved, "rows": [dict(entry) for entry in held.values()], "store": store}
+
+
+def preset_jobs(service: IOService) -> list[Any]:
+    return [request for request in service.pending if request.operation == "cache_admin"
+            and request.payload["action"] == "presets"]
+
+
+def drain(service: IOService, stores: Stores, store: str) -> None:
+    """Answer every presets job still waiting, and those they start, from ``store``."""
+    for _ in range(20):
+        waiting = preset_jobs(service)
+        if not waiting:
+            return
+        answer(service, waiting[0], stores.answer(store, waiting[0]), {"kind": "done"})
+    raise AssertionError("preset jobs keep starting")
+
+
+def recreated_with_two_writes(stores: Stores) -> tuple[IOService, FolderCache, list[Any]]:
+    """A is read; p="first" is written to A, held; the store is recreated as B, which a read
+    finds (p goes to B too); then p="second" is saved to B. The three writes, not yet answered."""
+    jobs, cache = frozen()
+    cache.read_presets()
+    first = admin_job(jobs, 0)
+    answer(jobs, first, stores.answer("A", first), {"kind": "done"})
+    cache.set_presets([(ARR, "", "p", '"first"')])
+    to_a = admin_job(jobs, 1)
+    assert to_a.payload["params"]["store"] == "A"
+    cache.read_presets()
+    read_b = admin_job(jobs, 0)
+    answer(jobs, read_b, stores.answer("B", read_b), {"kind": "done"})
+    first_to_b = admin_job(jobs, 1)
+    assert first_to_b is not to_a and first_to_b.payload["params"]["store"] == "B"
+    cache.set_presets([(ARR, "", "p", '"second"')])
+    second_to_b = admin_job(jobs, 1)
+    assert second_to_b.payload["params"]["rows"][0]["record"] == '"second"'
+    return jobs, cache, [to_a, first_to_b, second_to_b]
+
+
+def assert_settled(service: IOService, cache: FolderCache, stores: Stores) -> None:
+    assert not cache._preset_jobs and not preset_jobs(service)
+    assert not cache.presets_unsaved and cache.quit_saves() == [] and cache._presets_store == "B"
+    assert cache.preset_records(ARR) == {("", "p"): '"second"'} and stores.held["B"]["p"]["record"] == '"second"'
+
+
+def test_interleaved_answers_from_the_retired_and_the_current_store_leave_nothing_waiting(
+        service: IOService) -> None:
+    """(1) Flint's order: A's presets event, then B's, then each job's end. Neither defers to the
+    other: B's answer settles p, A's changes nothing, and quitting waits for nothing."""
+    stores = Stores()
+    jobs, cache, (to_a, first_to_b, second_to_b) = recreated_with_two_writes(stores)
+    jobs.resultReady.emit(to_a, stores.answer("A", to_a))
+    for request in (first_to_b, second_to_b):
+        jobs.resultReady.emit(request, stores.answer("B", request))
+    assert not cache.presets_unsaved  # Settled by B's answers alone.
+    for request in (to_a, first_to_b, second_to_b):
+        answer(jobs, request, {"kind": "admin_result", "action": "presets"}, {"kind": "done"})
+    assert_settled(jobs, cache, stores)
+
+
+def interleavings(*sequences: tuple[Any, ...]) -> Iterator[list[Any]]:
+    """Every order of these sequences' items that keeps each sequence's own order."""
+    if not any(sequences):
+        yield []
+        return
+    for index, sequence in enumerate(sequences):
+        if sequence:
+            rest = (*sequences[:index], sequence[1:], *sequences[index + 1:])
+            for tail in interleavings(*rest):
+                yield [sequence[0], *tail]
+
+
+def test_every_order_of_the_three_writes_answers_settles_every_change(service: IOService) -> None:
+    """Each job's presets event comes before its end; across jobs, any order (90 of them). The
+    retired store's answer may come first, last or between B's; B may commit "second" before
+    "first" (then "first" saves nothing: the later choice stays)."""
+    count = 0
+    for order in interleavings(*(((job, "presets"), (job, "done")) for job in range(3))):
+        stores = Stores()
+        jobs, cache, writes = recreated_with_two_writes(stores)
+        for job, step in order:
+            request = writes[job]
+            if step == "presets":
+                jobs.resultReady.emit(request, stores.answer("A" if job == 0 else "B", request))
+            else:
+                answer(jobs, request, {"kind": "done"})
+            # Never shown as being saved without a job in flight to settle it.
+            assert not cache.presets_saving() or cache._preset_jobs, order
+        drain(jobs, stores, "B")
+        assert_settled(jobs, cache, stores)
+        count += 1
+    assert count == 90
+
+
+def test_a_retired_stores_answer_after_its_change_was_superseded_writes_nothing_again(service: IOService) -> None:
+    """A write to A held while B is found, and p changed again meanwhile: when A's job ends, p's
+    change in RAM is B's job's, not A's, so nothing is written again."""
+    stores = Stores()
+    jobs, cache, (to_a, first_to_b, second_to_b) = recreated_with_two_writes(stores)
+    for request in (first_to_b, second_to_b):
+        answer(jobs, request, stores.answer("B", request), {"kind": "done"})
+    answer(jobs, to_a, stores.answer("A", to_a), {"kind": "done"})
+    assert not preset_jobs(jobs)
+    assert_settled(jobs, cache, stores)
+
+
+def test_a_write_meant_for_the_old_store_that_finds_a_new_one_writes_nothing_there(service: IOService) -> None:
+    """The write's helper opens B (recreated since), which holds p: it writes nothing there, and
+    B's names are a fresh start: p, changed before they were known, keeps B's (said once); q is
+    written to B."""
+    stores = Stores()
+    stores.held["B"] = {"p": row("p", '"theirs"', 1.0)}
+    jobs, cache = frozen()
+    cache.read_presets()
+    first = admin_job(jobs, 0)
+    answer(jobs, first, stores.answer("A", first), {"kind": "done"})
+    cache.set_presets([(ARR, "", "p", '"mine"'), (ARR, "", "q", '"new"')])
+    to_a = admin_job(jobs, 2)
+    answer(jobs, to_a, stores.answer("B", to_a), {"kind": "done"})
+    assert stores.held["B"]["p"]["record"] == '"theirs"'
+    assert cache.presets_conflicts == {(ARR, "", "p"): PRESET_FOUND}
+    drain(jobs, stores, "B")
+    assert cache.preset_records(ARR) == {("", "p"): '"theirs"', ("", "q"): '"new"'} and not cache.presets_unsaved
+    assert stores.held["B"]["q"]["record"] == '"new"' and stores.held["B"]["p"]["record"] == '"theirs"'
+
+
+def test_a_replacement_stores_failed_read_leaves_its_names_unknown(qtbot: QtBot, service: IOService) -> None:
+    """(2) A was read; the store recreated as B answers with an error: nothing is known about B, so
+    no list says "none saved", and a change waits for B's names instead of being written."""
+    from helab.views.PresetsInspector import PresetsInspector
+    stores = Stores()
+    stores.held["A"] = {"old": row("old", "{}", 100.0)}
+    jobs, cache = frozen()
+    cache.read_presets()
+    first = admin_job(jobs, 0)
+    answer(jobs, first, stores.answer("A", first), {"kind": "done"})
+    assert cache.presets_known() and set(cache.preset_records(ARR)) == {("", "old")}
+    cache.set_presets([(ARR, "", "q", '"mine"')])
+    to_a = admin_job(jobs, 1)
+    cache.read_presets()
+    read_b = admin_job(jobs, 0)
+    answer(jobs, read_b, {"kind": "presets", "saved": [], "error": "no such column: kind", "store": "B"},
+           {"kind": "done"})
+    assert not cache.presets_read and not cache.presets_known()
+    assert cache.presets_note() == "⚠ Saved presets can't be read: no such column: kind"
+    assert cache.preset_records(ARR) == {("", "q"): '"mine"'}  # A's "old" isn't B's.
+    assert cache.preset_unsaved(ARR, "", "q").startswith("not saved: the saved presets can't be read (")
+    inspector = PresetsInspector(cache)
+    qtbot.addWidget(inspector)
+    assert empty_lines(inspector)[0] == "(none known yet)"
+    assert cache.quit_saves() == [PRESETS_SAVING]  # q waits for the read the inspector asked for…
+    answer(jobs, admin_job(jobs, 0), {"kind": "presets", "saved": [], "error": "no such column: kind", "store": "B"},
+           {"kind": "done"})
+    assert empty_lines(inspector)[0] == "(none known yet)"
+    answer(jobs, to_a, stores.answer("A", to_a), {"kind": "done"})  # Retired: changes nothing.
+    assert cache.quit_saves() == [] and not preset_jobs(jobs)  # …which failed: nothing will write it now.
+    # A change now waits for B's names: only a read is asked.
+    assert cache.set_presets([(ARR, "", "r", '"mine"')]) == PRESETS_WAIT_READ
+    assert [len(request.payload["params"]["rows"]) for request in preset_jobs(jobs)] == [0]
+    assert cache.quit_saves() == [PRESETS_SAVING]
+    stores.held["B"] = {"r": row("r", '"theirs"', 1.0)}  # B readable now, holding r.
+    drain(jobs, stores, "B")
+    assert cache.preset_records(ARR) == {("", "q"): '"mine"', ("", "r"): '"theirs"'}
+    assert cache.presets_conflicts == {(ARR, "", "r"): PRESET_FOUND}
+    assert stores.held["B"]["q"]["record"] == '"mine"' and stores.held["B"]["r"]["record"] == '"theirs"'
+    assert not cache.presets_unsaved and cache.quit_saves() == [] and cache.presets_known()

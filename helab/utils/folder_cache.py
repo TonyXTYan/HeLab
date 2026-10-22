@@ -258,19 +258,20 @@ class FolderCache(QObject):
         # ones too: (kind, scope, name) → {"record": JSON text or None, "set_at"}; the newest
         # ``set_at`` wins. Read and written by helpers (``read_presets``, ``set_presets``).
         self.presets: dict[tuple[str, str, str], dict[str, Any]] = {}
-        self.presets_read = False  # The store answered once this session.
+        self.presets_read = False  # The current store sent its rows: its names are known.
         self.presets_error = ""  # Why the store's presets couldn't be read last ("" if they were).
         # Rows not in the store yet: why ("" while a helper writes them); tried again by the next read.
         self.presets_unsaved: dict[tuple[str, str, str], str] = {}
-        # Preset jobs in flight: owner → the rows it writes (none: a read).
-        self._preset_jobs: dict[str, list[tuple[str, str, str]]] = {}
+        # Preset jobs in flight: owner → the changes it writes, by their ``set_at`` (none: a read).
+        self._preset_jobs: dict[str, dict[tuple[str, str, str], float]] = {}
         self._presets_again = False  # Read again once the read in flight ends.
-        # Rows changed before the store's names were known: checked against them, then written.
+        # Changes made before the current store's names were known: checked against them, then written.
         self._presets_unknown: set[tuple[str, str, str]] = set()
         # Those the store turned out to hold already: kept as saved, the user told (``PRESET_FOUND``).
         self.presets_conflicts: dict[tuple[str, str, str], str] = {}
         self._presets_store = ""  # The store whose answers RAM holds (its ``store_id``).
         self._presets_retired: set[str] = set()  # Stores replaced since (recreated): their answers count for nothing.
+        self._presets_stale: set[str] = set()  # Jobs a replaced store answered: their changes go to the current one.
         self.service = service
         self.snapshots: OrderedDict[str, FolderSnapshot] = OrderedDict()
         self.datasets: OrderedDict[tuple[str, str, int], Dataset] = OrderedDict()
@@ -1143,8 +1144,22 @@ class FolderCache(QObject):
     # Read at startup and whenever they could have changed (the Presets menu, a plot's settings
     # page or the presets window opening); the user's changes show at once and a helper writes
     # them. RAM only while the disk cache is off or its saved folder refused, saved once it's there.
-    # A change made before the store's names are known (``presets_read``) waits for them: a name
-    # the store turns out to hold is never replaced unasked (``presets_conflicts``).
+    #
+    # One rule keeps ``presets_unsaved`` right whatever order helpers answer in:
+    # - RAM follows one store, the current one (``_presets_store``). An answer from a store replaced
+    #   since (``_presets_retired``) changes nothing. An answer from another store makes it current
+    #   as at a fresh start: what the last one said goes, its names are unknown until it sends its
+    #   rows (``presets_read``), and this session's unsaved changes stay, to be checked against them.
+    # - A change is written only once the current store's names are known, and only to that store:
+    #   each write names it, and a helper finding another store writes nothing. Until then it waits
+    #   (PRESETS_WAIT_READ); a name the store turns out to hold is never replaced unasked
+    #   (``presets_conflicts``).
+    # - A change stays unsaved until the current store holds it or a later choice of that preset
+    #   (its row with the change's ``set_at`` or a later one), whichever job's answer says so.
+    # - When a job ends, a change it carried that is still unsaved, and no other job carries, is
+    #   written again (to the current store) if the job's answer came from a replaced store;
+    #   otherwise its save failed, and it says why until the next read tries again.
+    # So a change shown as being saved always has a job in flight that will settle it.
 
     def presets_session_only(self) -> str:
         """Why presets last only this session ("" if a helper saves them)."""
@@ -1155,8 +1170,8 @@ class FolderCache(QObject):
         return ""
 
     def presets_known(self) -> bool:
-        """Every saved preset's name is known here: the store answered once, or there is none (RAM
-        only). Until then, no list of presets is "all of them"."""
+        """Every saved preset's name is known here: the current store sent its rows, or there is
+        none (RAM only). Until then, no list of presets is "all of them"."""
         return self.presets_read or bool(self.presets_session_only())
 
     def presets_note(self) -> str:
@@ -1179,23 +1194,28 @@ class FolderCache(QObject):
         return self.presets_unsaved.get((kind, scope, name), "")
 
     def presets_saving(self) -> bool:
-        """A helper is writing presets, or will once the read in flight answers (``quit_saves``
-        waits for it)."""
-        return any(why in ("", PRESETS_WAIT_READ) for why in self.presets_unsaved.values())
+        """A helper is writing presets, or reading the store's names for changes that wait for them
+        (``quit_saves`` waits for it). Never without a job in flight."""
+        return bool(self._preset_jobs) and any(why in ("", PRESETS_WAIT_READ) for why in self.presets_unsaved.values())
 
     def read_presets(self) -> None:
-        """Ask a helper for the store's presets (``presetsChanged`` when it answers), with the rows
-        not saved yet (once the store's names are known). One read at a time: asked meanwhile, it
-        reads again after."""
-        if self.presets_session_only() or self.quitting or self.service.closed:
+        """Ask a helper for the store's presets (``presetsChanged`` when it answers), with the
+        changes not saved yet once the store's names are known. One read at a time: asked
+        meanwhile, it reads again after. Not while quitting."""
+        if not self.quitting:
+            self._read_presets()
+
+    def _read_presets(self) -> None:
+        if self.presets_session_only() or self.service.closed:
             return
         if any(not keys for keys in self._preset_jobs.values()):
             self._presets_again = True
             return
-        if not self.presets_read:
+        if self.presets_read:
+            self._write_presets([key for key in self.presets_unsaved if not self._preset_carried(key)])
+        else:
             self.presets_unsaved.update(dict.fromkeys(self._presets_unknown, PRESETS_WAIT_READ))
-        self._write_presets([key for key, why in self.presets_unsaved.items() if why and why != PRESETS_WAIT_READ]
-                            if self.presets_read else [])
+            self._write_presets([])
 
     def set_presets(self, rows: Iterable[tuple[str, str, str, str | None]]) -> str:
         """The user's change to presets: (kind, scope, name, JSON record, or None to delete), all
@@ -1221,7 +1241,7 @@ class FolderCache(QObject):
             self.presets_unsaved.update(dict.fromkeys(keys, why))
         elif not self.presets_read:
             self.presets_unsaved.update(dict.fromkeys(keys, PRESETS_WAIT_READ))
-            self.read_presets()
+            self._read_presets()
             why = self.presets_unsaved.get(keys[0], "") if keys else ""
             self.quitSavesChanged.emit()
         elif not self._write_presets(keys):
@@ -1230,60 +1250,61 @@ class FolderCache(QObject):
         return why
 
     def _write_presets(self, keys: list[tuple[str, str, str]]) -> bool:
-        rows = [{"kind": key[0], "scope": key[1], "name": key[2], **self.presets[key]}
-                for key in keys if key in self.presets]
-        owner = self.cache_admin("presets", rows=rows)
+        """Write these changes to the current store (its names known), then read it; none: a read."""
+        keys = [key for key in keys if key in self.presets]
+        rows = [{"kind": key[0], "scope": key[1], "name": key[2], **self.presets[key]} for key in keys]
+        owner = self.cache_admin("presets", rows=rows, store=self._presets_store)
         if not owner:
             self.presets_unsaved.update(dict.fromkeys(keys, "HeLab's work queue is full"))
             if not self.presets_read:
                 self.presets_unsaved.update(dict.fromkeys(self._presets_unknown, "HeLab's work queue is full"))
             return False
         self.presets_unsaved.update(dict.fromkeys(keys, ""))
-        self._preset_jobs[owner] = keys
+        self._preset_jobs[owner] = {key: float(self.presets[key]["set_at"]) for key in keys}
         if keys:
             self.quitSavesChanged.emit()
         return True
 
-    def _preset_writing(self, key: tuple[str, str, str], besides: str) -> bool:
-        """Another job in flight writes ``key`` too (a later change of it)."""
-        return any(key in keys for owner, keys in self._preset_jobs.items() if owner != besides)
+    def _preset_carried(self, key: tuple[str, str, str]) -> bool:
+        """A job in flight writes this preset's change as RAM holds it."""
+        set_at = float(self.presets[key]["set_at"]) if key in self.presets else None
+        return any(keys.get(key) == set_at for keys in self._preset_jobs.values())
 
     def _remember_preset(self, row: Mapping[str, Any]) -> tuple[str, str, str]:
+        """A row the current store holds: shown unless RAM holds a later change, which it settles
+        otherwise (the store has that change, or a later choice: another HeLab's)."""
         key = (str(row["kind"]), str(row["scope"]), str(row["name"]))
         record, set_at = row.get("record"), float(row["set_at"])
         current = self.presets.get(key)
         if current is None or float(current["set_at"]) <= set_at:
             self.presets[key] = {"record": None if record is None else str(record), "set_at": set_at}
-            if self.presets_unsaved.get(key):
-                del self.presets_unsaved[key]  # (Saved meanwhile, by another HeLab's later choice.)
+            self.presets_unsaved.pop(key, None)
         return key
 
+    def _new_presets_store(self, store: str) -> None:
+        """Another store answered (recreated at the cache folder): as at a fresh start. Nothing the
+        last one said holds, whatever its times, and this one's names aren't known until it sends
+        its rows; this session's unsaved changes stay, to be checked against them and written."""
+        if self._presets_store:
+            self._presets_retired.add(self._presets_store)
+        for key in [key for key in self.presets if key not in self.presets_unsaved]:
+            del self.presets[key]
+        self.presets_conflicts.clear()
+        self._presets_store = store
+        self.presets_read = False
+        self._presets_unknown.update(self.presets_unsaved)
+
     def _on_presets(self, producer: IORequest, event: Mapping[str, Any]) -> None:
-        keys = self._preset_jobs.get(producer.owner, [])
         store = str(event.get("store") or "")
         if store in self._presets_retired:
-            # From a store replaced since (recreated): it saved nothing that is still there, and says
-            # nothing about the current one. Its rows are written again, to the current store.
-            again = [key for key in keys if self.presets_unsaved.get(key) == ""
-                     and not self._preset_writing(key, producer.owner)]
-            if again:
-                self._write_presets(again)
+            # It saved nothing that is still there, and says nothing about the current store: its
+            # changes are written again, to that one, when the job ends.
+            self._presets_stale.add(producer.owner)
             return
         if store and store != self._presets_store:
-            # Another store (a new one, recreated): nothing the last one said holds, whatever its
-            # times; this session's unsaved changes stay, to be written to this one. Within one store
-            # a row never goes (a delete keeps it), so a snapshot, however old, removes nothing.
-            if self._presets_store:
-                self._presets_retired.add(self._presets_store)
-                for key in [key for key in self.presets if key not in self.presets_unsaved]:
-                    del self.presets[key]
-                self.presets_conflicts.clear()
-            self._presets_store = store
+            self._new_presets_store(store)
         for row in event.get("saved") or ():
             self._remember_preset(row)
-        for key in keys:
-            if self.presets_unsaved.get(key) == "" and not self._preset_writing(key, producer.owner):
-                del self.presets_unsaved[key]  # Saved (or a later choice was, which now shows).
         if "rows" in event:
             stored = {(str(row["kind"]), str(row["scope"]), str(row["name"])): row for row in event["rows"] or ()}
             for key in sorted(self._presets_unknown):
@@ -1314,20 +1335,29 @@ class FolderCache(QObject):
                                                       f"not saved: the saved presets can't be read ({message})"))
 
     def _preset_job_ended(self, producer: IORequest, kind: str, event: Mapping[str, Any]) -> None:
-        keys = self._preset_jobs.pop(producer.owner)
-        if kind != "done":
-            message = str(event.get("message") or "cancelled")
-            for key in keys:
-                if self.presets_unsaved.get(key) == "" and not self._preset_writing(key, producer.owner):
-                    self.presets_unsaved[key] = f"couldn't be saved ({message})"
-            self.presets_error = message  # (A job that writes reads after: it read nothing either.)
-            self._names_unread(message)
+        carried = self._preset_jobs.pop(producer.owner)
+        stale = producer.owner in self._presets_stale
+        self._presets_stale.discard(producer.owner)
+        left = [key for key in carried if self.presets_unsaved.get(key) == "" and not self._preset_carried(key)]
+        if stale:
+            if left and self.presets_read:
+                self._write_presets(left)
+            elif left:
+                self._presets_unknown.update(left)
+                self.presets_unsaved.update(dict.fromkeys(left, PRESETS_WAIT_READ))
+                self._read_presets()
+        elif left or kind != "done":
+            message = str(event.get("message") or "cancelled") if kind != "done" else "the disk cache didn't keep it"
+            self.presets_unsaved.update(dict.fromkeys(left, f"couldn't be saved ({message})"))
+            if kind != "done":
+                self.presets_error = message  # (A job that writes reads after: it read nothing either.)
+                self._names_unread(message)
             logging.warning("Presets: %s", message)
-            self.quitSavesChanged.emit()
-            self.presetsChanged.emit()
-        if self._presets_again and not keys:
+        self.quitSavesChanged.emit()
+        self.presetsChanged.emit()
+        if self._presets_again and not carried:
             self._presets_again = False
-            self.read_presets()
+            self._read_presets()
 
     def load_file(self, path: str) -> str:
         """The TXY file a running load of ``path`` is reading now ("" if none), from memory."""

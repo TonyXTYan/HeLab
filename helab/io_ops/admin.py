@@ -146,8 +146,10 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 send({"kind": "folder_constants", "folders": {path: saved_constants}})
         elif action == "presets":
             # The user's presets: write these rows (newest choice wins each), then read them all.
-            # (Only a read when there's nothing to write: a read-only store still answers it.)
-            rows = list(params.get("rows") or ())
+            # (Only a read when there's nothing to write: a read-only store still answers it.) Only
+            # to the store they were meant for: in another (one recreated since), whose names the
+            # app hasn't seen, they could replace a preset unasked; it reads that one instead.
+            rows = list(params.get("rows") or ()) if params.get("store") == store.store_id else []
             written = cast(list[PresetRowFields], store.write_presets(rows) if rows else [])
             stored = store.read_presets()
             if stored.failed:
