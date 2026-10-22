@@ -247,3 +247,36 @@ Proposed doc edits, in addition to those above: AGENTS.md › Caching: "a result
 in `pending_results` and CacheDialogs asks Make room (other saved results, least recently shown, never
 datasets) or Discard; Settings → Cache › Reuse saved analysis results (`result_reuse`, default on)";
 `roadmaps/cache-storage-and-settings.md`: the same under pending saves and the Cache tab.
+
+## Review fixes (Gauge on `6906d96`)
+
+All four findings fixed, each with a regression test in `tests/test_result_cache_review.py`:
+
+1. **[P2] Stale result events after a Clear cached analysis.** `FolderCache` remembers when each
+   result read or save was asked (`_result_ops`, the newest 1,024, kept after the helper ends); a
+   `result_found`, `result_saved` or `result_pending` for a folder whose results a removal took since
+   (all, a root's or a purge: `removed(..., ["results"])`) is answered as nothing found (with no
+   guard: a save of that run would be refused), or as not saved (reason `cleared`); a stale waiting
+   result is dropped from the store (`discard_result`), never asked. So a late answer can't mark a
+   cleared plot as saved, and a pre-clear exact lookup no longer skips computing. A purge that took
+   another result of the same folder also makes a save in flight read as not saved: conservative.
+2. **[P2] Sweep for files retired by result saves.** `result_saved`, `result_not_saved` and
+   `result_pending` carry the store's `next_deadline` (typed); `FolderCache` schedules the sweep.
+3. **[P3] Retention after clearing a result reused from disk.** A result read back is marked
+   `DISK_CACHED` (exact and outdated); `describe` says "From disk cache, computed … · in the disk
+   cache", and "· kept in RAM only" after a Clear cached analysis.
+4. **[P3] Damaged files.** `result_codec.unpack` turns `zipfile.BadZipFile`, `TypeError` and
+   `KeyError` into `CodecError` too, so the lookup keeps its guard and the computed result replaces the
+   damaged file.
+
+Also the blank line at the end of `result_cache.py`.
+
+**Mixed versions** (Gauge; add to AGENTS.md's note on lab machines running mixed versions): an older
+HeLab opens the migrated store fine and its Clear all and sweep leave results, but it counts result
+rows and not result files in the usage, so its saves can go past the shared budget; an older sweep
+removes a retired result's `retired_files` row and leaves its file, which the new orphan sweep deletes
+after an hour; an older nested-root re-key leaves result rows under the old key: misses, never reuse
+across folders.
+
+**Manual check to add**: clear cached analysis while a plot shows a result reused from disk: the plot
+stays, its record says "kept in RAM only", and its next Rerun computes.

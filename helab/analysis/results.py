@@ -229,7 +229,9 @@ class AnalysisResult:
         took = f" in {self.finished_at - self.started_at:.1f} s" if self.started_at and self.finished_at else ""
         if self.source == FROM_DISK:
             computed = datetime.fromtimestamp(self.finished_at).strftime("%Y-%m-%d %H:%M") if self.finished_at else "?"
-            lines.append(f"From disk cache, computed {computed}{took} (job {self.job_id})"
+            # Where it is kept now too: a Clear cached analysis after it was shown leaves it in RAM only.
+            kept = "in the disk cache" if self.policy == DISK_CACHED else "kept in RAM only"
+            lines.append(f"From disk cache, computed {computed}{took} (job {self.job_id}) · {kept}"
                          + (f" · outdated: {'; '.join(self.outdated)}" if self.outdated else ""))
         else:
             kept = "saved in the disk cache" if self.policy == DISK_CACHED else "kept in RAM only"

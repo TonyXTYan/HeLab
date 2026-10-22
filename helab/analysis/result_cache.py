@@ -31,7 +31,7 @@ from helab.analysis.dataset_view import ViewIdentity, ViewKey
 from helab.analysis.identity import AnalysisIdentity
 from helab.analysis.masks import mask_key
 from helab.analysis.physics import ResolvedConstants
-from helab.analysis.results import FROM_DISK, AnalysisContext, AnalysisResult, Coverage
+from helab.analysis.results import DISK_CACHED, FROM_DISK, AnalysisContext, AnalysisResult, Coverage
 
 # Types a result's record holds (``record_of``).
 RECORD_TYPES: tuple[type, ...] = (AnalysisResult, AnalysisIdentity, ViewKey, ViewIdentity, Coverage, ResolvedConstants)
@@ -123,5 +123,4 @@ def result_from(record: Any, data: Any, *, outdated: tuple[str, ...] = ()) -> An
     result = result_codec.decode(record, {}, RECORD_TYPES)
     if not isinstance(result, AnalysisResult):
         raise result_codec.CodecError("not a saved result's record")
-    return replace(result, data=data, source=FROM_DISK, outdated=outdated)
-
+    return replace(result, data=data, source=FROM_DISK, outdated=outdated, policy=DISK_CACHED)

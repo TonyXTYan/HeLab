@@ -517,6 +517,8 @@ class ResultMissingEvent(TypedDict):
 class ResultSavedEvent(UsageFields):
     kind: Literal["result_saved"]
     bytes: int
+    # The store's next cleanup deadline: a save that replaced a result retired its file.
+    next_deadline: NotRequired[float | None]
 
 
 class ResultPendingEvent(UsageFields):
@@ -529,6 +531,7 @@ class ResultPendingEvent(UsageFields):
     bytes: int
     budget: int | None
     room: dict[str, Any] | None
+    next_deadline: NotRequired[float | None]  # (Its expiry, an hour unanswered.)
 
 
 class ResultNotSavedEvent(UsageFields):
@@ -538,6 +541,7 @@ class ResultNotSavedEvent(UsageFields):
     message: str
     bytes: int  # its file (0 when not known)
     budget: int | None
+    next_deadline: NotRequired[float | None]  # A refused save retired its file: the sweep deletes it.
 
 
 class InventoryEvent(TypedDict):

@@ -208,6 +208,8 @@ class FolderCache(QObject):
     FRESH_SECONDS: float = 10.0
     MAX_SNAPSHOTS: int = 256
     MAX_ENTRIES: int = 100_000
+    # Saved analysis results' requests remembered for stale answers (each a few bytes).
+    MAX_RESULT_OPS = 1024
     # Folders remembered as mismatched (``mismatched``): small entries, ~2-4 MB at most.
     MAX_MISMATCHED: int = 8192
     # From this many mismatched folders, the user may skip them for the session.
@@ -364,8 +366,10 @@ class FolderCache(QObject):
         self._markers_timer.timeout.connect(self._verify_markers)
         # cache_admin jobs by owner: their action.
         self._admin: dict[str, str] = {}
-        # Saved analysis results' reads and saves in flight (R2), by their owner: the folder.
-        self._result_ops: dict[str, str] = {}
+        # Saved analysis results' reads and saves in flight (R2), by their owner: the folder and when it
+        # was asked (monotonic), so an answer a removal made stale since is never taken as current.
+        # Kept after its helper ends (the newest ``MAX_RESULT_OPS``): an event delivered late is still checked.
+        self._result_ops: OrderedDict[str, tuple[str, float]] = OrderedDict()
         # When cache_admin jobs and history writes started: removals since then void their results.
         self._started: dict[str, float] = {}
         # When each kind was last removed from the disk cache, for every path or per path;
@@ -1954,7 +1958,7 @@ class FolderCache(QObject):
                                    {"cache": options, "lookup": lookup, "family": family,
                                     "verified_volumes": self.verified_volumes()}, priority=True):
             return False
-        self._result_ops[owner] = self.key(path)
+        self._result_ops[owner] = (self.key(path), time.monotonic())
         return True
 
     def save_result(self, owner: str, path: str, packed: bytes, *, lookup: str, family: str, record: Any,
@@ -1970,19 +1974,41 @@ class FolderCache(QObject):
                                     "guard": guard, "label": label, "verified_volumes": self.verified_volumes()},
                                    priority=True, blob=packed):
             return False
-        self._result_ops[owner] = self.key(path)
+        self._result_ops[owner] = (self.key(path), time.monotonic())
         return True
 
     def _on_result_event(self, producer: IORequest, event: dict[str, Any]) -> None:
         self._note_usage(event.get("usage"), event.get("usage_seq"))
+        if "next_deadline" in event:
+            # A save that replaced or refused a result retired its file; a waiting one expires.
+            self._schedule_sweep(event["next_deadline"])
+        path, started = self._result_ops.get(producer.owner, ("", time.monotonic()))
+        if (event["kind"] in ("result_found", "result_saved", "result_pending")
+                and self._removed_after(started, "results", path)):
+            # A Clear cached analysis (all, the root's, a purge) since it was asked: what it found or
+            # saved is gone, and its guard, taken before, would never save. Never shown as current.
+            event = self._stale_result(event)
         if event["kind"] == "result_pending" and event.get("pending_id") not in self._pending_gone:
             # Doesn't fit the disk budget: asked (Make room or Discard) with the dataset saves.
             self.pending_results[str(event["pending_id"])] = {**event, "result": True, "reason": "over_budget",
                                                               "created_at": time.time()}
             self.pendingSavesChanged.emit()
-        if event["kind"] in ("done", "error", "cancelled", "exit"):
-            self._result_ops.pop(producer.owner, None)
+        while len(self._result_ops) > self.MAX_RESULT_OPS:
+            self._result_ops.popitem(last=False)
         self.resultReady.emit(producer, event)
+
+    def _stale_result(self, event: dict[str, Any]) -> dict[str, Any]:
+        """The answer to a result read or save that a removal made stale: nothing found (and no guard:
+        a save of the run would be refused), or not saved."""
+        if event["kind"] == "result_found":
+            return {"kind": "result_missing", "stale": True}
+        if event["kind"] == "result_pending" and event.get("pending_id"):
+            # Its guard predates the removal, so Make room would be refused: dropped, not asked.
+            self._forget_pending({str(event["pending_id"])})
+            self.cache_admin("discard_result", pending_id=str(event["pending_id"]))
+        return {"kind": "result_not_saved", "reason": "cleared", "bytes": int(event.get("bytes") or 0),
+                "budget": event.get("budget"),
+                "message": "Cached analysis was cleared before saving completed"}
 
     def _schedule_sweep(self, deadline: object) -> None:
         """Keep one timer for the earliest cleanup deadline any helper reported."""

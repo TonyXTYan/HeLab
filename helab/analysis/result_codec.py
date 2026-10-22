@@ -22,6 +22,7 @@ import enum
 import io
 import json
 import math
+import zipfile
 from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping, Union
 
@@ -215,7 +216,9 @@ def unpack(data: bytes) -> tuple[Any, Arrays]:
     try:
         with np.load(io.BytesIO(data), allow_pickle=False) as files:
             arrays: Arrays = {name: files[name] for name in files.files}
-    except (ValueError, OSError, EOFError) as exc:  # (``allow_pickle=False`` refuses object arrays.)
+    except (ValueError, OSError, EOFError, zipfile.BadZipFile, TypeError, KeyError) as exc:
+        # (``allow_pickle=False`` refuses object arrays; a truncated zip is a BadZipFile, and a bare
+        # ``.npy`` in its place a TypeError at the context manager: a damaged file, never a crash.)
         raise CodecError(f"not a saved result file: {exc}") from exc
     text = arrays.pop(TREE, None)
     if text is None or text.dtype != np.uint8:

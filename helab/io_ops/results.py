@@ -18,7 +18,7 @@ from typing import Any
 
 from helab.io_ops.events import ResultFoundEvent, ResultGuard, ResultMissingEvent
 from helab.io_ops.infra import Emit, emit
-from helab.io_ops.stores import _store_or_off, _usage
+from helab.io_ops.stores import _deadline, _store_or_off, _usage
 
 
 def _guard_fields(guard: Any) -> ResultGuard:
@@ -98,7 +98,7 @@ def result_save(path: str, cache_options: dict[str, Any] | None, blob_file: str,
                 budget_set_at=options.get("budget_set_at"), label=label)
         except SaveRejected as rejection:
             send({"kind": "result_not_saved", "reason": rejection.reason, "message": str(rejection),
-                  "bytes": len(packed), "budget": None, **_usage(store)})
+                  "bytes": len(packed), "budget": None, "next_deadline": _deadline(store), **_usage(store)})
             return
         if not saved.saved and saved.pending_id:
             # Waits for the user's answer (Make room or Discard), with what Make room would remove.
@@ -109,12 +109,13 @@ def result_save(path: str, cache_options: dict[str, Any] | None, blob_file: str,
                 except (SaveRejected, StoreError):
                     room = None
             send({"kind": "result_pending", "pending_id": saved.pending_id, "path": path, "label": label,
-                  "bytes": saved.bytes, "budget": saved.budget, "room": room, **_usage(store)})
+                  "bytes": saved.bytes, "budget": saved.budget, "room": room, "next_deadline": _deadline(store),
+                  **_usage(store)})
             return
         if not saved.saved:
             send({"kind": "result_not_saved", "reason": saved.reason, "message": "it doesn't fit the disk cache's budget",
-                  "bytes": saved.bytes, "budget": saved.budget, **_usage(store)})
+                  "bytes": saved.bytes, "budget": saved.budget, "next_deadline": _deadline(store), **_usage(store)})
             return
-        send({"kind": "result_saved", "bytes": saved.bytes, **_usage(store)})
+        send({"kind": "result_saved", "bytes": saved.bytes, "next_deadline": _deadline(store), **_usage(store)})
     finally:
         store.close()
