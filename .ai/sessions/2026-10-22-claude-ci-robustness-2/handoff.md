@@ -135,3 +135,20 @@ later and one alive: before the fix the next test found them alive (and failed f
 both were deleted and only the two `RuntimeError`s were reported. Full suite: 2395 passed, no
 RERUN; strict mypy (helab, tests) and pyright clean. Local only, not pushed (CoCo lands from the
 floor).
+
+## CI failure after landing (run 39715190343)
+
+`dev/v0.0.6` at `51c0ee2` (this branch merged) failed Tests on all three OSes, with one test:
+`test_left_widgets.py::test_a_teardown_that_raises_still_deletes_the_web_views`, failed 6 of 6.
+The cleanup worked on CI (the nested run: "3 passed, 2 errors", `test_after_it` passed); my
+output check didn't. The nested test file lives in `tmp_path`, and with `--rootdir` the checkout,
+its node IDs were relative to the checkout. CI's basetemp is outside it (`/tmp`, `/Users/runner/...`),
+which gave `../../…/HeLab::test_after_it`, not `test_broken_teardown.py::test_after_it`; mine was
+`.ai/temp/pytest`, inside it. Reproduced locally with a basetemp outside the checkout.
+Fix: the nested run gets its own `pytest.ini` (rootdir) in `tmp_path`, with `PYTHONPATH` naming
+the checkout and `tests/`. It passes with either basetemp, and still fails with the hook unfixed.
+CI's exact command locally: 2395 passed, no RERUN.
+
+Also taken: Mend's `22ee3fb` (cherry-picked, identical), importing `QtWebEngineWidgets` first in
+`test_settings_defaults.py`. Its real-window test run alone failed with "QtWebEngineWidgets must
+be imported … before a QCoreApplication instance is created" (reproduced here; not in these CI logs).

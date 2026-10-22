@@ -64,10 +64,12 @@ def test_a_teardown_that_raises_still_deletes_the_web_views(tmp_path: Path) -> N
     calls, in a run of its own with this conftest as its plugin."""
     test = tmp_path / "test_broken_teardown.py"  # (Outside tests/, so conftest comes only by -p.)
     test.write_text(BROKEN_TEARDOWN, encoding="utf-8")
-    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent)}
+    # Its own rootdir, so its node IDs are "test_broken_teardown.py::…" wherever the basetemp is (one
+    # outside the checkout, as on CI, gave "../../…/HeLab::test_after_it" under the checkout's).
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(ROOT), str(ROOT / "tests")])}
     done = subprocess.run([sys.executable, "-m", "pytest", "-p", "conftest", "-p", "no:cacheprovider",
-                           "-p", "no:xdist", "-p", "no:rerunfailures", "-q", "-rA", "--rootdir", str(ROOT),
-                           "-c", str(ROOT / "pytest.ini"), str(test)],
+                           "-p", "no:xdist", "-p", "no:rerunfailures", "-q", "-rA", str(test)],
                           cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
     out = done.stdout + done.stderr
     assert "PASSED test_broken_teardown.py::test_after_it" in out, out
