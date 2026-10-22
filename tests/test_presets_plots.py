@@ -54,10 +54,19 @@ def dataset(name: str, shots: range) -> Dataset:
                     "bytes": sum(array.nbytes for array in data.values()), "loaded_at": time.time()}, 0)
 
 
+def helper_request(cache: FolderCache, operation: str, path: str) -> Any:
+    """The request of the helper running ``path``'s ``operation`` job."""
+    job = cache.jobs[(operation, path)]
+    return next(r for r in cache.service.pending if r.owner == job.owner)
+
+
 def helper_says(cache: FolderCache, operation: str, path: str, *events: dict[str, Any]) -> None:
     """The helper of ``path``'s ``operation`` job sends ``events``, as FolderCache gets them."""
-    job = cache.jobs[(operation, path)]
-    request = next(r for r in cache.service.pending if r.owner == job.owner)
+    send(cache, helper_request(cache, operation, path), *events)
+
+
+def send(cache: FolderCache, request: Any, *events: dict[str, Any]) -> None:
+    """``request``'s helper sends ``events`` (also after FolderCache has let its job go)."""
     for event in events:
         cache.service.resultReady.emit(request, event)
     if events and events[-1]["kind"] in ("done", "error") and request in cache.service.pending:
@@ -1058,8 +1067,9 @@ def test_a_cached_read_that_lands_while_the_folder_is_mismatched_is_refused(
     app_settings().setValue(OPEN_PLOTS_SETTING, Arrangement(
         (SavedPlot(ScriptRef("tests.counted", "Plot", "1"), path),)).dumps())
     [instance] = PlotReopen(window.plots, window.scripts).restore()
-    cache._mismatch(path, {"missing": [1]})  # Found by another check while the read was in flight.
-    helper_says(cache, "cached", path, *read_events(range(1, 4), "old"))
+    read = helper_request(cache, "cached", path)
+    mismatch_through_the_cache(cache, path, [1])  # Found by another check while the read was in flight.
+    send(cache, read, *read_events(range(1, 4), "old"))
     qtbot.wait(20)
     assert Counted.runs == [] and instance.waiting()
     assert instance.status_label.text().startswith("raced's cached data doesn't match the folder")
@@ -1210,9 +1220,10 @@ def test_a_cached_read_racing_a_mismatch_isnt_kept_by_the_cache(qtbot: QtBot, ca
     path = folder("raced2")
     wait, found, noted = new_waiter(cache, path)
     wait.look()
-    assert ("cached", path) in cache.jobs
+    read = helper_request(cache, "cached", path)
     mismatch_through_the_cache(cache, path, [1])
-    helper_says(cache, "cached", path, *read_events(range(1, 4), "old"))
+    assert ("cached", path) not in cache.jobs  # Fenced: the read in flight is cancelled.
+    send(cache, read, *read_events(range(1, 4), "old"))
     assert found == [] and cache.latest_dataset(path) is None
     assert noted[-1].startswith("raced2's cached data doesn't match the folder")
     fresh = load_through_the_cache(cache, path, range(2, 4), "fresh")
@@ -1238,3 +1249,28 @@ def test_an_arrangement_applied_while_a_tab_pins_old_data_waits(qtbot: QtBot, ca
     load_through_the_cache(cache, path, range(2, 4), "fresh")
     qtbot.waitUntil(lambda: plot.shown is not None, timeout=10_000)
     assert Counted.runs == [(2, 3)]
+
+
+def test_a_cached_read_from_before_a_mismatch_never_lands_after_it_is_resolved(
+        qtbot: QtBot, cache: FolderCache, windows: Windows, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Flint's round-4 order, end to end: a tab's cached read of the old data and its check start;
+    the check finds shot 1 gone; Load as it is now replaces the data and clears the mismatch; only
+    then does the old read's helper answer. FolderCache never keeps it (its job was fenced at the
+    mismatch), so once the fresh data leaves RAM a new waiter reads the disk cache again, and that
+    read, asked after the folder matched again, is taken."""
+    disk_cache(monkeypatch)
+    path = folder("late")
+    assert cache.submit("tab-owner", 0, path, "cached", {"cache": {"directory": "store"}}, priority=True)
+    old_read = helper_request(cache, "cached", path)
+    mismatch_through_the_cache(cache, path, [1])  # The tab's check
+    fresh = load_through_the_cache(cache, path, range(9, 10), "fresh")  # Load as it is now
+    assert path not in cache.mismatched and cache.latest_dataset(path) is fresh
+    send(cache, old_read, *read_events(range(1, 2), "old"))  # The old read answers at last.
+    assert cache.latest_dataset(path) is fresh and all(entry.signature != "old" for entry in cache.datasets.values())
+    cache.evict_to(0)
+    assert cache.latest_dataset(path) is None
+    wait, found, _ = new_waiter(cache, path)
+    wait.look()
+    assert found == [] and ("cached", path) in cache.jobs  # A read asked after the folder matched again…
+    helper_says(cache, "cached", path, *read_events(range(9, 10), "fresh"))
+    assert [view.shot_numbers for view in found] == [(9,)]  # … is taken.

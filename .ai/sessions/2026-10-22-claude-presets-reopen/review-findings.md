@@ -98,3 +98,36 @@ dataset for any reason (mismatch, folder changed, a clear), not only mismatch. I
 public query on `FolderCache` (e.g. "is this dataset still the cache's own for this path"), add it,
 minimal, and name it in the handoff (the Result Cache floor also edits `folder_cache.py`; it merges
 after you). Test each order through the real events, including this one, then reply to CoCo.
+
+## Round 4: Flint, `0098d8d..222bcdb`
+
+The round-3 stale-pin probe passes; the `current_dataset` / `latest_dataset` rule excludes pins. A
+real offscreen `FolderExplorer` probe passes too: a cached read cancelled *while* mismatched, then
+Review / Load as it is now (no old dataset stored or shown, the replacement has `allow_missing=True`,
+`cache_base=False`, shot 9 shows, the mismatch clears).
+
+**[P1] one ordering hole left in the shared guard, `helab/utils/folder_cache.py:2659-2661`.** It
+checks *current* membership in `mismatched`, so a `cached` job started **before** the mismatch that
+lands **after** a replacement load cleared it is admitted and stored: `_mismatch` neither cancels nor
+fences it, and `FolderWait` then trusts it because the cache holds it. Reproduced with a real
+`FolderExplorer` and producer events: (1) a tab's cached read of old shot 1 and its source check
+start; (2) a status check reports the mismatch (`cache._mismatch`), the source check errors, the
+cached read stays in flight; (3) `browser.load_as_it_is_now`: the replacement's `scan_summary`, shot
+9, `loaded(fresh)`, `done`: signature fresh, mismatch cleared, tab shows shot 9; (4) the original
+cached read then sends shot 1, `loaded(old, verified=False)`, `done`: admitted, old data back in
+`cache.datasets`; (5) a queued check with an older tab signature touches that entry, cancelled on
+navigation; the fresh pin released and `cache.evict_to(24)`: fresh evicted, old survives while the
+snapshot's signature is still fresh; (6) a new `FolderWait.look` emits shot 1 through the
+`latest_dataset` fallback.
+
+**CoCo:** this race predates the branch (before 51b8a87 a cached read landing while mismatched was
+stored too); fix it where the invariant lives. Fence the folder's jobs when a mismatch is recorded
+(e.g. `_mismatch` moves the folder's epoch, or cancels its in-flight `cached` jobs), so a job from
+before the mismatch can never be admitted afterwards, whatever lands in between; then drop the
+`in self.mismatched` condition if the fence makes it redundant. Keep legitimate recovery working: a
+new `allow_missing` load and cached reads submitted after resolution, and a tab's own loads at the
+new epoch. Test Flint's order end to end, plus a cached read submitted after resolution (accepted).
+Name the change in the handoff (`folder_cache.py`, for the Result Cache merge).
+
+Flint's checks at `222bcdb`: full suite 2549 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
+(156 / 117) and pyright clean.

@@ -1482,6 +1482,15 @@ class FolderCache(QObject):
             self.mismatched.popitem(last=False)  # The oldest.
         for key in [key for key in self.datasets if key[0] == path]:
             del self.datasets[key]
+        # A cached read in flight holds that same data: it never lands, whatever completes before it
+        # would (a replacement load clearing the mismatch first). Reads asked after this wait for a
+        # load to match the folder (those asking check ``mismatched``).
+        job = self.jobs.get(("cached", path))
+        if job is not None:
+            self._cancel_job(job)
+        for request in self._deliveries:
+            if request.operation == "cached" and request.path == path:
+                request.cancelled.set()
         self.datasetChanged.emit(path)
         if earlier is None:
             self.mismatch_count += 1
@@ -2654,11 +2663,9 @@ class FolderCache(QObject):
                 source_snapshot = self.snapshot(job.path)
                 expected = source_snapshot.status.get("signature") if source_snapshot else None
                 # Cached data is shown unchecked, even if the folder has changed since.
-                # A cached read landing while the folder is mismatched holds the data that doesn't match
-                # it: never kept (``_mismatch`` dropped the folder's data until a load matches it).
                 if job.epoch != self._epochs.get(job.path, 0) or (
                         job.operation == "load" and expected and event.get("signature") != expected
-                        and not job.behind_listing) or (job.operation == "cached" and job.path in self.mismatched):
+                        and not job.behind_listing):
                     self._cancel_job(job)
                     if source_snapshot:
                         source_snapshot.checked_at = 0
