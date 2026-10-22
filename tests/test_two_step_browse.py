@@ -165,6 +165,27 @@ def test_browse_shows_counts_first_and_details_fill_dates_and_signature(
     service.shutdown()
 
 
+def test_details_dates_subfolders_from_the_listing_without_another_stat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A share's top folder may hold hundreds of date folders: their dates come from the listing's
+    entries (free on Windows, the same single call elsewhere), never a stat by path per subfolder."""
+    child = tmp_path / "run"
+    child.mkdir()
+    stat, modified = os.stat, child.lstat().st_mtime
+
+    def refuse_subfolder(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        if os.fspath(path) == str(child):
+            raise PermissionError("a stat by path")
+        return stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", refuse_subfolder)
+    events: list[Any] = []
+    scan(str(tmp_path), events.append)
+    dated = [entry for event in events if event["kind"] == "entries" for entry in event["entries"]]
+    assert [entry["path"] for entry in dated] == [str(child)] and dated[0]["modified"] == modified
+
+
 def test_refresh_does_not_complete_a_running_folder_status_check(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:

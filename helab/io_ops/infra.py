@@ -216,20 +216,22 @@ def _isdir(path: str, reason: str) -> bool:
     return found
 
 
-def _entry_stat(entry: os.DirEntry[str], reason: str) -> os.stat_result:
-    """A listed entry's ``stat()``, traced. One more call on macOS and Linux; on Windows the
-    listing already has it (``syscall`` False), unless the entry is a link (not probed: asking
-    would be a call the untraced helper doesn't make)."""
+def _entry_stat(entry: os.DirEntry[str], reason: str, *, follow_symlinks: bool = True) -> os.stat_result:
+    """A listed entry's ``stat()`` (traced as ``entry_stat``), or its ``lstat`` with
+    ``follow_symlinks`` False (traced as ``lstat``). One more call on macOS and Linux; on Windows
+    the listing already has it (``syscall`` False), unless a followed entry is a link (not probed:
+    asking would be a call the untraced helper doesn't make)."""
     _guard(entry.path)
     if TRACE is None:
-        return entry.stat()
+        return entry.stat(follow_symlinks=follow_symlinks)
+    op = "entry_stat" if follow_symlinks else "lstat"
     syscall = sys.platform != "win32"
     try:
-        info = entry.stat()
+        info = entry.stat(follow_symlinks=follow_symlinks)
     except OSError as exc:
-        _trace("entry_stat", entry.path, reason, error=type(exc).__name__, syscall=syscall)
+        _trace(op, entry.path, reason, error=type(exc).__name__, syscall=syscall)
         raise
-    _trace("entry_stat", entry.path, reason, size=info.st_size, mtime_ns=info.st_mtime_ns, syscall=syscall)
+    _trace(op, entry.path, reason, size=info.st_size, mtime_ns=info.st_mtime_ns, syscall=syscall)
     return info
 
 
