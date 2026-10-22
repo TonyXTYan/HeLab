@@ -297,3 +297,34 @@ stays, its record says "kept in RAM only", and its next Rerun computes.
 
 Each has a regression test in `tests/test_result_cache_review.py` through real helpers, the dialog
 and FolderCache's events; all three fail without the fixes.
+
+## Review fixes, round 3 (Gauge on `81a9529`): evictions by result, the lifecycle table
+
+**The cause, fixed once.** Make room's eviction no longer acts as a clear of the folder:
+- The store's eviction moves no epoch (only clears and purges do), so the folder's other saves and
+  waiting results keep their guards. Its removal names the evicted results, `[folder, lookup]` each
+  (`ResultRemoval.evicted`, the `removed` event's `evicted`).
+- `FolderCache._results_evicted` records them by (folder, lookup) (`_evicted`, the newest 1,024), never
+  in `_removed_paths`: a `result_found` of an evicted row asked before is answered as missing *with its
+  guard* (the run computes and may save again); a `result_saved` of that key asked before reads as not
+  saved; `resultsEvicted` tells plots, and only a plot whose shown result was evicted says RAM only.
+- The helper's `result_found` carries the row's `lookup` (an outdated one's differs from the one asked).
+- A purge also removes the waiting results of the folders it took results from (their guards no
+  longer hold, so Make room would refuse them): the GUI's question and the store now agree.
+
+**The table**: what the store keeps · what the plot shows · the question. Each cell is a test in
+`tests/test_result_lifecycle.py` through real helpers and FolderCache events (the cell's event held
+until the removal is done, then delivered).
+
+| In flight ↓ / meanwhile → | Make room evicts the same result | Make room evicts another of the folder | Clear cached analysis (all / root) | Purge by age (the folder's results) | Discard |
+|---|---|---|---|---|---|
+| **Lookup** (answer held) | row gone · computes (the stale `result_found` reads as missing, guard kept) · — `lookup_x_eviction_of_the_same_result_computes` | row kept · shown from disk, 0 computations · — `lookup_x_eviction_of_another_result_shows_it_from_disk` | rows gone · computes, not saved (guard predates the clear) · — `lookup_x_clear_or_purge_computes[all, root]` | rows gone · computes, not saved · — `lookup_x_clear_or_purge_computes[purge]` | can't happen (a lookup has no question) |
+| **Save** (acknowledgement held) | row gone · RAM only · — `save_x_eviction_of_the_same_result_is_ram_only` | its row kept · "saved in disk cache" · — `save_x_eviction_of_another_result_is_saved` | rows gone · RAM only · — `save_x_clear_or_purge_is_ram_only[all, root]` | rows gone · RAM only · — `save_x_clear_or_purge_is_ram_only[purge]` | can't happen |
+| **Waiting result** (question open) | can't happen (Make room never evicts its own key; a waiting key isn't saved) | waiting row kept, guard holds · its Make room saves it · question stays, then answered True — `waiting_x_another_waiting_ones_eviction_keeps_its_question_and_saves` | waiting row gone · "not saved in the disk cache (discarded)" · question gone — `waiting_x_clear_drops_the_question[all, root]` | waiting row gone (guard broken) · "discarded" · question gone — `waiting_x_purge_of_its_folder_drops_the_question` | waiting row gone · "discarded" · question gone — `waiting_x_discard` |
+| **Adoption** (Make room asked) | can't happen | another adoption evicted the row its plan named: nothing removed, still waiting · question asked again with the new plan — `adoption_x_another_adoptions_eviction_asks_again_with_the_new_plan` | the clear's transaction first: "gone" · RAM only · question gone — `adoption_x_clear_before_it_is_gone[all, root]` | the purge's first: "gone" · RAM only · question gone — `adoption_x_purge_before_it_is_gone` | can't happen (one answer per question) |
+
+(The adoption's own transaction first, then a clear: the clear removes the newly saved row as any saved
+row, covered by the Clear cached analysis tests.)
+
+Conservative, as before: a save acknowledged after an eviction of its own key reads as not saved even
+when its transaction came after the eviction (the store has it; the next lookup finds it).

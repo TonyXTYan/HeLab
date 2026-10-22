@@ -162,6 +162,8 @@ class FolderCache(QObject):
     pendingSavesChanged = pyqtSignal()
     # A saved analysis result that waited for the user (R2) was saved (True) or not (False): its pending_id.
     resultPendingAnswered = pyqtSignal(str, bool)
+    # Make room evicted saved results: [(folder key, lookup)].
+    resultsEvicted = pyqtSignal(object)
     # A cache_admin job's result: action, event (inventory, admin_result, swept, error).
     cacheAdminResult = pyqtSignal(str, object)
     # A cache_admin job ended: its owner, action, and "" or why it failed.
@@ -369,7 +371,10 @@ class FolderCache(QObject):
         # Saved analysis results' reads and saves in flight (R2), by their owner: the folder and when it
         # was asked (monotonic), so an answer a removal made stale since is never taken as current.
         # Kept after its helper ends (the newest ``MAX_RESULT_OPS``): an event delivered late is still checked.
-        self._result_ops: OrderedDict[str, tuple[str, float]] = OrderedDict()
+        self._result_ops: OrderedDict[str, tuple[str, float, str]] = OrderedDict()
+        # Saved results Make room evicted, by (folder, lookup), and when (monotonic): the newest
+        # ``MAX_RESULT_OPS``. Only reads and marks of those results are affected, not their folders'.
+        self._evicted: OrderedDict[tuple[str, str], float] = OrderedDict()
         # When cache_admin jobs and history writes started: removals since then void their results.
         self._started: dict[str, float] = {}
         # When each kind was last removed from the disk cache, for every path or per path;
@@ -1960,7 +1965,7 @@ class FolderCache(QObject):
                                    {"cache": options, "lookup": lookup, "family": family,
                                     "verified_volumes": self.verified_volumes()}, priority=True):
             return False
-        self._result_ops[owner] = (self.key(path), time.monotonic())
+        self._result_ops[owner] = (self.key(path), time.monotonic(), lookup)
         return True
 
     def save_result(self, owner: str, path: str, packed: bytes, *, lookup: str, family: str, record: Any,
@@ -1976,7 +1981,7 @@ class FolderCache(QObject):
                                     "guard": guard, "label": label, "verified_volumes": self.verified_volumes()},
                                    priority=True, blob=packed):
             return False
-        self._result_ops[owner] = (self.key(path), time.monotonic())
+        self._result_ops[owner] = (self.key(path), time.monotonic(), lookup)
         return True
 
     def _on_result_event(self, producer: IORequest, event: dict[str, Any]) -> None:
@@ -1984,12 +1989,19 @@ class FolderCache(QObject):
         if "next_deadline" in event:
             # A save that replaced or refused a result retired its file; a waiting one expires.
             self._schedule_sweep(event["next_deadline"])
-        path, started = self._result_ops.get(producer.owner, ("", time.monotonic()))
+        path, started, lookup = self._result_ops.get(producer.owner, ("", time.monotonic(), ""))
         if (event["kind"] in ("result_found", "result_saved", "result_pending")
                 and self._removed_after(started, "results", path)):
             # A Clear cached analysis (all, the root's, a purge) since it was asked: what it found or
             # saved is gone, and its guard, taken before, would never save. Never shown as current.
             event = self._stale_result(event)
+        elif event["kind"] == "result_found" and self._evicted_after(started, path, str(event.get("lookup") or lookup)):
+            # Make room evicted that very result since: not found, but the run may still save (its
+            # guard holds: an eviction is no clear).
+            event = {"kind": "result_missing", "evicted": True, **({"guard": event["guard"]} if "guard" in event else {})}
+        elif event["kind"] == "result_saved" and self._evicted_after(started, path, lookup):
+            event = {"kind": "result_not_saved", "reason": "evicted", "bytes": int(event.get("bytes") or 0),
+                     "budget": None, "message": "Make room removed it again"}
         if event["kind"] == "result_pending" and event.get("pending_id") not in self._pending_gone:
             # Doesn't fit the disk budget: asked (Make room or Discard) with the dataset saves.
             self.pending_results[str(event["pending_id"])] = {**event, "result": True, "reason": "over_budget",
@@ -1999,6 +2011,22 @@ class FolderCache(QObject):
         while len(self._result_ops) > self.MAX_RESULT_OPS:
             self._result_ops.popitem(last=False)
         self.resultReady.emit(producer, event)
+
+    def _evicted_after(self, started: float, path: str, lookup: str) -> bool:
+        return self._evicted.get((path, lookup), float("-inf")) > started
+
+    def _results_evicted(self, evicted: list[Any]) -> None:
+        """Make room removed these saved results ([folder, lookup] each) for a waiting one: their reads
+        asked before aren't current, plots showing them say RAM only; their folders' other results,
+        saves and waiting ones are untouched (no epoch moved)."""
+        now = time.monotonic()
+        keys = [(self.key(str(folder)), str(lookup)) for folder, lookup in evicted]
+        for key in keys:
+            self._evicted[key] = now
+            self._evicted.move_to_end(key)
+        while len(self._evicted) > self.MAX_RESULT_OPS:
+            self._evicted.popitem(last=False)
+        self.resultsEvicted.emit(keys)
 
     def _stale_result(self, event: dict[str, Any]) -> dict[str, Any]:
         """The answer to a result read or save that a removal made stale: nothing found (and no guard:
@@ -2073,11 +2101,9 @@ class FolderCache(QObject):
         self._full_warned = False
         self.update_auto_load_pause()
 
-    def removed(self, paths: list[str] | None, kinds: list[str], *, evicted: bool = False) -> None:
+    def removed(self, paths: list[str] | None, kinds: list[str]) -> None:
         """Forget what a disk cache removal took away: ``paths`` (None: every path) of ``kinds``.
-        ``evicted``: saved results Make room removed for a waiting one; results waiting for an answer
-        (the one being saved among them) aren't touched, and result reads and saves asked before aren't
-        made stale by it (a waiting result of the folder would be dropped).
+        (Make room's eviction of saved results isn't one: ``_results_evicted``.)
 
         Cache flags and dates, saved summaries, histories and subfolder statuses go;
         datasets in RAM stay loaded but are no longer marked as cached. Results read
@@ -2086,8 +2112,6 @@ class FolderCache(QObject):
         now = time.monotonic()
         keys = None if paths is None else [self.key(path) for path in paths]
         for kind in kinds:
-            if evicted:
-                continue
             if keys is None:
                 self._removed_all[kind] = now
             else:
@@ -2099,7 +2123,7 @@ class FolderCache(QObject):
 
         def selected(known: Any) -> list[str]:
             return list(known) if keys is None else [path for path in keys if path in known]
-        if "results" in kinds and not evicted:
+        if "results" in kinds:
             # Results waiting for an answer go with the saved ones of their folders.
             gone = {pending_id for pending_id, entry in self.pending_results.items()
                     if keys is None or self.key(str(entry.get("path", ""))) in keys}
@@ -2228,8 +2252,11 @@ class FolderCache(QObject):
             for path in {*event["paths"], *self.prefs}:
                 self.remember_prefs(path, cleared)
             return
+        if kind == "removed" and isinstance(event.get("evicted"), list):
+            self._results_evicted(event["evicted"])
+            return
         if kind == "removed":
-            self.removed(event["paths"], event["kinds"], evicted=bool(event.get("evicted")))
+            self.removed(event["paths"], event["kinds"])
             return
         started = self._started.get(producer.owner, 0.0)
         # A newer inventory was already applied: this one is stale, for the cache and its viewers.

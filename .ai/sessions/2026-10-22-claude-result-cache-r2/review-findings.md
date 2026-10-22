@@ -82,3 +82,39 @@ helper/GUI events, then reply to CoCo with the commits.
 
 Gauge's checks at `b2f342e`: full suite 2560 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
 (helab 158, tests 122) and pyright clean; `git diff --check` clean.
+
+## Round 3: Gauge, `b2f342e..81a9529`
+
+The three round-2 fixes are accepted (probes pass). No P0/P1, no schema change, no wrong result.
+Two **[P2]** eviction cases remain, opposite sides of one cause: **Make room's eviction invalidates
+by folder, not by the saved results it removed.**
+
+1. **Eviction skips invalidating a delayed lookup of the result actually evicted.**
+   `helab/utils/folder_cache.py:2088-2090`: the `evicted=True` branch skips all `_removed_paths`
+   tracking, not only pending-save cancellation, so a `result_found` captured before Make room
+   removed that exact row is still accepted as a current exact disk result. Reproduced with real
+   helpers: save Scale 1; hold another plot's `result_found` for Scale 1; run Scale 2 with a budget
+   forcing Scale 1's eviction; adopt Scale 2 with Make room; deliver the held Scale 1 event: the store
+   has Scale 2, but the delayed plot shows Scale 1 with policy disk and 0 computations.
+2. **Make room still invalidates the folder's other pending saves in the store.**
+   `helab/utils/cache_store.py:1716-1717` with `FolderCache.removed(evicted=True)`: every evicted row
+   bumps its folder-wide results epoch, so other `pending_results` of that folder keep stale guards
+   and their later Make room raises `SaveRejected("cleared")` and deletes their file and row, though
+   the user only agreed to remove the named saved results. Reproduced (private temp store): save
+   "old"; queue "pending-a" and "pending-b" under one folder (distinct lookup keys); adopt pending-a
+   with Make room, evicting "old"; pending-b is still listed, but adopting it even with an 8 GiB budget
+   fails "Cached analysis was cleared before saving completed" and deletes it. (Pre-existing store
+   behaviour; the round-2 GUI fix exposes it.)
+
+**CoCo: fix the cause, once, for both.** Invalidate an eviction by the **saved results it removed**
+(their ids / lookup keys), not by the folder: the store's guard for a save or lookup checks whether
+*its* key was evicted after it started (e.g. per-key eviction records, or the evicted keys in the
+`removed` event and in the guard check), while Clear cached analysis, root clears and purges keep the
+folder/root epochs. Then check the whole pending-result lifecycle as one table, each through real
+helper and GUI events: {lookup, save, pending save, adoption} in flight × {Make room eviction of the
+same key, of another key of the same folder, Clear cached analysis (all / root), purge, Discard}:
+what the store keeps, what the plot shows, which question stays. Add tests for each cell that can
+happen; reply to CoCo with the commits and the table.
+
+Gauge's checks at `81a9529`: full suite 2563 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
+(158 / 122) and pyright clean; `git diff --check` clean.

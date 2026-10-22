@@ -212,16 +212,17 @@ def test_a_waiting_result_is_discarded_expired_or_rejected_by_a_clear(tmp_path: 
         with pytest.raises(SaveRejected) as gone:
             store.adopt_pending_result(second.pending_id, budget=10 ** 12, budget_set_at=2.0)
         assert gone.value.reason == "gone"
-        # A clear after its run started (here a purge removing an older result of the folder) leaves the
-        # waiting result, but its guard no longer holds: Make room discards it.
+        # A purge removing an older result of the folder moves its epoch: the waiting result's guard no
+        # longer holds, so it goes with the purge (Make room would refuse it).
         assert save(store, lookup="old", budget=10 ** 12, budget_set_at=2.0).saved
         store._conn.execute("UPDATE results SET last_used = 1")
         guard = store.start_result_job(RUN)
         third = save(store, lookup="c", data=big_result(2), budget=budget, budget_set_at=3.0, guard=guard)
-        assert store.remove_results(cutoff=time.time() - 60).results == 1
+        removal = store.remove_results(cutoff=time.time() - 60)
+        assert removal.results == 1 and removal.paths == (RUN,)
         with pytest.raises(SaveRejected) as cleared:
             store.adopt_pending_result(third.pending_id, budget=10 ** 12, budget_set_at=4.0)
-        assert cleared.value.reason == "cleared"
+        assert cleared.value.reason == "gone"
         assert store._conn.execute("SELECT COUNT(*) FROM pending_results").fetchone()[0] == 0
         fifth = save(store, lookup="e", data=big_result(4), budget=budget, budget_set_at=5.0)
         swept = store.sweep(time.time() + cache_store.PENDING_MAX_AGE + 1)

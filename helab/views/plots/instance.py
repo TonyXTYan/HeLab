@@ -296,7 +296,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self._cached_link = CachedRuns(self._cache(), self.script, self.action, self.name,
                                            found=self._cached_found, run=self._cached_run, saved=self._cached_saved,
                                            note=self._cached_status, closed=lambda: self.is_closed,
-                                           removed=self._cached_removed)
+                                           removed=self._cached_removed, evicted=self._cached_evicted)
         return self._cached_link
 
     def _submit(self, view: DatasetView, values: Optional[Dict[str, Any]] = None, *, reloading: bool = False,
@@ -413,6 +413,12 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if content is not None and not sip.isdeleted(content):
             self._show_content(content, self.shown, self.script.parameters(self.action),
                                "; ".join(self._hook("parameter_warnings", [], self.shown.parameters)))
+
+    def _cached_evicted(self, job_id: str) -> None:
+        """Make room removed this run's saved result for another: the record says RAM only again."""
+        shown = self.shown
+        if shown is not None and shown.job_id == job_id:
+            self._cached_removed(None)
 
     def _cached_status(self, text: str) -> None:
         """What the disk cache said of the run (not saved, couldn't be read, waiting for an answer): on

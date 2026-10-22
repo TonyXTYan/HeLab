@@ -261,6 +261,9 @@ class ResultRemoval:
     results: int = 0
     bytes: int = 0
     root: str | None = None
+    # Make room's eviction: the saved results it removed, (folder, lookup) each. Not a clear: no epoch
+    # moves, so other saves and waiting results of those folders stay valid.
+    evicted: tuple[tuple[str, str], ...] = ()
 
 
 class ResultRow(TypedDict):
@@ -1672,7 +1675,8 @@ class CacheStore:
                     if fits:
                         removal = None if not removed else ResultRemoval(
                             tuple(sorted({self._source_path(item[1]) for item in removed})), len(removed),
-                            sum(item[2] for item in removed))
+                            sum(item[2] for item in removed),
+                            evicted=tuple((self._source_path(item[1]), item[4]) for item in removed))
                         result = ResultAdopt(True, self._source_path(path), size, removal=removal)
                     else:
                         assert budget is not None
@@ -1687,7 +1691,7 @@ class CacheStore:
 
     def _adopt_result_savepoint(self, pending_id: str, budget: int | None, make_room: bool, *, keep: bool,
                                 expected: Sequence[str] | None = None
-                                ) -> tuple[bool, list[tuple[str, str, int, float]]]:
+                                ) -> tuple[bool, list[tuple[str, str, int, float, str]]]:
         """Adopt a waiting result inside a savepoint, with Make room if asked; kept only if ``keep``
         and it fits. Whether it fits, and the results Make room removed (or would): (result_id, path,
         bytes, last_used)."""
@@ -1697,7 +1701,7 @@ class CacheStore:
         path, lookup = str(row[0]), str(row[1])
         now = time.time()
         self._conn.execute("SAVEPOINT adopt_result")
-        removed: list[tuple[str, str, int, float]] = []
+        removed: list[tuple[str, str, int, float, str]] = []
         try:
             previous = self._upsert_result(path, lookup, str(row[2]), str(row[3]), str(row[4]), str(row[5]),
                                            str(row[6]), int(row[7]), float(row[8]), now)
@@ -1706,16 +1710,16 @@ class CacheStore:
                 self._retire(previous, now)
             if budget is not None and make_room:
                 others = self._conn.execute(
-                    "SELECT result_id, path, bytes, last_used, file FROM results WHERE NOT (path = ? AND lookup = ?) "
-                    "ORDER BY last_used, result_id", (path, lookup)).fetchall()
-                for result_id, other, size, last_used, file in others:
+                    "SELECT result_id, path, bytes, last_used, file, lookup FROM results "
+                    "WHERE NOT (path = ? AND lookup = ?) ORDER BY last_used, result_id", (path, lookup)).fetchall()
+                for result_id, other, size, last_used, file, key in others:
                     if self._live() <= budget:
                         break
+                    # Only these rows go, by the user's answer: no folder epoch moves (that is for clears),
+                    # so the folder's other saves and waiting results keep their guards.
                     self._retire(str(file), now)
                     self._conn.execute("DELETE FROM results WHERE result_id = ?", (result_id,))
-                    self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
-                                       "DO UPDATE SET epoch = epoch + 1", (_results_epoch(str(other)),))
-                    removed.append((str(result_id), str(other), int(size), float(last_used)))
+                    removed.append((str(result_id), str(other), int(size), float(last_used), str(key)))
             fits = budget is None or self._live() <= budget
             if expected is not None and make_room and {item[0] for item in removed} != set(expected):
                 fits = False  # Not what the user agreed to remove: nothing is.
@@ -1877,6 +1881,14 @@ class CacheStore:
                         self._retire(str(file), now)
                         waiting.append(str(folder))
                     self._conn.execute(f"DELETE FROM pending_results{where}", args)
+                elif self._pending_results:
+                    # A purge moves the epochs of the folders it took results from: their waiting
+                    # results' guards no longer hold (Make room would refuse them), so they go too.
+                    for folder in sorted({str(path) for path, _, _ in rows}):
+                        for (file,) in self._conn.execute("SELECT file FROM pending_results WHERE path = ?",
+                                                          (folder,)).fetchall():
+                            self._retire(str(file), now)
+                        self._conn.execute("DELETE FROM pending_results WHERE path = ?", (folder,))
                 by_path = root is None and cutoff is None and paths is not None
                 folders = sorted({str(path) for path, _, _ in rows} | set(waiting)
                                  | (set(map(str, args)) if by_path else set()))

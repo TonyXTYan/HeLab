@@ -65,7 +65,8 @@ def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lo
             except StoreError:
                 pass  # (Only purges by age go by it.)
         event: ResultFoundEvent = {"kind": "result_found", "artifact": artifact, "exact": found.value.exact,
-                                   "record": row["record"], "computed_at": row["computed_at"], "bytes": row["bytes"]}
+                                   "record": row["record"], "computed_at": row["computed_at"], "bytes": row["bytes"],
+                                   "lookup": row["lookup"]}
         if guard is not None:
             event["guard"] = guard
         send(event)

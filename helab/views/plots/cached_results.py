@@ -80,11 +80,14 @@ class CachedRuns(QObject):
                  run: Callable[[AnalysisContext], None],
                  saved: Callable[[AnalysisResult, int], None],
                  note: Callable[[str], None], closed: Callable[[], bool],
-                 removed: Callable[[Optional[List[str]]], None] = lambda paths: None) -> None:
+                 removed: Callable[[Optional[List[str]]], None] = lambda paths: None,
+                 evicted: Callable[[str], None] = lambda job_id: None) -> None:
         super().__init__()
         self.cache, self.script, self.action, self.name = cache, script, action, name
         self._found, self._run, self._saved, self._note, self._closed = found, run, saved, note, closed
-        self._removed = removed
+        self._removed, self._evicted = removed, evicted
+        # The saved result of each of the plot's runs it found or saved: job id → (folder key, lookup).
+        self._keys: Dict[str, tuple[str, str]] = {}
         self._lookups: Dict[str, Lookup] = {}  # By the run's job id.
         self._saves: Dict[str, AnalysisResult] = {}  # By the save's owner.
         # Results that didn't fit the disk budget, waiting for Make room or Discard, by pending_id.
@@ -162,13 +165,25 @@ class CachedRuns(QObject):
                                   action=result.action, computed_at=result.finished_at, guard=entry.guard,
                                   label=self.name):
             self._saves[owner] = replace(result, packed=None)
+            self._keys[result.job_id] = (self.cache.key(entry.view.identity.source_path), entry.lookup)
 
     def _connect(self) -> None:
         if not self._connected:
             self.cache.resultReady.connect(self._event)
             self.cache.cacheRemoved.connect(self._cache_removed)
             self.cache.resultPendingAnswered.connect(self._pending_answered)
+            self.cache.resultsEvicted.connect(self._results_evicted)
             self._connected = True
+
+    @pyqtSlot(object)
+    def _results_evicted(self, keys: Any) -> None:
+        """Make room removed saved results: a run of this plot whose result was one of them is in RAM only."""
+        gone = {tuple(key) for key in keys or ()}
+        for job_id, key in list(self._keys.items()):
+            if key in gone:
+                del self._keys[job_id]
+                if not self._closed():
+                    self._evicted(job_id)
 
     @pyqtSlot(str, bool)
     def _pending_answered(self, pending_id: str, saved: bool) -> None:
@@ -196,7 +211,8 @@ class CachedRuns(QObject):
         if self._connected and not self._saves:
             self._waiting.clear()
             for signal, slot in ((self.cache.resultReady, self._event), (self.cache.cacheRemoved, self._cache_removed),
-                                 (self.cache.resultPendingAnswered, self._pending_answered)):
+                                 (self.cache.resultPendingAnswered, self._pending_answered),
+                                 (self.cache.resultsEvicted, self._results_evicted)):
                 try:
                     signal.disconnect(slot)
                 except TypeError:
@@ -258,6 +274,7 @@ class CachedRuns(QObject):
             saved = replace(saved, job_id=context.job_id, input=context.view.key, owner=context.owner,
                             policy=DISK_CACHED)
             self._lookups.pop(context.job_id, None)
+            self._keys[context.job_id] = (self.cache.key(entry.view.identity.source_path), entry.lookup)
         self._found(context, saved)
         return exact
 

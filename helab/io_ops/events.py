@@ -485,8 +485,8 @@ class RemovedEvent(TypedDict):
     bytes: NotRequired[int]
     results: NotRequired[int]
     root: NotRequired[str | None]
-    # Saved results Make room removed for a waiting one: results waiting for an answer stay.
-    evicted: NotRequired[bool]
+    # Saved results Make room removed for a waiting one, [folder, lookup] each: not a clear (no epoch moved).
+    evicted: NotRequired[list[list[str]]]
 
 
 class ResultGuard(TypedDict):
@@ -501,6 +501,7 @@ class ResultFoundEvent(TypedDict):
     kind: Literal["result_found"]
     artifact: str
     exact: bool
+    lookup: NotRequired[str]  # The row's own key (an outdated one's differs from the one asked)
     record: Any
     computed_at: float
     bytes: int
