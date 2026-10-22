@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import replace as dataclass_replace
 import sys
 import time
 from typing import Any, Callable, Iterator, List, Optional, cast
@@ -724,6 +725,10 @@ class Explorer(QObject):
         self.live = type("Session", (), {"path": self.selected_path_globally})()
         return True
 
+    def stop_live(self, save: bool = True) -> None:
+        self.calls.append(("stop_live", self.selected_path_globally))
+        self.live = None
+
     def show_data(self, data: Any = "data") -> None:
         """The tab's load ended and its data shows."""
         self.loading = False
@@ -945,3 +950,108 @@ def test_a_corrupt_arrangement_preset_is_named_and_kept(qtbot: QtBot, cache: Fol
     assert presets.delete("good") and arrangement_names() == ["bad/one"]
     with pytest.raises(Exception):
         read_arrangement("good")
+
+
+# Review findings (Flint, a74fd07)
+
+
+def test_a_mismatched_folders_pinned_data_is_never_used(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """A tab still pins data the folder no longer matches: a reopened plot doesn't run on it, nor
+    on the disk cache, until a load of the folder matches it again."""
+    window = new_window(qtbot, cache, windows)
+    old = dataset("moved", range(1, 4))
+    cache.retain("existing-tab", old)
+    cache._mismatch(old.path, {"missing": [1]})
+    assert old.path in cache.mismatched and cache.pins["existing-tab"] is old
+    app_settings().setValue(OPEN_PLOTS_SETTING, Arrangement(
+        (SavedPlot(ScriptRef("tests.counted", "Plot", "1"), old.path),)).dumps())
+    before = list(cache.service.pending)
+    [instance] = PlotReopen(window.plots, window.scripts).restore()
+    instance.run()  # Deliberately too.
+    qtbot.wait(20)
+    assert Counted.runs == [] and instance.waiting() and list(cache.service.pending) == before
+    assert instance.status_label.text() == ("moved's cached data doesn't match the folder: Review… it, or select it "
+                                            "to load it as it is now")
+    # A load of the folder matches it again: its new data is used.
+    new = dataset("moved", range(2, 4))
+    del cache.mismatched[old.path]
+    cache.datasets[(new.path, "new", 1)] = Dataset(new.path, "new", new.data, new.metadata, 1)
+    cache.mismatchesChanged.emit()
+    qtbot.waitUntil(lambda: instance.shown is not None, timeout=10_000)
+    assert Counted.runs == [(2, 3)]
+
+
+def test_a_cached_read_waiting_for_its_volume_is_asked_again(qtbot: QtBot, cache: FolderCache, windows: Windows,
+                                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    disk_cache(monkeypatch)
+    window = new_window(qtbot, cache, windows)
+    path = folder("external")
+    app_settings().setValue(OPEN_PLOTS_SETTING, Arrangement(
+        (SavedPlot(ScriptRef("tests.counted", "Plot", "1"), path),)).dumps())
+    [instance] = PlotReopen(window.plots, window.scripts).restore()
+    for request in list(cache.jobs[("cached", path)].subscribers.values()):
+        cache.resultReady.emit(request, {"kind": "error", "message": "Volume not verified yet", "unverified": True})
+    assert ("cached", path) not in cache.jobs and instance.waiting()
+    cache.volumesVerified.emit()
+    job = cache.jobs[("cached", path)]  # Asked again, through the local lane.
+    for request in list(job.subscribers.values()):
+        cache.resultReady.emit(request, {"kind": "loaded", "dataset": dataset("external", range(1, 3))})
+    qtbot.waitUntil(lambda: instance.shown is not None, timeout=10_000)
+    assert Counted.runs == [(1, 2)]
+    cache.volumesVerified.emit()  # Done waiting: nothing more is asked.
+    assert ("cached", path) not in cache.jobs
+
+
+def test_a_plain_cache_miss_isnt_asked_again_when_volumes_are_verified(
+        qtbot: QtBot, cache: FolderCache, windows: Windows, monkeypatch: pytest.MonkeyPatch) -> None:
+    disk_cache(monkeypatch)
+    window = new_window(qtbot, cache, windows)
+    path = folder("none")
+    app_settings().setValue(OPEN_PLOTS_SETTING, Arrangement(
+        (SavedPlot(ScriptRef("tests.counted", "Plot", "1"), path),)).dumps())
+    PlotReopen(window.plots, window.scripts).restore()
+    for request in list(cache.jobs[("cached", path)].subscribers.values()):
+        cache.resultReady.emit(request, {"kind": "error", "message": "No cached data for this folder"})
+    cache.volumesVerified.emit()
+    assert ("cached", path) not in cache.jobs
+
+
+def test_a_live_off_preset_turns_live_off_in_its_folder(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """Already at the preset's folder with Live on: the preset's Live off is applied, not skipped."""
+    window = new_window(qtbot, cache, windows)
+    path = folder("watched")
+    write_arrangement("quiet", Arrangement((), path, live=False))
+    explorer = Explorer(path)
+    explorer.live = type("Session", (), {"path": path})()
+    presets_for(window, explorer, cache).apply("quiet")
+    assert ("open_to_path", path) not in explorer.calls and ("stop_live", path) in explorer.calls
+    assert explorer.live is None and "Preset “quiet”: Live off for watched" in window.notices
+
+
+def test_a_layout_that_cant_be_read_is_named_and_the_plots_still_open(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    window = new_window(qtbot, cache, windows)
+    ref = ScriptRef("tests.counted", "Plot", "1")
+    record = json.loads(Arrangement((SavedPlot(ref, folder("a"), group=0), SavedPlot(ref, folder("a"), group=0),
+                                     SavedPlot(ref, folder("a"), group=1)), folder("a")).dumps())
+    record["dock_state"] = "\u2603 not base64"
+    arrangement = parse(json.dumps(record))
+    assert arrangement.dock_state == "" and arrangement.layout_error == "its saved layout can't be read"
+    assert parse(json.dumps({**record, "dock_state": 5})).layout_error == "its saved layout isn't text"
+    # Reopen: the plots open in their tab groups, and it is said.
+    app_settings().setValue(OPEN_PLOTS_SETTING, json.dumps(record))
+    opened = PlotReopen(window.plots, window.scripts).restore()
+    area = window.plots.middle_mainwindow
+    assert len(opened) == 3 and area.tabifiedDockWidgets(cast(QDockWidget, opened[0].dock_widget)) == [
+        opened[1].dock_widget]
+    assert window.notices == ["The plots open last time reopened in their tab groups: its saved layout can't be read"]
+    # An arrangement preset: applied all the same (folder, plots), and said.
+    app_settings().setValue(arrangement_key("bad layout"), json.dumps(record))
+    explorer = Explorer(folder("b"))
+    applied = presets_for(window, explorer, cache).apply("bad layout")
+    assert len(applied) == 3 and explorer.calls[:2] == [("open_to_path", folder("a")), ("load", (folder("a"), False, True))]
+    assert window.notices[-1] == "Preset “bad layout”: its plots are in their tab groups: its saved layout can't be read"
+    # Even a layout that slipped past the parser (base64 in name only) doesn't stop a restore.
+    broken = dataclass_replace(arrangement, dock_state="\u2603")
+    again = new_window(qtbot, cache, windows)
+    assert len(open_arrangement(again.scripts, cache, broken)[0]) == 3

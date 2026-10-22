@@ -29,6 +29,8 @@ No Qt, no I/O: the Qt side is ``helab/views/plots/presets.py`` and ``reopen.py``
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import math
 import time
@@ -137,6 +139,7 @@ class Arrangement:
     dock_state: str = ""  # The plot area's ``saveState``, base64 ("": none)
     saved_at: float = 0.0  # Wall-clock time
     unreadable: tuple[str, ...] = ()  # Plots of the record that couldn't be read, with why (not saved again)
+    layout_error: str = ""  # Why the saved ``dock_state`` was dropped ("": none, or it was fine)
 
     def to_json(self) -> dict[str, Any]:
         return {"format": FORMAT, "folder": self.folder, "root_key": self.root_key, "live": self.live,
@@ -166,8 +169,23 @@ class Arrangement:
                 plots.append(SavedPlot.from_json(entry))
             except RecordError as error:
                 unreadable.append(str(error))
+        state, layout_error = _dock_state(data.get("dock_state"))
         return cls(tuple(plots), _text(data.get("folder")), _text(data.get("root_key")), data.get("live") is True,
-                   _text(data.get("dock_state")), _time(data.get("saved_at")), tuple(unreadable))
+                   state, _time(data.get("saved_at")), tuple(unreadable), layout_error)
+
+
+def _dock_state(value: Any) -> tuple[str, str]:
+    """A saved layout as stored (base64 text) if it is one, else ("", why it was dropped): the plots
+    then open in their tab groups."""
+    if value is None or value == "":
+        return "", ""
+    if not isinstance(value, str):
+        return "", "its saved layout isn't text"
+    try:
+        base64.b64decode(value.encode("ascii"), validate=True)
+    except (UnicodeEncodeError, binascii.Error, ValueError):
+        return "", "its saved layout can't be read"
+    return value, ""
 
 
 def parse(text: Any) -> Arrangement:

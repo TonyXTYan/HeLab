@@ -649,7 +649,10 @@ class ArrangementPresets(QObject):
             self.applying.finish()
         folder = arrangement.folder
         if FolderCache.key(explorer.selected_path_globally) != folder or explorer.view_path != folder:
-            explorer.open_to_path(folder)  # As typing its path in the tab's path bar
+            explorer.open_to_path(folder)  # As typing its path in the tab's path bar (it stops Live)
+        elif explorer.live is not None and not arrangement.live:
+            explorer.stop_live()  # Already there with Live on: the preset says off.
+            self.plots.notice(f"Preset “{name}”: Live off for {folder_name(folder)}")
         opened, failed = open_arrangement(self.scripts, self.cache(), arrangement, folder=folder,
                                           layout=how == "replace")
         presets = {plot.script: read_script_presets(plot.script) for plot in arrangement.plots if plot.preset}
@@ -660,6 +663,8 @@ class ArrangementPresets(QObject):
             if note and instance.presets is not None and check is not None:
                 instance.presets.set_note(f"Preset “{name}”", dataclasses.replace(check, notes=(*check.notes, note)),
                                           "at the script's defaults", quiet=True)
+        if arrangement.layout_error:
+            self.plots.notice(f"Preset “{name}”: its plots are in their tab groups: {arrangement.layout_error}")
         missing = [f"{saved.script.label()} ({why})" for saved, why in failed]
         missing += [f"a plot ({why})" for why in arrangement.unreadable]
         if missing:

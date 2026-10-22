@@ -76,3 +76,24 @@ def test_applying_a_live_preset_in_a_real_tab_starts_live_once_listed(
     qtbot.waitUntil(lambda: explorer.live is not None, timeout=30_000)
     assert explorer.live is not None and explorer.live.path == folder
     window.close()
+
+
+def test_a_live_off_preset_turns_live_off_in_a_real_tab(qtbot: QtBot, tmp_path: Path) -> None:
+    """Flint's probe: a Live preset of an empty folder, then one with Live off for the same folder."""
+    from helab.views.FolderExplorer import FolderExplorer
+    from helab.views.HelabMainWindow import HelabMainWindow
+    run = tmp_path / "run"
+    run.mkdir()
+    folder = FolderCache.key(str(run))
+    write_arrangement("on", Arrangement((), folder, live=True))
+    write_arrangement("off", Arrangement((), folder, live=False))
+    window = HelabMainWindow()
+    qtbot.addWidget(window)
+    qtbot.waitUntil(lambda: isinstance(window.tab_widget.currentWidget(), FolderExplorer), timeout=10_000)
+    explorer = window.tab_widget.currentWidget()
+    assert isinstance(explorer, FolderExplorer)
+    window.arrangement_presets.apply("on")
+    qtbot.waitUntil(lambda: explorer.live is not None, timeout=30_000)
+    window.arrangement_presets.apply("off")
+    assert explorer.live is None
+    window.close()

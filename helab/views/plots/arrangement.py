@@ -9,6 +9,7 @@ tab's normal load brings the data ("Waiting for <folder>'s data: select it to lo
 """
 from __future__ import annotations
 
+import base64
 import dataclasses
 import logging
 import os
@@ -46,7 +47,11 @@ class FolderWait(QObject):
     ``noted`` says what it is doing, for the plot's one line.
 
     A folder recorded with a data root (``root_key``) whose data now has another is not the same
-    folder: it isn't used unless asked deliberately (the plot's Rerun)."""
+    folder: it isn't used unless asked deliberately (the plot's Rerun). A folder whose cached
+    data is known not to match it (``FolderCache.mismatched``) has none to use, in RAM (a tab may
+    still pin it) or the disk cache, until a load of the folder resolves it (Review…, Load as it
+    is now). A cached read that waited for its volume's verification (``unverified``) is asked
+    again once volumes are verified, as a tab's is."""
 
     found = pyqtSignal(object)  # DatasetView
     noted = pyqtSignal(str)
@@ -58,9 +63,12 @@ class FolderWait(QObject):
         self.root_key = root_key
         self.waiting: Callable[[], bool] = lambda: True  # The plot's (``AnalysisInstance.waiting``)
         self._owner = ""  # The cached read in flight (its request's owner)
+        self._unverified = False  # The last read waited for its volume's verification: read again after it
         self._read_tried = False  # One automatic read: a tab's load brings newer data anyway
         self._stopped = False
         cache.datasetChanged.connect(self._dataset_changed)
+        cache.mismatchesChanged.connect(self._mismatches_changed)
+        cache.volumesVerified.connect(self._volumes_verified)
 
     def waiting_text(self) -> str:
         return f"Waiting for {folder_name(self.path)}'s data: select it to load"
@@ -87,10 +95,13 @@ class FolderWait(QObject):
         if self._stopped:
             return
         self._stopped = True
-        try:
-            self.cache.datasetChanged.disconnect(self._dataset_changed)
-        except TypeError:
-            pass
+        for signal, slot in ((self.cache.datasetChanged, self._dataset_changed),
+                             (self.cache.mismatchesChanged, self._mismatches_changed),
+                             (self.cache.volumesVerified, self._volumes_verified)):
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                pass
         self._end_read()
 
     def _found(self, view: DatasetView) -> None:
@@ -105,9 +116,16 @@ class FolderWait(QObject):
                           "Rerun to use its data")
         return view, ""
 
+    def _mismatched_text(self) -> str:
+        return (f"{folder_name(self.path)}'s cached data doesn't match the folder: Review… it, or select it "
+                "to load it as it is now")
+
     def _in_ram(self, deliberate: bool) -> Tuple[Optional[DatasetView], str]:
-        """The folder's newest dataset held in RAM (a tab's, or kept), as a view."""
+        """The folder's newest dataset held in RAM (a tab's, or kept), as a view; none while the
+        folder is listed as mismatched (a tab's pin of its old data stays until it lets go)."""
         cache = self.cache
+        if self.path in cache.mismatched:
+            return None, self._mismatched_text()
         held = [entry for entry in (*cache.pins.values(), *cache.datasets.values()) if entry.path == self.path]
         if not held:
             return None, ""
@@ -122,6 +140,7 @@ class FolderWait(QObject):
         cache = self.cache
         if not options or self.path in cache.mismatched:
             return False
+        self._unverified = False
         owner = f"plot-reopen:{uuid4().hex}"
         cache.resultReady.connect(self._read_event)
         self._owner = owner
@@ -161,6 +180,8 @@ class FolderWait(QObject):
                 return
             self.noted.emit(why)
             return
+        if kind == "error" and event.get("unverified"):
+            self._unverified = True  # Not a miss: read again once volumes are verified.
         if not self.waiting():
             self.stop()
             return
@@ -171,6 +192,21 @@ class FolderWait(QObject):
             self.noted.emit(f"{folder_name(self.path)} is too large to read back automatically: select it to load")
         else:
             self.noted.emit(why or self.waiting_text())
+
+    @pyqtSlot()
+    def _volumes_verified(self) -> None:
+        """A cached read that waited for its volume's verification is asked again (once)."""
+        if self._stopped or not self._unverified or self._owner:
+            return
+        self._unverified = False
+        self._read_tried = False
+        self.look()
+
+    @pyqtSlot()
+    def _mismatches_changed(self) -> None:
+        """The mismatched list changed (an answer, or a load matched the folder again): look in RAM again."""
+        if not self._stopped and self.path not in self.cache.mismatched:
+            self._dataset_changed(self.path)
 
     @pyqtSlot(str)
     def _dataset_changed(self, path: str) -> None:
@@ -272,8 +308,11 @@ def open_arrangement(scripts: TreePanelWidget, cache: FolderCache, arrangement: 
         for other in area.findChildren(QDockWidget):
             if id(other) not in mine and other.objectName().startswith(DOCK_NAME.format("")):
                 other.setObjectName("")
-        state = QByteArray.fromBase64(QByteArray(arrangement.dock_state.encode("ascii")))
-        if not area.restoreState(state):
+        try:
+            state = QByteArray(base64.b64decode(arrangement.dock_state.encode("ascii"), validate=True))
+        except (ValueError, UnicodeEncodeError):  # (``parse`` drops a layout that isn't base64 already.)
+            state = QByteArray()
+        if state.isEmpty() or not area.restoreState(state):
             logging.info("Plot area: its recorded layout couldn't be restored; plots are in their tab groups")
     for dock in fronts:
         if not sip.isdeleted(dock) and area.tabifiedDockWidgets(dock):
@@ -325,6 +364,8 @@ class PlotReopen(QObject):
             opened, failed = open_arrangement(self.scripts, cache, arrangement, keep_ids=True)
         finally:
             self._restoring = False
+        if arrangement.layout_error:
+            self.plots.notice(f"The plots open last time reopened in their tab groups: {arrangement.layout_error}")
         if arrangement.unreadable:
             unreadable = "; ".join(arrangement.unreadable)
             self.plots.notice(f"Not reopened (their records can't be read): {unreadable}")
