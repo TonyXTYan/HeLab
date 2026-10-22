@@ -98,6 +98,11 @@ def test_folder_cache_keeps_the_newest_measurement_and_drops_counts_with_a_clear
     assert cache.analysis_cached("/r/a") is None and changed[-1] is None
     cache.set_result_reuse(True)
     assert cache.analysis_cached("/r/a") == (1, 700)
+    # Don't cache this folder: its saved results aren't reused (the helper refuses), so no badge.
+    cache.remember_prefs("/r/a", {"no_cache": True, "no_auto_load": False, "set_at": 1.0})
+    assert cache.analysis_cached("/r/a") is None and analysis_cached_text(cache, "/r/a") == ""
+    cache.remember_prefs("/r/a", {"no_cache": False, "no_auto_load": False, "set_at": 2.0})
+    assert cache.analysis_cached("/r/a") == (1, 700)
 
 
 def test_the_row_shows_report_with_a_tooltip_line_and_folder_details_says_it(

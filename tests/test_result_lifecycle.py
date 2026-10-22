@@ -544,3 +544,32 @@ def test_make_room_updates_its_folders_saved_result_count(lab: Lab) -> None:
     assert len(lab.cache.pending_results[pending_id]["room"]["result_ids"]) == 2
     assert lab.make_room(pending_id)["adopted"] is True
     lab.qtbot.waitUntil(lambda: (lab.cache.analysis_cached(path) or (0, 0))[0] == 1, timeout=WAIT)
+
+
+def test_adoption_acknowledged_after_another_make_room_evicted_its_row_is_ram_only(lab: Lab) -> None:
+    """Gauge's round 7: adoption A commits, Make room B evicts A's row, then A's acknowledgement
+    arrives: by its row's id it names a row that is gone, so its plot isn't marked disk-cached."""
+    lab.budget(1)
+    instance, pending_id = lab.waiting(1)
+    lab.budget(8 << 30)
+    held: list[tuple[IORequest, dict[str, Any]]] = []
+    real, adopting = lab.cache._on_admin_event, [""]
+
+    def hold(producer: IORequest, event: dict[str, Any]) -> None:
+        if producer.owner == adopting[0]:  # (All of the adoption's events, its done too: held in order.)
+            held.append((producer, event))
+            return
+        real(producer, event)
+    lab.monkeypatch.setattr(lab.cache, "_on_admin_event", hold)
+    adopting[0] = lab.cache.cache_admin("adopt_result", pending_id=pending_id, make_room=True, room_ids=[])
+    assert adopting[0]
+    lab.qtbot.waitUntil(lambda: any(event["kind"] == "admin_result" for _, event in held), timeout=WAIT)
+    acknowledgement = next(event for _, event in held if event["kind"] == "admin_result")
+    assert acknowledgement["adopted"] is True and acknowledgement["result_id"] and lab.store_rows() == (1, 0)
+    evict_scale_1(lab)  # Make room for Scale 2 evicts Scale 1's row, adopted just now.
+    assert lab.store_rows() == (1, 0)
+    for producer, event in held:
+        real(producer, event)
+    assert (pending_id, False) in lab.answers
+    lab.qtbot.wait(100)
+    assert shown(instance).policy != DISK_CACHED

@@ -437,7 +437,7 @@ Discard") more often exactly when this session's work filled the budget. Easy to
 | **Save**, answer after its transaction (its row was the one evicted) | RAM only (by `result_id`) · `save_x_eviction_of_the_same_result_is_ram_only` | saved · `save_x_eviction_of_another_result_is_saved` |
 | **Save**, transaction after the eviction | the newer copy is saved · `save_x_eviction_of_the_same_key_before_its_transaction_saves_the_newer_copy`; no room: its own question · `save_x_eviction_of_the_same_key_then_no_room_is_its_own_question`; store: `a_save_running_since_before_an_eviction_saves_its_newer_copy`, `a_newer_copy_that_doesnt_fit_after_an_eviction_is_its_own_question` | saved |
 | **Waiting result** (a newer copy of the key) | stays, asked; its Make room saves it · `waiting_x_eviction_of_its_keys_saved_row_keeps_the_replacement`; its `result_pending` in transit: still asked · `waiting_in_transit_x_eviction_of_its_key_is_still_asked`; store: `a_waiting_newer_copy_stays_when_its_old_saved_row_is_evicted` | stays, saved by its Make room · `waiting_x_another_waiting_ones_eviction_keeps_its_question_and_saves` |
-| **Adoption** (Make room asked) | saves · `adoption_x_eviction_of_its_keys_saved_row_still_saves` | the plan changed: nothing removed, asked again · `adoption_x_another_adoptions_eviction_asks_again_with_the_new_plan` |
+| **Adoption** (Make room asked) | saves · `adoption_x_eviction_of_its_keys_saved_row_still_saves`; its acknowledgement after another Make room evicted the row it saved: RAM only (round 7) · `adoption_acknowledged_after_another_make_room_evicted_its_row_is_ram_only` | the plan changed: nothing removed, asked again · `adoption_x_another_adoptions_eviction_asks_again_with_the_new_plan` |
 
 Plus: a copy saved after the question is never removed by it (asked again, the new plan takes the
 oldest) · `a_newer_copy_saved_after_the_question_is_never_removed_by_it`; a result saved by Make room
@@ -473,3 +473,16 @@ is unchanged (the icon exists).
 - `.ai/memory/results/disk-cache-and-budgets.md`: Make room for results, as above.
 
 **Checks:** full suite (`pytest -n 4 --reruns 5 --reruns-delay 1`): see the summary sent to CoCo.
+
+## Review fixes, round 7 (Gauge on `a2c581f..ca7e4cd`)
+
+1. **[P2] A delayed Make room acknowledgement after its row was evicted.** Adoption A commits, Make
+   room B evicts A's row, then A's acknowledgement arrives: it was answered "saved" and its plot said
+   "saved in disk cache". Its answer now also checks the row's `result_id` against the evicted ids
+   (as `result_found` and `result_saved` do), so it says RAM only; a newer copy, with another id, is
+   unaffected. Cell added to the table above
+   (`adoption_acknowledged_after_another_make_room_evicted_its_row_is_ram_only`; fails before the fix).
+2. **[P3] The REPORT badge on a Don't cache folder.** The helper refuses reuse there, so
+   `FolderCache.analysis_cached` now gives None while the folder's own `no_cache` is set: no badge, no
+   tooltip or Folder details line; it comes back when the flag is cleared (the flag's change repaints
+   the row). Tested in `test_folder_cache_keeps_the_newest_measurement_and_drops_counts_with_a_clear`.

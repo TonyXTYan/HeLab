@@ -2034,8 +2034,9 @@ class FolderCache(QObject):
 
     def analysis_cached(self, path: str) -> tuple[int, int] | None:
         """The folder's saved analysis results that reuse will use: (count, bytes), None if none,
-        not known or reuse is off. Memory only (row rendering)."""
-        if not self.result_reuse or self.result_cache_off(path):
+        not known, reuse is off or the folder is set to Don't cache (the helper refuses its reuse
+        then). Memory only (row rendering)."""
+        if not self.result_reuse or self.result_cache_off(path) or self.folder_prefs(path)["no_cache"]:
             return None
         entry = self.result_counts.get(self.key(path))
         return (entry[0], entry[1]) if entry is not None and entry[0] > 0 else None
@@ -2398,9 +2399,11 @@ class FolderCache(QObject):
             elif pending_id:
                 self._forget_pending({pending_id})
                 # Saved, unless a Clear cached analysis (all, the root's, a purge) of its folder came since
-                # Make room was asked: its acknowledgement then names a row that is gone.
-                saved_now = bool(event.get("adopted")) and not self._removed_after(
-                    started, "results", self.key(str(event.get("path") or "")))
+                # Make room was asked, or another Make room evicted that very row (by its id; a newer
+                # copy has another): its acknowledgement then names a row that is gone.
+                saved_now = (bool(event.get("adopted"))
+                             and str(event.get("result_id") or "") not in self._evicted
+                             and not self._removed_after(started, "results", self.key(str(event.get("path") or ""))))
                 if isinstance(event.get("folder_results"), dict):
                     self._note_result_counts(event["folder_results"], started)
                 self.resultPendingAnswered.emit(pending_id, saved_now,
