@@ -200,3 +200,16 @@ full workspace file left open.
 
 Tests added: change marks (and clearing them), Replace/Add, Keep/Drop and a kept plot reopening
 once its script is loaded. Full suite 2535 passed, no RERUN; strict mypy and pyright clean.
+
+## Review fixes (Flint on `a74fd07`): `29add99`, not pushed
+
+1. P1 mismatched folder: `FolderWait` uses no RAM (tab pins included) or cached data while the folder
+   is in `FolderCache.mismatched`, deliberate Rerun included; line "run's cached data doesn't match
+   the folder: Review… it, or select it to load it as it is now"; looks again on `mismatchesChanged`.
+2. P2 unverified cached read: asked again once on `volumesVerified` (a plain miss isn't).
+3. P2 Live-off preset on the folder already shown: Apply stops Live ("Preset “X”: Live off for run").
+4. P2 bad `dock_state`: `parse` drops it (`Arrangement.layout_error`), plots open in their tab groups,
+   reopen and apply name it; restore decodes defensively.
+
+Each has a regression test (5 tests fail on the unfixed code). Full suite 2541 passed, no RERUN;
+strict mypy and pyright clean.
