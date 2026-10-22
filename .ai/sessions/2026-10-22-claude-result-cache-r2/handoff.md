@@ -149,6 +149,13 @@ looks itself up; an exact match shows without computing. A Qt-free key for other
    and leaves the Cached column's data; Clear cached data… leaves the saved results.
 5. Release time with the default 1,000-replicate bootstrap: the second open is instant.
 6. A folder without a `.helab-root`: plots work as before, nothing saved (RAM only).
+7. (Follow-up 2) After a plot saves, its folder's row shows the grey REPORT badge after the data
+   cache's; the row tooltip and Folder details' cache line say "Cached analysis: 1 result, <size>".
+   Settings → Cache › Reuse saved analysis results off: the badge and lines go; on: back. Clear cached
+   analysis…: they go.
+8. (Follow-up 2) With a small budget, Make room for a result removes the least recently shown other
+   results; a plot that recomputes one of those right after saves its newer copy (or asks its own
+   Make room), never refused.
 
 ## Proposed documentation edits (for the Coordinator)
 
@@ -391,3 +398,78 @@ the plan's dropped pending ids (`dropped_ids`, empty when none) beside its `room
 differ (a replacement queued after the question was shown); the plan comes back and the question,
 whose identity now includes those ids (`CacheDialogs.question`), is asked again naming it
 (`test_a_waiting_replacement_that_appears_after_the_question_makes_it_ask_again`).
+
+## Follow-up 2 (Tony's answers, 2026-10-22)
+
+Commits `e6f56ae` (Make room), `f1a6c08` (row badge); not pushed (Gauge reviews the delta first).
+
+**Make room removes old saved results only** (Tony: "make room only should remove very old saved
+results so any newer copy saving in cache is fine"). It still removes the least recently shown other
+saved results (by `last_used`) and nothing else, and no longer fences or drops anything:
+- Gone: the per-key epoch (`folder_epochs` rows `result-key:…`, their compaction, the `lookup` of
+  `start_result_job`), the dropping of waiting replacements (`dropped`, `expected_dropped`,
+  `dropped_ids`, `ResultRoom.dropped`/`dropped_labels`) and the question's "It also discards…" sentence.
+  Rounds 4–6's notes above on those are superseded. (No store outside this unpushed branch has
+  `result-key:` rows.)
+- A newer copy of an evicted result, being saved or waiting, keeps its guard and checks the budget in
+  its own transaction like any save: saved if it fits, else its own Make room question.
+- Every save gives its row a new `result_id` (a replacement's too), so a plan, which names ids, never
+  removes a copy saved after the question was shown: the answer then removes nothing and the question
+  is asked again with the new plan, in which that copy (just saved, so most recently used) comes last.
+- The app tracks evictions by `result_id` (`result_found`, `result_saved` and an adoption's answer
+  carry it; `removed.evicted` names `[folder, lookup, result_id]`): an answer about an evicted row
+  isn't current, while a newer copy stays "saved in disk cache". A plot saved by Make room is now
+  tracked too (`resultPendingAnswered` carries the row's id), so a later eviction marks it RAM only.
+- The user's clears (Clear cached analysis…, Clear all, a root's) fence running saves as before.
+
+**Should Make room also skip results used this session or shown by a plot? I recommend not.** The
+order already puts them last: showing an exact match and saving both set `last_used`, so results
+from earlier sessions that nobody showed since go first. A shown plot keeps its result in RAM either
+way (its record then says "kept in RAM only"). Skipping them would make Make room fail ("only
+Discard") more often exactly when this session's work filled the budget. Easy to add if Tony wants it.
+
+**The table now** (replaces round 4's; tests in `tests/test_result_lifecycle.py`, store cells in
+`tests/test_result_cache_store.py`; the Clear, Purge and Discard columns are unchanged):
+
+| In flight ↓ / meanwhile → | Make room evicts the same key's old row | Make room evicts another key of the folder |
+|---|---|---|
+| **Lookup** | computes and saves the newer copy (its guard holds) · `lookup_x_eviction_of_the_same_result_computes_and_saves_the_newer_copy` | shown from disk · `lookup_x_eviction_of_another_result_shows_it_from_disk` |
+| **Save**, answer after its transaction (its row was the one evicted) | RAM only (by `result_id`) · `save_x_eviction_of_the_same_result_is_ram_only` | saved · `save_x_eviction_of_another_result_is_saved` |
+| **Save**, transaction after the eviction | the newer copy is saved · `save_x_eviction_of_the_same_key_before_its_transaction_saves_the_newer_copy`; no room: its own question · `save_x_eviction_of_the_same_key_then_no_room_is_its_own_question`; store: `a_save_running_since_before_an_eviction_saves_its_newer_copy`, `a_newer_copy_that_doesnt_fit_after_an_eviction_is_its_own_question` | saved |
+| **Waiting result** (a newer copy of the key) | stays, asked; its Make room saves it · `waiting_x_eviction_of_its_keys_saved_row_keeps_the_replacement`; its `result_pending` in transit: still asked · `waiting_in_transit_x_eviction_of_its_key_is_still_asked`; store: `a_waiting_newer_copy_stays_when_its_old_saved_row_is_evicted` | stays, saved by its Make room · `waiting_x_another_waiting_ones_eviction_keeps_its_question_and_saves` |
+| **Adoption** (Make room asked) | saves · `adoption_x_eviction_of_its_keys_saved_row_still_saves` | the plan changed: nothing removed, asked again · `adoption_x_another_adoptions_eviction_asks_again_with_the_new_plan` |
+
+Plus: a copy saved after the question is never removed by it (asked again, the new plan takes the
+oldest) · `a_newer_copy_saved_after_the_question_is_never_removed_by_it`; a result saved by Make room
+and evicted later says RAM only · `adopted_then_evicted_says_ram_only`.
+
+**Folder-row badge: `report`** (REPORT_ANALYTICS, grey like no_cache, from Debug › Show all Icons;
+`chart3d` is the 3D scatter's own picture, `report` reads as analysis results). It shows after the
+data cache's badge when the folder has saved results that reuse will use (reuse on, the folder has a
+disk cache). The row tooltip and Folder details' cache line add "Cached analysis: 2 results, 3.0 MB".
+Debug Icons' `report` row has a tooltip saying so.
+- Where the counts come from: a listing sends each subfolder's (`results` on its entries, and the
+  listed folder's own on its status; from the store's records only, like the other saved flags); a save
+  sends its folder's count after it, an adoption those of its folder and the folders it took results
+  from. Each carries the store's `[store_id, writes]`; FolderCache keeps the newest
+  (`result_counts`, `analysis_cached`, `resultCountsChanged`); a Clear cached analysis zeroes them, and a
+  listing or answer asked before it is ignored. Rendering reads memory only.
+- Known limit: a folder whose data root is forgotten while HeLab runs keeps its last count in memory,
+  hidden (no disk cache) until a listing says otherwise.
+
+**Owned-path note:** the listing's field is added in `helab/io_ops/browse.py` (not `metadata.py`'s
+`_saved_folders`), so a details scan's entries don't carry it; listings do. `helab/resources/icons.py`
+is unchanged (the icon exists).
+
+**Proposed doc edits** (in addition to those above):
+- AGENTS.md › Caching, the saved-results paragraph: "Make room for a result removes the least recently
+  shown other saved results only (never datasets, never a waiting result or a save running: a newer copy
+  of an evicted result checks the budget in its own transaction); each save gets a new `result_id` and
+  the plan names ids, so a copy saved after the question makes it ask again."
+- AGENTS.md › UI (or `.ai/memory/results/folder-summary-indicators.md` and `folder-row-tooltip.md`): "A
+  folder with saved analysis results that reuse will use shows REPORT after the data cache's badge; its
+  tooltip and Folder details' cache line say 'Cached analysis: N results, X MB' (listing counts, memory
+  only)."
+- `.ai/memory/results/disk-cache-and-budgets.md`: Make room for results, as above.
+
+**Checks:** full suite (`pytest -n 4 --reruns 5 --reruns-delay 1`): see the summary sent to CoCo.
