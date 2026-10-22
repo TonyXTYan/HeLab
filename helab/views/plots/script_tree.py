@@ -300,7 +300,13 @@ class TreePanelWidget(QWidget):
             return None
         self._instance_counter += 1
         instance_id = f"{self._instance_counter}"
-        instance = AnalysisInstance(metadata, script, action, view, instance_id, plots)
+        try:
+            instance = AnalysisInstance(metadata, script, action, view, instance_id, plots)
+        except Exception as error:
+            # The script's live_policy() or constant_keys() failing (in this Qt slot it would abort the app).
+            logging.exception("%s could not open its plot", metadata.name)
+            plots.notice(f"{metadata.name} failed: {error}")
+            return None
         self._analysis_instances[instance_id] = instance
         instance.start()
         self._add_dock(instance)

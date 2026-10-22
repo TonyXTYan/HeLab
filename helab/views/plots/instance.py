@@ -129,6 +129,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def __init__(self, metadata: ScriptMetadata, script: DatasetAnalysis, action: str, view: DatasetView,
                  instance_id: str, workspace: Optional[PlotWorkspace],
                  runner: Optional[AnalysisRunner] = None, cache: Optional[FolderCache] = None) -> None:
+        # The script's hooks first: one that raises leaves nothing connected (``run_analysis`` says so).
+        policy, constant_keys = script.live_policy(action), script.constant_keys(action)
         super().__init__(metadata.name, instance_id, workspace)
         # The app's FolderCache unless given (tests); its lab and folder constants feed each run.
         self._given_cache = cache
@@ -144,7 +146,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._content: Optional[QWidget] = None  # The plot drawn (``render``), updated in place if it can
         self._drawn_with = ""  # The library ``_content`` was drawn with (``backend``)
         self.error = ""  # The last run's failure, while the plot before it stays
-        self.policy = script.live_policy(action)
+        self.policy = policy
         self.follow = Follow(view, self.policy)
         self.parameter_root: Optional[Parameter] = None
         self.status_label = QLabel()
@@ -176,7 +178,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         # The constants its settings let it override (helab/analysis/constant_layers.py): each run
         # resolves them (lab, folder, this plot) when it is submitted. A lab or folder value that
         # changes afterwards marks the plot (open decision 5, proposed); the next run uses it.
-        self.constant_keys = script.constant_keys(action)
+        self.constant_keys = constant_keys
         self._constants_note = ""
         self._reload_constants: Optional[Mapping[str, Mapping[str, float]]] = None
         if self.constant_keys:
@@ -193,7 +195,20 @@ class AnalysisInstance(LinkedAnalysisInstance):
 
     def start(self) -> None:
         """Open the dock and its settings page, then run with the defaults."""
-        self.setup_dock_widget(self._message(f"Running {self.name} on {self.view.key.short()}…"))
+        message = self._message(f"Running {self.name} on {self.view.key.short()}…")
+        self.setup_dock_widget(message)
+        try:
+            self._open_settings()
+        except Exception as error:
+            # A script's parameters(), backends() or minimum_size() failing: the dock says so (in this
+            # Qt slot the exception would abort the app).
+            logging.exception("%s could not open its settings", self.name)
+            message.setText(f"{self.name} failed: {error}")
+            return
+        self.run()
+
+    def _open_settings(self) -> None:
+        """The plot's settings page (its parameters, Drawing and Live) and its RAM budget entry."""
         if isinstance(self.dock_widget, AnalysisDock):
             self.dock_widget.set_minimum_plot_size(*self.script.minimum_size(self.action))
         specs = self.script.parameters(self.action)
@@ -222,7 +237,6 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.workspace.panel_right_top_plot_settings.plotShown.connect(self._plot_shown)
         if self.budget is not None:
             self.budget.add(self)
-        self.run()
 
     def values(self) -> Dict[str, Any]:
         """The analysis's parameters as set (not the plot's Live settings)."""
@@ -263,7 +277,12 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._follow_timer.stop()
         if not reloading:
             self._reload_note = ""
-        values = self.values() if values is None else values
+        try:
+            values = self.values() if values is None else values
+        except Exception as error:  # The script's parameters() (a Qt slot: never raised from here).
+            logging.exception("Parameters of %s failed", self.name)
+            self.status_label.setText(f"Failed: {error}")
+            return
         if constants is None:
             constants = self.constant_layers(view.identity.source_path)
         try:
