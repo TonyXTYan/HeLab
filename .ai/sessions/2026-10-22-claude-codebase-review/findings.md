@@ -577,3 +577,8 @@ joblib, cloudpickle or loky remains in helab/, tests/ or the spec; the lock lose
 the README's command without `--upgrade`) onto a copy of the lock gives a byte-identical file but for the
 header's output path. The floor venv has neither package; the full suite and type checks at this head are
 my final check (below).
+
+**R-12 wheel half in `be12b7d`: accepted.** `setup.py` `package_data` names `ai-icon.icns` beside `*.svg` (Beatunes.icns
+stays out); the new test reads `setup(package_data=…)` by AST (3 tests pass, strict mypy clean). A wheel I built
+from the floor (`pip wheel . --no-deps --no-build-isolation`, into the scratchpad, removed after) holds
+`helab/resources/ai-icon.icns` and `menu-right.svg` and nothing else from the folder.
