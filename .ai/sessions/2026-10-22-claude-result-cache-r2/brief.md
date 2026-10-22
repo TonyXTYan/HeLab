@@ -138,3 +138,38 @@ timings, pending-save or refusal, wording of the 50 MB warning and the two clear
 the branch once to `TonyXTYan/HeLab`, watch its CI (`gh run watch`) and report every RERUN by
 test and OS. Then `--state review` and `maestri ask "CoCo" "<handoff summary>"`. Ask CoCo
 (`maestri ask "CoCo" …`) when blocked or unsure of scope.
+
+## Follow-up 1 (Tony, Chat, 2026-10-22, after the handoff)
+
+A Codex Reviewer (Gauge) is reviewing `6906d96` on this floor at the same time, in its own detached
+worktree under `.ai/temp/review-results` (don't touch it). Its findings come to you through CoCo;
+fold them in with these changes. Commit as you go; **don't push until CoCo says the review findings
+are in too**. Landing order (Tony): Presets Reopen lands first, then you merge `dev/v0.0.6` into
+this branch, resolve the two import conflicts (`instance.py`, `tests/test_headless_imports.py`) and
+fix the seam CoCo found: once merged, `AnalysisInstance.run_reopened` calls `self._submit(view)`
+without `one_off=True`, so reopened and preset-applied plots neither look up nor save results;
+make it a one-off run and test that a reopened plot shows an exact cached match without computing.
+CoCo tells you when to merge.
+
+1. **A result that doesn't fit the disk budget: a popup with Discard or Make room**, replacing
+   decision 1: the dataset cache's pending-save flow (`CacheDialogs`, `pending_saves`, `adopt` /
+   `discard`, one question at a time, also restored at startup if that falls out naturally), with
+   the result's plot, folder and size in the question. Same 80 % approval rule as datasets if it
+   applies naturally; say what you chose.
+2. **Show when result reuse is on.** Tony: "an indicator when result reuse is on (perhaps the
+   folder explorer's row status icon and somewhere else in case the explorer is folded, so maybe
+   the plot window should show indication too)". CoCo's reading, to confirm with Tony:
+   - a **setting to turn reuse off** (Settings → Cache, default on; off: no lookups and no saves);
+   - the **folder row** shows a small badge when the folder has saved analysis results that reuse
+     will use (beside the status icon, like ANCHOR / no_cache; from the listing's per-subfolder
+     flags, memory only during rendering, never a store read), with a tooltip line ("Cached
+     analysis: N results, X MB"); Folder details' cache line says the same;
+   - the **plot dock** shows it too: an icon or short mark on the source line when the shown result
+     came from the disk cache or will be saved (reuse on for this plot), wording to propose.
+   Start with the setting and the plot mark; do the row badge after CoCo confirms the reading.
+3. Decisions 2–7 (Don't cache blocks result saves, wording, 50 MiB, purge by `last_used`, opt-in
+   Correlations + Release time, which runs, kept plot after a clear): Tony is fine with them.
+
+Owned paths add `helab/views/CacheDialogs.py`, `helab/models/SnapshotFileSystemModel.py` (the badge),
+`helab/io_ops/browse.py` (the listing's flag), `helab/views/FolderDetailsPanel.py` (its cache line)
+and `helab/views/SettingsDialog.py` (the reuse setting only).

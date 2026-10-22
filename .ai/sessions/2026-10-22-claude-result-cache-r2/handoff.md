@@ -95,7 +95,7 @@ computing") and never saves (no guard).
 
 ## Decisions I took (please confirm or change)
 
-1. **Budget refusal, no pending save.** A result that doesn't fit isn't saved (its file retired at
+1. *(Replaced by Follow-up 1: Make room or Discard.)* **Budget refusal, no pending save.** A result that doesn't fit isn't saved (its file retired at
    once; nothing removed to make room) and the status line says "⚠ not saved in the disk cache: it
    doesn't fit the disk budget (Settings → Cache)". The dataset cache's Make room flow would ask a
    question per plot run; results are cheap to recompute relative to that.
@@ -201,3 +201,49 @@ PC (Windows process start makes a lookup ~0.1–0.5 s there: confirm it still be
 - A plot whose run started from kept state (Correlations after its first run) is neither looked up nor
   saved unless `cache_result` says the result equals a fresh plot's; reopening the plot (or a restart)
   finds it again.
+
+## Follow-up 1 (after Tony's answers, 2026-10-22)
+
+Commits `b4b435e` (Make room or Discard), `67f9266` (reuse setting and plot mark); not pushed yet
+(CoCo: wait for the review findings). The CI run on `6906d96` (39746062230) was green on macOS,
+Windows and Ubuntu with no RERUN.
+
+**Schema change, with its reason.** A new table `pending_results` (in `RESULT_SCHEMA`, added to older
+stores by `_migrate`, including stores made by `c31ac10`): a result that doesn't fit the budget must
+wait for the user's answer, with its file, record, the plot's name and its run's save guard, several
+per folder. The dataset `pending_saves` table allows one per folder and checks dataset kinds, so it
+couldn't hold them. `results` itself is unchanged.
+
+**Make room or Discard** (replaces decision 1): `CacheDialogs` asks it in the same queue as the
+dataset saves, also after a restart (the startup inventory restores waiting results):
+"Not enough room in the disk cache to save Correlations's result for halo_run (63.0 MB, 7.9 GB of
+8.0 GB used)." with "Make room removes 3 saved analysis results (70.0 MB) not shown since 4 Oct,
+least recently shown first. Cached data isn't touched. The plot stays as it is either way." and the
+buttons Make room / Discard. Decisions:
+- **Make room removes other saved results only, never cached datasets** (Rule 1: one budget, but
+  clearing stays the user's per kind). When results alone can't free enough, only Discard is offered,
+  with where to free space (Settings → Cache: Clear cached data, Remove old entries) or to raise the
+  budget.
+- **No 80 % approval question for results**: the dataset rule asks before a cached folder's update
+  grows; a result never updates another (one key, one result), so it doesn't apply.
+- A waiting result expires after an hour unanswered (as dataset saves), goes with Clear cached
+  analysis, is discarded on Make room if a clear or a nested root's re-key happened since its run
+  started (its guard), and doesn't count toward the budget meanwhile.
+- The plot says "not saved yet: the disk cache is full (Make room or Discard)", then shows "saved in
+  disk cache" or "not saved in the disk cache (discarded)".
+
+**Reuse setting**: Settings → Cache › "Reuse saved analysis results" (`result_reuse`, default on, read
+at each run; off: no lookups, no saves; saved results stay until cleared).
+
+**Plot mark** (wording to confirm): the source line's first line ends with "disk cache reuse on" (its
+runs are looked up and saved), "saved in disk cache", "from disk cache, computed 2026-10-22 14:03" or
+"saved result of 2026-10-22 14:03, outdated". Nothing for quick plots, RAM-only folders or reuse off.
+
+**Not done yet**: the folder-row badge and Folder details' cache line (waiting for CoCo's
+confirmation of the reading); the merge with `dev/v0.0.6` and the `run_reopened` seam (after Presets
+Reopen lands); the review findings.
+
+Proposed doc edits, in addition to those above: AGENTS.md › Caching: "a result that doesn't fit waits
+in `pending_results` and CacheDialogs asks Make room (other saved results, least recently shown, never
+datasets) or Discard; Settings → Cache › Reuse saved analysis results (`result_reuse`, default on)";
+`roadmaps/cache-storage-and-settings.md`: the same under pending saves and the Cache tab.
