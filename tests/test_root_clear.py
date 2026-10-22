@@ -164,7 +164,7 @@ def test_clear_names_the_root_and_its_size_then_asks_a_helper(
     page.confirm = answer
     page.clear_selected()
     assert asked == ["Clears 12 cached folders (3.0 GB) for data root “dld_output” on this computer. "
-                     "The .helab-root and folder flags stay."] and len(jobs) == 1
+                     "The .helab-root, folder flags and cached analysis stay."] and len(jobs) == 1
     page.clear_selected()
     assert jobs[-1] == ("clear_root", {"uuid": A}) and not page.clear_button.isEnabled()
     assert page.cache is not None

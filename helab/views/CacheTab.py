@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from helab.analysis.budget_core import RELEASE_SHARE
-from helab.utils.cache_store import KINDS, purge_estimate, trim_estimate
+from helab.utils.cache_store import KINDS, purge_estimate, results_purge_estimate, trim_estimate
 from helab.utils.constants import (
     DISK_BUDGET_SETTING, LIVE_AUTOSAVE_SETTING, PLOT_AUTO_RELOAD_SETTING, MAX_LIVE_AUTOSAVE, MIN_DISK_BUDGET, RAM_BUDGET_SETTING, RAM_STEPS,
     read_disk_budget, cache_dir_refused, read_live_autosave, read_plot_auto_reload, read_ram_budget_steps, ram_step_bytes, ram_step_range,
@@ -43,6 +43,10 @@ CLEAR_TEXT = {
     "histories": "Automatic checks will try these folders again.",
     "subtrees": "Each folder's status from its subfolders is derived again when it is listed.",
 }
+# Saved analysis results (result caching R2): apart from the kinds above (Clear all keeps them).
+RESULTS_LABEL = "Cached analysis"
+RESULTS_TEXT = ("Plots shown now stay as they are; the next run of each plot computes again. Cached data, "
+                "folder records and exported files are kept.")
 
 
 def plural(count: int, noun: str) -> str:
@@ -139,7 +143,7 @@ class CacheTab(QWidget):
         self.disk_budget.setSuffix(" GB")
         self.disk_budget.setValue(read_disk_budget(settings) / GB)
         self.disk_budget.setToolTip(
-            "Counts live data: cached datasets and the records database. Removed files waiting out their "
+            "Counts live data: cached datasets, cached analysis and the records database. Removed files waiting out their "
             "10-minute grace period don't count. Nothing is removed to make room without asking. At 80%, "
             "automatic loads of folders without cached data pause.")
         usage.addWidget(self.disk_budget)
@@ -158,6 +162,17 @@ class CacheTab(QWidget):
             button.clicked.connect(lambda checked=False, k=kind: self.clear([k]))
             self.kind_buttons[kind] = button
             grid.addWidget(button, row, 2)
+        # Saved analysis results (R2): their own Clear, not part of Clear all.
+        row = len(KIND_ROWS)
+        grid.addWidget(QLabel(RESULTS_LABEL), row, 0)
+        self.results_label = QLabel("Checking…")
+        self.results_label.setToolTip("Results of costly plots (Correlations, Release time…), reused when a plot "
+                                      "runs again with the same data, script and settings. They count toward the "
+                                      "budget; Clear all keeps them.")
+        grid.addWidget(self.results_label, row, 1)
+        self.results_button = QPushButton("Clear…")
+        self.results_button.clicked.connect(self.clear_results)
+        grid.addWidget(self.results_button, row, 2)
         layout.addLayout(grid)
 
         footer = QHBoxLayout()
@@ -210,11 +225,17 @@ class CacheTab(QWidget):
         self.record_estimate = QLabel("")
         self.purge_records_button = QPushButton("Remove…")
         self.purge_records_button.clicked.connect(self.purge_records)
+        self.result_days = self._days()
+        self.result_estimate = QLabel("")
+        self.purge_results_button = QPushButton("Remove…")
+        self.purge_results_button.clicked.connect(self.purge_results)
         for row, (text, days, estimate, button) in enumerate((
                 ("Cached data not used in the last", self.dataset_days, self.dataset_estimate,
                  self.purge_datasets_button),
                 ("Folder records not checked in the last", self.record_days, self.record_estimate,
-                 self.purge_records_button))):
+                 self.purge_records_button),
+                ("Cached analysis not shown in the last", self.result_days, self.result_estimate,
+                 self.purge_results_button))):
             purges.addWidget(QLabel(text), row, 0)
             purges.addWidget(days, row, 1)
             purges.addWidget(estimate, row, 2)
@@ -387,7 +408,8 @@ class CacheTab(QWidget):
             text = (f"Removes everything in the disk cache: cached data for "
                     f"{plural(inventory['datasets']['count'], 'folder')} ({byte_size(inventory['datasets']['bytes'])}),"
                     " folder summaries, scan failures and subfolder status.\n\n"
-                    "Loaded data stays open. Automatic checks will try failed folders again.")
+                    "Loaded data stays open. Automatic checks will try failed folders again. Cached analysis "
+                    "stays (its own Clear).")
             verb, label = "Clear all", "Clear all"
         else:
             kind = kinds[0]
@@ -400,6 +422,28 @@ class CacheTab(QWidget):
             label = f"{verb} {name.lower()}"
         if self.confirm(title, text, verb):
             self._run(label, "clear", kinds=list(kinds))
+
+    def clear_results(self) -> None:
+        """Clear cached analysis: every saved result, nothing else (asks first)."""
+        inventory = self.inventory
+        if inventory is None or self.busy:
+            return
+        results = inventory.get("results") or {"count": 0, "bytes": 0}
+        if self.confirm("Clear cached analysis?",
+                        f"Removes {plural(int(results['count']), 'saved result')} ({byte_size(int(results['bytes']))})"
+                        f".\n\n{RESULTS_TEXT}", "Clear"):
+            self._run("Clear cached analysis", "clear_results")
+
+    def purge_results(self) -> None:
+        if self.inventory is None or self.busy:
+            return
+        days = self.result_days.value()
+        cutoff = time.time() - days * DAY
+        estimate = results_purge_estimate(self.inventory, cutoff)
+        if self.confirm("Remove old cached analysis?",
+                        f"Removes {plural(estimate['results'], 'saved result')} ({byte_size(estimate['bytes'])}) "
+                        f"not shown in the last {plural(days, 'day')}.\n\n{RESULTS_TEXT}", "Remove"):
+            self._run("Remove old cached analysis", "purge", what="results", cutoff=cutoff)
 
     def purge_datasets(self) -> None:
         if self.inventory is None or self.busy:
@@ -442,10 +486,11 @@ class CacheTab(QWidget):
     def _show_estimates(self) -> None:
         inventory = self.inventory
         if inventory is None:
-            for label in (self.dataset_estimate, self.record_estimate):
+            for label in (self.dataset_estimate, self.record_estimate, self.result_estimate):
                 label.setText("")
             self.purge_datasets_button.setEnabled(False)
             self.purge_records_button.setEnabled(False)
+            self.purge_results_button.setEnabled(False)
             return
         now = time.time()
         datasets = purge_estimate(inventory, now - self.dataset_days.value() * DAY, datasets=True)
@@ -457,9 +502,13 @@ class CacheTab(QWidget):
         self.record_estimate.setToolTip(f"{plural(records['summaries'], 'folder summary')} · "
                                         f"{plural(records['subtrees'], 'subfolder status')} · "
                                         f"{plural(records['histories'], 'scan history')}")
+        results = results_purge_estimate(inventory, now - self.result_days.value() * DAY)
+        self.result_estimate.setText(f"— frees ~{byte_size(results['bytes'])} "
+                                     f"({plural(results['results'], 'result')})")
         writable = not inventory.get("read_only") and not self.busy
         self.purge_datasets_button.setEnabled(writable and datasets["datasets"] > 0)
         self.purge_records_button.setEnabled(writable and sum(records.values()) > 0)
+        self.purge_results_button.setEnabled(writable and results["results"] > 0)
 
     def _update(self) -> None:
         inventory = self.inventory
@@ -467,13 +516,14 @@ class CacheTab(QWidget):
         for button in (*self.kind_buttons.values(), self.clear_all_button):
             button.setEnabled(writable)
         self.prefs_button.setEnabled(False)
+        self.results_button.setEnabled(False)
         self.refresh_button.setEnabled(self.enabled and not self.busy and not self._inventory_owner)
         self.disk_budget.setEnabled(not self.applying)
         status = ("Off for this session" if not store_options() else
                   "Changing the disk budget…" if self._budget_job else f"{self._job_label}…" if self.busy else "Checking…" if self._inventory_owner and inventory is None
                   else "")
         if inventory is None:
-            for label in (*self.kind_labels.values(), self.prefs_label):
+            for label in (*self.kind_labels.values(), self.prefs_label, self.results_label):
                 label.setText(status or "Not checked")
             self.usage_label.setText(status or "Not checked")
             self.checked_label.setText(self.message or status)
@@ -506,6 +556,12 @@ class CacheTab(QWidget):
         self.kind_labels["histories"].setText(f"{plural(histories['blocked'], 'folder')} skip automatic checks")
         self.kind_labels["histories"].setToolTip(f"{plural(histories['count'], 'folder')} with a scan history")
         self.kind_labels["subtrees"].setText(plural(inventory["subtrees"]["count"], "folder"))
+        results = inventory.get("results") or {"count": 0, "bytes": 0, "last_used": None}
+        text = f"{plural(int(results['count']), 'result')} · {byte_size(int(results['bytes']))}"
+        if isinstance(results.get("last_used"), (int, float)):
+            text += f" · last shown {relative_age(time.time() - results['last_used'])}"
+        self.results_label.setText(text)
+        self.results_button.setEnabled(writable and bool(results["count"]))
         prefs = inventory.get("prefs") or {"no_cache": 0, "no_auto_load": 0}
         self.prefs_label.setText(f"{plural(prefs['no_cache'], 'folder')} not cached · "
                                  f"{plural(prefs['no_auto_load'], 'folder')} not auto-loaded")

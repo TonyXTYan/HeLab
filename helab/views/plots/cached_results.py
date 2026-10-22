@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 from uuid import uuid4
 
 from PyQt6.QtCore import QObject, pyqtSlot
@@ -65,10 +65,12 @@ class CachedRuns(QObject):
                  found: Callable[[AnalysisContext, AnalysisResult], None],
                  run: Callable[[AnalysisContext], None],
                  saved: Callable[[AnalysisResult, int], None],
-                 note: Callable[[str], None], closed: Callable[[], bool]) -> None:
+                 note: Callable[[str], None], closed: Callable[[], bool],
+                 removed: Callable[[Optional[List[str]]], None] = lambda paths: None) -> None:
         super().__init__()
         self.cache, self.script, self.action, self.name = cache, script, action, name
         self._found, self._run, self._saved, self._note, self._closed = found, run, saved, note, closed
+        self._removed = removed
         self._lookups: Dict[str, Lookup] = {}  # By the run's job id.
         self._saves: Dict[str, AnalysisResult] = {}  # By the save's owner.
         self._connected = False
@@ -144,17 +146,26 @@ class CachedRuns(QObject):
     def _connect(self) -> None:
         if not self._connected:
             self.cache.resultReady.connect(self._event)
+            self.cache.cacheRemoved.connect(self._cache_removed)
             self._connected = True
+
+    @pyqtSlot(object, object)
+    def _cache_removed(self, paths: Any, kinds: Any) -> None:
+        """Saved results were removed (Clear cached analysis): the plot's record no longer says its
+        result is in the disk cache, for those folders (None: every folder)."""
+        if isinstance(kinds, list) and "results" in kinds and not self._closed():
+            self._removed(None if paths is None else [str(path) for path in paths])
 
     def disconnect_all(self) -> None:
         """The plot closed: its lookups' answers are dropped (saves already asked for go on)."""
         for job_id in list(self._lookups):
             self.forget(job_id)
         if self._connected and not self._saves:
-            try:
-                self.cache.resultReady.disconnect(self._event)
-            except TypeError:
-                pass
+            for signal, slot in ((self.cache.resultReady, self._event), (self.cache.cacheRemoved, self._cache_removed)):
+                try:
+                    signal.disconnect(slot)
+                except TypeError:
+                    pass
             self._connected = False
 
     @pyqtSlot(object, object)

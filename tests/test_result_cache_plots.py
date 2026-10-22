@@ -299,3 +299,57 @@ def test_a_large_saved_result_is_said_once_per_save(
     instance.run()
     qtbot.waitUntil(lambda: len([n for n in window.notices if "in the disk cache" in n]) == 2, timeout=WAIT)
     close(window)
+
+
+def test_clear_cached_analysis_leaves_the_plot_but_its_record_says_ram_only(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    instance = open_plot(window, qtbot, folder_view(tmp_path), Costly())
+    qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
+    assert cache.cache_admin("clear_results")
+    qtbot.waitUntil(lambda: cast(AnalysisResult, instance.shown).policy != DISK_CACHED, timeout=WAIT)
+    assert "kept in RAM only" in label(instance, "plot_data_source") and results_saved() == 0
+    assert cast(QDockWidget, instance.dock_widget).findChild(QLabel, "costly_plot") is not None
+    close(window)
+
+
+def test_the_gui_never_opens_the_store_and_helpers_touch_no_source_folder(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Saving and finding results run in local-lane helpers only: in this process the store can't be
+    opened, and the helpers' I/O trace (every source-folder operation) records none."""
+    trace = tmp_path / "trace"
+    trace.mkdir()
+    monkeypatch.setenv("HELAB_TEST_IO_TRACE", str(trace))
+
+    def refuse(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("the GUI process opened the disk cache")
+    monkeypatch.setattr(CacheStore, "__init__", refuse)
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    first = open_plot(window, qtbot, folder_view(tmp_path), Costly())
+    qtbot.waitUntil(lambda: saved(first), timeout=WAIT)
+    script = Costly()
+    second = open_plot(window, qtbot, folder_view(tmp_path), script)
+    qtbot.waitUntil(lambda: settled(second), timeout=WAIT)
+    assert cast(AnalysisResult, second.shown).source == FROM_DISK and script.computed == 0
+    close(window)
+    import json
+    lines = [json.loads(line) for file in trace.glob("*.jsonl") for line in file.read_text().splitlines() if line]
+    # The helpers' own bookkeeping and the mount table (for the folder's key), as every cached read's.
+    assert lines and {line["op"] for line in lines} <= {"request", "request_end", "mounts"}
+
+
+def test_saved_results_count_in_the_usage_the_80_percent_pause_sees(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.utils import folder_cache
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    instance = open_plot(window, qtbot, folder_view(tmp_path), Costly())
+    qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
+    with CacheStore(store_root(cache_dir())) as store:
+        with store.transaction(write=False):
+            results = store._results_live()
+        assert cache.disk_usage == store.usage() and results > 0
+    # With a budget the results alone fill past 80 %, automatic loads of uncached folders pause.
+    monkeypatch.setattr(folder_cache, "_disk_budget", int(results / 0.81) + int(cache.disk_usage or 0) - results)
+    cache.update_auto_load_pause()
+    assert cache.auto_load_paused
+    close(window)

@@ -2062,6 +2062,13 @@ def purge_estimate(inventory: Mapping[str, Any], cutoff: float, *, datasets: boo
                              for saved_at, failures in ages["histories"])}
 
 
+def results_purge_estimate(inventory: Mapping[str, Any], cutoff: float) -> dict[str, int]:
+    """What a purge of saved results not shown since ``cutoff`` removes (``remove_results(cutoff=…)``),
+    from an inventory: ``{"results", "bytes"}`` (their files)."""
+    old = [size for last_used, size in inventory["ages"].get("results", ()) if last_used < cutoff]
+    return {"results": len(old), "bytes": sum(old)}
+
+
 def trim_estimate(inventory: Mapping[str, Any], budget: int) -> dict[str, int]:
     """What :meth:`CacheStore.trim` to ``budget`` removes, from an inventory: least recently
     used datasets until usage fits. An upper bound, since each dataset's records go with it."""

@@ -28,7 +28,7 @@ from helab.analysis.live_feed import LiveFeed
 from helab.analysis.parameter_tree import build_tree, commit_pending_text, parameter_of, settings_widget, tree_values
 from helab.analysis import result_cache
 from helab.analysis.parameters import describe
-from helab.analysis.results import DISK_CACHED, AnalysisContext, AnalysisResult
+from helab.analysis.results import DISK_CACHED, RAM_ONLY, AnalysisContext, AnalysisResult
 from helab.analysis.runner import AnalysisRunner, get_analysis_runner
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.utils.constants import QDOCKWIDGET_STYLESHEET
@@ -295,7 +295,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if self._cached_link is None:
             self._cached_link = CachedRuns(self._cache(), self.script, self.action, self.name,
                                            found=self._cached_found, run=self._cached_run, saved=self._cached_saved,
-                                           note=self._cached_status, closed=lambda: self.is_closed)
+                                           note=self._cached_status, closed=lambda: self.is_closed,
+                                           removed=self._cached_removed)
         return self._cached_link
 
     def _submit(self, view: DatasetView, values: Optional[Dict[str, Any]] = None, *, reloading: bool = False,
@@ -392,6 +393,20 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if content is not None and not sip.isdeleted(content):
             specs = self.script.parameters(self.action)
             self._show_content(content, self.shown, specs,
+                               "; ".join(self._hook("parameter_warnings", [], self.shown.parameters)))
+
+    def _cached_removed(self, paths: Optional[List[str]]) -> None:
+        """Clear cached analysis removed the folder's saved results: the record says RAM only again."""
+        shown = self.shown
+        if (shown is None or shown.policy != DISK_CACHED or self.released is not None
+                or (paths is not None and FolderCache.key(self.path) not in paths)):
+            return
+        self.shown = replace(shown, policy=RAM_ONLY)
+        if self.result is shown:
+            self.result = self.shown
+        content = self._content
+        if content is not None and not sip.isdeleted(content):
+            self._show_content(content, self.shown, self.script.parameters(self.action),
                                "; ".join(self._hook("parameter_warnings", [], self.shown.parameters)))
 
     def _cached_status(self, text: str) -> None:

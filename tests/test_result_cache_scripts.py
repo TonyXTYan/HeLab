@@ -20,8 +20,8 @@ from helab.analysis import result_cache, result_codec
 from helab.analysis.results import AnalysisResult
 from helab.scripts.base import DatasetAnalysis
 from helab.scripts.dld import correlations_plot
-from tests import test_correlations_plot as correlation_tests
-from tests import test_release_time_plot as release_tests
+import test_correlations_plot as correlation_tests
+import test_release_time_plot as release_tests
 
 CASES: dict[str, tuple[DatasetAnalysis, Callable[[], AnalysisResult]]] = {
     "correlations radial": (correlation_tests.SCRIPT, lambda: correlation_tests.run(
