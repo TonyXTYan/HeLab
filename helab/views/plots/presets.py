@@ -32,7 +32,7 @@ from helab.analysis.dataset_view import root_key
 from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.presets import (Arrangement, PlotCheck, RecordError, ScriptPreset, ScriptPresets, ScriptRef,
-                                    parse, preset_note)
+                                    check_value, parse, preset_note)
 from helab.utils.colours import AMBER
 from helab.utils.folder_cache import FolderCache
 from helab.utils.settings_defaults import ARRANGEMENT_PRESETS_PREFIX, SCRIPT_PRESETS_PREFIX, read_setting
@@ -253,17 +253,18 @@ class PresetBar(QWidget):
 
     def changes(self) -> List[tuple[ParameterSpec, object]]:
         """The settings that differ from the preset applied: (spec, the preset's value). Settings the
-        preset doesn't hold (or holds a value that didn't fit) aren't compared: its note named them."""
+        preset doesn't hold, or holds a value the script's settings don't accept (``check_value``),
+        aren't compared: its note named them."""
         preset, root = self.applied, self.plot.parameter_root
         if preset is None or root is None:
             return []
         saved = {**preset.values, **({BACKEND: preset.backend} if preset.backend else {})}
-        found = []
+        found: List[tuple[ParameterSpec, object]] = []
         for spec in self._compared():
             if spec.name not in saved:
                 continue
-            wanted = saved[spec.name]
-            if wanted != parameter_of(root, spec).value() and spec.coerce(wanted) == wanted:
+            wanted, _ = check_value(spec, saved[spec.name])
+            if wanted is not None and wanted != parameter_of(root, spec).value():
                 found.append((spec, wanted))
         return found
 

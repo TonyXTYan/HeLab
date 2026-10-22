@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 from PyQt6 import sip
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
-from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QMenu, QWidget
+from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QMenu, QMessageBox, QWidget
 from pytestqt.qtbot import QtBot
 
 from helab.analysis.backends import BACKEND, backend_specs
@@ -357,6 +357,35 @@ def test_settings_changed_from_the_applied_preset_are_marked(qtbot: QtBot, cache
     assert presets.applied is None and marked(instance) == {} and presets.changes_button.isHidden()
 
 
+def test_values_a_preset_holds_that_dont_fit_are_named_not_marked(qtbot: QtBot, cache: FolderCache,
+                                                                   windows: Windows) -> None:
+    """A preset with values the script doesn't accept (wrong types, nothing, a list) applies the
+    rest, names those, and marks only accepted values that were changed afterwards."""
+    window = new_window(qtbot, cache, windows)
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    instance = waiting_plot(window, cache, ref)
+    data = {"format": FORMAT, "presets": {"odd": {"format": FORMAT, "script": ref.to_json(), "saved_at": 1.0,
+                                                  "values": {"bins": "many", "mode": "rate"}, "backend": None},
+                                          "odder": {"format": FORMAT, "script": ref.to_json(), "saved_at": 1.0,
+                                                    "values": {"bins": None, "mode": ["a"]}, "backend": [1]}}}
+    app_settings().setValue(script_key(ref), json.dumps(data))
+    presets = bar(instance)
+    presets.refresh()
+    for name in ("odd", "odder"):
+        presets.combo.setCurrentText(name)
+        presets.apply()
+        qtbot.wait(10)
+        assert "Bins" in presets.note.text() and marked(instance) == {}
+    presets.combo.setCurrentText("odd")
+    presets.apply()
+    assert instance.values() == {"bins": 10, "mode": "rate"}
+    set_values(instance, {"bins": 11})  # Bins: never compared (the preset's value isn't one).
+    qtbot.wait(20)
+    assert marked(instance) == {}
+    set_values(instance, {"mode": "counts"})
+    qtbot.waitUntil(lambda: set(marked(instance)) == {"mode"}, timeout=2_000)
+
+
 def test_another_plot_deleting_the_preset_clears_the_marks(qtbot: QtBot, cache: FolderCache,
                                                           windows: Windows) -> None:
     window = new_window(qtbot, cache, windows)
@@ -595,6 +624,26 @@ def test_plots_that_cant_reopen_are_asked_about_once_and_kept_until_dropped(
     assert recorded() == ["user.gone", "tests.counted"]
     reopen.answer(False)  # Drop.
     assert recorded() == []
+
+
+def test_the_keep_or_drop_question_doesnt_block_the_window(qtbot: QtBot, cache: FolderCache,
+                                                            windows: Windows) -> None:
+    """The real question (not a test stand-in): shown, not modal, and its Drop answers."""
+    window = new_window(qtbot, cache, windows)
+    window.show()
+    app_settings().setValue(OPEN_PLOTS_SETTING, Arrangement(
+        (SavedPlot(ScriptRef("user.gone", "Plot", "1", "", "Gone"), folder("x")),)).dumps())
+    reopen = PlotReopen(window.plots, window.scripts)
+    assert reopen.restore() == []
+    box = reopen._question
+    assert isinstance(box, QMessageBox)
+    qtbot.waitUntil(box.isVisible, timeout=2_000)
+    assert box.windowModality() == Qt.WindowModality.NonModal and not box.isModal()
+    assert QApplication.activeModalWidget() is None
+    assert "Gone (its script isn't loaded" in box.text() and recorded() == ["user.gone"]
+    [drop] = [button for button in box.buttons() if button.text() == "Drop"]
+    drop.click()
+    assert recorded() == [] and reopen._question is None
 
 
 def test_a_kept_plot_reopens_once_its_script_is_loaded(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
@@ -955,9 +1004,25 @@ def test_a_corrupt_arrangement_preset_is_named_and_kept(qtbot: QtBot, cache: Fol
 # Review findings (Flint, a74fd07)
 
 
+def load_through_the_cache(cache: FolderCache, path: str, shots: range, signature: str) -> None:
+    """A tab's load of ``path`` as FolderCache handles it (its helper's events, in their order),
+    reading the folder as it is now (Load as it is now: ``allow_missing``)."""
+    assert cache.submit("tab-owner", 0, path, "load", {"allow_missing": True}, priority=True)
+    job = cache.jobs[("load", path)]
+    request = next(r for r in cache.service.pending if r.owner == job.owner)
+    for shot in shots:
+        cache.service.resultReady.emit(request, {"kind": "shot", "shot": shot,
+                                                 "array": np.full((ROWS, 3), float(shot))})
+    cache.service.resultReady.emit(request, {
+        "kind": "loaded", "signature": signature, "bytes": 0, "rows": ROWS * len(shots), "files": len(shots),
+        "problematic": [], "fingerprint": [[shot, 200 + shot, 2_000 + shot] for shot in shots]})
+    cache.service.resultReady.emit(request, {"kind": "done"})
+
+
 def test_a_mismatched_folders_pinned_data_is_never_used(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
-    """A tab still pins data the folder no longer matches: a reopened plot doesn't run on it, nor
-    on the disk cache, until a load of the folder matches it again."""
+    """A tab still pins data the folder no longer matches: a reopened plot doesn't run on it, nor on
+    the disk cache; when a load matches the folder again (FolderCache lifts the mismatch before it
+    publishes the new dataset), the plot runs on the new data, never the old pin."""
     window = new_window(qtbot, cache, windows)
     old = dataset("moved", range(1, 4))
     cache.retain("existing-tab", old)
@@ -972,13 +1037,30 @@ def test_a_mismatched_folders_pinned_data_is_never_used(qtbot: QtBot, cache: Fol
     assert Counted.runs == [] and instance.waiting() and list(cache.service.pending) == before
     assert instance.status_label.text() == ("moved's cached data doesn't match the folder: Review… it, or select it "
                                             "to load it as it is now")
-    # A load of the folder matches it again: its new data is used.
-    new = dataset("moved", range(2, 4))
-    del cache.mismatched[old.path]
-    cache.datasets[(new.path, "new", 1)] = Dataset(new.path, "new", new.data, new.metadata, 1)
-    cache.mismatchesChanged.emit()
+    load_through_the_cache(cache, old.path, range(2, 4), "fresh")
+    assert old.path not in cache.mismatched and cache.pins["existing-tab"] is old  # The old pin is still there.
     qtbot.waitUntil(lambda: instance.shown is not None, timeout=10_000)
     assert Counted.runs == [(2, 3)]
+
+
+def test_a_cached_read_that_lands_while_the_folder_is_mismatched_is_refused(
+        qtbot: QtBot, cache: FolderCache, windows: Windows, monkeypatch: pytest.MonkeyPatch) -> None:
+    disk_cache(monkeypatch)
+    window = new_window(qtbot, cache, windows)
+    path = folder("raced")
+    app_settings().setValue(OPEN_PLOTS_SETTING, Arrangement(
+        (SavedPlot(ScriptRef("tests.counted", "Plot", "1"), path),)).dumps())
+    [instance] = PlotReopen(window.plots, window.scripts).restore()
+    requests = list(cache.jobs[("cached", path)].subscribers.values())
+    cache._mismatch(path, {"missing": [1]})  # Found by another check while the read was in flight.
+    for request in requests:
+        cache.resultReady.emit(request, {"kind": "loaded", "dataset": dataset("raced", range(1, 4))})
+    qtbot.wait(20)
+    assert Counted.runs == [] and instance.waiting()
+    assert instance.status_label.text().startswith("raced's cached data doesn't match the folder")
+    load_through_the_cache(cache, path, range(1, 3), "fresh")
+    qtbot.waitUntil(lambda: instance.shown is not None, timeout=10_000)
+    assert Counted.runs == [(1, 2)]
 
 
 def test_a_cached_read_waiting_for_its_volume_is_asked_again(qtbot: QtBot, cache: FolderCache, windows: Windows,

@@ -13,6 +13,7 @@ import base64
 import dataclasses
 import logging
 import os
+import weakref
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
@@ -50,7 +51,9 @@ class FolderWait(QObject):
     folder: it isn't used unless asked deliberately (the plot's Rerun). A folder whose cached
     data is known not to match it (``FolderCache.mismatched``) has none to use, in RAM (a tab may
     still pin it) or the disk cache, until a load of the folder resolves it (Review…, Load as it
-    is now). A cached read that waited for its volume's verification (``unverified``) is asked
+    is now): the datasets held when the wait saw the mismatch stay unusable after it (``_stale``;
+    ``FolderCache`` lifts the mismatch before it publishes the new load's dataset, and a tab may
+    pin the old one for a while), and a cached read arriving while it holds is refused. A cached read that waited for its volume's verification (``unverified``) is asked
     again once volumes are verified, as a tab's is."""
 
     found = pyqtSignal(object)  # DatasetView
@@ -64,6 +67,8 @@ class FolderWait(QObject):
         self.waiting: Callable[[], bool] = lambda: True  # The plot's (``AnalysisInstance.waiting``)
         self._owner = ""  # The cached read in flight (its request's owner)
         self._unverified = False  # The last read waited for its volume's verification: read again after it
+        # The folder's datasets held when it was seen mismatched: never its data (weak: not kept alive).
+        self._stale: Dict[int, "weakref.ref[Dataset]"] = {}
         self._read_tried = False  # One automatic read: a tab's load brings newer data anyway
         self._stopped = False
         cache.datasetChanged.connect(self._dataset_changed)
@@ -116,6 +121,22 @@ class FolderWait(QObject):
                           "Rerun to use its data")
         return view, ""
 
+    def _held(self) -> List[Dataset]:
+        cache = self.cache
+        return [entry for entry in (*cache.pins.values(), *cache.datasets.values()) if entry.path == self.path]
+
+    def _is_stale(self, entry: Dataset) -> bool:
+        ref = self._stale.get(id(entry))
+        return ref is not None and ref() is entry
+
+    def _seen_mismatched(self) -> bool:
+        """Whether the folder is mismatched now; if so, what is held of it now is stale for good."""
+        if self.path not in self.cache.mismatched:
+            return False
+        for entry in self._held():
+            self._stale[id(entry)] = weakref.ref(entry)
+        return True
+
     def _mismatched_text(self) -> str:
         return (f"{folder_name(self.path)}'s cached data doesn't match the folder: Review… it, or select it "
                 "to load it as it is now")
@@ -123,10 +144,9 @@ class FolderWait(QObject):
     def _in_ram(self, deliberate: bool) -> Tuple[Optional[DatasetView], str]:
         """The folder's newest dataset held in RAM (a tab's, or kept), as a view; none while the
         folder is listed as mismatched (a tab's pin of its old data stays until it lets go)."""
-        cache = self.cache
-        if self.path in cache.mismatched:
+        if self._seen_mismatched():
             return None, self._mismatched_text()
-        held = [entry for entry in (*cache.pins.values(), *cache.datasets.values()) if entry.path == self.path]
+        held = [entry for entry in self._held() if not self._is_stale(entry)]
         if not held:
             return None, ""
         newest = max(held, key=lambda entry: (entry.epoch, float(entry.metadata.get("loaded_at") or 0)))
@@ -173,6 +193,9 @@ class FolderWait(QObject):
         if self._stopped:
             return
         dataset = event.get("dataset")
+        if kind == "loaded" and isinstance(dataset, Dataset) and (self._seen_mismatched() or self._is_stale(dataset)):
+            self.noted.emit(self._mismatched_text())  # Read while the folder doesn't match it: not its data.
+            return
         if kind == "loaded" and isinstance(dataset, Dataset):
             view, why = self._view(dataset, bool(request.payload.get("deliberate")))
             if view is not None:
@@ -204,9 +227,10 @@ class FolderWait(QObject):
 
     @pyqtSlot()
     def _mismatches_changed(self) -> None:
-        """The mismatched list changed (an answer, or a load matched the folder again): look in RAM again."""
-        if not self._stopped and self.path not in self.cache.mismatched:
-            self._dataset_changed(self.path)
+        """The mismatched list changed: newly mismatched, what is held is stale; matched again, a
+        new load's dataset follows (``datasetChanged``), and only data held then is used."""
+        if not self._stopped:
+            self._seen_mismatched()
 
     @pyqtSlot(str)
     def _dataset_changed(self, path: str) -> None:
@@ -389,10 +413,12 @@ class PlotReopen(QObject):
         keep = box.addButton("Keep for later", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("Drop", QMessageBox.ButtonRole.DestructiveRole)
         box.setDefaultButton(keep)
+        # Not modal: the window stays usable at start (``open()`` would make it window-modal).
         box.setWindowModality(Qt.WindowModality.NonModal)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         box.buttonClicked.connect(lambda button: self.answer(button is keep))
         self._question = box
-        box.open()
+        box.show()
 
     def answer(self, keep: bool) -> None:
         """The reply to ``ask``: Keep leaves the plots that couldn't reopen in the record, Drop forgets them."""
