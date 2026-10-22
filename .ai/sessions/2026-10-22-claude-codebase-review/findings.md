@@ -486,3 +486,52 @@ above 2 MB a Windows rollover fails in the second instance (its lines lost, a tr
 per record) while on macOS/Linux the other instance keeps writing into `helab.log.1`; a per-instance
 name would avoid both but the file's name and place are Tony's call. Doc: AGENTS.md should name the
 log file and the carry-on rule.
+
+**R-16 in `c4cf63c`: accepted.** The manual marker's Save to folder… now goes through the new `marker_save`
+helper op (`io_ops.markers.save_marker_copy`: exclusive create, or with `replace` a truncating open
+without O_CREAT falling back to an exclusive create; a partial file removed on a failed write;
+`marker_saved` / `marker_save_exists` / `marker_save_refused` for EACCES, EPERM, EROFS, other errors
+fail the request), foreground whoever asks (`FOREGROUND_OPERATIONS`, `MARKER_OPERATIONS`), under the
+tests' source guard (`SOURCE_OPERATIONS`, checked at `io_helper.py:51`), typed in events.py with its
+kinds in `KINDS`, labelled in `IOService`. The dialog submits, disables Save until done/error/
+cancelled and asks Replace after the save has ended, then resubmits with `replace`; both callers pass
+the FolderCache. Tests: 153 pass across test_root_gui, test_helper_dispatch, test_helper_events,
+test_real_data_guard, test_io_trace and the duplicates tests, no RERUN; the real-helper test asserts
+the GUI process never opens `.helab-root`. Nits, no change asked: two new user-visible strings for
+the handoff's wording list ("Couldn't save <file>: HeLab is quitting." when submit is refused, and
+the "stopped" fallback for a cancelled save); the dialog's owner key is `marker-save:<id(self)>`,
+which a later dialog could reuse while an old save still runs (a counter would not).
+
+**R-13 (placeholders) in `c7eb0a3` (after the dev/v0.0.6 merge `4ca1f9f`): accepted.** "Enable feature X"
+and "Example Text" with their reads, writes, `settings_defaults` rows and constants are gone; no
+reference remains in helab/, tests/, roadmaps/, AGENTS.md or the memory; both keys are in `RETIRED`,
+which `SettingsDialog.save_settings` removes; the Qt imports they used are still used elsewhere. The
+10 px spacer removal is a small layout change for the handoff's UI list. New test fails before.
+Side note confirmed: `tests/test_settingsDialog.py tests/test_settings_defaults.py
+tests/test_constants.py` in ONE process (serial, or `-n 4` with only those files) fails the three
+`test_settings_defaults` tests that import `helab.views.HelabMainWindow` lazily inside the test
+(lines 116, 143): the window imports QtWebEngineWidgets (via `scripts/dld/scatter_3d.py` →
+`analysis/panes.py`), which PyQt6 requires before the QApplication exists, and by then
+test_settingsDialog's qapp is up. Identical at `4ca1f9f` (scratch worktree: 3 failed), so it
+predates R-13; the full suite is safe because 11 test modules import HelabMainWindow at top level
+at collection. One-line fix for the handoff: import `helab.views.HelabMainWindow` (or
+`PyQt6.QtWebEngineWidgets`) at the top of `tests/test_settings_defaults.py` (a CI-floor file, now landed).
+
+**R-15 (star imports) in `0406507`, plus `22ee3fb`: accepted.** `HelabMainWindow.py` and `SettingsDialog.py`
+import constants and readers from `constants` and setting keys from `settings_defaults` by name;
+`QDirIterator` dropped from constants.py; no star import is left in helab/ outside
+`scripts/legacy_plotly` (the new `tests/test_explicit_imports.py` guards it). Undefined names would
+fail strict mypy (151 + 111 files) and pyright, both clean; the one test patching a star-imported
+name (`helab.views.HelabMainWindow.DIR_TEMPS`, test_helabMainWindow.py:379) still finds it. 154 tests
+across the explicit-imports, settings, main-window, load-queue, cache-tab, lab-parameters and Live
+files pass, no RERUN. `22ee3fb` imports `PyQt6.QtWebEngineWidgets` at the top of
+`tests/test_settings_defaults.py`: the trio from the R-13 note now passes serially (41 passed).
+
+**R-19 (Reference spacing) in `6fac7df`: accepted.** The DLD Transfer fractions now calls
+`helab.analysis.orders.detect` (reference-guided, as Basic plots v1) and its own `detect` is gone with
+the imports only it used (`find_peaks`, `shortest_range`, `half_maximum_width`, `refine`); the new
+`reference_spacing` spec mirrors v1's (0.015 s, ms, Auto only); the no-side-peak note and the settings
+line name it; version 3 so earlier results aren't reused; hidden under Manual it stays out of the
+reuse key by the `unused` rule. The two new tests fail at `22ee3fb` (scratch worktree: bump seeds 0
+and 1 and the reference test, 3 failed) and pass at head; DLD and v1 transfer fractions, the MATLAB
+comparison and `test_orders`: 127 passed, no RERUN.
