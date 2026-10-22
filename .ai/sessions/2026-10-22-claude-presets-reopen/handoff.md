@@ -2,6 +2,86 @@
 
 Branch `agent/presets-reopen` from `c3d4b50`. Brief: [brief.md](brief.md); notes: [notes.md](notes.md).
 
+## Final state, for landing (2026-10-23)
+
+Flint's review is complete at `5a99168` (round 12: nothing above P3; `review-findings.md` has
+every round). The pushed head and its CI run are in "CI (final push)" at the end. The sections
+below this one are the history, stage 1 first, then the follow-ups and review rounds. Where they
+differ, this section is current.
+
+**Decisions for Tony to confirm** (each explained in its section below):
+
+1. Script presets hold the library, not the Live group (decision 1).
+2. Arrangements store each plot's values; the script preset's name is provenance only
+   (decision 2).
+3. Applying an arrangement asks **Replace / Add / Cancel** (Follow-up 1, item 2; this replaced
+   decision 3).
+4. Plots that can't reopen get one **Keep for later / Drop** question per start (Follow-up 1,
+   item 3; this replaced decision 7).
+5. **Presets live in the disk cache store** (Follow-up 2). Reset all settings keeps them and
+   clears only the plots to reopen (decision 10). Reopen at start stays in QSettings.
+6. Editing values inside the presets inspector is **proposed, not built** (Follow-up 2,
+   Inspector). Apply → change → Save to preset already edits one.
+7. Store bookkeeping, settled over Flint's rounds 7–11:
+   - Never replace a name the store holds before its names are read (`PRESET_FOUND`).
+   - A recreated store is a fresh start.
+   - Writes name their store.
+   - Only the current store clears a change.
+   - A change still owed is decided in one place, once no preset work remains.
+   - Quitting waits while a change is owed and a preset job or a requested read remains. CoCo
+     confirmed this narrower condition (round 11): no "Saving presets…" for a plain read.
+
+**Proposed doc edits (for the Coordinator).** All are below; this is where each one is:
+
+- **AGENTS.md, Script system:** the Presets paragraph in "Proposed doc edits" (stage 1). Update
+  it for Follow-up 1: Replace / Add, Keep / Drop, and the change marks with "Save N changes ▾".
+- **AGENTS.md, Settings persistence:** the `open_plots` sentence in "Proposed doc edits". Presets
+  are not in QSettings.
+- **AGENTS.md, Caching:** the presets paragraph at the end of Follow-up 2, plus the round-9
+  sentence on a recreated store (round 9 section). One more clause for round 11: "`quit_saves`
+  lists Presets while a change is owed and a preset job or requested read remains; an owed change
+  is said not saved only once neither is left."
+- **`roadmaps/known-issues.md`, recently fixed: six pre-existing mismatch races, fixed in
+  `b66bba6`.** Each test fails on `c3d4b50`; the tests are in `tests/test_mismatch_fence.py`.
+  Work started before a folder was found mismatched could clear the mismatch and bring the old
+  data back. The six kinds of work:
+  1. an ordinary load;
+  2. a memory check;
+  3. a Live check (a `live_unchanged` answer too: round 6);
+  4. a held Live save;
+  5. a check beside a cached read (it cleared the mismatch, then failed, leaving no data and no
+     warning);
+  6. a RAM answer still queued (it handed the old data to a tab).
+
+  The same fence also fixes the cached-read race of rounds 3–4. The Windows RERUN in the stage-1
+  CI run is already listed (line 47).
+- **`roadmaps/presets-and-workspaces.md`:** a "Stage 1 (done)" section, plus open decisions 2,
+  3 and 7 above as Tony settles them.
+- **`roadmaps/_readme.md`:** mark stage 1 done.
+- **`.ai/MANUAL_TODO.md`:** the on-screen checks in "What Tony should check on screen", plus one
+  for Settings → Cache › Presets… (the listing, Rename, Duplicate, Delete).
+- **Later cleanups (notes only):**
+  - Move the preset test modules' `fresh_presets` reset into `tests/conftest.py`
+    (`default_constants`), which isn't my file.
+  - Make the "stop Live → Review…" recovery order explicit (round 6).
+
+**Files changed outside new modules.** Stage 1 is listed in "Shared files" below. Since then:
+
+- the presets table and its `_migrate` step in `cache_store.py`;
+- the `presets` action in `io_ops/admin.py`;
+- two TypedDicts in `io_ops/events.py`;
+- the presets section, `_on_admin_event` hooks and `quit_saves` entry in `folder_cache.py`, and
+  `_mismatch` (`b66bba6`);
+- `CacheTab.py`, a 16-line hook;
+- `QuitSaveDialog.py` (owned with CoCo's approval);
+- the Reset wording in `SettingsDialog.py`;
+- `HelabMainWindow.py`, for the script finder and an initial `fill_menu(read=False)`;
+- the preset rows removed from `settings_defaults.py`.
+
+**Validation at `b99523f`** (`5a99168` plus a handoff note): full suite 2597 passed, 2 skipped,
+2 xfailed, **no RERUN**; `mypy helab/ --strict`, `mypy tests --strict` and `pyright helab tests`
+clean.
+
 ## What was built
 
 - **`helab/analysis/presets.py`** (Qt-free, listed in `tests/test_headless_imports.py`): the one
@@ -160,7 +240,7 @@ full workspace file left open.
 
 **.ai/MANUAL_TODO.md**: add an item with the six on-screen checks above, linking this handoff.
 
-## Validation
+## Validation (stage 1)
 
 - `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest` (local, macOS): 2531 passed, 2 skipped, 2 xfailed, **no RERUN**.
 - `mypy helab --strict`, `mypy tests --strict`, `pyright helab tests`: clean.
@@ -168,7 +248,7 @@ full workspace file left open.
   `tests/test_presets_window.py` (3, the real main window: record at quit and reopen; menu; a Live
   preset in a real tab on an empty folder starts Live only after the listing).
 
-## CI (run 39745015514 on `a74fd07`, all required jobs green)
+## CI, stage 1 (run 39745015514 on `a74fd07`, all required jobs green)
 
 - ubuntu py3.13 Tests: 2529 passed, 4 skipped, 2 xfailed, no RERUN. macOS py3.13 Tests: 2531 passed,
   2 skipped, 2 xfailed, no RERUN. Builds green on all three.

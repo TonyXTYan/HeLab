@@ -275,3 +275,7 @@ Round-10 orders pass. Suite 2594 passed, no RERUN; mypy/pyright clean. One P2:
    ending with a helper error, or answering with a B read error, marks p "not saved" and notifies
    quit with `[]`; the dialog accepts while the retry, which would save p, is still in
    `_preset_jobs`.
+
+## Round 12 (Flint, 3bb153a..5a99168)
+
+REVIEW COMPLETE: no blocker, nothing above P3. The structural quit rule holds across every notification and failure path reviewed (53-case enumeration instrumented at each notification; queue refusals; done/error/cancelled ends; both round-11 orders). Suite 2597 passed, no RERUN; mypy/pyright clean.
