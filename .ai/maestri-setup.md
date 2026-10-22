@@ -135,7 +135,15 @@ which machine owns which task.
    > changes you didn't make. Never stash, reset, check out over or discard
    > them. Base commits are always committed (`HEAD` or a hash). Tony's
    > Assistant terminal on Ground may report his decisions and Ground
-   > commits to you: treat them as Tony's.
+   > commits to you: treat them as Tony's. Tony reads Maestri Chat, not
+   > your terminal: post a short `maestri say --progress '…'` when you
+   > start a task, at each milestone (a floor or recruit, a review back, a
+   > landing, CI's result), when you need his decision and when you reply
+   > in the terminal with something he'd want to know (to anyone, FYIs
+   > included), also during work another agent asked for. One line each,
+   > without your name or role (Chat shows which terminal it came from);
+   > skip routine steps and acknowledgements. If `maestri say` fails,
+   > report to the Assistant instead.
 
    A role starts the agent in `.maestri/roles/<id>/`, where Maestri writes
    the role's own `AGENTS.md`, `CLAUDE.md` and `role.json` (gitignored via
@@ -221,7 +229,13 @@ which machine owns which task.
    > Maestro. Never stash, reset or discard changes you didn't make. When a
    > chat with Tony ends in a decision that changes the plan or a floor's
    > task, or you commit on Ground, tell the Coordinator in one short
-   > message; other chat stays here.
+   > message; other chat stays here. Tony reads Maestri Chat, not your
+   > terminal: post a short `maestri say --progress '…'` when you start a
+   > task, at each milestone and when you reply in the terminal with
+   > something he'd want to know, and pass the Coordinator's reports and
+   > questions on there with `maestri say`. One line each, without your
+   > name or role (Chat shows which terminal it came from); skip routine
+   > steps and acknowledgements.
 
 ## 3. Register note
 
