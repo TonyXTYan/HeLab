@@ -628,7 +628,7 @@ and a preset job is in flight or a read is asked for. Since owed changes leave t
 `_presets_settle`, no notification can show quit an empty list while work that would save one
 remains.
 
-**One deviation from CoCo's wording, for Tony and CoCo to confirm.** CoCo asked for Presets to be
+**One deviation from CoCo's wording (CoCo confirmed it, 2026-10-23).** CoCo asked for Presets to be
 listed whenever any preset job is in flight, owed change or not. I tried exactly that first.
 Closing the main window during the startup read (or after opening the Presets menu) then showed
 "Saving presets…" with nothing to save, and in tests the main window's close was deferred
