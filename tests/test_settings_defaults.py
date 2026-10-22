@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import pytest
+from PyQt6 import QtWebEngineWidgets  # noqa: F401  (before any QApplication: two tests build the main window)
 from PyQt6.QtCore import QSettings
 from pytestqt.qtbot import QtBot
 
