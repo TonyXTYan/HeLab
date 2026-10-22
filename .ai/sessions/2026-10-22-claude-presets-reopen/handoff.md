@@ -253,3 +253,26 @@ folder matched again). Tests: `tests/test_presets_mismatch_tab.py` (Flint's orde
 `FolderExplorer`, ending with a post-resolution cached read that is taken) and the same order at
 `FolderCache` level in `tests/test_presets_plots.py`; both fail on `222bcdb`. Full suite 2551
 passed, no RERUN; strict mypy and pyright clean.
+
+## Review fix, round 5 (Flint on `760a69f`): the commit after `760a69f`, not pushed
+
+**`helab/utils/folder_cache.py`, net diff vs `c3d4b50` (for the Result Cache merge): 14 lines added
+in `_mismatch`, one line (`self._matched(job.path)`) moved in the `loaded` branch.** Replaces the
+round-3 and round-4 changes.
+- `_mismatch` fences all of the folder's earlier work: it moves the folder's epoch (every load,
+  memory check, Live check, held save and cached read from before is cancelled when it reports, by
+  the existing epoch check), raises `_base_floor` (nothing held from before is a later load's base)
+  and cancels queued RAM answers of loads and cached reads (subscribers hear `cancelled`). Not a
+  clear: the record, window and Review / Retry stay; no disk flags change.
+- `_matched` runs only for an accepted load, after the epoch / signature / base checks.
+- Side effects, as intended or acceptable: a tab load or Live check of that folder in flight at the
+  mismatch ends `cancelled` (the tab says "Cancelled — Retry"; Live stops with Retry, as on any
+  error); a load that finished just before and is still writing its disk cache has its badge events
+  ignored (its `_finishing_epochs` no longer match), so the cache badge waits for the next check.
+- **For `roadmaps/known-issues.md` (pre-existing, fixed here):** work started before a mismatch
+  could clear it and bring the old data back (ordinary load, memory check, Live check, held save,
+  a check beside a cached read, a queued RAM answer); `tests/test_mismatch_fence.py`'s ordinary-load
+  test fails on `c3d4b50` (`mismatched` emptied by the old load's `loaded`), all 6 family tests fail
+  on `c3d4b50` and `760a69f`.
+
+Full suite 2560 passed, no RERUN; strict mypy and pyright clean.
