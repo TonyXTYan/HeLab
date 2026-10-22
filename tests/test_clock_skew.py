@@ -66,6 +66,24 @@ def test_loads_and_scans_say_so(tmp_path: Path) -> None:
     assert len(skews(sent)) == 1
 
 
+def test_a_live_save_reading_a_changed_shot_again_says_so(tmp_path: Path) -> None:
+    """Live's save reads again a shot Live read recently and that changed since: dated ahead of our clock,
+    it isn't read (still being written) and the save says the clocks differ."""
+    import numpy as np
+    from helab.io_ops.save_held import save_held
+    run = tmp_path / "run"
+    write_shot(run, 1, -60)
+    info = (run / "d_txy_forc1.txt").stat()
+    held = tmp_path / "held"
+    held.mkdir()
+    np.save(held / "1.npy", np.array([[1.0, 2.0, 3.0]]), allow_pickle=False)
+    write_shot(run, 1, 90)  # (Rewritten since Live read it, by a computer whose clock is ahead.)
+    sent: list[Any] = []
+    save_held(str(run), sent.append, None, [[1, info.st_size, info.st_mtime_ns]], [], str(held), recent=[1],
+              output=str(tmp_path))
+    assert len(skews(sent)) == 1 and 85 < skews(sent)[0]["seconds"] < 91
+
+
 @pytest.fixture
 def cache(monkeypatch: pytest.MonkeyPatch) -> Iterator[FolderCache]:
     service = IOService()
@@ -96,13 +114,14 @@ def test_the_window_names_the_folder_and_the_skew_and_tells_hooks(qtbot: QtBot, 
     qtbot.addWidget(parent)
     warning = ClockSkewWarning(cache, parent)
     heard: list[hub_events.Event] = []
-    hub_events.hub().add_hook(heard.append)
+    stop_hearing = hub_events.hub().add_hook(heard.append)
     skew(cache, "/Volumes/dld/run_1", "smb://server/dld", 3725.0)
     box = warning.dialog
     assert isinstance(box, QMessageBox) and box.isVisible() and box.windowModality() == Qt.WindowModality.NonModal
     assert box.text() == TEXT.format(folder=os.path.normpath("/Volumes/dld/run_1"), skew="1 h 2 min")
     assert span(3725.0) == "1 h 2 min" and span(125.0) == "2 min 5 s" and span(3.0) == "3 s"
     assert [event.kind for event in heard if event.kind == hub_events.CLOCK_SKEW] == [hub_events.CLOCK_SKEW]
+    stop_hearing()
     box.close()
     warning.detach()
     warning.detach()  # (Twice is fine: the window may close twice.)
