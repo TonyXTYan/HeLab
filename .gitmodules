@@ -10,3 +10,4 @@
 	path = legacy/DLD_front_panel
 	url = https://github.com/HeBECANU/DLD_front_panel
 	branch = LaserMac-BECMachine-cloudstor
+	ignore = dirty
