@@ -541,3 +541,39 @@ comparison and `test_orders`: 127 passed, no RERUN.
 other RERUN). Not this branch's: dev/v0.0.6's run 39715190343 at `51c0ee2` fails identically; reproduced
 locally with pytest's default basetemp (nested pytest node IDs `../../…/HeLab::test_after_it` outside the
 checkout); fixed by the CI floor in `5e696aa` (run 39717002040 green), which merges cleanly with `44ad4eb`.
+
+**R-22 (clock skew) in `cdc255f`: accepted.** Tony's rule kept (`_settled` unchanged); `fingerprints._clock_ahead`
+sends the typed `clock_skew` event (events.py, in `KINDS`; path, seconds, location from the mount table via
+`identity._mount_source`, no source I/O) when the newest file is over `FUTURE_SECONDS` = 2 s ahead, beside
+every `_settled` call (load, scan, both Live spots, Live save); Live's `_stop_if_ahead` raises, so the
+existing error stop applies (data kept, amber line, Retry). `FolderCache._on_event` forwards it as
+`clockSkew` once per location per session; `ClockSkewWarning` (non-modal, `events.notify(CLOCK_SKEW)`,
+idempotent `detach` on close) formats only. Tests cover the 2 s threshold, loads and scans, once per share
+or volume, the window and hook, and the Live stop with Retry; they fail at `6d1f327` (collection error
+without the module; the Live test: no `clockSkew`) and pass at head; 185 tests across clock-skew, Live,
+helper events, headless imports, settings store, I/O trace, Live I/O, cache-first, real-data guard, the
+events hub and the main window pass, no RERUN; strict mypy (152 + 112 files) and pyright clean. Nits:
+the window test's `hub().add_hook` is never removed (a leak into later tests on that worker); the
+Live-save call has no test. Docs: AGENTS.md's "Files still being written" paragraph should add the
+2 s rule, the once-per-share warning and Live's stop.
+
+**R-22 nits in `bf05b59` and R-11 (per-instance logs) in `752c638`: accepted.** `bf05b59` (tests only): the window
+test calls the hook's remover; a new save_held test shows the Live save sends `clock_skew` for a rewritten
+recent shot dated ahead. `752c638`: `LOG_NAME = "helab-{pid}.log"` filled with `os.getpid()` in
+`start_log_file`, rotation per file; nothing deletes earlier sessions' files (the removal rule is proposed in
+the handoff, not built, as Tony asked). Tests: rotation names carry the pid; two instances (patched pids)
+write separate files; 71 tests across app-log, clock-skew, Live, main and the events hub pass in parallel,
+the app-log file serially, no RERUN. Note for the handoff's old-log question: PIDs are reused across
+sessions, so a later HeLab with the same PID appends to that old file (harmless).
+
+**R-12 (bundled icon) in `4c9f2a8`: accepted.** `HeLab.spec` datas gains `helab/resources/ai-icon.icns` → `helab/resources`,
+where `HelabMainWindow.py:100` looks beside the package (as `menu-right.svg` already is); `tests/test_spec_datas.py`
+reads the spec's `Analysis(datas=…)` by AST and checks the entry and that every bundled file exists (2 passed;
+strict mypy clean). Mend's local macOS build placed the file; CI's three builds confirm the rest.
+
+**R-20 (joblib) in `ccce741`: accepted.** `joblib` removed from `requirements.txt` and `setup.py`; no importer of
+joblib, cloudpickle or loky remains in helab/, tests/ or the spec; the lock loses exactly `joblib==1.6.0` and
+`cloudpickle==3.1.2`. Reproduced: `uv pip compile requirements.txt --universal --python-version 3.13` (uv 0.12.21,
+the README's command without `--upgrade`) onto a copy of the lock gives a byte-identical file but for the
+header's output path. The floor venv has neither package; the full suite and type checks at this head are
+my final check (below).
