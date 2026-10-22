@@ -99,6 +99,7 @@ class AdminResultFields(TypedDict, total=False):
     recorded: bool
     results: int  # saved results removed (R2)
     result_id: str  # an adopted result's saved row (R2)
+    folder_results: dict[str, ResultCountField]  # an adoption's folders' saved results after it (R2)
 
 
 # Process and progress
@@ -177,6 +178,7 @@ class ListedStatusEvent(_StatusBase):
     cache_info: NotRequired[dict[str, Any]]
     data_root: NotRequired[DataRoot]
     saved_root: NotRequired[dict[str, Any]]
+    results: NotRequired[ResultCountField]  # The folder's saved analysis results (R2)
 
 
 class FolderSummary(_StatusBase):
@@ -491,6 +493,24 @@ class RemovedEvent(TypedDict):
     evicted: NotRequired[list[list[str]]]
 
 
+class ResultCountField(TypedDict):
+    """A folder's saved results (``CacheStore.ResultCount``): the row badge and Folder details. ``seq``
+    is the store's [store_id, writes] when counted; the newest wins."""
+    count: int
+    bytes: int
+    seq: list[Any]
+
+
+class ResultsField(TypedDict, total=False):
+    """A listing's own folder's saved results, when known (``ListedStatusEvent.results``)."""
+    results: ResultCountField
+
+
+class FolderResultsField(TypedDict, total=False):
+    """A save's folder's saved results after it (``ResultSavedEvent.folder_results``)."""
+    folder_results: ResultCountField
+
+
 class ResultGuard(TypedDict):
     """A result save's guard (``CacheStore.start_result_job``), taken when its run started."""
     generations: dict[str, int]
@@ -524,6 +544,7 @@ class ResultSavedEvent(UsageFields):
     kind: Literal["result_saved"]
     bytes: int
     result_id: NotRequired[str]  # Its saved row's id (new for every save)
+    folder_results: NotRequired[ResultCountField]  # The folder's saved results after it
     # The store's next cleanup deadline: a save that replaced a result retired its file.
     next_deadline: NotRequired[float | None]
 

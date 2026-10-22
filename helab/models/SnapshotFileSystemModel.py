@@ -22,7 +22,7 @@ from helab.models.StatusReport import StatusReport
 from helab.resources.icons import StatusIcons
 from helab.utils.io_service import IORequest, IOService, get_io_service
 from helab.utils.number_format import byte_size
-from helab.utils.folder_cache import SCANS, data_root_text, get_folder_cache, store_options
+from helab.utils.folder_cache import SCANS, analysis_cached_text, data_root_text, get_folder_cache, store_options
 from helab.utils.time_format import relative_age
 from helab.utils.cache_freshness import CacheFreshness, cache_freshness, data_as_of, metadata_date
 
@@ -156,6 +156,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.savedRefreshed.connect(self._saved_refreshed)
         self.cache.cacheRemoved.connect(self._cache_removed)
         self.cache.dataRootsChanged.connect(self._data_root_changed)
+        self.cache.resultCountsChanged.connect(self._result_counts_changed)
         # Locations waiting for Same folder or Copy: their rows show ROOT_PENDING (memory only).
         self._pending_roots = {str(entry["path"]) for entry in self.cache.root_duplicates.values()}
         self.cache.rootDuplicatesChanged.connect(self._root_duplicates_changed)
@@ -409,6 +410,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 shown.append(badge)
             if cached in StatusIcons.ICONS_EXTRA:
                 shown.append(StatusIcons.ICONS_EXTRA[cached])
+            if self.cache.analysis_cached(node.path) is not None:
+                shown.append(StatusIcons.ICONS_EXTRA["report"])  # Saved analysis results reuse will use.
             return shown
         return None
 
@@ -473,6 +476,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if disk_cached:
             saved_at = metadata_date(self.cache.cache_status(node.path).info.get("saved_at"))
             lines.append("Data cache: " + _stamp(saved_at) + _FRESHNESS[self.data_freshness(node)])
+        if text := analysis_cached_text(self.cache, node.path):
+            lines.append(text)
         if self.cache.current_dataset(node.path):
             lines.append("Data: shared RAM dataset open (read-only arrays)")
         clock = bool(self.display_status(node)) and not busy and not load_state and self.display_older(node)
@@ -989,6 +994,14 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if not self.closed and node is not None and not node.subtree_live:
             self._update_ancestors(node)
 
+    def _result_counts_changed(self, paths: list[str] | None) -> None:
+        """Folders' saved analysis results changed (or reuse was turned on or off): their badges."""
+        if self.closed:
+            return
+        for node in (list(self.nodes.values()) if paths is None else
+                     [self.nodes[path] for path in paths if path in self.nodes]):
+            self.changed(node)
+
     def _shared_dataset_changed(self, path: str) -> None:
         node = self.nodes.get(path)
         if node:
@@ -1168,4 +1181,5 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.savedRefreshed.disconnect(self._saved_refreshed)
         self.cache.cacheRemoved.disconnect(self._cache_removed)
         self.cache.dataRootsChanged.disconnect(self._data_root_changed)
+        self.cache.resultCountsChanged.disconnect(self._result_counts_changed)
         self.cache.rootDuplicatesChanged.disconnect(self._root_duplicates_changed)

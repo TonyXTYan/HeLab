@@ -292,6 +292,19 @@ class ResultFound:
 
 
 @dataclass(frozen=True)
+class ResultCount:
+    """A folder's saved results (the row badge, Folder details): how many and their files' bytes,
+    as of the store's ``writes``-th write transaction (newer measurements win, as for usage)."""
+    count: int
+    bytes: int
+    store_id: str
+    writes: int
+
+    def event(self) -> dict[str, Any]:
+        return {"count": self.count, "bytes": self.bytes, "seq": [self.store_id, self.writes]}
+
+
+@dataclass(frozen=True)
 class ResultSave:
     """A result save: made, or not (``reason`` "over_budget": it doesn't fit the disk budget)."""
     saved: bool
@@ -302,6 +315,7 @@ class ResultSave:
     budget: int | None = None
     pending_id: str = ""  # Not saved: it waits for the user's answer (``pending_results``).
     result_id: str = ""  # Saved: its row's id (new for every save, a replacement's too).
+    folder: ResultCount | None = None  # Saved: the folder's saved results after it.
 
 
 @dataclass(frozen=True)
@@ -322,6 +336,8 @@ class ResultAdopt:
     room: ResultRoom | None = None  # Not adopted: it doesn't fit, and what Make room would remove.
     removal: ResultRemoval | None = None  # Adopted with Make room: what was removed.
     result_id: str = ""  # Adopted: its saved row's id.
+    # Adopted: the saved results of its folder and of those Make room took from, after it (by source path).
+    folders: dict[str, ResultCount] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1601,11 +1617,12 @@ class CacheStore:
                 if previous is not None and previous != file:
                     self._retire(previous, now)
                 self._drop_pending_result(key, lookup, now)  # (Saved after all: no question about it.)
+                folder = self._folder_results([key])[key]
         except SaveRejected as rejection:
             raise self._reject_result_file(file, rejection) from None
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
-        return ResultSave(True, "", size + len(text), usage, writes, budget, result_id=result_id)
+        return ResultSave(True, "", size + len(text), usage, writes, budget, result_id=result_id, folder=folder)
 
     def _upsert_result(self, key: str, lookup: str, family: str, analysis_id: str, action: str, record: str,
                        file: str, size: int, computed_at: float, now: float) -> tuple[str | None, str]:
@@ -1680,12 +1697,15 @@ class CacheStore:
                     fits, removed, result_id = self._adopt_result_savepoint(pending_id, budget, make_room, keep=True,
                                                                             expected=expected_room)
                     if fits:
+                        touched = list(dict.fromkeys([path, *(item[1] for item in removed)]))
+                        folders = {self._source_path(key): count
+                                   for key, count in self._folder_results(touched).items()}
                         removal = None if not removed else ResultRemoval(
                             tuple(sorted({self._source_path(item[1]) for item in removed})), len(removed),
                             sum(item[2] for item in removed),
                             evicted=tuple((self._source_path(item[1]), item[4], item[0]) for item in removed))
                         result = ResultAdopt(True, self._source_path(path), size, removal=removal,
-                                             result_id=result_id)
+                                             result_id=result_id, folders=folders)
                     else:
                         assert budget is not None
                         result = ResultAdopt(False, self._source_path(path), size,
@@ -1840,6 +1860,37 @@ class CacheStore:
             except OSError as exc:
                 return _error(f"Cached result file could not be read: {exc}")
         return _error("Cached result file is missing")  # (Not reached.)
+
+    def _folder_results(self, keys: Sequence[str]) -> dict[str, ResultCount]:
+        """Each folder's saved results (count and files' bytes; zero if none), as of this
+        transaction's write count (``seq``), for the folder row's badge (inside a transaction)."""
+        counts = {key: ResultCount(0, 0, self.store_id, self._writes()) for key in keys}
+        if not self._results_table:
+            return counts
+        stored = list(counts)
+        for start in range(0, len(stored), 500):
+            chunk = stored[start:start + 500]
+            for key, count, size in self._conn.execute(
+                    f"SELECT path, COUNT(*), COALESCE(SUM(bytes), 0) FROM results "
+                    f"WHERE path IN ({','.join('?' * len(chunk))}) GROUP BY path", chunk):
+                counts[str(key)] = ResultCount(int(count), int(size), self.store_id, counts[str(key)].writes)
+        return counts
+
+    def result_counts(self, paths: Sequence[str]) -> dict[str, ResultCount]:
+        """Each folder's saved results, by source path, for a listing's entries; a path without a
+        key here (above every data root, an unsupported mount) is left out."""
+        keys: dict[str, str] = {}
+        for path in dict.fromkeys(paths):
+            try:
+                keys[path] = self._path_key(path)
+            except Exception:
+                continue
+        try:
+            with self.transaction(write=False):
+                counts = self._folder_results(list(dict.fromkeys(keys.values())))
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be read: {exc}") from exc
+        return {path: counts[key] for path, key in keys.items()}
 
     def touch_result(self, path: str, lookup: str, now: float | None = None) -> None:
         """Record that a saved result was shown (purges by age go by it)."""

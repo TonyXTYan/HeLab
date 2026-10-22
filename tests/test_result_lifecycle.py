@@ -529,3 +529,18 @@ def test_waiting_in_transit_x_eviction_of_its_key_is_still_asked(lab: Lab) -> No
     [pending_id] = [str(held_event["pending_id"]) for _, held_event in held]
     assert pending_id in lab.cache.pending_results and lab.store_rows() == (1, 1)
     lab.qtbot.waitUntil(lambda: "not saved yet" in second.status_label.text(), timeout=WAIT)
+
+
+def test_make_room_updates_its_folders_saved_result_count(lab: Lab) -> None:
+    """The row badge's count (Follow-up 2) follows an adoption that evicted results of the folder."""
+    path = lab.view.identity.source_path
+    lab.saved_plot(1)
+    lab.saved_plot(3)
+    lab.qtbot.waitUntil(lambda: (lab.cache.analysis_cached(path) or (0, 0))[0] == 2, timeout=WAIT)
+    with CacheStore(store_root(cache_dir())) as store:
+        usage = store.usage()
+    lab.budget(usage - 100_000)  # Scale 2 fits only once both are removed.
+    _, pending_id = lab.waiting(2)
+    assert len(lab.cache.pending_results[pending_id]["room"]["result_ids"]) == 2
+    assert lab.make_room(pending_id)["adopted"] is True
+    lab.qtbot.waitUntil(lambda: (lab.cache.analysis_cached(path) or (0, 0))[0] == 1, timeout=WAIT)

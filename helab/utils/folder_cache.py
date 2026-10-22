@@ -36,7 +36,7 @@ from helab.utils.scan_history import ScanHistory, empty_history, parse_history, 
 SCANS = ("list", "details", "scan")
 # The saved fields a listing entry carries for each kind of disk cache record.
 ENTRY_KEYS = {"datasets": ("disk_cached", "cache_info"), "summaries": ("scan_status",),
-              "histories": ("scan_history",), "subtrees": ("subtree",)}
+              "histories": ("scan_history",), "subtrees": ("subtree",), "results": ("results",)}
 # The current tab's work that runs in the foreground I/O lane.
 # (``root_create``: the user's Enable disk cache here…, one small write, runs like a listing.)
 FOREGROUND_OPERATIONS = ("list", "resolve", "load", "root_create", "root_reassign", "root_remove", "marker_save")
@@ -165,6 +165,9 @@ class FolderCache(QObject):
     resultPendingAnswered = pyqtSignal(str, bool, str)
     # Make room evicted saved results: their result_ids (a newer copy of one of those keys has another).
     resultsEvicted = pyqtSignal(object)
+    # Folders' saved analysis results (the row badge) changed: their keys, or None (every folder, or
+    # reuse turned on or off).
+    resultCountsChanged = pyqtSignal(object)
     # A cache_admin job's result: action, event (inventory, admin_result, swept, error).
     cacheAdminResult = pyqtSignal(str, object)
     # A cache_admin job ended: its owner, action, and "" or why it failed.
@@ -373,6 +376,14 @@ class FolderCache(QObject):
         # was asked (monotonic), so an answer a removal made stale since is never taken as current.
         # Kept after its helper ends (the newest ``MAX_RESULT_OPS``): an event delivered late is still checked.
         self._result_ops: OrderedDict[str, tuple[str, float, str]] = OrderedDict()
+        # Each folder's saved analysis results as last measured in the store (count, files' bytes and
+        # the store's [store_id, writes] then, None after a removal), from listings, saves and Make
+        # room: the row badge and Folder details read them, memory only. The newest MAX_ENTRIES.
+        self.result_counts: OrderedDict[str, tuple[int, int, tuple[str, int] | None]] = OrderedDict()
+        # Settings → Cache › Reuse saved analysis results: the badge shows only while it is on.
+        from helab.utils.settings_defaults import RESULT_REUSE_SETTING, read_setting
+        from helab.utils.settings_store import app_settings
+        self.result_reuse = bool(read_setting(app_settings(), RESULT_REUSE_SETTING, typed=True))
         # Saved results Make room evicted, by result_id: the newest ``MAX_RESULT_OPS``. Only reads and
         # marks of those very rows are affected, not their folders' nor a newer copy of their keys.
         self._evicted: OrderedDict[str, None] = OrderedDict()
@@ -2009,6 +2020,8 @@ class FolderCache(QObject):
             # again nor waited for, but not saved by this save.
             event = {"kind": "result_not_saved", "reason": "dropped", "bytes": int(event.get("bytes") or 0),
                      "budget": event.get("budget"), "message": "already answered"}
+        if event["kind"] == "result_saved" and path and isinstance(event.get("folder_results"), dict):
+            self._note_result_counts({path: event["folder_results"]})
         if event["kind"] == "result_pending" and event.get("pending_id") not in self._pending_gone:
             # Doesn't fit the disk budget: asked (Make room or Discard) with the dataset saves.
             self.pending_results[str(event["pending_id"])] = {**event, "result": True, "reason": "over_budget",
@@ -2018,6 +2031,48 @@ class FolderCache(QObject):
         while len(self._result_ops) > self.MAX_RESULT_OPS:
             self._result_ops.popitem(last=False)
         self.resultReady.emit(producer, event)
+
+    def analysis_cached(self, path: str) -> tuple[int, int] | None:
+        """The folder's saved analysis results that reuse will use: (count, bytes), None if none,
+        not known or reuse is off. Memory only (row rendering)."""
+        if not self.result_reuse or self.result_cache_off(path):
+            return None
+        entry = self.result_counts.get(self.key(path))
+        return (entry[0], entry[1]) if entry is not None and entry[0] > 0 else None
+
+    def set_result_reuse(self, on: bool) -> None:
+        """Settings → Cache › Reuse saved analysis results changed."""
+        if on != self.result_reuse:
+            self.result_reuse = on
+            self.resultCountsChanged.emit(None)
+
+    def _note_result_counts(self, counts: Mapping[str, Any], started: float | None = None) -> None:
+        """Measured saved-result counts by folder (``ResultCountField`` each), kept unless a newer
+        measurement of the same store is known or, asked at ``started``, a removal came since."""
+        changed: list[str] = []
+        for path, value in counts.items():
+            if not isinstance(value, dict):
+                continue
+            seq: Any = value.get("seq")
+            try:
+                count, size = int(value["count"]), int(value["bytes"])
+                order = (str(seq[0]), int(seq[1]))
+            except (KeyError, TypeError, ValueError, IndexError):
+                continue
+            key = self.key(path)
+            if started is not None and self._removed_after(started, "results", key):
+                continue
+            old = self.result_counts.get(key)
+            if old is not None and old[2] is not None and old[2][0] == order[0] and order[1] < old[2][1]:
+                continue  # Measured before the one kept.
+            self.result_counts[key] = (count, size, order)
+            self.result_counts.move_to_end(key)
+            if old is None or old[:2] != (count, size):
+                changed.append(key)
+        while len(self.result_counts) > self.MAX_ENTRIES:
+            self.result_counts.popitem(last=False)
+        if changed:
+            self.resultCountsChanged.emit(changed)
 
     def _results_evicted(self, evicted: list[Any]) -> None:
         """Make room removed these old saved results ([folder, lookup, result_id] each) for a waiting
@@ -2128,6 +2183,13 @@ class FolderCache(QObject):
         def selected(known: Any) -> list[str]:
             return list(known) if keys is None else [path for path in keys if path in known]
         if "results" in kinds:
+            # The folders' saved results are gone; a measurement from before is ignored (by its
+            # job's start: ``_fresh_entry``, ``_removed_after``), any later one taken.
+            cleared = selected(self.result_counts)
+            for path in cleared:
+                self.result_counts[path] = (0, 0, None)
+            if cleared:
+                self.resultCountsChanged.emit(None if keys is None else cleared)
             # Results waiting for an answer go with the saved ones of their folders.
             gone = {pending_id for pending_id, entry in self.pending_results.items()
                     if keys is None or self.key(str(entry.get("path", ""))) in keys}
@@ -2339,6 +2401,8 @@ class FolderCache(QObject):
                 # Make room was asked: its acknowledgement then names a row that is gone.
                 saved_now = bool(event.get("adopted")) and not self._removed_after(
                     started, "results", self.key(str(event.get("path") or "")))
+                if isinstance(event.get("folder_results"), dict):
+                    self._note_result_counts(event["folder_results"], started)
                 self.resultPendingAnswered.emit(pending_id, saved_now,
                                                 str(event.get("result_id") or "") if saved_now else "")
             self.pendingSavesChanged.emit()
@@ -2682,6 +2746,8 @@ class FolderCache(QObject):
                         self.remember_constants(entry["path"], entry["constants"], known=False)
                     if "disk_cached" in entry and not self._cleared_since(job, entry["path"]):
                         self._observe_cache(entry["path"], entry)
+                self._note_result_counts({entry["path"]: entry["results"] for entry in event["entries"]
+                                          if "results" in entry})
                 if event.get("replace"):
                     changed = {entry["path"]: entry for entry in event["entries"]}
                     job.entries = [changed.get(entry["path"], entry) for entry in job.entries]
@@ -2717,6 +2783,8 @@ class FolderCache(QObject):
                 self.remember_history(job.path, None)
                 if "disk_cached" in event and not self._cleared_since(job, job.path):
                     self._observe_cache(job.path, event)
+                if "results" in event:
+                    self._note_result_counts({job.path: event["results"]}, job.created)
                 job.status = event
                 job.completed_scan = FolderSnapshot(tuple(job.entries), event, time.monotonic())
                 return
@@ -2982,6 +3050,16 @@ def data_root_text(cache: FolderCache, path: str) -> str:
         return f"Data root: {label or os.path.basename(folder)} · " + (
             ".helab-root in this folder" if folder == path else marker_path(folder))
     return "RAM only: no .helab-root found here or above" if cache.no_root(path) is not None else ""
+
+
+def analysis_cached_text(cache: FolderCache, path: str) -> str:
+    """The row tooltip's and Folder details' line for the folder's saved analysis results that
+    reuse will use ("Cached analysis: 2 results, 1.2 MB"; "" if none). Memory only."""
+    if (cached := cache.analysis_cached(path)) is None:
+        return ""
+    from helab.utils.number_format import byte_size
+    count, size = cached
+    return f"Cached analysis: {count:,} result{'' if count == 1 else 's'}, {byte_size(size)}"
 
 
 def data_root_row(cache: FolderCache, path: str) -> tuple[str, str]:

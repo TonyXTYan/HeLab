@@ -645,5 +645,7 @@ class CacheTab(QWidget):
         settings.setValue(RAM_BUDGET_SETTING, self.ram_budget.value())
         settings.setValue(PLOT_AUTO_RELOAD_SETTING, self.plot_auto_reload.isChecked())
         settings.setValue(RESULT_REUSE_SETTING, self.result_reuse.isChecked())
+        if self.cache is not None:
+            self.cache.set_result_reuse(self.result_reuse.isChecked())  # (The folder rows' badge.)
         settings.setValue(LIVE_AUTOSAVE_SETTING, self.live_autosave.value())
 
