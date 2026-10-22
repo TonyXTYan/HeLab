@@ -39,9 +39,9 @@ ENTRY_KEYS = {"datasets": ("disk_cached", "cache_info"), "summaries": ("scan_sta
               "histories": ("scan_history",), "subtrees": ("subtree",)}
 # The current tab's work that runs in the foreground I/O lane.
 # (``root_create``: the user's Enable disk cache here…, one small write, runs like a listing.)
-FOREGROUND_OPERATIONS = ("list", "resolve", "load", "root_create", "root_reassign", "root_remove")
+FOREGROUND_OPERATIONS = ("list", "resolve", "load", "root_create", "root_reassign", "root_remove", "marker_save")
 # The user's marker writes: in the foreground whoever asked (a tab, Settings or a window).
-MARKER_OPERATIONS = ("root_create", "root_reassign", "root_remove")
+MARKER_OPERATIONS = ("root_create", "root_reassign", "root_remove", "marker_save")
 
 
 @dataclass
@@ -1371,7 +1371,8 @@ class FolderCache(QObject):
             if self.verified(base) and base.metadata.get("listed_at") and base.metadata.get("identity"):
                 # The quick check of the data in RAM when no cached dataset has one (``io_ops.loading``).
                 payload["memory_check"] = {key: base.metadata.get(key) for key in (
-                    "listed_at", "names", "identity", "fingerprint", "problematic", "data_root")} | {
+                    "listed_at", "names", "identity", "fingerprint", "problematic", "data_root",
+                    "folder_mtime_ns")} | {
                     "signature": base.signature, "unsettled": base.metadata.get("unsettled_files", 0)}
         arrays: dict[int, npt.NDArray[np.float64]] | None = None
         if operation == "load" and payload.get("save_memory"):
@@ -1612,6 +1613,15 @@ class FolderCache(QObject):
         for key in [key for key, dataset in self.datasets.items()
                     if key[0] == entry.path and key[1] != entry.signature and id(dataset) not in shown]:
             del self.datasets[key]
+
+    def _folder_changed(self, path: str) -> None:
+        """A status check found other files than the folder's snapshot: its datasets describe files
+        the folder has moved past (a tab still shows its own, pinned). Unlike a clear
+        (``_invalidate_data``), running loads, Live checks and cached reads go on: each checks the
+        folder itself, and a ``loaded`` from before the change fails its signature check."""
+        for key in [key for key in self.datasets if key[0] == path]:
+            del self.datasets[key]
+        self.datasetChanged.emit(path)
 
     def _invalidate_data(self, path: str) -> None:
         self._epochs[path] = self._epochs.get(path, 0) + 1
@@ -2190,7 +2200,9 @@ class FolderCache(QObject):
             self.cacheAdminDone.emit(producer.owner, action,
                                      "" if kind == "done" else str(event.get("message") or "Cancelled"))
 
-    def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+    def _on_root_event(self, producer: IORequest, event: dict[str, Any]) -> bool:
+        """Data roots and mount tables, from whichever helper reports them; True: nothing else
+        to do with the event (``mounts_seen``)."""
         if isinstance(event.get("data_root"), dict):
             # The root of the folder listed, checked or loaded, wherever its root folder is.
             self._root_reported(event["data_root"])
@@ -2238,7 +2250,11 @@ class FolderCache(QObject):
             elif self._mounts_observed == self._roots_mounts:
                 # The table the last check saw: covered, so a later change back is new again.
                 self._verify_asked = self._mounts_observed
-            return
+            return True
+        return False
+
+    def _on_verification_event(self, producer: IORequest, event: dict[str, Any]) -> bool:
+        """The local-lane volume and data-root verifications; True if ``producer`` is one."""
         if producer.owner == self._volume_verify_owner:
             if event["kind"] == "volumes_verified":
                 self._verified_volumes = tuple(tuple(pair) for pair in event["volumes"])
@@ -2257,7 +2273,7 @@ class FolderCache(QObject):
                     self._verify_volumes(options)
                 else:
                     self._verify_markers()
-            return
+            return True
         if producer.owner == self._root_verify_owner:
             if event["kind"] == "volumes_verified":
                 self._verified_volumes = tuple(tuple(pair) for pair in event["volumes"])
@@ -2277,6 +2293,66 @@ class FolderCache(QObject):
                     self._markers_wanted = True
                     if not self._volume_verify_owner:
                         self._verify_markers()
+            return True
+        return False
+
+    def _on_finishing_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        """A finished load's helper still writing its disk cache (``_finishing``)."""
+        path = self._finishing[producer.owner]
+        kind = event["kind"]
+        # A removal since the load started voids its cache events: a save that committed
+        # before a Clear must not bring the badge back after it.
+        valid = (self._finishing_epochs.get(producer.owner) == self._epochs.get(path, 0)
+                 and not self._removed_after(self._finishing_created.get(producer.owner, 0.0), "datasets", path))
+        was_saving = producer.owner in self._disk_cache_writers
+        if kind in ("cache_saved", "cache_save_failed", "disk_cached", "cache_warning", "cache_full",
+                    "cache_approval", "done", "error", "cancelled"):
+            self._disk_cache_writers.discard(producer.owner)
+        if "next_deadline" in event:
+            self._schedule_sweep(event["next_deadline"])
+        self._note_usage(event.get("usage"), event.get("usage_seq"))
+        if kind in ("cache_full", "cache_approval", "cache_saved"):
+            self._forget_pending(set(event.get("superseded") or ()))
+        if kind == "cache_saved" and event.get("job_seq"):
+            self._save_seq[path] = max(self._save_seq.get(path, 0), int(event["job_seq"]))
+        held = False
+        if valid and kind in ("cache_full", "cache_approval") and (held := self._hold_pending(path, event)):
+            # Not saved yet: it waits for the user's answer (Make room / Save update).
+            state = self._cache_states.setdefault(path, CacheStatus())
+            state.error = ("Not cached — disk cache full" if kind == "cache_full"
+                           else "Cache update waiting for your answer")
+            self.diskCacheChanged.emit(path)
+        if valid and kind == "cache_saved":
+            state = self._cache_states.setdefault(path, CacheStatus())
+            state.info, state.error = dict(event["cache_info"]), ""
+            for entry in self.datasets.values():
+                if entry.path == path and entry.signature == state.info.get("signature"):
+                    entry.metadata.update(cache_info=state.info, disk_cached=True, disk_cache_pending=False)
+            self._set_disk_cached(path, True, notify=True)
+        elif valid and kind == "disk_cached":
+            self._set_disk_cached(path, bool(event["disk_cached"]), notify=was_saving)
+        elif valid and (kind == "cache_save_failed" or was_saving and kind in (
+                "cache_warning", "done", "error", "cancelled")):
+            state = self._cache_states.setdefault(path, CacheStatus())
+            state.error = event.get("message", "Cache save did not complete")
+            self.diskCacheChanged.emit(path)
+        if kind == "cache_warning":
+            logging.warning("Folder cache %s: %s", path, event["message"])
+        if kind in ("done", "error", "cancelled"):
+            del self._finishing[producer.owner]
+            self._finishing_epochs.pop(producer.owner, None)
+            self._finishing_created.pop(producer.owner, None)
+        if was_saving and producer.owner not in self._disk_cache_writers:
+            outcome = ("saved" if valid and kind == "cache_saved" else
+                       "pending" if held else
+                       "superseded" if valid and kind in ("cache_full", "cache_approval") else "failed")
+            self.saveEnded.emit(path, outcome)
+            self.quitSavesChanged.emit()
+            if path in self._deferred_saves and not self.disk_cache_saving(path):
+                QTimer.singleShot(0, lambda: self._start_deferred(path))
+
+    def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        if self._on_root_event(producer, event) or self._on_verification_event(producer, event):
             return
         if event["kind"] == "cache_skipped":
             self._remember_mount_warning(event)
@@ -2314,58 +2390,7 @@ class FolderCache(QObject):
             return
         job = self._producers.get(producer.owner)
         if job is None and producer.owner in self._finishing:
-            path = self._finishing[producer.owner]
-            kind = event["kind"]
-            # A removal since the load started voids its cache events: a save that committed
-            # before a Clear must not bring the badge back after it.
-            valid = (self._finishing_epochs.get(producer.owner) == self._epochs.get(path, 0)
-                     and not self._removed_after(self._finishing_created.get(producer.owner, 0.0), "datasets", path))
-            was_saving = producer.owner in self._disk_cache_writers
-            if kind in ("cache_saved", "cache_save_failed", "disk_cached", "cache_warning", "cache_full",
-                        "cache_approval", "done", "error", "cancelled"):
-                self._disk_cache_writers.discard(producer.owner)
-            if "next_deadline" in event:
-                self._schedule_sweep(event["next_deadline"])
-            self._note_usage(event.get("usage"), event.get("usage_seq"))
-            if kind in ("cache_full", "cache_approval", "cache_saved"):
-                self._forget_pending(set(event.get("superseded") or ()))
-            if kind == "cache_saved" and event.get("job_seq"):
-                self._save_seq[path] = max(self._save_seq.get(path, 0), int(event["job_seq"]))
-            held = False
-            if valid and kind in ("cache_full", "cache_approval") and (held := self._hold_pending(path, event)):
-                # Not saved yet: it waits for the user's answer (Make room / Save update).
-                state = self._cache_states.setdefault(path, CacheStatus())
-                state.error = ("Not cached — disk cache full" if kind == "cache_full"
-                               else "Cache update waiting for your answer")
-                self.diskCacheChanged.emit(path)
-            if valid and kind == "cache_saved":
-                state = self._cache_states.setdefault(path, CacheStatus())
-                state.info, state.error = dict(event["cache_info"]), ""
-                for entry in self.datasets.values():
-                    if entry.path == path and entry.signature == state.info.get("signature"):
-                        entry.metadata.update(cache_info=state.info, disk_cached=True, disk_cache_pending=False)
-                self._set_disk_cached(path, True, notify=True)
-            elif valid and kind == "disk_cached":
-                self._set_disk_cached(path, bool(event["disk_cached"]), notify=was_saving)
-            elif valid and (kind == "cache_save_failed" or was_saving and kind in (
-                    "cache_warning", "done", "error", "cancelled")):
-                state = self._cache_states.setdefault(path, CacheStatus())
-                state.error = event.get("message", "Cache save did not complete")
-                self.diskCacheChanged.emit(path)
-            if kind == "cache_warning":
-                logging.warning("Folder cache %s: %s", path, event["message"])
-            if kind in ("done", "error", "cancelled"):
-                del self._finishing[producer.owner]
-                self._finishing_epochs.pop(producer.owner, None)
-                self._finishing_created.pop(producer.owner, None)
-            if was_saving and producer.owner not in self._disk_cache_writers:
-                outcome = ("saved" if valid and kind == "cache_saved" else
-                           "pending" if held else
-                           "superseded" if valid and kind in ("cache_full", "cache_approval") else "failed")
-                self.saveEnded.emit(path, outcome)
-                self.quitSavesChanged.emit()
-                if path in self._deferred_saves and not self.disk_cache_saving(path):
-                    QTimer.singleShot(0, lambda: self._start_deferred(path))
+            self._on_finishing_event(producer, event)
             return
         if job is None:
             # Non-shared IOService consumers retain their existing protocol.
@@ -2523,7 +2548,7 @@ class FolderCache(QObject):
                 old = self.snapshot(job.path)
                 signature = job.status.get("signature")
                 if old and signature and old.status.get("signature") not in (None, "", signature):
-                    self._invalidate_data(job.path)
+                    self._folder_changed(job.path)
                 checked_at = time.monotonic() - max(0, time.time() - job.status.get("scanned_at", time.time()))
                 # A late status check must not replace a newer refresh's names,
                 # including snapshots used by tabs opened after both jobs finish.

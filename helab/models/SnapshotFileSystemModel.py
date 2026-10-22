@@ -27,13 +27,18 @@ from helab.utils.time_format import relative_age
 from helab.utils.cache_freshness import CacheFreshness, cache_freshness, data_as_of, metadata_date
 
 
+def _date_text(timestamp: float) -> str:
+    """A source file's or folder's time as local time, "" if the OS can't convert it (a corrupt
+    far-future mtime on a share: Windows' localtime refuses those past about year 3000)."""
+    try:
+        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, OverflowError, OSError):
+        return ""
+
+
 def _stamp(timestamp: float | None) -> str:
     """An exact local time with its age, e.g. "2026-10-09 00:16:08 (2h ago)"."""
-    if timestamp is None:
-        return "date not recorded"
-    try:
-        exact = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-    except (ValueError, OverflowError, OSError):
+    if timestamp is None or not (exact := _date_text(timestamp)):
         return "date not recorded"
     return f"{exact} ({relative_age(time.time() - timestamp)})"
 
@@ -355,7 +360,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             if column == self.COLUMN_NAME:
                 return os.path.basename(node.path.rstrip(os.sep)) or node.path
             if column == self.COLUMN_DATE_MODIFIED and node.modified is not None:
-                return datetime.fromtimestamp(node.modified).strftime("%Y-%m-%d %H:%M:%S")
+                return _date_text(node.modified)
             if column == self.COLUMN_STATUS_NUMBER:
                 return str(node.report.count) if node.report and node.report.count >= 0 else ""
             if column == self.COLUMN_STATUS_ICON and node.error:

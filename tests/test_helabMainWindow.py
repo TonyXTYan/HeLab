@@ -1,4 +1,5 @@
 # tests/test_helabMainWindow.py
+from pathlib import Path
 import signal
 from typing import Generator, Any
 from unittest.mock import patch
@@ -494,3 +495,13 @@ def test_earlier_io_traces_ask_with_keep_as_the_default(
     text, default, buttons = seen[0]
     assert text == f"2 earlier I/O traces ({byte_size(3000)}) in {tmp_path}."
     assert default == "Keep" and sorted(buttons) == ["Delete old traces", "Keep"]
+
+
+def test_window_icon_is_found_from_any_launch_folder(
+        qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """The packaged app and ``python -m helab`` from elsewhere don't start in the repository's root."""
+    monkeypatch.chdir(tmp_path)
+    window = HelabMainWindow()
+    qtbot.addWidget(window)
+    assert "Icon file not found" not in caplog.text and not window.windowIcon().isNull()
+    window.close()

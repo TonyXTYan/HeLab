@@ -228,3 +228,13 @@ def test_history_save_warning_line(model: SnapshotFileSystemModel) -> None:
 def test_stamp_formats_exact_time_and_age() -> None:
     assert _stamp(NOW - 7200) == f"{datetime.fromtimestamp(NOW - 7200):%Y-%m-%d %H:%M:%S} (2h ago)"
     assert _stamp(None) == _stamp(1e20) == "date not recorded"
+
+
+def test_a_corrupt_far_future_folder_date_shows_no_date_instead_of_raising(model: SnapshotFileSystemModel) -> None:
+    """A share can hold a folder with a corrupt mtime the OS can't convert (Windows' localtime refuses
+    those past about year 3000): its row renders (an exception in ``data()`` aborts HeLab)."""
+    node = leaf(modified=1e20)
+    model.root = node
+    index = model.createIndex(0, model.COLUMN_DATE_MODIFIED, node)
+    assert model.data(index) == ""
+    assert f"Folder modified: {stamp(1e20)}" in model._tooltip(node, "").splitlines()

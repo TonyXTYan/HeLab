@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import deque
+import contextlib
 from dataclasses import dataclass, field
 import itertools
 import json
@@ -167,7 +168,7 @@ class IOService(QObject):
               "cache_move": "Move disk cache", "roots_verify": "Verify data roots",
               "volumes_verify": "Verify volumes", "root_create": "Enable disk cache",
               "root_reassign": "Make a copy's data root", "root_remove": "Remove .helab-root",
-              "trace_check": "Check I/O trace folder"}
+              "marker_save": "Save .helab-root to folder", "trace_check": "Check I/O trace folder"}
     NOUNS = {"load": "load", "cached": "cached data read", "list": "folder listing", "details": "folder details scan",
              "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup",
@@ -175,7 +176,7 @@ class IOService(QObject):
              "cache_move": "disk cache move", "roots_verify": "data-root verification",
              "volumes_verify": "volume verification", "root_create": "disk cache enabling",
              "root_reassign": "data-root reassignment", "root_remove": ".helab-root removal",
-             "trace_check": "I/O trace folder check"}
+             "marker_save": ".helab-root save", "trace_check": "I/O trace folder check"}
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -596,7 +597,7 @@ class IOService(QObject):
                   "drives": "Listing drives", "roots_verify": "Verifying data roots",
                   "volumes_verify": "Verifying volumes", "root_create": "Enabling disk cache",
                   "root_reassign": "Giving a copy its own data root", "root_remove": "Removing .helab-root",
-                  "trace_check": "Checking the I/O trace folder"}
+                  "marker_save": "Saving .helab-root", "trace_check": "Checking the I/O trace folder"}
 
     def activity_summary(self) -> str:
         """App-wide status-bar phrase from memory; zero counts are left out."""
@@ -733,6 +734,9 @@ class IOService(QObject):
                     if request.cancelled.is_set():
                         return
                     np.save(os.path.join(held, f"{shot}.npy"), array, allow_pickle=False)
+                    # Writing the data out is progress: a large dataset on a slow disk must not use
+                    # up the no-progress time before the helper starts (a float store: atomic).
+                    request.last_activity = time.monotonic()
                 payload["held_dir"] = held
             response_file: str | None = None
             if getattr(sys, "frozen", False):
@@ -746,9 +750,12 @@ class IOService(QObject):
             env = os.environ.copy()
             package_root = str(Path(__file__).resolve().parents[2])
             env["PYTHONPATH"] = os.pathsep.join(filter(None, (package_root, env.get("PYTHONPATH", ""))))
-            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                       stderr=subprocess.DEVNULL, text=True, env=env,
-                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0)
+            # What a helper that dies says (a traceback, a failed import): logged if it never ends.
+            errors_file = os.path.join(request.output, "stderr.txt")
+            with open(errors_file, "wb") as errors:
+                process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                           stderr=errors, text=True, env=env,
+                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0)
             request.process = process
             if request.cancelled.is_set():
                 process.kill()
@@ -775,6 +782,11 @@ class IOService(QObject):
                 if request.cancelled.is_set():
                     break
             if not complete and not request.cancelled.is_set():
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    process.wait(1)  # (Its output has ended: it is exiting.)
+                if output := self._tail(errors_file):
+                    logging.warning("I/O helper exited unexpectedly: %s %s; it said:\n%s",
+                                    request.operation, request.path, output)
                 self._put(request, {"kind": "error", "message": "I/O helper exited unexpectedly"})
         except Exception as exc:
             self._put(request, {"kind": "error", "message": str(exc)})
@@ -829,9 +841,22 @@ class IOService(QObject):
                         yield partial
                         partial = ""
                 elif request.process is not None and request.process.poll() is not None:
+                    # It exited: what it wrote after that read and before exiting is still to read.
+                    partial += response.read()
+                    yield from (line for line in partial.splitlines(keepends=True) if line.endswith("\n"))
                     break
                 else:
                     time.sleep(0.01)
+
+    @staticmethod
+    def _tail(filename: str, limit: int = 2048) -> str:
+        """The last ``limit`` bytes of a helper's error output, as text."""
+        try:
+            with open(filename, "rb") as stream:
+                stream.seek(max(0, stream.seek(0, os.SEEK_END) - limit))
+                return stream.read().decode("utf-8", "replace").strip()
+        except OSError:
+            return ""
 
     @staticmethod
     def release(request: IORequest) -> None:

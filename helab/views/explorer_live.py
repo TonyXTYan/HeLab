@@ -340,7 +340,10 @@ class LiveController:
         now = time.time()
 
         def when(nanoseconds: int) -> str:
-            return datetime.fromtimestamp(nanoseconds / 1e9).astimezone().isoformat(timespec="milliseconds")
+            try:
+                return datetime.fromtimestamp(nanoseconds / 1e9).astimezone().isoformat(timespec="milliseconds")
+            except (ValueError, OverflowError, OSError):  # A corrupt far-future mtime (Windows' localtime).
+                return f"{nanoseconds} ns"
         for entry in entries:
             shot = int(entry["shot"])
             (old_size, old_mtime), (new_size, new_mtime) = entry["old"], entry["new"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from typing import Any, Mapping, TYPE_CHECKING
 
 from helab.io_ops.events import FolderSummary
@@ -48,9 +49,11 @@ def _valid_summary(info: object) -> dict[str, Any]:
 
 
 def _summary(path: str, found: dict[str, set[int]], sizes: dict[str, int], has_dirs: bool, empty: bool,
-             fingerprint: list[tuple[int, int, int]], scanned_at: float) -> FolderSummary:
-    """A complete status for this folder, as a scan or load computes it."""
-    folder_stat = _stat(path, "folder mtime")
+             fingerprint: list[tuple[int, int, int]], scanned_at: float,
+             folder_stat: os.stat_result | None = None) -> FolderSummary:
+    """A complete status for this folder, as a scan or load computes it. ``folder_stat``: the folder's
+    stat when the caller took it already (a load's, before its listing), else it is stat'ed here."""
+    folder_stat = folder_stat or _stat(path, "folder mtime")
     raw, txy = _shots(found)
     status, count = _classify(raw, txy, has_dirs)
     return {"kind": "status", "details": True, "status": status, "count": count, "empty": empty,

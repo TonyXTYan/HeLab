@@ -24,6 +24,29 @@ if TYPE_CHECKING:
 # renaming it remains the real fix.
 SETTLE_SECONDS = float(os.environ.get("HELAB_SETTLE_SECONDS", "5"))
 
+# A folder modified this close to when its listing began (either way: the server's clock may differ
+# a little from ours) may change again within the same mtime step (FAT and some shares keep 2 s),
+# which a later stat wouldn't see: its mtime isn't kept for the quick check (``_quick_mtime``), as
+# Live's isn't (``live.RACY_SECONDS``). Tests, with no settle age, have no margin either.
+RACY_SECONDS = min(2.0, SETTLE_SECONDS)
+
+
+def _quick_mtime(folder: os.stat_result, listed_at: float) -> int | None:
+    """The folder's mtime (ns), stat'ed just before the listing that began at ``listed_at``, for the
+    quick checks: a folder whose mtime is still exactly this one has had nothing added or removed
+    since. It is the server's clock, so it is compared only with itself, never with our time, except
+    for the ``RACY_SECONDS`` margin: within it, None (the next check lists the folder)."""
+    return None if abs(listed_at - folder.st_mtime) < RACY_SECONDS else folder.st_mtime_ns
+
+
+def _mtime_unchanged(saved: dict[str, Any], folder: os.stat_result, as_of: float) -> bool:
+    """Whether a folder stat'ed now is as a listing left it: its mtime exactly the one that listing
+    saw (``folder_mtime_ns``; None: too close to the listing, so no). Data saved before it was kept
+    compares the mtime with the listing's time (``as_of``) instead, which trusts the two clocks."""
+    if "folder_mtime_ns" not in saved:
+        return folder.st_mtime <= as_of
+    return isinstance(saved["folder_mtime_ns"], int) and saved["folder_mtime_ns"] == folder.st_mtime_ns
+
 
 def _settled(fingerprint: list[tuple[int, int, int]]) -> list[tuple[int, int, int]]:
     """Fingerprints of files not modified within SETTLE_SECONDS (nor in the future)."""

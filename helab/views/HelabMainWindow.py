@@ -26,9 +26,15 @@ from PyQt6.QtWidgets import QMainWindow, QStatusBar, QMenuBar, QWidget, QVBoxLay
 from helab.views.plots.script_tree import TreePanelWidget
 from helab.views.plots.workspace import PlotWorkspace
 from helab.resources.icons import ToolIcons
-from helab.utils.constants import *
+from helab.utils.constants import (
+    APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, DEFAULT_LOAD_MODE, DIR_TEMPS, LOAD_MODE_LABELS,
+    QSPLITTER_STYLESHEET, TOOLBAR_STYLESHEET_LR, assert_warn, cache_dir_refused, read_check_level,
+    read_disk_budget, read_io_concurrency, read_live_autosave, read_live_interval, read_load_mode,
+    read_plot_auto_reload, read_ram_budget,
+)
 from helab.utils.number_format import byte_size, fnum
-from helab.utils.settings_defaults import THREAD_STATUS_SETTING, read_setting
+from helab.utils.settings_defaults import (
+    AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, THREAD_STATUS_SETTING, read_setting)
 from helab.utils.settings_store import app_settings
 from helab.views.CacheDialogs import CacheDialogs
 from helab.views.ElidedLabel import ElidedLabel
@@ -90,7 +96,7 @@ class HelabMainWindow(QMainWindow):
         signal.signal(signal.SIGTERM, self.handle_exit)
 
         self.process = psutil.Process()
-        icon_path = os.path.abspath("./helab/resources/ai-icon.icns")
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "ai-icon.icns")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         else:

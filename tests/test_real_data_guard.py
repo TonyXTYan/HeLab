@@ -51,6 +51,19 @@ def test_the_developers_data_folders_are_refused() -> None:
     assert len(taken_notes()) == len(data)
 
 
+@pytest.mark.parametrize("path", DEV_POTENTIAL_DATA_PATHS, ids=[str(i) for i in range(len(DEV_POTENTIAL_DATA_PATHS))])
+def test_each_listed_data_folder_is_a_path_and_guarded(path: str) -> None:
+    """Every entry of the developers' data folders is a path of its own (a missing comma would fuse
+    two), and a folder inside it is refused, unless it is in the temp folder or this checkout."""
+    assert path
+    allowed, _, _ = infra._guard_rules()
+    if any(infra._within(infra._normal(path), folder) for folder in allowed):
+        return
+    with pytest.raises(infra.SourceRefused):
+        infra._guard(os.path.join(path, "run_1"))
+    assert taken_notes() == [os.path.join(path, "run_1")]
+
+
 def test_test_folders_and_the_way_to_them_are_allowed(tmp_path: Path) -> None:
     checkout = Path(__file__).resolve().parents[1]
     for path in (tmp_path, tmp_path / "run_1", checkout / "tests_sample_data", Path(tmp_path.anchor)):

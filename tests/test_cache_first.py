@@ -766,3 +766,85 @@ def test_a_cached_read_waiting_for_its_volume_runs_once_verification_checks_it(
     service.resultReady.emit(markers, {"kind": "volumes_verified", "volumes": volumes})
     qtbot.wait(20)
     assert ("cached", path) not in cache.jobs
+
+
+def memory_check(first: dict[str, Any]) -> dict[str, Any]:
+    """What ``FolderCache.submit`` sends for the quick check of data held in RAM without a disk cache."""
+    return {key: first.get(key) for key in ("listed_at", "names", "identity", "fingerprint", "problematic",
+                                             "data_root", "folder_mtime_ns")} | {
+        "signature": first["signature"], "unsettled": first["unsettled_files"]}
+
+
+def check_again(source: Path, tmp_path: Path, first: dict[str, Any], held: str) -> dict[str, Any]:
+    """The folder's next check, holding ``first``'s shots: from its disk cache (``cached``) or, without
+    one, from RAM (``memory``)."""
+    memory = [list(entry) for entry in first["fingerprint"]]
+    if held == "cached":
+        return loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"]))
+    output = tmp_path / f"artifacts-{time.monotonic_ns()}"
+    output.mkdir()
+    events: list[Any] = []
+    load(str(source), str(output), events.append, None, memory, first["signature"],
+         memory_check=memory_check(first))
+    return loaded(events)
+
+
+def first_load(source: Path, tmp_path: Path, held: str) -> dict[str, Any]:
+    if held == "cached":
+        return loaded(run_load(source, tmp_path))
+    output = tmp_path / "first"
+    output.mkdir()
+    events: list[Any] = []
+    load(str(source), str(output), events.append)
+    return loaded(events)
+
+
+@pytest.mark.parametrize("held", ["cached", "memory"])
+def test_a_server_clock_behind_ours_still_shows_new_shots(tmp_path: Path, held: str) -> None:
+    """The folder's mtime is the server's clock and the listing's time this computer's: a new shot
+    on a server an hour behind leaves the folder's mtime earlier than the listing, so only an
+    unchanged mtime may skip the listing."""
+    source = source_folder(tmp_path)
+    behind = time.time() - 3600
+    os.utime(source, (behind, behind))
+    first = first_load(source, tmp_path, held)
+    (source / "d_txy_forc3.txt").write_text("3,2,3\n")
+    os.utime(source, (behind + 5, behind + 5))
+    result = check_again(source, tmp_path, first, held)
+    assert not result.get("unchanged") and result["load_counts"]["new_loaded"] == 1
+    again = check_again(source, tmp_path, result, held)  # The new listing's mtime is the one to compare.
+    assert again["unchanged"]
+
+
+@pytest.mark.parametrize("held", ["cached", "memory"])
+def test_a_server_clock_ahead_of_ours_keeps_the_quick_check(tmp_path: Path, held: str) -> None:
+    source = source_folder(tmp_path)
+    ahead = time.time() + 3600
+    os.utime(source, (ahead, ahead))
+    first = first_load(source, tmp_path, held)
+    assert check_again(source, tmp_path, first, held)["unchanged"]
+
+
+@pytest.mark.parametrize("held", ["cached", "memory"])
+def test_a_folder_changed_within_its_mtime_tick_is_listed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, held: str,
+) -> None:
+    """FAT (and some shares) keep a folder's mtime in 2 s steps: a shot added in the same step as the
+    listing leaves the mtime as the listing saw it. A folder modified within ``RACY_SECONDS`` of its
+    listing is listed again by the next check, until a listing sees an older mtime."""
+    from helab.io_ops import fingerprints
+    monkeypatch.setattr(fingerprints, "RACY_SECONDS", 2.0)  # (Tests set no settle age, hence no margin.)
+    source = source_folder(tmp_path)
+    tick = math.floor(time.time() / 2) * 2
+    os.utime(source, (tick, tick))
+    first = first_load(source, tmp_path, held)
+    assert first["folder_mtime_ns"] is None
+    (source / "d_txy_forc3.txt").write_text("3,2,3\n")
+    os.utime(source, (tick, tick))  # (The same 2 s step.)
+    result = check_again(source, tmp_path, first, held)
+    assert not result.get("unchanged") and result["load_counts"]["new_loaded"] == 1
+    older = time.time() - 60
+    os.utime(source, (older, older))
+    listed = check_again(source, tmp_path, result, held)
+    assert not listed.get("unchanged") and listed["load_counts"]["read"] == 0
+    assert check_again(source, tmp_path, listed, held)["unchanged"]

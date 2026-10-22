@@ -179,7 +179,9 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
               "live_reread": reread, "raw_times": _raw_list(times, replaced),
               "fingerprint": [list(entry) for entry in fingerprint], "memory_shots": kept,
               "base_signature": signature, "signature": signature,
-              "listed_at": listed_at, "names": names, "identity": _location_identity(path, "save: identity")})
+              "listed_at": listed_at, "names": names, "identity": _location_identity(path, "save: identity"),
+              # A save is its one listing, with no folder stat: the next check lists the folder.
+              "folder_mtime_ns": None})
         if not saving:
             return
         assert store is not None and guard is not None

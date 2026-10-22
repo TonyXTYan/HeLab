@@ -168,7 +168,9 @@ class SaveGuard:
 
 class DatasetRecord(TypedDict):
     """What a load saves with its dataset file. ``info`` holds ``saved_at``,
-    ``snapshot_at``, ``signature``, ``counts``, ``unsettled``, ``kind``, ``format`` and ``names``.
+    ``snapshot_at``, ``signature``, ``counts``, ``unsettled``, ``kind``, ``format``, ``names`` and
+    ``folder_mtime_ns`` (the folder's mtime before the listing, for the quick check; None when too
+    close to it; rows saved before it have none, and the quick check then compares ``snapshot_at``).
     ``raw_times``: ``[shot, mtime_ns]`` of each shot's raw ``d<N>.txt`` file where one was found (the
     shot's time). Kept out of ``info``, which listings read for every subfolder, and out of the
     fingerprint, which raw files never affect. Rows saved before it have none (``[]``)."""
@@ -476,14 +478,21 @@ class CacheStore:
                 for location, identifier, kind, label, first, last, decision in rows]
 
     def root_at(self, location: str) -> tuple[str, str, str] | None:
-        row = self._conn.execute(
-            "SELECT uuid, label, decision FROM roots WHERE location=?", (location,)).fetchone()
+        try:
+            row = self._conn.execute(
+                "SELECT uuid, label, decision FROM roots WHERE location=?", (location,)).fetchone()
+        except sqlite3.Error as exc:
+            raise StoreError(f"Data roots could not be read: {exc}") from exc
         return (str(row[0]), str(row[1]), str(row[2])) if row is not None else None
 
     def other_root_locations(self, identifier: str, location: str) -> list[str]:
-        return [str(row[0]) for row in self._conn.execute(
-            "SELECT location FROM roots WHERE uuid=? AND location<>? AND decision='confirmed'",
-            (identifier, location))]
+        try:
+            rows = self._conn.execute(
+                "SELECT location FROM roots WHERE uuid=? AND location<>? AND decision='confirmed'",
+                (identifier, location)).fetchall()
+        except sqlite3.Error as exc:
+            raise StoreError(f"Data roots could not be read: {exc}") from exc
+        return [str(row[0]) for row in rows]
 
     def volume_locations(self) -> list[tuple[str, str, str]]:
         """Mounted-volume hints captured earlier by source helpers."""
@@ -1292,14 +1301,17 @@ class CacheStore:
 
     def confirm_dataset(self, path: str, fingerprint: Sequence[Sequence[int]], names: Sequence[str],
                         snapshot_at: float, guard: SaveGuard,
-                        raw_times: Sequence[Sequence[int]] | None = None) -> bool:
+                        raw_times: Sequence[Sequence[int]] | None = None,
+                        folder_mtime_ns: int | None = None) -> bool:
         """Record that a full listing at ``snapshot_at`` found a cached dataset's TXY files all
         unchanged (none still being written), without rewriting it: its file list now dates from
         then (``snapshot_at``, so a later non-TXY change such as Finder's ``.DS_Store`` no longer
         rules out the quick check), nothing is unsettled, and its file names (for the quick check's
         samples; older caches have none) are kept, and so are ``raw_times`` when given (shot times
-        the row lacked, which the listing found). Only while the row still has ``fingerprint``,
-        under the job's save guard. Returns whether it was recorded."""
+        the row lacked, which the listing found). The folder's mtime before that listing
+        (``folder_mtime_ns``, for the quick check; None: too close to it) replaces the saved one,
+        unless the row's file list is newer than this listing. Only while the row still has
+        ``fingerprint``, under the job's save guard. Returns whether it was recorded."""
         path = self._path_key(path)
         try:
             with self.transaction():
@@ -1311,10 +1323,11 @@ class CacheStore:
                 if not isinstance(info, dict):
                     return False
                 previous = info.get("snapshot_at")
-                if isinstance(previous, (int, float)) and math.isfinite(previous):
-                    snapshot_at = max(snapshot_at, float(previous))
+                mtime = {"folder_mtime_ns": folder_mtime_ns}
+                if isinstance(previous, (int, float)) and math.isfinite(previous) and previous > snapshot_at:
+                    snapshot_at, mtime = float(previous), {}  # (Its mtime goes with its own listing.)
                 self._conn.execute("UPDATE datasets SET info = ? WHERE path = ?", (_dumps(
-                    {**info, "names": list(names), "snapshot_at": snapshot_at, "unsettled": 0}), path))
+                    {**info, "names": list(names), "snapshot_at": snapshot_at, "unsettled": 0, **mtime}), path))
                 if raw_times is not None:
                     self._conn.execute("UPDATE datasets SET raw_times = ? WHERE path = ?",
                                        (_dumps([list(entry) for entry in raw_times]), path))

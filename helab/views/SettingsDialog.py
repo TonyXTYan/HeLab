@@ -1,8 +1,5 @@
 # SettingsDialog.py
 import logging
-import sys
-import time
-from re import S
 from typing import Optional, Dict, Any
 
 from PyQt6.QtGui import QCloseEvent, QDesktopServices
@@ -12,9 +9,14 @@ from PyQt6.QtCore import QSettings, QUrl
 
 from helab.utils.folder_cache import FolderCache, store_options
 from helab.utils.number_format import fnum
-from helab.utils.constants import *
+from helab.utils.constants import (
+    CHECK_LEVEL_LABELS, DIR_TEMPS, LOAD_MODE_LABELS, MAX_LIVE_INTERVAL, MAX_SIMULTANEOUS_IO, MIN_LIVE_INTERVAL,
+    cache_dir, default_app_dir, read_check_level, read_disk_budget, read_io_concurrency, read_live_autosave,
+    read_live_interval, read_load_mode, read_plot_auto_reload, read_ram_budget_steps,
+)
 from helab.utils.settings_defaults import (
-    DIR_CACHES_SETTING, DIR_TEMPS_SETTING, EXAMPLE_CHECKBOX_SETTING, EXAMPLE_TEXT_SETTING, RETIRED, read_setting)
+    AUTO_SCAN_VISIBLE_SETTING, CHECK_LEVEL_SETTING, DIR_CACHES_SETTING, DIR_TEMPS_SETTING, LIVE_INTERVAL_SETTING,
+    LOAD_MODE_SETTING, RETIRED, SIMULTANEOUS_IO_SETTING, read_setting)
 from helab.utils.settings_store import app_settings
 from helab.views.DataRootsTab import DataRootsTab
 from helab.views.CacheTab import CacheTab
@@ -52,18 +54,9 @@ class SettingsDialog(QDialog):
         self.general_tab = QWidget()
         self.general_layout = QVBoxLayout(self.general_tab)
 
-        self.example_checkbox = QCheckBox("Enable feature X")
-        self.example_text = QLineEdit()
-        self.example_text.setPlaceholderText("Enter some text")
-
-        self.general_layout.addWidget(self.example_checkbox)
-        self.general_layout.addWidget(QLabel("Example Text:"))
-        self.general_layout.addWidget(self.example_text)
-
         self.load_mode_combo = QComboBox()
         for mode, label in LOAD_MODE_LABELS.items():
             self.load_mode_combo.addItem(label, mode)
-        self.general_layout.addSpacerItem(QSpacerItem(0, 10))
         self.general_layout.addWidget(QLabel("When selecting another folder:"))
         self.general_layout.addWidget(self.load_mode_combo)
 
@@ -277,8 +270,6 @@ class SettingsDialog(QDialog):
 
     def load_settings(self) -> None:
         settings = self.settings
-        self.example_checkbox.setChecked(read_setting(settings, EXAMPLE_CHECKBOX_SETTING, typed=True))
-        self.example_text.setText(read_setting(settings, EXAMPLE_TEXT_SETTING, typed=True))
         # Unset only when its folder came from an override (tests, floors): show the one in use.
         self.dir_temps_edit.setText(read_setting(settings, DIR_TEMPS_SETTING, typed=True) or DIR_TEMPS)
         self.dir_caches_edit.setText(cache_dir())
@@ -311,8 +302,6 @@ class SettingsDialog(QDialog):
 
     def _write_settings(self) -> None:
         settings = self.settings
-        settings.setValue(EXAMPLE_CHECKBOX_SETTING, self.example_checkbox.isChecked())
-        settings.setValue(EXAMPLE_TEXT_SETTING, self.example_text.text())
         settings.setValue(DIR_TEMPS_SETTING, self.dir_temps_edit.text())
         settings.setValue(LOAD_MODE_SETTING, self.load_mode_combo.currentData())
         settings.setValue(SIMULTANEOUS_IO_SETTING, self.simultaneous_io_spin.value())
@@ -331,7 +320,7 @@ class SettingsDialog(QDialog):
         # TODO warning box if unsaved changes
 
 
-        logging.warning("Settings dialog closed")
+        logging.debug("Settings dialog closed")
         super().closeEvent(a0)
         self.deleteLater()
 

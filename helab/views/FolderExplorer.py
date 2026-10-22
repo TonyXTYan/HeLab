@@ -1059,7 +1059,6 @@ class FolderExplorer(QWidget):
         report.problematic_txy_ns = list(dataset.metadata.get("problematic", []))
         report.loaded_txy_files_count = int(dataset.metadata.get("files", 0))
         report.loaded_txy_rows_count = int(dataset.metadata.get("rows", 0))
-        report.time_load_ram = datetime.now()
         report.data_dict_bytes = self.load_bytes
         report.extra_icons = ["ram_opened"]
         node = self.model.nodes.get(path)
@@ -2117,8 +2116,8 @@ class FolderExplorer(QWidget):
         kind, path = event["kind"], request.path
         if kind == "root_manual":
             # Non-modal: the user places the file, then Retry / Refresh finds it.
-            ManualMarkerDialog(self, str(event["path"]), str(event["name"]), str(event["contents"]),
-                               str(event.get("reason", ""))).show()
+            ManualMarkerDialog(self, self.model.cache, str(event["path"]), str(event["name"]),
+                               str(event["contents"]), str(event.get("reason", ""))).show()
         elif kind in ("root_created", "root_adopted"):
             # Its listing (and the subfolders' saved results) under the new root; folders not in
             # this tab's tree are skipped.

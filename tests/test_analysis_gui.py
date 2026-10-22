@@ -6,7 +6,7 @@ import gc
 import threading
 import weakref
 from pathlib import Path
-from typing import Any, Iterator, List, Optional, cast
+from typing import Any, Iterator, List, Optional, Sequence, cast
 
 import numpy as np
 import pyqtgraph as pg
@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QTab
 
 from helab.analysis.backends import BACKEND, DRAWING_GROUP, MATPLOTLIB, PLOTLY, PYQTGRAPH, MatplotlibPane
 from helab.analysis.dataset_view import build_view
+from helab.analysis.follow import LivePolicy
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
@@ -477,6 +478,52 @@ def test_run_without_data_says_so(window: Window, qtbot: QtBot) -> None:
     script = Blocking()
     assert panel.run_analysis(script.get_metadata(), script, "Plot") is None
     assert window.notices == ["Blocking: load a folder's data first"]
+
+
+class Broken(Blocking):
+    """A script loaded with Load Scripts… with a mistake in one of the hooks its plot needs at once."""
+
+    def __init__(self, hook: str) -> None:
+        super().__init__()
+        self.hook = hook
+
+    def parameters(self, action_name: str) -> List[ParameterSpec]:
+        if self.hook == "parameters":
+            raise ValueError("a typo in a ParameterSpec")
+        return super().parameters(action_name)
+
+    def live_policy(self, action_name: str) -> LivePolicy:
+        if self.hook == "live_policy":
+            raise ValueError("a typo in the policy")
+        return super().live_policy(action_name)
+
+    def backends(self, action_name: str) -> Sequence[str]:
+        if self.hook == "backends":
+            raise ValueError("a typo in the libraries")
+        return super().backends(action_name)
+
+
+@pytest.mark.parametrize(("hook", "error"), [
+    ("parameters", "a typo in a ParameterSpec"),  # (Read first by its constant keys.)
+    ("live_policy", "a typo in the policy"),
+    ("backends", "a typo in the libraries"),
+])
+def test_a_script_hook_that_raises_is_reported_and_helab_goes_on(
+        window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path, hook: str, error: str) -> None:
+    run = folder(tmp_path, "run_E", 1)
+    browse(browser, qtbot, str(tmp_path))
+    load(browser, qtbot, run, {1: 2})
+    panel = TreePanelWidget(window.plots)
+    qtbot.addWidget(panel)
+    script = Broken(hook)
+    instance = panel.run_analysis(script.get_metadata(), script, "Plot")
+    if hook != "backends":  # Needed to make the plot: none, and the status bar says why.
+        assert instance is None and window.notices == [f"Blocking failed: {error}"]
+        return
+    assert isinstance(instance, AnalysisInstance) and instance.dock_widget is not None
+    assert [label.text() for label in instance.dock_widget.findChildren(QLabel)
+            if label.text().startswith("Blocking failed")] == [f"Blocking failed: {error}"]
+    assert not instance.job_id and not script.entered.is_set()
 
 
 def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: QtBot, tmp_path: Path) -> None:

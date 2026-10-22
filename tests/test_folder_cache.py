@@ -801,6 +801,29 @@ def test_invalidation_rejects_late_load_results_and_rechecks(
     service.shutdown()
 
 
+def test_a_status_check_finding_new_files_leaves_a_running_load_to_finish(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A folder being acquired: another tab's status check completes with a new signature while
+    this tab's load runs. The load lists the folder itself, so it isn't cancelled; its result is
+    kept when it matches the check's signature (one from before the change would be discarded)."""
+    service = service_for_test(monkeypatch)
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    cache, path = get_folder_cache(service), str(tmp_path)
+    explorer = explorer_for_test(qtbot, path)
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    finish_scan(cache, path)
+    qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
+    load_request = producer(cache, path, "load")
+    cache.submit("other", 0, path, "scan", {}, force=True)
+    finish_scan(cache, path, signature="v2")
+    assert not load_request.cancelled.is_set() and ("load", path) in cache.jobs
+    finish_load(cache, path, signature="v2")
+    assert explorer.folder_opened_data is not None and cache.current_dataset(path) is not None
+    explorer.close_cleanup()
+    service.shutdown()
+
+
 def test_memory_budget_evicts_unused_entries_but_pins_open_data(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

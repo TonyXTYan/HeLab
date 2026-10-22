@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sqlite3
 import sys
 from typing import Any, Literal, TYPE_CHECKING
 
@@ -52,9 +53,10 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                           "reason": "marker invalid"})
                 return old is not None
             duplicates = store.other_root_locations(marker.uuid, location)
+            # Pending only while another location of this UUID is confirmed: one still waiting whose
+            # other locations have all been forgotten since is confirmed.
             decision: Literal["confirmed", "pending"] = (
-                "pending" if old is not None and old[0] == marker.uuid and old[2] == "pending"
-                else "confirmed" if old is not None and old[0] == marker.uuid
+                "confirmed" if old is not None and old[0] == marker.uuid and old[2] == "confirmed"
                 else "pending" if duplicates else "confirmed")
             old_key = ""
             if decision == "confirmed" and old is None:
@@ -95,7 +97,8 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
     except UnresolvedRemotePath:
         # The subsequent optional-cache open reports the typed skip once.
         return False
-    except StoreError as exc:
+    except (StoreError, sqlite3.Error) as exc:
+        # A write's own statement or commit failing is SQLite's error, not the store's.
         send({"kind": "cache_warning", "message": f"Data root could not be recorded: {exc}"})
         return False
 
@@ -316,6 +319,47 @@ def create_root(path: str, cache_options: dict[str, Any] | None, send: Emit = em
     _discover_root(path, True, cache_options, send)
     send({"kind": "root_created" if created and found.uuid == marker.uuid else "root_adopted",
           "path": path, "uuid": found.uuid, "label": found.label})
+
+
+def save_marker_copy(folder: str, contents: str, replace: bool = False, send: Emit = emit) -> None:
+    """The manual marker dialog's Save to folder…: write the ``.helab-root`` HeLab couldn't place, its exact
+    contents under its exact name, in a folder the user chose, to move into place by hand. A copy to move,
+    not a data root: not hidden, read back or recorded. A file already there is replaced only with
+    ``replace`` (else ``marker_save_exists``); refused by the system (permission, a read-only volume),
+    ``marker_save_refused``; written, ``marker_saved``. Other errors fail the request."""
+    import errno
+    from helab.utils.data_roots import MARKER_NAME
+    file = os.path.join(folder, MARKER_NAME)
+    data = contents.encode("utf-8")
+    binary = getattr(os, "O_BINARY", 0)
+    try:
+        try:
+            # Truncating without O_CREAT: Windows refuses to re-create a hidden file in place.
+            descriptor = (os.open(file, os.O_WRONLY | os.O_TRUNC | binary) if replace
+                          else os.open(file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | binary, 0o644))
+        except FileNotFoundError:
+            if not replace:
+                raise
+            descriptor = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | binary, 0o644)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(data)
+        except OSError:
+            with contextlib.suppress(OSError):
+                os.remove(file)  # Never leave a partial copy.
+            raise
+    except FileExistsError:
+        _trace("marker_write", file, "marker_save", error="FileExistsError")
+        send({"kind": "marker_save_exists", "path": folder, "file": file})
+        return
+    except OSError as exc:
+        _traced_error("marker_write", file, "marker_save", exc)
+        if exc.errno not in (errno.EACCES, errno.EPERM, errno.EROFS):
+            raise
+        send({"kind": "marker_save_refused", "path": folder, "file": file, "reason": str(exc)})
+        return
+    _trace("marker_write", file, "marker_save", bytes=len(data))
+    send({"kind": "marker_saved", "path": folder, "file": file})
 
 
 def remove_root(path: str, cache_options: dict[str, Any], expected: str, location: str = "",

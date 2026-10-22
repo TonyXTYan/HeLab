@@ -1,19 +1,13 @@
-# tabWidget.py
-import gc
+# FolderTabWidget.py
 import logging
 import os
-import platform
-import sys
 from types import ModuleType
-from typing import Tuple, List, Dict, Any
+from typing import Any
 
-from PIL.TiffTags import lookup
-from PyQt6.QtCore import QDir, QThreadPool, Qt, QSize, QTimer
-from PyQt6.QtWidgets import QTabWidget, QWidget, QMessageBox, QTabBar, QAbstractItemView
-# from cachetools import LRUCache, TTLCache
-# from matplotlib.backend_bases import CloseEvent
+from PyQt6.QtCore import QDir
+from PyQt6.QtWidgets import QTabWidget, QWidget, QTabBar
 
-from helab.utils.constants import *
+from helab.utils.constants import DEFAULT_DATA_PATH, DEV_POTENTIAL_DATA_PATHS
 from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.views.FolderExplorer import FolderExplorer
 
@@ -38,7 +32,6 @@ class FolderTabWidget(QTabWidget):
         self.setTabsClosable(True)
         self.setMovable(True)
         self.tabCloseRequested.connect(self.removeTab)
-        self._tab_switching_enabled = True
 
         self.setStyleSheet("""
                     QTabBar::tab {
@@ -50,44 +43,15 @@ class FolderTabWidget(QTabWidget):
 
         self.currentChanged.connect(self.on_current_tab_changed)
 
-
     def set_tab_switching_enable(self) -> None:
-        self._tab_switching_enabled = True
-        # self.setTabsClosable(True)
+        """Tabs can be moved and closed (each tab's close button)."""
         self.setMovable(True)
-        # self.setTabEnabled()
-        tab_bar = self.tabBar()
-        if tab_bar:
-            for index in range(self.count()):
-                if tab_bar:
-                    close_button = tab_bar.tabButton(index, QTabBar.ButtonPosition.RightSide)
-                    if close_button:
-                        close_button.setEnabled(True)  # Enable the close button
-                    current_folder_explorer = self.widget(index)
-                    if isinstance(current_folder_explorer, FolderExplorer):
-                        # current_folder_explorer.tree.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)     # Just click to select multiple items
-                        # current_folder_explorer.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)  # Hold Cmd or Shift to select multiple items
-                        # current_folder_explorer.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-                        # current_folder_explorer.tree.setEnabled(True)
-                        pass
-            # tab_bar.setEnabled(True)
-
-    def set_tab_switching_disable(self) -> None:
-        self._tab_switching_enabled = False
-        # self.setTabsClosable(False)
-        self.setMovable(False)
         tab_bar = self.tabBar()
         if tab_bar:
             for index in range(self.count()):
                 close_button = tab_bar.tabButton(index, QTabBar.ButtonPosition.RightSide)
                 if close_button:
-                    close_button.setEnabled(False)  # Disable the close button
-                current_folder_explorer = self.widget(index)
-                if isinstance(current_folder_explorer, FolderExplorer):
-                    # current_folder_explorer.tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-                    # current_folder_explorer.tree.setEnabled(False)
-                    pass
-            # tab_bar.setEnabled(False)
+                    close_button.setEnabled(True)
 
     def add_new_folder_explorer_tab(self,
                                     model_root_path: str|None = QDir.rootPath(),
@@ -95,16 +59,6 @@ class FolderTabWidget(QTabWidget):
                                     target_path: str|None = None,
                                     set_initial_expand_to_parent_level: bool = True,
                                     ) -> None:
-        # Create a new FolderExplorer instance
-        # model_root_path = QDir.rootPath()
-        # model_root_path = QDir.drives()
-        # view_path = QDir.rootPath()
-        # view_path = model_root_path
-
-        # model_root_path = ""
-        # view_path = ""
-        # target_path = r'/Volumes/tonyNVME Gold/dld output'
-
         logging.debug(f"folderTabsWidget.add_new_folder_explorer_tab: called  {model_root_path = }, {target_path = }, {view_path = }")
 
         if model_root_path is None:
@@ -139,8 +93,6 @@ class FolderTabWidget(QTabWidget):
         ]
 
         logging.debug(f"folderTabsWidget.add_new_folder_explorer_tab: cleaned {model_root_path = }, {target_path = }, {view_path = }")
-        # on M4M: add_new_folder_explorer_tab: model_root_path = '/', target_path = '/Volumes/tonyNVME Gold/dld output', view_path = '/'
-
 
         folder_explorer = FolderExplorer(
             model_root_path= model_root_path,
@@ -151,24 +103,10 @@ class FolderTabWidget(QTabWidget):
             default_candidates = default_candidates,
         )
         index = self.addTab(folder_explorer, 'File Explorer')
-
-        # folder_explorer.rootPathChanged.connect(lambda path, idx=index: self.update_folder_explorer_tab_title_on_root_change(path, idx))\
-        # folder_explorer.on_selection_changed.connect(lambda path, idx=index: self.update_folder_explorer_tab_title(path, idx))
         folder_explorer.rootPathChanged.connect(lambda _ : self.update_tab_titles())
-
-        # selection_model = folder_explorer.get_selection_model()
-        # selection_model.selectionChanged.connect(self.update_folder_explorer_tab_title_on_selection_change)
-
         folder_explorer.emit_root_path_changed()
-
         self.setCurrentIndex(index)
-
-        # The explorer schedules exactly one initial scan after signal wiring.
-        # QTimer.singleShot(600, lambda: self.rescan_current_folder_explorer(user_requested_scan = False))
-
-
-        # Add the FolderExplorer as a new tab
-        # self.tab_widget.addTab(folder_explorer, 'File Explorer')
+        # (The explorer schedules exactly one initial scan after signal wiring.)
 
     def update_tab_titles(self) -> None:
         for index in range(self.count()):
@@ -178,37 +116,7 @@ class FolderTabWidget(QTabWidget):
             else:
                 logging.critical(f"update_tab_titles: Current tab {index = } is not a FolderExplorer instance.")
 
-    def update_folder_explorer_tab_title_on_root_change(self, selected_path: str, index: int) -> None:
-        logging.debug(f"update_folder_explorer_tab_title: {index = } and {selected_path = }")
-        # self.tab_widget.setTabText(index, os.selected_path.basename(selected_path))
-        if platform.system() == 'Windows':
-            drive, tail = os.path.splitdrive(selected_path)
-            if tail in ('\\', '/'):
-                self.setTabText(index, drive)
-            else:
-                self.setTabText(index, os.path.basename(selected_path))
-        else:
-            if selected_path == "/":
-                self.setTabText(index, "/")
-            else:
-                self.setTabText(index, os.path.basename(selected_path))
-        logging.debug(f"update_folder_explorer_tab_title: {self.tabText(index) = }")
-
-
-    def update_folder_explorer_tab_title_on_selection_change(self, selected: List[str], deselected: List[str]) -> None:
-        current_folder_explorer = self.currentWidget()
-        if isinstance(current_folder_explorer, FolderExplorer):
-            selected_path = current_folder_explorer.selected_path_globally
-            if selected_path:
-                # self.setTabText(self.currentIndex(), os.path.basename(selected_path))
-                self.update_folder_explorer_tab_title_on_root_change(selected_path, self.currentIndex())
-            else:
-                self.setTabText(self.currentIndex(), "File Explorer")
-        else:
-            logging.warning("Current tab is not a FolderExplorer instance.")
-
     def on_back_button_clicked(self) -> None:
-        # Get the current folder explorer
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.on_back_button_clicked()
@@ -246,70 +154,31 @@ class FolderTabWidget(QTabWidget):
             logging.debug(f"Current tab dir_path: {current_folder_explorer.model_root_path}"
                           f", view_path: {current_folder_explorer.view_path}"
                           f", target_path: {current_folder_explorer.target_path}"
-                          f", selected_path = {currently_selected_path}"
-                          # f", {current_folder_explorer.get_selected_path() = }"
-                          )
+                          f", selected_path = {currently_selected_path}")
+        elif index == -1:
+            logging.debug("folderTabWidget.on_current_tab_changed: index is -1")
         else:
-            currently_selected_path = ""
-            if index == -1:
-                logging.debug("folderTabWidget.on_current_tab_changed: index is -1")
-            else:
-                logging.warning(f"folderTabWidget.on_current_tab_changed: current tab {index = } is not a FolderExplorer instance.")
-        # current_folder_explorer = self.currentWidget()
-        # if isinstance(current_folder_explorer, FolderExplorer):
-        #     current_folder_explorer.update_back_button_state()
-        #     self.tab_back_button_enabled = current_folder_explorer.back_button_enabled
-
-        for ii in range(self.count()):
-            logging.debug(f"folderTabWidget.on_current_tab_changed: checking tab {ii}")
-            if ii == index:
-                continue
-            other_folder_explorer = self.widget(ii)
-            if isinstance(other_folder_explorer, FolderExplorer):
-                logging.debug(f"folderTabWidget.on_current_tab_changed: {ii = }, {other_folder_explorer.folder_opened_path = }")
-                if (other_folder_explorer.folder_opened_path is not None and
-                    other_folder_explorer.folder_opened_path != currently_selected_path):
-                    # Each tab owns its snapshot and pending requests. Switching
-                    # tabs does not read caches or invalidate another tab's data.
-                    pass
-                # other_folder_explorer.clear_selection()
-            else:
-                logging.warning("folderTabWidget.on_current_tab_changed: other tab is not a FolderExplorer instance.")
-
-    def update_all_path_selection(self, path: str) -> None:
-        for index in range(self.count()):
-            current_folder_explorer = self.widget(index)
-            if isinstance(current_folder_explorer, FolderExplorer):
-                current_folder_explorer.selected_path_globally = path
-            else:
-                logging.warning("Current tab is not a FolderExplorer instance.")
+            logging.warning(f"folderTabWidget.on_current_tab_changed: current tab {index = } is not a FolderExplorer instance.")
+        # Each tab owns its snapshot and pending requests: switching tabs does not read caches or
+        # invalidate another tab's data.
 
     def on_stop_button_clicked(self) -> None:
         current_folder_explorer = self.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.on_stop_button_clicked()
-            # self.tab_back_button_enabled = current_folder_explorer.back_button_enabled
         else:
             logging.warning("on_stop_button_clicked: Current tab is not a FolderExplorer instance.")
 
     def removeTab(self, index: int) -> None:
-        # Remove the tab
-        # self.widget(index).close_cleanup
         logging.debug(f"Removing tab at index {index}")
         current_folder_explorer = self.widget(index)
         if isinstance(current_folder_explorer, FolderExplorer):
-            # if current_folder_explorer.is_running_status_worker():
-            #     logging.debug(f"Stopping status worker for tab at index {index}")
-            #     current_folder_explorer.stop_status_worker()
-            #     return
             current_folder_explorer.on_stop_button_clicked()
             current_folder_explorer.close_cleanup()
             current_folder_explorer.deleteLater()
         super().removeTab(index)
-        # gc.collect()
 
     def closeEvent(self, a0: Any) -> None:
-        # Close all tabs
         for index in reversed(range(self.count())):
             self.removeTab(0)
 

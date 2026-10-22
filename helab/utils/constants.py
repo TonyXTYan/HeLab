@@ -1,18 +1,14 @@
 import os
-import random
-import re
-import subprocess
 import sys
 import tempfile
 import logging
 from typing import List
-import hashlib
 from helab._version import __version__
 from helab.build_info import get_build_info
 
 from typing import Optional
 
-from PyQt6.QtCore import QSettings, QDir, QDirIterator
+from PyQt6.QtCore import QSettings, QDir
 from helab.utils.settings_store import app_settings
 # Settings' keys (re-exported: they were defined here) and defaults: helab/utils/settings_defaults.py.
 from helab.utils.settings_defaults import (
@@ -29,8 +25,6 @@ from helab.utils.settings_defaults import (
     SIMULTANEOUS_IO_SETTING as SIMULTANEOUS_IO_SETTING,
     read_setting, setting_default)
 # from PyQt6.QtGui import QFontDatabase, QFont
-
-from joblib.externals.loky.process_executor import MAX_DEPTH
 
 # try:
 #     helab_mono_font = QFont("SF Mono", 12)
@@ -236,8 +230,6 @@ logging.debug(f"{QDir_USER_DIRECTORY = }")
 logging.debug(f"{QDir_ROOT_DIRECTORY = }")
 logging.debug(f"{QDir_TEMP_DIRECTORY = }")
 
-TEMPFILE_PREFIX = tempfile.gettempdir()
-
 
 def default_app_dir(kind: str) -> str:
     """Persistent per-user folder for HeLab's ``"caches"`` or ``"temps"``.
@@ -270,14 +262,6 @@ DIR_CACHES_CANDIDATES = [
 
 # logging.debug(f"{DIR_TEMPS_CANDIDATES = }")
 # logging.debug(f"{DIR_CACHES_CANDIDATES = }")
-
-INDICATOR_DOTS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-INDICATOR_DOTS_ALL = "⠃⠅⠆⠇⠉⠊⠋⠌⠍⠎⠏⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟⠡⠢⠣⠤⠥⠦⠧⠨⠩⠪⠫⠬⠭⠮⠯⠰⠱⠲⠳⠴⠵⠶⠷⠸⠹⠺⠻⠼⠽⠾⠿"
-def INDICATOR_DOT_RANDOM(n: int = 1) -> str:
-    if not (1 <= n <= len(INDICATOR_DOTS)):
-        raise ValueError(f"n must be between 1 and {len(INDICATOR_DOTS)}, inclusive.")
-    return ''.join(random.sample(INDICATOR_DOTS, n))
-
 
 def usable_directory(path: str, *, create: bool = False) -> bool:
     """A directory HeLab can write to, optionally created first.
@@ -462,11 +446,6 @@ def app_folder() -> str:
 # DIR_CACHES = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches')
 # DIR_TEMP = "/tmp/cache"
 
-OS_DIR_CACHE_TTL = 60*60 # seconds
-
-# MAX_DEPTH_INT = int(sys.maxsize)>>10
-MAX_DEPTH_INT = 1<<15
-
 DEV_POTENTIAL_DATA_PATHS = [
     '/Volumes/dld_output',
     '/Volumes/tonyNVME Gold/dld output',
@@ -481,64 +460,12 @@ DEV_POTENTIAL_DATA_PATHS = [
     'C:\\Users\\XinTong\\Documents',
     'O:\\',
     '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/tests_sample_data/good',
-    '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/tests_sample_data/bad'
-    '',
+    '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/tests_sample_data/bad',
 ]
 
 # This is a display hint; availability is resolved by an isolated I/O helper
 # after the window is shown. Never stat a remote mount at module import.
 DEFAULT_DATA_PATH = DEV_POTENTIAL_DATA_PATHS[0]
-
-
-DEV_PATH_TO_MATLAB = "/Applications/MATLAB_R2024b.app"
-DEV_PATH_TO_TDC_AUTOCONVERTER_GIT_FOLDER = "/Users/tonyyan/Documents/_ANU/_He_BEC_Group/tdc_autoconverter"
-DEV_PATH_TO_TDC_AUTO_CONVERT_M = "/Users/tonyyan/Documents/_ANU/_He_BEC_Group/tdc_autoconverter/tdc_auto_convert.m"
-DEV_PATH_TO_TDC_CONVERT_FILELIST_M = "/Users/tonyyan/Documents/_ANU/_He_BEC_Group/tdc_autoconverter/tdc_convert_filelist.m"
-
-
-BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-
-def base62_encode(number: int) -> str:
-    if number == 0:
-        return BASE62_ALPHABET[0]
-    
-    base62 = []
-    while number:
-        number, remainder = divmod(number, 62)
-        base62.append(BASE62_ALPHABET[remainder])
-    
-    return ''.join(reversed(base62))
-
-def base62_decode(base62: str) -> int:
-    number = 0
-    for char in base62:
-        number = number * 62 + BASE62_ALPHABET.index(char)
-    return number
-
-
-def hash_int(path: str) -> int:
-    # return int(hashlib.sha256(path.encode()).hexdigest(), 16)
-    hash_bytes = hashlib.sha256(path.encode()).digest()
-    return int.from_bytes(hash_bytes, 'big')
-
-def hash_bit(path: str) -> str:
-    return bin(hash_int(path))[2:]
-
-def hash_bit_to_int(code: str) -> int:
-    return int(code, 2)
-
-def hash_str(path: str) -> str:
-    # return hashlib.sha256(path.encode()).hexdigest()
-    
-    # hash_bytes = hashlib.sha256(path.encode()).digest()
-    # return base64.b64encode(hash_bytes).decode('utf-8').replace('/', '_').replace('+', '-')
-    
-    hash_bytes = hashlib.sha256(path.encode()).digest()
-    hash_int = int.from_bytes(hash_bytes, 'big')
-    return base62_encode(hash_int)
-
-def hash_str_to_int(code: str) -> int:
-    return base62_decode(code)
 
 
 def assert_warn(condition: bool, message: str) -> None:

@@ -7,7 +7,7 @@ from typing import Any, TYPE_CHECKING
 from helab.io_ops import metadata, stores
 from helab.io_ops.events import DatasetFlags, ScanStatusEvent, SubtreeSavedEvent
 from helab.io_ops.fingerprints import _saved_fingerprint, _settled
-from helab.io_ops.infra import Emit, Heartbeat, _entry_stat, _is_dir, _scandir, _stat, emit
+from helab.io_ops.infra import Emit, Heartbeat, _entry_stat, _is_dir, _scandir, emit
 from helab.io_ops.markers import _marker_temporary
 from helab.io_ops.metadata import _dataset_flags, _saved_folders, _send_guard
 from helab.io_ops.stores import _data_root, _store_or_off
@@ -181,7 +181,8 @@ def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | No
             if _is_dir(entry):
                 has_dirs = True
                 try:
-                    stat = _stat(entry.path, "subfolder date", follow_symlinks=False)
+                    # (The listing's own on Windows: no call per subfolder on a share.)
+                    stat = _entry_stat(entry, "subfolder date", follow_symlinks=False)
                     modified: float | None = stat.st_mtime
                 except OSError:
                     modified = None

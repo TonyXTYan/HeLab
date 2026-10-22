@@ -152,3 +152,22 @@ def test_shared_limit_defaults_safely_when_only_legacy_limits_exist(
     assert read_io_concurrency(settings) == 2
     assert not settings.contains("simultaneous_folder_scans")
     assert not settings.contains("simultaneous_folder_loads")
+
+
+def test_the_placeholder_settings_are_gone_and_their_saved_values_removed(
+    qtbot: QtBot, tmp_path: Path,
+) -> None:
+    """Settings → General had two placeholders ("Enable feature X", "Example Text"); a value an older
+    HeLab saved for them is removed when settings are saved (R-13)."""
+    from PyQt6.QtWidgets import QCheckBox, QLineEdit
+    from helab.utils.settings_defaults import RETIRED
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    settings.setValue("example_checkbox", True)
+    settings.setValue("example_text", "hello")
+    dialog = SettingsDialog(settings=settings)
+    qtbot.addWidget(dialog)
+    assert not any(box.text() == "Enable feature X" for box in dialog.general_tab.findChildren(QCheckBox))
+    assert not any(edit.placeholderText() == "Enter some text" for edit in dialog.general_tab.findChildren(QLineEdit))
+    assert {"example_checkbox", "example_text"} <= set(RETIRED)
+    dialog.save_settings()
+    assert not settings.contains("example_checkbox") and not settings.contains("example_text")

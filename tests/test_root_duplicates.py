@@ -88,6 +88,25 @@ def test_same_folder_shares_the_cached_data(two: tuple[Path, Path, str, dict[str
         assert store.read_record("summaries", str(second / "run")).value == {"version": 1, "owner": "first"}
 
 
+def test_a_pending_location_whose_duplicate_is_forgotten_is_confirmed_by_its_next_listing(
+    two: tuple[Path, Path, str, dict[str, Any]],
+) -> None:
+    """Pending exists only because another confirmed location has the UUID: with none left, there is
+    nothing to compare it with, so the next listing confirms it instead of asking again."""
+    first, second, identifier, cache = two
+    duplicate(second, cache)
+    cache_admin(cache, "forget_root", lambda _: None, location="smb://host/first")
+    events: list[Any] = []
+    list_folder(str(second), events.append, cache)
+    assert not [event for event in events if event["kind"] == "root_duplicate"]
+    assert [(event["location"], event["uuid"]) for event in events if event["kind"] == "root_found"] == [
+        ("smb://host/second", identifier)]
+    with CacheStore(cache["directory"], root_mode=True) as store:
+        assert store.root_at("smb://host/second") == (identifier, "first", "confirmed")
+    with stores._cache_store(cache["directory"], [str(second / "run")]) as store:  # Not RAM only now.
+        assert store.read_record("summaries", str(second / "run")).value == {"version": 1, "owner": "first"}
+
+
 def test_a_copy_keeping_the_known_location_gets_a_new_root_and_starts_empty(
     two: tuple[Path, Path, str, dict[str, Any]],
 ) -> None:

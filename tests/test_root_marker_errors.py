@@ -9,6 +9,7 @@ import errno
 import json
 import os
 from pathlib import Path
+import sqlite3
 import sys
 from typing import Any, Callable
 import uuid
@@ -188,6 +189,55 @@ def test_an_invalid_marker_never_known_changes_no_root(share: Path, tmp_path: Pa
     events: Events = []
     list_folder(str(share), events.append, options(tmp_path))
     assert not [event for event in events if event["kind"] == "root_changed"] and not root_rows(tmp_path)
+
+
+@pytest.mark.parametrize("marker", [True, False], ids=["marker", "marker removed"])
+def test_a_roots_table_that_cant_be_read_warns_and_the_listing_completes(
+        share: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: bool) -> None:
+    """A busy store or a disk I/O error reading the roots table is a cache warning: the listing still
+    ends with its status, not an error (which would block the folder's automatic status checks)."""
+    placed(share, tmp_path)
+    if not marker:
+        (share / ".helab-root").unlink()
+
+    def unreadable(*args: Any) -> Any:
+        raise StoreError("Data roots could not be read: disk I/O error")
+
+    monkeypatch.setattr(CacheStore, "root_at", unreadable)
+    monkeypatch.setattr(CacheStore, "other_root_locations", unreadable)
+    events: Events = []
+    list_folder(str(share), events.append, options(tmp_path))
+    assert [event["kind"] for event in events if event["kind"] in ("status", "error")] == ["status"]
+    assert any(event["kind"] == "cache_warning" and "disk I/O error" in event["message"] for event in events)
+
+
+def test_a_root_record_sqlite_cant_write_warns_and_the_listing_completes(
+        share: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    placed(share, tmp_path)
+
+    def unwritable(*args: Any, **kwargs: Any) -> None:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(CacheStore, "record_root", unwritable)
+    events: Events = []
+    list_folder(str(share), events.append, options(tmp_path))
+    assert [event["kind"] for event in events if event["kind"] in ("status", "error")] == ["status"]
+    assert any(event["kind"] == "cache_warning" and "disk I/O error" in event["message"] for event in events)
+
+
+def test_roots_table_reads_report_a_database_error_as_a_store_error(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class Failing:
+        def execute(self, *args: Any) -> Any:
+            raise sqlite3.OperationalError("disk I/O error")
+
+    with CacheStore(options(tmp_path)["directory"], root_mode=True) as store:
+        with monkeypatch.context() as patch:
+            patch.setattr(store, "_conn", Failing())
+            with pytest.raises(StoreError, match="disk I/O error"):
+                store.root_at(LOCATION)
+            with pytest.raises(StoreError, match="disk I/O error"):
+                store.other_root_locations("uuid", LOCATION)
 
 
 # root_reassign

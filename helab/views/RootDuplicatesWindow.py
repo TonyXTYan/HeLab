@@ -211,8 +211,8 @@ class RootDuplicatesWindow(QDialog):
             return
         from helab.views.DataRootDialogs import ManualMarkerDialog
         if event["kind"] == "root_manual":
-            ManualMarkerDialog(self, str(event["path"]), str(event["name"]), str(event["contents"]),
-                               str(event.get("reason", ""))).show()
+            ManualMarkerDialog(self, self.cache, str(event["path"]), str(event["name"]),
+                               str(event["contents"]), str(event.get("reason", ""))).show()
         elif event["kind"] == "error":
             box = QMessageBox(QMessageBox.Icon.Warning, TITLE, str(event.get("message", "")), parent=self)
             box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
