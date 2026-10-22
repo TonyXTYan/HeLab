@@ -80,7 +80,16 @@ RESULT_SCHEMA = (
     "bytes INTEGER NOT NULL, computed_at REAL NOT NULL, saved_at REAL NOT NULL, last_used REAL NOT NULL, "
     "UNIQUE (path, lookup))",
     "CREATE INDEX IF NOT EXISTS results_family ON results (path, family)",
-    "CREATE INDEX IF NOT EXISTS results_last_used ON results (last_used)")
+    "CREATE INDEX IF NOT EXISTS results_last_used ON results (last_used)",
+    # A result that didn't fit the budget waits here for the user's answer (Make room or Discard,
+    # Tony 2026-10-22): its file in ``results/``, the save guard its run took (JSON), the plot's name.
+    # Like a dataset's pending save, it doesn't count toward the budget, and it expires after
+    # ``PENDING_MAX_AGE`` unanswered. Added after c31ac10, as a table of its own.
+    "CREATE TABLE IF NOT EXISTS pending_results ("
+    "pending_id TEXT PRIMARY KEY, path TEXT NOT NULL, lookup TEXT NOT NULL, family TEXT NOT NULL, "
+    "analysis_id TEXT NOT NULL, action TEXT NOT NULL, label TEXT NOT NULL, record TEXT NOT NULL, "
+    "file TEXT NOT NULL, bytes INTEGER NOT NULL, computed_at REAL NOT NULL, guard TEXT NOT NULL, "
+    "created_at REAL NOT NULL, UNIQUE (path, lookup))")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -287,6 +296,26 @@ class ResultSave:
     usage: int = 0  # live bytes when the save was decided
     usage_seq: int = 0
     budget: int | None = None
+    pending_id: str = ""  # Not saved: it waits for the user's answer (``pending_results``).
+
+
+@dataclass(frozen=True)
+class ResultRoom:
+    """What Make room removes for a waiting result: least recently shown other saved results (never
+    cached datasets); ``possible`` False if removing all of them isn't enough."""
+    result_ids: tuple[str, ...]
+    bytes: int
+    newest_last_used: float | None
+    possible: bool
+
+
+@dataclass(frozen=True)
+class ResultAdopt:
+    adopted: bool
+    path: str
+    bytes: int
+    room: ResultRoom | None = None  # Not adopted: it doesn't fit, and what Make room would remove.
+    removal: ResultRemoval | None = None  # Adopted with Make room: what was removed.
 
 
 @dataclass(frozen=True)
@@ -459,6 +488,7 @@ class CacheStore:
                 self._constants_table = _has_table(self._conn, "folder_constants")
                 # (Nor the results table: it then has no results saved, and saves none.)
                 self._results_table = _has_table(self._conn, "results")
+                self._pending_results = _has_table(self._conn, "pending_results")
                 meta = self._meta()
                 self.layout_version = int(meta["layout_version"])
                 self.store_id = str(meta["store_id"])
@@ -728,6 +758,22 @@ class CacheStore:
                 self._retire(str(previous[2]), time.time())
                 self._conn.execute("DELETE FROM results WHERE result_id=?", (previous[0],))
             self._conn.execute("UPDATE results SET path=? WHERE result_id=?", (target, result_id))
+        if self._pending_results:
+            # Results waiting for an answer move too; under a key held at both, the newer stays.
+            for pending_id, source, lookup, created_at, file in self._conn.execute(
+                    "SELECT pending_id, path, lookup, created_at, file FROM pending_results "
+                    "WHERE path=? OR (path>=? AND path<?)", (old, old + "/", old + "0")).fetchall():
+                target = new + str(source)[len(old):]
+                moved.add(str(source))
+                previous = self._conn.execute("SELECT pending_id, created_at, file FROM pending_results "
+                                              "WHERE path=? AND lookup=?", (target, lookup)).fetchone()
+                if previous is not None:
+                    loser = (pending_id, file) if float(previous[1]) >= float(created_at) else (previous[0], previous[2])
+                    self._retire(str(loser[1]), time.time())
+                    self._conn.execute("DELETE FROM pending_results WHERE pending_id=?", (loser[0],))
+                    if loser[0] == pending_id:
+                        continue
+                self._conn.execute("UPDATE pending_results SET path=? WHERE pending_id=?", (target, pending_id))
         return moved
 
     @contextlib.contextmanager
@@ -1512,46 +1558,219 @@ class CacheStore:
 
     def save_result(self, path: str, lookup: str, family: str, record: Mapping[str, Any], file: str,
                     guard: SaveGuard, *, analysis_id: str, action: str, computed_at: float,
-                    budget: int | None = None, budget_set_at: float | None = None) -> ResultSave:
+                    budget: int | None = None, budget_set_at: float | None = None, label: str = "",
+                    hold: bool = True) -> ResultSave:
         """Point the row of ``path``'s result ``lookup`` at a file from :meth:`write_result_file`,
         replacing (retiring) one saved before under the same key, if ``guard`` still holds and the
         folder may be cached (``no_cache``). Within the one disk budget, measured in the same
         transaction with the row written: a save that doesn't fit isn't made (``saved`` False,
-        nothing removed to make room) and its file is retired. A rejected save raises
-        :class:`SaveRejected` and retires ``file`` too."""
+        nothing removed to make room); with ``hold`` it waits in ``pending_results`` for the user's
+        answer (``pending_id``; ``label``: the plot's name, for the question), else its file is
+        retired. A rejected save raises :class:`SaveRejected` and retires ``file`` too."""
         key = self._path_key(path)
         now = time.time()
         size = self._size(file)
+        text = _dumps(record)
         try:
             with self.transaction():
                 self._check_result_guard(guard, key)
                 self._check_cacheable(key)
                 budget = self._active_budget(budget, budget_set_at)
                 self._conn.execute("SAVEPOINT result_fit")
-                previous = self._conn.execute("SELECT file FROM results WHERE path = ? AND lookup = ?",
-                                              (key, lookup)).fetchone()
-                self._conn.execute(
-                    "INSERT INTO results (result_id, path, lookup, family, analysis_id, action, record, file, bytes, "
-                    "computed_at, saved_at, last_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT (path, lookup) DO UPDATE SET family = excluded.family, record = excluded.record, "
-                    "file = excluded.file, bytes = excluded.bytes, computed_at = excluded.computed_at, "
-                    "saved_at = excluded.saved_at, last_used = excluded.last_used",
-                    (uuid.uuid4().hex, key, lookup, family, analysis_id, action, _dumps(record), file, size,
-                     computed_at, now, now))
+                previous = self._upsert_result(key, lookup, family, analysis_id, action, text, file, size,
+                                               computed_at, now)
                 usage, writes = self._live(), self._writes()
                 if budget is not None and usage > budget:
                     self._conn.execute("ROLLBACK TO result_fit")
                     self._conn.execute("RELEASE result_fit")
-                    self._retire(file, now)
-                    return ResultSave(False, "over_budget", size, self._live(), writes, budget)
+                    pending_id = ""
+                    if hold and self._pending_results:
+                        pending_id = self._insert_pending_result(key, lookup, family, analysis_id, action, label,
+                                                                 text, file, size, computed_at, guard, now)
+                    else:
+                        self._retire(file, now)
+                    return ResultSave(False, "over_budget", size, self._live(), writes, budget, pending_id)
                 self._conn.execute("RELEASE result_fit")
-                if previous is not None and previous[0] != file:
-                    self._retire(str(previous[0]), now)
+                if previous is not None and previous != file:
+                    self._retire(previous, now)
+                self._drop_pending_result(key, lookup, now)  # (Saved after all: no question about it.)
         except SaveRejected as rejection:
             raise self._reject_result_file(file, rejection) from None
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
-        return ResultSave(True, "", size + len(_dumps(record)), usage, writes, budget)
+        return ResultSave(True, "", size + len(text), usage, writes, budget)
+
+    def _upsert_result(self, key: str, lookup: str, family: str, analysis_id: str, action: str, record: str,
+                       file: str, size: int, computed_at: float, now: float) -> str | None:
+        """Write a result's row; the file of the one it replaces (the caller retires it), if any."""
+        previous = self._conn.execute("SELECT file FROM results WHERE path = ? AND lookup = ?",
+                                      (key, lookup)).fetchone()
+        self._conn.execute(
+            "INSERT INTO results (result_id, path, lookup, family, analysis_id, action, record, file, bytes, "
+            "computed_at, saved_at, last_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (path, lookup) DO UPDATE SET family = excluded.family, record = excluded.record, "
+            "file = excluded.file, bytes = excluded.bytes, computed_at = excluded.computed_at, "
+            "saved_at = excluded.saved_at, last_used = excluded.last_used",
+            (uuid.uuid4().hex, key, lookup, family, analysis_id, action, record, file, size, computed_at, now, now))
+        return None if previous is None else str(previous[0])
+
+    def _insert_pending_result(self, key: str, lookup: str, family: str, analysis_id: str, action: str, label: str,
+                               record: str, file: str, size: int, computed_at: float, guard: SaveGuard,
+                               now: float) -> str:
+        """Hold a result for the user's answer, replacing (retiring) one held under the same key."""
+        self._drop_pending_result(key, lookup, now)
+        pending_id = uuid.uuid4().hex
+        self._conn.execute(
+            "INSERT INTO pending_results (pending_id, path, lookup, family, analysis_id, action, label, record, file, "
+            "bytes, computed_at, guard, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (pending_id, key, lookup, family, analysis_id, action, label, record, file, size, computed_at,
+             _dumps({"generations": dict(guard.generations), "epochs": dict(guard.epochs)}), now))
+        return pending_id
+
+    def _drop_pending_result(self, key: str, lookup: str, now: float) -> None:
+        if not self._pending_results:
+            return
+        for (file,) in self._conn.execute("SELECT file FROM pending_results WHERE path = ? AND lookup = ?",
+                                          (key, lookup)).fetchall():
+            self._retire(str(file), now)
+        self._conn.execute("DELETE FROM pending_results WHERE path = ? AND lookup = ?", (key, lookup))
+
+    def adopt_pending_result(self, pending_id: str, *, budget: int | None = None, budget_set_at: float | None = None,
+                             make_room: bool = False, expected_room: Sequence[str] | None = None) -> ResultAdopt:
+        """Save a waiting result (Make room): with ``make_room``, least recently shown **other saved
+        results** are removed until it fits, in the same transaction (never cached datasets: Clear
+        cached data is the user's own); with ``expected_room`` (the result ids the user was told),
+        exactly those or nothing. Raises :class:`SaveRejected` (discarding it) if it is gone, its
+        run's guard no longer holds (a Clear cached analysis since) or the folder isn't to be cached.
+        Not fitting, it keeps waiting and the answer says what Make room would remove."""
+        now = time.time()
+        rejection: SaveRejected | None = None
+        result: ResultAdopt | None = None
+        try:
+            with self.transaction():
+                row = self._conn.execute(
+                    "SELECT path, file, bytes, guard FROM pending_results WHERE pending_id = ?",
+                    (pending_id,)).fetchone() if self._pending_results else None
+                if row is None:
+                    raise SaveRejected("gone", "This save is no longer waiting")
+                path, file, size, guard_text = str(row[0]), str(row[1]), int(row[2]), json.loads(row[3])
+                guard = SaveGuard(dict(guard_text["generations"]), dict(guard_text["epochs"]))
+                budget = self._active_budget(budget, budget_set_at)
+                try:
+                    self._check_result_guard(guard, path)
+                    self._check_cacheable(path)
+                except SaveRejected as rejected:
+                    rejection = rejected
+                except ValueError:  # (Its guard names the folder's old key: a nested root re-keyed it since.)
+                    rejection = SaveRejected("cleared", "The folder's data root changed before saving completed")
+                if rejection is not None:
+                    self._retire(file, now)
+                    self._conn.execute("DELETE FROM pending_results WHERE pending_id = ?", (pending_id,))
+                else:
+                    fits, removed = self._adopt_result_savepoint(pending_id, budget, make_room, keep=True,
+                                                                 expected=expected_room)
+                    if fits:
+                        removal = None if not removed else ResultRemoval(
+                            tuple(sorted({self._source_path(item[1]) for item in removed})), len(removed),
+                            sum(item[2] for item in removed))
+                        result = ResultAdopt(True, self._source_path(path), size, removal=removal)
+                    else:
+                        assert budget is not None
+                        result = ResultAdopt(False, self._source_path(path), size,
+                                             room=self._result_room(pending_id, budget))
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        if rejection is not None:
+            raise rejection
+        assert result is not None
+        return result
+
+    def _adopt_result_savepoint(self, pending_id: str, budget: int | None, make_room: bool, *, keep: bool,
+                                expected: Sequence[str] | None = None
+                                ) -> tuple[bool, list[tuple[str, str, int, float]]]:
+        """Adopt a waiting result inside a savepoint, with Make room if asked; kept only if ``keep``
+        and it fits. Whether it fits, and the results Make room removed (or would): (result_id, path,
+        bytes, last_used)."""
+        row = self._conn.execute(
+            "SELECT path, lookup, family, analysis_id, action, record, file, bytes, computed_at FROM pending_results "
+            "WHERE pending_id = ?", (pending_id,)).fetchone()
+        path, lookup = str(row[0]), str(row[1])
+        now = time.time()
+        self._conn.execute("SAVEPOINT adopt_result")
+        removed: list[tuple[str, str, int, float]] = []
+        try:
+            previous = self._upsert_result(path, lookup, str(row[2]), str(row[3]), str(row[4]), str(row[5]),
+                                           str(row[6]), int(row[7]), float(row[8]), now)
+            self._conn.execute("DELETE FROM pending_results WHERE pending_id = ?", (pending_id,))
+            if previous is not None and previous != row[6]:
+                self._retire(previous, now)
+            if budget is not None and make_room:
+                others = self._conn.execute(
+                    "SELECT result_id, path, bytes, last_used, file FROM results WHERE NOT (path = ? AND lookup = ?) "
+                    "ORDER BY last_used, result_id", (path, lookup)).fetchall()
+                for result_id, other, size, last_used, file in others:
+                    if self._live() <= budget:
+                        break
+                    self._retire(str(file), now)
+                    self._conn.execute("DELETE FROM results WHERE result_id = ?", (result_id,))
+                    self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
+                                       "DO UPDATE SET epoch = epoch + 1", (_results_epoch(str(other)),))
+                    removed.append((str(result_id), str(other), int(size), float(last_used)))
+            fits = budget is None or self._live() <= budget
+            if expected is not None and make_room and {item[0] for item in removed} != set(expected):
+                fits = False  # Not what the user agreed to remove: nothing is.
+        except BaseException:
+            self._conn.execute("ROLLBACK TO adopt_result")
+            self._conn.execute("RELEASE adopt_result")
+            raise
+        if not (keep and fits):
+            self._conn.execute("ROLLBACK TO adopt_result")
+        self._conn.execute("RELEASE adopt_result")
+        return fits, removed
+
+    def _result_room(self, pending_id: str, budget: int) -> ResultRoom:
+        fits, removed = self._adopt_result_savepoint(pending_id, budget, True, keep=False)
+        return ResultRoom(tuple(item[0] for item in removed) if fits else (),
+                          sum(item[2] for item in removed) if fits else 0,
+                          max((item[3] for item in removed), default=None) if fits else None, fits)
+
+    def result_room_plan(self, pending_id: str, budget: int) -> ResultRoom:
+        """What Make room would remove for a waiting result, tried in the store and rolled back."""
+        try:
+            with self.transaction():
+                if not self._pending_results or self._conn.execute(
+                        "SELECT 1 FROM pending_results WHERE pending_id = ?", (pending_id,)).fetchone() is None:
+                    raise SaveRejected("gone", "This save is no longer waiting")
+                return self._result_room(pending_id, budget)
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be read: {exc}") from exc
+
+    def discard_pending_result(self, pending_id: str) -> bool:
+        """Discard a waiting result (its file retired); False if it was already gone."""
+        if not self._pending_results:
+            return False
+        try:
+            with self.transaction():
+                row = self._conn.execute("SELECT file FROM pending_results WHERE pending_id = ?",
+                                         (pending_id,)).fetchone()
+                if row is None:
+                    return False
+                self._retire(str(row[0]), time.time())
+                self._conn.execute("DELETE FROM pending_results WHERE pending_id = ?", (pending_id,))
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return True
+
+    def pending_result_rows(self) -> list[dict[str, Any]]:
+        """Results waiting for an answer, oldest first, for the inventory (inside a transaction)."""
+        if not self._pending_results:
+            return []
+        return [{"pending_id": str(pending_id), "path": self._source_path(str(path)), "label": str(label),
+                 "analysis_id": str(analysis_id), "bytes": int(size), "created_at": float(created_at),
+                 "reason": "over_budget", "result": True}
+                for pending_id, path, label, analysis_id, size, created_at in self._conn.execute(
+                    "SELECT pending_id, path, label, analysis_id, bytes, created_at FROM pending_results "
+                    "ORDER BY created_at")]
 
     def _size(self, file: str) -> int:
         try:
@@ -1650,8 +1869,17 @@ class CacheStore:
                 for _, file, _ in rows:
                     self._retire(str(file), now)
                 self._conn.execute(f"DELETE FROM results{where}", args)
+                waiting: list[str] = []
+                if self._pending_results and cutoff is None:
+                    # Results waiting for an answer go with the saved ones they would join (not by age).
+                    for folder, file in self._conn.execute(f"SELECT path, file FROM pending_results{where}",
+                                                           args).fetchall():
+                        self._retire(str(file), now)
+                        waiting.append(str(folder))
+                    self._conn.execute(f"DELETE FROM pending_results{where}", args)
                 by_path = root is None and cutoff is None and paths is not None
-                folders = sorted({str(path) for path, _, _ in rows} | (set(map(str, args)) if by_path else set()))
+                folders = sorted({str(path) for path, _, _ in rows} | set(waiting)
+                                 | (set(map(str, args)) if by_path else set()))
                 if root is not None or cutoff is not None or paths is not None:
                     for folder in folders:
                         self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
@@ -1773,6 +2001,9 @@ class CacheStore:
         datasets = self._conn.execute("SELECT COALESCE(SUM(bytes), 0) FROM datasets").fetchone()[0]
         # A pending save's record lives in the database too, but like its file it doesn't count.
         pending = self._conn.execute("SELECT COALESCE(SUM(LENGTH(record)), 0) FROM pending_saves").fetchone()[0]
+        if self._pending_results:  # (Nor a result waiting for the user's answer.)
+            pending += self._conn.execute("SELECT COALESCE(SUM(LENGTH(record) + LENGTH(guard)), 0) "
+                                          "FROM pending_results").fetchone()[0]
         return int(datasets) + self._result_files() + max(0, self._records_bytes() - int(pending))
 
     def _result_files(self) -> int:
@@ -1918,6 +2149,7 @@ class CacheStore:
                     "SELECT last_used, bytes FROM results ORDER BY last_used")] if self._results_table else []
                 ages["results"] = result_ages
                 result_bytes = self._results_live()
+                pending_results = self.pending_result_rows()
                 live, writes = self._live(), self._writes()
                 records_bytes = live - sum(size for _, size in dataset_ages) - self._result_files()
                 no_cache, no_auto_load = self._conn.execute(
@@ -1939,7 +2171,7 @@ class CacheStore:
                         "last_used": max((used for used, _ in result_ages), default=None)},
             "summaries": {"count": len(ages["summaries"])}, "subtrees": {"count": len(ages["subtrees"])},
             "histories": {"count": len(ages["histories"]), "blocked": blocked}, "prefs": prefs,
-            "pending": pending,
+            "pending": pending, "pending_results": pending_results,
             "retired": {"count": len(retired), "bytes": retired_bytes},
             "orphans": {"count": len(orphans), "bytes": sum(self._size_or_zero(name) for name in orphans)},
             "ages": ages, "next_deadline": deadline, "checked_at": time.time(),
@@ -1958,6 +2190,8 @@ class CacheStore:
             "SELECT file FROM datasets UNION SELECT file FROM pending_saves UNION SELECT file FROM retired_files")}
         if self._results_table:
             known.update(str(file) for (file,) in self._conn.execute("SELECT file FROM results"))
+        if self._pending_results:
+            known.update(str(file) for (file,) in self._conn.execute("SELECT file FROM pending_results"))
         return known
 
     def _listed_files(self) -> list[str]:
@@ -1978,6 +2212,10 @@ class CacheStore:
             with self.transaction(write=False):
                 retired = self._conn.execute("SELECT MIN(retired_at) FROM retired_files").fetchone()[0]
                 pending = self._conn.execute("SELECT MIN(created_at) FROM pending_saves").fetchone()[0]
+                if self._pending_results:
+                    waiting = self._conn.execute("SELECT MIN(created_at) FROM pending_results").fetchone()[0]
+                    if waiting is not None and (pending is None or waiting < pending):
+                        pending = waiting
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be read: {exc}") from exc
         deadlines = [value for value in (None if retired is None else retired + RETIRE_GRACE,
@@ -1997,6 +2235,13 @@ class CacheStore:
                     self._retire(file, now)
                 self._conn.executemany("DELETE FROM pending_saves WHERE pending_id = ?",
                                        [(pending_id,) for pending_id, _ in expired])
+                expired_results = self._conn.execute(
+                    "SELECT pending_id, file FROM pending_results WHERE created_at <= ?",
+                    (now - PENDING_MAX_AGE,)).fetchall() if self._pending_results else []
+                for _, file in expired_results:
+                    self._retire(file, now)
+                self._conn.executemany("DELETE FROM pending_results WHERE pending_id = ?",
+                                       [(pending_id,) for pending_id, _ in expired_results])
                 due = [file for (file,) in self._conn.execute(
                     "SELECT file FROM retired_files WHERE retired_at <= ?", (now - RETIRE_GRACE,)).fetchall()]
             deleted, still_open = 0, []
@@ -2019,7 +2264,8 @@ class CacheStore:
         if deadline is not None and deadline <= now:
             # Only files still open are past due: retry them shortly, not at once.
             deadline = now + RETRY_OPEN
-        return Sweep(deleted, len(expired), [pending_id for pending_id, _ in expired], still_open, deadline)
+        return Sweep(deleted, len(expired) + len(expired_results),
+                     [pending_id for pending_id, _ in (*expired, *expired_results)], still_open, deadline)
 
     def _sweep_orphans(self, now: float) -> int:
         names = self._listed_files()
@@ -2108,7 +2354,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     def missing() -> tuple[bool, bool, bool]:
         return (not _has_table(conn, "folder_constants"),
                 _has_table(conn, "datasets") and not _has_raw_times(conn),
-                not _has_table(conn, "results") or conn.execute(
+                not _has_table(conn, "results") or not _has_table(conn, "pending_results") or conn.execute(
                     "SELECT 1 FROM meta WHERE key = 'gen_results'").fetchone() is None)
     if not any(missing()):
         return

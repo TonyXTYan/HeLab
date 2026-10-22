@@ -519,6 +519,18 @@ class ResultSavedEvent(UsageFields):
     bytes: int
 
 
+class ResultPendingEvent(UsageFields):
+    """A result that doesn't fit the disk budget waits for the user's answer (Make room or Discard):
+    ``room`` is what Make room would remove (``CacheStore.result_room_plan``), None if unknown."""
+    kind: Literal["result_pending"]
+    pending_id: str
+    path: str
+    label: str
+    bytes: int
+    budget: int | None
+    room: dict[str, Any] | None
+
+
 class ResultNotSavedEvent(UsageFields):
     """Why not: ``over_budget``, ``cleared`` (the guard), ``no_cache``, ``ram_only``."""
     kind: Literal["result_not_saved"]
@@ -757,7 +769,7 @@ HelperEvent = Union[
     RootFoundEvent, RootChangedEvent, RootDuplicateEvent, RootRekeyedEvent, RootConfirmedEvent, RootCreatedEvent,
     RootManualEvent, RootReassignedEvent, RootRemovedEvent, RootRemoveRefusedEvent, ClockSkewEvent, MarkerSaveEvent,
     MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
-    ResultFoundEvent, ResultMissingEvent, ResultSavedEvent, ResultNotSavedEvent,
+    ResultFoundEvent, ResultMissingEvent, ResultSavedEvent, ResultNotSavedEvent, ResultPendingEvent,
 ]
 
 # Every kind a helper sends.
@@ -776,4 +788,5 @@ KINDS = frozenset({
     "root_adopted", "root_manual", "root_reassigned", "root_removed", "root_remove_refused",
     "clock_skew", "marker_saved", "marker_save_exists", "marker_save_refused", "volumes_verified",
     "roots_verified", "result_found", "result_missing", "result_saved", "result_not_saved",
+    "result_pending",
 })

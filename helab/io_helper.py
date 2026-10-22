@@ -114,7 +114,7 @@ def main() -> None:
                         family=str(request.get("family") or ""), record=request["record"],
                         analysis_id=str(request["analysis_id"]), action=str(request["action"]),
                         computed_at=float(request["computed_at"]), guard=request["guard"],
-                        verified_volumes=request.get("verified_volumes"))
+                        verified_volumes=request.get("verified_volumes"), label=str(request.get("label") or ""))
         elif operation == "invalidate":
             with stores._cache_store(request["cache"]["directory"], [request["path"]], local_lane=True) as store:
                 # Bumps the folder's epoch: a load started before cannot save it back.

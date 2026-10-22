@@ -75,8 +75,9 @@ def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lo
 
 def result_save(path: str, cache_options: dict[str, Any] | None, blob_file: str, *, lookup: str, family: str,
                 record: Any, analysis_id: str, action: str, computed_at: float, guard: dict[str, Any],
-                send: Emit = emit, verified_volumes: list[list[str]] | None = None) -> None:
-    from helab.utils.cache_store import SaveGuard, SaveRejected
+                send: Emit = emit, verified_volumes: list[list[str]] | None = None, label: str = "") -> None:
+    from dataclasses import asdict
+    from helab.utils.cache_store import SaveGuard, SaveRejected, StoreError
     store, off = _store_or_off(cache_options, send, path, local_lane=True, verified_volumes=verified_volumes)
     if store is None:
         if off:
@@ -94,10 +95,21 @@ def result_save(path: str, cache_options: dict[str, Any] | None, blob_file: str,
                 path, lookup, family, record, file,
                 SaveGuard(dict(guard["generations"]), dict(guard["epochs"])), analysis_id=analysis_id,
                 action=action, computed_at=computed_at, budget=options.get("budget"),
-                budget_set_at=options.get("budget_set_at"))
+                budget_set_at=options.get("budget_set_at"), label=label)
         except SaveRejected as rejection:
             send({"kind": "result_not_saved", "reason": rejection.reason, "message": str(rejection),
                   "bytes": len(packed), "budget": None, **_usage(store)})
+            return
+        if not saved.saved and saved.pending_id:
+            # Waits for the user's answer (Make room or Discard), with what Make room would remove.
+            room: dict[str, Any] | None = None
+            if saved.budget is not None:
+                try:
+                    room = asdict(store.result_room_plan(saved.pending_id, saved.budget))
+                except (SaveRejected, StoreError):
+                    room = None
+            send({"kind": "result_pending", "pending_id": saved.pending_id, "path": path, "label": label,
+                  "bytes": saved.bytes, "budget": saved.budget, "room": room, **_usage(store)})
             return
         if not saved.saved:
             send({"kind": "result_not_saved", "reason": saved.reason, "message": "it doesn't fit the disk cache's budget",

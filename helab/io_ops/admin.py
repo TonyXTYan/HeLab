@@ -20,7 +20,8 @@ NO_ROOT_CONSTANTS = "no .helab-root found here or above"
 UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
-                 "constants", "forget_root", "root_same", "clear_root", "clear_results", "clear_root_results")
+                 "constants", "forget_root", "root_same", "clear_root", "clear_results", "clear_root_results",
+                 "adopt_result", "discard_result")
 
 
 def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, **params: Any) -> None:
@@ -63,6 +64,9 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                     if entry["reason"] == "over_budget":
                         with contextlib.suppress(SaveRejected, StoreError):
                             entry["room"] = asdict(store.room_plan(entry["pending_id"], int(budget)))
+                for entry in inventory["pending_results"]:
+                    with contextlib.suppress(SaveRejected, StoreError):
+                        entry["room"] = asdict(store.result_room_plan(entry["pending_id"], int(budget)))
             inventory["roots"] = _root_rows(store, send)
             send({"kind": "inventory", "inventory": inventory})
         elif action == "sweep":
@@ -173,6 +177,21 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             cleared = store.remove_results(root=str(params["uuid"]))
             send(_results_removed_event(cleared))
             result.update({"results": cleared.results, "bytes": cleared.bytes})
+        elif action == "adopt_result":
+            # A waiting result's Make room (R2): only other saved results make room, never cached data.
+            try:
+                taken = store.adopt_pending_result(params["pending_id"], budget=budget, budget_set_at=budget_set_at,
+                                                   make_room=bool(params.get("make_room")),
+                                                   expected_room=params.get("room_ids"))
+            except SaveRejected as rejection:
+                result.update({"adopted": False, "rejected": rejection.reason, "message": str(rejection)})
+            else:
+                if taken.removal is not None:
+                    send(_results_removed_event(taken.removal))
+                result.update({"adopted": taken.adopted, "path": taken.path, "bytes": taken.bytes,
+                               "room": None if taken.room is None else asdict(taken.room)})
+        elif action == "discard_result":
+            result["discarded"] = store.discard_pending_result(params["pending_id"])
         elif action == "clear_results":
             # The Cache tab's Clear cached analysis: every saved result; datasets and records stay.
             cleared = store.remove_results()

@@ -273,15 +273,42 @@ def test_a_folder_without_a_data_root_keeps_results_in_ram(
     close(window)
 
 
-def test_a_result_over_the_budget_isnt_saved_and_the_plot_says_so(
-        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("answer", ["Make room", "Discard"])
+def test_a_result_over_the_budget_asks_make_room_or_discard(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer: str) -> None:
+    """Tony, 2026-10-22: a result that doesn't fit waits, and the disk cache asks (CacheDialogs, with
+    the dataset saves' questions): Make room saves it (other saved results make room, never cached
+    data), Discard drops it; the plot says which."""
     from helab.utils import folder_cache
+    from helab.views.CacheDialogs import CacheDialogs
     monkeypatch.setattr(folder_cache, "_disk_budget", 1)
     monkeypatch.setattr(folder_cache, "_disk_budget_set_at", time.time())
     window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    dialogs = CacheDialogs(cache, window, lambda: None)
     instance = open_plot(window, qtbot, folder_view(tmp_path), Costly())
-    qtbot.waitUntil(lambda: "doesn't fit the disk budget" in instance.status_label.text(), timeout=WAIT)
-    assert "Settings → Cache" in instance.status_label.text() and results_saved() == 0
+    qtbot.waitUntil(lambda: dialogs.dialog is not None, timeout=WAIT)
+    assert "not saved yet: the disk cache is full (Make room or Discard)" in instance.status_label.text()
+    box = dialogs.dialog
+    assert box is not None
+    assert box.text().startswith("Not enough room in the disk cache to save Costly's result for run (")
+    assert "Cached data isn't touched" in box.informativeText() or "isn't enough" in box.informativeText()
+    [entry] = cache.pending_results.values()
+    assert entry["label"] == "Costly" and results_saved() == 0
+    if answer == "Make room":
+        # The user raised the budget meanwhile: Make room saves it without removing anything.
+        monkeypatch.setattr(folder_cache, "_disk_budget", 8 << 30)
+        monkeypatch.setattr(folder_cache, "_disk_budget_set_at", time.time())
+        dialogs._answer(entry["pending_id"], dialogs._asking[1], "adopt_result", make_room=False)
+        dialogs._close()
+        qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
+        assert results_saved() == 1
+    else:
+        button = next(b for b in box.buttons() if b.text() == "Discard")
+        button.click()
+        qtbot.waitUntil(lambda: "discarded" in instance.status_label.text(), timeout=WAIT)
+        assert results_saved() == 0
+    qtbot.waitUntil(lambda: not cache.pending_results, timeout=WAIT)
+    dialogs.detach()
     close(window)
 
 

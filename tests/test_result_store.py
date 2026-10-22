@@ -55,7 +55,7 @@ def meta(directory: Path) -> dict[str, str]:
         return {str(key): str(value) for key, value in conn.execute("SELECT key, value FROM meta")}
 
 
-RESULT_TABLES = {"results", "results_family", "results_last_used"}
+RESULT_TABLES = {"results", "results_family", "results_last_used", "pending_results"}
 
 
 def insert_result(store: CacheStore, path: str, record: str = "{}", size: int = 0) -> None:
@@ -94,6 +94,20 @@ def test_a_store_with_the_table_but_no_generation_gains_it(tmp_path: Path) -> No
     with CacheStore(str(directory)):
         pass
     assert meta(directory)["gen_results"] == "0" and RESULT_TABLES <= tables(directory)
+
+
+def test_a_store_from_the_first_result_schema_gains_pending_results(tmp_path: Path) -> None:
+    """c31ac10's stores have ``results`` but not ``pending_results`` (added for Make room or Discard)."""
+    directory = base_store(tmp_path / "store")
+    with sqlite3.connect(directory / "records.sqlite") as conn:
+        for statement in cache_store.RESULT_SCHEMA:
+            if "pending_results" not in statement:
+                conn.execute(statement)
+        conn.execute("INSERT INTO meta (key, value) VALUES ('gen_results', '0')")
+    assert "pending_results" not in tables(directory)
+    with CacheStore(str(directory)) as store:
+        assert store._pending_results
+    assert RESULT_TABLES <= tables(directory)
 
 
 def test_concurrent_helpers_add_the_result_tables_once(tmp_path: Path) -> None:

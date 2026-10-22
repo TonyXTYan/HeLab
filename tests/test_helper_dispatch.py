@@ -154,7 +154,7 @@ ROUTES: list[tuple[dict[str, Any], str, tuple[Any, ...], dict[str, Any]]] = [
       "record": {"r": 1}, "analysis_id": "a", "action": "Plot", "computed_at": 5, "guard": {"g": 1}},
      "result_save", (PATH, CACHE, "/b"),
      {"lookup": "k", "family": "f", "record": {"r": 1}, "analysis_id": "a", "action": "Plot", "computed_at": 5.0,
-      "guard": {"g": 1}, "verified_volumes": None}),
+      "guard": {"g": 1}, "verified_volumes": None, "label": ""}),
     ({"operation": "cache_admin", "cache": CACHE, "action": "purge", "params": {"days": 30, "kinds": ["x"]}},
      "cache_admin", (CACHE, "purge"), {"days": 30, "kinds": ["x"]}),
     ({"operation": "cache_admin", "cache": CACHE, "action": "inventory"}, "cache_admin", (CACHE, "inventory"), {}),

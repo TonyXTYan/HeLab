@@ -134,22 +134,111 @@ def test_another_roots_clear_leaves_these_results(tmp_path: Path) -> None:
 
 
 @pytest.mark.no_auto_data_root
-def test_results_count_toward_the_budget_and_one_that_doesnt_fit_isnt_saved(tmp_path: Path) -> None:
+def big_result(seed: int = 0) -> bytes:
+    noise = np.random.default_rng(seed).random(20_000)  # (Incompressible: ~160 kB.)
+    return result_codec.pack(*result_codec.encode({"x": noise}))
+
+
+def test_results_count_toward_the_budget_and_one_that_doesnt_fit_waits(tmp_path: Path) -> None:
     with CacheStore(str(tmp_path / "store")) as store:
         dataset(store)
         before = store.usage()
-        noise = np.random.default_rng(0).random(20_000)  # (Incompressible: ~160 kB.)
-        big = result_codec.pack(*result_codec.encode({"x": noise}))
-        saved = save(store, data=big, budget=before + 250_000, budget_set_at=1.0)
-        assert saved.saved and store.usage() >= before + len(big)
-        refused = save(store, lookup="k2", data=big, budget=before + 250_000, budget_set_at=1.0)
-        assert not refused.saved and refused.reason == "over_budget"
+        budget = before + 250_000
+        saved = save(store, data=big_result(), budget=budget, budget_set_at=1.0)
+        assert saved.saved and store.usage() >= before + 150_000
+        held = save(store, lookup="k2", data=big_result(1), budget=budget, budget_set_at=1.0, label="Correlations")
+        assert not held.saved and held.reason == "over_budget" and held.pending_id
         assert store.find_result(RUN, "k2").missing
-        # Its file is retired at once (nothing removed to make room), and the budget is the store's.
+        # It waits for the user's answer and doesn't count toward the budget.
+        assert store.usage() < budget
+        inventory = store.inventory(budget)
+        assert inventory["results"]["count"] == 1
+        assert [(entry["pending_id"], entry["label"], entry["path"]) for entry in inventory["pending_results"]] == [
+            (held.pending_id, "Correlations", RUN)]
+        assert store._conn.execute("SELECT COUNT(*) FROM retired_files").fetchone()[0] == 0
+        # Without holding it, its file is retired at once.
+        assert not save(store, lookup="k9", data=big_result(9), budget=budget, budget_set_at=1.0, hold=False).saved
         assert store._conn.execute("SELECT COUNT(*) FROM retired_files").fetchone()[0] == 1
-        assert store.inventory(before + 250_000)["results"]["count"] == 1
         # A budget set later (recorded by the store) wins over an older job's.
-        assert not save(store, lookup="k3", data=big, budget=10 ** 12, budget_set_at=0.5).saved
+        assert not save(store, lookup="k3", data=big_result(3), budget=10 ** 12, budget_set_at=0.5).saved
+
+
+@pytest.mark.no_auto_data_root
+def test_make_room_removes_least_recently_shown_results_never_datasets(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        dataset(store)
+        dataset(store, f"root://{A}/other")
+        budget = store.usage() + 400_000
+        for index, lookup in enumerate(("old", "new")):
+            assert save(store, lookup=lookup, data=big_result(index), budget=budget, budget_set_at=1.0).saved
+        store._conn.execute("UPDATE results SET last_used = 1 WHERE lookup = 'old'")
+        held = save(store, lookup="k3", data=big_result(3), budget=budget, budget_set_at=1.0)
+        assert held.pending_id
+        room = store.result_room_plan(held.pending_id, budget)
+        old_id = store._conn.execute("SELECT result_id FROM results WHERE lookup = 'old'").fetchone()[0]
+        assert room.possible and room.result_ids == (old_id,) and room.bytes > 100_000
+        # Plain adopt doesn't fit: it keeps waiting, with the plan.
+        kept = store.adopt_pending_result(held.pending_id, budget=budget, budget_set_at=1.0)
+        assert not kept.adopted and kept.room == room
+        # Make room with another plan than the user was told removes nothing.
+        assert not store.adopt_pending_result(held.pending_id, budget=budget, budget_set_at=1.0, make_room=True,
+                                              expected_room=["someone-else"]).adopted
+        adopted = store.adopt_pending_result(held.pending_id, budget=budget, budget_set_at=1.0, make_room=True,
+                                             expected_room=list(room.result_ids))
+        assert adopted.adopted and adopted.removal is not None and adopted.removal.results == 1
+        assert store.find_result(RUN, "k3").found and store.find_result(RUN, "old").missing
+        assert store.find_result(RUN, "new").found
+        assert store.read_dataset_row(RUN).found and store.read_dataset_row(f"root://{A}/other").found
+        assert store.inventory(budget)["pending_results"] == []
+
+
+@pytest.mark.no_auto_data_root
+def test_make_room_impossible_when_results_alone_cant_free_enough(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        dataset(store)
+        budget = store.usage() + 50_000  # Smaller than the result: nothing makes room among results.
+        held = save(store, data=big_result(), budget=budget, budget_set_at=1.0)
+        assert held.pending_id and not store.result_room_plan(held.pending_id, budget).possible
+
+
+@pytest.mark.no_auto_data_root
+def test_a_waiting_result_is_discarded_expired_or_rejected_by_a_clear(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        budget = store.usage() + 1_000
+        first = save(store, lookup="a", data=big_result(), budget=budget, budget_set_at=1.0)
+        assert store.discard_pending_result(first.pending_id) and not store.discard_pending_result(first.pending_id)
+        second = save(store, lookup="b", data=big_result(1), budget=budget, budget_set_at=1.0)
+        store.remove_results(root=A)  # Clear cached analysis takes the waiting ones too.
+        with pytest.raises(SaveRejected) as gone:
+            store.adopt_pending_result(second.pending_id, budget=10 ** 12, budget_set_at=2.0)
+        assert gone.value.reason == "gone"
+        # A clear after its run started (here a purge removing an older result of the folder) leaves the
+        # waiting result, but its guard no longer holds: Make room discards it.
+        assert save(store, lookup="old", budget=10 ** 12, budget_set_at=2.0).saved
+        store._conn.execute("UPDATE results SET last_used = 1")
+        guard = store.start_result_job(RUN)
+        third = save(store, lookup="c", data=big_result(2), budget=budget, budget_set_at=3.0, guard=guard)
+        assert store.remove_results(cutoff=time.time() - 60).results == 1
+        with pytest.raises(SaveRejected) as cleared:
+            store.adopt_pending_result(third.pending_id, budget=10 ** 12, budget_set_at=4.0)
+        assert cleared.value.reason == "cleared"
+        assert store._conn.execute("SELECT COUNT(*) FROM pending_results").fetchone()[0] == 0
+        fifth = save(store, lookup="e", data=big_result(4), budget=budget, budget_set_at=5.0)
+        swept = store.sweep(time.time() + cache_store.PENDING_MAX_AGE + 1)
+        assert fifth.pending_id in swept.expired_ids
+        assert store._conn.execute("SELECT COUNT(*) FROM pending_results").fetchone()[0] == 0
+
+
+@pytest.mark.no_auto_data_root
+def test_a_nested_roots_rekey_moves_waiting_results_whose_guard_then_fails(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        budget = store.usage() + 1_000
+        held = save(store, f"root://{A}/inner/run", data=big_result(), budget=budget, budget_set_at=1.0)
+        store.rekey_subtree(f"root://{A}/inner", f"root://{B}")
+        assert store.inventory()["pending_results"][0]["path"] == f"root://{B}/run"
+        with pytest.raises(SaveRejected) as changed:
+            store.adopt_pending_result(held.pending_id, budget=10 ** 12, budget_set_at=2.0)
+        assert changed.value.reason == "cleared"
 
 
 @pytest.mark.no_auto_data_root

@@ -160,6 +160,8 @@ class FolderCache(QObject):
     cacheRemoved = pyqtSignal(object, object)
     # Pending saves (waiting for Make room / Save update) were added or answered.
     pendingSavesChanged = pyqtSignal()
+    # A saved analysis result that waited for the user (R2) was saved (True) or not (False): its pending_id.
+    resultPendingAnswered = pyqtSignal(str, bool)
     # A cache_admin job's result: action, event (inventory, admin_result, swept, error).
     cacheAdminResult = pyqtSignal(str, object)
     # A cache_admin job ended: its owner, action, and "" or why it failed.
@@ -372,6 +374,9 @@ class FolderCache(QObject):
         self._removed_paths: OrderedDict[tuple[str, str], float] = OrderedDict()
         # Saves waiting for the user's answer, by folder: the cache_full / cache_approval event.
         self.pending_saves: dict[str, dict[str, Any]] = {}
+        # Analysis results that didn't fit the disk budget, waiting for Make room or Discard (R2), by
+        # pending_id (several per folder): asked by CacheDialogs with the dataset saves.
+        self.pending_results: dict[str, dict[str, Any]] = {}
         # What late events must not undo: pending ids answered, superseded or expired; each
         # folder's newest job_seq whose save outcome arrived; when events last changed a folder's
         # pending save (an inventory requested before then doesn't override it).
@@ -1953,7 +1958,7 @@ class FolderCache(QObject):
         return True
 
     def save_result(self, owner: str, path: str, packed: bytes, *, lookup: str, family: str, record: Any,
-                    analysis_id: str, action: str, computed_at: float, guard: Any) -> bool:
+                    analysis_id: str, action: str, computed_at: float, guard: Any, label: str = "") -> bool:
         """Save a run's packed result (``result_codec.pack``) under the guard its lookup gave:
         ``result_saved`` or ``result_not_saved``. False if it can't be asked."""
         options = store_options()
@@ -1962,7 +1967,7 @@ class FolderCache(QObject):
         if not self.service.submit(owner, 0, self.key(path), "result_save",
                                    {"cache": options, "lookup": lookup, "family": family, "record": record,
                                     "analysis_id": analysis_id, "action": action, "computed_at": computed_at,
-                                    "guard": guard, "verified_volumes": self.verified_volumes()},
+                                    "guard": guard, "label": label, "verified_volumes": self.verified_volumes()},
                                    priority=True, blob=packed):
             return False
         self._result_ops[owner] = self.key(path)
@@ -1970,6 +1975,11 @@ class FolderCache(QObject):
 
     def _on_result_event(self, producer: IORequest, event: dict[str, Any]) -> None:
         self._note_usage(event.get("usage"), event.get("usage_seq"))
+        if event["kind"] == "result_pending" and event.get("pending_id") not in self._pending_gone:
+            # Doesn't fit the disk budget: asked (Make room or Discard) with the dataset saves.
+            self.pending_results[str(event["pending_id"])] = {**event, "result": True, "reason": "over_budget",
+                                                              "created_at": time.time()}
+            self.pendingSavesChanged.emit()
         if event["kind"] in ("done", "error", "cancelled", "exit"):
             self._result_ops.pop(producer.owner, None)
         self.resultReady.emit(producer, event)
@@ -2055,6 +2065,13 @@ class FolderCache(QObject):
 
         def selected(known: Any) -> list[str]:
             return list(known) if keys is None else [path for path in keys if path in known]
+        if "results" in kinds:
+            # Results waiting for an answer go with the saved ones of their folders.
+            gone = {pending_id for pending_id, entry in self.pending_results.items()
+                    if keys is None or self.key(str(entry.get("path", ""))) in keys}
+            for pending_id in gone:
+                self.resultPendingAnswered.emit(pending_id, False)
+            self._forget_pending(gone)
         if "datasets" in kinds:
             # The store drops the folders' pending saves with their data.
             self._forget_pending({entry["pending_id"] for path, entry in self.pending_saves.items()
@@ -2119,7 +2136,10 @@ class FolderCache(QObject):
         for path in gone:
             del self.pending_saves[path]
             self._pending_changed[path] = time.monotonic()
-        if gone:
+        results = [pending_id for pending_id in self.pending_results if pending_id in pending_ids]
+        for pending_id in results:
+            del self.pending_results[pending_id]
+        if gone or results:
             self.pendingSavesChanged.emit()
 
     def _hold_pending(self, path: str, event: dict[str, Any]) -> bool:
@@ -2203,6 +2223,12 @@ class FolderCache(QObject):
                     # Its job_seq orders it against late events, as for one an event added.
                     self._save_seq[path] = max(self._save_seq.get(path, 0), int(snapshot[path].get("job_seq", 0)))
             self.pending_saves = merged
+            # Waiting results (R2): the store's list, with what events added for the same one.
+            waiting = {str(entry["pending_id"]): entry for entry in event["inventory"].get("pending_results") or ()
+                       if entry["pending_id"] not in self._pending_gone
+                       and not self._removed_after(started, "results", self.key(entry["path"]))}
+            self.pending_results = {pending_id: {**self.pending_results.get(pending_id, {}), **entry}
+                                    for pending_id, entry in waiting.items()}
             self.pendingSavesChanged.emit()
             self._schedule_sweep(event["inventory"].get("next_deadline"))
         elif kind == "admin_result" and action in ("adopt", "discard"):
@@ -2229,8 +2255,20 @@ class FolderCache(QObject):
                 state.info, state.error = dict(event.get("cache_info") or {}), ""
                 self._set_disk_cached(adopted, True, notify=True)
             self.pendingSavesChanged.emit()
+        elif kind == "admin_result" and action in ("adopt_result", "discard_result"):
+            pending_id = str(producer.payload["params"].get("pending_id") or "")
+            if event.get("adopted") is False and event.get("room") is not None and pending_id in self.pending_results:
+                # Still waiting: Make room wasn't enough or changed; asked again with the new plan.
+                self.pending_results[pending_id] = {**self.pending_results[pending_id], "room": event["room"]}
+            elif pending_id:
+                self._forget_pending({pending_id})
+                self.resultPendingAnswered.emit(pending_id, bool(event.get("adopted")))
+            self.pendingSavesChanged.emit()
         elif kind == "swept":
-            self._forget_pending(set(event.get("expired_ids") or ()))
+            expired: set[str] = {str(pending_id) for pending_id in event.get("expired_ids") or ()}
+            for pending_id in expired & set(self.pending_results):
+                self.resultPendingAnswered.emit(pending_id, False)
+            self._forget_pending(expired)
             logging.info("Disk cache cleanup: %s", event)
         elif kind in ("error", "cancelled"):
             logging.warning("Disk cache %s: %s", action, event.get("message", "Cancelled"))

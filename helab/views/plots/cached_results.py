@@ -73,6 +73,8 @@ class CachedRuns(QObject):
         self._removed = removed
         self._lookups: Dict[str, Lookup] = {}  # By the run's job id.
         self._saves: Dict[str, AnalysisResult] = {}  # By the save's owner.
+        # Results that didn't fit the disk budget, waiting for Make room or Discard, by pending_id.
+        self._waiting: Dict[str, tuple[AnalysisResult, int]] = {}
         self._connected = False
 
     def supported(self) -> bool:
@@ -140,14 +142,28 @@ class CachedRuns(QObject):
         self._connect()
         if self.cache.save_result(owner, entry.view.identity.source_path, packed, lookup=entry.lookup,
                                   family=entry.family, record=record, analysis_id=result.analysis.analysis_id,
-                                  action=result.action, computed_at=result.finished_at, guard=entry.guard):
+                                  action=result.action, computed_at=result.finished_at, guard=entry.guard,
+                                  label=self.name):
             self._saves[owner] = replace(result, packed=None)
 
     def _connect(self) -> None:
         if not self._connected:
             self.cache.resultReady.connect(self._event)
             self.cache.cacheRemoved.connect(self._cache_removed)
+            self.cache.resultPendingAnswered.connect(self._pending_answered)
             self._connected = True
+
+    @pyqtSlot(str, bool)
+    def _pending_answered(self, pending_id: str, saved: bool) -> None:
+        """The user answered a result that didn't fit (Make room: saved; Discard), or it expired."""
+        waiting = self._waiting.pop(pending_id, None)
+        if waiting is None or self._closed():
+            return
+        result, size = waiting
+        if saved:
+            self._saved(replace(result, policy=DISK_CACHED), size)
+        else:
+            self._note("not saved in the disk cache (discarded)")
 
     @pyqtSlot(object, object)
     def _cache_removed(self, paths: Any, kinds: Any) -> None:
@@ -161,7 +177,9 @@ class CachedRuns(QObject):
         for job_id in list(self._lookups):
             self.forget(job_id)
         if self._connected and not self._saves:
-            for signal, slot in ((self.cache.resultReady, self._event), (self.cache.cacheRemoved, self._cache_removed)):
+            self._waiting.clear()
+            for signal, slot in ((self.cache.resultReady, self._event), (self.cache.cacheRemoved, self._cache_removed),
+                                 (self.cache.resultPendingAnswered, self._pending_answered)):
                 try:
                     signal.disconnect(slot)
                 except TypeError:
@@ -229,9 +247,14 @@ class CachedRuns(QObject):
     def _save_event(self, owner: str, event: Dict[str, Any]) -> None:
         kind = event.get("kind")
         result = self._saves.get(owner)
-        if result is None or kind not in ("result_saved", "result_not_saved", "error", "cancelled"):
+        if result is None or kind not in ("result_saved", "result_not_saved", "result_pending", "error", "cancelled"):
             return
         del self._saves[owner]
+        if kind == "result_pending":
+            # Doesn't fit the disk budget: the disk cache asks the user (Make room or Discard).
+            self._waiting[str(event.get("pending_id"))] = (result, int(event.get("bytes") or 0))
+            self._note("not saved yet: the disk cache is full (Make room or Discard)")
+            return
         if kind == "result_saved":
             size = int(event.get("bytes") or 0)
             if size > result_cache.LARGE_RESULT_BYTES:
@@ -239,8 +262,6 @@ class CachedRuns(QObject):
                                 result.input.identity.source_path, byte_size(size))
             if not self._closed():
                 self._saved(replace(result, policy=DISK_CACHED), size)
-        elif kind == "result_not_saved" and event.get("reason") == "over_budget":
-            self._note("not saved in the disk cache: it doesn't fit the disk budget (Settings → Cache)")
         elif kind == "result_not_saved":
             logging.info("%s: result not saved in the disk cache (%s)", self.name, event.get("message"))
         else:

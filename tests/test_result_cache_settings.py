@@ -186,3 +186,35 @@ def test_a_roots_clear_cached_analysis_asks_and_sends_only_that(
     assert len(jobs) == 1  # Declined: nothing sent.
     page.clear_results_selected()
     assert jobs[-1] == ("clear_root_results", {"uuid": A}) and not page.clear_results_button.isEnabled()
+
+
+def test_waiting_results_come_back_with_the_startup_inventory_and_are_asked(
+        qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from PyQt6.QtWidgets import QWidget
+    from helab.views.CacheDialogs import CacheDialogs
+    service, cache = frozen_cache(monkeypatch)
+    monkeypatch.setattr("helab.utils.folder_cache.store_options",
+                        lambda: {"directory": str(tmp_path), "budget": 8 * GB, "budget_set_at": 1.0})
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    dialogs = CacheDialogs(cache, parent, lambda: None)
+    owner = cache.cache_admin("inventory")
+    request = next(r for r in service.pending if r.owner == owner)
+    waiting = {"pending_id": "p1", "path": str(tmp_path / "run"), "label": "Release time", "analysis_id": "a",
+               "bytes": 3 * MB, "created_at": time.time(), "reason": "over_budget", "result": True,
+               "room": {"result_ids": ["r1", "r2"], "bytes": 4 * MB, "newest_last_used": None, "possible": True}}
+    finish(service, request, {"kind": "inventory", "inventory": inventory(pending_results=[waiting])})
+    assert set(cache.pending_results) == {"p1"}
+    qtbot.waitUntil(lambda: dialogs.dialog is not None)
+    box = dialogs.dialog
+    assert box is not None and box.text().startswith("Not enough room in the disk cache to save Release time's result")
+    assert "Make room removes 2 saved analysis results (4.0 MB)" in box.informativeText()
+    make_room = next(b for b in box.buttons() if b.text() == "Make room")
+    make_room.click()
+    answer = admin_request(service, "adopt_result")
+    assert answer.payload["params"] == {"pending_id": "p1", "make_room": True, "room_ids": ["r1", "r2"]}
+    finish(service, answer, {"kind": "admin_result", "action": "adopt_result", "adopted": True, "path": "x",
+                             "bytes": 3 * MB, "room": None, "next_deadline": None})
+    assert not cache.pending_results
+    dialogs.detach()
+    service.shutdown()
