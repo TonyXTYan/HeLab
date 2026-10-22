@@ -39,6 +39,7 @@ from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from helab.resources.icons import IconsInitUtil
+from helab.utils import app_log
 from helab.utils.constants import APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, app_folder, start_cache_dir
 from helab.utils.settings_store import app_settings
 from helab.views.HelabMainWindow import HelabMainWindow
@@ -135,6 +136,10 @@ _INSTANCE_LOCK: list[object] = []
 
 
 def main() -> None:
+    # The packaged app has no console: errors leave their trace in the app folder's log file, and
+    # an unhandled exception is logged there and HeLab carries on (PyQt6 would end it).
+    app_log.start_log_file(app_folder())
+    app_log.catch_unhandled()
     _raise_fd_limit()
     logging.info(f"Platform: {sys.platform}, {platform.system()}, {platform.release()}, {platform.version()}, {platform.machine()}, {platform.processor()}")
     logging.info(f"{tempfile.gettempdir() = }")
@@ -162,6 +167,7 @@ def main() -> None:
     moved = _start_cache()
 
     main_window = HelabMainWindow()
+    app_log.catch_unhandled(main_window.show_status_notice)
     main_window.show()
     if moved:
         QTimer.singleShot(0, lambda: QMessageBox.information(main_window, "Disk cache", moved))
