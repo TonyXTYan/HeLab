@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable, Dict, List, Literal, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from PyQt6 import sip
-from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, pyqtSlot
 from PyQt6.QtWidgets import (QComboBox, QDockWidget, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMainWindow,
                              QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
@@ -21,48 +21,15 @@ if TYPE_CHECKING:
     from helab.views.plots.workspace import PlotWorkspace
 
 
-GroupType = Literal["dynamic"]
-
-class GroupData:
-    """Stores information about a script group in the tree widget.
-    
-    This class maintains the state and metadata for each script group, including:
-    - The group's name and type (scripts registered with the ScriptsManager)
-    - Reference to the group's tree widget item
-    - Loading status
-    
-    The group's tree item is set when the group is displayed in the tree widget,
-    and the loading status helps prevent duplicate loading of group contents.
-    """
-    def __init__(self, name: str, group_type: GroupType):
-        self.name = name
-        self.type = group_type
-        self.tree_item: Optional[QTreeWidgetItem] = None
-        self.is_loaded = False
-
 class TreePanelWidget(QWidget):
-    """A widget that displays and manages analysis scripts in a tree structure.
-    
-    This widget provides:
-    1. A GUI for browsing and organizing analysis scripts
-    2. Script grouping by each script's metadata group
-    3. Action buttons for executing script functions
-    4. Dynamic loading of scripts from directories
-    
-    The widget consists of:
-    - A group selector dropdown
-    - A "Load Scripts" button for importing new scripts
-    - A tree view showing scripts organized by groups
-    - Action buttons for each script
-    
-    Key concepts:
-    - Groups: HeLab's bundled analyses ("Basic plots v1", `helab.scripts.standard.group`; "DLD Front Panel Port", `helab.scripts.dld.group`) and those of scripts loaded from a folder
-    - Actions: Each script can have up to 2 executable actions
+    """The Scripts panel: a group selector, Load Scripts… and the selected group's scripts, each
+    with up to two run buttons (its first actions).
+
+    Groups are each script's metadata group: HeLab's bundled analyses ("Basic plots v1",
+    ``helab.scripts.standard.group``; "DLD Front Panel Port", ``helab.scripts.dld.group``) and
+    those of scripts loaded from a folder (``ScriptsManager``).
     """
-    
-    # Signal emitted when selected group changes (group_name, group_type)
-    group_changed = pyqtSignal(str, str)
-    
+
     def __init__(self, workspace: Optional[PlotWorkspace] = None,
                  parent: Any = None) -> None:
         super().__init__(parent)
@@ -70,10 +37,8 @@ class TreePanelWidget(QWidget):
         self.workspace = workspace  # The plot area new plots open in.
         self.script_manager = ScriptsManager()
         
-        # Group tracking
-        self.groups: Dict[str, GroupData] = {}
-        self.current_group: Optional[GroupData] = None
-        
+        self.groups: List[str] = []  # As the group selector lists them.
+
         # Analysis instance tracking
         self._instance_counter = 0
         self._analysis_instances: Dict[str, LinkedAnalysisInstance] = {}
@@ -112,9 +77,6 @@ class TreePanelWidget(QWidget):
             self.tree_widget.setColumnWidth(1, 100)
             self.tree_widget.setColumnWidth(2, 100)
 
-        # Dictionary to map group names to QTreeWidgetItem objects
-        self.group_mapping: Dict[str, QTreeWidgetItem] = {}
-
         # Add tree widget to the layout
         self.panel_layout_right_bottom.addWidget(self.tree_widget)
 
@@ -122,20 +84,6 @@ class TreePanelWidget(QWidget):
         self._load_default_scripts()
 
         logging.info(f"TreePanelWidget initialized. {type(self.parent()) = }")
-
-    def _register_group(self, name: str, group_type: GroupType) -> None:
-        """Register a new group with type tracking in the widget.
-        
-        Creates and tracks a new GroupData instance for managing script groups.
-        Only registers if the group doesn't already exist to prevent duplicates.
-        
-        Args:
-            name: The unique name for the group
-            group_type: Type of group (only "dynamic": scripts from the ScriptsManager)
-        """
-        if name not in self.groups:
-            self.groups[name] = GroupData(name, group_type)
-            logging.debug(f"Registered group: {name} (type: {group_type})")
 
     def _load_default_scripts(self) -> None:
         """Register HeLab's bundled analyses (``helab.scripts.standard``, then the DLD front panel port, ``helab.scripts.dld``) and show the first group."""
@@ -193,9 +141,7 @@ class TreePanelWidget(QWidget):
         """
         current = self.group_selector.currentText()
         groups = self.script_manager.get_groups()
-        # Groups of newly loaded scripts are registered before they are listed.
-        for group in groups:
-            self._register_group(group, "dynamic")
+        self.groups = list(groups)  # Known before the selector lists them (it selects one at once).
         self.group_selector.clear()
         if groups:
             self.group_selector.addItems(groups)
@@ -208,29 +154,12 @@ class TreePanelWidget(QWidget):
                 self.group_selector.setCurrentIndex(0)
         else:
             self.tree_widget.clear()
-            self.group_mapping.clear()
 
     def _on_group_changed(self, group_name: str) -> None:
-        """Handle group selection changes in the UI.
-        
-        This method is called when the user selects a different group:
-        1. Validates that the selected group exists
-        2. Updates current group tracking
-        3. Loads the group's scripts and items
-        4. Emits group_changed signal for parent widgets
-        
-        Args:
-            group_name: Name of the newly selected group
-            
-        The method ensures proper error handling and state management
-        when switching between groups.
-        """
+        """The selector chose another group: list its scripts."""
         if group_name:
             if group_name in self.groups:
-                group_data = self.groups[group_name]
-                self.current_group = group_data
                 self._load_current_group()
-                self.group_changed.emit(group_name, group_data.type)
             else:
                 logging.error(f"Unknown group: {group_name}")
 
@@ -249,18 +178,9 @@ class TreePanelWidget(QWidget):
         if not group_name or group_name not in self.groups:
             return
 
-        group_data = self.groups[group_name]
-        self.current_group = group_data
-
-        # Clear existing items
         self.tree_widget.clear()
-        self.group_mapping.clear()
-
-        # Create group item
         group_item = QTreeWidgetItem(self.tree_widget, [group_name])
         group_item.setFirstColumnSpanned(True)
-        self.group_mapping[group_name] = group_item
-        group_data.tree_item = group_item
 
         for metadata in self.script_manager.get_scripts_in_group(group_name):
             script_class = self.script_manager.get_script(metadata.script_id)
@@ -280,7 +200,6 @@ class TreePanelWidget(QWidget):
                     error_item.setForeground(0, Qt.GlobalColor.red)
 
         group_item.setExpanded(True)
-        group_data.is_loaded = True
 
     def _action_callback(self, metadata: ScriptMetadata, script: Any, action: str) -> Callable[[], None]:
         if isinstance(script, DatasetAnalysis):
