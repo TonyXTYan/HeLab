@@ -154,3 +154,27 @@ proposed edits to `AGENTS.md` (Script system / Settings persistence), `roadmaps/
 its CI (`gh run watch`) and report every RERUN by test and OS. Then `--state review` and
 `maestri ask "CoCo" "<handoff summary>"`. Ask CoCo (`maestri ask "CoCo" …`) when blocked or unsure
 of scope.
+
+## Follow-up 1 (Tony, Chat, 2026-10-22, after the handoff)
+
+A Codex Reviewer (Flint) is reviewing `a74fd07` on this floor at the same time, in its own detached
+worktree under `.ai/temp/review-presets` (don't touch it). Its findings come to you through CoCo;
+fold them in with these changes. Commit as you go; **don't push until CoCo says the review findings
+are in too** (one more push for both).
+
+1. **Changed from a preset:** when a plot's values differ from the script preset last applied to
+   it, show an indication **next to each changed value** in the settings page (memory only, from
+   the applied preset's values; the tooltip gives the preset's value) and a button offering
+   **Save to preset "<name>"** (overwrite, asks first) or **Save as new preset…**. Keep it to one
+   row (`feedback_ui_vertical_space`); no indication when no preset was applied.
+2. **Applying an arrangement asks Replace or Add** (Add opens the preset's plots beside the open
+   ones, numbered after them; Cancel default). Replaces decision 3.
+3. **A plot that can't reopen: ask the user** Drop or Keep (Keep leaves it in the record for a
+   later session, e.g. until its Load Scripts… folder is loaded; one question for all such plots
+   at a start, not one per plot). Replaces decision 7.
+4. **Preset storage separate from QSettings** ("maybe something similar to the folder status
+   storage?"): CoCo is confirming the design with Tony; start with 1–3 and **wait for CoCo's word
+   on storage before moving it**. Reset all settings will then leave presets alone (decision 10).
+
+Decisions 2 (arrangements store values with provenance), 1, 4–6, 8, 9, 11 and the wording: Tony is
+fine with them.

@@ -9,14 +9,15 @@ tab's normal load brings the data ("Waiting for <folder>'s data: select it to lo
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from PyQt6 import sip
-from PyQt6.QtCore import QByteArray, QObject, QSettings, pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import QDockWidget
+from PyQt6.QtCore import QByteArray, QObject, QSettings, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtWidgets import QDockWidget, QMessageBox
 
 from helab.analysis.dataset_view import DatasetView, view_of
 from helab.analysis.presets import Arrangement, RecordError, SavedPlot, parse
@@ -220,18 +221,19 @@ def capture(plots: PlotWorkspace, instances: Sequence[AnalysisInstance], *, fold
 
 
 def open_arrangement(scripts: TreePanelWidget, cache: FolderCache, arrangement: Arrangement, *,
-                     keep_ids: bool = False, folder: str = "") -> Tuple[List[Tuple[AnalysisInstance, SavedPlot]],
-                                                                         List[str]]:
+                     keep_ids: bool = False, folder: str = "",
+                     layout: bool = True) -> Tuple[List[Tuple[AnalysisInstance, SavedPlot]],
+                                                   List[Tuple[SavedPlot, str]]]:
     """Open ``arrangement``'s plots, each with its saved settings, waiting for its folder's data
     (every plot's ``folder`` when given: an arrangement preset is one folder's), in their tab
-    groups, floating or docked, then the plot area's recorded state on top (positions and sizes,
-    when Qt can restore them). The plots opened (with their records), and each plot that couldn't,
-    named with why."""
+    groups, floating or docked, then (``layout``) the plot area's recorded state on top (positions
+    and sizes, when Qt can restore them; not when plots are added beside open ones, which it
+    would move). The plots opened (with their records), and each plot that couldn't, with why."""
     plots = scripts.workspace
     opened: List[Tuple[AnalysisInstance, SavedPlot]] = []
-    failed: List[str] = []
+    failed: List[Tuple[SavedPlot, str]] = []
     if plots is None:
-        return opened, [plot.title or plot.script.label() for plot in arrangement.plots]
+        return opened, [(plot, "no plot area") for plot in arrangement.plots]
     area = plots.middle_mainwindow
     firsts: Dict[int, QDockWidget] = {}
     fronts: List[QDockWidget] = []
@@ -243,7 +245,7 @@ def open_arrangement(scripts: TreePanelWidget, cache: FolderCache, arrangement: 
         if isinstance(made, str):
             wait.stop()
             wait.deleteLater()
-            failed.append(f"{saved.script.label()} ({made})")
+            failed.append((saved, made))
             continue
         wait.setParent(made)
         dock = made.dock_widget
@@ -263,7 +265,7 @@ def open_arrangement(scripts: TreePanelWidget, cache: FolderCache, arrangement: 
         if saved.front:
             fronts.append(dock)
         opened.append((made, saved))
-    if arrangement.dock_state and opened:
+    if layout and arrangement.dock_state and opened:
         # Docks closed just before (an arrangement preset replacing the open plots) are deleted
         # later and still carry recorded names: Qt's restoreState mustn't take them for these.
         mine = {id(instance.dock_widget) for instance, _ in opened}
@@ -283,9 +285,12 @@ class PlotReopen(QObject):
     """The plots that reopen at start (Settings → General, "Reopen plots at start", on by
     default): the open plots are recorded (``OPEN_PLOTS_SETTING``, an arrangement) when one opens
     or closes and when HeLab quits (``quit``, before the plots close); at the next start
-    (``restore``) they open again, each waiting for its folder's data. Plots that can't (their
-    script isn't loaded, or their record can't be read) are named once in a notice, and aren't
-    recorded again."""
+    (``restore``) they open again, each waiting for its folder's data.
+
+    Plots that can't (their script isn't loaded, e.g. a Load Scripts… folder; or it has no such
+    action now) are asked about once, in one question for all of them (``ask``, not modal): Keep
+    leaves them in the record for a later start, Drop forgets them. Until the user answers they
+    are kept. A plot whose record can't be read at all is named in a notice and not kept."""
 
     def __init__(self, plots: PlotWorkspace, scripts: TreePanelWidget,
                  settings: Callable[[], QSettings] = app_settings) -> None:
@@ -296,6 +301,11 @@ class PlotReopen(QObject):
         self._saved_text = read_setting(store, OPEN_PLOTS_SETTING, typed=True)
         self._stopped = False
         self._restoring = False
+        # Plots that couldn't reopen, kept in the record (Keep, or not answered yet).
+        self.kept: List[SavedPlot] = []
+        # Asks Keep or Drop for these plots (names with why); ``answer`` takes the reply.
+        self.ask: Callable[[List[str]], None] = self._ask
+        self._question: Optional[QMessageBox] = None
         scripts.plotsChanged.connect(self.record)
 
     def restore(self) -> List[AnalysisInstance]:
@@ -315,12 +325,40 @@ class PlotReopen(QObject):
             opened, failed = open_arrangement(self.scripts, cache, arrangement, keep_ids=True)
         finally:
             self._restoring = False
-        failed += [f"a plot ({why})" for why in arrangement.unreadable]
+        if arrangement.unreadable:
+            unreadable = "; ".join(arrangement.unreadable)
+            self.plots.notice(f"Not reopened (their records can't be read): {unreadable}")
+            logging.info("Plots not reopened, records unreadable: %s", unreadable)
+        self.kept = [saved for saved, _ in failed]
         if failed:
-            self.plots.notice(f"Not reopened: {'; '.join(failed)}")
-            logging.info("Plots not reopened: %s", "; ".join(failed))
+            names = [f"{saved.script.label()} ({why})" for saved, why in failed]
+            logging.info("Plots not reopened: %s", "; ".join(names))
+            self.ask(names)
         self.record()
         return [instance for instance, _ in opened]
+
+    def _ask(self, names: List[str]) -> None:
+        count = len(names)
+        box = QMessageBox(QMessageBox.Icon.Information, "Plots not reopened",
+                          f"{count:,} plot{'' if count == 1 else 's'} open last time couldn't reopen: "
+                          + "; ".join(names) + ".\n\nKeep "
+                          + ("it" if count == 1 else "them") + " for a later start (for example once "
+                          "the scripts are loaded), or drop " + ("it" if count == 1 else "them") + "?",
+                          QMessageBox.StandardButton.NoButton, self.plots.host)
+        keep = box.addButton("Keep for later", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Drop", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(keep)
+        box.setWindowModality(Qt.WindowModality.NonModal)
+        box.buttonClicked.connect(lambda button: self.answer(button is keep))
+        self._question = box
+        box.open()
+
+    def answer(self, keep: bool) -> None:
+        """The reply to ``ask``: Keep leaves the plots that couldn't reopen in the record, Drop forgets them."""
+        self._question = None
+        if not keep:
+            self.kept = []
+            self.record()
 
     def _cache(self) -> FolderCache:
         budget = self.plots.ram_budget
@@ -332,19 +370,27 @@ class PlotReopen(QObject):
 
     @pyqtSlot()
     def record(self) -> None:
-        """Record the open plots now (not while they are being reopened, nor once HeLab quits)."""
+        """Record the open plots now, and the plots kept that couldn't reopen (not while plots are
+        being reopened, nor once HeLab quits)."""
         if self._stopped or self._restoring or sip.isdeleted(self.plots.middle_mainwindow):
             return
         instances = self.scripts.instances()
         try:
-            text = capture(self.plots, instances).dumps() if instances else ""
+            arrangement = capture(self.plots, instances) if instances else Arrangement()
         except Exception:  # A script's parameters() failing: the record keeps what it had.
             logging.exception("The open plots couldn't be recorded")
             return
-        self._settings().setValue(OPEN_PLOTS_SETTING, text)
+        if self.kept:
+            # Each on its own after the open plots: no dock in the saved layout, no tab group shared.
+            first = max((plot.group for plot in arrangement.plots), default=-1) + 1
+            kept = tuple(dataclasses.replace(plot, group=first + index, floating=False, front=True, dock_name="")
+                         for index, plot in enumerate(self.kept))
+            arrangement = dataclasses.replace(arrangement, plots=(*arrangement.plots, *kept))
+        self._settings().setValue(OPEN_PLOTS_SETTING, arrangement.dumps() if arrangement.plots else "")
 
     def quit(self) -> None:
         """HeLab quits: the open plots are recorded once more (before they close), and no more."""
         self.record()
         self._stopped = True
-
+        if self._question is not None and not sip.isdeleted(self._question):
+            self._question.close()  # Unanswered: the plots stay kept.

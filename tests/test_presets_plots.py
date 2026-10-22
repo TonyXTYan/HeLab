@@ -8,7 +8,7 @@ import json
 import math
 import sys
 import time
-from typing import Any, Iterator, List, Optional, cast
+from typing import Any, Callable, Iterator, List, Optional, cast
 
 import numpy as np
 import pytest
@@ -17,7 +17,7 @@ from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QMenu, QWidget
 from pytestqt.qtbot import QtBot
 
-from helab.analysis.backends import backend_specs
+from helab.analysis.backends import BACKEND, backend_specs
 from helab.analysis.dataset_view import DatasetView
 from helab.analysis.follow import DELAY, EVERY, FOLLOW, live_specs
 from helab.analysis.parameter_tree import parameter_of
@@ -297,6 +297,79 @@ def test_a_preset_is_shared_by_every_plot_of_the_script(qtbot: QtBot, cache: Fol
     assert not bar(first).apply_button.isEnabled()
 
 
+def marked(instance: AnalysisInstance) -> dict[str, str]:
+    """The settings marked as changed from the preset applied, with their tooltips."""
+    root = cast(Any, instance.parameter_root)
+    specs = [*instance.script.parameters(instance.action), *backend_specs(instance.script.backends(instance.action))]
+    found = {}
+    for spec in specs:
+        items = list(parameter_of(root, spec).items.keys())
+        assert items  # (The settings page's tree shows it.)
+        if not items[0].icon(0).isNull():
+            found[spec.name] = items[0].toolTip(0)
+    return found
+
+
+def test_settings_changed_from_the_applied_preset_are_marked(qtbot: QtBot, cache: FolderCache,
+                                                             windows: Windows) -> None:
+    window = new_window(qtbot, cache, windows)
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    instance = waiting_plot(window, cache, ref)
+    presets = bar(instance)
+    set_values(instance, {"bins": 20})
+    qtbot.wait(10)
+    assert marked(instance) == {} and presets.changes_button.isHidden()  # No preset applied: nothing to say.
+    presets.ask_name = lambda *_: "p"
+    presets.save()
+    assert marked(instance) == {} and presets.changes_button.isHidden()
+    set_values(instance, {"bins": 30})
+    qtbot.waitUntil(lambda: not presets.changes_button.isHidden(), timeout=2_000)
+    assert marked(instance) == {"bins": "Changed from preset “p”, which has 20"}
+    assert presets.changes_button.text() == "Save 1 change" and presets.save_to_action.text() == "Save to preset “p”"
+    parameter_of(cast(Any, instance.parameter_root), backend_specs(("PyQtGraph", "Matplotlib"))[0]).setValue("Matplotlib")
+    qtbot.waitUntil(lambda: presets.changes_button.text() == "Save 2 changes", timeout=2_000)
+    assert set(marked(instance)) == {"bins", BACKEND}
+    # Save to preset "p" asks first.
+    presets.confirm = lambda *_: False
+    presets.save_to_action.trigger()
+    assert read_script_presets(ref).presets["p"].values["bins"] == 20
+    presets.confirm = lambda *_: True
+    presets.save_to_action.trigger()
+    saved = read_script_presets(ref).presets["p"]
+    assert saved.values["bins"] == 30 and saved.backend == "Matplotlib"
+    assert marked(instance) == {} and presets.changes_button.isHidden()
+    # Save as new preset…: the new one is what changes are marked against.
+    set_values(instance, {"mode": "rate"})
+    qtbot.waitUntil(lambda: not presets.changes_button.isHidden(), timeout=2_000)
+    presets.ask_name = lambda *_: "q"
+    presets.save_new_action.trigger()
+    assert presets.applied is not None and presets.applied.name == "q" and marked(instance) == {}
+    # Back to the preset's value: unmarked; the preset deleted: nothing to compare with.
+    set_values(instance, {"bins": 31})
+    qtbot.waitUntil(lambda: bool(marked(instance)), timeout=2_000)
+    set_values(instance, {"bins": 30})
+    qtbot.waitUntil(lambda: not marked(instance), timeout=2_000)
+    set_values(instance, {"bins": 32})
+    qtbot.waitUntil(lambda: bool(marked(instance)), timeout=2_000)
+    presets.combo.setCurrentText("q")
+    presets.delete()
+    assert presets.applied is None and marked(instance) == {} and presets.changes_button.isHidden()
+
+
+def test_another_plot_deleting_the_preset_clears_the_marks(qtbot: QtBot, cache: FolderCache,
+                                                          windows: Windows) -> None:
+    window = new_window(qtbot, cache, windows)
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    first, second = waiting_plot(window, cache, ref), waiting_plot(window, cache, ref)
+    bar(first).ask_name = lambda *_: "p"
+    bar(first).save()
+    set_values(first, {"bins": 50})
+    qtbot.waitUntil(lambda: bool(marked(first)), timeout=2_000)
+    bar(second).confirm = lambda *_: True
+    bar(second).delete()
+    assert marked(first) == {} and bar(first).applied is None
+
+
 def test_applying_a_preset_is_an_edit_and_names_what_doesnt_fit(qtbot: QtBot, cache: FolderCache,
                                                                  windows: Windows) -> None:
     """Incompatible values are named and leave the open plot's settings as they were; nothing reruns."""
@@ -486,21 +559,61 @@ def test_reopen_with_the_disk_cache_off_asks_nothing(qtbot: QtBot, cache: Folder
     assert list(cache.service.pending) == before and Counted.runs == []
 
 
-def test_a_plot_whose_script_isnt_loaded_is_named_once(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+def recorded() -> List[str]:
+    """The plots the reopen record holds (by script); none when it's empty."""
+    text = read_setting(app_settings(), OPEN_PLOTS_SETTING)
+    return [plot.script.analysis_id for plot in parse(text).plots] if text else []
+
+
+def test_plots_that_cant_reopen_are_asked_about_once_and_kept_until_dropped(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """One question for every plot that can't reopen; until it's answered, and after Keep, they stay
+    in the record (each on its own, after the open plots); Drop forgets them. A record that can't
+    be read at all is only named."""
     window = new_window(qtbot, cache, windows)
-    record = Arrangement((SavedPlot(ScriptRef("user.gone", "Plot", "1", "", "Gone"), folder("x")),
-                          SavedPlot(ScriptRef("tests.counted", "Other", "1", "", "Counted"), folder("x")),
-                          SavedPlot(ScriptRef("tests.counted", "Plot", "1"), folder("x"))))
+    gone = SavedPlot(ScriptRef("user.gone", "Plot", "1", "", "Gone"), folder("x"), values={"a": 1}, group=0)
+    other = SavedPlot(ScriptRef("tests.counted", "Other", "1", "", "Counted"), folder("x"), group=0)
+    record = Arrangement((gone, other, SavedPlot(ScriptRef("tests.counted", "Plot", "1"), folder("x"))))
     text = json.loads(record.dumps())
     text["plots"].append({"script": {"analysis_id": "broken"}})
     app_settings().setValue(OPEN_PLOTS_SETTING, json.dumps(text))
-    opened = PlotReopen(window.plots, window.scripts).restore()
+    reopen = PlotReopen(window.plots, window.scripts)
+    asked: List[List[str]] = []
+    reopen.ask = asked.append
+    opened = reopen.restore()
     assert len(opened) == 1
-    assert window.notices == [
-        "Not reopened: Gone (its script isn't loaded (Load Scripts… its folder, then open it again)); "
-        "Counted › Other (its script has no “Other” now); a plot (no script action)"]
-    # The record now holds the plot that opened only.
-    assert len(parse(read_setting(app_settings(), OPEN_PLOTS_SETTING)).plots) == 1
+    assert asked == [["Gone (its script isn't loaded (Load Scripts… its folder, then open it again))",
+                      "Counted › Other (its script has no “Other” now)"]]
+    assert window.notices == ["Not reopened (their records can't be read): no script action"]
+    # Not answered yet: kept, after the open plot, each in a tab group of its own.
+    saved = parse(read_setting(app_settings(), OPEN_PLOTS_SETTING)).plots
+    assert [plot.script.analysis_id for plot in saved] == ["tests.counted", "user.gone", "tests.counted"]
+    assert [plot.group for plot in saved] == [0, 1, 2] and saved[1].values == {"a": 1} and saved[1].dock_name == ""
+    reopen.answer(True)  # Keep: still there as plots open and close.
+    opened[0].close()
+    assert recorded() == ["user.gone", "tests.counted"]
+    reopen.answer(False)  # Drop.
+    assert recorded() == []
+
+
+def test_a_kept_plot_reopens_once_its_script_is_loaded(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    window = new_window(qtbot, cache, windows)
+    app_settings().setValue(OPEN_PLOTS_SETTING, Arrangement(
+        (SavedPlot(ScriptRef("tests.counted", "Plot", "1"), folder("x")),)).dumps())
+    # A start without the script: kept.
+    first = PlotReopen(window.plots, window.scripts)
+    first.scripts.script_manager._remove_script(next(
+        meta.script_id for meta in window.scripts.script_manager.get_scripts_in_group("Tests")))
+    first.ask = lambda names: None
+    assert first.restore() == [] and recorded() == ["tests.counted"]
+    first.quit()
+    # The next start has it loaded again (as a Load Scripts… folder would).
+    again = new_window(qtbot, cache, windows)
+    asked: List[List[str]] = []
+    reopen = PlotReopen(again.plots, again.scripts)
+    reopen.ask = asked.append
+    [instance] = reopen.restore()
+    assert asked == [] and instance.waiting() and recorded() == ["tests.counted"]
 
 
 def test_a_reopened_plot_names_settings_that_dont_fit(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
@@ -622,6 +735,7 @@ class Explorer(QObject):
 def presets_for(window: Window, explorer: Explorer, cache: FolderCache) -> ArrangementPresets:
     presets = ArrangementPresets(window.plots, window.scripts, lambda: cast(Any, explorer), window, cache)
     presets.confirm = lambda *_: True
+    presets.replace_or_add = lambda *_: "replace"
     return presets
 
 
@@ -675,11 +789,39 @@ def test_applying_replaces_open_plots_after_asking(qtbot: QtBot, cache: FolderCa
     kept = waiting_plot(window, cache, ref, folder("b"))
     explorer = Explorer(folder("b"))
     presets = presets_for(window, explorer, cache)
-    presets.confirm = lambda *_: False
+    questions: List[str] = []
+
+    def answer(reply: Optional[str]) -> Callable[..., Optional[str]]:
+        def ask(parent: Optional[QWidget], title: str, text: str) -> Optional[str]:
+            questions.append(text)
+            return reply
+        return ask
+
+    presets.replace_or_add = answer(None)  # Cancel
     assert presets.apply("one") == [] and not kept.is_closed and explorer.calls == []
-    presets.confirm = lambda *_: True
+    assert questions == ["“one” opens a with its 1 plot. Replace the 1 open plot, or Add the preset's beside it?"]
+    presets.replace_or_add = answer("replace")
     [opened] = presets.apply("one")
     assert kept.is_closed and opened.values()["bins"] == 2 and opened.path == folder("a")
+
+
+def test_applying_can_add_beside_the_open_plots(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """Add: the open plots stay where they are; the preset's open beside them, numbered after them."""
+    window = new_window(qtbot, cache, windows)
+    ref = ScriptRef("tests.counted", "Plot", "1")
+    first, second = waiting_plot(window, cache, ref, folder("a")), waiting_plot(window, cache, ref, folder("a"))
+    area = window.plots.middle_mainwindow
+    tabbed = area.tabifiedDockWidgets(cast(QDockWidget, first.dock_widget))
+    arrangement = capture(window.plots, [first, second], folder=folder("a"))
+    write_arrangement("pair", arrangement)
+    presets = presets_for(window, Explorer(folder("b")), cache)
+    presets.replace_or_add = lambda *_: "add"
+    added = presets.apply("pair")
+    assert not first.is_closed and not second.is_closed
+    assert [instance.instance_id for instance in added] == ["3", "4"]
+    assert area.tabifiedDockWidgets(cast(QDockWidget, first.dock_widget)) == tabbed  # Not moved.
+    assert area.tabifiedDockWidgets(cast(QDockWidget, added[0].dock_widget)) == [added[1].dock_widget]
+    assert len(window.scripts.instances()) == 4
 
 
 def test_a_replaced_plots_dock_isnt_taken_for_a_new_one(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:

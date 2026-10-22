@@ -22,12 +22,15 @@ from typing import TYPE_CHECKING, Callable, List, Optional
 from urllib.parse import quote, unquote
 
 from PyQt6 import sip
-from PyQt6.QtCore import QObject, QSettings, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import (QComboBox, QHBoxLayout, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton,
-                             QSizePolicy, QVBoxLayout, QWidget)
+from PyQt6.QtCore import QObject, QSettings, Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PyQt6.QtWidgets import (QApplication, QComboBox, QHBoxLayout, QInputDialog, QLabel, QMenu, QMessageBox,
+                             QPushButton, QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
+from helab.analysis.backends import BACKEND, backend_specs
 from helab.analysis.dataset_view import root_key
+from helab.analysis.parameter_tree import parameter_of
+from helab.analysis.parameters import ParameterSpec
 from helab.analysis.presets import (Arrangement, PlotCheck, RecordError, ScriptPreset, ScriptPresets, ScriptRef,
                                     parse, preset_note)
 from helab.utils.colours import AMBER
@@ -128,6 +131,17 @@ def ask_name(parent: Optional[QWidget], title: str, label: str, text: str) -> Op
     return name.strip() if ok and name.strip() else None
 
 
+def replace_or_add(parent: Optional[QWidget], title: str, text: str) -> Optional[str]:
+    """Replace the open plots, or Add beside them ("replace", "add"); None: Cancel (the default)."""
+    box = QMessageBox(QMessageBox.Icon.Question, title, text, QMessageBox.StandardButton.Cancel, parent)
+    replace = box.addButton("Replace", QMessageBox.ButtonRole.AcceptRole)
+    add = box.addButton("Add", QMessageBox.ButtonRole.AcceptRole)
+    box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+    box.exec()
+    clicked = box.clickedButton()
+    return "replace" if clicked is replace else "add" if clicked is add else None
+
+
 def confirm(parent: Optional[QWidget], title: str, text: str, action: str) -> bool:
     """Ask first; Cancel is the default."""
     box = QMessageBox(QMessageBox.Icon.Question, title, text, QMessageBox.StandardButton.Cancel, parent)
@@ -140,10 +154,30 @@ def confirm(parent: Optional[QWidget], title: str, text: str, action: str) -> bo
 # A plot's Presets row
 
 
+def changed_mark() -> QIcon:
+    """The dot beside a setting changed from the preset applied (the palette's highlight colour)."""
+    size = 10
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    app = QApplication.instance()
+    colour = app.palette().highlight().color() if isinstance(app, QApplication) else QColor("#3070d0")
+    painter.setBrush(colour)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawEllipse(1, 1, size - 2, size - 2)
+    painter.end()
+    return QIcon(pixmap)
+
+
 class PresetBar(QWidget):
     """A plot's Presets row in its settings page: the script's presets, Apply, Save… and Delete…,
     and below it, only when there is something to say, one line on the last preset applied or
-    reopened (settings not applied named; the rest in its tooltip)."""
+    reopened (settings not applied named; the rest in its tooltip).
+
+    Once a preset is applied (or saved) here, each setting that differs from it has a dot beside
+    its name, the preset's value in its tooltip (memory only: the preset as applied), and the row
+    shows "Save N changes ▾": Save to preset “<name>” (asks first) or Save as new preset…."""
 
     def __init__(self, plot: AnalysisInstance, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -170,8 +204,20 @@ class PresetBar(QWidget):
         self.delete_button = QPushButton("Delete…")
         self.delete_button.setToolTip("Delete this preset")
         self.delete_button.clicked.connect(self.delete)
+        self.changes_button = QToolButton()
+        self.changes_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        changes = QMenu(self.changes_button)
+        self.save_to_action = QAction("Save to preset", changes)
+        self.save_to_action.triggered.connect(self.save_to_applied)
+        self.save_new_action = QAction("Save as new preset…", changes)
+        self.save_new_action.triggered.connect(self.save)
+        changes.addAction(self.save_to_action)
+        changes.addAction(self.save_new_action)
+        self.changes_button.setMenu(changes)
+        self.changes_button.hide()
         for button in (self.apply_button, self.save_button, self.delete_button):
             row.addWidget(button)
+        row.addWidget(self.changes_button)
         layout.addLayout(row)
         self.note = QLabel()
         self.note.setTextFormat(self.note.textFormat().PlainText)
@@ -180,8 +226,72 @@ class PresetBar(QWidget):
         layout.addWidget(self.note)
         self.presets = ScriptPresets()
         self._problems: List[str] = []
+        # The preset applied (or saved) here last, as it was then: what changed settings differ from.
+        self.applied: Optional[ScriptPreset] = None
+        self._mark = changed_mark()
+        self._marked: set[str] = set()
+        self._marks_soon = QTimer(self)
+        self._marks_soon.setSingleShot(True)
+        self._marks_soon.setInterval(0)
+        self._marks_soon.timeout.connect(self.update_marks)
         self.refresh()
         signals().scriptPresetsChanged.connect(self._changed)
+        if plot.parameter_root is not None:
+            plot.parameter_root.sigTreeStateChanged.connect(self._tree_changed)
+
+    def _tree_changed(self, *_: object) -> None:
+        if self.applied is not None and not sip.isdeleted(self):
+            self._marks_soon.start()
+
+    def set_applied(self, preset: Optional[ScriptPreset]) -> None:
+        self.applied = preset
+        self.update_marks()
+
+    def _compared(self) -> List[ParameterSpec]:
+        plot = self.plot
+        return [*plot.script.parameters(plot.action), *backend_specs(plot.script.backends(plot.action))]
+
+    def changes(self) -> List[tuple[ParameterSpec, object]]:
+        """The settings that differ from the preset applied: (spec, the preset's value). Settings the
+        preset doesn't hold (or holds a value that didn't fit) aren't compared: its note named them."""
+        preset, root = self.applied, self.plot.parameter_root
+        if preset is None or root is None:
+            return []
+        saved = {**preset.values, **({BACKEND: preset.backend} if preset.backend else {})}
+        found = []
+        for spec in self._compared():
+            if spec.name not in saved:
+                continue
+            wanted = saved[spec.name]
+            if wanted != parameter_of(root, spec).value() and spec.coerce(wanted) == wanted:
+                found.append((spec, wanted))
+        return found
+
+    def update_marks(self) -> None:
+        """A dot beside each setting changed from the preset applied, and the Save changes button."""
+        root = self.plot.parameter_root
+        if root is None or sip.isdeleted(self):
+            return
+        changed = {spec.name: (spec, wanted) for spec, wanted in self.changes()}
+        name = self.applied.name if self.applied is not None else ""
+        for spec in self._compared():
+            if spec.name not in changed and spec.name not in self._marked:
+                continue
+            tip = ""
+            if spec.name in changed:
+                shown = spec.text(changed[spec.name][1])[len(spec.title) + 1:]
+                tip = f"Changed from preset “{name}”, which has {shown}"
+            for item in list(parameter_of(root, spec).items.keys()):
+                item.setIcon(0, self._mark if tip else QIcon())
+                item.setToolTip(0, tip)
+        self._marked = set(changed)
+        count = len(changed)
+        self.changes_button.setVisible(bool(count))
+        if count:
+            self.changes_button.setText(f"Save {count:,} change{'' if count == 1 else 's'}")
+            self.changes_button.setToolTip(f"Settings changed from preset “{name}”: "
+                                           + ", ".join(spec.title for spec, _ in changed.values()))
+            self.save_to_action.setText(f"Save to preset “{name}”")
 
     def refresh(self) -> None:
         """List the script's presets again (keeping the one chosen, if still there)."""
@@ -211,6 +321,8 @@ class PresetBar(QWidget):
         self.delete_button.setEnabled(bool(names))
         if problems and not self.note.isVisible():
             self._show_problems()
+        if self.applied is not None and not self.presets.error and self.applied.name not in self.presets.presets:
+            self.set_applied(None)  # Deleted (by another plot of the script): nothing to compare with.
 
     def _show_problems(self) -> None:
         """The saved presets that can't be read (or nothing)."""
@@ -238,12 +350,25 @@ class PresetBar(QWidget):
         self.note.setStyleSheet(f"color: {AMBER};" if amber else "")
         self.note.setVisible(bool(text))
 
+    def save_to_applied(self) -> None:
+        """Save to preset “<name>”: the preset applied takes these settings (asks first)."""
+        if self.applied is None:
+            return
+        name = self.applied.name
+        if not self.confirm(self, "Save to preset?", f"Replace the settings of preset “{name}” of {self.plot.name} "
+                            "with these? Every plot of it gets them the next time it applies it.", "Save to preset"):
+            return
+        self._save_as(name, ask=False)
+
     def save(self) -> None:
         plot = self.plot
         name = self.ask_name(self, "Save preset", f"Save these settings of {plot.name} as:",
                              self.combo.currentText())
-        if not name:
-            return
+        if name:
+            self._save_as(name)
+
+    def _save_as(self, name: str, ask: bool = True) -> None:
+        plot = self.plot
         presets = read_script_presets(self.ref)
         if presets.error:
             if not self.confirm(self, "Replace unreadable presets?",
@@ -251,7 +376,7 @@ class PresetBar(QWidget):
                                 "replaces them (what was there is in HeLab's log).", "Replace them"):
                 return
             presets = ScriptPresets()
-        elif name in presets.presets or name in presets.unreadable:
+        elif ask and (name in presets.presets or name in presets.unreadable):
             if not self.confirm(self, "Replace preset?", f"A preset “{name}” of {plot.name} exists. Replace it?",
                                 "Replace"):
                 return
@@ -264,6 +389,7 @@ class PresetBar(QWidget):
         write_script_presets(self.ref, text)
         plot.preset_from = (name, preset.saved_at)
         self.combo.setCurrentText(name)
+        self.set_applied(preset)
         self._show(f"Saved preset “{name}”", f"Every plot of {self.ref.label()} lists it", amber=False)
 
     def apply(self) -> None:
@@ -278,6 +404,7 @@ class PresetBar(QWidget):
             return
         self.plot.apply_saved(preset, "left as they were")
         self.plot.preset_from = (name, preset.saved_at)
+        self.set_applied(preset)
 
     def delete(self) -> None:
         name = self.combo.currentText()
@@ -289,6 +416,8 @@ class PresetBar(QWidget):
             self.refresh()
             return
         write_script_presets(self.ref, presets.without(name))
+        if self.applied is not None and self.applied.name == name:
+            self.set_applied(None)  # Nothing to compare with any more.
         self._show(f"Deleted preset “{name}”", "", amber=False)
 
 
@@ -383,7 +512,8 @@ class PresetFolder(QObject):
 
 class ArrangementPresets(QObject):
     """The Presets menu's arrangement presets: Save the current folder's arrangement as a preset…,
-    apply one, delete one (asks first). Applying one replaces the open plots, after asking.
+    apply one, delete one (asks first). Applying one with plots open asks first: Replace them, or
+    Add the preset's plots beside them (numbered after them; the open plots stay where they are).
 
     Saving takes the current tab's folder (its data shown, else its selection), whether Live
     watches it, and the open plots of that folder (plots of other folders are left out, and
@@ -398,6 +528,7 @@ class ArrangementPresets(QObject):
         self._given_cache = cache
         self.ask_name: Callable[[Optional[QWidget], str, str, str], Optional[str]] = ask_name
         self.confirm: Callable[[Optional[QWidget], str, str, str], bool] = confirm
+        self.replace_or_add: Callable[[Optional[QWidget], str, str], Optional[str]] = replace_or_add
         self.warn: Callable[[str, str], None] = self._warn
         self.applying: Optional[PresetFolder] = None
 
@@ -487,8 +618,9 @@ class ArrangementPresets(QObject):
         return arrangement
 
     def apply(self, name: str) -> List[AnalysisInstance]:
-        """Apply preset ``name``: the open plots close (after asking), its folder is selected and
-        loaded in the current tab, its plots open in their places, waiting for its data, and Live
+        """Apply preset ``name``: with plots open, asks whether they close (Replace) or stay (Add);
+        its folder is selected and loaded in the current tab, its plots open in their places (with
+        Add, in their tab groups only: the open plots aren't moved), waiting for its data, and Live
         starts once the data shows if the preset says so. The plots opened."""
         try:
             arrangement = read_arrangement(name)
@@ -500,19 +632,26 @@ class ArrangementPresets(QObject):
             self.plots.notice("Presets: open a folder tab first")
             return []
         open_plots = self.scripts.instances()
-        if open_plots and not self.confirm(
+        how = "replace"
+        if open_plots:
+            count = len(open_plots)
+            how = self.replace_or_add(
                 self.parent_widget, "Apply preset?",
-                f"Applying “{name}” closes the {len(open_plots):,} open plot{'' if len(open_plots) == 1 else 's'} "
-                f"and opens {folder_name(arrangement.folder)} with its {len(arrangement.plots):,}.", "Apply"):
-            return []
-        for instance in open_plots:
-            instance.close()
+                f"“{name}” opens {folder_name(arrangement.folder)} with its {len(arrangement.plots):,} plot"
+                f"{'' if len(arrangement.plots) == 1 else 's'}. Replace the {count:,} open plot"
+                f"{'' if count == 1 else 's'}, or Add the preset's beside {'it' if count == 1 else 'them'}?") or ""
+            if not how:
+                return []
+        if how == "replace":
+            for instance in open_plots:
+                instance.close()
         if self.applying is not None and not sip.isdeleted(self.applying):
             self.applying.finish()
         folder = arrangement.folder
         if FolderCache.key(explorer.selected_path_globally) != folder or explorer.view_path != folder:
             explorer.open_to_path(folder)  # As typing its path in the tab's path bar
-        opened, failed = open_arrangement(self.scripts, self.cache(), arrangement, folder=folder)
+        opened, failed = open_arrangement(self.scripts, self.cache(), arrangement, folder=folder,
+                                          layout=how == "replace")
         presets = {plot.script: read_script_presets(plot.script) for plot in arrangement.plots if plot.preset}
         for instance, saved in opened:
             # Its values are the arrangement's own; the script preset they came from may have changed.
@@ -521,9 +660,10 @@ class ArrangementPresets(QObject):
             if note and instance.presets is not None and check is not None:
                 instance.presets.set_note(f"Preset “{name}”", dataclasses.replace(check, notes=(*check.notes, note)),
                                           "at the script's defaults", quiet=True)
-        failed += [f"a plot ({why})" for why in arrangement.unreadable]
-        if failed:
-            self.plots.notice(f"Preset “{name}”: not opened: {'; '.join(failed)}")
+        missing = [f"{saved.script.label()} ({why})" for saved, why in failed]
+        missing += [f"a plot ({why})" for why in arrangement.unreadable]
+        if missing:
+            self.plots.notice(f"Preset “{name}”: not opened: {'; '.join(missing)}")
         # Loaded as a deliberate selection, and Live once its data shows (``PresetFolder``).
         self.applying = PresetFolder(explorer, folder, name, arrangement.live, self.plots.notice)
         return [instance for instance, _ in opened]
