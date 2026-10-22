@@ -20,8 +20,6 @@ charset-normalizer==3.5.2
     # via requests
 click==8.5.0
     # via flask
-cloudpickle==3.1.2
-    # via joblib
 colorama==0.4.6
     # via
     #   pyqtgraph
@@ -58,8 +56,6 @@ janus==2.0.0
     # via dash
 jinja2==3.1.6
     # via flask
-joblib==1.6.0
-    # via -r requirements.txt
 kiwisolver==1.5.1
     # via matplotlib
 librt==0.16.0 ; platform_python_implementation != 'PyPy'

@@ -6,7 +6,7 @@ from typing import Any, TYPE_CHECKING
 
 from helab.io_ops import metadata, stores
 from helab.io_ops.events import DatasetFlags, ScanStatusEvent, SubtreeSavedEvent
-from helab.io_ops.fingerprints import _saved_fingerprint, _settled
+from helab.io_ops.fingerprints import _clock_ahead, _saved_fingerprint, _settled
 from helab.io_ops.infra import Emit, Heartbeat, _entry_stat, _is_dir, _scandir, emit
 from helab.io_ops.markers import _marker_temporary
 from helab.io_ops.metadata import _dataset_flags, _saved_folders, _send_guard
@@ -198,6 +198,7 @@ def _scan(path: str, send: Emit, store: CacheStore | None, guard: SaveGuard | No
     # Like load(), files that may still be being written are not in the signature,
     # so a scan during acquisition agrees with the data loaded meanwhile.
     settled = _settled(fingerprint)
+    _clock_ahead(path, fingerprint, send)
     # Without a cache nothing is cached; a cache that couldn't be opened is unknown.
     uncached: DatasetFlags = {} if cache_on else {"disk_cached": False, "cache_info": {}}
     report: ScanStatusEvent = {

@@ -7,7 +7,7 @@ from typing import Any, TYPE_CHECKING
 
 from helab.io_ops import fingerprints, infra
 from helab.io_ops.events import RawMtimeField
-from helab.io_ops.fingerprints import _fingerprint_signature, _raw_list, _settled
+from helab.io_ops.fingerprints import _clock_ahead, _fingerprint_signature, _raw_list, _settled
 from helab.io_ops.identity import _folder_identity, _location_identity
 from helab.io_ops.infra import Emit, Heartbeat, Pause, _entry_stat, _is_dir, _read_gate, _scandir, _stat
 from helab.io_ops.loading import _save_failed, _write_dataset
@@ -103,6 +103,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         was = {shot: (size, modified) for shot, size, modified in fingerprint}
         items = [(shot, *listed[shot]) for shot in changed]
         settled = {item[0] for item in _settled(items)}
+        _clock_ahead(path, items, send)
         replaced: dict[int, tuple[int, int, int]] = {}
         reread: list[dict[str, Any]] = []
         times = file_kinds.raw_times(raw_times)

@@ -34,6 +34,7 @@ from typing import Any, Callable, Mapping, Optional, Protocol
 
 LOW_COUNTS = "low_counts"  # a shot below a plot's low-count rule(s), during Live (Shot trends)
 LIVE_ERROR = "live_error"  # Live stopped checking a folder on an error (LiveController._live_halt)
+CLOCK_SKEW = "clock_skew"  # a folder's files dated ahead of this computer's clock (ClockSkewWarning)
 RATE_SECONDS = 60.0  # proposed, for Tony: one desktop notification a minute per kind and folder
 SEEN_LIMIT = 4096
 HISTORY_LIMIT = 256

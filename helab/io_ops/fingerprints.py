@@ -9,7 +9,7 @@ import random
 import time
 from typing import Any, Iterable, TYPE_CHECKING
 
-from helab.io_ops.infra import _entry_stat, _stat
+from helab.io_ops.infra import Emit, _entry_stat, _stat
 from helab.io_ops.stores import _cache_info
 from helab.utils import file_kinds
 
@@ -29,6 +29,26 @@ SETTLE_SECONDS = float(os.environ.get("HELAB_SETTLE_SECONDS", "5"))
 # which a later stat wouldn't see: its mtime isn't kept for the quick check (``_quick_mtime``), as
 # Live's isn't (``live.RACY_SECONDS``). Tests, with no settle age, have no margin either.
 RACY_SECONDS = min(2.0, SETTLE_SECONDS)
+
+
+# A source file's mtime more than this ahead of our clock means the computers' clocks are out of
+# sync (FAT and some shares round mtimes to 2 s, plus jitter): ``_clock_ahead`` says so. Such a file
+# still counts as being written (``_settled``), by Tony's decision (2026-10-22, R-22).
+FUTURE_SECONDS = 2.0
+
+
+def _clock_ahead(path: str, fingerprint: Iterable[tuple[int, int, int]], send: Emit) -> float:
+    """How far the newest of the folder's files is ahead of our clock, in seconds, sent as
+    ``clock_skew`` (with its share or volume, the app's once-per-location key) when that is over
+    FUTURE_SECONDS; else 0."""
+    from helab.io_ops.identity import _mount_source
+    newest = max((item[2] for item in fingerprint), default=None)
+    ahead = 0.0 if newest is None else newest / 1e9 - time.time()
+    if ahead <= FUTURE_SECONDS:
+        return 0.0
+    mount = _mount_source(path, "clock skew: location")
+    send({"kind": "clock_skew", "path": path, "seconds": ahead, "location": mount[0] if mount else path})
+    return ahead
 
 
 def _quick_mtime(folder: os.stat_result, listed_at: float) -> int | None:

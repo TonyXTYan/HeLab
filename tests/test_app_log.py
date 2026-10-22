@@ -3,6 +3,7 @@ writes only its own temporary folder, never the app folder."""
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 import sys
 import threading
@@ -94,13 +95,14 @@ def test_the_log_file_keeps_tracebacks_and_rotates(tmp_path: Path, monkeypatch: 
         except ValueError:
             logging.exception("Unhandled exception")
         handler.flush()
-        log = tmp_path / "logs" / "helab.log"
+        log = tmp_path / "logs" / f"helab-{os.getpid()}.log"
         assert "Traceback" in log.read_text(encoding="utf-8") and "ValueError: no such shot" in log.read_text(
             encoding="utf-8")
         for index in range(200):
             logging.info(f"line {index} " + "x" * 40)
         names = sorted(path.name for path in (tmp_path / "logs").iterdir())
-        assert names == ["helab.log", "helab.log.1", "helab.log.2", "helab.log.3", "helab.log.4"]
+        own = f"helab-{os.getpid()}.log"
+        assert names == [own, *(f"{own}.{index}" for index in range(1, 5))]
     finally:
         root.removeHandler(handler)
         handler.close()
@@ -111,3 +113,27 @@ def test_no_log_file_where_it_cant_be_written(tmp_path: Path, caplog: pytest.Log
     with caplog.at_level(logging.WARNING):
         assert app_log.start_log_file(str(tmp_path)) is None
     assert "No log file" in caplog.text
+
+
+def test_each_helab_writes_its_own_log_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two HeLabs at once never share a file (a Windows rollover in one would lose the other's lines):
+    each writes helab-<its process ID>.log, rotated on its own."""
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "level", logging.INFO)
+    handlers = []
+    try:
+        for pid in (101, 202):
+            monkeypatch.setattr(os, "getpid", lambda pid=pid: pid)
+            handler = app_log.start_log_file(str(tmp_path))
+            assert handler is not None
+            handlers.append(handler)
+            logging.info(f"from {pid}")
+            root.removeHandler(handler)  # (One instance's handler at a time, as in two processes.)
+            handler.flush()
+        assert sorted(path.name for path in (tmp_path / "logs").iterdir()) == ["helab-101.log", "helab-202.log"]
+        assert "from 101" in (tmp_path / "logs" / "helab-101.log").read_text(encoding="utf-8")
+        assert "from 202" not in (tmp_path / "logs" / "helab-101.log").read_text(encoding="utf-8")
+    finally:
+        for handler in handlers:
+            root.removeHandler(handler)
+            handler.close()

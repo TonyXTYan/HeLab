@@ -9,7 +9,7 @@ from typing import Any, TYPE_CHECKING
 
 from helab.io_ops import fingerprints, infra
 from helab.io_ops.events import DiskCachedField, PendingSaveEvent, RawMtimeField
-from helab.io_ops.fingerprints import (DEFAULT_CHECK_LEVEL, _as_of, _cached_signature,
+from helab.io_ops.fingerprints import (DEFAULT_CHECK_LEVEL, _as_of, _cached_signature, _clock_ahead,
                                        _fingerprint_signature, _mtime_unchanged, _quick_mtime, _raw_list,
                                        _samples_unchanged, _saved_fingerprint, _saved_raw_times, _settled,
                                        _touch)
@@ -332,6 +332,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # Files another computer may still be writing are left out entirely (not in
     # the fingerprint), so the next load sees them as new and reads them whole.
     young = {item[0] for item in fingerprint} - {item[0] for item in _settled(fingerprint)}
+    _clock_ahead(path, fingerprint, send)  # (Dated in the future: still being written, and the app warns.)
     if young:
         files = [item for item in files if item[0] not in young]
         fingerprint = [item for item in fingerprint if item[0] not in young]

@@ -41,13 +41,22 @@ def _folder_identity(path: str, root: str | None = None, reason: str = "live: id
     return _location_identity(path, reason), ""
 
 
-def _location_identity(path: str, reason: str) -> str:
-    """Where ``path`` is, from the mount table alone (no source I/O): its SMB share's server and share,
-    or its local mount's device, and the path below it."""
+def _mount_source(path: str, reason: str) -> tuple[str, str] | None:
+    """The mount holding ``path``, from the mount table alone (no source I/O): its SMB share's server
+    and share, or its local mount's device; and the mount's path. None if no mount holds it."""
     from helab.utils.cache_paths import _inside, _normal, _smb_source
     mounts = [mount for mount in _mounts(reason) if _inside(_normal(path), _normal(mount.path))]
     if not mounts:
-        return "location:" + path
+        return None
     mount = max(mounts, key=lambda item: len(_normal(item.path)))
-    source = _smb_source(mount.source, mount.fstype) or f"{mount.fstype}:{mount.source}"
-    return f"location:{source}|{path[len(mount.path):]}"
+    return _smb_source(mount.source, mount.fstype) or f"{mount.fstype}:{mount.source}", mount.path
+
+
+def _location_identity(path: str, reason: str) -> str:
+    """Where ``path`` is, from the mount table alone (no source I/O): its SMB share's server and share,
+    or its local mount's device, and the path below it."""
+    found = _mount_source(path, reason)
+    if found is None:
+        return "location:" + path
+    source, mount = found
+    return f"location:{source}|{path[len(mount):]}"

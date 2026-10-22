@@ -94,3 +94,14 @@ Full checks after each item: no RERUN in any full run, except two runs before th
 `test_helper_dispatch.py::test_the_routing_table_covers_every_handler_and_named_operation`, each
 rerun 5 times and failed: real failures from my test's `markers.os` patch and the routing table
 lacking `marker_save`, fixed before the commit). Final: see the handoff.
+
+### Tony's later decisions (2026-10-22, through CoCo), and R-12 and R-20 at CoCo's word
+
+| ID | Commit | What was done | Test (fails before) |
+|---|---|---|---|
+| R-22 | `cdc255f`, `bf05b59` | Settle rule kept. `fingerprints._clock_ahead` sends a typed `clock_skew` (path, seconds, location: the mount's source from the mount table, else the folder) when the newest file is more than `FUTURE_SECONDS` = 2 s ahead, beside every `_settled` call (load, scan, both Live spots, Live save). Live's `_stop_if_ahead` raises, so Live's error stop applies. `FolderCache.clockSkew` once per location per session; `ClockSkewWarning` (non-modal, events hub `CLOCK_SKEW`). | `tests/test_clock_skew.py` (threshold, loads/scans/saves, once per location, the window), `tests/test_live.py` (Live stop, Retry stops again, one warning) |
+| R-11 | `752c638` | `<app folder>/logs/helab-<pid>.log`, rotated per file; nothing deletes old files (a rule proposed in the handoff). | `tests/test_app_log.py` (pid in the names; two instances, two files) |
+| R-12 | `4c9f2a8` | `HeLab.spec` `datas` bundles `ai-icon.icns` to `helab/resources`. Local macOS build: the icon in both outputs. | `tests/test_spec_datas.py` |
+| R-20 | `ccce741` | joblib out of `requirements.txt` and `setup.py`; lock refreshed without `--upgrade` (drops joblib and cloudpickle only). Suite run with both uninstalled. | — (the suite without the package) |
+
+Full checks after each: no RERUN. Final local run at `ccce741`: see the handoff.

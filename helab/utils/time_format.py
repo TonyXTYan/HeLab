@@ -13,6 +13,20 @@ def duration(seconds: float) -> str:
     return f"{elapsed} s" if elapsed < 60 else f"{elapsed // 60} min {elapsed % 60} s"
 
 
+def span(seconds: float) -> str:
+    """A length of time to the nearest second, its two largest units: ``4 s``, ``2 min 5 s``,
+    ``1 h 3 min``, ``2 d 5 h``."""
+    total = max(0, round(seconds))
+    days, rest = divmod(total, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes, secs = divmod(rest, 60)
+    if days:
+        return f"{days} d {hours} h"
+    if hours:
+        return f"{hours} h {minutes} min"
+    return f"{minutes} min {secs} s" if minutes else f"{secs} s"
+
+
 def clock(seconds: float) -> str:
     """Stopwatch label: ``0:42``, ``12:05``, ``1:02:03``."""
     total = max(0, int(seconds))
