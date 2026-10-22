@@ -163,3 +163,13 @@ full workspace file left open.
 - New tests: `tests/test_presets_record.py` (29), `tests/test_presets_plots.py` (25),
   `tests/test_presets_window.py` (3, the real main window: record at quit and reopen; menu; a Live
   preset in a real tab on an empty folder starts Live only after the listing).
+
+## CI (run 39745015514 on `a74fd07`, all required jobs green)
+
+- ubuntu py3.13 Tests: 2529 passed, 4 skipped, 2 xfailed, no RERUN. macOS py3.13 Tests: 2531 passed,
+  2 skipped, 2 xfailed, no RERUN. Builds green on all three.
+- **Windows py3.13 Tests: 2511 passed, 18 skipped, 2 xfailed, 3 RERUN**, all
+  `tests/test_cache_first.py::test_a_folder_changed_within_its_mtime_tick_is_listed[cached]`
+  (`tests\test_cache_first.py:841: assert 1792656510000000000 is None`, the same each time): already
+  listed in `roadmaps/known-issues.md` (line 47); untouched by this branch (no I/O or cache code
+  changed). This section is committed locally after the push (not pushed, to save a CI run).
