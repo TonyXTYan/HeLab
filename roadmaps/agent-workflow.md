@@ -62,18 +62,21 @@ hook, landing): [.ai/maestri-setup.md](../.ai/maestri-setup.md).
      wired to the ground checkout by absolute paths: its `bin/` scripts start
      with ground's `venv.nosync/bin/python3.13`, `activate` sets ground's
      `VIRTUAL_ENV`, and its editable install points at ground's `helab/`. It is
-     usable with two guards: pytest must import the floor's code (proposed:
-     `pythonpath = .` in a pytest config, so `pytest` and `python -m pytest`
-     both test the checkout they run in; helpers already follow the GUI's
-     checkout via `PYTHONPATH`), and the app runs as `python -m helab`, not
-     the `helab` entry point. A branch that changes dependencies
+     usable with two guards: pytest must import the floor's code (**done**
+     2026-10-22, `agent/ci-robustness-2` `50fa36b`: `pytest.ini` sets
+     `pythonpath = .`, so `pytest` and `python -m pytest` both test the
+     checkout they run in; helpers already follow the GUI's checkout via
+     `PYTHONPATH`), and the app runs as `python -m helab`, not the `helab`
+     entry point. A branch that changes dependencies
      (`requirements.txt` and its refreshed `requirements.lock`) gets a fresh
      venv instead (`uv venv --seed --python 3.13 venv && uv pip install
      -r requirements.lock -e .`, 16 s measured 2026-10-15 with uv's cache), so
      it never installs into ground's venv.
    - **Profile**: a private settings/app/cache folder for the floor (below).
    - **Stale bytecode**: delete the copied `__pycache__` folders, which carry Ground's
-     paths into tracebacks (Live L3 notes, 2026-10-19).
+     paths into tracebacks (Live L3 notes, 2026-10-19; seen again on the CI Robustness
+     floor, a traceback naming `../../../HeLab/tests/…`, 2026-10-22). A setup hook step
+     does it ([setup](../.ai/maestri-setup.md#4-floor-setup-hook)).
    - **Tests**: own `--basetemp`, and about `-n 4` per worker when several run.
    - CodeGraph: initialise `.codegraph/` in the floor if the worker uses it.
 4. The worker commits as it goes; when done it writes its handoff, pushes its
@@ -112,7 +115,14 @@ enforces it.
 table, for example `helab/utils/settings_defaults.py`, with the key, type,
 default and a short description). It is the starting point for every new
 profile, and it serves the release too: **Restore default** actions and
-tooltips showing the default value all read it.
+tooltips showing the default value all read it. **Done** 2026-10-22
+(`agent/ci-robustness-2` `0f4df65`): `helab/utils/settings_defaults.py` and
+`read_setting`, which every settings read goes through
+(`tests/test_settings_defaults.py`). Left: Restore default per setting and
+default-value tooltips (each editor needs its key; path rows show
+`default_app_dir(kind)`, and `dir_caches` goes through a cache move; tooltips
+need display text per row:
+[what they need](../.ai/sessions/2026-10-22-claude-ci-robustness-2/handoff.md#restore-default-and-default-tooltips-not-done-what-theyd-need)).
 
 **Profiles.** One resolved at startup, before any settings, cache or Dash
 import (including the frozen helper entry), gives the settings file and the

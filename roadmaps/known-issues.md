@@ -33,32 +33,80 @@ How to use it:
 - [ ] `roots_verify` is missing from `io_helper.CACHE_ONLY`, though `IOService.CACHE_OPERATIONS`
   lists it: sent without a cache it would fail with a vague `KeyError`. `FolderCache` always
   sends one, so it can't happen today (2026-10-21).
+- [ ] A server clock more than `SETTLE_SECONDS` (5 s) ahead of this PC's holds every new shot
+  back as still being written for the whole skew, in loads, scans, Live and saves; a folder whose
+  shots are all that young fails with "TXY files are still being written — Retry" (R-22,
+  [review](../.ai/sessions/2026-10-22-claude-codebase-review/handoff.md)) (2026-10-22). Decided (Tony, 2026-10-22): the rule stays, a file with a future
+  mtime is still being written. A clock-out-of-sync popup that stops Live is in progress on
+  `agent/codebase-review`.
+- [ ] Two HeLabs share `<app folder>/logs/helab.log`: past 2 MB, on Windows the instance that
+  loses the rollover drops its records (a traceback to stderr for each); on macOS/Linux the other
+  keeps writing into `helab.log.1` (R-11) (2026-10-22). Tony chose per-instance names
+  (`helab-<pid>.log`, 2026-10-22): in progress on `agent/codebase-review`.
+- [ ] With a server clock more than 2 s off ours, a change in the same mtime step right after a
+  listing (FAT and some shares keep 2 s) isn't seen by the quick check until the folder's next
+  change (the next shot) or a Retry / Refresh (R-1's residual, agreed with the reviewer)
+  (2026-10-22).
+- [ ] The packaged app lacks `helab/resources/ai-icon.icns` (`HeLab.spec`'s `datas` lists only
+  `menu-right.svg`), so it logs "Icon file not found" (the bundle has its own icon) (R-12)
+  (2026-10-22). In progress on `agent/codebase-review`.
+- [ ] joblib is in `requirements.txt` with no importer left in `helab/` (R-20, `a1b75b2`)
+  (2026-10-22). In progress on `agent/codebase-review`.
 
 ## Tests and CI
 
-- [ ] `test_gui_responsiveness.py::test_output_close_failure_cannot_leave_dead_helper_in_active_queue`
-  needed one rerun on the RSPE Windows PC on three branches (2026-10-19).
-- [ ] `tests/test_cache_tab.py::test_saves_restored_from_the_store_ask_with_its_numbers`
-  fails when `tests/test_io_trace.py::test_a_live_save_keeps_dont_cache_and_the_budget`
-  ran earlier on the same xdist worker: a pending save left in the shared test
-  store ([register](../.ai/sessions/2026-10-20-claude-dld-coordinator/register.md)) (2026-10-20).
-- [ ] Main-window tests resolve the default data path, which is
-  `/Volumes/dld_output` when it is mounted: tests should never touch the real
-  volume (2026-10-19).
-- [ ] `test_window_resize.py::test_label_keeps_painting_after_resize[repeated]` and `[single]`
-  rerun on macOS and Ubuntu CI: 12 jobs on `dev/v0.0.6`, 3 on agent branches
-  ([CI survey](../.ai/sessions/2026-10-21-claude-ci-robustness/notes.md)) (2026-10-21).
-- [ ] `test_live_plots.py::…[Matplotlib-TransferFractions]` crashed an xdist worker (a
-  segfault) 7 times on `dev/v0.0.6` CI, macOS and Windows, never on the agent branches
-  (2026-10-21).
 - [ ] `test_plot_settings_panel.py::test_activation_sources` reran once on macOS CI; it didn't
-  fail in 60 local runs under load (2026-10-21).
-- [ ] `test_dash_server.py::test_stop_frees_the_port` reruns: when suites run at once on one
-  machine (port 8050 contention), and 3 times in one Ubuntu CI job on its own (`c127469`), so
-  contention isn't the whole cause; the port may not be free at once after the server stops
-  (2026-10-21).
+  fail in 60 local runs under load (2026-10-21). The Windows rerun was the web-view crash
+  (fixed, below); the macOS rerun (`f9faefd`) was a teardown failure, cause unknown, and 160 local
+  runs passed. CI now prints rerun reasons: read them at its next rerun (2026-10-22).
 
 ## Fixed
+
+Landed in `dev/v0.0.6` from the Codebase Review floor (merge `0ee6ca2`, 2026-10-22); the
+commits are on `agent/codebase-review` ([handoff](../.ai/sessions/2026-10-22-claude-codebase-review/handoff.md)):
+
+- [x] The quick check of cached or RAM-held data compared the share's clock with this PC's, so a
+  share whose clock is behind hid new shots until Retry / Refresh; it now compares the folder's
+  own mtime from its last listing (`info["folder_mtime_ns"]`) (R-1, `4468eaf`).
+- [x] A Live save's data dump ran under the no-progress timer, so a large dataset on a slow disk
+  timed out before its helper started (R-2, `265f35e`).
+- [x] The frozen build's response reader could miss a helper's last lines (R-3, `6299fdd`).
+- [x] Roots-table reads raised raw SQLite errors and failed a listing (R-4, `af632a3`).
+- [x] A store that couldn't be opened was reported as "Mount information is unavailable"; it now
+  says "Disk cache could not be opened: …" once (R-5, `2447a66`).
+- [x] A pending root location stayed pending after its duplicate was forgotten (R-6, `d586f9d`).
+- [x] A status check or details scan finding a folder's signature changed cancelled its running
+  load, Live check and cached read ("Cancelled — Retry", Live halted) (R-7, `2559c77`).
+- [x] A crashing helper left no cause in the log; its stderr's last 2 KB are logged now (R-8,
+  `34bcb78`).
+- [x] An unhandled exception (in a slot or a model's `data()`) ended HeLab, with no log file for
+  the packaged app; source timestamps were unguarded (R-11, `e4d3f2d`, `1efcb87`).
+- [x] The window icon was looked up from the launch folder (R-12, `fbb072f`; the packaged app's
+  copy is open, above).
+- [x] The manual marker's Save to folder… wrote on the GUI thread (R-16, `c4cf63c`).
+- [x] A script hook that raised when its plot opened ended HeLab (R-17, `c530e7f`).
+- [x] `tests/test_settings_defaults.py` failed 3 tests run in one process after
+  `test_settingsDialog.py`: QtWebEngineWidgets must be imported before the QApplication
+  (`22ee3fb`).
+
+Landed in `dev/v0.0.6` from the CI Robustness floor (merges `51c0ee2`, `23e922f`, 2026-10-22);
+the commits are on `agent/ci-robustness-2` ([handoff](../.ai/sessions/2026-10-22-claude-ci-robustness-2/handoff.md)):
+
+- [x] `test_live_plots.py::…[Matplotlib-TransferFractions]` worker crash: a QWebEngineView left
+  to `deleteLater()` was deleted in a later test or at exit. Fixed in that file by `e492409`
+  (no crash in 33 CI jobs since, 9 before); every test is protected now: deferred deletes after
+  each test, also when teardown raises, and a test leaving a web view fails (`f9d4a88`, `2fc4dee`,
+  `5e696aa`).
+- [x] `test_cache_tab.py::test_saves_restored_from_the_store_ask_with_its_numbers` after the
+  io-trace test: one store per worker; now a store per test (`c21d5b8`).
+- [x] Main-window tests and the default data path: patched in conftest since `d2833f1`; now a
+  test guards it (`c21d5b8`).
+- [x] `test_window_resize.py::test_label_keeps_painting_after_resize`: a paint still pending for
+  the last tick came first (`ebdc33f`).
+- [x] `test_dash_server.py::test_stop_frees_the_port`: TIME_WAIT after the server closed
+  connections, and a probe without SO_REUSEADDR; it uses a port of its own (`45e5b14`).
+- [x] `test_gui_responsiveness.py::test_output_close_failure_cannot_leave_dead_helper_in_active_queue`:
+  the log came after the exit it waited for (`c472031`; shown with a delayed call, not on RSPE).
 
 Landed in `dev/v0.0.6` with TonyXTYan/HeLab#7 (squash `17f7bcb`, 2026-10-21); the commits named
 are on its branch, `agent/ci-robustness`, unless said

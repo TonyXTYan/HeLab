@@ -245,14 +245,15 @@ Right-click the floor button (bottom right, next to the minimap) →
 below as its own entry, in this order, so each can be switched on or off.
 Maestri provides `$MAESTRI_FLOOR_PATH`, `$MAESTRI_ROOT_PATH`,
 `$MAESTRI_BRANCH_NAME`, `$MAESTRI_FLOOR_NAME` and `$MAESTRI_PROJECT_NAME`.
-Every command starts from the floor's folder itself and the venv ones refuse
-to run on Ground, so none relies on an earlier one's working directory.
+Every command starts from the floor's folder itself and the venv and bytecode
+ones refuse to run on Ground, so none relies on an earlier one's working directory.
 
 **Python.** The cloned venv has the right packages but is wired to Ground by
 absolute paths (script shebangs, `activate`, and the editable install of
-`helab`), so a bare `pytest` on a floor can import **Ground's** code. Until the
-pytest `pythonpath` guard lands, give each floor a fresh venv (about 16 s with
-uv's cache). Keep 1 and 2 both on or both off.
+`helab`). `pytest.ini` (`pythonpath = .`, 2026-10-22) now makes pytest test the
+floor's checkout whatever the venv, but the `helab` entry point and anything
+else that imports `helab` would still get **Ground's** code, so give each floor
+a fresh venv (about 16 s with uv's cache). Keep 1 and 2 both on or both off.
 
 1. Fresh venv:
 
@@ -289,10 +290,23 @@ isolated, see below). Command 3 starts `.ai/local/floor-env.sh` afresh; 4 and
    echo "export HELAB_DIR_TEMPS_OVERRIDE=\"$HOME/Library/Caches/HeLab/floors/$MAESTRI_FLOOR_NAME/temps\"" >> "$MAESTRI_FLOOR_PATH/.ai/local/floor-env.sh"
    ```
 
+**Stale bytecode.** The clone copies Ground's `__pycache__` folders, which
+carry Ground's paths into tracebacks (seen on the CI Robustness floor: a
+traceback naming `../../../HeLab/tests/…`). Delete them outside `venv/` and
+`legacy/`:
+
+6. Bytecode:
+
+   ```bash
+   cd "$MAESTRI_FLOOR_PATH" && [ "$MAESTRI_FLOOR_PATH" != "$MAESTRI_ROOT_PATH" ] && find . \( -path ./venv -o -path ./venv.nosync -o -path ./legacy -o -path ./.git \) -prune -o -type d -name __pycache__ -prune -exec rm -rf {} +
+   ```
+
+   Added 2026-10-22, checked on a scratch tree only, not yet on a floor **(check)**.
+
 **Optional**, added but switched off; switch it on when a task needs the
 legacy MATLAB converter (submodule folders start empty on a floor):
 
-6. Submodules:
+7. Submodules:
 
    ```bash
    cd "$MAESTRI_FLOOR_PATH" && git submodule update --init --recursive
@@ -432,7 +446,7 @@ free memory. Remove the branch on GitHub too once it's merged.
 
 ## Not yet in place
 
-- Settings profiles (`HELAB_SETTINGS_OVERRIDE`, share/isolated per checkout,
-  hard-coded defaults): until then, no GUI runs from floors.
-- The pytest `pythonpath` guard: until then, fresh venv per floor (above).
+- Settings profiles (`HELAB_SETTINGS_OVERRIDE`, share/isolated per checkout;
+  the hard-coded defaults table landed 2026-10-22): until then, no GUI runs
+  from floors.
 - The floor review items marked **(check)**.

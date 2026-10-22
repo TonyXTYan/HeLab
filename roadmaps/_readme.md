@@ -30,6 +30,9 @@ still to choose (Tony, with the coordinator's proposal).
   Restore default and tooltips in the release) and per-checkout share/isolated
   profiles, with `HELAB_SETTINGS_OVERRIDE` ([plan](agent-workflow.md)) (2026-10-15).
   The settings factory (`app_settings()`) landed in TonyXTYan/HeLab#7 (2026-10-21).
+  Floors piloted; the pytest `pythonpath` guard (`50fa36b`) and the settings-defaults
+  table with `read_setting` (`0f4df65`) landed from `agent/ci-robustness-2` (merge
+  `51c0ee2`, 2026-10-22). Left: Restore default and default tooltips, the profiles.
 
 - [ ] Native checks for v0.0.5a1 on macOS and a Windows lab PC: data roots,
   cache first and remounts on `/Volumes/dld_output`, the packaged app and the
@@ -113,7 +116,8 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
   unsure" and "moved", clipped manual windows, typed values kept across reruns,
   From-shot wording, counts checked against a Python `fraction_calc`); a
   Reference spacing (15 ms) guides auto's spacing, so a bump 5 ms from order 0
-  no longer gives 5 ms (2026-10-20). Left:
+  no longer gives 5 ms (2026-10-20); the DLD port's Transfer fractions uses the same
+  detection and Reference spacing (R-19, `f7d06e6`…`6fac7df`, merge `0ee6ca2`, 2026-10-22). Left:
   detection on real Bragg/magnetic data (MANUAL_TODO); a hot spot near the XY
   box's edge without MATLAB's `dld_xy_rot` (to investigate; new detector since);
   draggable windows on the T histogram; the averaged-vs-detuning view (Tony,
