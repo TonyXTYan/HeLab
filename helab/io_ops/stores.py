@@ -101,7 +101,7 @@ def _cache_store(root: str, source_paths: list[str] | None = None,
     A source path on another hinted mount raises ``VolumeUnverified``.
     """
     from helab.utils.cache_paths import CachePaths, UnresolvedRemotePath, _inside, _normal
-    from helab.utils.cache_store import CacheStore, StoreError
+    from helab.utils.cache_store import OPEN_FAILED, CacheStore, StoreError
     from helab.utils.data_roots import (DataRoots, LocalVolumes, NoDataRoot, RootLocation, VolumeUnverified,
                                         current_local_volumes, fixed_mount)
     store: CacheStore | None = None
@@ -109,7 +109,10 @@ def _cache_store(root: str, source_paths: list[str] | None = None,
     try:
         mounts = _mounts("disk cache keys")
         paths = CachePaths(mounts)
-        store = CacheStore(root, root_mode=True)
+        try:
+            store = CacheStore(root, root_mode=True)
+        except OSError as exc:  # Its folder can't be made (the store's own errors are StoreErrors).
+            raise StoreError(f"{OPEN_FAILED}: {exc}") from exc
         if local_lane:
             known = {(path, source): identifier for path, source, identifier in store.volume_locations()}
             hinted = [mount for mount in mounts if (mount.path, mount.source) in known]
@@ -137,7 +140,8 @@ def _cache_store(root: str, source_paths: list[str] | None = None,
                     if not any(_inside(_normal(path), _normal(mount)) for mount in held):
                         raise
                     raise VolumeUnverified(path) from None
-    except UnresolvedRemotePath:
+    except (UnresolvedRemotePath, StoreError):
+        # (The store's own errors say what failed: opening it, or reading its roots or volumes.)
         if store is not None:
             store.close()
         raise

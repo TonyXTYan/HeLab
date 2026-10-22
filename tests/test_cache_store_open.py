@@ -134,3 +134,23 @@ def test_the_warning_says_could_not_be_opened_once(
     events: list[Any] = []
     assert stores._store_or_off({"directory": str(tmp_path)}, events.append, str(tmp_path)) == (None, False)
     assert events == [{"kind": "cache_warning", "message": message}]
+
+
+@pytest.mark.parametrize(("error", "message"), [
+    (sqlite3.OperationalError("unable to open database file"),
+     "Disk cache could not be opened: unable to open database file"),
+    (PermissionError("denied"), "Disk cache could not be opened: denied"),
+], ids=["sqlite", "an OS error"])
+@pytest.mark.no_auto_data_root  # (Its seeding would open the store first.)
+def test_a_store_that_cant_be_opened_is_not_reported_as_mount_information(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception, message: str,
+) -> None:
+    """The store's own open error passes through ``_cache_store`` as it is: "Mount information is
+    unavailable" is only for the mount table and volume steps."""
+    def refuse(self: CacheStore, busy_timeout: float) -> sqlite3.Connection:
+        raise error
+    monkeypatch.setattr(CacheStore, "_open", refuse)
+    events: list[Any] = []
+    assert stores._store_or_off({"directory": str(tmp_path / "store")}, events.append, str(tmp_path)) == (
+        None, False)
+    assert events == [{"kind": "cache_warning", "message": message}]
