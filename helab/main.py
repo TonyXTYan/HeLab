@@ -23,8 +23,6 @@ import tempfile
 
 import coloredlogs
 
-# from helab.utils.loggingSetup import setup_logging
-# setup_logging()
 coloredlogs.install(
         level=logging.DEBUG,
         # format='%(asctime)s - %(levelname)s - %(message)s'
@@ -34,17 +32,14 @@ coloredlogs.install(
 
 import platform
 from typing import Any
-import re
-import subprocess
 import sys
-import os
 
-from PyQt6.QtCore import QSettings, Qt, QThreadPool, QTimer
+from PyQt6.QtCore import QSettings, QTimer
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from helab.resources.icons import StatusIcons, ToolIcons, IconsInitUtil
-from helab.utils.constants import *
+from helab.resources.icons import IconsInitUtil
+from helab.utils.constants import APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, app_folder, start_cache_dir
 from helab.utils.settings_store import app_settings
 from helab.views.HelabMainWindow import HelabMainWindow
 
@@ -140,15 +135,7 @@ _INSTANCE_LOCK: list[object] = []
 
 
 def main() -> None:
-    # setup_logging()
     _raise_fd_limit()
-    logging.debug("this is a debugging message")
-    logging.info("this is an informational message")
-    logging.warning("this is a warning message")
-    logging.error("this is an error message")
-    logging.critical("this is a critical message")
-    logging.fatal("this is a fatal message")
-
     logging.info(f"Platform: {sys.platform}, {platform.system()}, {platform.release()}, {platform.version()}, {platform.machine()}, {platform.processor()}")
     logging.info(f"{tempfile.gettempdir() = }")
 
