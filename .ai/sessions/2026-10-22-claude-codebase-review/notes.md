@@ -52,3 +52,16 @@ Batch checks after R-2..R-10 (`f684720`): full suite 2390 passed, 2 skipped, 2 x
 
 Batch checks after `f410ccb`: full suite 2396 passed, 2 skipped, 2 xfailed, **no RERUN**; strict mypy
 (helab, tests) and pyright clean.
+
+Lens reviewed `c530e7f..f410ccb`: all accepted, no changes asked.
+
+### Areas 4 and 5 (numerics, DLD and standard scripts; main, release, utils)
+
+| ID | Outcome | Commit | Notes |
+|---|---|---|---|
+| R-19 | Fixed | `f7d06e6`, follow-up `e4b1712` | The DLD module imports `Orders`, `Detection`, `order_label`, `in_box`, `smooth`, `count_orders`, `unsure`, `chosen_by_search`, `jump` (same default centre) and the detection constants from `orders.py`, and `half_maximum_width`/`refine` from `peaks.py`; its `Fractions` subclasses the shared one to add `masked` (passed by keyword). Kept: its `detect`, `window_half` (ms text), Search T helpers. The follow-up points `tests/test_dld_transfer_fractions.py` at `helab.analysis.orders`: strict mypy refused `tf.Orders`/`tf.jump` (no implicit re-export), which failed `test_typing.py` in the first full run (5 RERUNs of that one test, then failed: a real failure, not flakiness). **For Tony:** should the DLD port also take the Reference spacing (`guided_spacing`), a new setting and a detection change? |
+| R-20 | Fixed | `a1b75b2` | joblib's `MAX_DEPTH` import gone; importing constants no longer loads joblib. Handoff: joblib can leave `requirements.txt` (and the lock) if nothing else needs it. |
+| R-21 | Fixed | `60a8a99`, `a1b75b2`, `89531cc` | The `DEV_POTENTIAL_DATA_PATHS` comma: the fused entry was `'.../bad' + '' = '.../bad'`, so that path was and is guarded; only the meaningless `''` was swallowed; the value is unchanged. New test: each listed entry is non-empty and refused unless inside the temp folder or checkout. Dead names and imports out of `constants.py` (also checked in the star importers), the QSettings import line and read functions untouched. `main.py`: six probe log lines, star import, unused imports and commented setup_logging gone. `synchronised_dict.py` and `logging_setup.py` removed. Left: `QDirIterator` (unused, on the QSettings import line). |
+
+Batch checks after `e4b1712`: full suite (`--basetemp=.ai/temp/pytest-review`) 2408 passed, 2 skipped,
+2 xfailed, **no RERUN**; strict mypy (helab 148 files, tests 106) and pyright clean.
