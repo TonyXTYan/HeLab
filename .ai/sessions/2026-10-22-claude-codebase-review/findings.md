@@ -443,3 +443,9 @@ exercised by the frozen build; the R-6 behaviour change hasn't been tried on a r
 
 **Floors**: `helab/utils/constants.py` (R-20, R-21) and the star imports of `HelabMainWindow.py`
 and `SettingsDialog.py` (R-15) wait for the CI Robustness floor if it is editing those files.
+
+### Correction to R-21 (2026-10-22, after sign-off)
+
+`helab/utils/synchronised_dict.py` is a module Tony decided to keep (CoCo); my "imported nowhere"
+check was right but the decision wasn't mine to overturn. Mend restored it in `b68f6b1`,
+byte-identical to the baseline `fc0f50d`. The rest of R-21 stands.
