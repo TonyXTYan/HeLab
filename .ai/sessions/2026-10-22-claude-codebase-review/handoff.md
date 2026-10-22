@@ -45,7 +45,7 @@ started importing), fixed in `e4b1712`.
 | R-18 Scripts panel leftover state, stale docstrings | quality | Fixed | `324ae2a` |
 | R-19 DLD Transfer fractions duplicates the shared order helpers | quality | Fixed; **one question for Tony** | `f7d06e6`, `e4b1712` |
 | R-20 private joblib import never used | low | Fixed | `a1b75b2` |
-| R-21 dead code, two unused modules, probe log lines, a missing comma | quality | Fixed | `60a8a99`, `a1b75b2`, `89531cc` |
+| R-21 dead code, two unused modules, probe log lines, a missing comma | quality | Fixed, except `synchronised_dict.py`: restored (Tony kept it on 2026-10-21, a vendored MIT thread-safe dict) | `60a8a99`, `a1b75b2`, `89531cc`, restore: next commit |
 
 Notes commits: `2180d56`, `e266925`, `db2cc14`.
 
