@@ -37,6 +37,7 @@ LIVE_INTERVAL_SETTING = "live_check_interval_seconds"
 LIVE_AUTOSAVE_SETTING = "live_autosave_shots"
 PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
 THREAD_STATUS_SETTING = "view_toggle_thread_status"
+LOG_KEEP_SETTING = "log_files_keep"
 
 SETTINGS: tuple[Setting, ...] = (
     Setting(DIR_TEMPS_SETTING, str, "",
@@ -70,6 +71,10 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(PLOT_AUTO_RELOAD_SETTING, bool, True,
             "A plot released to free RAM reloads when it is shown again (Settings → Cache)."),
     Setting(THREAD_STATUS_SETTING, bool, True, "View › Toggle Thread Status Auto Pop-up."),
+    Setting(LOG_KEEP_SETTING, int, 300,
+            "Log files to keep, every session's helab-<pid>.log files and their rotated copies counted; "
+            "at startup the oldest beyond it are deleted, never a running HeLab's, 1 to 100,000 "
+            "(Settings → General)."),
 )
 
 # Keys under a prefix: Settings → Lab parameters saves only the lab constants the user set,

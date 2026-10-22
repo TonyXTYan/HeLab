@@ -40,7 +40,8 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from helab.resources.icons import IconsInitUtil
 from helab.utils import app_log
-from helab.utils.constants import APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, app_folder, start_cache_dir
+from helab.utils.constants import (
+    APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, app_folder, read_log_keep, start_cache_dir)
 from helab.utils.settings_store import app_settings
 from helab.views.HelabMainWindow import HelabMainWindow
 
@@ -169,6 +170,8 @@ def main() -> None:
     main_window = HelabMainWindow()
     app_log.catch_unhandled(main_window.show_status_notice)
     main_window.show()
+    # Registered as a running instance by now, so other HeLabs keep its log file.
+    main_window.old_logs.start(read_log_keep(app_settings()))
     if moved:
         QTimer.singleShot(0, lambda: QMessageBox.information(main_window, "Disk cache", moved))
 
