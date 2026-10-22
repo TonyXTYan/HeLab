@@ -572,3 +572,40 @@ def test_search_t_around_the_wrong_peak_says_what_it_replaced() -> None:
     # No last detection (the default centre): nothing replaced, no line.
     assert not [note for note in fractions(shots_of(transferred(0.9)), around_plus_1).notes
                 if note.startswith("order 0 now")]
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_a_bump_between_the_orders_is_not_taken_for_one(seed: int) -> None:
+    # Orders 15 ms apart with a small bump 5 ms after order 0: the nearest peak would make the
+    # spacing 5 ms (the real +1 then counting as +3); the reference spacing keeps it 15 ms (R-19).
+    rng = np.random.default_rng(seed)
+    shots = {}
+    for shot in range(1, 4):
+        orders = orders_events(rng, {-1: 150, 0: 600, 1: 250}, spacing=0.015)
+        bump = np.column_stack((rng.normal(CENTRE + 0.005, 0.0007, 15), np.zeros((15, 2))))
+        shots[shot] = np.concatenate((orders, bump))
+    data = fractions(view(shots))
+    assert data.orders.centre == pytest.approx(CENTRE, abs=2e-4)
+    assert data.orders.spacing == pytest.approx(0.015, rel=0.02) and data.notes == ()
+
+
+def test_the_reference_spacing_guides_auto_and_shows_in_ms() -> None:
+    from helab.analysis import orders
+    assert getattr(tf, "detect") is orders.detect  # Basic plots v1's guided detection, not a copy.
+    reference = next(spec for spec in tf.PARAMETERS if spec.name == "reference_spacing")
+    assert (reference.default, reference.unit_prefix, reference.when) == (0.015, "m", ("orders_mode", tf.AUTO))
+    data = shots_of({-2: 30, -1: 100, 0: 600, 1: 250, 2: 30})
+    # 12.5 ms orders: within 30 % of the 15 ms default, and of 10 ms.
+    assert fractions(data).orders.spacing == pytest.approx(SPACING, rel=0.02)
+    assert fractions(data, {"reference_spacing": 0.010}).orders.spacing == pytest.approx(SPACING, rel=0.02)
+    # Twice the orders' spacing: ±1 lands on ±2, which says the reference is off by a whole order.
+    doubled = fractions(data, {"reference_spacing": 0.025, "orders_each_side": 1})
+    assert doubled.orders.spacing == pytest.approx(2 * SPACING, rel=0.02)
+    # No peak near any multiple: the spacing as set, and the note names the reference.
+    far = fractions(shots_of(SIDES), {"reference_spacing": 0.04})
+    assert far.orders.spacing == tf.SPACING.default
+    assert far.notes[0].startswith("no side peak found beyond order 0's width (")
+    assert far.notes[0].endswith(" ms) within 30 % of k × the reference spacing (40 ms): spacing as set")
+    script = tf.TransferFractions()
+    _, settings = script.describe_run("Plot", effective(script.parameters("Plot"), {}), data)
+    assert settings == "auto orders ±2 ~15 ms · XY ±30 mm · > 50 counts"
