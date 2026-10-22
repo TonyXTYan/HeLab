@@ -2,6 +2,7 @@
 daemon thread before and after the helper process runs."""
 from __future__ import annotations
 
+from pathlib import Path
 import time
 from typing import Any
 
@@ -35,3 +36,21 @@ def test_writing_held_data_out_counts_as_progress(qtbot: QtBot, monkeypatch: pyt
     service._run(request)
     assert len(idle_at_start) == 1 and idle_at_start[0] < request.timeout
     service.shutdown()
+
+
+def test_the_frozen_reader_reads_lines_written_just_before_the_helper_exited(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The packaged app reads the helper's response file: a ``done`` written between the reader's
+    last read and its check that the helper exited must still be read."""
+    response = tmp_path / "response.jsonl"
+    response.write_text('{"kind": "status"}\n', encoding="utf-8")
+
+    class Exiting:
+        def poll(self) -> int:
+            with response.open("a", encoding="utf-8") as stream:
+                stream.write('{"kind": "done"}\n')
+            return 0
+
+    request = IORequest("tab", 0, "/data", "list", {}, 60.0)
+    monkeypatch.setattr(request, "process", Exiting())
+    assert list(IOService._file_lines(request, str(response))) == ['{"kind": "status"}\n', '{"kind": "done"}\n']

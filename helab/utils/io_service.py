@@ -832,6 +832,9 @@ class IOService(QObject):
                         yield partial
                         partial = ""
                 elif request.process is not None and request.process.poll() is not None:
+                    # It exited: what it wrote after that read and before exiting is still to read.
+                    partial += response.read()
+                    yield from (line for line in partial.splitlines(keepends=True) if line.endswith("\n"))
                     break
                 else:
                     time.sleep(0.01)
