@@ -36,8 +36,8 @@ highlight (on or off) change.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
-from typing import Any, List, Mapping, Optional, cast
+from dataclasses import dataclass
+from typing import Any, List, Mapping, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -52,6 +52,11 @@ from helab.analysis.masks import MASK_SPECS, mask_brief, mask_from, mask_warning
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.plot_axes import grouped_axes
 from helab.analysis.plot_text import add_label, add_plot, line_html, notes_html, set_plot_title
+from helab.analysis.orders import (COARSE_FACTOR, DENSE_SHARE, DENSEST_SHARE, MAX_DETECTION_BINS, MIN_DETECTION_BINS,
+                                   SIDE_PEAK_COUNTS, SIDE_PEAK_FWHMS, SIDE_PEAK_SHARE, Detection, Orders,
+                                   Fractions as OrderFractions,
+                                   chosen_by_search, count_orders, in_box, jump, order_label, smooth, unsure)
+from helab.analysis.peaks import half_maximum_width, refine
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.selection import (SHOT_SPECS, newest_brief, newest_colour, newest_shot, newest_specs, select_shots,
                                       selection_text, shots_brief, shots_text)
@@ -94,107 +99,10 @@ MIN_COUNTS = ParameterSpec("min_counts", "Minimum counts", "int", 50, (0, 10_000
 HIGHLIGHT, NEWEST_COLOUR = newest_specs("T histogram")
 PARAMETERS = (*SHOT_SPECS, MODE, EACH_SIDE, CENTRE, SPACING, HALF_WIDTH, SEARCH_MIN, SEARCH_MAX, XY_HALF,
               MIN_COUNTS, HIGHLIGHT, NEWEST_COLOUR, *MASK_SPECS)
-MAX_DETECTION_BINS = 20_000
-MIN_DETECTION_BINS = 50
-DENSEST_SHARE = 0.1  # the bin width is half the shortest T interval holding this share of the events
-SMOOTHING_BINS = 1.5  # Gaussian sigma
-DENSE_SHARE = 0.99  # with the bins capped, the histogram narrows to the shortest interval holding this share
-COARSE_FACTOR = 4  # bins still this many times wider than wanted are too coarse to tell orders apart
-SIDE_PEAK_SHARE = 0.02  # a side peak's least prominence, as a share of order 0's height …
-SIDE_PEAK_COUNTS = 4.0  # … and in (smoothed) events per bin, against noise in sparse bins
-SIDE_PEAK_FWHMS = 0.5  # how far a side peak must be from order 0, in order 0's full widths
-UNSURE_SHARE = 0.5  # another order with at least this share of order 0's events makes order 0 unsure
-JUMP_SLACK = 0.3  # a centre within this many spacings of a whole number (≥ 1) from the last one has jumped
-
-
 @dataclass(frozen=True)
-class Orders:
-    centre: float
-    spacing: float
-    half_width: float
-    each_side: int
-
-    @property
-    def numbers(self) -> tuple[int, ...]:
-        return tuple(range(-self.each_side, self.each_side + 1))
-
-    def window(self, order: int) -> tuple[float, float]:
-        middle = self.centre + order * self.spacing
-        return middle - self.half_width, middle + self.half_width
-
-
-@dataclass(frozen=True)
-class Detection:
-    centre: float
-    spacing: float | None  # None: no side peak found
-    edges: npt.NDArray[np.float64]
-    counts: npt.NDArray[np.float64]
-    fwhm: float = math.nan  # order 0's full width at half maximum, in the smoothed histogram
-    coarse: bool = False  # the bins were capped at over COARSE_FACTOR times the width wanted
-
-
-@dataclass(frozen=True)
-class Fractions:
-    orders: Orders
-    shots: npt.NDArray[np.int64]  # the shots counted
-    counts: npt.NDArray[np.int64]  # (shots, orders)
-    chosen: int  # shots chosen by Shots
-    total_shots: int
-    auto: bool
-    notes: tuple[str, ...] = ()
-    histogram: tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]] = field(
-        default=(np.empty(0), np.empty(0)))  # (edges, counts) of T around the orders
-    detected: bool = False  # Auto found order 0 in this run's events (it had some to search)
-    minimum: int = 0  # Shots with no more counts than this in the XY box were left out
-    events: int = 0  # events in the chosen shots, before the XY box
-    extent: tuple[float, float] = (math.nan, math.nan)  # T of the events counted, first to last
-    jumped: int = 0  # auto's order 0 is this many orders from the last detection (``jump``)
+class Fractions(OrderFractions):
+    """The shared record (``helab.analysis.orders``), with what the DLD port's Mask took out."""
     masked: int = 0  # events the mask took out of the chosen shots (before the XY box)
-    # The highlighted newest shot (None: off): the newest chosen shot's T (masked, in the XY box)
-    # in the histogram's bins, drawn over it; ``newest_left_out`` when Minimum counts left it out.
-    newest_shot: int | None = None
-    newest: npt.NDArray[np.float64] = field(default_factory=lambda: np.empty(0))
-    newest_left_out: bool = False
-    colour: tuple[int, int, int] = (214, 39, 40)
-
-    @property
-    def fractions(self) -> npt.NDArray[np.float64]:
-        totals = self.counts.sum(axis=1, keepdims=True).astype(np.float64)
-        with np.errstate(invalid="ignore", divide="ignore"):
-            return np.where(totals > 0, self.counts / totals, np.nan)
-
-
-def order_label(order: int) -> str:
-    return f"+{order}" if order > 0 else "0" if order == 0 else f"−{-order}"
-
-
-def in_box(events: npt.NDArray[np.float64], half: float) -> npt.NDArray[np.float64]:
-    if half <= 0:
-        return events
-    return events[(np.abs(events[:, 1]) <= half) & (np.abs(events[:, 2]) <= half)]
-
-
-def smooth(counts: npt.NDArray[np.float64], sigma: float = SMOOTHING_BINS) -> npt.NDArray[np.float64]:
-    radius = int(math.ceil(3 * sigma))
-    kernel = np.exp(-0.5 * (np.arange(-radius, radius + 1) / sigma) ** 2)
-    return cast(npt.NDArray[np.float64], np.convolve(counts, kernel / kernel.sum(), mode="same"))
-
-
-def half_maximum_width(smoothed: npt.NDArray[np.float64], top: int) -> float:
-    """Twice the distance, in bins, from ``top`` to where the histogram first falls to half its
-    height, on the nearer side: a neighbouring order above half the height widens only its own
-    side. At least one bin."""
-    half = float(smoothed[top]) / 2
-    distances = []
-    for direction in (-1, 1):
-        index = top
-        while 0 <= index + direction < len(smoothed) and smoothed[index + direction] > half:
-            index += direction
-        beyond = index + direction
-        if 0 <= beyond < len(smoothed):  # interpolate between the last bin above half and the first below
-            above, below = float(smoothed[index]), float(smoothed[beyond])
-            distances.append(abs(index - top) + (above - half) / (above - below))
-    return 2 * max(min(distances), 0.5) if distances else float(len(smoothed))
 
 
 def detect(times: npt.NDArray[np.float64], lower: float, upper: float, each_side: int) -> Detection:
@@ -239,26 +147,6 @@ def detect(times: npt.NDArray[np.float64], lower: float, upper: float, each_side
     return Detection(centre, spacing, edges, counts.astype(np.float64), fwhm, coarse)
 
 
-def refine(times: npt.NDArray[np.float64], position: float, reach: float) -> float:
-    """The mean time within ``reach`` of ``position``, repeated so that a start off the peak's
-    middle doesn't pull it."""
-    for _ in range(3):
-        near = times[np.abs(times - position) <= reach]
-        position = float(near.mean()) if len(near) else position
-    return position
-
-
-def count_orders(times: npt.NDArray[np.float64], orders: Orders) -> npt.NDArray[np.int64]:
-    """Events per order window, each window half-open [low, high), so windows that touch never
-    share an event."""
-    ordered = np.sort(times)
-    counts = []
-    for order in orders.numbers:
-        low, high = orders.window(order)
-        counts.append(int(np.searchsorted(ordered, high, "left") - np.searchsorted(ordered, low, "left")))
-    return np.array(counts, dtype=np.int64)
-
-
 def window_half(half_width: float, spacing: float) -> tuple[float, str]:
     """The window ± used: as set, half the spacing for 0, and clipped to half the spacing when
     set wider, so neighbouring windows never overlap (each event counts once); with what it says."""
@@ -283,50 +171,6 @@ def search_warnings(values: Mapping[str, Any]) -> tuple[str, ...]:
     if values[MODE.name] == AUTO and low and high and low >= high:
         return ("Search T: from ≥ to, searching every event",)
     return ()
-
-
-def jump(previous: float, centre: float, spacing: float, each_side: int) -> int:
-    """How many orders auto's order 0 moved from the last detection (the hidden manual centre):
-    a whole number of spacings, n with 1 ≤ |n| ≤ each_side + 1, within JUMP_SLACK; else 0. A
-    strong transfer can make another order the tallest peak from one run to the next (Live, an
-    amplitude scan). The default centre is no detection: 0."""
-    if previous == CENTRE.default or not spacing > 0:
-        return 0
-    moved = (centre - previous) / spacing
-    orders = round(moved)
-    return orders if 1 <= abs(orders) <= each_side + 1 and abs(moved - orders) <= JUMP_SLACK else 0
-
-
-def unsure(orders: Orders, totals: npt.NDArray[np.int64], low: float, high: float) -> tuple[str, ...]:
-    """A note when auto's order 0 may be another order: one of the others holds at least
-    UNSURE_SHARE of its events (order 0 is the tallest peak, which a strong transfer, or a search
-    range that leaves the real order 0 out, makes another order). A Search T with both ends set
-    is the user's word on where order 0 is: such orders outside it get a plain line instead."""
-    zero = int(totals[orders.each_side])
-    bounded = math.isfinite(low) and math.isfinite(high)
-    rivals = [(int(total), order) for order, total in zip(orders.numbers, totals)
-              if order and total > 0 and total >= UNSURE_SHARE * zero]
-    outside = [(total, order) for total, order in rivals
-               if not low <= orders.centre + order * orders.spacing <= high]
-    warned = [rival for rival in rivals if not bounded or rival not in outside]
-    notes: list[str] = []
-    if warned:
-        total, order = max(warned)
-        share = f"{total / zero:.0%} as many events as" if zero else "events, none in"
-        where = " (outside Search T)" if (total, order) in outside else ""
-        notes.append(f"⚠ order 0 unsure: order {order_label(order)}{where} holds {share} order 0; set both ends "
-                     f"of Search T around order 0, or the orders by hand")
-    if bounded and outside:
-        total, order = max(outside)
-        share = "is taller than" if total > zero else f"holds {total / zero:.0%} as many events as"
-        notes.append(f"order {order_label(order)} (outside Search T) {share} order 0")
-    return tuple(notes)
-
-
-def chosen_by_search(previous: float, low: float, high: float) -> bool:
-    """Whether a Search T with both ends set leaves out the last detection's order 0: the new
-    one, found inside it, replaces it without a jump warning (a plain line says so)."""
-    return math.isfinite(low) and math.isfinite(high) and not low <= previous <= high
 
 
 class TransferFractions(DatasetAnalysis):
@@ -461,8 +305,8 @@ class TransferFractions(DatasetAnalysis):
                          (histogram[1], histogram[0].astype(np.float64)) if histogram else (np.empty(0), np.empty(0)),
                          detected, minimum, events_total,
                          (float(times.min()), float(times.max())) if len(times) else (math.nan, math.nan),
-                         jumped, masked, newest, fresh, newest is not None and newest not in boxed,
-                         newest_colour(values))
+                         jumped, newest, fresh, newest is not None and newest not in boxed,
+                         newest_colour(values), masked=masked)
 
     def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
         data: Fractions = result.data
