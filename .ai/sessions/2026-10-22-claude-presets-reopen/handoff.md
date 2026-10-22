@@ -11,14 +11,14 @@ Branch `agent/presets-reopen` from `c3d4b50`. Brief: [brief.md](brief.md); notes
     section open and width, floating, tab group, front tab, dock name, the script preset its
     values came from); `Arrangement` (plots, folder, root key, Live, the plot area's `saveState`,
     format version). Used for **arrangement presets** and for the **plots to reopen**.
-  - `ScriptPreset` / `ScriptPresets` (one record per script and action; unreadable entries kept
-    as they were on every rewrite).
+  - `ScriptPreset` / `ScriptPresets` (one stored record per preset since Follow-up 2; one that
+    can't be read is named and left as it is).
   - `check_plot` / `check_values`: unknown key, wrong type, outside limits, a choice that's gone,
     a parameter the record lacks, a library that's gone, a script version that differs. Nothing is
     clamped or replaced: values that fit apply, the others are named (`PlotCheck.summary` one
     line, `details` the tooltip). `preset_note`: a referenced script preset changed or deleted.
-- **`helab/views/plots/presets.py`**: storage (`script_presets/<id>/<action>`,
-  `arrangement_presets/<name>`, percent-encoded); **`PresetBar`**, the Presets row at the top of
+- **`helab/views/plots/presets.py`**: storage (since Follow-up 2 the disk cache store's `presets`
+  table through FolderCache, below); **`PresetBar`**, the Presets row at the top of
   each plot's settings page (Preset ▾, Apply, Save…, Delete…, and one note line only when there is
   something to say); **`ArrangementPresets`**, the main window's **Presets** menu; **`PresetFolder`**,
   which loads an applied preset's folder and starts its Live under the normal rules.
@@ -71,9 +71,8 @@ Branch `agent/presets-reopen` from `c3d4b50`. Brief: [brief.md](brief.md); notes
 9. **Recording**: on plot open, plot close and quit (not on every edit), so a crash loses edits
    since the last open/close. Recorded even with reopening off (cheap; turning it on later
    reopens the last session).
-10. **Reset all settings** clears presets and the reopen list (as briefed) and its confirmation now
-    says so. My view: presets are the user's work rather than preferences; *Tony may prefer
-    Reset to keep them* (a one-line change: save and restore the two prefixes around `clear()`).
+10. **Reset all settings** clears the reopen list and keeps presets (Follow-up 2: presets are in the
+    disk cache store now); its confirmation says so.
 11. **Dock geometry**: `saveState`/`restoreState` on the plot area, docks named `helab-plot-<n>` by
     their place in the record. Tested offscreen: tab groups, which tab is in front, a separate dock
     area, floating flag, settings width. Floating window positions and sizes are left to Qt's
@@ -105,8 +104,9 @@ Branch `agent/presets-reopen` from `c3d4b50`. Brief: [brief.md](brief.md); notes
   `plotsChanged`; `_forget_instance` emits it.
 - `FolderExplorer`: **no change**; uses `open_to_path`, `load_to_ram_cache(dwell=False,
   explicit=True)`, `live_unavailable`, `start_live` and its signals.
-- `settings_defaults.py`: rows `reopen_plots_at_start`, `open_plots`, prefixes `script_presets/`,
-  `arrangement_presets/` (together, after `log_files_keep` / `lab_constants/`).
+- `settings_defaults.py`: rows `reopen_plots_at_start`, `open_plots` (together, after
+  `log_files_keep`); the preset prefixes went with Follow-up 2.
+- Follow-up 2 (store, admin, events, FolderCache, CacheTab): see its section below.
 
 ## What Tony should check on screen
 
@@ -119,7 +119,7 @@ Branch `agent/presets-reopen` from `c3d4b50`. Brief: [brief.md](brief.md); notes
 4. A Live preset on a folder with data: Live starts only after the data shows; on a large folder
    the large-folder question comes first.
 5. A preset of an unmounted folder: one notice, plots waiting; mount it and select it: they run.
-6. Reset all settings' new wording.
+6. Reset all settings' new wording (presets kept).
 7. (Flint, round 6) With Live on a folder whose cached data turns out not to match it: stop Live →
    Review… / Load as it is now → start Live again: the mismatch clears with the new data and Live
    runs on it, never the old shots.
@@ -144,9 +144,10 @@ Branch `agent/presets-reopen` from `c3d4b50`. Brief: [brief.md](brief.md); notes
 > missing parameter, library, version; never clamped or replaced).
 
 **AGENTS.md, Settings persistence**, after the `lab_constants/` sentence:
-> Presets are JSON records with a format version under `script_presets/<id>/<action>` and
-> `arrangement_presets/<name>` (percent-encoded), the plots to reopen under `open_plots`; Reset all
-> settings clears them too.
+> The plots to reopen are an arrangement record under `open_plots` (Reset all settings clears it);
+> presets are in the disk cache store (Caching), not QSettings.
+
+(And the Caching paragraph's addition: see Follow-up 2 below.)
 
 **roadmaps/presets-and-workspaces.md**: add a "Stage 1 (done 2026-10-22, `agent/presets-reopen`)"
 section summarising the above, and move to Open decisions: references vs stored values (2),
@@ -302,3 +303,122 @@ Full suite 2560 passed, no RERUN; strict mypy and pyright clean.
   old data to a tab). Plus the cached-read race of rounds 3–4, fixed by the same fence.
 
 Full suite 2561 passed, no RERUN; strict mypy and pyright clean.
+
+## Follow-up 2 (Tony, 2026-10-22: presets in the cache store, an inspector): `0dd9e02` and the commit after, not pushed (full suite 2575 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy and pyright clean)
+
+**Storage** (`helab/utils/cache_store.py`, the presets table and its `_migrate` step only):
+- Table `presets (kind, scope, name, record, set_at)`, primary key (kind, scope, name). `kind` is
+  "script" (`scope` = percent-encoded analysis id `/` action) or "arrangement" (`scope` "").
+  `record` is the preset's JSON, or NULL once deleted. The row stays with its `set_at`, so an older
+  write (another HeLab, a late request) can't bring the preset back; a later write can.
+- `write_presets(rows)` is one transaction: each row is written unless a later `set_at` is saved,
+  and it returns what is saved now. `read_presets()` returns every row, deleted ones too. A
+  read-only store without the table reads as none and is never changed.
+- `_migrate` gained a third check (`presets`), run under the same write lock. `SCHEMA` has the
+  table too.
+- Keyed by no folder, so `rekey_subtree`, `remove`/Clear all, purges, `trim`, `clear_root` and
+  `clear_prefs` never touch it.
+- **For Cellar's merge:** `SCHEMA` gains one `CREATE TABLE`, and `_migrate`'s `missing()` gains a
+  third element. Each is a few lines next to `folder_constants`.
+
+**Action and event** (`helab/io_ops/admin.py`, `events.py`):
+- `cache_admin` "presets" (local lane): writes `params["rows"]` (if any), then reads every row.
+  With nothing to write it only reads, so a read-only store still answers.
+- It sends `PresetsEvent` `{"kind": "presets", "saved", "rows" | "error"}` (`PresetRowFields`).
+- **For Cellar:** one `elif` in `cache_admin`, one name in `ADMIN_ACTIONS`, two TypedDicts, one
+  `HelperEvent` member and one `KINDS` name.
+
+**FolderCache** (`helab/utils/folder_cache.py`, the presets section, the `_on_admin_event` hooks and
+the `quit_saves` entry):
+- `presets` is the RAM copy, (kind, scope, name) → {record, set_at}, deleted rows included; the
+  newest `set_at` wins.
+- **What I chose for reads:** a helper reads presets at startup (`ArrangementPresets.__init__`),
+  and when the Presets menu, a plot's settings page or the presets window opens. One read runs at
+  a time; a read asked meanwhile runs once after it. Every write job also reads everything back,
+  so the menu and the plots' Presets rows update when the answer comes (`presetsChanged`).
+- `set_presets(rows)`: the user's change shows at once, and one helper writes it, so a rename is
+  atomic. Its `set_at` is past what this HeLab shows, even when another HeLab's clock is ahead.
+  The call returns "" or why the change is RAM only.
+- **RAM only** while the disk cache is off or its saved folder is refused (`presets_session_only`;
+  nothing is read or written then). The next read writes those rows once the store is there, e.g.
+  after a cache move clears the refusal.
+- **A store that can't be read** is named (`presets_note()`: "⚠ Saved presets can't be read: …").
+  RAM keeps what it knew, and changes stay "couldn't be saved (…)" until the next read succeeds.
+  It is never "no presets". Before the first answer, the note says "Reading saved presets…".
+- `quit_saves` lists **"Presets"** (`PRESETS_SAVING`) while a preset write is in flight.
+  QuitSaveDialog then shows "Presets — waiting for its previous save". It is a folder-oriented
+  window that isn't in my owned paths; I asked CoCo whether I may add a two-line case so it reads
+  "Presets — saving". *Open.*
+- Refused while quitting (`QUITTING`), like constants.
+
+**Views:**
+- `helab/views/plots/presets.py`: the storage functions now go through `preset_store()` (the app's
+  FolderCache). The QSettings functions and `PresetSignals` are gone, and `ScriptPresets` is built
+  from one record per preset (`from_records`).
+- Saving a preset under another name no longer asks to "replace unreadable presets": nothing but
+  the named preset is written. Notes and notices add "(RAM only…)" when that applies.
+- `preset_note` is skipped until the store's presets are known.
+- **Folder by `root://` key:** applying still selects the saved path. When that path can't be
+  opened, the notice also names where its data root is seen this session, if anywhere
+  (`folder_now`: "its data root is seen at another place now: <path>").
+
+**Inspector** (`helab/views/PresetsInspector.py`, new; the hook in `CacheTab.py` is 16 lines):
+- Settings → Cache has a "Presets" row with its counts and the note, and **Presets…**, which opens
+  the window (one at a time, non-modal).
+- The window lists script presets by script, then arrangement presets. Columns: Name (with
+  "(RAM only)"), Saved with (vN, or "folder, N plots"), Installed script ("✓ fits the installed
+  script", "⚠ N settings wouldn't apply · saved with v0, now v1", "⚠ its script isn't loaded…",
+  "⚠ can't be read: …"), Saved (date).
+- The details pane shows each value by its setting's title, the library, each problem named
+  (`check_plot`, the same check as applying), and each plot of an arrangement with its own
+  verdict.
+- **Rename…** and **Duplicate…** ask only when they would replace another preset. **Delete…**
+  asks first.
+- The installed scripts come from the main window's Scripts panel (`set_script_finder`, held
+  weakly). Without them, a preset says "not checked: the installed scripts aren't known here".
+- **Editing values in the inspector is not built, by proposal:** pyqtgraph's parameter editors
+  belong to a plot's settings tree (`AnalysisInstance`, Live group, library), and reusing them
+  outside a plot isn't clean. Apply → change → **Save to preset “X”** already edits a preset. A
+  later option is an "Edit in a plot" button that opens a plot of the script with the preset
+  applied.
+- A rename leaves an arrangement that names the old preset saying "preset “old” deleted since"
+  (its own values still apply).
+
+**Reopen at start** stays in QSettings (`open_plots`; Reset all settings clears it). The preset
+rows left `settings_defaults.py`; nothing was released, so old keys get no migration.
+
+**Tests:**
+- `tests/test_presets_store.py` (new, 13), at three levels:
+  - The store: newest wins; a delete beats an older write and a later write beats the delete; a
+    failed transaction writes nothing; scopes kept apart; Clear all, purges, trim, `clear_root`,
+    `clear_prefs` and a re-key leave presets; an older store gains the table; a read-only store
+    without it reads as none and is left as it was.
+  - The helper's action.
+  - FolderCache through real helpers: save, restart, read back, delete, restart; another HeLab's
+    later choice wins and shows; an older write can't undo a delete; a refused cache folder keeps
+    presets in RAM, then saves them once usable (read back after a restart); disk cache off; an
+    unreadable store is named, keeps what was known and saves on the next good read;
+    `quit_saves` waits ("Presets"); Clear all plus Reset all settings leave presets (read back
+    after a restart).
+- `tests/test_presets_plots.py`:
+  - The round-trip tests now really restart (the app's IOService ends; a new FolderCache reads
+    the store).
+  - New: a script preset is there after a restart.
+  - New inspector tests: the listing with versions and verdicts, a value outside its limits, an
+    unreadable preset, a missing script in an arrangement; Rename, Duplicate and Delete with their
+    questions, read back after a restart; the Cache tab's counts and Presets….
+- Each preset test module resets the app FolderCache's preset RAM (an autouse `fresh_presets`)
+  and waits for its preset helpers: that cache lasts a worker's run. *Proposed for later:* move
+  this into `tests/conftest.py`'s `default_constants`, which isn't my file.
+
+**Proposed doc edit, AGENTS.md Caching paragraph** (after the folder constants sentences):
+> Presets (`helab/views/plots/presets.py`) are the store's `presets` table: one row per script or
+> arrangement preset (kind, scope, name, JSON record or NULL once deleted, `set_at`), written only
+> by helpers (`cache_admin presets`, local lane: writes, then reads every row), the newest `set_at`
+> winning each row in the store's transaction; a delete keeps its row so an older write can't
+> bring the preset back. Nothing else removes them (not Clear all, purges, making room, a root's
+> Clear cached data… or Reset all settings). FolderCache keeps them in RAM (`presets`), read at
+> startup and when the Presets menu, a plot's settings page or Settings → Cache › Presets…
+> (`helab/views/PresetsInspector.py`) opens; RAM only while the disk cache is off or its folder
+> refused (saved by the next read once it's there); a store that can't be read is named
+> (`presets_note`), never "no presets"; `quit_saves` waits for their writes.

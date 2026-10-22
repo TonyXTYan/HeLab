@@ -1,0 +1,281 @@
+"""Presets in the disk cache store (helab/utils/cache_store.py's ``presets`` table, the
+``cache_admin`` "presets" action, FolderCache's RAM copy): written only by helpers, the newest
+choice winning each preset, a delete kept so an older write can't bring it back, added to older
+stores, read as none from a read-only one without it; RAM only while the cache folder is refused
+(saved once it's there); a store that can't be read named, never "no presets"; untouched by Clear
+all and Reset all settings; ``quit_saves`` waits for their writes."""
+from __future__ import annotations
+
+import json
+import sqlite3
+import time
+from pathlib import Path
+from typing import Any, Iterator
+
+import pytest
+from PyQt6.QtCore import QSettings
+from pytestqt.qtbot import QtBot
+
+from helab.io_ops.admin import cache_admin
+from helab.utils import cache_store
+from helab.utils.cache_store import KINDS, CacheStore, StoreError, StoreReadOnly
+from helab.utils.folder_cache import PRESETS_SAVING, FolderCache, get_folder_cache, store_options
+from helab.utils.io_service import IOService
+
+ARR, SCR = "arrangement", "script"
+A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+
+def row(name: str, record: str | None, set_at: float, kind: str = ARR, scope: str = "") -> dict[str, Any]:
+    return {"kind": kind, "scope": scope, "name": name, "record": record, "set_at": set_at}
+
+
+def rows_of(store: CacheStore) -> dict[str, tuple[str | None, float]]:
+    found = store.read_presets()
+    assert found.found and found.value is not None
+    return {entry["name"]: (entry["record"], entry["set_at"]) for entry in found.value}
+
+
+# The store
+
+
+def test_the_newest_choice_wins_and_a_delete_beats_an_older_write(tmp_path: Path) -> None:
+    root = str(tmp_path / "store")
+    with CacheStore(root) as store:
+        assert store.write_presets([row("run", "{}", 10.0)]) == [row("run", "{}", 10.0)]
+        # An older choice (another HeLab, a write arriving late) doesn't overwrite a newer one.
+        assert store.write_presets([row("run", '{"old": 1}', 5.0)]) == [row("run", "{}", 10.0)]
+        # A delete keeps its row: an older write can't bring the preset back, a later one can.
+        store.write_presets([row("run", None, 20.0)])
+        assert store.write_presets([row("run", '{"late": 1}', 15.0)]) == [row("run", None, 20.0)]
+        assert rows_of(store) == {"run": (None, 20.0)}
+        store.write_presets([row("run", '{"again": 1}', 30.0)])
+        assert rows_of(store)["run"] == ('{"again": 1}', 30.0)
+        # Several in one transaction (a rename): all or none.
+        with pytest.raises(StoreError):
+            store.write_presets([row("other", "{}", 31.0), row("", "{}", 31.0)])
+        assert set(rows_of(store)) == {"run"}
+
+
+def test_a_scripts_presets_are_apart_from_another_scripts_and_the_arrangements(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        store.write_presets([row("p", "1", 1.0, SCR, "a/Plot"), row("p", "2", 1.0, SCR, "b/Plot"), row("p", "3", 1.0)])
+        found = store.read_presets().value or []
+        assert sorted((entry["kind"], entry["scope"], entry["record"]) for entry in found) == [
+            (ARR, "", "3"), (SCR, "a/Plot", "1"), (SCR, "b/Plot", "2")]
+
+
+def test_presets_survive_clear_all_purges_making_room_and_a_roots_clear(tmp_path: Path) -> None:
+    root = str(tmp_path / "store")
+    with CacheStore(root) as store:
+        store.write_presets([row("run", "{}", 10.0), row("p", "{}", 10.0, SCR, "a/Plot")])
+        store.remove(KINDS)  # Clear all.
+        store.purge_records(time.time() + 1, include_failures=True)
+        store.purge_datasets(time.time() + 1)
+        store.trim(0)  # Make room, as far as it goes.
+        store.clear_root(A)  # Settings › Data roots › Clear cached data…
+        store.clear_prefs(13.0)
+        store.rekey_subtree(f"root://{A}", f"root://{A}x")
+    with CacheStore(root) as store:  # A restart.
+        assert set(rows_of(store)) == {"run", "p"}
+
+
+def without_presets(directory: Path, *, layout: int | None = None) -> None:
+    """A store as an earlier HeLab made it (no ``presets`` table); ``layout``: as a newer HeLab's."""
+    with CacheStore(str(directory)):
+        pass
+    conn = sqlite3.connect(directory / "records.sqlite", isolation_level=None)
+    try:
+        conn.execute("DROP TABLE presets")
+        if layout is not None:
+            conn.execute("UPDATE meta SET value = ? WHERE key = 'layout_version'", (json.dumps(layout),))
+    finally:
+        conn.close()
+
+
+def tables(directory: Path) -> set[str]:
+    with sqlite3.connect(directory / "records.sqlite") as conn:
+        return {str(found[0]) for found in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+
+
+def test_an_older_store_gains_the_presets_table_when_opened(tmp_path: Path) -> None:
+    directory = tmp_path / "store"
+    without_presets(directory)
+    assert "presets" not in tables(directory)
+    with CacheStore(str(directory)) as store:
+        assert "presets" in tables(directory) and rows_of(store) == {}
+        store.write_presets([row("run", "{}", 1.0)])
+    with CacheStore(str(directory)) as store:
+        assert rows_of(store) == {"run": ("{}", 1.0)}
+
+
+def test_a_read_only_store_without_the_table_reads_as_none_and_is_left_as_it_was(tmp_path: Path) -> None:
+    directory = tmp_path / "store"
+    without_presets(directory, layout=cache_store.LAYOUT_VERSION + 1)
+    with CacheStore(str(directory)) as store:
+        assert store.read_only and rows_of(store) == {}
+        with pytest.raises(StoreReadOnly):
+            store.write_presets([row("run", "{}", 1.0)])
+    assert "presets" not in tables(directory)
+    # Through the helper's action: a read answers (none), a write fails (named by the error event).
+    events: list[Any] = []
+    cache_admin({"directory": str(directory)}, "presets", events.append)
+    assert [event for event in events if event["kind"] == "presets"] == [{"kind": "presets", "saved": [], "rows": []}]
+    with pytest.raises(StoreReadOnly):
+        cache_admin({"directory": str(directory)}, "presets", events.append, rows=[row("run", "{}", 1.0)])
+
+
+def test_the_helpers_action_writes_then_reads_every_preset(tmp_path: Path) -> None:
+    options = {"directory": str(tmp_path / "store")}
+    events: list[Any] = []
+    cache_admin(options, "presets", events.append, rows=[row("a", "{}", 5.0), row("b", None, 6.0)])
+    [answer] = [event for event in events if event["kind"] == "presets"]
+    assert answer["saved"] == [row("a", "{}", 5.0), row("b", None, 6.0)]
+    assert sorted(answer["rows"], key=lambda entry: entry["name"]) == answer["saved"]
+    assert events[-1]["kind"] == "admin_result" and events[-1]["action"] == "presets"
+
+
+# FolderCache, through real helpers
+
+
+_sessions: list[IOService] = []
+
+
+@pytest.fixture
+def service() -> Iterator[IOService]:
+    """A session's IOService; it and those ``restarted`` makes end with the test."""
+    made = IOService()
+    _sessions.append(made)
+    yield made
+    while _sessions:
+        _sessions.pop().shutdown()
+
+
+def settled(qtbot: QtBot, cache: FolderCache) -> None:
+    qtbot.waitUntil(lambda: not cache._preset_jobs, timeout=30_000)
+
+
+def restarted(qtbot: QtBot, service: IOService) -> FolderCache:
+    """The same store, read by another HeLab session (a new IOService and FolderCache)."""
+    service.shutdown()
+    _sessions.append(IOService())
+    again = get_folder_cache(_sessions[-1])
+    again.read_presets()
+    qtbot.waitUntil(lambda: again.presets_read or bool(again.presets_error), timeout=30_000)
+    settled(qtbot, again)
+    return again
+
+
+def test_a_saved_preset_is_read_back_after_a_restart(qtbot: QtBot, service: IOService) -> None:
+    cache = get_folder_cache(service)
+    assert store_options() and cache.presets_note() == "Reading saved presets…"
+    assert cache.set_presets([(ARR, "", "run", '{"format": 1}'), (SCR, "x/Plot", "p", "{}")]) == ""
+    assert cache.preset_records(ARR) == {("", "run"): '{"format": 1}'}  # Shown at once.
+    assert cache.quit_saves() == [PRESETS_SAVING]  # Quitting waits for the write.
+    settled(qtbot, cache)
+    assert cache.quit_saves() == [] and cache.presets_read and cache.presets_note() == ""
+    again = restarted(qtbot, service)
+    assert again.preset_records(ARR) == {("", "run"): '{"format": 1}'}
+    assert again.preset_records(SCR, "x/Plot") == {("x/Plot", "p"): "{}"}
+    # Deleted here, then read again by a third session: gone.
+    again.set_presets([(ARR, "", "run", None)])
+    assert again.preset_records(ARR) == {}
+    settled(qtbot, again)
+    third = restarted(qtbot, again.service)
+    assert third.preset_records(ARR) == {} and third.presets[(ARR, "", "run")]["record"] is None
+
+
+def test_another_helabs_later_choice_wins_and_shows(qtbot: QtBot, service: IOService) -> None:
+    cache = get_folder_cache(service)
+    with CacheStore(store_options()["directory"]) as store:  # Another HeLab, whose clock is ahead.
+        store.write_presets([row("run", '"theirs"', time.time() + 1000)])
+    cache.set_presets([(ARR, "", "run", '"mine"')])
+    settled(qtbot, cache)
+    assert cache.preset_records(ARR) == {("", "run"): '"theirs"'} and not cache.presets_unsaved
+
+
+def test_an_older_write_from_another_helab_cant_bring_a_deleted_preset_back(qtbot: QtBot,
+                                                                            service: IOService) -> None:
+    cache = get_folder_cache(service)
+    cache.set_presets([(ARR, "", "run", "{}")])
+    settled(qtbot, cache)
+    cache.set_presets([(ARR, "", "run", None)])
+    settled(qtbot, cache)
+    deleted_at = float(cache.presets[(ARR, "", "run")]["set_at"])
+    with CacheStore(store_options()["directory"]) as store:  # Another HeLab's write, made before the delete.
+        store.write_presets([row("run", '"late"', deleted_at - 1)])
+    cache.read_presets()
+    settled(qtbot, cache)
+    assert cache.preset_records(ARR) == {}
+
+
+def test_a_refused_cache_folder_keeps_presets_in_ram_until_the_store_is_there(
+        qtbot: QtBot, service: IOService, monkeypatch: pytest.MonkeyPatch) -> None:
+    cache = get_folder_cache(service)
+    refused = "The saved cache folder /net/share is a network folder…"
+    monkeypatch.setattr("helab.utils.folder_cache.cache_dir_refused", lambda: refused)
+    why = cache.set_presets([(ARR, "", "run", "{}")])
+    assert why == "the saved cache folder isn't used this session"
+    assert cache.presets_note() == "RAM only: the saved cache folder isn't used this session"
+    assert not cache._preset_jobs and cache.quit_saves() == []  # Nothing to wait for.
+    assert cache.preset_unsaved(ARR, "", "run") == why
+    cache.read_presets()  # Neither read nor written meanwhile.
+    assert not cache._preset_jobs
+    # The cache folder is usable again (moved with Change…): the next read saves it.
+    monkeypatch.setattr("helab.utils.folder_cache.cache_dir_refused", lambda: "")
+    cache.read_presets()
+    settled(qtbot, cache)
+    assert cache.preset_unsaved(ARR, "", "run") == "" and not cache.presets_unsaved
+    assert restarted(qtbot, service).preset_records(ARR) == {("", "run"): "{}"}
+
+
+def test_with_the_disk_cache_off_presets_last_the_session(service: IOService,
+                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    cache = get_folder_cache(service)
+    monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: {})
+    assert cache.set_presets([(ARR, "", "run", "{}")]) == "the disk cache is off for this session"
+    assert cache.preset_records(ARR) == {("", "run"): "{}"} and not cache._preset_jobs
+
+
+def test_a_store_that_cant_be_read_is_named_never_none(qtbot: QtBot, service: IOService,
+                                                       monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cache = get_folder_cache(service)
+    cache.set_presets([(ARR, "", "kept", "{}")])
+    settled(qtbot, cache)
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "records.sqlite").write_bytes(b"not a database" * 100)
+    monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: {"directory": str(broken)})
+    monkeypatch.setattr(cache.service, "cache_options", lambda: {"directory": str(broken)})  # (As a job starts.)
+    cache.set_presets([(ARR, "", "new", "{}")])
+    settled(qtbot, cache)
+    assert cache.presets_note().startswith("⚠ Saved presets can't be read: ")
+    # What was known stays listed; the change is kept in RAM and said not saved.
+    assert set(cache.preset_records(ARR)) == {("", "kept"), ("", "new")}
+    assert cache.preset_unsaved(ARR, "", "new").startswith("couldn't be saved (")
+    assert cache.quit_saves() == []
+    # The store readable again: the next read saves it.
+    monkeypatch.undo()
+    cache.read_presets()
+    settled(qtbot, cache)
+    assert cache.presets_note() == "" and not cache.presets_unsaved
+
+
+def test_clear_all_and_reset_all_settings_leave_presets(qtbot: QtBot, service: IOService,
+                                                        tmp_path: Path) -> None:
+    from helab.views.SettingsDialog import SettingsDialog
+    cache = get_folder_cache(service)
+    cache.set_presets([(ARR, "", "run", "{}")])
+    settled(qtbot, cache)
+    owner = cache.cache_admin("clear", kinds=list(KINDS))
+    assert owner
+    qtbot.waitUntil(lambda: owner not in cache._admin, timeout=30_000)
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    settings.setValue("open_plots", "{}")
+    dialog = SettingsDialog(settings=settings, cache=cache)
+    qtbot.addWidget(dialog)
+    dialog.cache_tab.confirm = lambda title, text, verb: "presets are kept" in text
+    dialog.reset_settings()
+    assert not settings.contains("open_plots")  # The plots to reopen go; presets stay.
+    dialog.close()
+    assert restarted(qtbot, service).preset_records(ARR) == {("", "run"): "{}"}

@@ -1257,8 +1257,7 @@ class FolderCache(QObject):
             for key in keys:
                 if self.presets_unsaved.get(key) == "" and not self._preset_writing(key, producer.owner):
                     self.presets_unsaved[key] = f"couldn't be saved ({message})"
-            if not keys or not self.presets_read:
-                self.presets_error = message
+            self.presets_error = message  # (A job that writes reads after: it read nothing either.)
             logging.warning("Presets: %s", message)
             if keys:
                 self.quitSavesChanged.emit()

@@ -178,3 +178,47 @@ are in too** (one more push for both).
 
 Decisions 2 (arrangements store values with provenance), 1, 4–6, 8, 9, 11 and the wording: Tony is
 fine with them.
+
+## Follow-up 2 (Tony, Chat, 2026-10-22): preset storage
+
+Tony's answers: **store presets in the cache store, like folder constants**, and add **a preset
+editor/inspector in Settings → Cache**. The mismatch-race fix stays on this floor (done).
+
+1. **Storage.** Per-script presets and arrangement presets move out of QSettings into a table (or
+   two) in `store-v3`, written only by helpers like folder constants: a `cache_admin` action on the
+   local lane, the newest `set_at` winning in the store's transaction; a delete is the user's own
+   request and is recorded so an older write from another HeLab can't bring the preset back (e.g.
+   a tombstone with its `set_at`). Nothing else removes them: not Clear all, purges, Make room, a
+   root's Clear cached data… or Reset all settings. The table is added to older stores by
+   `cache_store._migrate` (once, under the write lock), never only in `SCHEMA`; a read-only store
+   without it reads as empty. The GUI never opens the store: it reads presets through a helper
+   (at startup and when they could have changed, e.g. when the menu or the inspector opens; say
+   what you chose). An arrangement's folder is saved by its `root://` key plus its source path
+   (the path is what applying selects; the key names it when the path moved). A session whose
+   cache folder is refused, or before the store answers, keeps presets in RAM ("RAM only", saved
+   once the store is there, as `constants_session_only` does); a store that can't be read is named
+   and never a crash, and never means "no presets". While quitting, `quit_saves` waits for preset
+   writes as for constants.
+2. **Reopen at start stays in QSettings** (it is the session's state, not the user's work; Reset all
+   settings clears it, as briefed). Remove the preset rows from `settings_defaults.py` (nothing
+   released, so no migration of old keys).
+3. **Inspector in Settings → Cache:** a section (or a "Presets…" button opening a window, whichever
+   keeps the tab short) listing per-script presets by script and arrangement presets: each one's
+   values, saved script version, and whether it still validates against the installed script (the
+   same validation, each incompatible value named); **Rename**, **Delete** (asks first) and
+   Duplicate. Editing values there: only if it reuses the plot settings page's editors cleanly,
+   else propose it in the handoff (applying to a plot then Save to preset already edits).
+   New module (e.g. `helab/views/PresetsInspector.py`) with at most a small hook in `CacheTab.py`.
+4. Tests: round-trips through the store (save, restart, apply), newest `set_at` wins, a delete
+   beats an older write, migrate of a store without the table, read-only store, refused cache
+   folder (RAM only, saved later), Clear all and Reset all settings leave presets, the inspector's
+   actions.
+
+**Owned paths add** `helab/utils/cache_store.py` (the presets table and its `_migrate` step only),
+`helab/io_ops/admin.py` (the presets action) and `helab/io_ops/events.py` (its events),
+`helab/utils/folder_cache.py` (the presets requests and RAM-only state), `helab/views/CacheTab.py`
+(the inspector's hook only) and the new inspector module. The Result Cache floor also changes
+`cache_store.py`, `admin.py` and `CacheTab.py` (schema, results actions, Clear cached analysis);
+you land first and Cellar syncs, so keep your changes contained and name them in the handoff.
+
+Then: commit, tell CoCo; Flint reviews the delta before you push once.

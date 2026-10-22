@@ -61,6 +61,19 @@ def stored(qtbot: QtBot) -> None:
     qtbot.waitUntil(lambda: store.presets_read and not store._preset_jobs, timeout=30_000)
 
 
+def restart_presets(qtbot: QtBot) -> FolderCache:
+    """HeLab quits once the presets are saved, and starts again: a new app FolderCache, which
+    knows only what it reads from the store."""
+    from helab.utils.io_service import get_io_service
+    stored(qtbot)
+    get_io_service().shutdown()
+    store = preset_store()
+    assert not store.presets and store.presets_note() == "Reading saved presets…"
+    store.read_presets()
+    stored(qtbot)
+    return store
+
+
 def folder(name: str) -> str:
     return FolderCache.key(f"/data/root/{name}")
 
@@ -352,6 +365,23 @@ def test_a_preset_is_shared_by_every_plot_of_the_script(qtbot: QtBot, cache: Fol
     bar(second).delete()
     assert read_script_presets(ref).names() == [] and bar(first).combo.count() == 0
     assert not bar(first).apply_button.isEnabled()
+
+
+def test_a_script_preset_saved_is_there_after_a_restart(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    window = new_window(qtbot, cache, windows)
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    first = waiting_plot(window, cache, ref)
+    set_values(first, {"bins": 42, "mode": "rate"})
+    bar(first).ask_name = lambda *_: "42 bins"
+    bar(first).save()
+    assert bar(first).note.text() == "Saved preset “42 bins”"
+    first.close()
+    restart_presets(qtbot)
+    again = new_window(qtbot, cache, windows)
+    second = waiting_plot(again, cache, ref)
+    assert bar(second).combo.currentText() == "42 bins"
+    bar(second).apply()
+    assert second.values() == {"bins": 42, "mode": "rate"}
 
 
 def marked(instance: AnalysisInstance) -> dict[str, str]:
@@ -875,7 +905,8 @@ def test_an_arrangement_preset_round_trips_every_bundled_script(qtbot: QtBot, ca
     assert asked == [f"Save run with its {len(expected)} plots (not the 1 of other folders) as:"]
     assert arrangement_names() == ["all plots"]
     other.close()
-    # Restart: another window, a tab elsewhere.
+    # Restart (the presets read from the store again): another window, a tab elsewhere.
+    restart_presets(qtbot)
     again = new_window(qtbot, cache, windows)
     tab = Explorer(folder("somewhere"))
     opened = presets_for(again, tab, cache).apply("all plots")
@@ -1299,3 +1330,118 @@ def test_a_cached_read_from_before_a_mismatch_never_lands_after_it_is_resolved(
     assert found == [] and ("cached", path) in cache.jobs  # A read asked after the folder matched again…
     helper_says(cache, "cached", path, *read_events(range(9, 10), "fresh"))
     assert [view.shot_numbers for view in found] == [(9,)]  # … is taken.
+
+
+# Settings → Cache › Presets… (helab/views/PresetsInspector.py)
+
+
+def inspector_rows(inspector: Any) -> dict[str, list[str]]:
+    """Each preset's row (by name): its columns."""
+    from helab.views.PresetsInspector import PresetsInspector
+    assert isinstance(inspector, PresetsInspector)
+    return {entry.name: [inspector._items[key].text(column) for column in range(4)]
+            for key, entry in inspector.entries.items()}
+
+
+def choose(inspector: Any, name: str) -> None:
+    item = next(inspector._items[key] for key, entry in inspector.entries.items() if entry.name == name)
+    inspector.tree.setCurrentItem(item)
+
+
+def test_the_inspector_lists_presets_with_whether_they_fit_the_installed_scripts(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    from helab.views.PresetsInspector import PresetsInspector, set_script_finder
+    window = new_window(qtbot, cache, windows)
+    set_script_finder(window.scripts.find_script)
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    write_script_preset(ScriptPreset("fits", ref, {"bins": 20, "mode": "rate"}, "PyQtGraph", 1.0))
+    write_script_preset(ScriptPreset("old", dataclass_replace(ref, version="0"), {"bins": 500, "mode": "rate"},
+                                     "PyQtGraph", 1.0))
+    preset_store().set_presets([(SCRIPT, script_scope(ref), "broken", "{broken")])
+    write_arrangement("run", Arrangement((full(window, ref, folder("a"), bins=3),
+                                          SavedPlot(ScriptRef("user.gone", "Plot", "1", "", "Gone"), folder("a"))),
+                                         folder("a"), root_key="root://u/a", live=True))
+    stored(qtbot)
+    inspector = PresetsInspector(preset_store())
+    qtbot.addWidget(inspector)
+    rows = inspector_rows(inspector)
+    assert rows["fits"][1:3] == ["v1", "✓ fits the installed script"]
+    assert rows["old"][1:3] == ["v0", "⚠ 1 setting wouldn't apply · saved with v0, now v1"]
+    assert rows["broken"][2].startswith("⚠ can't be read: not valid JSON")
+    assert rows["run"][1:3] == ["a, 2 plots", "⚠ 1 plot wouldn't open as saved"]
+    choose(inspector, "old")
+    details = inspector.details.toPlainText()
+    assert "saved with v0" in details and "Mode rate" in details
+    assert "⚠ Bins: saved 500 is outside 1 to 100" in details
+    choose(inspector, "run")
+    details = inspector.details.toPlainText()
+    assert f"{folder('a')} (root://u/a), Live on" in details and "Bins 3" in details
+    assert "• Gone: ⚠ its script isn't loaded (Load Scripts… its folder, then open it again)" in details
+    # Without the installed scripts (a Settings dialog of its own): listed, not checked.
+    set_script_finder(None)
+    inspector.refresh()
+    assert inspector_rows(inspector)["fits"][2] == "not checked: the installed scripts aren't known here"
+
+
+def test_the_inspector_renames_duplicates_and_deletes_after_asking(qtbot: QtBot, cache: FolderCache,
+                                                                   windows: Windows) -> None:
+    from helab.views.PresetsInspector import PresetsInspector
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    write_script_preset(ScriptPreset("fast", ref, {"bins": 5}, "", 1.0))
+    write_script_preset(ScriptPreset("slow", ref, {"bins": 50}, "", 1.0))
+    write_arrangement("run", Arrangement((), folder("a")))
+    inspector = PresetsInspector(preset_store())
+    qtbot.addWidget(inspector)
+    questions: List[str] = []
+
+    def answer(reply: bool) -> Callable[..., bool]:
+        def ask(parent: Any, title: str, text: str, action: str) -> bool:
+            questions.append(text)
+            return reply
+        return ask
+    scope = script_scope(ref)
+    # Rename: onto another preset's name asks; No leaves both.
+    choose(inspector, "fast")
+    inspector.ask_name = lambda *_: "slow"
+    inspector.confirm = answer(False)
+    inspector.rename()
+    assert questions == ["A preset “slow” exists. Replace it?"]
+    assert set(preset_store().preset_records(SCRIPT, scope)) == {(scope, "fast"), (scope, "slow")}
+    inspector.ask_name = lambda *_: "quick"
+    inspector.rename()
+    assert read_script_presets(ref).names() == ["quick", "slow"]
+    assert read_script_presets(ref).presets["quick"].values == {"bins": 5}
+    # Duplicate.
+    choose(inspector, "quick")
+    inspector.ask_name = lambda *_: "quick copy"
+    inspector.duplicate()
+    assert read_script_presets(ref).names() == ["quick", "quick copy", "slow"]
+    # Delete asks first.
+    choose(inspector, "run")
+    inspector.delete()
+    assert questions[-1] == "Delete the preset “run”? Open plots keep their settings." and arrangement_names() == ["run"]
+    inspector.confirm = answer(True)
+    inspector.delete()
+    assert arrangement_names() == [] and not inspector.delete_button.isEnabled()
+    # Saved: a restart reads the same.
+    restart_presets(qtbot)
+    assert read_script_presets(ref).names() == ["quick", "quick copy", "slow"] and arrangement_names() == []
+
+
+def test_settings_cache_tab_counts_presets_and_opens_the_inspector(qtbot: QtBot, tmp_path: Any) -> None:
+    from PyQt6.QtCore import QSettings
+    from helab.views.CacheTab import CacheTab
+    from helab.views.PresetsInspector import PresetsInspector
+    store = preset_store()
+    tab = CacheTab(store, QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat))
+    qtbot.addWidget(tab)
+    assert tab.presets_label.text() == "0 script presets, 0 arrangements · Reading saved presets…"
+    write_arrangement("run", Arrangement((), folder("a")))
+    stored(qtbot)
+    assert tab.presets_label.text() == "0 script presets, 1 arrangement"
+    tab.presets_button.click()
+    first = tab.presets_window
+    assert isinstance(first, PresetsInspector) and first.isVisible()
+    tab.presets_button.click()
+    assert tab.presets_window is first  # One at a time.
+    first.close()

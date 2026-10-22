@@ -40,11 +40,12 @@ ScriptFinder = Callable[[ScriptRef], Found]
 _finder: Optional[Callable[[], Optional[ScriptFinder]]] = None
 
 
-def set_script_finder(finder: ScriptFinder) -> None:
+def set_script_finder(finder: Optional[ScriptFinder]) -> None:
     """The installed scripts to check presets against (the main window's Scripts panel's
-    ``find_script``; held weakly, so a closed window's isn't kept)."""
+    ``find_script``; held weakly, so a closed window's isn't kept), or None: not known."""
     global _finder
-    _finder = weakref.WeakMethod(finder) if hasattr(finder, "__self__") else (lambda: finder)
+    _finder = (None if finder is None else weakref.WeakMethod(finder) if hasattr(finder, "__self__")
+               else (lambda: finder))
 
 
 def script_finder() -> Optional[ScriptFinder]:
@@ -94,8 +95,11 @@ def describe(saved: Union[SavedPlot, ScriptPreset], finder: Optional[ScriptFinde
     if saved.backend:
         lines.append(f"  Library: {saved.backend}")
     if check is None:
-        lines.append(f"Not checked: {why}")
-        return lines, f"not checked: {why}"
+        if finder is None:
+            lines.append(f"Not checked: {why}")
+            return lines, f"not checked: {why}"
+        lines.append(f"⚠ {why}")  # Its script isn't installed now (or failed): it wouldn't apply.
+        return lines, f"⚠ {why}"
     lines.extend(f"  ⚠ {problem.text()}" for problem in check.problems)
     lines.extend(f"  {note}" for note in check.notes)
     count = len(check.problems)
