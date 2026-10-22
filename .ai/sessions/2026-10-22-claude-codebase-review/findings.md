@@ -535,3 +535,9 @@ line name it; version 3 so earlier results aren't reused; hidden under Manual it
 reuse key by the `unused` rule. The two new tests fail at `22ee3fb` (scratch worktree: bump seeds 0
 and 1 and the reference test, 3 failed) and pass at head; DLD and v1 transfer fractions, the MATLAB
 comparison and `test_orders`: 127 passed, no RERUN.
+
+**CI on `44ad4eb` (run 39716589995)**: builds green; the py3.13 Tests job on each OS fails one test,
+`tests/test_left_widgets.py::test_a_teardown_that_raises_still_deletes_the_web_views` (5 RERUNs then FAILED, no
+other RERUN). Not this branch's: dev/v0.0.6's run 39715190343 at `51c0ee2` fails identically; reproduced
+locally with pytest's default basetemp (nested pytest node IDs `../../…/HeLab::test_after_it` outside the
+checkout); fixed by the CI floor in `5e696aa` (run 39717002040 green), which merges cleanly with `44ad4eb`.
