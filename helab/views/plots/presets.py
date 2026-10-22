@@ -7,7 +7,7 @@
   whether Live watched it, and its plots with their settings and places. Applying one selects
   the folder in the current tab as typing its path would, loads it as a deliberate selection
   (the normal rules: cache first, large-folder questions), opens the plots, each waiting for the
-  folder's data, and turns Live on only once the folder's data shows (``LiveWhenShown``), saying
+  folder's data, and turns Live on only once the folder's data shows (``PresetFolder``), saying
   why if it can't. Saved under ``arrangement_presets/<name>``.
 
 Saved settings that don't fit the script now are named, never replaced or clamped
@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional
 from urllib.parse import quote, unquote
 
 from PyQt6 import sip
-from PyQt6.QtCore import QObject, QSettings, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QSettings, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (QComboBox, QHBoxLayout, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton,
                              QSizePolicy, QVBoxLayout, QWidget)
@@ -179,6 +179,7 @@ class PresetBar(QWidget):
         self.note.hide()
         layout.addWidget(self.note)
         self.presets = ScriptPresets()
+        self._problems: List[str] = []
         self.refresh()
         signals().scriptPresetsChanged.connect(self._changed)
 
@@ -192,12 +193,15 @@ class PresetBar(QWidget):
         self.combo.addItems(names)
         if chosen in names:
             self.combo.setCurrentText(chosen)
+        elif names:
+            self.combo.setCurrentIndex(0)  # (With a placeholder, Qt chooses none itself.)
         self.combo.blockSignals(False)
         problems = []
         if self.presets.error:
             problems.append(f"{self.plot.name}'s saved presets can't be read ({self.presets.error}); saving one "
                             "asks to replace them")
         problems += [f"Preset “{name}” can't be read ({why})" for name, why in self.presets.unreadable.items()]
+        self._problems = problems
         self.combo.setEnabled(bool(names))
         self.combo.setToolTip("\n".join(problems) if problems else
                               f"Presets of {self.ref.label()}, shared by every plot of it" if names else
@@ -206,7 +210,12 @@ class PresetBar(QWidget):
         self.apply_button.setEnabled(bool(names))
         self.delete_button.setEnabled(bool(names))
         if problems and not self.note.isVisible():
-            self._show(f"⚠ {problems[0]}", "\n".join(problems), amber=True)
+            self._show_problems()
+
+    def _show_problems(self) -> None:
+        """The saved presets that can't be read (or nothing)."""
+        problems = self._problems
+        self._show(f"⚠ {problems[0]}" if problems else "", "\n".join(problems), amber=bool(problems))
 
     @pyqtSlot(str)
     def _changed(self, key: str) -> None:
@@ -218,7 +227,7 @@ class PresetBar(QWidget):
         not applied (``kept`` as they are) and notes. ``quiet``: nothing to say if all applied."""
         summary = check.summary(kept)
         if quiet and not summary:
-            self._show("", "", amber=False)
+            self._show_problems()
             return
         text = " · ".join(filter(None, (f"{what} applied" if not quiet else what, summary)))
         self._show(text, check.details() or text, amber=bool(check.problems))
@@ -286,11 +295,14 @@ class PresetBar(QWidget):
 # Arrangement presets
 
 
-class LiveWhenShown(QObject):
-    """After an arrangement preset is applied: turn Live on for its folder once the tab shows its
-    data, under the normal rules (``FolderExplorer.start_live``), never forced; if it can't, say
-    why once. Also names the folder once if it can't be listed or loaded (unmounted, moved).
-    Gives up if the tab selects another folder or closes."""
+class PresetFolder(QObject):
+    """An arrangement preset's folder after it is applied (the tab has opened it as typing its path
+    would): it loads as a deliberate selection (cache first; a large folder asks) once it is known
+    to hold data (cached, in RAM, or listed with TXY files; a folder with none isn't loaded: there
+    is nothing to load), and with the preset's Live, Live turns on once the tab shows its data, or
+    finds it has no shots yet, under the normal rules (``FolderExplorer.start_live``), never
+    forced: if it can't, it says why, once. A folder that can't be listed (unmounted, moved) is
+    named once; its plots go on waiting. It gives up if the tab selects another folder or closes."""
 
     def __init__(self, explorer: FolderExplorer, folder: str, name: str, live: bool,
                  notice: Callable[[str], None]) -> None:
@@ -298,12 +310,12 @@ class LiveWhenShown(QObject):
         self.explorer, self.folder, self.name, self.live = explorer, folder, name, live
         self._notice = notice
         self.done = False
-        self._missing_named = False
+        self.load_asked = False
         self._signals = [explorer.dataLoaded, explorer.loadStateChanged, explorer.liveChanged,
                          explorer.model.activityChanged]
         for signal in self._signals:
             signal.connect(self.check)
-        QTimer.singleShot(0, self.check)
+        self.check()
 
     def check(self, *_: object) -> None:
         if self.done:
@@ -317,25 +329,35 @@ class LiveWhenShown(QObject):
                 self._notice(f"Preset “{self.name}”: Live not started: another folder was selected")
             self.finish()
             return
-        missing = self._missing()
-        if missing and not self._missing_named:
-            self._missing_named = True
-            self._notice(f"Preset “{self.name}”: {folder_name(self.folder)} can't be opened now ({missing}): "
-                         "its plots wait for its data")
-        if not self.live:
-            if missing or self._shown():
-                self.finish()
+        node = explorer.model.nodes.get(self.folder)
+        if node is not None and node.error:
+            self._notice(f"Preset “{self.name}”: {folder_name(self.folder)} can't be opened now "
+                         f"({node.error.removesuffix(' — Retry')}): its plots wait for its data")
+            self.finish()
             return
-        if explorer.live is not None:
-            self.finish()  # On (by the user, or already).
-            return
+        listed = node is not None and node.report is not None
+        if not self.load_asked:
+            has_shots = node is not None and node.report is not None and node.txy_count > 0
+            if self._shown() or explorer.model.cache.disk_cached(self.folder) or has_shots:
+                self.load_asked = True
+                explorer.load_to_ram_cache(self.folder, dwell=False, explicit=True)
+                if self.done:
+                    return  # (A load answered at once, and this ran again meanwhile.)
+            elif listed:
+                self.load_asked = True  # No TXY files: nothing to load (Live may start before the first shot).
+            else:
+                return  # Until the tab's listing answers.
         if self._busy():
+            return
+        if not self.live or explorer.live is not None:
+            self.finish()  # Done; or Live on already (by the user, or before).
             return
         reason = explorer.live_unavailable(self.folder)
         if not reason and explorer.start_live():
             self._notice(f"Preset “{self.name}”: Live on for {folder_name(self.folder)}")
         else:
-            self._notice(f"Preset “{self.name}”: Live not started: {reason or 'it could not start'}")
+            why = explorer.load_error.removesuffix(" — Retry") if explorer.load_error else reason
+            self._notice(f"Preset “{self.name}”: Live not started: {why or 'it could not start'}")
         self.finish()
 
     def _shown(self) -> bool:
@@ -345,24 +367,7 @@ class LiveWhenShown(QObject):
     def _busy(self) -> bool:
         """The folder's load (or its wait to start) is still going: its data may yet show."""
         explorer = self.explorer
-        return ((explorer.loading and explorer.load_path == self.folder) or explorer.load_waiting
-                or explorer.settling or (not self._shown() and not explorer.load_error and not self._missing()
-                                         and explorer.large_state(self.folder) is None
-                                         and self._listing()))
-
-    def _listing(self) -> bool:
-        """Its listing hasn't answered yet (a Live from no shots needs it)."""
-        node = self.explorer.model.nodes.get(self.folder)
-        return node is None or (node.report is None and not node.error)
-
-    def _missing(self) -> str:
-        explorer = self.explorer
-        node = explorer.model.nodes.get(self.folder)
-        if node is not None and node.error:
-            return node.error.removesuffix(" — Retry")
-        if explorer.load_error and explorer.selected_path_globally == self.folder:
-            return explorer.load_error.removesuffix(" — Retry")
-        return ""
+        return (explorer.loading and explorer.load_path == self.folder) or explorer.load_waiting or explorer.settling
 
     def finish(self) -> None:
         if self.done:
@@ -394,7 +399,7 @@ class ArrangementPresets(QObject):
         self.ask_name: Callable[[Optional[QWidget], str, str, str], Optional[str]] = ask_name
         self.confirm: Callable[[Optional[QWidget], str, str, str], bool] = confirm
         self.warn: Callable[[str, str], None] = self._warn
-        self.live_starter: Optional[LiveWhenShown] = None
+        self.applying: Optional[PresetFolder] = None
 
     def _warn(self, title: str, text: str) -> None:
         QMessageBox.warning(self.parent_widget, title, text)
@@ -502,14 +507,11 @@ class ArrangementPresets(QObject):
             return []
         for instance in open_plots:
             instance.close()
-        if self.live_starter is not None and not sip.isdeleted(self.live_starter):
-            self.live_starter.finish()
+        if self.applying is not None and not sip.isdeleted(self.applying):
+            self.applying.finish()
         folder = arrangement.folder
         if FolderCache.key(explorer.selected_path_globally) != folder or explorer.view_path != folder:
             explorer.open_to_path(folder)  # As typing its path in the tab's path bar
-        # A deliberate selection: it loads (cache first) even where automatic loads wouldn't, and a
-        # large folder asks.
-        explorer.load_to_ram_cache(folder, dwell=False, explicit=True)
         opened, failed = open_arrangement(self.scripts, self.cache(), arrangement, folder=folder)
         presets = {plot.script: read_script_presets(plot.script) for plot in arrangement.plots if plot.preset}
         for instance, saved in opened:
@@ -522,7 +524,8 @@ class ArrangementPresets(QObject):
         failed += [f"a plot ({why})" for why in arrangement.unreadable]
         if failed:
             self.plots.notice(f"Preset “{name}”: not opened: {'; '.join(failed)}")
-        self.live_starter = LiveWhenShown(explorer, folder, name, arrangement.live, self.plots.notice)
+        # Loaded as a deliberate selection, and Live once its data shows (``PresetFolder``).
+        self.applying = PresetFolder(explorer, folder, name, arrangement.live, self.plots.notice)
         return [instance for instance, _ in opened]
 
     def delete(self, name: str) -> bool:

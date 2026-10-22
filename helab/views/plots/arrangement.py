@@ -209,7 +209,8 @@ def capture(plots: PlotWorkspace, instances: Sequence[AnalysisInstance], *, fold
         together = [] if floating else [other for other in area.tabifiedDockWidgets(dock) if other in docks]
         first = min([dock, *together], key=docks.index)
         group = groups.setdefault(id(first), len(groups))
-        front = not together or not dock.isHidden()
+        # The tab shown in its group (a tab behind it has no visible region).
+        front = not together or not dock.visibleRegion().isEmpty()
         plot = by_dock[id(dock)].saved_plot()
         saved.append(SavedPlot(plot.script, plot.path, plot.root_key, plot.values, plot.backend, plot.live,
                                plot.instance_id, plot.title, plot.settings_open, plot.settings_width, floating,
