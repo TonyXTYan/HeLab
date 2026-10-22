@@ -113,4 +113,13 @@ seems to handle that.
 
 ## CI
 
-(Filled in after the push.)
+Run 39704784500 on `60914be` (the pushed head): **success**. Tests and Build passed on all three
+OSes, with **no RERUN on any OS** and no worker crash.
+
+| OS | Tests |
+|---|---|
+| Ubuntu | 2392 passed, 4 skipped, 2 xfailed (4:42) |
+| macOS | 2394 passed, 2 skipped, 2 xfailed (5:27) |
+| Windows | 2374 passed, 18 skipped, 2 xfailed (8:10) |
+
+This commit (the CI result) is local only, so the branch was pushed once.
