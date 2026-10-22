@@ -90,17 +90,21 @@ def pytest_terminal_summary(terminalreporter: Any) -> None:
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_teardown(item: pytest.Item) -> Iterator[None]:
-    result = yield
+    try:
+        result = yield
+    except BaseException:  # A fixture's or pytest-qt's teardown failed: clean up, keep its failure.
+        delete_left_widgets(item.nodeid, fail=False)
+        raise
     delete_left_widgets(item.nodeid)
     return result
 
 
-def delete_left_widgets(test: str) -> None:
+def delete_left_widgets(test: str, *, fail: bool = True) -> None:
     """Widgets a test leaves go with it. pytest-qt and fixtures only ``deleteLater()`` them, so a
     later test's event loop, or the interpreter's exit, deleted them; a QWebEngineView outliving
     its test that way crashed Qt (segfaults in ``test_live_plots.py`` on CI). Deferred deletes are
     sent at each test's teardown, and a web view still alive after that fails the test: nothing
-    would delete it."""
+    would delete it (``fail=False``: deleted only, when the teardown already failed)."""
     if "PyQt6.QtWebEngineWidgets" not in sys.modules:
         return
     from PyQt6.QtCore import QEvent
@@ -115,7 +119,9 @@ def delete_left_widgets(test: str) -> None:
             view.close()
             view.deleteLater()
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
-        pytest.fail(f"{test} left {len(alive)} web view(s) alive: close or delete its plots", pytrace=False)
+        if fail:
+            pytest.fail(f"{test} left {len(alive)} web view(s) alive: close or delete its plots",
+                        pytrace=False)
 
 
 @pytest.fixture(autouse=True)

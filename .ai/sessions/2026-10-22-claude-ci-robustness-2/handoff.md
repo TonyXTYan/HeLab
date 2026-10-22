@@ -123,3 +123,15 @@ OSes, with **no RERUN on any OS** and no worker crash.
 | Windows | 2374 passed, 18 skipped, 2 xfailed (8:10) |
 
 This commit (the CI result) is local only, so the branch was pushed once.
+
+## Review fix (Probe)
+
+Probe's blocker: if a fixture's or pytest-qt's teardown raised at the hook's `yield`,
+`delete_left_widgets()` was skipped, so a web view left to `deleteLater()` (or alive) escaped into
+the next test: A1's hazard. Now the cleanup runs then too, without failing the test again, and the
+teardown's own error is the one reported. `tests/test_left_widgets.py` runs a pytest of its own
+(this conftest as a plugin) where a fixture's teardown raises after a test left one view deleted
+later and one alive: before the fix the next test found them alive (and failed for them), after it
+both were deleted and only the two `RuntimeError`s were reported. Full suite: 2395 passed, no
+RERUN; strict mypy (helab, tests) and pyright clean. Local only, not pushed (CoCo lands from the
+floor).
