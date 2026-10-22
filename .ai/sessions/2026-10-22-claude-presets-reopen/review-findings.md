@@ -177,3 +177,27 @@ it then becomes its own floor.
 
 Flint's checks at `760a69f`: full suite 2551 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
 (156 / 118) and pyright clean.
+
+## Round 6: Flint, `760a69f..2c7c2dc`: review complete
+
+**Nothing above P3.** All six family probes pass (ordinary load, cache_base check, memory_check, Live
+`loaded`, save_held, queued RAM delivery); old results neither republish cache-held data nor clear the
+mismatch; queued loads are cancelled, not delivered. Side effects judged acceptable: a pre-mismatch
+Live result is refused and Live halts "Cancelled" with the mismatch kept (verified recovery with real
+test files: stop Live → Load as it is now → `allow_missing`, no old base → [2,3] → mismatch cleared →
+Live starts again); a finishing load's late `cache_saved` / `done` is ignored for the badge, its save
+and quit bookkeeping completes, and the next valid load restores the badge.
+
+P3 notes:
+1. **Do now (small):** `folder_cache.py:2667` checks the epoch only for `loaded`; a pre-mismatch
+   `live_unchanged` still reaches `explorer_live.py:484` and schedules another check instead of
+   stopping (no data escapes: the next check halts "Live needs the folder's loaded data"). Gate
+   `live_unchanged` by the same epoch check so it ends cancelled too, with a test through the real
+   Live helper's events; then the handoff's "a Live check in flight ends cancelled" is exact.
+2. **Note only:** stop Live → Review recovery needs Qt's model update between the two actions (one
+   stack: no replacement on the first call). Not a blocker; list it in the handoff for a later
+   test/API cleanup, and add "stop Live → Review / Load as it is now → start Live again" to the
+   on-screen checks.
+
+Flint's checks at `2c7c2dc`: full suite 2560 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
+(156 / 119) and pyright clean.

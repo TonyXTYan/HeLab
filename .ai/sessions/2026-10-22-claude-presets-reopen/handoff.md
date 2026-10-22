@@ -120,6 +120,9 @@ Branch `agent/presets-reopen` from `c3d4b50`. Brief: [brief.md](brief.md); notes
    the large-folder question comes first.
 5. A preset of an unmounted folder: one notice, plots waiting; mount it and select it: they run.
 6. Reset all settings' new wording.
+7. (Flint, round 6) With Live on a folder whose cached data turns out not to match it: stop Live →
+   Review… / Load as it is now → start Live again: the mismatch clears with the new data and Live
+   runs on it, never the old shots.
 
 ## Proposed doc edits (for the Coordinator)
 
@@ -276,3 +279,26 @@ round-3 and round-4 changes.
   on `c3d4b50` and `760a69f`.
 
 Full suite 2560 passed, no RERUN; strict mypy and pyright clean.
+
+
+## Round 6 (Flint on `2c7c2dc`: review complete, nothing above P3): the commit after `2c7c2dc`, not pushed
+
+- `live_unchanged` is fenced by the same epoch check as `loaded`: a Live check from before a
+  mismatch that finds nothing new also ends `cancelled` (Live stops with Retry) instead of scheduling
+  another check, so "a Live check in flight at the mismatch ends cancelled" (round 5) is exact. Test:
+  the real Live helper (`io_ops.live.live_check`) on an unchanged temp folder, its events fed to the
+  Live job after a status check's mismatch (`tests/test_mismatch_fence.py`; fails without the gate).
+- **`folder_cache.py` net diff vs `c3d4b50` now:** 18 lines added (14 in `_mismatch`, 4 for the
+  `live_unchanged` gate in the load/cached event branch), one line (`self._matched(job.path)`) moved
+  in the `loaded` branch.
+- **Later cleanup (note only):** stop Live → Review… recovery needs a Qt event-loop turn between
+  the two actions (the tab's model updates in between; called on one stack, the first call finds no
+  replacement). Not a blocker; a later test/API cleanup could make the order explicit.
+- **For `roadmaps/known-issues.md`: six mismatch races, pre-existing, fixed in `b66bba6`** (each
+  fails on `c3d4b50`, tests in `tests/test_mismatch_fence.py`): work started before a folder was found
+  mismatched could clear the mismatch and bring the old data back: (1) an ordinary load, (2) a
+  memory check, (3) a Live check, (4) a held (Live) save, (5) a check beside a cached read (cleared
+  it and then failed, leaving no data and no warning), (6) a RAM answer still queued (handed the
+  old data to a tab). Plus the cached-read race of rounds 3–4, fixed by the same fence.
+
+Full suite 2561 passed, no RERUN; strict mypy and pyright clean.

@@ -2649,6 +2649,10 @@ class FolderCache(QObject):
                 if event.get("problematic"):
                     job.problematic.add(event["shot"])
                 return
+            if kind == "live_unchanged" and job.epoch != self._epochs.get(job.path, 0):
+                # A Live check from before a mismatch (the folder's epoch moved): fenced like a ``loaded``.
+                self._cancel_job(job)
+                return
             if kind == "loaded":
                 job.clock.stop()
                 event = {"loaded_at": time.time(), **event}

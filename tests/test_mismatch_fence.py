@@ -5,7 +5,9 @@ before it. Only a load started after the mismatch, and accepted, clears it. Thro
 real events (FolderCache's producer-event handler; helpers held, no source I/O)."""
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 from typing import Any, Iterator, List
 
 import numpy as np
@@ -191,3 +193,37 @@ def test_after_resolution_the_tabs_loads_live_and_cached_reads_work(cache: Folde
     read = start(cache, "plot-reopen", "cached", {"cache": {"directory": "store"}})
     send(cache, read, shot(9), loaded("cached-now", [9], verified=False), {"kind": "done"})
     assert any(entry.signature == "cached-now" for entry in cache.datasets.values())
+
+
+def test_a_live_check_from_before_the_mismatch_finding_nothing_new_ends_cancelled(
+        cache: FolderCache, tmp_path: Path) -> None:
+    """The real Live helper on an unchanged folder answers ``live_unchanged``: from before the
+    mismatch, it is fenced like a ``loaded``: Live hears "cancelled" (it stops with Retry), not
+    "unchanged" (which would schedule another check)."""
+    from helab.io_ops.live import live_check
+    folder = tmp_path / "watched"
+    folder.mkdir()
+    for number in (1, 2):
+        file = folder / f"d_txy_forc{number}.txt"
+        file.write_text(f"{number},2,3\n")
+        os.utime(file, (time.time() - 60, time.time() - 60))
+    os.utime(folder, (time.time() - 60, time.time() - 60))
+    path = FolderCache.key(str(folder))
+    memory = [[number, (folder / f"d_txy_forc{number}.txt").stat().st_size,
+               (folder / f"d_txy_forc{number}.txt").stat().st_mtime_ns] for number in (1, 2)]
+    helper_events: List[Any] = []
+    output = tmp_path / "live-output"
+    output.mkdir()
+    live_check(str(folder), str(output), helper_events.append, memory)
+    assert helper_events[-1]["kind"] == "live_unchanged"
+    kinds = events_for(cache, "tab:live")
+    assert cache.submit("tab:live", 0, path, "load", {"live": {"interval": 3}, "memory": memory}, priority=True)
+    job = cache.jobs[("live", path)]
+    request = next(r for r in cache.service.pending if r.owner == job.owner)
+    assert cache.submit("status-check", 0, path, "details", {}, priority=True, force=True)
+    details = next(r for r in cache.service.pending if r.owner == cache.jobs[("details", path)].owner)
+    send(cache, details, MISMATCH, {"kind": "error", "message": "stopped"})
+    assert path in cache.mismatched
+    send(cache, request, *helper_events, {"kind": "done"})
+    assert "cancelled" in kinds and "live_unchanged" not in kinds
+    assert path in cache.mismatched and ("live", path) not in cache.jobs
