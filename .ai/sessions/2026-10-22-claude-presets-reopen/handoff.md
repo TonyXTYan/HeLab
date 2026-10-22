@@ -224,3 +224,18 @@ strict mypy and pyright clean.
 3. P2: the Keep/Drop box is shown with `show()`, non-modal (tested on the real box).
 
 4 new tests fail on `ffc2d4e`; full suite 2544 passed, no RERUN; strict mypy and pyright clean.
+
+## Review fixes, round 3 (Flint on `0098d8d`): the commit after `0098d8d`, not pushed
+
+- **One rule** for a reopened or preset plot's data, on every path: only what `FolderCache` itself
+  keeps as the folder's current data (`current_dataset`, else `latest_dataset`; a cached read's
+  result only if `holds` it; none while `mismatched`), never a tab's pin alone. No per-wait history.
+- **`helab/utils/folder_cache.py` (outside my owned paths, a one-condition guard, no new API):** a
+  `cached` read that lands while its folder is mismatched is cancelled, not stored, so `_mismatch`'s
+  "nothing shows it again until a load completes" holds for tabs too (a tab's cached read racing
+  a check that finds shots gone no longer shows the old data). The Result Cache floor, which also
+  edits `folder_cache.py`, merges after: the change is in the `loaded` branch's cancel condition.
+- Tests drive real helper events (load, `shots_missing`, list, invalidate, cached, `evict_to`) with a
+  tab's old pin held and a waiter made after each drop (mismatch → load → evicted; folder changed;
+  cleared), a cached read racing a mismatch, and an arrangement applied over a pinned old dataset.
+  Full suite 2549 passed, no RERUN; strict mypy and pyright clean.
