@@ -275,7 +275,7 @@ class PresetsEvent(TypedDict):
     kind: Literal["presets"]
     saved: list[PresetRowFields]
     rows: NotRequired[list[PresetRowFields]]
-    store: NotRequired[str]  # With ``rows``: the store's ``store_id`` (a recreated store has another).
+    store: NotRequired[str]  # The store's ``store_id`` (a recreated store has another).
     error: NotRequired[str]
 
 

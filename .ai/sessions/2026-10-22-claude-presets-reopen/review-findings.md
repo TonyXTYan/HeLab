@@ -201,3 +201,37 @@ P3 notes:
 
 Flint's checks at `2c7c2dc`: full suite 2560 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
 (156 / 119) and pyright clean.
+
+## Round 7 (Flint, 5923fe7..9a338fd, Follow-up 2: presets in the store)
+
+Suite 2575 passed, no RERUN; mypy/pyright clean. Three findings, each reproduced by a probe.
+
+1. [P1] Saving before the first preset read can overwrite an existing preset without the Replace
+   question (`helab/views/plots/presets.py:388`, `helab/utils/folder_cache.py:1197`): the UI checks
+   only the still-empty RAM names and `set_presets` submits a disk write while `presets_read` is
+   false. Keep changes pending (RAM only) until a store answer establishes the names; an unknown or
+   unreadable name list never authorizes replacing.
+2. [P2] An older read snapshot can remove a committed preset from RAM (`folder_cache.py:1242`):
+   read submitted while a write is pending; the write lands first, then the older empty read's
+   pruning (by submission time > set_at) deletes p from RAM though it is on disk. Submission time
+   can't order a snapshot against committed writes.
+3. [P2] Unknown/unreadable presets are described as empty (`presets.py:587`,
+   `helab/views/PresetsInspector.py:224`): with `presets_read=false` (initial or failed read) the
+   menu shows "No presets saved" and the inspector "(none saved)". Claim empty only after a
+   successful read.
+
+## Round 8 (Flint, 9a338fd..393d2af)
+
+Round-7 findings fixed in their scenarios. Suite 2583 passed, no RERUN; mypy/pyright clean. Two P2s in
+the recreated-store path, each reproduced with a store recreated at the same test path:
+
+1. [P2] A late acknowledgement from the retired store marks a change saved in the replacement store
+   (`helab/utils/folder_cache.py:1262-1266`, `:1270-1275`): the held A write answer, delivered after
+   B's read, clears p from `presets_unsaved` before checking store identity and makes A current
+   again; B's table is empty, `quit_saves()` is `[]`. A retired store's answer must neither
+   acknowledge a save nor make the old store current.
+2. [P2] Reconciling with a recreated store keeps the previous store's same-name value
+   (`folder_cache.py:1273`, `:1283-1284`): only names absent from B are reset, and
+   `_remember_preset` compares `set_at` across unrelated stores (A p="old" set_at=100, B
+   p="replacement" set_at=10: RAM keeps "old"). On identity change drop the previous store's saved
+   rows, keep this session's unsaved changes, then merge B.

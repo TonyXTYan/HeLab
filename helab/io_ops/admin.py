@@ -151,7 +151,7 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             written = cast(list[PresetRowFields], store.write_presets(rows) if rows else [])
             stored = store.read_presets()
             if stored.failed:
-                send({"kind": "presets", "saved": written, "error": stored.error})
+                send({"kind": "presets", "saved": written, "error": stored.error, "store": store.store_id})
             else:
                 send({"kind": "presets", "saved": written, "rows": cast(list[PresetRowFields], stored.value or []),
                       "store": store.store_id})

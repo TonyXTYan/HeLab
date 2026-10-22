@@ -475,3 +475,30 @@ Tests:
 
 Checks: full suite 2583 passed, 2 skipped, 2 xfailed, **no RERUN**; mypy --strict (helab, tests)
 and pyright clean.
+
+## Review fixes, round 8 (Flint on `9a338fd..393d2af`, round 7 accepted): the commit after `393d2af`, not pushed
+
+Both findings concern a store recreated while HeLab runs (deleted by hand, made again at the same
+path, so it has a new `store_id`).
+
+- **Every presets answer now names its store** (`store`), the error answer too.
+- **FolderCache checks the store first.**
+  - An answer from a **retired** store (one replaced since: `_presets_retired`) changes nothing.
+    It acknowledges no save, merges no row and doesn't make that store current. The rows its job
+    wrote are written again, to the current store, so `quit_saves` keeps waiting for them.
+  - On a **store change**, every row the previous store said goes, whatever its `set_at`: `set_at`
+    isn't comparable across unrelated stores. This session's unsaved changes stay (and are written
+    to the new store). Only then are the new store's rows merged. Pending conflict notes from the
+    old store go too.
+- Tests, in `tests/test_presets_store.py`, all three failing on `393d2af`:
+  - `test_a_late_answer_from_the_retired_store_acknowledges_nothing`: frozen helpers, Flint's
+    order.
+  - `test_a_recreated_stores_rows_replace_the_old_stores_whatever_their_times`: A's p at set_at
+    100 against B's at 10; an unsaved change carried to B.
+  - `test_a_store_recreated_at_the_same_folder_is_read_as_itself`: real helpers, the store
+    deleted and recreated at the same path.
+- `review-findings.md` (CoCo's and Flint's rounds 7 and 8) is committed with this, so the floor is
+  clean.
+
+Checks: full suite 2586 passed, 2 skipped, 2 xfailed, **no RERUN**; mypy --strict (helab, tests)
+and pyright clean.

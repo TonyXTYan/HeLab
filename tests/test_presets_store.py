@@ -419,3 +419,64 @@ def test_names_are_claimed_empty_only_after_a_successful_read(qtbot: QtBot) -> N
     answer(jobs, admin_job(jobs, 0), {"kind": "presets", "saved": [], "rows": [], "store": "S"}, {"kind": "done"})
     assert empty_lines(inspector) == ["(none saved)"] * 2
     assert presets_summary(cache) == "0 script presets, 0 arrangements"
+
+
+# Review round 8 (Flint, 9a338fd..393d2af): a store recreated while HeLab runs
+
+
+def test_a_late_answer_from_the_retired_store_acknowledges_nothing(service: IOService) -> None:
+    """(1) A write to store A is held; A is recreated as B, whose read answers first; A's answer
+    then lands: it neither marks the change saved nor makes A current again. The change is
+    written again, to B."""
+    jobs, cache = frozen()
+    cache.read_presets()
+    answer(jobs, admin_job(jobs, 0), {"kind": "presets", "saved": [], "rows": [], "store": "A"}, {"kind": "done"})
+    cache.set_presets([(ARR, "", "p", "{}")])
+    to_a = admin_job(jobs, 1)
+    cache.read_presets()
+    answer(jobs, admin_job(jobs, 0), {"kind": "presets", "saved": [], "rows": [], "store": "B"}, {"kind": "done"})
+    saved = row("p", "{}", cache.presets[(ARR, "", "p")]["set_at"])
+    answer(jobs, to_a, {"kind": "presets", "saved": [saved], "rows": [saved], "store": "A"}, {"kind": "done"})
+    assert cache._presets_store == "B" and cache.preset_unsaved(ARR, "", "p") == ""  # Being written…
+    assert cache.quit_saves() == [PRESETS_SAVING]
+    to_b = admin_job(jobs, 1)  # …again, to B.
+    assert to_b is not to_a and to_b.payload["params"]["rows"] == [saved]
+    answer(jobs, to_b, {"kind": "presets", "saved": [saved], "rows": [saved], "store": "B"}, {"kind": "done"})
+    assert not cache.presets_unsaved and cache.quit_saves() == [] and cache.preset_records(ARR) == {("", "p"): "{}"}
+
+
+def test_a_recreated_stores_rows_replace_the_old_stores_whatever_their_times(service: IOService) -> None:
+    """(2) A said p="old" (set_at 100); the recreated B says p="replacement" (set_at 10): B's shows.
+    This session's unsaved change stays, and is written to B."""
+    jobs, cache = frozen()
+    cache.read_presets()
+    answer(jobs, admin_job(jobs, 0), {"kind": "presets", "saved": [], "store": "A",
+                                      "rows": [row("p", '"old"', 100.0), row("gone", '"a"', 100.0)]},
+           {"kind": "done"})
+    cache.set_presets([(ARR, "", "mine", "{}")])
+    mine = admin_job(jobs, 1)
+    cache.read_presets()
+    answer(jobs, admin_job(jobs, 0), {"kind": "presets", "saved": [], "store": "B",
+                                      "rows": [row("p", '"replacement"', 10.0)]}, {"kind": "done"})
+    assert cache.preset_records(ARR) == {("", "p"): '"replacement"', ("", "mine"): "{}"}
+    answer(jobs, mine, {"kind": "presets", "saved": [], "rows": [], "store": "A"}, {"kind": "done"})
+    rewrite = admin_job(jobs, 1)
+    assert rewrite is not mine and [entry["name"] for entry in rewrite.payload["params"]["rows"]] == ["mine"]
+
+
+def test_a_store_recreated_at_the_same_folder_is_read_as_itself(qtbot: QtBot, service: IOService) -> None:
+    """Through real helpers: the store deleted by hand and made again at the same path, holding an
+    older "p" than the one this session saved: the new store's shows."""
+    import shutil
+    cache = get_folder_cache(service)
+    cache.read_presets()
+    settled(qtbot, cache)
+    cache.set_presets([(ARR, "", "p", '"old"')])
+    settled(qtbot, cache)
+    directory = store_options()["directory"]
+    shutil.rmtree(directory)
+    with CacheStore(directory) as store:
+        store.write_presets([row("p", '"replacement"', 10.0)])
+    cache.read_presets()
+    settled(qtbot, cache)
+    assert cache.preset_records(ARR) == {("", "p"): '"replacement"'} and not cache.presets_unsaved

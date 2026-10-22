@@ -270,6 +270,7 @@ class FolderCache(QObject):
         # Those the store turned out to hold already: kept as saved, the user told (``PRESET_FOUND``).
         self.presets_conflicts: dict[tuple[str, str, str], str] = {}
         self._presets_store = ""  # The store whose answers RAM holds (its ``store_id``).
+        self._presets_retired: set[str] = set()  # Stores replaced since (recreated): their answers count for nothing.
         self.service = service
         self.snapshots: OrderedDict[str, FolderSnapshot] = OrderedDict()
         self.datasets: OrderedDict[tuple[str, str, int], Dataset] = OrderedDict()
@@ -1259,6 +1260,25 @@ class FolderCache(QObject):
 
     def _on_presets(self, producer: IORequest, event: Mapping[str, Any]) -> None:
         keys = self._preset_jobs.get(producer.owner, [])
+        store = str(event.get("store") or "")
+        if store in self._presets_retired:
+            # From a store replaced since (recreated): it saved nothing that is still there, and says
+            # nothing about the current one. Its rows are written again, to the current store.
+            again = [key for key in keys if self.presets_unsaved.get(key) == ""
+                     and not self._preset_writing(key, producer.owner)]
+            if again:
+                self._write_presets(again)
+            return
+        if store and store != self._presets_store:
+            # Another store (a new one, recreated): nothing the last one said holds, whatever its
+            # times; this session's unsaved changes stay, to be written to this one. Within one store
+            # a row never goes (a delete keeps it), so a snapshot, however old, removes nothing.
+            if self._presets_store:
+                self._presets_retired.add(self._presets_store)
+                for key in [key for key in self.presets if key not in self.presets_unsaved]:
+                    del self.presets[key]
+                self.presets_conflicts.clear()
+            self._presets_store = store
         for row in event.get("saved") or ():
             self._remember_preset(row)
         for key in keys:
@@ -1266,13 +1286,6 @@ class FolderCache(QObject):
                 del self.presets_unsaved[key]  # Saved (or a later choice was, which now shows).
         if "rows" in event:
             stored = {(str(row["kind"]), str(row["scope"]), str(row["name"])): row for row in event["rows"] or ()}
-            store = str(event.get("store") or "")
-            if store != self._presets_store:
-                # Another store (a new one, recreated): what the last one said doesn't hold. Within one
-                # store a row never goes (a delete keeps it), so a snapshot, however old, removes nothing.
-                for key in [key for key in self.presets if key not in stored and key not in self.presets_unsaved]:
-                    del self.presets[key]
-                self._presets_store = store
             for key in sorted(self._presets_unknown):
                 # Changed before the store's names were known: a preset saved under that name stays.
                 found = stored.get(key)
