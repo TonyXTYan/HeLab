@@ -1658,10 +1658,12 @@ class CacheStore:
         self._conn.execute("DELETE FROM pending_results WHERE path = ? AND lookup = ?", (key, lookup))
 
     def adopt_pending_result(self, pending_id: str, *, budget: int | None = None, budget_set_at: float | None = None,
-                             make_room: bool = False, expected_room: Sequence[str] | None = None) -> ResultAdopt:
+                             make_room: bool = False, expected_room: Sequence[str] | None = None,
+                             expected_dropped: Sequence[str] | None = None) -> ResultAdopt:
         """Save a waiting result (Make room): with ``make_room``, least recently shown **other saved
         results** are removed until it fits, in the same transaction (never cached datasets: Clear
-        cached data is the user's own); with ``expected_room`` (the result ids the user was told),
+        cached data is the user's own); with ``expected_room`` (the result ids the user was told) and
+        ``expected_dropped`` (the waiting replacements it said it discards with them),
         exactly those or nothing. Raises :class:`SaveRejected` (discarding it) if it is gone, its
         run's guard no longer holds (a Clear cached analysis since) or the folder isn't to be cached.
         Not fitting, it keeps waiting and the answer says what Make room would remove."""
@@ -1691,7 +1693,8 @@ class CacheStore:
                     self._conn.execute("DELETE FROM pending_results WHERE pending_id = ?", (pending_id,))
                 else:
                     fits, removed = self._adopt_result_savepoint(pending_id, budget, make_room, keep=True,
-                                                                 expected=expected_room)
+                                                                 expected=expected_room,
+                                                                 expected_dropped=expected_dropped)
                     if fits:
                         removal = None if not removed else ResultRemoval(
                             tuple(sorted({self._source_path(item[1]) for item in removed})), len(removed),
@@ -1711,7 +1714,8 @@ class CacheStore:
         return result
 
     def _adopt_result_savepoint(self, pending_id: str, budget: int | None, make_room: bool, *, keep: bool,
-                                expected: Sequence[str] | None = None
+                                expected: Sequence[str] | None = None,
+                                expected_dropped: Sequence[str] | None = None
                                 ) -> tuple[bool, list[tuple[str, str, int, float, str]]]:
         """Adopt a waiting result inside a savepoint, with Make room if asked; kept only if ``keep``
         and it fits. Whether it fits, and the results Make room removed (or would): (result_id, path,
@@ -1755,6 +1759,9 @@ class CacheStore:
             fits = budget is None or self._live() <= budget
             if expected is not None and make_room and {item[0] for item in removed} != set(expected):
                 fits = False  # Not what the user agreed to remove: nothing is.
+            if (expected_dropped is not None and make_room
+                    and {pending for pending, _ in self._dropped} != set(expected_dropped)):
+                fits = False  # A waiting result it would discard that the question didn't name: asked again.
         except BaseException:
             self._conn.execute("ROLLBACK TO adopt_result")
             self._conn.execute("RELEASE adopt_result")

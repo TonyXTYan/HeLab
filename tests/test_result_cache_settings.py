@@ -212,7 +212,8 @@ def test_waiting_results_come_back_with_the_startup_inventory_and_are_asked(
     make_room = next(b for b in box.buttons() if b.text() == "Make room")
     make_room.click()
     answer = admin_request(service, "adopt_result")
-    assert answer.payload["params"] == {"pending_id": "p1", "make_room": True, "room_ids": ["r1", "r2"]}
+    assert answer.payload["params"] == {"pending_id": "p1", "make_room": True, "room_ids": ["r1", "r2"],
+                                        "dropped_ids": []}
     finish(service, answer, {"kind": "admin_result", "action": "adopt_result", "adopted": True, "path": "x",
                              "bytes": 3 * MB, "room": None, "next_deadline": None})
     assert not cache.pending_results

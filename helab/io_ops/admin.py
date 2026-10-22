@@ -182,7 +182,8 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             try:
                 taken = store.adopt_pending_result(params["pending_id"], budget=budget, budget_set_at=budget_set_at,
                                                    make_room=bool(params.get("make_room")),
-                                                   expected_room=params.get("room_ids"))
+                                                   expected_room=params.get("room_ids"),
+                                                   expected_dropped=params.get("dropped_ids"))
             except SaveRejected as rejection:
                 result.update({"adopted": False, "rejected": rejection.reason, "message": str(rejection)})
             else:

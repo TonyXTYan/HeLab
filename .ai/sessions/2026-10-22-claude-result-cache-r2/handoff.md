@@ -382,3 +382,12 @@ saved, and a purge that took another result of a folder makes a save in flight t
 4. **The lookup cell and comment corrected**: a lookup answered after Make room evicted its key
    computes and stays in RAM (the store refuses that run's save: its guard predates the eviction); a
    run asked for later takes a fresh guard and saves it.
+
+## Review fix, round 6 (Gauge on `339ed5b`: review complete, one P3)
+
+Make room removes exactly what its question named, waiting replacements included: the answer sends
+the plan's dropped pending ids (`dropped_ids`, empty when none) beside its `room_ids`, and
+`adopt_pending_result(expected_dropped=…)` removes nothing if the replacements it would discard
+differ (a replacement queued after the question was shown); the plan comes back and the question,
+whose identity now includes those ids (`CacheDialogs.question`), is asked again naming it
+(`test_a_waiting_replacement_that_appears_after_the_question_makes_it_ask_again`).

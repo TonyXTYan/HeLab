@@ -194,3 +194,22 @@ adopts; a fresh keyed guard saves). No P0/P1, no wrong result. Fix before landin
 
 Gauge's checks at `4c50d01`: full suite 2590 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
 (158 / 123) and pyright clean; `git diff --check` clean.
+
+## Round 6: Gauge, `4c50d01..339ed5b`: review complete
+
+**No findings above P3.** All round-5 fixes accepted: the held late `result_pending` ends terminal
+(no question, no `_waiting`); tombstone compaction runs under the broader fence in the same
+transaction for global, root and folder clears and an age purge (tombstones 3 → 0, the pre-clear guard
+still refused, a fresh guard saves); dropping a waiting replacement of an evicted key is disclosed in
+the room plan; the Lookup cell and comment are right.
+
+**[P3, non-blocking] disclosure race:** `helab/utils/cache_store.py:1755-1757`,
+`helab/views/CacheDialogs.py:118-119`. The plan now includes dropped pending ids and labels, but the
+confirmation's identity and `expected_room` validation compare only saved `result_ids`, so a waiting
+replacement that appears after the question was shown is discarded without the question saying so.
+(Save old; queue new and get its plan, 0 waiting drops; queue an over-budget replacement of old; adopt
+new with the original plan: succeeds and drops 1.) **CoCo: fix it (small):** include the expected
+dropped pending ids in the plan's validation and the question's identity, so a changed plan asks again.
+
+Gauge's checks at `339ed5b`: full suite 2594 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
+(158 / 123) and pyright clean.

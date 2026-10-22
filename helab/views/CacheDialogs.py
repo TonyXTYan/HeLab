@@ -116,7 +116,9 @@ class CacheDialogs(QObject):
         if kind == "needs_approval":
             return kind
         paths = sorted(room.get("paths") or room.get("result_ids") or ()) if isinstance(room, dict) else None
-        return json.dumps([kind, paths, store_options().get("budget")])
+        # (And the waiting results it discards with them: a new one is a new question.)
+        dropped = sorted(room.get("dropped") or ()) if isinstance(room, dict) else []
+        return json.dumps([kind, paths, store_options().get("budget"), *([dropped] if dropped else [])])
 
     @staticmethod
     def kind(question: str) -> str:
@@ -247,19 +249,22 @@ class CacheDialogs(QObject):
                 listed = "result_ids" if result else "paths"
                 self._answer(pending_id, question, "adopt_result" if result else "adopt",
                              make_room=kind == "over_budget",
-                             room_paths=list(room.get(listed) or ()) if isinstance(room, dict) else None)
+                             room_paths=list(room.get(listed) or ()) if isinstance(room, dict) else None,
+                             dropped=list(room.get("dropped") or ()) if result and isinstance(room, dict) else None)
             else:
                 self._answer(pending_id, question, "discard_result" if result else "discard")
         self._open(box, (pending_id, question), answer)
 
     def _answer(self, pending_id: str, question: str, action: str, *, make_room: bool = False,
-                room_paths: list[str] | None = None) -> None:
+                room_paths: list[str] | None = None, dropped: list[str] | None = None) -> None:
         params: dict[str, Any] = {"pending_id": pending_id}
         if action in ("adopt", "adopt_result"):
             params["make_room"] = make_room
             if make_room and room_paths is not None:
                 # Removes exactly what the question said, or nothing (then asked again).
                 params["room_ids" if action == "adopt_result" else "room_paths"] = room_paths
+                if action == "adopt_result":
+                    params["dropped_ids"] = dropped or []  # (Exactly those waiting results, or nothing.)
         self._answered[pending_id] = question
         self._failed.pop(pending_id, None)
         owner = self.cache.cache_admin(action, **params)

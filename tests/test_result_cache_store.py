@@ -493,3 +493,32 @@ def test_key_epochs_are_compacted_under_the_broader_fence(tmp_path: Path, fence:
             save(store, RUN, "k", data=big_result(0), guard=stale, budget=10 ** 12, budget_set_at=99.0)
         assert save(store, RUN, "k", data=big_result(0), guard=store.start_result_job(RUN, "k"),
                     budget=10 ** 12, budget_set_at=99.0).saved
+
+
+@pytest.mark.no_auto_data_root
+def test_a_waiting_replacement_that_appears_after_the_question_makes_it_ask_again(tmp_path: Path) -> None:
+    """Gauge's round 6: Make room removes exactly the saved results and waiting replacements its
+    question named, or nothing; a replacement queued since is a new question (CacheDialogs.question)."""
+    from helab.views.CacheDialogs import CacheDialogs
+    with CacheStore(str(tmp_path / "store")) as store:
+        assert save(store, lookup="old", data=big_result(0), budget=10 ** 12, budget_set_at=1.0).saved
+        budget = store.usage() + 50_000
+        new = save(store, lookup="new", data=big_result(1), budget=budget, budget_set_at=2.0)
+        asked = store.result_room_plan(new.pending_id, budget)
+        assert asked.possible and len(asked.result_ids) == 1 and asked.dropped == ()
+        # (A same-size replacement fits by replacing: a budget under the usage makes it wait.)
+        replacement = save(store, lookup="old", data=big_result(2), budget=store.usage() - 1, budget_set_at=3.0)
+        assert replacement.pending_id  # Queued after the question was shown.
+        refused = store.adopt_pending_result(new.pending_id, budget=budget, budget_set_at=4.0, make_room=True,
+                                             expected_room=list(asked.result_ids), expected_dropped=list(asked.dropped))
+        assert not refused.adopted and refused.room is not None and refused.room.dropped == (replacement.pending_id,)
+        assert store.find_result(RUN, "old").found and store.inventory(budget)["pending_results"]
+        entry = {"reason": "over_budget", "result": True}
+        first = CacheDialogs.question({**entry, "room": {"result_ids": list(asked.result_ids), "possible": True}})
+        again = CacheDialogs.question({**entry, "room": {"result_ids": list(refused.room.result_ids), "possible": True,
+                                                         "dropped": list(refused.room.dropped)}})
+        assert first != again  # Asked again, now naming the replacement it discards.
+        adopted = store.adopt_pending_result(new.pending_id, budget=budget, budget_set_at=4.0, make_room=True,
+                                             expected_room=list(refused.room.result_ids),
+                                             expected_dropped=list(refused.room.dropped))
+        assert adopted.adopted and adopted.removal is not None and adopted.removal.dropped == (replacement.pending_id,)
