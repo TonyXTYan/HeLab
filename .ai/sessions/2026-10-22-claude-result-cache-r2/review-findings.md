@@ -118,3 +118,40 @@ happen; reply to CoCo with the commits and the table.
 
 Gauge's checks at `81a9529`: full suite 2563 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
 (158 / 122) and pyright clean; `git diff --check` clean.
+
+## Round 4: Gauge, `81a9529..de6825f`
+
+Both round-3 cases fixed (probes pass). No P0/P1, no schema change in this delta, no wrong result.
+
+1. **[P2] The store no longer stops an in-flight save from resurrecting the evicted key.**
+   `helab/utils/cache_store.py:1718-1722` (guard checks at `:1579`, `start_result_job` /
+   `_check_result_guard`). Eviction dropped the folder epoch bump without a persistent per-(folder,
+   lookup) replacement, so a guard taken before the eviction still passes for the very key the user
+   removed. `FolderCache._evicted` only hides the late GUI acknowledgement; it can't stop a helper (or
+   another HeLab process) committing the row. Reproduced (private temp store): save key `old`; take
+   guard G for a running save of `old`; queue/adopt `pending-a` with Make room so `old` is evicted;
+   make the budget sufficient; `save_result(old, …, G)` returns saved and `find_result(old).found`.
+   Add a **key-specific persisted epoch/sequence** (per folder and lookup), checked by save and by
+   adoption, leaving other keys' guards alone. A computation restarted after the eviction takes a
+   fresh guard; a save already running must not reuse its old one.
+2. **[P3, table/test gap] A waiting key can also have a saved row**, so "Waiting × eviction of the
+   same key" and "Adoption × eviction of the same key" are possible (`cache_store.py:1583-1592`): an
+   over-budget replacement rolls back its upsert, keeping the existing `results` row, then inserts a
+   `pending_results` row under the same (path, lookup); nothing prevents both. Probe: save
+   `same-key` with enough budget; save it again with the budget at 1: `find_result` finds it and
+   `pending_results` has it too. A run that bypasses reuse, or concurrent runs/processes, can produce
+   that replacement; another key's Make room can then evict the saved row while its replacement waits
+   or is adopted. ("Make room never evicts its own key" excludes only the adopting request's key.)
+   Replace those two "impossible" cells with explicit semantics and tests, with the per-key guard.
+
+Table audit (fold into the table): the lookup/save tests hold answers *after* the store
+read/save completes, covering message order but not a save transaction that runs *after* the
+eviction (finding 1 is that order). Discard is "impossible" only per request / for one local dialog
+answer: with a saved row and a pending replacement of the same key, Discard can overlap a lookup of
+the saved row, and two HeLab processes can adopt and discard one pending id at once (the store must
+give one success and one "gone"): state the table's scope. "Adoption transaction first, clear
+second" doesn't cover a held successful adoption acknowledgement delivered after the clear: test that
+order too (no failure found there).
+
+Gauge's checks at `de6825f`: full suite 2582 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
+(158 / 123) and pyright clean; `git diff --check` clean.

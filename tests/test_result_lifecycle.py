@@ -7,6 +7,7 @@ the folder's other saves or waiting results. Each cell that can happen has a tes
 table is in the session handoff."""
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, List, cast
@@ -35,11 +36,13 @@ class Noisy(Costly):
     def __init__(self, scale: int = 1) -> None:
         super().__init__()
         self.scale = scale
+        self.entered = threading.Event()
 
     def parameters(self, action_name: str) -> List[ParameterSpec]:
         return [ParameterSpec("scale", "Scale", "int", self.scale, (1, 10))]
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
+        self.entered.set()  # (Its lookup is answered: the run computes.)
         data = super().compute(action_name, context)
         return type(data)(np.random.default_rng(int(context.parameters["scale"])).random(20_000), data.scale)
 
@@ -333,3 +336,121 @@ def test_adoption_x_purge_before_it_is_gone(lab: Lab) -> None:
     answer = lab.make_room(pending_id, room_ids=[])
     assert answer["adopted"] is False and answer["rejected"] == "gone"
     assert lab.store_rows() == (0, 0) and shown(instance).policy != DISK_CACHED
+
+
+# Round 4: a save running since before its key's eviction, and a saved row with a waiting replacement
+
+class Deferred:
+    """Saves asked for from now are held, their guards taken at their lookups; ``run`` sends one."""
+
+    def __init__(self, lab: Lab) -> None:
+        self.lab = lab
+        self.calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        self.real = lab.cache.save_result
+        lab.monkeypatch.setattr(lab.cache, "save_result", self.hold)
+
+    def hold(self, *args: Any, **kwargs: Any) -> bool:
+        self.calls.append((args, kwargs))
+        return True  # (Asked: its answer comes once it is sent.)
+
+    def ready(self, count: int) -> None:
+        self.lab.qtbot.waitUntil(lambda: len(self.calls) >= count, timeout=WAIT)
+
+    def run(self, index: int) -> None:
+        args, kwargs = self.calls[index]
+        assert self.real(*args, **kwargs)
+
+
+def saved_with_waiting_replacement(lab: Lab) -> tuple[AnalysisInstance, str]:
+    """Scale 1 saved by one run, and another run's result of the same key waiting (it didn't fit):
+    both runs looked up before either saved, as two plots (or two HeLabs) can."""
+    deferred = Deferred(lab)
+    first, _ = lab.plot(1)
+    second, _ = lab.plot(1)
+    deferred.ready(2)
+    deferred.run(0)
+    lab.qtbot.waitUntil(lambda: saved(first), timeout=WAIT)
+    first.close()
+    with CacheStore(store_root(cache_dir())) as store:
+        usage = store.usage()
+    lab.budget(usage - 1)  # The replacement doesn't fit: it waits, beside the saved row of its key.
+    before = set(lab.cache.pending_results)
+    deferred.run(1)
+    lab.qtbot.waitUntil(lambda: bool(set(lab.cache.pending_results) - before), timeout=WAIT)
+    [pending_id] = set(lab.cache.pending_results) - before
+    assert lab.store_rows() == (1, 1)
+    lab.monkeypatch.setattr(lab.cache, "save_result", deferred.real)
+    return second, pending_id
+
+
+def test_save_x_eviction_of_the_same_key_before_its_transaction_is_refused(lab: Lab) -> None:
+    """The order Gauge found: the save's transaction runs after Make room evicted its key."""
+    deferred = Deferred(lab)
+    late, _ = lab.plot(1)  # Looked up before anything was saved (its guard is old); its save waits.
+    deferred.ready(1)
+    lab.monkeypatch.setattr(lab.cache, "save_result", deferred.real)
+    lab.saved_plot(1)  # Another run saves Scale 1...
+    evict_scale_1(lab)  # ...and Make room for Scale 2 evicts it.
+    lab.budget(8 << 30)
+    deferred.run(0)  # Only now does the first run's save of Scale 1 reach the store, with its old guard.
+    lab.qtbot.wait(500)
+    assert shown(late).policy != DISK_CACHED and lab.store_rows() == (1, 0)  # Scale 2 only.
+
+
+def test_waiting_x_eviction_of_its_keys_saved_row_drops_the_replacement(lab: Lab) -> None:
+    replacement_plot, replacement = saved_with_waiting_replacement(lab)
+    lab.tight()
+    _, other = lab.waiting(2)
+    assert lab.make_room(other)["adopted"] is True  # Evicts saved Scale 1: its waiting replacement goes too.
+    assert replacement not in lab.cache.pending_results and (replacement, False) in lab.answers
+    assert lab.store_rows() == (1, 0)
+    lab.qtbot.waitUntil(lambda: "discarded" in replacement_plot.status_label.text(), timeout=WAIT)
+
+
+def test_adoption_x_eviction_of_its_keys_saved_row_is_gone(lab: Lab) -> None:
+    replacement_plot, replacement = saved_with_waiting_replacement(lab)
+    entry = dict(lab.cache.pending_results[replacement])
+    lab.tight()
+    _, other = lab.waiting(2)
+    assert lab.make_room(other)["adopted"] is True
+    lab.cache.pending_results[replacement] = entry  # (Its Make room was asked before the eviction arrived.)
+    lab.budget(8 << 30)
+    answer = lab.make_room(replacement, room_ids=[])
+    assert answer["adopted"] is False and answer["rejected"] == "gone"
+    assert shown(replacement_plot).policy != DISK_CACHED and lab.store_rows() == (1, 0)
+
+
+def test_lookup_x_discard_of_a_waiting_replacement_shows_the_saved_row(lab: Lab) -> None:
+    _, replacement = saved_with_waiting_replacement(lab)
+    release = lab.hold("result_found")
+    instance, script = lab.plot(1, wait=False)
+    lab.arrived()
+    lab.admin("discard_result", pending_id=replacement)
+    release()
+    lab.qtbot.waitUntil(lambda: settled(instance), timeout=WAIT)
+    assert script.computed == 0 and shown(instance).source == FROM_DISK and lab.store_rows() == (1, 0)
+
+
+def test_adoption_acknowledged_after_a_clear_is_not_saved(lab: Lab) -> None:
+    lab.budget(1)
+    instance, pending_id = lab.waiting(1)
+    lab.budget(8 << 30)
+    held: list[tuple[IORequest, dict[str, Any]]] = []
+    real, adopting = lab.cache._on_admin_event, [""]
+
+    def hold(producer: IORequest, event: dict[str, Any]) -> None:
+        if producer.owner == adopting[0]:  # (All of the adoption's events, its done too: held in order.)
+            held.append((producer, event))
+            return
+        real(producer, event)
+    lab.monkeypatch.setattr(lab.cache, "_on_admin_event", hold)
+    adopting[0] = lab.cache.cache_admin("adopt_result", pending_id=pending_id, make_room=True, room_ids=[])
+    assert adopting[0]
+    lab.qtbot.waitUntil(lambda: any(event["kind"] == "admin_result" for _, event in held), timeout=WAIT)
+    acknowledgement = next(event for _, event in held if event["kind"] == "admin_result")
+    assert acknowledgement["adopted"] is True and lab.store_rows() == (1, 0)  # Saved in the store...
+    lab.removal("all")  # ...then cleared, before its acknowledgement arrives.
+    for producer, event in held:
+        real(producer, event)
+    assert (pending_id, False) in lab.answers and shown(instance).policy != DISK_CACHED
+    assert lab.store_rows() == (0, 0)

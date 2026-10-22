@@ -487,6 +487,7 @@ class RemovedEvent(TypedDict):
     root: NotRequired[str | None]
     # Saved results Make room removed for a waiting one, [folder, lookup] each: not a clear (no epoch moved).
     evicted: NotRequired[list[list[str]]]
+    dropped: NotRequired[list[str]]  # Waiting replacements of the evicted keys that went with them.
 
 
 class ResultGuard(TypedDict):

@@ -2015,10 +2015,15 @@ class FolderCache(QObject):
     def _evicted_after(self, started: float, path: str, lookup: str) -> bool:
         return self._evicted.get((path, lookup), float("-inf")) > started
 
-    def _results_evicted(self, evicted: list[Any]) -> None:
+    def _results_evicted(self, evicted: list[Any], dropped: list[str] | None = None) -> None:
         """Make room removed these saved results ([folder, lookup] each) for a waiting one: their reads
-        asked before aren't current, plots showing them say RAM only; their folders' other results,
-        saves and waiting ones are untouched (no epoch moved)."""
+        asked before aren't current, plots showing them say RAM only; a waiting replacement of one of
+        those keys went with it (``dropped``); their folders' other results, saves and waiting ones are
+        untouched (no folder epoch moved)."""
+        for pending_id in dropped or ():
+            if pending_id in self.pending_results:
+                self.resultPendingAnswered.emit(pending_id, False)
+        self._forget_pending(set(dropped or ()))
         now = time.monotonic()
         keys = [(self.key(str(folder)), str(lookup)) for folder, lookup in evicted]
         for key in keys:
@@ -2253,7 +2258,7 @@ class FolderCache(QObject):
                 self.remember_prefs(path, cleared)
             return
         if kind == "removed" and isinstance(event.get("evicted"), list):
-            self._results_evicted(event["evicted"])
+            self._results_evicted(event["evicted"], [str(pending_id) for pending_id in event.get("dropped") or ()])
             return
         if kind == "removed":
             self.removed(event["paths"], event["kinds"])
@@ -2331,7 +2336,11 @@ class FolderCache(QObject):
                 self.pending_results[pending_id] = {**self.pending_results[pending_id], "room": event["room"]}
             elif pending_id:
                 self._forget_pending({pending_id})
-                self.resultPendingAnswered.emit(pending_id, bool(event.get("adopted")))
+                # Saved, unless a Clear cached analysis (all, the root's, a purge) of its folder came since
+                # Make room was asked: its acknowledgement then names a row that is gone.
+                saved_now = bool(event.get("adopted")) and not self._removed_after(
+                    started, "results", self.key(str(event.get("path") or "")))
+                self.resultPendingAnswered.emit(pending_id, saved_now)
             self.pendingSavesChanged.emit()
         elif kind == "swept":
             expired: set[str] = {str(pending_id) for pending_id in event.get("expired_ids") or ()}

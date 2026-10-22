@@ -328,3 +328,34 @@ row, covered by the Clear cached analysis tests.)
 
 Conservative, as before: a save acknowledged after an eviction of its own key reads as not saved even
 when its transaction came after the eviction (the store has it; the next lookup finds it).
+
+## Review fixes, round 4 (Gauge on `de6825f`): a key's own epoch, and the table completed
+
+**Store.** Make room's eviction now bumps a persisted epoch of each evicted key, `folder_epochs`
+row `result-key:<root key>#<lookup>` (no new table). `start_result_job(path, lookup)` takes it with
+the folder's and root's (the lookup passes its key), and both `save_result` and `adopt_pending_result`
+check it (a guard without it counts from 0): a save already running for an evicted key can't write it
+back, by any helper or HeLab, while the folder's other keys keep their guards; a run started after the
+eviction takes a fresh guard and saves it again. A waiting replacement of an evicted key (a saved row
+and a waiting result can share a key: an over-budget replacement keeps the saved row) goes with it,
+its file retired, named in the removal (`dropped`, the event's `dropped`); FolderCache forgets its
+question and answers it False. A Make room acknowledgement that arrives after a Clear cached analysis
+of its folder is answered False (not saved).
+
+**The table, completed** (replaces round 3's; each cell a test in `tests/test_result_lifecycle.py`,
+store-only cells in `tests/test_result_cache_store.py`):
+
+| In flight ↓ / meanwhile → | Make room evicts the same key | Make room evicts another key of the folder | Clear cached analysis (all / root) | Purge by age | Discard |
+|---|---|---|---|---|---|
+| **Lookup** | computes; may save again (fresh key epoch) · `lookup_x_eviction_of_the_same_result_computes` | shown from disk · `lookup_x_eviction_of_another_result_shows_it_from_disk` | computes, RAM only · `lookup_x_clear_or_purge_computes[all, root]` | computes, RAM only · `…[purge]` | of a waiting replacement of the key: the saved row is shown · `lookup_x_discard_of_a_waiting_replacement_shows_the_saved_row` |
+| **Save**, answer after its transaction | RAM only · `save_x_eviction_of_the_same_result_is_ram_only` | saved · `save_x_eviction_of_another_result_is_saved` | RAM only · `save_x_clear_or_purge_is_ram_only[all, root]` | RAM only · `…[purge]` | can't happen (per request) |
+| **Save**, transaction after the eviction | refused by the key's epoch, nothing written, RAM only · `save_x_eviction_of_the_same_key_before_its_transaction_is_refused`; store: `a_save_running_since_before_an_eviction_cant_write_the_key_back` | saved (its guard holds) · same store test | refused (folder/root epoch), as before | refused (folder epoch) | — |
+| **Waiting result** | its replacement goes with the evicted saved row: question gone, "discarded" · `waiting_x_eviction_of_its_keys_saved_row_drops_the_replacement`; store: `a_waiting_replacement_goes_when_its_saved_row_is_evicted` | stays, its Make room saves it · `waiting_x_another_waiting_ones_eviction_keeps_its_question_and_saves` | question gone, "discarded" · `waiting_x_clear_drops_the_question[all, root]` | question gone, "discarded" · `waiting_x_purge_of_its_folder_drops_the_question` | question gone, "discarded" · `waiting_x_discard` |
+| **Adoption** (Make room asked) | "gone" · `adoption_x_eviction_of_its_keys_saved_row_is_gone` | the plan changed: nothing removed, asked again · `adoption_x_another_adoptions_eviction_asks_again_with_the_new_plan` | the clear first: "gone" · `adoption_x_clear_before_it_is_gone[all, root]`; the adoption first, its acknowledgement after the clear: not saved · `adoption_acknowledged_after_a_clear_is_not_saved` | "gone" · `adoption_x_purge_before_it_is_gone` | another HeLab's Discard at once: one wins, the other is "gone" · `two_processes_answering_one_waiting_result_one_wins` (4 rounds, two processes) |
+
+**Scope.** One question per waiting result in one HeLab (CacheDialogs asks one at a time and sends one
+answer); Discard and Make room of one pending id from two HeLabs are decided by the store's
+transactions (one success, one "gone"). Message order (answers held until the removal is done) and
+transaction order (a save or adoption reaching the store after the removal) are both covered where they
+differ. Conservative, as before: a save acknowledged after an eviction of its own key reads as not
+saved, and a purge that took another result of a folder makes a save in flight there read as not saved.

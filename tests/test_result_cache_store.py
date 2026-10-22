@@ -380,3 +380,74 @@ def test_a_folder_without_a_data_root_reads_and_writes_nothing(tmp_path: Path) -
     assert refused[-1]["kind"] == "result_not_saved" and refused[-1]["reason"] == "ram_only"
     results = Path(cache["directory"]) / cache_store.RESULTS_DIRNAME
     assert not results.exists() or not os.listdir(results)
+
+
+# Round 4: a key's own epoch (Make room's eviction), and a saved row with a waiting replacement
+
+@pytest.mark.no_auto_data_root
+def test_a_save_running_since_before_an_eviction_cant_write_the_key_back(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        assert save(store, lookup="old", data=big_result(0), budget=10 ** 12, budget_set_at=1.0).saved
+        running = store.start_result_job(RUN, "old")  # A run of "old" starts (its save in flight)...
+        other = store.start_result_job(RUN, "other")  # ...and one of another key of the folder.
+        budget = store.usage() + 50_000
+        held = save(store, lookup="a", data=big_result(1), budget=budget, budget_set_at=2.0)
+        evicted = store.adopt_pending_result(held.pending_id, budget=budget, budget_set_at=2.0, make_room=True)
+        assert evicted.adopted and evicted.removal is not None and evicted.removal.evicted == ((RUN, "old"),)
+        with pytest.raises(SaveRejected) as refused:  # Even with room now, the evicted key stays evicted.
+            save(store, lookup="old", data=big_result(0), guard=running, budget=10 ** 12, budget_set_at=3.0)
+        assert refused.value.reason == "cleared" and store.find_result(RUN, "old").missing
+        # Another key's run keeps its guard; a run started after the eviction saves the key again.
+        assert save(store, lookup="other", data=big_result(2), guard=other, budget=10 ** 12, budget_set_at=3.0).saved
+        fresh = store.start_result_job(RUN, "old")
+        assert save(store, lookup="old", data=big_result(0), guard=fresh, budget=10 ** 12, budget_set_at=3.0).saved
+
+
+@pytest.mark.no_auto_data_root
+def test_a_waiting_replacement_goes_when_its_saved_row_is_evicted(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        assert save(store, lookup="k", data=big_result(0), budget=10 ** 12, budget_set_at=1.0).saved
+        replacement = save(store, lookup="k", data=big_result(9), budget=1, budget_set_at=2.0)
+        assert replacement.pending_id and store.find_result(RUN, "k").found  # Both, under one key.
+        budget = store.usage() + 50_000
+        held = save(store, lookup="a", data=big_result(1), budget=budget, budget_set_at=3.0)
+        adopted = store.adopt_pending_result(held.pending_id, budget=budget, budget_set_at=3.0, make_room=True)
+        assert adopted.removal is not None and adopted.removal.dropped == (replacement.pending_id,)
+        assert store.find_result(RUN, "k").missing
+        with pytest.raises(SaveRejected) as gone:
+            store.adopt_pending_result(replacement.pending_id, budget=10 ** 12, budget_set_at=4.0)
+        assert gone.value.reason == "gone"
+
+
+@pytest.mark.no_auto_data_root
+def test_two_processes_answering_one_waiting_result_one_wins(tmp_path: Path) -> None:
+    """Two HeLabs (processes) asked the same question: one Make room and one Discard at once give one
+    success and one "gone"/False, never both."""
+    import subprocess
+    import sys
+    directory = tmp_path / "store"
+    code = ("import sys\nfrom helab.utils.cache_store import CacheStore, SaveRejected\n"
+            "with CacheStore(sys.argv[1]) as store:\n"
+            "    if sys.argv[2] == 'adopt':\n"
+            "        try:\n"
+            "            print('won' if store.adopt_pending_result(sys.argv[3], budget=10 ** 12, budget_set_at=float(sys.argv[4]))"
+            ".adopted else 'waiting')\n"
+            "        except SaveRejected as rejected:\n"
+            "            print(rejected.reason)\n"
+            "    else:\n"
+            "        print('won' if store.discard_pending_result(sys.argv[3]) else 'gone')\n")
+    for round_ in range(4):
+        with CacheStore(str(directory)) as store:
+            # (Each round's budget is set after the last round's Make room recorded a larger one.)
+            pending_id = save(store, lookup=f"k{round_}", data=big_result(round_), budget=1,
+                              budget_set_at=10.0 * (round_ + 1)).pending_id
+        assert pending_id
+        helpers = [subprocess.Popen([sys.executable, "-c", code, str(directory), answer, pending_id,
+                                     str(10.0 * (round_ + 1) + 5)],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                   for answer in ("adopt", "discard")]
+        outcomes = [helper.communicate(timeout=60)[0].strip() for helper in helpers]
+        assert sorted(outcomes) in (["gone", "won"], ["won", "gone"]), outcomes
+        with CacheStore(str(directory)) as store:
+            assert store._conn.execute("SELECT COUNT(*) FROM pending_results").fetchone()[0] == 0
+            assert store.find_result(RUN, f"k{round_}").found is (outcomes[0] == "won")

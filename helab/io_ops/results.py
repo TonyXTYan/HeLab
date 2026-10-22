@@ -43,7 +43,7 @@ def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lo
             return
         guard: ResultGuard | None
         try:
-            guard = _guard_fields(store.start_result_job(path))
+            guard = _guard_fields(store.start_result_job(path, lookup))
         except StoreReadOnly:
             guard = None  # (Read, never saved: a newer HeLab's store.)
         found = store.find_result(path, lookup, family)

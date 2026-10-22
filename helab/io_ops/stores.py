@@ -184,6 +184,7 @@ def _results_removed_event(removal: Any, *, evicted: bool = False) -> RemovedEve
                            "results": removal.results, "bytes": removal.bytes, "root": removal.root}
     if evicted:
         event["evicted"] = [[folder, lookup] for folder, lookup in removal.evicted]
+        event["dropped"] = list(removal.dropped)
     return event
 
 
