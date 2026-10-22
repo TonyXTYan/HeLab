@@ -28,6 +28,7 @@ from helab.utils.constants import (
 )
 from helab.utils.folder_cache import FolderCache, store_options
 from helab.utils.number_format import byte_size
+from helab.utils.settings_defaults import RESULT_REUSE_SETTING, read_setting
 from helab.utils.time_format import relative_age
 
 GB = 1 << 30
@@ -47,6 +48,10 @@ CLEAR_TEXT = {
 RESULTS_LABEL = "Cached analysis"
 RESULTS_TEXT = ("Plots shown now stay as they are; the next run of each plot computes again. Cached data, "
                 "folder records and exported files are kept.")
+
+
+def read_result_reuse(settings: QSettings) -> bool:
+    return bool(read_setting(settings, RESULT_REUSE_SETTING, typed=True))
 
 
 def plural(count: int, noun: str) -> str:
@@ -174,6 +179,13 @@ class CacheTab(QWidget):
         self.results_button.clicked.connect(self.clear_results)
         grid.addWidget(self.results_button, row, 2)
         layout.addLayout(grid)
+        self.result_reuse = QCheckBox("Reuse saved analysis results")
+        self.result_reuse.setChecked(read_result_reuse(settings))
+        self.result_reuse.setToolTip(
+            "On: a costly plot (Correlations, Release time) shows its result saved for the same data, script and "
+            "settings at once instead of computing it again, and saves new ones; its source line says so. Off: "
+            "plots compute every run and save nothing (saved results stay until cleared).")
+        layout.addWidget(self.result_reuse)
 
         footer = QHBoxLayout()
         self.checked_label = QLabel("Checking…")
@@ -632,5 +644,6 @@ class CacheTab(QWidget):
                           self._acknowledged if self._acknowledged is not None else read_disk_budget(settings))
         settings.setValue(RAM_BUDGET_SETTING, self.ram_budget.value())
         settings.setValue(PLOT_AUTO_RELOAD_SETTING, self.plot_auto_reload.isChecked())
+        settings.setValue(RESULT_REUSE_SETTING, self.result_reuse.isChecked())
         settings.setValue(LIVE_AUTOSAVE_SETTING, self.live_autosave.value())
 

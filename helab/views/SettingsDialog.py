@@ -20,7 +20,7 @@ from helab.utils.settings_defaults import (
     LOAD_MODE_SETTING, LOG_KEEP_SETTING, RETIRED, SIMULTANEOUS_IO_SETTING, read_setting)
 from helab.utils.settings_store import app_settings
 from helab.views.DataRootsTab import DataRootsTab
-from helab.views.CacheTab import CacheTab
+from helab.views.CacheTab import CacheTab, read_result_reuse
 from helab.views.LabParametersTab import LabParametersTab
 
 
@@ -354,4 +354,5 @@ class SettingsDialog(QDialog):
         self.cache_tab.ram_budget.setValue(read_ram_budget_steps(settings, self.cache_tab.ram_budget.total))
         self.cache_tab.live_autosave.setValue(read_live_autosave(settings))
         self.cache_tab.plot_auto_reload.setChecked(read_plot_auto_reload(settings))
+        self.cache_tab.result_reuse.setChecked(read_result_reuse(settings))
         logging.debug("Settings reset to default")

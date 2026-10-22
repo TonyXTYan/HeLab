@@ -19,7 +19,7 @@ from helab.analysis.budget import RamBudget
 from helab.analysis.budget_core import DIALOG_SHARE, RELEASE_SHARE, WARN_SHARE
 from helab.analysis.dataset_view import DatasetView, view_of
 from helab.analysis.live_feed import LiveFeed
-from helab.analysis.results import FROM_DISK, AnalysisResult
+from helab.analysis.results import DISK_CACHED, FROM_DISK, AnalysisResult
 from helab.utils.colours import AMBER
 from helab.utils.constants import read_plot_auto_reload
 from helab.utils.folder_cache import FolderCache
@@ -210,8 +210,8 @@ class PlotWorkspace:
         dock.setProperty("dataSourcePath", identity.source_path)
         dock.setProperty("dataSourceSignature", result.input_signature or identity.signature)
         dock.setProperty("plotSourceRevision", f"rev {result.input.revision}")
-        dock.setProperty("plotSourceDetail", " · ".join(filter(None, (selection_text, result.analysis.short(),
-                                                                       PlotWorkspace._cached_text(result)))))
+        dock.setProperty("plotSourceDetail", " · ".join(filter(None, (
+            selection_text, result.analysis.short(), PlotWorkspace._cached_text(result, bool(dock.property("plotReuse")))))))
         dock.setProperty("plotSourceSettings", parameters_text)
         dock.setProperty("plotSourceRecord", result.describe(record_text or parameters_text))
         old = dock.widget()
@@ -223,13 +223,18 @@ class PlotWorkspace:
         self.update_plot_source(dock)
 
     @staticmethod
-    def _cached_text(result: AnalysisResult) -> str:
-        """``from disk cache, computed 2026-10-22 14:03`` for a saved result read back (R2); ``saved
-        result of …, outdated`` for one shown while its rerun goes on; "" for one computed now."""
-        if result.source != FROM_DISK:
-            return ""
-        when = datetime.fromtimestamp(result.finished_at).strftime("%Y-%m-%d %H:%M") if result.finished_at else "?"
-        return f"saved result of {when}, outdated" if result.outdated else f"from disk cache, computed {when}"
+    def _cached_text(result: AnalysisResult, reuse: bool = False) -> str:
+        """The plot's mark for saved results (R2): ``from disk cache, computed 2026-10-22 14:03`` for a
+        saved result read back; ``saved result of …, outdated`` for one shown while its rerun goes on;
+        ``saved in disk cache`` for one computed now and saved; ``disk cache reuse on`` while the plot's
+        runs are looked up and saved (``reuse``: Settings → Cache › Reuse saved analysis results, a
+        script that supports it, a folder with a disk cache); "" otherwise."""
+        if result.source == FROM_DISK:
+            when = datetime.fromtimestamp(result.finished_at).strftime("%Y-%m-%d %H:%M") if result.finished_at else "?"
+            return f"saved result of {when}, outdated" if result.outdated else f"from disk cache, computed {when}"
+        if result.policy == DISK_CACHED:
+            return "saved in disk cache"
+        return "disk cache reuse on" if reuse else ""
 
     def replace_plot_content(self, dock: QDockWidget, content: QWidget) -> None:
         """Show ``content`` (a released plot's picture) in place of the plot, under the same

@@ -317,6 +317,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
             constants = self.constant_layers(view.identity.source_path)
         link = self._cached_runs() if one_off and not live else None
         cached = link is not None and link.supported() and not link.off_reason(view)
+        if link is not None and self.dock_widget is not None and not sip.isdeleted(self.dock_widget):
+            # The source line's mark: this plot's runs are looked up and saved (``disk cache reuse on``).
+            self.dock_widget.setProperty("plotReuse", cached)
         context = self.runner.prepare(self.script, self.metadata, self.action, view, values, constants,
                                       owner=self.instance_id, live=live, to_cache=cached)
         waiting = cached and link is not None and link.start(context)

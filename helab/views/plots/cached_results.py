@@ -34,10 +34,20 @@ from helab.analysis.dataset_view import DatasetView
 from helab.analysis.results import DISK_CACHED, AnalysisContext, AnalysisResult
 from helab.utils.io_service import IORequest
 from helab.utils.number_format import byte_size
+from helab.utils.settings_defaults import RESULT_REUSE_SETTING, read_setting
+from helab.utils.settings_store import app_settings
 
 if TYPE_CHECKING:
+    from PyQt6.QtCore import QSettings
+
     from helab.scripts.base import DatasetAnalysis
     from helab.utils.folder_cache import FolderCache
+
+
+def reuse_on(settings: Optional[QSettings] = None) -> bool:
+    """Settings → Cache › Reuse saved analysis results (on by default): off, no plot looks its runs
+    up or saves them."""
+    return bool(read_setting(settings if settings is not None else app_settings(), RESULT_REUSE_SETTING, typed=True))
 
 
 @dataclass
@@ -78,6 +88,9 @@ class CachedRuns(QObject):
         self._connected = False
 
     def supported(self) -> bool:
+        """Whether the plot's runs are looked up and saved: its script supports it and reuse is on."""
+        if not reuse_on():
+            return False
         try:
             return bool(self.script.cache_supported(self.action))
         except Exception:

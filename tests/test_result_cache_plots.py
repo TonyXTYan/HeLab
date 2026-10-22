@@ -380,3 +380,77 @@ def test_saved_results_count_in_the_usage_the_80_percent_pause_sees(
     cache.update_auto_load_pause()
     assert cache.auto_load_paused
     close(window)
+
+
+def source_line(instance: AnalysisInstance) -> str:
+    dock = cast(QDockWidget, instance.dock_widget)
+    found = dock.findChild(QLabel, "plot_data_source")
+    assert found is not None
+    return found.text()
+
+
+class Quick(Costly):
+    """The same analysis, not saved (as the quick plots)."""
+
+    def cache_supported(self, action_name: str) -> bool:
+        return False
+
+
+def test_the_source_line_marks_reuse(qtbot: QtBot, cache: FolderCache, tmp_path: Path,
+                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    script = Costly()
+    script.go.clear()
+    instance = open_plot(window, qtbot, folder_view(tmp_path), script)
+    qtbot.waitUntil(lambda: bool(instance.job_id), timeout=WAIT)
+    assert cast(QDockWidget, instance.dock_widget).property("plotReuse") is True
+    script.go.set()
+    qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
+    assert "saved in disk cache" in source_line(instance)
+    again = open_plot(window, qtbot, folder_view(tmp_path, "other"), Costly())
+    qtbot.waitUntil(lambda: saved(again), timeout=WAIT)
+    quick = open_plot(window, qtbot, folder_view(tmp_path, "third"), Quick())
+    qtbot.waitUntil(lambda: settled(quick), timeout=WAIT)
+    line = source_line(quick)
+    assert "disk cache" not in line and "reuse" not in line
+    close(window)
+
+
+def test_with_reuse_off_plots_neither_look_up_nor_save(qtbot: QtBot, cache: FolderCache, tmp_path: Path,
+                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.utils.settings_defaults import RESULT_REUSE_SETTING
+    from helab.utils.settings_store import app_settings
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    first = open_plot(window, qtbot, folder_view(tmp_path), Costly())
+    qtbot.waitUntil(lambda: saved(first), timeout=WAIT)
+    first.close()
+    settings = app_settings()
+    settings.setValue(RESULT_REUSE_SETTING, False)
+    settings.sync()
+    asked: list[str] = []
+    submit = cache.service.submit
+
+    def record(owner: str, generation: int, path: str, operation: str, *args: Any, **kwargs: Any) -> bool:
+        asked.append(operation)
+        return submit(owner, generation, path, operation, *args, **kwargs)
+    monkeypatch.setattr(cache.service, "submit", record)
+    script = Costly()
+    second = open_plot(window, qtbot, folder_view(tmp_path), script)
+    qtbot.waitUntil(lambda: settled(second), timeout=WAIT)
+    assert script.computed == 1 and cast(AnalysisResult, second.shown).source != FROM_DISK
+    assert "result_find" not in asked and "result_save" not in asked
+    assert "disk cache" not in source_line(second) and results_saved() == 1
+    close(window)
+
+
+def test_the_cache_tab_saves_the_reuse_setting(qtbot: QtBot, cache: FolderCache, tmp_path: Path) -> None:
+    from helab.utils.settings_defaults import RESULT_REUSE_SETTING, read_setting
+    from helab.views.CacheTab import CacheTab
+    settings = QSettings(str(tmp_path / "cache-tab.ini"), QSettings.Format.IniFormat)
+    tab = CacheTab(cache, settings)
+    qtbot.addWidget(tab)
+    assert tab.result_reuse.isChecked()  # On by default.
+    tab.result_reuse.setChecked(False)
+    tab.save(settings)
+    assert read_setting(settings, RESULT_REUSE_SETTING, typed=True) is False
+    tab.detach()
