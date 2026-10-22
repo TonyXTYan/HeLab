@@ -213,3 +213,14 @@ once its script is loaded. Full suite 2535 passed, no RERUN; strict mypy and pyr
 
 Each has a regression test (5 tests fail on the unfixed code). Full suite 2541 passed, no RERUN;
 strict mypy and pyright clean.
+
+## Review fixes, round 2 (Flint on `ffc2d4e`): see the commit after `ffc2d4e`, not pushed
+
+1. P1: the datasets held when a wait sees its folder mismatched stay unusable to it (weak refs);
+   `mismatchesChanged` (emitted before the new load's dataset is published) only records them;
+   a cached read landing while mismatched is refused. Tests drive a real `allow_missing` load
+   through `FolderCache`'s events with the old pin held.
+2. P2: change marks compare only values `check_value` accepts (no `coerce` on rejected values).
+3. P2: the Keep/Drop box is shown with `show()`, non-modal (tested on the real box).
+
+4 new tests fail on `ffc2d4e`; full suite 2544 passed, no RERUN; strict mypy and pyright clean.
