@@ -44,7 +44,6 @@ setup(
         "blosc",
         "coloredlogs",
         "dash",
-        "joblib",
         "matplotlib",
         "numpy",
         "pandas",
