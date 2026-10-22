@@ -2654,9 +2654,11 @@ class FolderCache(QObject):
                 source_snapshot = self.snapshot(job.path)
                 expected = source_snapshot.status.get("signature") if source_snapshot else None
                 # Cached data is shown unchecked, even if the folder has changed since.
+                # A cached read landing while the folder is mismatched holds the data that doesn't match
+                # it: never kept (``_mismatch`` dropped the folder's data until a load matches it).
                 if job.epoch != self._epochs.get(job.path, 0) or (
                         job.operation == "load" and expected and event.get("signature") != expected
-                        and not job.behind_listing):
+                        and not job.behind_listing) or (job.operation == "cached" and job.path in self.mismatched):
                     self._cancel_job(job)
                     if source_snapshot:
                         source_snapshot.checked_at = 0

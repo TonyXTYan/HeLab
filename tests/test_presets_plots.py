@@ -54,6 +54,35 @@ def dataset(name: str, shots: range) -> Dataset:
                     "bytes": sum(array.nbytes for array in data.values()), "loaded_at": time.time()}, 0)
 
 
+def helper_says(cache: FolderCache, operation: str, path: str, *events: dict[str, Any]) -> None:
+    """The helper of ``path``'s ``operation`` job sends ``events``, as FolderCache gets them."""
+    job = cache.jobs[(operation, path)]
+    request = next(r for r in cache.service.pending if r.owner == job.owner)
+    for event in events:
+        cache.service.resultReady.emit(request, event)
+    if events and events[-1]["kind"] in ("done", "error") and request in cache.service.pending:
+        cache.service.pending.remove(request)  # Its helper has ended (as IOService's dispatch would see).
+
+
+def read_events(shots: range, signature: str) -> List[dict[str, Any]]:
+    """A load's or cached read's events for ``shots``, ending ``loaded`` then ``done``."""
+    return [*({"kind": "shot", "shot": shot, "array": np.full((ROWS, 3), float(shot))} for shot in shots),
+            {"kind": "loaded", "signature": signature, "bytes": ROWS * 3 * 8 * len(shots), "rows": ROWS * len(shots),
+             "files": len(shots), "problematic": [], "fingerprint": [[shot, 200 + shot, 2_000 + shot] for shot in shots]},
+            {"kind": "done"}]
+
+
+def load_through_the_cache(cache: FolderCache, path: str, shots: range, signature: str,
+                           allow_missing: bool = True, owner: str = "tab-owner") -> Dataset:
+    """A tab's load of ``path`` as FolderCache handles it (its helper's events, in their order); with
+    ``allow_missing``, reading the folder as it is now (Load as it is now). The dataset it kept."""
+    assert cache.submit(owner, 0, path, "load", {"allow_missing": allow_missing}, priority=True)
+    helper_says(cache, "load", path, *read_events(shots, signature))
+    found = cache.latest_dataset(path)
+    assert found is not None and found.signature == signature
+    return found
+
+
 class Counted(DatasetAnalysis):
     """A test script: its result is the shots it ran on and its settings."""
 
@@ -515,8 +544,7 @@ def test_reopened_plots_keep_every_bundled_scripts_settings_library_and_live_gro
 
 def test_reopen_runs_from_ram_without_any_request(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
     window = new_window(qtbot, cache, windows)
-    entry = dataset("ram", range(1, 4))
-    cache.datasets[(entry.path, entry.signature, entry.epoch)] = entry
+    entry = load_through_the_cache(cache, folder("ram"), range(1, 4), "v1", allow_missing=False)
     before = list(cache.service.pending)
     record = Arrangement((SavedPlot(ScriptRef("tests.counted", "Plot", "1"), entry.path, values={"bins": 3}),))
     app_settings().setValue(OPEN_PLOTS_SETTING, record.dumps())
@@ -541,9 +569,7 @@ def test_reopen_reads_the_disk_cache_only(qtbot: QtBot, cache: FolderCache, wind
     assert asked[0].payload["allow_large"] is False and asked[0].payload["cache"] == {"directory": "store"}
     message = cast(QLabel, cast(QDockWidget, first.dock_widget).widget())
     assert message.text() == "Reading disk's data from the disk cache…"
-    job = cache.jobs[("cached", path)]
-    for request in list(job.subscribers.values()):
-        cache.resultReady.emit(request, {"kind": "loaded", "dataset": dataset("disk", range(1, 3))})
+    helper_says(cache, "cached", path, *read_events(range(1, 3), "disk"))
     qtbot.waitUntil(lambda: first.shown is not None and second.shown is not None, timeout=10_000)
     assert Counted.runs == [(1, 2), (1, 2)]
     assert all(request.operation == "cached" for request in cache.service.pending if id(request) not in before)
@@ -561,17 +587,13 @@ def test_reopen_without_data_waits_for_a_tabs_load(qtbot: QtBot, cache: FolderCa
     before = set(map(id, cache.service.pending))
     [instance] = PlotReopen(window.plots, window.scripts).restore()
     assert [request.operation for request in cache.service.pending if id(request) not in before] == ["cached"]
-    job = cache.jobs[("cached", path)]
-    for request in list(job.subscribers.values()):
-        cache.resultReady.emit(request, {"kind": "error", "message": "No cached data for this folder"})
+    helper_says(cache, "cached", path, {"kind": "error", "message": "No cached data for this folder"})
     message = cast(QLabel, cast(QDockWidget, instance.dock_widget).widget())
     assert message.text() == "Waiting for later's data: select it to load"
     assert "waiting for its data" in instance._title() and instance.waiting()
     assert Counted.runs == []
     # A tab's normal load stores the folder's data: the plot runs.
-    entry = dataset("later", range(5, 7))
-    cache.datasets[(entry.path, entry.signature, entry.epoch)] = entry
-    cache.datasetChanged.emit(entry.path)
+    load_through_the_cache(cache, path, range(5, 7), "v1", allow_missing=False)
     qtbot.waitUntil(lambda: instance.shown is not None, timeout=10_000)
     assert Counted.runs == [(5, 6)] and not instance.waiting()
 
@@ -1004,21 +1026,6 @@ def test_a_corrupt_arrangement_preset_is_named_and_kept(qtbot: QtBot, cache: Fol
 # Review findings (Flint, a74fd07)
 
 
-def load_through_the_cache(cache: FolderCache, path: str, shots: range, signature: str) -> None:
-    """A tab's load of ``path`` as FolderCache handles it (its helper's events, in their order),
-    reading the folder as it is now (Load as it is now: ``allow_missing``)."""
-    assert cache.submit("tab-owner", 0, path, "load", {"allow_missing": True}, priority=True)
-    job = cache.jobs[("load", path)]
-    request = next(r for r in cache.service.pending if r.owner == job.owner)
-    for shot in shots:
-        cache.service.resultReady.emit(request, {"kind": "shot", "shot": shot,
-                                                 "array": np.full((ROWS, 3), float(shot))})
-    cache.service.resultReady.emit(request, {
-        "kind": "loaded", "signature": signature, "bytes": 0, "rows": ROWS * len(shots), "files": len(shots),
-        "problematic": [], "fingerprint": [[shot, 200 + shot, 2_000 + shot] for shot in shots]})
-    cache.service.resultReady.emit(request, {"kind": "done"})
-
-
 def test_a_mismatched_folders_pinned_data_is_never_used(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
     """A tab still pins data the folder no longer matches: a reopened plot doesn't run on it, nor on
     the disk cache; when a load matches the folder again (FolderCache lifts the mismatch before it
@@ -1051,10 +1058,8 @@ def test_a_cached_read_that_lands_while_the_folder_is_mismatched_is_refused(
     app_settings().setValue(OPEN_PLOTS_SETTING, Arrangement(
         (SavedPlot(ScriptRef("tests.counted", "Plot", "1"), path),)).dumps())
     [instance] = PlotReopen(window.plots, window.scripts).restore()
-    requests = list(cache.jobs[("cached", path)].subscribers.values())
     cache._mismatch(path, {"missing": [1]})  # Found by another check while the read was in flight.
-    for request in requests:
-        cache.resultReady.emit(request, {"kind": "loaded", "dataset": dataset("raced", range(1, 4))})
+    helper_says(cache, "cached", path, *read_events(range(1, 4), "old"))
     qtbot.wait(20)
     assert Counted.runs == [] and instance.waiting()
     assert instance.status_label.text().startswith("raced's cached data doesn't match the folder")
@@ -1071,13 +1076,11 @@ def test_a_cached_read_waiting_for_its_volume_is_asked_again(qtbot: QtBot, cache
     app_settings().setValue(OPEN_PLOTS_SETTING, Arrangement(
         (SavedPlot(ScriptRef("tests.counted", "Plot", "1"), path),)).dumps())
     [instance] = PlotReopen(window.plots, window.scripts).restore()
-    for request in list(cache.jobs[("cached", path)].subscribers.values()):
-        cache.resultReady.emit(request, {"kind": "error", "message": "Volume not verified yet", "unverified": True})
+    helper_says(cache, "cached", path, {"kind": "error", "message": "Volume not verified yet", "unverified": True})
     assert ("cached", path) not in cache.jobs and instance.waiting()
     cache.volumesVerified.emit()
-    job = cache.jobs[("cached", path)]  # Asked again, through the local lane.
-    for request in list(job.subscribers.values()):
-        cache.resultReady.emit(request, {"kind": "loaded", "dataset": dataset("external", range(1, 3))})
+    assert ("cached", path) in cache.jobs  # Asked again, through the local lane.
+    helper_says(cache, "cached", path, *read_events(range(1, 3), "external"))
     qtbot.waitUntil(lambda: instance.shown is not None, timeout=10_000)
     assert Counted.runs == [(1, 2)]
     cache.volumesVerified.emit()  # Done waiting: nothing more is asked.
@@ -1092,8 +1095,7 @@ def test_a_plain_cache_miss_isnt_asked_again_when_volumes_are_verified(
     app_settings().setValue(OPEN_PLOTS_SETTING, Arrangement(
         (SavedPlot(ScriptRef("tests.counted", "Plot", "1"), path),)).dumps())
     PlotReopen(window.plots, window.scripts).restore()
-    for request in list(cache.jobs[("cached", path)].subscribers.values()):
-        cache.resultReady.emit(request, {"kind": "error", "message": "No cached data for this folder"})
+    helper_says(cache, "cached", path, {"kind": "error", "message": "No cached data for this folder"})
     cache.volumesVerified.emit()
     assert ("cached", path) not in cache.jobs
 
@@ -1137,3 +1139,102 @@ def test_a_layout_that_cant_be_read_is_named_and_the_plots_still_open(
     broken = dataclass_replace(arrangement, dock_state="\u2603")
     again = new_window(qtbot, cache, windows)
     assert len(open_arrangement(again.scripts, cache, broken)[0]) == 3
+
+
+# Round 3: one rule, the folder's data is what FolderCache itself keeps (never a tab's pin alone)
+
+
+def mismatch_through_the_cache(cache: FolderCache, path: str, missing: List[int]) -> None:
+    """A check finds shots of ``path`` gone (its helper's ``shots_missing``): FolderCache lists the
+    folder as mismatched and drops its data (a tab may still pin it)."""
+    assert cache.submit("checker", 0, path, "load", {}, priority=True)
+    helper_says(cache, "load", path, {"kind": "shots_missing", "missing": missing, "missing_count": len(missing)},
+                {"kind": "error", "message": "Shots missing — Retry"})
+    assert path in cache.mismatched
+
+
+def list_through_the_cache(cache: FolderCache, path: str, signature: str) -> None:
+    """A listing of ``path`` (its helper's entries, status, done): one with another signature than
+    the last tells FolderCache the folder changed."""
+    assert cache.submit(f"lister-{signature}", 0, path, "list", {}, priority=True, force=True)
+    helper_says(cache, "list", path, {"kind": "entries", "entries": []},
+                {"kind": "status", "status": "ok", "count": 1, "details": True, "raw": [1], "txy": [1],
+                 "modified": 0, "signature": signature},
+                {"kind": "done"})
+
+
+def new_waiter(cache: FolderCache, path: str) -> tuple[FolderWait, List[DatasetView], List[str]]:
+    wait = FolderWait(cache, path)
+    found: List[DatasetView] = []
+    noted: List[str] = []
+    wait.found.connect(found.append)
+    wait.noted.connect(noted.append)
+    return wait, found, noted
+
+
+@pytest.mark.parametrize("drop", ["mismatch, then a load, then evicted", "folder changed", "cleared"])
+def test_a_waiter_made_after_the_cache_dropped_a_folders_data_never_takes_a_tabs_old_pin(
+        qtbot: QtBot, cache: FolderCache, windows: Windows, monkeypatch: pytest.MonkeyPatch, drop: str) -> None:
+    """A tab still pins the folder's old data; FolderCache has dropped it (and maybe more since): a
+    waiter made afterwards, with no history, reads the disk cache (or waits), never the old pin."""
+    disk_cache(monkeypatch)
+    path = folder("dropped")
+    old = load_through_the_cache(cache, path, range(1, 4), "v1", allow_missing=False)
+    cache.retain("existing-tab", old)
+    if drop == "mismatch, then a load, then evicted":
+        mismatch_through_the_cache(cache, path, [1])
+        fresh = load_through_the_cache(cache, path, range(2, 4), "fresh")  # Load as it is now
+        assert path not in cache.mismatched and cache.latest_dataset(path) is fresh
+        cache.evict_to(0)  # The fresh data, shown in no tab, leaves RAM.
+        assert not cache.holds(fresh)
+    elif drop == "folder changed":
+        list_through_the_cache(cache, path, "v1")
+        list_through_the_cache(cache, path, "v2")
+    else:
+        assert cache.submit("tab-owner", 0, path, "invalidate", {})
+        helper_says(cache, "invalidate", path, {"kind": "done"})
+    assert cache.pins["existing-tab"] is old and not cache.holds(old)
+    wait, found, noted = new_waiter(cache, path)
+    wait.look()
+    wait.look(deliberate=True)  # A deliberate Rerun takes no pin either.
+    assert found == [] and ("cached", path) in cache.jobs  # Asks the local disk cache instead.
+    helper_says(cache, "cached", path, *read_events(range(2, 4), "fresh"))
+    assert [view.shot_numbers for view in found] == [(2, 3)]
+
+
+def test_a_cached_read_racing_a_mismatch_isnt_kept_by_the_cache(qtbot: QtBot, cache: FolderCache,
+                                                                windows: Windows, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cached read in flight when a check finds shots gone: FolderCache doesn't keep what it read,
+    so no waiter, then or later, can take it."""
+    disk_cache(monkeypatch)
+    path = folder("raced2")
+    wait, found, noted = new_waiter(cache, path)
+    wait.look()
+    assert ("cached", path) in cache.jobs
+    mismatch_through_the_cache(cache, path, [1])
+    helper_says(cache, "cached", path, *read_events(range(1, 4), "old"))
+    assert found == [] and cache.latest_dataset(path) is None
+    assert noted[-1].startswith("raced2's cached data doesn't match the folder")
+    fresh = load_through_the_cache(cache, path, range(2, 4), "fresh")
+    assert [view.shot_numbers for view in found] == [(2, 3)]
+    later, found_later, _ = new_waiter(cache, path)
+    later.look()
+    assert [view.shot_numbers for view in found_later] == [(2, 3)] and cache.holds(fresh)
+
+
+def test_an_arrangement_applied_while_a_tab_pins_old_data_waits(qtbot: QtBot, cache: FolderCache,
+                                                                windows: Windows) -> None:
+    """The same rule when an arrangement preset opens plots: the folder's old data, pinned by a
+    tab after a mismatch, isn't run on; a load as it is now is."""
+    window = new_window(qtbot, cache, windows)
+    path = folder("preset")
+    old = load_through_the_cache(cache, path, range(1, 4), "v1", allow_missing=False)
+    cache.retain("existing-tab", old)
+    mismatch_through_the_cache(cache, path, [1])
+    write_arrangement("p", Arrangement((SavedPlot(ScriptRef("tests.counted", "Plot", "1"), path),), path))
+    [plot] = presets_for(window, Explorer(folder("b")), cache).apply("p")
+    qtbot.wait(20)
+    assert plot.waiting() and Counted.runs == []
+    load_through_the_cache(cache, path, range(2, 4), "fresh")
+    qtbot.waitUntil(lambda: plot.shown is not None, timeout=10_000)
+    assert Counted.runs == [(2, 3)]

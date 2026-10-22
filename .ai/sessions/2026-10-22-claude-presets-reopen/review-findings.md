@@ -72,3 +72,29 @@ inserting state the order wouldn't give), then reply to CoCo with the commits.
 Flint's checks at `ffc2d4e`: full suite 2541 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
 and pyright clean. Follow-up items 1–3 otherwise reviewed fine (mark/save flows, Replace/Add, kept
 records).
+
+## Round 3: Flint, `ffc2d4e..0098d8d`
+
+The four round-2 probes now pass. One **[P1]** remains, in the same guard: `arrangement.py:69-71,
+128-137, 149`. Stale-data rejection lives only in each `FolderWait`'s `_stale`, so a waiter created
+**after** a mismatch was resolved has no history, while the old mismatched dataset is still pinned by
+a tab. If the replacement dataset has since left RAM, the new waiter accepts the old pin and runs on
+the wrong shots. Reproduced (real event order, offscreen): retain old (1,2,3) under `existing-tab`;
+`cache._mismatch(path, missing=[1])`; `load_through_the_cache(cache, path, range(2, 4), "fresh")`
+(real `shot` / `loaded` / `done` for `allow_missing` through `cache.service.resultReady`); mismatch
+resolved, latest is fresh, `existing-tab` still pins old; evict the unpinned fresh dataset
+(`cache._evict(target=0)`, behind `evict_to`); a **new** `FolderWait(cache, path).look()` emits
+(1,2,3) instead of reading the fresh local cache. Happens after a background replacement load, or
+when the tab showing the fresh data releases it and RAM pressure evicts it.
+
+**CoCo: third round on this guard, so fix it at the root, not per path.** Don't keep "known bad" in
+the waiter: decide from what `FolderCache` itself still holds as the folder's current data. One rule,
+for example: a reopened plot takes only a dataset `FolderCache` still keeps in its own datasets for
+that path (never a dataset that survives only as some tab's pin after the cache dropped it, which is
+what `_mismatch` and `_folder_changed` do); else a local `cached` read; else wait. Check that rule
+against every path a reopened or preset-opened plot takes data (initial look, `mismatchesChanged`,
+`datasetChanged`, deliberate Rerun, an in-flight cached read, arrangement apply) and against a dropped
+dataset for any reason (mismatch, folder changed, a clear), not only mismatch. If it needs a small
+public query on `FolderCache` (e.g. "is this dataset still the cache's own for this path"), add it,
+minimal, and name it in the handoff (the Result Cache floor also edits `folder_cache.py`; it merges
+after you). Test each order through the real events, including this one, then reply to CoCo.
