@@ -476,8 +476,7 @@ DEV_POTENTIAL_DATA_PATHS = [
     'C:\\Users\\XinTong\\Documents',
     'O:\\',
     '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/tests_sample_data/good',
-    '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/tests_sample_data/bad'
-    '',
+    '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/tests_sample_data/bad',
 ]
 
 # This is a display hint; availability is resolved by an isolated I/O helper
