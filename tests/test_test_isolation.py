@@ -1,15 +1,18 @@
-"""Tests run apart from the developer's data and from each other (tests/conftest.py): new tabs
-start in an empty temp folder, never the default data path (``/Volumes/dld_output`` when it is
-mounted), and each test's disk cache is a store of its own."""
+"""Tests run apart from the developer's data and from each other (tests/conftest.py): they test
+this checkout's helab, new tabs start in an empty temp folder, never the default data path
+(``/Volumes/dld_output`` when it is mounted), and each test's disk cache is a store of its own."""
 from __future__ import annotations
 
 import ast
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from pytestqt.qtbot import QtBot
 
+import helab
 from conftest import START_FOLDER
 from helab.utils import constants
 from helab.utils.cache_store import CacheStore, store_root
@@ -22,6 +25,27 @@ DEFAULT_PATHS = {"DEFAULT_DATA_PATH", "DEV_POTENTIAL_DATA_PATHS"}
 # The modules that may read the default data paths: conftest patches FolderTabWidget's names, and
 # io_ops.infra reads them only to refuse them under pytest.
 READERS = {"helab/utils/constants.py", "helab/views/FolderTabWidget.py", "helab/io_ops/infra.py"}
+
+
+def test_helab_is_this_checkouts() -> None:
+    """pytest.ini's ``pythonpath`` puts this checkout first, so pytest never tests another
+    checkout's helab: a floor's venv copied from Ground has Ground's editable install."""
+    assert Path(helab.__file__).resolve() == ROOT / "helab" / "__init__.py"
+
+
+def test_pytest_imports_the_checkout_it_runs_in_before_any_other(tmp_path: Path) -> None:
+    other = tmp_path / "other-checkout" / "helab"
+    other.mkdir(parents=True)
+    (other / "__init__.py").write_text("", encoding="utf-8")
+    test = tmp_path / "test_which.py"  # (Outside tests/: no conftest, so it imports quickly.)
+    test.write_text("import helab\n\ndef test_which():\n    print('helab at', helab.__file__)\n",
+                    encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(other.parent)}
+    done = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-p", "no:xdist",
+                           "-s", "-q", "--rootdir", str(ROOT), "-c", str(ROOT / "pytest.ini"), str(test)],
+                          cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert f"helab at {ROOT / 'helab' / '__init__.py'}" in done.stdout, done.stdout
 
 
 def test_only_patched_modules_read_the_default_data_paths() -> None:
