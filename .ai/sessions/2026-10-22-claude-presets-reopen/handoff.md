@@ -173,3 +173,30 @@ full workspace file left open.
   (`tests\test_cache_first.py:841: assert 1792656510000000000 is None`, the same each time): already
   listed in `roadmaps/known-issues.md` (line 47); untouched by this branch (no I/O or cache code
   changed). This section is committed locally after the push (not pushed, to save a CI run).
+
+## Follow-up 1 (Tony, 2026-10-22): done locally in `3fff973`, not pushed
+
+1. **Changed from a preset**: after Apply or Save in a plot's settings page, each setting that
+   differs from that preset (as applied, memory only; the library included, the Live group not)
+   has a small dot (the palette's highlight colour, not amber: it isn't a warning) beside its
+   name, tooltip "Changed from preset “p”, which has 20". The Presets row (same row) shows
+   **"Save N changes ▾"**: **Save to preset “p”** (asks first: "Replace the settings of preset “p”
+   of Counts per shot with these? …") or **Save as new preset…**. No marks when no preset was
+   applied this session (a reopened plot's provenance name isn't compared: its values may differ
+   from the preset by design); deleting the preset, here or from another plot, clears them.
+   Settings the preset holds a value for that didn't fit aren't marked (its note named them).
+2. **Replace or Add** replaces decision 3: "“p” opens run with its 3 plots. Replace the 2 open
+   plots, or Add the preset's beside them?" (Replace / Add / Cancel, Cancel default). Add keeps the
+   open plots where they are, opens the preset's in their own tab groups numbered after them, and
+   doesn't apply the saved dock layout (restoring it would move the open plots).
+3. **Keep or Drop** replaces decision 7: one non-modal question per start for all plots that
+   couldn't reopen: "2 plots open last time couldn't reopen: Gone (its script isn't loaded …); … Keep
+   them for a later start (for example once the scripts are loaded), or drop them?" (**Keep for
+   later**, default, / **Drop**). Until answered (closed, or HeLab quits) they're kept. Kept plots
+   stay in the record after the open plots, each in a tab group of its own, and reopen at a start
+   where their script is loaded. A plot whose record can't be read at all is only named.
+4. **Storage**: waiting for CoCo's word (presets stay in QSettings for now; decision 10 then
+   changes to Reset leaving presets alone).
+
+Tests added: change marks (and clearing them), Replace/Add, Keep/Drop and a kept plot reopening
+once its script is loaded. Full suite 2535 passed, no RERUN; strict mypy and pyright clean.
