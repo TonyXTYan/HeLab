@@ -731,3 +731,24 @@ quitting never ends while a change is still owed and work is left that would sav
   stays undecided while A's job runs, and is said not saved once it ends.
 
 These fail on `3bb153a`: both of Flint's orders, the enumeration, and the adjusted round-9 test.
+
+## CI (final push): run 39814028933 on `34bdf7f`, all required jobs green
+
+- macOS py3.13 Tests: 2597 passed, 2 skipped, 2 xfailed, no RERUN.
+- Windows py3.13 Tests: 2577 passed, 18 skipped, 2 xfailed, no RERUN.
+- **Ubuntu py3.13 Tests: 2595 passed, 4 skipped, 2 xfailed, 1 RERUN.**
+  - The test was `tests/test_presets_window.py::test_a_live_off_preset_turns_live_off_in_a_real_tab`,
+    the real main window with two arrangement presets.
+  - The rerun reason: "worker 'gw2' crashed while running …" ("[gw2] node down: Not properly
+    terminated"). There is no Python traceback and no faulthandler output, so it was a native
+    crash or the process being killed.
+  - It passed on the rerun (gw4).
+  - The test was added in `29add99`, so this is its first CI run.
+  - It passed 8 of 8 local repeats (macOS, `-n 4`, with `test_presets_plots.py`).
+  - Cause unknown.
+- Builds green on all three OSes; the compatibility matrices were skipped (no PR).
+- **Proposed for `roadmaps/known-issues.md`, Tests and CI:** "`test_presets_window.py::
+  test_a_live_off_preset_turns_live_off_in_a_real_tab` worker crash on Ubuntu CI (run
+  39814028933, 2026-10-23): gw2 'not properly terminated', no traceback; passed on rerun and in
+  8 local runs. Real `HelabMainWindow` offscreen; cause unknown."
+- This section is committed locally after the push and not pushed, to save a CI run.
