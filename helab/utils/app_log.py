@@ -17,8 +17,10 @@ from types import TracebackType
 from typing import Callable
 
 
-LOG_NAME = "helab.log"
-# The log file grows to LOG_BYTES, then is renamed helab.log.1 (and so on, LOG_BACKUPS of them).
+# Each HeLab writes its own file, helab-<process ID>.log (Tony, 2026-10-22): two at once never share
+# one, whose rollover on Windows would fail in the other. It grows to LOG_BYTES, then is renamed
+# helab-<pid>.log.1 (and so on, LOG_BACKUPS of them). Nothing deletes old sessions' files.
+LOG_NAME = "helab-{pid}.log"
 LOG_BYTES = 2 * 1024 * 1024
 LOG_BACKUPS = 4
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(process)d %(threadName)s] %(name)s: %(message)s"
@@ -32,9 +34,9 @@ _lock = threading.Lock()
 
 
 def start_log_file(folder: str, level: int = logging.INFO) -> RotatingFileHandler | None:
-    """Log to ``<folder>/logs/helab.log`` as well (``app_folder()``; tests' own folder), from
+    """Log to ``<folder>/logs/helab-<pid>.log`` as well (``app_folder()``; tests' own folder), from
     ``level`` up. Its handler, or None if it can't be written there (logged)."""
-    path = os.path.join(folder, "logs", LOG_NAME)
+    path = os.path.join(folder, "logs", LOG_NAME.format(pid=os.getpid()))
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         handler = RotatingFileHandler(path, maxBytes=LOG_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8")
