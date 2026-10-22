@@ -45,7 +45,7 @@ started importing), fixed in `e4b1712`.
 | R-18 Scripts panel leftover state, stale docstrings | quality | Fixed | `324ae2a` |
 | R-19 DLD Transfer fractions duplicates the shared order helpers | quality | Fixed; **one question for Tony** | `f7d06e6`, `e4b1712` |
 | R-20 private joblib import never used | low | Fixed | `a1b75b2` |
-| R-21 dead code, two unused modules, probe log lines, a missing comma | quality | Fixed, except `synchronised_dict.py`: restored (Tony kept it on 2026-10-21, a vendored MIT thread-safe dict) | `60a8a99`, `a1b75b2`, `89531cc`, restore: next commit |
+| R-21 dead code, two unused modules, probe log lines, a missing comma | quality | Fixed, except `synchronised_dict.py`: restored (Tony kept it on 2026-10-21, a vendored MIT thread-safe dict) | `60a8a99`, `a1b75b2`, `89531cc`, restore: `b68f6b1` |
 
 Notes commits: `2180d56`, `e266925`, `db2cc14`.
 
@@ -146,3 +146,8 @@ Lens reviewed every fix commit by diff and accepted them with no changes asked: 
 `60a8a99`, `a1b75b2`, `89531cc`). Lens's own checks at `db2cc14`: strict mypy (helab, tests) and
 pyright clean; full suite (`--basetemp=.ai/temp/pytest-review`) 2408 passed, 2 skipped, 2 xfailed,
 twice: the first run had 1 RERUN that `-q` didn't name, the second none. Lens confirms to CoCo.
+
+## Before the push
+
+`synchronised_dict.py` restored (`b68f6b1`). Full suite at that commit with `-rR`: 2408 passed,
+2 skipped, 2 xfailed, **no RERUN**; strict mypy (helab 149 files, tests 106) and pyright clean.
