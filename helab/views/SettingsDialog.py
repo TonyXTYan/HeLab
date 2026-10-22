@@ -17,7 +17,7 @@ from helab.utils.constants import (
 )
 from helab.utils.settings_defaults import (
     AUTO_SCAN_VISIBLE_SETTING, CHECK_LEVEL_SETTING, DIR_CACHES_SETTING, DIR_TEMPS_SETTING, LIVE_INTERVAL_SETTING,
-    LOAD_MODE_SETTING, LOG_KEEP_SETTING, RETIRED, SIMULTANEOUS_IO_SETTING, read_setting)
+    LOAD_MODE_SETTING, LOG_KEEP_SETTING, REOPEN_PLOTS_SETTING, RETIRED, SIMULTANEOUS_IO_SETTING, read_setting)
 from helab.utils.settings_store import app_settings
 from helab.views.DataRootsTab import DataRootsTab
 from helab.views.CacheTab import CacheTab
@@ -93,6 +93,12 @@ class SettingsDialog(QDialog):
         self.auto_scan_visible_checkbox.setToolTip(
             "Scan visible folders that have no saved scan results. Cached results are kept until a manual scan or refresh.")
         self.general_layout.addWidget(self.auto_scan_visible_checkbox)
+        self.reopen_plots_checkbox = QCheckBox("Reopen plots at start")
+        self.reopen_plots_checkbox.setToolTip(
+            "When HeLab starts, the plots open when it last quit open again with their settings and places. "
+            "Each runs again on its folder's data in RAM or the disk cache, never reading the folder itself: "
+            "without cached data it waits until a tab loads the folder.")
+        self.general_layout.addWidget(self.reopen_plots_checkbox)
         log_form = QFormLayout()
         self.log_keep_spin = QSpinBox()
         self.log_keep_spin.setRange(1, MAX_LOG_KEEP)
@@ -289,6 +295,7 @@ class SettingsDialog(QDialog):
         self.live_interval_spin.setValue(read_live_interval(settings))
         self.log_keep_spin.setValue(read_log_keep(settings))
         self.auto_scan_visible_checkbox.setChecked(read_setting(settings, AUTO_SCAN_VISIBLE_SETTING, typed=True))
+        self.reopen_plots_checkbox.setChecked(read_setting(settings, REOPEN_PLOTS_SETTING, typed=True))
         logging.debug("Settings loaded")
 
     def save_settings(self) -> None:
@@ -322,6 +329,7 @@ class SettingsDialog(QDialog):
         for key in RETIRED:
             settings.remove(key)
         settings.setValue(AUTO_SCAN_VISIBLE_SETTING, self.auto_scan_visible_checkbox.isChecked())
+        settings.setValue(REOPEN_PLOTS_SETTING, self.reopen_plots_checkbox.isChecked())
         self.cache_tab.save(settings)
         self.lab_tab.save(settings)
         self.accept()
@@ -340,7 +348,8 @@ class SettingsDialog(QDialog):
         if not self.cache_tab.confirm(
                 "Reset all settings?",
                 "Resets every HeLab setting to its default: folders, load options, both cache budgets, window "
-                "and view choices. The disk cache's contents are kept.", "Reset all settings"):
+                "and view choices, and deletes every preset and the list of plots to reopen. The disk cache's "
+                "contents are kept.", "Reset all settings"):
             return
         settings = self.settings
         # Where the disk cache is isn't a preference: it stays (moving it is Change…).

@@ -38,6 +38,11 @@ LIVE_AUTOSAVE_SETTING = "live_autosave_shots"
 PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
 THREAD_STATUS_SETTING = "view_toggle_thread_status"
 LOG_KEEP_SETTING = "log_files_keep"
+# Presets and the plots that reopen at start (helab/views/plots/presets.py, reopen.py).
+REOPEN_PLOTS_SETTING = "reopen_plots_at_start"
+OPEN_PLOTS_SETTING = "open_plots"
+SCRIPT_PRESETS_PREFIX = "script_presets/"
+ARRANGEMENT_PRESETS_PREFIX = "arrangement_presets/"
 
 SETTINGS: tuple[Setting, ...] = (
     Setting(DIR_TEMPS_SETTING, str, "",
@@ -75,6 +80,13 @@ SETTINGS: tuple[Setting, ...] = (
             "Log files to keep, every session's helab-<pid>.log files and their rotated copies counted; "
             "at startup the oldest beyond it are deleted, never a running HeLab's, 1 to 100,000 "
             "(Settings → General)."),
+    # Presets and the plots that reopen at start (keep these rows together).
+    Setting(REOPEN_PLOTS_SETTING, bool, True,
+            "Reopen the plots open when HeLab last quit; each reruns on its folder's data in RAM or the disk "
+            "cache, never reading the folder itself (Settings → General)."),
+    Setting(OPEN_PLOTS_SETTING, str, "",
+            "The plots open when HeLab last quit (or last opened or closed a plot), with their settings and "
+            "places: an arrangement record (helab.analysis.presets, JSON). Unset: none."),
 )
 
 # Keys under a prefix: Settings → Lab parameters saves only the lab constants the user set,
@@ -84,6 +96,12 @@ PREFIXES: tuple[Setting, ...] = (
     Setting("lab_constants/", float, None,
             "A lab constant the user set (Settings → Lab parameters), in SI units; unset: "
             "helab.analysis.physics.CONSTANTS's default."),
+    Setting(SCRIPT_PRESETS_PREFIX, str, None,
+            "One script's saved presets (a plot's settings › Presets), under script_presets/<analysis id>/<action>, "
+            "both percent-encoded: a ScriptPresets record (helab.analysis.presets, JSON). Unset: none."),
+    Setting(ARRANGEMENT_PRESETS_PREFIX, str, None,
+            "A saved arrangement (Presets menu: one folder, Live, its plots and their places), under "
+            "arrangement_presets/<name>, percent-encoded: an arrangement record (helab.analysis.presets, JSON)."),
 )
 
 # Keys older HeLabs saved, now only removed when settings are saved (the example_* pair: Settings →
