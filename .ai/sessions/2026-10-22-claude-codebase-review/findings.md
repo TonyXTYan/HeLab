@@ -449,3 +449,40 @@ and `SettingsDialog.py` (R-15) wait for the CI Robustness floor if it is editing
 `helab/utils/synchronised_dict.py` is a module Tony decided to keep (CoCo); my "imported nowhere"
 check was right but the decision wasn't mine to overturn. Mend restored it in `b68f6b1`,
 byte-identical to the baseline `fc0f50d`. The rest of R-21 stands.
+
+### Review of the held items (2026-10-22, after Tony's approval)
+
+**R-1 in `4468eaf`: accepted.** Both quick checks (`_unchanged_since_cache`, `_unchanged_since_memory`)
+now need the folder's mtime to equal the one its listing saw (`fingerprints._mtime_unchanged`); rows
+and events without the key keep today's rule, a None (within `RACY_SECONDS` of the listing, or a
+Live save) lists once; `confirm_dataset` keeps a newer row's own mtime; `memory_check` carries it.
+The six new tests in `tests/test_cache_first.py` fail at `4468eaf~1` (run in a scratch worktree:
+6 failed) and pass at head; the quick-check, store, I/O trace, Live and helper-event tests pass
+(111, no RERUN); strict mypy (helab, tests) and pyright clean. Residual (Mend's note, agreed): a
+server clock off by more than 2 s plus a change in the same mtime step right after the listing
+hides that change until the next change or Retry; for the handoff's open risks.
+
+### R-22 · low · unsure · `helab/io_ops/fingerprints.py:50-55` (found while reviewing R-1; not in 4468eaf)
+
+`_settled` keeps only files with mtime ≤ now − SETTLE_SECONDS, so a file whose mtime is in the
+*future* by our clock is "still being written" until our clock passes it. A server clock ahead by
+more than 5 s (the mirror of R-1's scenario) therefore holds every new shot back for the skew:
+loads (`loading.py:334`), basic scans (`scanning.py:200`), Live's new files (`live.py:110,188`)
+and saves (`save_held.py:105`); a folder whose shots are all that young fails with "TXY files are
+still being written — Retry". Visible (the unsettled count), so not silent, hence low; unsure how
+far lab clocks drift. **Fix**: Needs Tony (the settle rule): a file more than SETTLE_SECONDS
+*ahead* of our clock can't be young by our clock at all and could count as settled (the
+change-while-read and Live's `seen` checks still guard it), or ages could be measured against
+the folder's own mtime (server clock).
+
+**R-11 (excepthook) in `1efcb87`: accepted.** `helab/utils/app_log.py` (Qt-free): `start_log_file` adds a
+rotating INFO handler on the root logger (`coloredlogs.install(level=DEBUG)` at main.py's import
+sets the root to DEBUG, so INFO lines reach the file); `catch_unhandled` sets `sys.excepthook` (so
+PyQt6 carries on) and `threading.excepthook`, logs with the traceback, one notice on the GUI thread
+only, repeats per (type, file, line) counted for 60 s, Ctrl-C to the default hook. Tests restore both
+hooks and the module state and write only tmp folders; 12 tests pass in parallel and the 6 new ones
+serially, no RERUN. Residuals (Mend's, agreed, for the handoff): two HeLabs share one file, and
+above 2 MB a Windows rollover fails in the second instance (its lines lost, a traceback on stderr
+per record) while on macOS/Linux the other instance keeps writing into `helab.log.1`; a per-instance
+name would avoid both but the file's name and place are Tony's call. Doc: AGENTS.md should name the
+log file and the carry-on rule.
