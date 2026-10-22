@@ -3,9 +3,10 @@ import os
 import sys
 import tempfile
 import json
+import re
 import uuid
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 # Run Qt headless (offscreen) by default so tests don't pop up windows.
 # Set HELAB_SHOW_GUI=1 to force a real, visible display (e.g. when a test
@@ -66,6 +67,25 @@ def pytest_configure(config: pytest.Config) -> None:
     if (constants.cache_dir(), constants.DIR_TEMPS, constants.app_folder()) != expected:
         raise pytest.UsageError(f"Tests would use HeLab's real folders ({constants.cache_dir()}, "
                                 f"{constants.DIR_TEMPS}, {constants.app_folder()}), not {expected}")
+
+
+_reruns: list[tuple[str, str]] = []  # (test, why it reran), in this process (the controller under xdist)
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    if report.outcome == "rerun":  # type: ignore[comparison-overlap]  # (pytest-rerunfailures' outcome)
+        text = report.longreprtext.splitlines()
+        lines = [line for line in text if line.startswith("E ")][:6]
+        lines += [line for line in text if re.match(r"\S+\.py:\d+: \w", line)][-1:]  # Where it failed.
+        _reruns.append((report.nodeid, "\n".join(lines) or report.longreprtext[-600:]))
+
+
+def pytest_terminal_summary(terminalreporter: Any) -> None:
+    """Why each rerun test failed: ``-rR`` names them only, so a flaky test's cause on CI was lost."""
+    if _reruns:
+        terminalreporter.section("rerun reasons")
+        for test, why in _reruns:
+            terminalreporter.write_line(f"{test}\n{why}")
 
 
 @pytest.hookimpl(wrapper=True)
