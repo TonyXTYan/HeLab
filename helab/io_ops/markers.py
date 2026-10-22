@@ -53,9 +53,10 @@ def _discover_root(path: str, present: bool, cache_options: dict[str, Any] | Non
                           "reason": "marker invalid"})
                 return old is not None
             duplicates = store.other_root_locations(marker.uuid, location)
+            # Pending only while another location of this UUID is confirmed: one still waiting whose
+            # other locations have all been forgotten since is confirmed.
             decision: Literal["confirmed", "pending"] = (
-                "pending" if old is not None and old[0] == marker.uuid and old[2] == "pending"
-                else "confirmed" if old is not None and old[0] == marker.uuid
+                "confirmed" if old is not None and old[0] == marker.uuid and old[2] == "confirmed"
                 else "pending" if duplicates else "confirmed")
             old_key = ""
             if decision == "confirmed" and old is None:
