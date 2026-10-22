@@ -10,6 +10,7 @@ from PyQt6.QtCore import QSettings
 
 from helab.analysis.constant_layers import clean_layer
 from helab.analysis.physics import CONSTANTS, Constant
+from helab.utils.settings_defaults import read_setting
 
 LAB_CONSTANTS_GROUP = "lab_constants"
 
@@ -33,7 +34,7 @@ def read_lab_constants(settings: QSettings) -> dict[str, float]:
     keys = [constant.key for constant in lab_rows() if editable(constant)]
     saved: dict[str, object] = {}
     for key in keys:
-        value = settings.value(setting_key(key))
+        value = read_setting(settings, setting_key(key))
         if value is not None:
             saved[key] = value
     return clean_layer(saved, keys)

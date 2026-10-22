@@ -8,12 +8,15 @@ from typing import Any
 
 from PyQt6.QtCore import QSettings
 
+from helab.utils.settings_defaults import DIR_CACHES_SETTING, read_setting
+
 
 def write_cache_setting(settings: QSettings, path: str) -> bool:
     """Saved, synced and read back, or it didn't happen (still before the cutover)."""
-    settings.setValue("dir_caches", path)
+    settings.setValue(DIR_CACHES_SETTING, path)
     settings.sync()
-    return settings.status() == QSettings.Status.NoError and settings.value("dir_caches", type=str) == path
+    return (settings.status() == QSettings.Status.NoError
+            and read_setting(settings, DIR_CACHES_SETTING, typed=True) == path)
 
 
 def settings_spec(settings: QSettings) -> dict[str, Any]:

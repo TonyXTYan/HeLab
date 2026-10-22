@@ -43,6 +43,20 @@ class PaintCounter(QObject):
         return False
 
 
+class TickPaints(PaintCounter):
+    """The tick a "Tick NNNNNN" label showed at its last paint."""
+
+    def __init__(self, label: QLabel) -> None:
+        super().__init__(label)
+        self.label = label
+        self.tick = -1
+
+    def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
+        if a1 is not None and a1.type() == QEvent.Type.Paint:
+            self.tick = int(self.label.text().split()[-1])
+        return super().eventFilter(a0, a1)
+
+
 def resize_window(window: QMainWindow, qtbot: QtBot, repeated: bool) -> None:
     for width in ((740, 780, 820) if repeated else (740,)):
         window.resize(width, 520)
@@ -59,7 +73,7 @@ def test_label_keeps_painting_after_resize(qtbot: QtBot, repeated: bool) -> None
     qtbot.addWidget(window)
     label = QLabel("Tick 000000", window)
     window.setCentralWidget(label)
-    paints = PaintCounter(label)
+    paints = TickPaints(label)
     tick = 0
 
     def update_label() -> None:
@@ -75,11 +89,13 @@ def test_label_keeps_painting_after_resize(qtbot: QtBot, repeated: bool) -> None
         window.show()
         qtbot.waitUntil(lambda: paints.count > 0)
         resize_window(window, qtbot, repeated)
-        painted, previous_tick = paints.count, tick
-        qtbot.waitUntil(lambda: paints.count > painted, timeout=2000)
-        assert tick > previous_tick
-        painted = paints.count
-        qtbot.waitUntil(lambda: paints.count > painted, timeout=2000)
+        # New painting shows a tick after the resize. A paint still pending for the last tick
+        # (its timer fired in the wait's last pass) doesn't count: waiting for any paint and then
+        # requiring a new tick failed whenever that paint came first (CI reruns).
+        previous_tick = tick
+        qtbot.waitUntil(lambda: paints.tick > previous_tick, timeout=2000)
+        drawn = paints.tick
+        qtbot.waitUntil(lambda: paints.tick > drawn, timeout=2000)
     finally:
         timer.stop()
 
