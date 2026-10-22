@@ -669,16 +669,19 @@ def test_a_replacement_stores_failed_read_leaves_its_names_unknown(qtbot: QtBot,
     assert not cache.presets_read and not cache.presets_known()
     assert cache.presets_note() == "⚠ Saved presets can't be read: no such column: kind"
     assert cache.preset_records(ARR) == {("", "q"): '"mine"'}  # A's "old" isn't B's.
-    assert cache.preset_unsaved(ARR, "", "q").startswith("not saved: the saved presets can't be read (")
+    # q is still A's job's, being saved: decided only once no preset job is left.
+    assert cache.preset_unsaved(ARR, "", "q") == "" and cache.quit_saves() == [PRESETS_SAVING]
     inspector = PresetsInspector(cache)
     qtbot.addWidget(inspector)
     assert empty_lines(inspector)[0] == "(none known yet)"
-    assert cache.quit_saves() == [PRESETS_SAVING]  # q waits for the read the inspector asked for…
-    answer(jobs, admin_job(jobs, 0), {"kind": "presets", "saved": [], "error": "no such column: kind", "store": "B"},
-           {"kind": "done"})
+    unreadable = {"kind": "presets", "saved": [], "error": "no such column: kind", "store": "B"}
+    answer(jobs, admin_job(jobs, 0), unreadable, {"kind": "done"})  # The read the inspector asked for…
     assert empty_lines(inspector)[0] == "(none known yet)"
-    answer(jobs, to_a, stores.answer("A", to_a), {"kind": "done"})  # Retired: changes nothing.
-    assert cache.quit_saves() == [] and not preset_jobs(jobs)  # …which failed: nothing will write it now.
+    # …which q waited for (B's names): still undecided while A's job runs.
+    assert cache.preset_unsaved(ARR, "", "q") == PRESETS_WAIT_READ and cache.quit_saves() == [PRESETS_SAVING]
+    answer(jobs, to_a, stores.answer("A", to_a), {"kind": "done"})  # Retired: changes nothing. The last job:
+    assert cache.preset_unsaved(ARR, "", "q") == "not saved: the saved presets can't be read (no such column: kind)"
+    assert cache.quit_saves() == [] and not preset_jobs(jobs)  # Nothing will write it now.
     # A change now waits for B's names: only a read is asked.
     assert cache.set_presets([(ARR, "", "r", '"mine"')]) == PRESETS_WAIT_READ
     assert [len(request.payload["params"]["rows"]) for request in preset_jobs(jobs)] == [0]
@@ -728,3 +731,115 @@ def test_quitting_waits_for_a_read_asked_again_after_the_first_one_fails(qtbot: 
     drain(jobs, stores, "A")  # The retry reads A; p is written to it.
     qtbot.waitUntil(lambda: bool(results), timeout=5_000)
     assert not dialog.skipped and stores.held["A"]["p"]["record"] == '"mine"' and not cache.presets_unsaved
+
+
+# Review round 11 (Flint, 4fc315b..3bb153a): a change still owed is decided in one place, once no
+# preset job is in flight and no read is asked for; until then quitting waits for it.
+
+UNREADABLE_B = {"kind": "presets", "saved": [], "error": "no such column: kind", "store": "B"}
+
+
+def owed_to_b(stores: Stores) -> tuple[IOService, FolderCache, Any, Any]:
+    """A was read; p's write to A (w1) is in flight when the store, recreated as B, fails a read;
+    B's read is asked again (r2) and is running. p is owed to B. (w1, r2), not yet answered."""
+    jobs, cache = frozen()
+    cache.read_presets()
+    first = admin_job(jobs, 0)
+    answer(jobs, first, stores.answer("A", first), {"kind": "done"})
+    cache.set_presets([(ARR, "", "p", '"mine"')])
+    w1 = admin_job(jobs, 1)
+    cache.read_presets()
+    answer(jobs, admin_job(jobs, 0), UNREADABLE_B, {"kind": "done"})
+    assert cache.preset_unsaved(ARR, "", "p") == ""  # Still w1's: undecided.
+    cache.read_presets()
+    r2 = admin_job(jobs, 0)
+    assert cache.preset_unsaved(ARR, "", "p") == PRESETS_WAIT_READ and cache.quit_saves() == [PRESETS_SAVING]
+    return jobs, cache, w1, r2
+
+
+def owed(cache: FolderCache) -> bool:
+    return any(why in ("", PRESETS_WAIT_READ) for why in cache.presets_unsaved.values())
+
+
+def check_quit(cache: FolderCache, step: Any = None) -> None:
+    """At every step: quitting waits for presets exactly while a change is owed and a preset job
+    or a requested read remains; and no change is owed without one (nothing would settle it)."""
+    work = bool(cache._preset_jobs) or cache._presets_again
+    assert (cache.quit_saves() == [PRESETS_SAVING]) == (owed(cache) and work), step
+    assert cache.quit_saves() in ([], [PRESETS_SAVING]), step
+    assert work or not owed(cache), step
+
+
+@pytest.mark.parametrize("w1_ends", ["helper error", "B read error"])
+def test_another_jobs_failure_never_tells_quit_nothing_is_left_while_bs_read_runs(
+        qtbot: QtBot, service: IOService, w1_ends: str) -> None:
+    """Flint's two orders, through the real quit window: w1 ends with a helper error, or answers
+    with B's read error, while r2 (which would save p) runs. p stays owed, the window waits, and
+    r2's answer saves it."""
+    from helab.views.QuitSaveDialog import QuitSaveDialog
+    stores = Stores()
+    jobs, cache, w1, r2 = owed_to_b(stores)
+    cache.cancel_for_quit()
+    dialog = QuitSaveDialog(cache)
+    qtbot.addWidget(dialog)
+    results: list[int] = []
+    dialog.finished.connect(results.append)
+    dialog.open()
+    told: list[list[str]] = []
+    cache.quitSavesChanged.connect(lambda: told.append(cache.quit_saves()))
+    if w1_ends == "helper error":
+        answer(jobs, w1, {"kind": "error", "message": "helper exited"})
+    else:
+        answer(jobs, w1, UNREADABLE_B, {"kind": "done"})
+    assert told and all(saves == [PRESETS_SAVING] for saves in told) and results == []
+    assert cache.preset_unsaved(ARR, "", "p") == PRESETS_WAIT_READ
+    answer(jobs, r2, stores.answer("B", r2), {"kind": "done"})  # B readable now: p is written to it.
+    drain(jobs, stores, "B")
+    qtbot.waitUntil(lambda: bool(results), timeout=5_000)
+    assert not dialog.skipped and stores.held["B"]["p"]["record"] == '"mine"' and not cache.presets_unsaved
+
+
+W1_ENDS: dict[str, list[str | dict[str, Any]]] = {"helper error": [{"kind": "error", "message": "helper exited"}],
+           "B read error": [UNREADABLE_B, {"kind": "done"}],
+           "A's answer (retired)": ["A", {"kind": "done"}],
+           "B's rows": ["B", {"kind": "done"}]}
+R2_ENDS: dict[str, list[str | dict[str, Any]]] = {"B's rows": ["B", {"kind": "done"}],
+           "B read error": [UNREADABLE_B, {"kind": "done"}],
+           "helper error": [{"kind": "error", "message": "helper exited"}]}
+
+
+def test_quit_waits_exactly_while_work_that_would_save_a_change_remains(service: IOService) -> None:
+    """Every way w1 and r2 can end, in every order of their events: at each step quitting waits for
+    presets exactly while p is owed and a preset job or requested read remains, and p is never
+    owed with neither left. In the end p is saved to B if any answer read B, else said not saved."""
+    count = 0
+    for w1_name, w1_events in W1_ENDS.items():
+        for r2_name, r2_events in R2_ENDS.items():
+            steps = (tuple(("w1", event) for event in w1_events), tuple(("r2", event) for event in r2_events))
+            for order in interleavings(*steps):
+                stores = Stores()
+                jobs, cache, w1, r2 = owed_to_b(stores)
+                case = (w1_name, r2_name, [(job, event if isinstance(event, str) else event["kind"])
+                                           for job, event in order])
+                for job, event in order:
+                    request = w1 if job == "w1" else r2
+                    if isinstance(event, str):
+                        event = stores.answer(event, request)
+                    jobs.resultReady.emit(request, event)
+                    if event["kind"] in ("done", "error"):
+                        jobs.pending.remove(request)
+                    check_quit(cache, case)
+                for _ in range(10):  # Writes those answers started, answered by B (readable).
+                    waiting = preset_jobs(jobs)
+                    if not waiting:
+                        break
+                    answer(jobs, waiting[0], stores.answer("B", waiting[0]), {"kind": "done"})
+                    check_quit(cache, case)
+                assert not cache._preset_jobs and not cache._presets_again and cache.quit_saves() == [], case
+                if "B's rows" in (w1_name, r2_name):
+                    assert stores.held["B"]["p"]["record"] == '"mine"' and not cache.presets_unsaved, case
+                else:
+                    why = cache.preset_unsaved(ARR, "", "p")
+                    assert why.startswith(("not saved: ", "couldn't be saved (")), case
+                count += 1
+    assert count == 53

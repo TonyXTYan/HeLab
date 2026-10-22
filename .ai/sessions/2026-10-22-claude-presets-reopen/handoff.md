@@ -602,3 +602,52 @@ announced.
 twice: once with the first read's answer an error, once with the job itself failing. In both,
 every `quitSavesChanged` shows `["Presets"]`, the window stays open, the retry is queued, and p is
 saved before the window accepts. Both variants fail on `4fc315b`, where the window saw `[]`.
+
+## Review fix, round 11 (Flint on `4fc315b..3bb153a`): the commit after `3bb153a`, not pushed
+
+**Finding.** Another job's failure could still tell quit that nothing was left while B's read
+retry was running. Round 10's guard checked only `_presets_again`, which is false once the retry
+is queued. So an older write ending with a helper error, or answering with B's read error, marked
+p "not saved" and told quit `[]`.
+
+**Fix: the decision is made in one place.** A change still owed (being written `""`, or waiting
+for the names `PRESETS_WAIT_READ`) is said not saved only in `_presets_settle`. That runs only
+once no preset job is in flight and no read is asked for.
+
+- Until then, failures are only noted:
+  - a job's failure, for the changes it carried (`_presets_failed`);
+  - a failed read of names not yet known (`_presets_unread`);
+  - a full queue, the same way.
+- The owed change keeps its state while they are noted.
+- `_names_unread`, the per-path guard, is gone.
+- When the last job ends, each owed change gets its noted reason, or "not saved: the saved
+  presets can't be read (…)".
+
+**Quit's answer.** `presets_saving` (and so `quit_saves`) lists Presets while a change is owed
+and a preset job is in flight or a read is asked for. Since owed changes leave that state only in
+`_presets_settle`, no notification can show quit an empty list while work that would save one
+remains.
+
+**One deviation from CoCo's wording, for Tony and CoCo to confirm.** CoCo asked for Presets to be
+listed whenever any preset job is in flight, owed change or not. I tried exactly that first.
+Closing the main window during the startup read (or after opening the Presets menu) then showed
+"Saving presets…" with nothing to save, and in tests the main window's close was deferred
+(`test_presets_window` failed and the preset tests hung). The added "a change is owed" condition
+keeps the structural guarantee: an owed change can't stop being owed while work remains, so
+quitting never ends while a change is still owed and work is left that would save it.
+
+**Tests,** in `tests/test_presets_store.py`:
+
+- `test_another_jobs_failure_never_tells_quit_nothing_is_left_while_bs_read_runs`: Flint's two
+  orders, with the real `QuitSaveDialog` after `cancel_for_quit`. The window waits, every
+  notification shows `["Presets"]`, and B's read then saves p.
+- `test_quit_waits_exactly_while_work_that_would_save_a_change_remains`: every way w1 can end
+  (helper error, B read error, the retired store's answer, B's rows) against every way r2 can end
+  (B's rows, B read error, helper error), in every order of their events, 53 cases. At every
+  step, the quit window lists Presets exactly while p is owed and a job or requested read
+  remains, and p is never owed with neither. At the end, p is saved to B if any answer read B, and
+  otherwise is said not saved.
+- `test_a_replacement_stores_failed_read_leaves_its_names_unknown` (round 9) is adjusted: q now
+  stays undecided while A's job runs, and is said not saved once it ends.
+
+These fail on `3bb153a`: both of Flint's orders, the enumeration, and the adjusted round-9 test.

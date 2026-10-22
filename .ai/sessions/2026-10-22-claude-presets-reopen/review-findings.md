@@ -264,3 +264,14 @@ Round-9 findings fixed; the rule held in all 1680 commit/delivery/end orders of 
    then does `_preset_job_ended` queue the retry (p back to PRESETS_WAIT_READ, `quit_saves()==["Presets"]`).
    The window may quit and stop that retry, losing p. Schedule the requested continuation before
    publishing a quit-ready state (including the earlier presets-error notification).
+
+## Round 11 (Flint, 4fc315b..3bb153a)
+
+Round-10 orders pass. Suite 2594 passed, no RERUN; mypy/pyright clean. One P2:
+
+1. [P2] Another job's failure can let quit accept while the replacement-store read retry is already
+   running (`helab/utils/folder_cache.py:1336`, called at `:1328` and `:1357`): `_names_unread`
+   protects only `_presets_again`, which is false once the retry is queued. An older write job
+   ending with a helper error, or answering with a B read error, marks p "not saved" and notifies
+   quit with `[]`; the dialog accepts while the retry, which would save p, is still in
+   `_preset_jobs`.
