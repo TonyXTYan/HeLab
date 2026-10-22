@@ -37,8 +37,6 @@ LIVE_INTERVAL_SETTING = "live_check_interval_seconds"
 LIVE_AUTOSAVE_SETTING = "live_autosave_shots"
 PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
 THREAD_STATUS_SETTING = "view_toggle_thread_status"
-EXAMPLE_CHECKBOX_SETTING = "example_checkbox"
-EXAMPLE_TEXT_SETTING = "example_text"
 
 SETTINGS: tuple[Setting, ...] = (
     Setting(DIR_TEMPS_SETTING, str, "",
@@ -72,8 +70,6 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(PLOT_AUTO_RELOAD_SETTING, bool, True,
             "A plot released to free RAM reloads when it is shown again (Settings → Cache)."),
     Setting(THREAD_STATUS_SETTING, bool, True, "View › Toggle Thread Status Auto Pop-up."),
-    Setting(EXAMPLE_CHECKBOX_SETTING, bool, False, "Settings → General's example checkbox (a placeholder)."),
-    Setting(EXAMPLE_TEXT_SETTING, str, "", "Settings → General's example text (a placeholder)."),
 )
 
 # Keys under a prefix: Settings → Lab parameters saves only the lab constants the user set,
@@ -85,8 +81,9 @@ PREFIXES: tuple[Setting, ...] = (
             "helab.analysis.physics.CONSTANTS's default."),
 )
 
-# Keys older HeLabs saved, now only removed when settings are saved.
-RETIRED = ("simultaneous_folder_scans", "simultaneous_folder_loads")
+# Keys older HeLabs saved, now only removed when settings are saved (the example_* pair: Settings →
+# General's placeholders, removed by Tony's decision, 2026-10-22).
+RETIRED = ("simultaneous_folder_scans", "simultaneous_folder_loads", "example_checkbox", "example_text")
 
 _BY_KEY = {setting.key: setting for setting in SETTINGS}
 
