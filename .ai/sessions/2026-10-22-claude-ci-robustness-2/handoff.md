@@ -152,3 +152,5 @@ CI's exact command locally: 2395 passed, no RERUN.
 Also taken: Mend's `22ee3fb` (cherry-picked, identical), importing `QtWebEngineWidgets` first in
 `test_settings_defaults.py`. Its real-window test run alone failed with "QtWebEngineWidgets must
 be imported … before a QCoreApplication instance is created" (reproduced here; not in these CI logs).
+
+CI run 39717002040 on `5e696aa` (pushed): **success**, no RERUN on any OS. Ubuntu 2393 passed, 4 skipped, 2 xfailed; macOS 2395 passed, 2 skipped, 2 xfailed; Windows 2375 passed, 18 skipped, 2 xfailed. Builds passed on all three.
