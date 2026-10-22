@@ -35,8 +35,9 @@ from helab.analysis.results import FROM_DISK, AnalysisContext, AnalysisResult, C
 
 # Types a result's record holds (``record_of``).
 RECORD_TYPES: tuple[type, ...] = (AnalysisResult, AnalysisIdentity, ViewKey, ViewIdentity, Coverage, ResolvedConstants)
-# Above this, saving a result is said each time (Tony, 2026-10-22): the plot and the size.
-LARGE_RESULT_BYTES = 50 * 1000 * 1000
+# Above this, saving a result is said each time (Tony, 2026-10-22): the plot and the size (50 MB as
+# HeLab shows sizes, ``number_format.byte_size``).
+LARGE_RESULT_BYTES = 50 << 20
 
 
 @lru_cache(maxsize=1)
@@ -124,11 +125,3 @@ def result_from(record: Any, data: Any, *, outdated: tuple[str, ...] = ()) -> An
         raise result_codec.CodecError("not a saved result's record")
     return replace(result, data=data, source=FROM_DISK, outdated=outdated)
 
-
-def size_text(size: int) -> str:
-    """``63 MB``, ``1.2 GB`` (decimal units, as the disk cache's sizes are shown)."""
-    for unit, scale in (("GB", 1e9), ("MB", 1e6), ("kB", 1e3)):
-        if size >= scale:
-            value = size / scale
-            return f"{value:.1f} {unit}" if value < 10 else f"{value:,.0f} {unit}"
-    return f"{size:,} bytes"

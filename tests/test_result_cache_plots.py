@@ -1,0 +1,301 @@
+"""A plot's saved results (result caching R2), through real helpers and the test's own store: a
+one-off run is saved, and a plot after a restart (a new runner, new plots) shows it at once
+without computing; a changed script or data shows the saved one marked outdated while the run
+replaces it; a parameter gives no reuse; Live's reruns and RAM-only folders save nothing; a
+result too big for the budget isn't saved and the plot says so; a large one is said once per
+save; a cached result counts toward the plot RAM budget."""
+from __future__ import annotations
+
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterator, List, Optional, cast
+
+import numpy as np
+import numpy.typing as npt
+import pytest
+from PyQt6 import sip
+from PyQt6.QtCore import QSettings
+from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QWidget
+from pytestqt.qtbot import QtBot
+
+from helab.analysis import result_cache
+from helab.analysis.budget import RamBudget
+from helab.analysis.dataset_view import DatasetView, build_view
+from helab.analysis.parameters import ParameterSpec
+from helab.analysis.result_codec import Declared
+from helab.analysis.results import DISK_CACHED, FROM_DISK, AnalysisContext, AnalysisResult
+from helab.analysis.runner import AnalysisRunner
+from helab.scripts.base import DatasetAnalysis, ScriptMetadata
+from helab.utils.cache_store import CacheStore, store_root
+from helab.utils.constants import cache_dir
+from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache
+from helab.utils.io_service import IOService
+from helab.utils.ram_buffers import buffer_of
+from helab.views.plots.instance import AnalysisInstance
+from helab.views.plots.script_tree import TreePanelWidget
+from helab.views.plots.workspace import PlotWorkspace
+
+WAIT = 30_000
+
+
+@dataclass(frozen=True)
+class Summed:
+    totals: npt.NDArray[np.float64]
+    scale: int
+
+
+class Costly(DatasetAnalysis):
+    """A cached analysis: each shot's total, times Scale; counts its computations."""
+    version = "1"
+
+    def __init__(self) -> None:
+        self.computed = 0
+        self.go = threading.Event()
+        self.go.set()
+
+    def get_metadata(self) -> ScriptMetadata:
+        return self.create_metadata("Costly", "test", "Tests", __file__, "tests.costly", self.version)
+
+    def get_actions(self) -> List[str]:
+        return ["Plot"]
+
+    def parameters(self, action_name: str) -> List[ParameterSpec]:
+        return [ParameterSpec("scale", "Scale", "int", 1, (1, 10))]
+
+    def cache_supported(self, action_name: str) -> bool:
+        return True
+
+    def cache_types(self, action_name: str) -> List[Declared]:
+        return [Summed]
+
+    def compute(self, action_name: str, context: AnalysisContext) -> Any:
+        assert self.go.wait(10)
+        self.computed += 1
+        scale = int(context.parameters["scale"])
+        return Summed(np.array([array.sum() * scale for array in context.view.shots.values()]), scale)
+
+    def render(self, result: AnalysisResult, parent: Optional[QWidget] = None) -> QWidget:
+        data: Summed = result.data
+        label = QLabel(f"totals {data.totals.tolist()}", parent)
+        label.setObjectName("costly_plot")
+        return label
+
+
+class Plots(PlotWorkspace):
+    def __init__(self, window: Window) -> None:
+        super().__init__(window, notice=window.notices.append, closing=lambda: window.closing)
+        self.window = window
+
+    def current_dataset_view(self) -> DatasetView | None:
+        return self.window.view
+
+
+class Window(QMainWindow):
+    def __init__(self, cache: FolderCache, settings: QSettings) -> None:
+        super().__init__()
+        self.closing = False
+        self.view: Optional[DatasetView] = None
+        self.notices: list[str] = []
+        self.plots = Plots(self)
+        self.plots.setup_ram_budget(cache, settings)
+        assert self.plots.ram_budget is not None
+        self.budget: RamBudget = self.plots.ram_budget
+
+
+@pytest.fixture
+def cache() -> Iterator[FolderCache]:
+    """A cache whose helpers run (the local lane), with the test's own store."""
+    service = IOService()
+    made = get_folder_cache(service)
+    made.max_data_bytes = 1 << 40
+    yield made
+    service.shutdown()
+
+
+RUNNERS: list[AnalysisRunner] = []
+
+
+@pytest.fixture(autouse=True)
+def stop_runners() -> Iterator[None]:
+    yield
+    while RUNNERS:
+        RUNNERS.pop().stop()
+
+
+def make_window(qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Window:
+    runner = AnalysisRunner()
+    RUNNERS.append(runner)
+    monkeypatch.setattr("helab.views.plots.instance.get_analysis_runner", lambda: runner)
+    window = Window(cache, QSettings(str(tmp_path / f"settings-{time.monotonic_ns()}.ini"), QSettings.Format.IniFormat))
+    qtbot.addWidget(window)
+    window.plots.middle_mainwindow.show()
+    return window
+
+
+def close(window: Window) -> None:
+    window.plots.close_plots()
+    window.budget.detach()
+    if not sip.isdeleted(window.plots.middle_mainwindow):
+        window.plots.middle_mainwindow.close()
+        window.plots.middle_mainwindow.deleteLater()
+
+
+def folder_view(tmp_path: Path, name: str = "run", *, changed: int | None = None) -> DatasetView:
+    folder = tmp_path / "data" / name
+    folder.mkdir(parents=True, exist_ok=True)
+    data = {shot: np.full((10, 3), float(shot)) for shot in (1, 2, 3)}
+    prints = [[shot, 100 + shot + (1 if shot == changed else 0), 1_000 + shot] for shot in data]
+    return build_view(Dataset(FolderCache.key(str(folder)), f"sig-{name}-{changed}", data,
+                              {"fingerprint": prints, "source": "files", "loaded_at": time.time()}, 0))
+
+
+def open_plot(window: Window, qtbot: QtBot, view: DatasetView, script: DatasetAnalysis) -> AnalysisInstance:
+    window.view = view
+    panel = TreePanelWidget(window.plots)
+    qtbot.addWidget(panel)
+    instance = panel.run_analysis(script.get_metadata(), script, "Plot")
+    window.view = None
+    assert isinstance(instance, AnalysisInstance)
+    return instance
+
+
+def settled(instance: AnalysisInstance) -> bool:
+    return instance.shown is not None and not instance.job_id
+
+
+def saved(instance: AnalysisInstance) -> bool:
+    return settled(instance) and cast(AnalysisResult, instance.shown).policy == DISK_CACHED
+
+
+def label(instance: AnalysisInstance, name: str) -> str:
+    dock = cast(QDockWidget, instance.dock_widget)
+    found = dock.findChild(QLabel, name)
+    assert found is not None
+    return found.text() + "\n" + found.toolTip()
+
+
+def results_saved() -> int:
+    with CacheStore(store_root(cache_dir())) as store:
+        return int(store._conn.execute("SELECT COUNT(*) FROM results").fetchone()[0])
+
+
+def test_a_saved_result_is_shown_after_a_restart_without_computing(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    script = Costly()
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    first = open_plot(window, qtbot, folder_view(tmp_path), script)
+    qtbot.waitUntil(lambda: saved(first), timeout=WAIT)
+    assert script.computed == 1 and results_saved() == 1
+    assert "saved in the disk cache" in label(first, "plot_data_source")
+    close(window)
+    # A restart: a new runner (no results in RAM), new plots, the same disk cache.
+    again = Costly()
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    second = open_plot(window, qtbot, folder_view(tmp_path), again)
+    qtbot.waitUntil(lambda: settled(second), timeout=WAIT)
+    shown = cast(AnalysisResult, second.shown)
+    assert again.computed == 0 and shown.source == FROM_DISK and not shown.outdated
+    assert np.array_equal(shown.data.totals, [30.0, 60.0, 90.0])
+    text = label(second, "plot_data_source")
+    assert "from disk cache, computed" in text and "From disk cache, computed" in text
+    assert label(second, "plot_error").strip() == ""
+    # It counts toward the plot RAM budget like any result.
+    assert buffer_of(shown.data.totals)[0] in second.ram_buffers()
+    # A parameter changed: no reuse (and nothing outdated: other settings), computed and saved.
+    root = second.parameter_root
+    assert root is not None
+    root.child("scale").setValue(2)
+    second.run()
+    qtbot.waitUntil(lambda: saved(second) and again.computed == 1, timeout=WAIT)
+    assert cast(AnalysisResult, second.shown).source != FROM_DISK and results_saved() == 2
+    close(window)
+
+
+@pytest.mark.parametrize("change", ["script", "data"])
+def test_a_changed_script_or_data_shows_the_saved_result_outdated_until_the_run_ends(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str) -> None:
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    first = open_plot(window, qtbot, folder_view(tmp_path), Costly())
+    qtbot.waitUntil(lambda: saved(first), timeout=WAIT)
+    script = Costly()
+    if change == "script":
+        script.version = "2"
+    script.go.clear()  # The run waits, so the outdated one shows meanwhile.
+    view = folder_view(tmp_path, changed=2 if change == "data" else None)
+    second = open_plot(window, qtbot, view, script)
+    qtbot.waitUntil(lambda: second.shown is not None, timeout=WAIT)
+    shown = cast(AnalysisResult, second.shown)
+    assert shown.source == FROM_DISK and shown.outdated and second.job_id
+    reason = "script version 1 → 2" if change == "script" else "data changed (1 shot changed)"
+    assert reason in label(second, "plot_error") and "outdated" in label(second, "plot_error")
+    assert "saved result of" in label(second, "plot_data_source")
+    script.go.set()
+    qtbot.waitUntil(lambda: saved(second), timeout=WAIT)
+    assert cast(AnalysisResult, second.shown).source != FROM_DISK and label(second, "plot_error").strip() == ""
+    assert script.computed == 1
+    close(window)
+
+
+def test_live_reruns_are_never_saved(qtbot: QtBot, cache: FolderCache, tmp_path: Path,
+                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: list[str] = []
+    submit = cache.service.submit
+
+    def record(owner: str, generation: int, path: str, operation: str, *args: Any, **kwargs: Any) -> bool:
+        asked.append(operation)
+        return submit(owner, generation, path, operation, *args, **kwargs)
+    monkeypatch.setattr(cache.service, "submit", record)
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    script = Costly()
+    view = folder_view(tmp_path)
+    instance = open_plot(window, qtbot, view, script)
+    qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
+    asked.clear()
+    revision = view.with_shots({4: np.full((10, 3), 4.0)}, {4: (4, 104, 1_004)})
+    window.plots.live_feed.revised.emit(revision)
+    qtbot.waitUntil(lambda: script.computed == 2 and settled(instance), timeout=WAIT)
+    assert "result_find" not in asked and "result_save" not in asked and results_saved() == 1
+    close(window)
+
+
+@pytest.mark.no_auto_data_root
+def test_a_folder_without_a_data_root_keeps_results_in_ram(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    script = Costly()
+    instance = open_plot(window, qtbot, folder_view(tmp_path), script)
+    qtbot.waitUntil(lambda: settled(instance), timeout=WAIT)
+    assert cast(AnalysisResult, instance.shown).policy != DISK_CACHED and script.computed == 1
+    qtbot.wait(300)  # (Nothing more arrives.)
+    assert results_saved() == 0
+    close(window)
+
+
+def test_a_result_over_the_budget_isnt_saved_and_the_plot_says_so(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.utils import folder_cache
+    monkeypatch.setattr(folder_cache, "_disk_budget", 1)
+    monkeypatch.setattr(folder_cache, "_disk_budget_set_at", time.time())
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    instance = open_plot(window, qtbot, folder_view(tmp_path), Costly())
+    qtbot.waitUntil(lambda: "doesn't fit the disk budget" in instance.status_label.text(), timeout=WAIT)
+    assert "Settings → Cache" in instance.status_label.text() and results_saved() == 0
+    close(window)
+
+
+def test_a_large_saved_result_is_said_once_per_save(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(result_cache, "LARGE_RESULT_BYTES", 10)
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    instance = open_plot(window, qtbot, folder_view(tmp_path), Costly())
+    qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
+    notes = [note for note in window.notices if "in the disk cache" in note]
+    assert len(notes) == 1 and notes[0].startswith("Saved Costly (run) in the disk cache: ")
+    root = instance.parameter_root
+    assert root is not None
+    root.child("scale").setValue(3)
+    instance.run()
+    qtbot.waitUntil(lambda: len([n for n in window.notices if "in the disk cache" in n]) == 2, timeout=WAIT)
+    close(window)

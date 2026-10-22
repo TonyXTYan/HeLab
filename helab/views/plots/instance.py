@@ -6,6 +6,8 @@ import logging
 import math
 import os
 import time
+from dataclasses import replace
+from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Tuple, TYPE_CHECKING
 from uuid import uuid4
 
@@ -24,14 +26,17 @@ from helab.analysis.dataset_view import DatasetView, ViewKey
 from helab.analysis.follow import FOLLOW, Follow, changes, live_specs, policy_of, shots_text
 from helab.analysis.live_feed import LiveFeed
 from helab.analysis.parameter_tree import build_tree, commit_pending_text, parameter_of, settings_widget, tree_values
+from helab.analysis import result_cache
 from helab.analysis.parameters import describe
-from helab.analysis.results import AnalysisResult
+from helab.analysis.results import DISK_CACHED, AnalysisContext, AnalysisResult
 from helab.analysis.runner import AnalysisRunner, get_analysis_runner
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.utils.constants import QDOCKWIDGET_STYLESHEET
 from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache, store_options
 from helab.utils.io_service import IORequest, get_io_service
+from helab.utils.number_format import byte_size
 from helab.utils.ram_buffers import Buffers, arrays_in, buffers
+from helab.views.plots.cached_results import CachedRuns
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.pictures import ReleasedPlot, snapshot
 if TYPE_CHECKING:
@@ -269,11 +274,35 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 self.reload(self.values())
             return
         if self.job_id:
-            self.runner.cancel(self.job_id)
-        self._submit(self.follow.latest)
+            self._cancel_run()
+        self._submit(self.follow.latest, one_off=True)
+
+    # Saved results (result caching R2, ``helab.views.plots.cached_results``): set on the first run
+    # that may use them.
+    _cached_link: Optional[CachedRuns] = None
+    # The amber line's note while an outdated saved result shows (the run replacing it goes on), and
+    # what the disk cache said of the last run (not saved, couldn't be read) for the status line.
+    _cache_note = ""
+    _cache_status = ""
+
+    def _cancel_run(self) -> None:
+        """Cancel the run in flight, or its disk-cache lookup."""
+        if self._cached_link is not None:
+            self._cached_link.forget(self.job_id)
+        self.runner.cancel(self.job_id)
+
+    def _cached_runs(self) -> CachedRuns:
+        if self._cached_link is None:
+            self._cached_link = CachedRuns(self._cache(), self.script, self.action, self.name,
+                                           found=self._cached_found, run=self._cached_run, saved=self._cached_saved,
+                                           note=self._cached_status, closed=lambda: self.is_closed)
+        return self._cached_link
 
     def _submit(self, view: DatasetView, values: Optional[Dict[str, Any]] = None, *, reloading: bool = False,
-                constants: Optional[Mapping[str, Mapping[str, float]]] = None, live: bool = False) -> None:
+                constants: Optional[Mapping[str, Mapping[str, float]]] = None, live: bool = False,
+                one_off: bool = False) -> None:
+        """Run on ``view``. A ``one_off`` run (the user's: Rerun, the first run, a reload; never Live's)
+        of a script whose results may be saved looks itself up in the disk cache first (R2)."""
         self._follow_timer.stop()
         if not reloading:
             self._reload_note = ""
@@ -285,24 +314,102 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         if constants is None:
             constants = self.constant_layers(view.identity.source_path)
-        try:
-            context = self.runner.submit(self.script, self.metadata, self.action, view, values, constants,
-                                         owner=self.instance_id, live=live)
-        except RuntimeError as error:  # The runner is stopping: HeLab is closing.
-            self.status_label.setText(str(error))
-            return
+        link = self._cached_runs() if one_off and not live else None
+        cached = link is not None and link.supported() and not link.off_reason(view)
+        context = self.runner.prepare(self.script, self.metadata, self.action, view, values, constants,
+                                      owner=self.instance_id, live=live, to_cache=cached)
+        waiting = cached and link is not None and link.start(context)
+        if not waiting:
+            try:
+                self.runner.enqueue(self.script, context)
+            except RuntimeError as error:  # The runner is stopping: HeLab is closing.
+                if link is not None:
+                    link.forget(context.job_id)
+                self.status_label.setText(str(error))
+                return
+        self._cache_status = ""
         self.job_id, self._job_view = context.job_id, view
         self._runs.append(context.job_id)
         self.follow.start(view)
-        self.status_label.setText(f"Running ({context.job_id})…")
+        self.status_label.setText(f"Looking in the disk cache ({context.job_id})…" if waiting
+                                  else f"Running ({context.job_id})…")
         self._show_constant_titles(context.resolved_constants)
         self._show_follow()
+
+    def _cached_run(self, context: AnalysisContext) -> None:
+        """Nothing saved matched exactly: the run computes now."""
+        if self.is_closed or context.job_id != self.job_id:
+            return
+        try:
+            self.runner.enqueue(self.script, context)
+        except RuntimeError as error:  # The runner is stopping: HeLab is closing.
+            self.job_id = ""
+            self.follow.end(time.monotonic())
+            self.status_label.setText(str(error))
+            return
+        if self._cache_note:
+            self.status_label.setText(f"Showing a saved result; rerunning ({context.job_id})…")
+        else:
+            self.status_label.setText(f"Running ({context.job_id})…")
+
+    def _cached_found(self, context: AnalysisContext, result: AnalysisResult) -> None:
+        """A saved result for the run: an exact match is its result (the run is skipped); an
+        outdated one shows while the run goes on."""
+        if self.is_closed or context.job_id != self.job_id:
+            return
+        if not result.outdated:
+            self.runner.results.add(result)
+            self._finished(result)
+            return
+        specs = self.script.parameters(self.action)
+        warnings = "; ".join(self._hook("parameter_warnings", [], result.parameters))
+        try:
+            content = self._updated(result) or self._draw(result)
+        except Exception:
+            logging.exception("Could not draw %s's saved result", self.name)
+            return
+        if self.shown is not None:
+            self.runner.results.unpin(self.shown.job_id)
+        self.shown = result
+        if self.released is not None:
+            self.reloaded_at = time.monotonic()
+        self.released = None
+        when = datetime.fromtimestamp(result.finished_at).strftime("%Y-%m-%d %H:%M") if result.finished_at else "?"
+        self._cache_note = f"saved result from {when} is outdated ({'; '.join(result.outdated)}): rerunning"
+        self._show_content(content, result, specs, warnings)
+
+    def _cached_saved(self, result: AnalysisResult, size: int) -> None:
+        """The run's result is now in the disk cache: its record says so; a large one is said."""
+        if size > result_cache.LARGE_RESULT_BYTES and self.workspace is not None:
+            self.workspace.notice(f"Saved {self.name} ({self.view.identity.name}) in the disk cache: {byte_size(size)}")
+        shown = self.shown
+        if shown is None or shown.job_id != result.job_id or self.released is not None:
+            return
+        self.shown = replace(shown, policy=DISK_CACHED)
+        if self.result is shown:
+            self.result = self.shown
+        content = self._content
+        if content is not None and not sip.isdeleted(content):
+            specs = self.script.parameters(self.action)
+            self._show_content(content, self.shown, specs,
+                               "; ".join(self._hook("parameter_warnings", [], self.shown.parameters)))
+
+    def _cached_status(self, text: str) -> None:
+        """What the disk cache said of the run (not saved, couldn't be read): on the status line."""
+        self._cache_status = text
+        if not self.is_closed:
+            current = self.status_label.text()
+            self.status_label.setText(" · ".join(filter(None, (current, f"⚠ {text}"))))
 
     @pyqtSlot(object)
     def _finished(self, result: AnalysisResult) -> None:
         # A slot (no PyQt proxy object): closing disconnects it at once, not at a later deletion.
         if self.is_closed or result.job_id != self.job_id:
             return
+        if self._cached_link is not None:
+            self._cached_link.finished(result)  # Saves a completed result packed for the disk cache.
+        if result.packed is not None:
+            result = replace(result, packed=None)
         self.job_id = ""
         self.follow.end(time.monotonic())
         view, self._job_view = self._job_view, None
@@ -347,13 +454,15 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 return
             content = self._message(f"{self.name} failed: {error}")
         else:
-            self.status_label.setText(f"⚠ {warnings}" if warnings else "")
+            self.status_label.setText(" · ".join(filter(None, (f"⚠ {warnings}" if warnings else "",
+                                                               self._cache_status and f"⚠ {self._cache_status}"))))
         assert content is not None
         self.error = ""
         if self.shown is not None:
             self.runner.results.unpin(self.shown.job_id)
             self.shown = None
         if result.state == "completed" and not error:
+            self._cache_note = ""  # An outdated saved result shown meanwhile is replaced.
             self.shown, self._shown_view = result, view
             self.runner.results.pin(result.job_id)
             if self.released is not None:
@@ -609,7 +718,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         dock.setProperty("plotFollow", self.follow_text())
         dock.setProperty("plotFollowing", following)
         dock.setProperty("plotError", " · ".join(filter(None, (self.error or self._reload_note,
-                                                               self._constants_note))))
+                                                               self._constants_note, self._cache_note))))
         plots.update_plot_source(dock)
         if self.param_tab is not None:
             plots.panel_right_top_plot_settings.set_title(dock, self._title())
@@ -861,7 +970,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         values, self._reload_values = self._reload_values, None
         constants, self._reload_constants = self._reload_constants, None
         self.released.set_state(f"reloading from {where}…", busy=True)
-        self._submit(found.view, values, reloading=True, constants=constants)
+        self._submit(found.view, values, reloading=True, constants=constants, one_off=True)
         self.status_label.setText(f"Reloading from {where}…")
 
     def _reload_failed(self, why: str) -> None:

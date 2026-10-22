@@ -241,10 +241,11 @@ class DatasetAnalysis(HelabAnalysisScript):
         for costly runs (a bootstrap, pair counting), not for quick ones. Default: no."""
         return False
 
-    def cache_types(self, action_name: str) -> Sequence[type]:
-        """The dataclasses and enums ``compute``'s data may hold, for the default ``cache_pack``
-        and ``cache_unpack`` (``helab.analysis.result_codec``): only these are rebuilt from a
-        file. Default: none (plain values, tuples, dicts and NumPy arrays only)."""
+    def cache_types(self, action_name: str) -> Sequence[result_codec.Declared]:
+        """The dataclasses and enums ``compute``'s data may hold, and ``Reducer``s for objects saved
+        by their data (a fit model: ``result_types.FIT_MODEL``), for the default ``cache_pack`` and
+        ``cache_unpack`` (``helab.analysis.result_codec``): only these are rebuilt from a file.
+        Default: none (plain values, tuples, dicts and NumPy arrays only)."""
         return ()
 
     def cache_pack(self, action_name: str, data: Any) -> tuple[Any, Dict[str, Any]]:
