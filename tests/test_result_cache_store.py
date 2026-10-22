@@ -382,29 +382,49 @@ def test_a_folder_without_a_data_root_reads_and_writes_nothing(tmp_path: Path) -
     assert not results.exists() or not os.listdir(results)
 
 
-# Round 4: a key's own epoch (Make room's eviction), and a saved row with a waiting replacement
+# Follow-up 2 (Tony): Make room removes old saved results only; a newer copy of one, being saved or
+# waiting, is never fenced nor dropped: it checks the budget in its own transaction like any save.
+
+def epochs(store: CacheStore) -> dict[str, int]:
+    return {str(path): int(epoch) for path, epoch in store._conn.execute("SELECT path, epoch FROM folder_epochs")}
+
 
 @pytest.mark.no_auto_data_root
-def test_a_save_running_since_before_an_eviction_cant_write_the_key_back(tmp_path: Path) -> None:
+def test_a_save_running_since_before_an_eviction_saves_its_newer_copy(tmp_path: Path) -> None:
     with CacheStore(str(tmp_path / "store")) as store:
         assert save(store, lookup="old", data=big_result(0), budget=10 ** 12, budget_set_at=1.0).saved
-        running = store.start_result_job(RUN, "old")  # A run of "old" starts (its save in flight)...
-        other = store.start_result_job(RUN, "other")  # ...and one of another key of the folder.
+        old = store.find_result(RUN, "old").value
+        running = store.start_result_job(RUN)  # A run of "old" starts (its save in flight)...
         budget = store.usage() + 50_000
         held = save(store, lookup="a", data=big_result(1), budget=budget, budget_set_at=2.0)
-        evicted = store.adopt_pending_result(held.pending_id, budget=budget, budget_set_at=2.0, make_room=True)
-        assert evicted.adopted and evicted.removal is not None and evicted.removal.evicted == ((RUN, "old"),)
-        with pytest.raises(SaveRejected) as refused:  # Even with room now, the evicted key stays evicted.
-            save(store, lookup="old", data=big_result(0), guard=running, budget=10 ** 12, budget_set_at=3.0)
-        assert refused.value.reason == "cleared" and store.find_result(RUN, "old").missing
-        # Another key's run keeps its guard; a run started after the eviction saves the key again.
-        assert save(store, lookup="other", data=big_result(2), guard=other, budget=10 ** 12, budget_set_at=3.0).saved
-        fresh = store.start_result_job(RUN, "old")
-        assert save(store, lookup="old", data=big_result(0), guard=fresh, budget=10 ** 12, budget_set_at=3.0).saved
+        before = epochs(store)
+        adopted = store.adopt_pending_result(held.pending_id, budget=budget, budget_set_at=2.0, make_room=True)
+        assert old is not None and adopted.adopted and adopted.removal is not None
+        assert adopted.removal.evicted == ((RUN, "old", old.row["result_id"]),)
+        assert epochs(store) == before  # (Not a clear: no epoch moved.)
+        assert store.find_result(RUN, "old").missing
+        # ...and saves the newer copy, within the budget, under a new id.
+        newer = save(store, lookup="old", data=big_result(2), guard=running, budget=10 ** 12, budget_set_at=3.0)
+        found = store.find_result(RUN, "old").value
+        assert newer.saved and found is not None and newer.result_id == found.row["result_id"] != old.row["result_id"]
 
 
 @pytest.mark.no_auto_data_root
-def test_a_waiting_replacement_goes_when_its_saved_row_is_evicted(tmp_path: Path) -> None:
+def test_a_newer_copy_that_doesnt_fit_after_an_eviction_is_its_own_question(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        assert save(store, lookup="old", data=big_result(0), budget=10 ** 12, budget_set_at=1.0).saved
+        running = store.start_result_job(RUN)
+        budget = store.usage() + 50_000
+        held = save(store, lookup="a", data=big_result(1), budget=budget, budget_set_at=2.0)
+        assert store.adopt_pending_result(held.pending_id, budget=budget, budget_set_at=2.0, make_room=True).adopted
+        newer = save(store, lookup="old", data=big_result(2), guard=running, budget=budget, budget_set_at=3.0)
+        assert not newer.saved and newer.reason == "over_budget" and newer.pending_id  # Asked, never refused.
+        plan = store.result_room_plan(newer.pending_id, budget)
+        assert plan.possible and len(plan.result_ids) == 1  # (Make room for it would remove "a".)
+
+
+@pytest.mark.no_auto_data_root
+def test_a_waiting_newer_copy_stays_when_its_old_saved_row_is_evicted(tmp_path: Path) -> None:
     with CacheStore(str(tmp_path / "store")) as store:
         assert save(store, lookup="k", data=big_result(0), budget=10 ** 12, budget_set_at=1.0).saved
         replacement = save(store, lookup="k", data=big_result(9), budget=1, budget_set_at=2.0)
@@ -412,11 +432,11 @@ def test_a_waiting_replacement_goes_when_its_saved_row_is_evicted(tmp_path: Path
         budget = store.usage() + 50_000
         held = save(store, lookup="a", data=big_result(1), budget=budget, budget_set_at=3.0)
         adopted = store.adopt_pending_result(held.pending_id, budget=budget, budget_set_at=3.0, make_room=True)
-        assert adopted.removal is not None and adopted.removal.dropped == (replacement.pending_id,)
+        assert adopted.removal is not None and [item[1] for item in adopted.removal.evicted] == ["k"]
         assert store.find_result(RUN, "k").missing
-        with pytest.raises(SaveRejected) as gone:
-            store.adopt_pending_result(replacement.pending_id, budget=10 ** 12, budget_set_at=4.0)
-        assert gone.value.reason == "gone"
+        assert replacement.pending_id in {row["pending_id"] for row in store.inventory(budget)["pending_results"]}
+        later = store.adopt_pending_result(replacement.pending_id, budget=10 ** 12, budget_set_at=4.0)
+        assert later.adopted and store.find_result(RUN, "k").found
 
 
 @pytest.mark.no_auto_data_root
@@ -454,71 +474,32 @@ def test_two_processes_answering_one_waiting_result_one_wins(tmp_path: Path) -> 
 
 
 @pytest.mark.no_auto_data_root
-@pytest.mark.parametrize("fence", ["all", "root", "folder"])
-def test_key_epochs_are_compacted_under_the_broader_fence(tmp_path: Path, fence: str) -> None:
-    """Make room's per-key epochs (``result-key:``) go when a broader fence covers them, never by age:
-    Clear cached analysis (after gen_results), a root's (after its epoch), a folder's clear or purge
-    (after its epoch); guards taken before stay refused, other roots' and folders' rows stay."""
-    other_root, other_folder = f"root://{B}/run", f"root://{A}/other"
-
-    def evict(path: str, lookup: str, at: float) -> None:
-        assert save(store, path, lookup, data=big_result(int(at)), budget=10 ** 12, budget_set_at=at).saved
-        # (This one is the least recently shown: Make room evicts it, and only it.)
-        store._conn.execute("UPDATE results SET last_used = CASE WHEN path = ? AND lookup = ? THEN 1 ELSE 1e10 END",
-                            (path, lookup))
-        budget = store.usage() + 50_000
-        held = save(store, path, f"{lookup}-new", data=big_result(int(at) + 1), budget=budget, budget_set_at=at + 1)
-        assert store.adopt_pending_result(held.pending_id, budget=budget, budget_set_at=at + 1, make_room=True).adopted
-
-    def keys() -> set[str]:
-        return {str(path) for (path,) in store._conn.execute(
-            "SELECT path FROM folder_epochs WHERE substr(path, 1, 11) = 'result-key:'")}
-    with CacheStore(str(tmp_path / "store")) as store:
-        evict(RUN, "k", 10.0)
-        evict(other_folder, "k", 20.0)
-        evict(other_root, "k", 30.0)
-        before = keys()
-        assert len(before) == 3
-        stale = store.start_result_job(RUN, "k")
-        if fence == "all":
-            store.remove_results()
-            assert keys() == set()
-        elif fence == "root":
-            store.remove_results(root=A)
-            assert keys() == {f"result-key:{other_root}#k"}
-        else:
-            store.remove_results([RUN])
-            assert keys() == before - {f"result-key:{RUN}#k"}
-        with pytest.raises(SaveRejected):  # The broader fence still refuses a guard from before.
-            save(store, RUN, "k", data=big_result(0), guard=stale, budget=10 ** 12, budget_set_at=99.0)
-        assert save(store, RUN, "k", data=big_result(0), guard=store.start_result_job(RUN, "k"),
-                    budget=10 ** 12, budget_set_at=99.0).saved
-
-
-@pytest.mark.no_auto_data_root
-def test_a_waiting_replacement_that_appears_after_the_question_makes_it_ask_again(tmp_path: Path) -> None:
-    """Gauge's round 6: Make room removes exactly the saved results and waiting replacements its
-    question named, or nothing; a replacement queued since is a new question (CacheDialogs.question)."""
+def test_a_newer_copy_saved_after_the_question_is_never_removed_by_it(tmp_path: Path) -> None:
+    """Make room removes exactly the saved rows its question named (by id), or nothing: a copy of one
+    saved since has a new id, so the answer is asked again, and the new plan takes the oldest first."""
     from helab.views.CacheDialogs import CacheDialogs
     with CacheStore(str(tmp_path / "store")) as store:
         assert save(store, lookup="old", data=big_result(0), budget=10 ** 12, budget_set_at=1.0).saved
+        assert save(store, lookup="older", data=big_result(3), budget=10 ** 12, budget_set_at=1.0).saved
+        store._conn.execute("UPDATE results SET last_used = CASE lookup WHEN 'old' THEN 1 ELSE 2 END")
         budget = store.usage() + 50_000
         new = save(store, lookup="new", data=big_result(1), budget=budget, budget_set_at=2.0)
         asked = store.result_room_plan(new.pending_id, budget)
-        assert asked.possible and len(asked.result_ids) == 1 and asked.dropped == ()
-        # (A same-size replacement fits by replacing: a budget under the usage makes it wait.)
-        replacement = save(store, lookup="old", data=big_result(2), budget=store.usage() - 1, budget_set_at=3.0)
-        assert replacement.pending_id  # Queued after the question was shown.
+        old = store.find_result(RUN, "old").value
+        assert old is not None and asked.possible and asked.result_ids == (old.row["result_id"],)
+        # A newer copy of "old" is saved after the question was shown (same size: it fits by replacing).
+        newer = save(store, lookup="old", data=big_result(2), budget=10 ** 12, budget_set_at=3.0)
+        assert newer.saved
         refused = store.adopt_pending_result(new.pending_id, budget=budget, budget_set_at=4.0, make_room=True,
-                                             expected_room=list(asked.result_ids), expected_dropped=list(asked.dropped))
-        assert not refused.adopted and refused.room is not None and refused.room.dropped == (replacement.pending_id,)
-        assert store.find_result(RUN, "old").found and store.inventory(budget)["pending_results"]
+                                             expected_room=list(asked.result_ids))
+        assert not refused.adopted and refused.room is not None
+        assert store.find_result(RUN, "old").value is not None  # The newer copy stays.
+        older = store.find_result(RUN, "older").value
+        assert older is not None and refused.room.result_ids == (older.row["result_id"],)  # Now the oldest.
         entry = {"reason": "over_budget", "result": True}
         first = CacheDialogs.question({**entry, "room": {"result_ids": list(asked.result_ids), "possible": True}})
-        again = CacheDialogs.question({**entry, "room": {"result_ids": list(refused.room.result_ids), "possible": True,
-                                                         "dropped": list(refused.room.dropped)}})
-        assert first != again  # Asked again, now naming the replacement it discards.
+        again = CacheDialogs.question({**entry, "room": {"result_ids": list(refused.room.result_ids), "possible": True}})
+        assert first != again  # Asked again.
         adopted = store.adopt_pending_result(new.pending_id, budget=budget, budget_set_at=4.0, make_room=True,
-                                             expected_room=list(refused.room.result_ids),
-                                             expected_dropped=list(refused.room.dropped))
-        assert adopted.adopted and adopted.removal is not None and adopted.removal.dropped == (replacement.pending_id,)
+                                             expected_room=list(refused.room.result_ids))
+        assert adopted.adopted and store.find_result(RUN, "old").found and store.find_result(RUN, "older").missing

@@ -98,6 +98,7 @@ class AdminResultFields(TypedDict, total=False):
     budget: int
     recorded: bool
     results: int  # saved results removed (R2)
+    result_id: str  # an adopted result's saved row (R2)
 
 
 # Process and progress
@@ -485,9 +486,9 @@ class RemovedEvent(TypedDict):
     bytes: NotRequired[int]
     results: NotRequired[int]
     root: NotRequired[str | None]
-    # Saved results Make room removed for a waiting one, [folder, lookup] each: not a clear (no epoch moved).
+    # Saved results Make room removed for a waiting one, [folder, lookup, result_id] each: not a clear
+    # (no epoch moved; a newer copy of one of those keys has another result_id).
     evicted: NotRequired[list[list[str]]]
-    dropped: NotRequired[list[str]]  # Waiting replacements of the evicted keys that went with them.
 
 
 class ResultGuard(TypedDict):
@@ -503,6 +504,7 @@ class ResultFoundEvent(TypedDict):
     artifact: str
     exact: bool
     lookup: NotRequired[str]  # The row's own key (an outdated one's differs from the one asked)
+    result_id: NotRequired[str]  # The row's id (Make room's eviction names the rows it removed by it)
     record: Any
     computed_at: float
     bytes: int
@@ -521,6 +523,7 @@ class ResultMissingEvent(TypedDict):
 class ResultSavedEvent(UsageFields):
     kind: Literal["result_saved"]
     bytes: int
+    result_id: NotRequired[str]  # Its saved row's id (new for every save)
     # The store's next cleanup deadline: a save that replaced a result retired its file.
     next_deadline: NotRequired[float | None]
 

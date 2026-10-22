@@ -2,8 +2,9 @@
 through real helpers and FolderCache's events: a lookup, a save, a waiting result (its Make room or
 Discard question) and an adoption (Make room asked) in flight, against Make room evicting the same
 result or another of the folder, Clear cached analysis (all, the root's), a purge by age and Discard.
-An eviction is no clear: it affects only the results it removed (by folder and lookup key), never
-the folder's other saves or waiting results. Each cell that can happen has a test (``CELL_*``); the
+An eviction is no clear: it affects only the saved rows it removed (by result id), never the
+folder's other saves or waiting results, nor a newer copy of the same result being saved or waiting
+(Tony, Follow-up 2: Make room removes old saved results only). Each cell that can happen has a test (``CELL_*``); the
 table is in the session handoff."""
 from __future__ import annotations
 
@@ -56,7 +57,7 @@ class Lab:
         self.view = folder_view(tmp_path)
         self.answers: list[tuple[str, bool]] = []
         self.held: list[tuple[IORequest, dict[str, Any]]] = []
-        cache.resultPendingAnswered.connect(lambda pending_id, done: self.answers.append((pending_id, done)))
+        cache.resultPendingAnswered.connect(lambda pending_id, done, _: self.answers.append((pending_id, done)))
 
     def plot(self, scale: int, *, wait: bool = True) -> tuple[AnalysisInstance, Noisy]:
         script = Noisy(scale)
@@ -180,21 +181,17 @@ def shown(instance: AnalysisInstance) -> AnalysisResult:
 
 # A lookup in flight
 
-def test_lookup_x_eviction_of_the_same_result_computes_ram_only_then_a_rerun_saves(lab: Lab) -> None:
+def test_lookup_x_eviction_of_the_same_result_computes_and_saves_the_newer_copy(lab: Lab) -> None:
     lab.saved_plot(1)
     release = lab.hold("result_found")
     instance, script = lab.plot(1, wait=False)
     lab.arrived()
     evict_scale_1(lab)
+    lab.budget(8 << 30)
     release()
     lab.qtbot.waitUntil(lambda: settled(instance), timeout=WAIT)
     assert script.computed == 1 and shown(instance).source != FROM_DISK
-    # Its guard predates the eviction: the store refuses that run's save (RAM only)...
-    lab.qtbot.wait(300)
-    assert shown(instance).policy != DISK_CACHED and lab.store_rows() == (1, 0)
-    # ...and a run asked for later takes a fresh guard and saves Scale 1 again.
-    lab.budget(8 << 30)
-    instance.run()
+    # Its guard predates the eviction and still holds (an eviction fences nothing): saved again.
     lab.qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
     assert lab.store_rows() == (2, 0)
 
@@ -391,8 +388,9 @@ def saved_with_waiting_replacement(lab: Lab) -> tuple[AnalysisInstance, str]:
     return second, pending_id
 
 
-def test_save_x_eviction_of_the_same_key_before_its_transaction_is_refused(lab: Lab) -> None:
-    """The order Gauge found: the save's transaction runs after Make room evicted its key."""
+def test_save_x_eviction_of_the_same_key_before_its_transaction_saves_the_newer_copy(lab: Lab) -> None:
+    """The order Gauge found: the save's transaction runs after Make room evicted its key's old row.
+    The newer copy is saved, checked against the budget like any save."""
     deferred = Deferred(lab)
     late, _ = lab.plot(1)  # Looked up before anything was saved (its guard is old); its save waits.
     deferred.ready(1)
@@ -401,35 +399,62 @@ def test_save_x_eviction_of_the_same_key_before_its_transaction_is_refused(lab: 
     evict_scale_1(lab)  # ...and Make room for Scale 2 evicts it.
     lab.budget(8 << 30)
     deferred.run(0)  # Only now does the first run's save of Scale 1 reach the store, with its old guard.
-    lab.qtbot.wait(500)
-    assert shown(late).policy != DISK_CACHED and lab.store_rows() == (1, 0)  # Scale 2 only.
+    lab.qtbot.waitUntil(lambda: saved(late), timeout=WAIT)
+    assert lab.store_rows() == (2, 0)
 
 
-def test_waiting_x_eviction_of_its_keys_saved_row_drops_the_replacement(lab: Lab) -> None:
+def test_save_x_eviction_of_the_same_key_then_no_room_is_its_own_question(lab: Lab) -> None:
+    deferred = Deferred(lab)
+    late, _ = lab.plot(1)
+    deferred.ready(1)
+    lab.monkeypatch.setattr(lab.cache, "save_result", deferred.real)
+    lab.saved_plot(1)
+    evict_scale_1(lab)  # (The budget stays tight: the newer copy doesn't fit.)
+    before = set(lab.cache.pending_results)
+    deferred.run(0)
+    lab.qtbot.waitUntil(lambda: bool(set(lab.cache.pending_results) - before), timeout=WAIT)
+    assert lab.store_rows() == (1, 1)
+    lab.qtbot.waitUntil(lambda: "not saved yet" in late.status_label.text(), timeout=WAIT)
+
+
+def test_waiting_x_eviction_of_its_keys_saved_row_keeps_the_replacement(lab: Lab) -> None:
     from helab.views.CacheDialogs import result_room_text
     replacement_plot, replacement = saved_with_waiting_replacement(lab)
     lab.tight()
     _, other = lab.waiting(2)
     room = lab.cache.pending_results[other]["room"]
-    assert room["dropped"] == [replacement] and room["dropped_labels"] == ["Costly"]
-    assert "It also discards 1 newer result of it still waiting to be saved (Costly)." in result_room_text(room)
-    assert lab.make_room(other)["adopted"] is True  # Evicts saved Scale 1: its waiting replacement goes too.
-    assert replacement not in lab.cache.pending_results and (replacement, False) in lab.answers
-    assert lab.store_rows() == (1, 0)
-    lab.qtbot.waitUntil(lambda: "discarded" in replacement_plot.status_label.text(), timeout=WAIT)
+    assert set(room) == {"result_ids", "bytes", "newest_last_used", "possible"}
+    assert result_room_text(room).endswith("least recently shown first. Cached data isn't touched.")
+    assert lab.make_room(other)["adopted"] is True  # Evicts the old saved Scale 1 only.
+    assert replacement in lab.cache.pending_results and (replacement, False) not in lab.answers
+    assert lab.store_rows() == (1, 1)
+    lab.budget(8 << 30)
+    assert lab.make_room(replacement, room_ids=[])["adopted"] is True  # Its own question, its guard intact.
+    lab.qtbot.waitUntil(lambda: saved(replacement_plot), timeout=WAIT)
+    assert lab.store_rows() == (2, 0)
 
 
-def test_adoption_x_eviction_of_its_keys_saved_row_is_gone(lab: Lab) -> None:
+def test_adoption_x_eviction_of_its_keys_saved_row_still_saves(lab: Lab) -> None:
     replacement_plot, replacement = saved_with_waiting_replacement(lab)
-    entry = dict(lab.cache.pending_results[replacement])
     lab.tight()
     _, other = lab.waiting(2)
     assert lab.make_room(other)["adopted"] is True
-    lab.cache.pending_results[replacement] = entry  # (Its Make room was asked before the eviction arrived.)
     lab.budget(8 << 30)
     answer = lab.make_room(replacement, room_ids=[])
-    assert answer["adopted"] is False and answer["rejected"] == "gone"
-    assert shown(replacement_plot).policy != DISK_CACHED and lab.store_rows() == (1, 0)
+    assert answer["adopted"] is True and answer["result_id"]
+    lab.qtbot.waitUntil(lambda: saved(replacement_plot), timeout=WAIT)
+    assert lab.store_rows() == (2, 0)
+
+
+def test_adopted_then_evicted_says_ram_only(lab: Lab) -> None:
+    """A result saved by Make room is named by its row's id: a later eviction of it marks its plot."""
+    lab.budget(1)
+    instance, pending_id = lab.waiting(1)
+    lab.budget(8 << 30)
+    assert lab.make_room(pending_id, room_ids=[])["adopted"] is True
+    lab.qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
+    evict_scale_1(lab)
+    lab.qtbot.waitUntil(lambda: shown(instance).policy != DISK_CACHED, timeout=WAIT)
 
 
 def test_lookup_x_discard_of_a_waiting_replacement_shows_the_saved_row(lab: Lab) -> None:
@@ -468,9 +493,9 @@ def test_adoption_acknowledged_after_a_clear_is_not_saved(lab: Lab) -> None:
     assert lab.store_rows() == (0, 0)
 
 
-def test_waiting_in_transit_x_eviction_of_its_key_ends_not_saved(lab: Lab) -> None:
-    """The replacement's result_pending is still on its way when Make room drops it: the plot doesn't
-    wait for a question that will never come."""
+def test_waiting_in_transit_x_eviction_of_its_key_is_still_asked(lab: Lab) -> None:
+    """The replacement's result_pending is still on its way when Make room evicts its key's old row:
+    it stays waiting, and is asked."""
     deferred = Deferred(lab)
     first, _ = lab.plot(1)
     second, _ = lab.plot(1)
@@ -497,12 +522,10 @@ def test_waiting_in_transit_x_eviction_of_its_key_ends_not_saved(lab: Lab) -> No
     assert lab.store_rows() == (1, 1)
     lab.tight()
     _, other = lab.waiting(2)
-    assert lab.make_room(other)["adopted"] is True  # Evicts Scale 1, dropping the replacement.
+    assert lab.make_room(other)["adopted"] is True  # Evicts the old Scale 1; the replacement stays.
     setattr(hold, "go", True)
     for producer, event in held:
         real(producer, event)
-    assert not lab.cache.pending_results and lab.store_rows() == (1, 0)
-    lab.qtbot.waitUntil(lambda: "discarded" in second.status_label.text(), timeout=WAIT)
-    assert "not saved yet" not in second.status_label.text()
-    link = second._cached_link
-    assert link is not None and not link._waiting  # (Nothing kept for an answer that never comes.)
+    [pending_id] = [str(held_event["pending_id"]) for _, held_event in held]
+    assert pending_id in lab.cache.pending_results and lab.store_rows() == (1, 1)
+    lab.qtbot.waitUntil(lambda: "not saved yet" in second.status_label.text(), timeout=WAIT)

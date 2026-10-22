@@ -86,8 +86,8 @@ class CachedRuns(QObject):
         self.cache, self.script, self.action, self.name = cache, script, action, name
         self._found, self._run, self._saved, self._note, self._closed = found, run, saved, note, closed
         self._removed, self._evicted = removed, evicted
-        # The saved result of each of the plot's runs it found or saved: job id → (folder key, lookup).
-        self._keys: Dict[str, tuple[str, str]] = {}
+        # The saved result of each of the plot's runs it found or saved: job id → its row's result_id.
+        self._keys: Dict[str, str] = {}
         self._lookups: Dict[str, Lookup] = {}  # By the run's job id.
         self._saves: Dict[str, AnalysisResult] = {}  # By the save's owner.
         # Results that didn't fit the disk budget, waiting for Make room or Discard, by pending_id.
@@ -165,7 +165,6 @@ class CachedRuns(QObject):
                                   action=result.action, computed_at=result.finished_at, guard=entry.guard,
                                   label=self.name):
             self._saves[owner] = replace(result, packed=None)
-            self._keys[result.job_id] = (self.cache.key(entry.view.identity.source_path), entry.lookup)
 
     def _connect(self) -> None:
         if not self._connected:
@@ -176,22 +175,26 @@ class CachedRuns(QObject):
             self._connected = True
 
     @pyqtSlot(object)
-    def _results_evicted(self, keys: Any) -> None:
-        """Make room removed saved results: a run of this plot whose result was one of them is in RAM only."""
-        gone = {tuple(key) for key in keys or ()}
-        for job_id, key in list(self._keys.items()):
-            if key in gone:
+    def _results_evicted(self, ids: Any) -> None:
+        """Make room removed old saved results: a run of this plot whose saved row was one of them is
+        in RAM only (one whose newer copy was saved since has that copy's id: still saved)."""
+        gone = {str(result_id) for result_id in ids or ()}
+        for job_id, result_id in list(self._keys.items()):
+            if result_id in gone:
                 del self._keys[job_id]
                 if not self._closed():
                     self._evicted(job_id)
 
-    @pyqtSlot(str, bool)
-    def _pending_answered(self, pending_id: str, saved: bool) -> None:
-        """The user answered a result that didn't fit (Make room: saved; Discard), or it expired."""
+    @pyqtSlot(str, bool, str)
+    def _pending_answered(self, pending_id: str, saved: bool, result_id: str) -> None:
+        """The user answered a result that didn't fit (Make room: saved, as row ``result_id``;
+        Discard), or it expired."""
         waiting = self._waiting.pop(pending_id, None)
         if waiting is None or self._closed():
             return
         result, size = waiting
+        if saved and result_id:
+            self._keys[result.job_id] = result_id
         if saved:
             self._saved(replace(result, policy=DISK_CACHED), size)
         else:
@@ -274,7 +277,8 @@ class CachedRuns(QObject):
             saved = replace(saved, job_id=context.job_id, input=context.view.key, owner=context.owner,
                             policy=DISK_CACHED)
             self._lookups.pop(context.job_id, None)
-            self._keys[context.job_id] = (self.cache.key(entry.view.identity.source_path), entry.lookup)
+            if event.get("result_id"):
+                self._keys[context.job_id] = str(event["result_id"])
         self._found(context, saved)
         return exact
 
@@ -291,6 +295,8 @@ class CachedRuns(QObject):
             return
         if kind == "result_saved":
             size = int(event.get("bytes") or 0)
+            if event.get("result_id"):
+                self._keys[result.job_id] = str(event["result_id"])
             if size > result_cache.LARGE_RESULT_BYTES:
                 logging.warning("Saved %s's result (%s) in the disk cache: %s", self.name,
                                 result.input.identity.source_path, byte_size(size))

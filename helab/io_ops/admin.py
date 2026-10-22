@@ -182,8 +182,7 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             try:
                 taken = store.adopt_pending_result(params["pending_id"], budget=budget, budget_set_at=budget_set_at,
                                                    make_room=bool(params.get("make_room")),
-                                                   expected_room=params.get("room_ids"),
-                                                   expected_dropped=params.get("dropped_ids"))
+                                                   expected_room=params.get("room_ids"))
             except SaveRejected as rejection:
                 result.update({"adopted": False, "rejected": rejection.reason, "message": str(rejection)})
             else:
@@ -191,6 +190,8 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                     send(_results_removed_event(taken.removal, evicted=True))
                 result.update({"adopted": taken.adopted, "path": taken.path, "bytes": taken.bytes,
                                "room": None if taken.room is None else asdict(taken.room)})
+                if taken.adopted:
+                    result["result_id"] = taken.result_id
         elif action == "discard_result":
             result["discarded"] = store.discard_pending_result(params["pending_id"])
         elif action == "clear_results":

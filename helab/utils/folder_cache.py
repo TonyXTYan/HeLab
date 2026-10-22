@@ -160,9 +160,10 @@ class FolderCache(QObject):
     cacheRemoved = pyqtSignal(object, object)
     # Pending saves (waiting for Make room / Save update) were added or answered.
     pendingSavesChanged = pyqtSignal()
-    # A saved analysis result that waited for the user (R2) was saved (True) or not (False): its pending_id.
-    resultPendingAnswered = pyqtSignal(str, bool)
-    # Make room evicted saved results: [(folder key, lookup)].
+    # A saved analysis result that waited for the user (R2) was saved (True) or not (False): its
+    # pending_id, and saved, its row's result_id ("" if not).
+    resultPendingAnswered = pyqtSignal(str, bool, str)
+    # Make room evicted saved results: their result_ids (a newer copy of one of those keys has another).
     resultsEvicted = pyqtSignal(object)
     # A cache_admin job's result: action, event (inventory, admin_result, swept, error).
     cacheAdminResult = pyqtSignal(str, object)
@@ -372,9 +373,9 @@ class FolderCache(QObject):
         # was asked (monotonic), so an answer a removal made stale since is never taken as current.
         # Kept after its helper ends (the newest ``MAX_RESULT_OPS``): an event delivered late is still checked.
         self._result_ops: OrderedDict[str, tuple[str, float, str]] = OrderedDict()
-        # Saved results Make room evicted, by (folder, lookup), and when (monotonic): the newest
-        # ``MAX_RESULT_OPS``. Only reads and marks of those results are affected, not their folders'.
-        self._evicted: OrderedDict[tuple[str, str], float] = OrderedDict()
+        # Saved results Make room evicted, by result_id: the newest ``MAX_RESULT_OPS``. Only reads and
+        # marks of those very rows are affected, not their folders' nor a newer copy of their keys.
+        self._evicted: OrderedDict[str, None] = OrderedDict()
         # When cache_admin jobs and history writes started: removals since then void their results.
         self._started: dict[str, float] = {}
         # When each kind was last removed from the disk cache, for every path or per path;
@@ -1989,25 +1990,25 @@ class FolderCache(QObject):
         if "next_deadline" in event:
             # A save that replaced or refused a result retired its file; a waiting one expires.
             self._schedule_sweep(event["next_deadline"])
-        path, started, lookup = self._result_ops.get(producer.owner, ("", time.monotonic(), ""))
+        path, started, _ = self._result_ops.get(producer.owner, ("", time.monotonic(), ""))
         if (event["kind"] in ("result_found", "result_saved", "result_pending")
                 and self._removed_after(started, "results", path)):
             # A Clear cached analysis (all, the root's, a purge) since it was asked: what it found or
             # saved is gone, and its guard, taken before, would never save. Never shown as current.
             event = self._stale_result(event)
-        elif event["kind"] == "result_found" and self._evicted_after(started, path, str(event.get("lookup") or lookup)):
-            # Make room evicted that very result since: not found, so the run computes. Its guard predates
-            # the eviction, so the store refuses that run's save (the key's epoch): RAM only; a run asked
-            # for later takes a fresh guard and saves it.
+        elif event["kind"] == "result_found" and str(event.get("result_id") or "") in self._evicted:
+            # Make room evicted that very row since it was read: not found, so the run computes and
+            # saves anew (an eviction fences nothing: the save checks the budget like any other).
             event = {"kind": "result_missing", "evicted": True, **({"guard": event["guard"]} if "guard" in event else {})}
-        elif event["kind"] == "result_pending" and str(event.get("pending_id")) in self._pending_gone:
-            # Already gone when this arrives (Make room evicted its key's saved row and dropped it, or it
-            # was answered): never a question nor a wait, but not saved.
-            event = {"kind": "result_not_saved", "reason": "dropped", "bytes": int(event.get("bytes") or 0),
-                     "budget": event.get("budget"), "message": "Make room discarded it with its key's saved result"}
-        elif event["kind"] == "result_saved" and self._evicted_after(started, path, lookup):
+        elif event["kind"] == "result_saved" and str(event.get("result_id") or "") in self._evicted:
+            # Saved, then evicted by Make room (as the oldest shown) before this arrived: not on disk.
             event = {"kind": "result_not_saved", "reason": "evicted", "bytes": int(event.get("bytes") or 0),
                      "budget": None, "message": "Make room removed it again"}
+        elif event["kind"] == "result_pending" and str(event.get("pending_id")) in self._pending_gone:
+            # Already answered when this arrives (as the startup inventory's question): never asked
+            # again nor waited for, but not saved by this save.
+            event = {"kind": "result_not_saved", "reason": "dropped", "bytes": int(event.get("bytes") or 0),
+                     "budget": event.get("budget"), "message": "already answered"}
         if event["kind"] == "result_pending" and event.get("pending_id") not in self._pending_gone:
             # Doesn't fit the disk budget: asked (Make room or Discard) with the dataset saves.
             self.pending_results[str(event["pending_id"])] = {**event, "result": True, "reason": "over_budget",
@@ -2018,26 +2019,18 @@ class FolderCache(QObject):
             self._result_ops.popitem(last=False)
         self.resultReady.emit(producer, event)
 
-    def _evicted_after(self, started: float, path: str, lookup: str) -> bool:
-        return self._evicted.get((path, lookup), float("-inf")) > started
-
-    def _results_evicted(self, evicted: list[Any], dropped: list[str] | None = None) -> None:
-        """Make room removed these saved results ([folder, lookup] each) for a waiting one: their reads
-        asked before aren't current, plots showing them say RAM only; a waiting replacement of one of
-        those keys went with it (``dropped``); their folders' other results, saves and waiting ones are
-        untouched (no folder epoch moved)."""
-        for pending_id in dropped or ():
-            if pending_id in self.pending_results:
-                self.resultPendingAnswered.emit(pending_id, False)
-        self._forget_pending(set(dropped or ()))
-        now = time.monotonic()
-        keys = [(self.key(str(folder)), str(lookup)) for folder, lookup in evicted]
-        for key in keys:
-            self._evicted[key] = now
-            self._evicted.move_to_end(key)
+    def _results_evicted(self, evicted: list[Any]) -> None:
+        """Make room removed these old saved results ([folder, lookup, result_id] each) for a waiting
+        one: reads of those rows aren't current, plots showing them say RAM only. Everything else is
+        untouched (no epoch moved): their folders' other results, and every save and waiting result,
+        a newer copy of those keys' included (saved, it has another result_id)."""
+        ids = [str(item[2]) for item in evicted if isinstance(item, (list, tuple)) and len(item) > 2]
+        for result_id in ids:
+            self._evicted[result_id] = None
+            self._evicted.move_to_end(result_id)
         while len(self._evicted) > self.MAX_RESULT_OPS:
             self._evicted.popitem(last=False)
-        self.resultsEvicted.emit(keys)
+        self.resultsEvicted.emit(ids)
 
     def _stale_result(self, event: dict[str, Any]) -> dict[str, Any]:
         """The answer to a result read or save that a removal made stale: nothing found (and no guard:
@@ -2139,7 +2132,7 @@ class FolderCache(QObject):
             gone = {pending_id for pending_id, entry in self.pending_results.items()
                     if keys is None or self.key(str(entry.get("path", ""))) in keys}
             for pending_id in gone:
-                self.resultPendingAnswered.emit(pending_id, False)
+                self.resultPendingAnswered.emit(pending_id, False, "")
             self._forget_pending(gone)
         if "datasets" in kinds:
             # The store drops the folders' pending saves with their data.
@@ -2264,7 +2257,7 @@ class FolderCache(QObject):
                 self.remember_prefs(path, cleared)
             return
         if kind == "removed" and isinstance(event.get("evicted"), list):
-            self._results_evicted(event["evicted"], [str(pending_id) for pending_id in event.get("dropped") or ()])
+            self._results_evicted(event["evicted"])
             return
         if kind == "removed":
             self.removed(event["paths"], event["kinds"])
@@ -2346,12 +2339,13 @@ class FolderCache(QObject):
                 # Make room was asked: its acknowledgement then names a row that is gone.
                 saved_now = bool(event.get("adopted")) and not self._removed_after(
                     started, "results", self.key(str(event.get("path") or "")))
-                self.resultPendingAnswered.emit(pending_id, saved_now)
+                self.resultPendingAnswered.emit(pending_id, saved_now,
+                                                str(event.get("result_id") or "") if saved_now else "")
             self.pendingSavesChanged.emit()
         elif kind == "swept":
             expired: set[str] = {str(pending_id) for pending_id in event.get("expired_ids") or ()}
             for pending_id in expired & set(self.pending_results):
-                self.resultPendingAnswered.emit(pending_id, False)
+                self.resultPendingAnswered.emit(pending_id, False, "")
             self._forget_pending(expired)
             logging.info("Disk cache cleanup: %s", event)
         elif kind in ("error", "cancelled"):

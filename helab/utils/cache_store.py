@@ -145,13 +145,6 @@ def _results_root_epoch(key: str) -> str | None:
     return f"root-results-clear://{key[7:].partition('/')[0]}" if key.startswith("root://") else None
 
 
-def _result_key_epoch(key: str, lookup: str) -> str:
-    """The ``folder_epochs`` row Make room's eviction of one saved result bumps (``result-key:<root
-    key>#<lookup>``): a save of that very key whose run started before can't write it back, while the
-    folder's other keys keep their guards."""
-    return f"result-key:{key}#{lookup}"
-
-
 def _results_epoch(key: str) -> str:
     """The ``folder_epochs`` row a removal of one folder's results bumps (``results:<key>``): a
     dataset removal of the folder bumps the folder's own row, which result saves don't check."""
@@ -268,11 +261,10 @@ class ResultRemoval:
     results: int = 0
     bytes: int = 0
     root: str | None = None
-    # Make room's eviction: the saved results it removed, (folder, lookup) each. Not a clear: no epoch
-    # moves, so other saves and waiting results of those folders stay valid.
-    evicted: tuple[tuple[str, str], ...] = ()
-    # The waiting replacements of those keys that went with them (their guards broken), by pending id.
-    dropped: tuple[str, ...] = ()
+    # Make room's eviction: the saved results it removed, (folder, lookup, result_id) each. Not a
+    # clear: no epoch moves, so every save and waiting result, a newer copy of those keys' included,
+    # stays valid (a replacement saved gets a new result_id: never one of these).
+    evicted: tuple[tuple[str, str, str], ...] = ()
 
 
 class ResultRow(TypedDict):
@@ -309,6 +301,7 @@ class ResultSave:
     usage_seq: int = 0
     budget: int | None = None
     pending_id: str = ""  # Not saved: it waits for the user's answer (``pending_results``).
+    result_id: str = ""  # Saved: its row's id (new for every save, a replacement's too).
 
 
 @dataclass(frozen=True)
@@ -319,9 +312,6 @@ class ResultRoom:
     bytes: int
     newest_last_used: float | None
     possible: bool
-    # The waiting replacements of those keys it discards too (their guards break), and their plots' names.
-    dropped: tuple[str, ...] = ()
-    dropped_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -331,6 +321,7 @@ class ResultAdopt:
     bytes: int
     room: ResultRoom | None = None  # Not adopted: it doesn't fit, and what Make room would remove.
     removal: ResultRemoval | None = None  # Adopted with Make room: what was removed.
+    result_id: str = ""  # Adopted: its saved row's id.
 
 
 @dataclass(frozen=True)
@@ -492,8 +483,6 @@ class CacheStore:
         # ``verified_volumes``): a folder there has no key until they are verified.
         self._unverified_mounts: list[str] = []
         self._writing = False
-        # Waiting results Make room's eviction dropped in the adoption being decided (``_adopt_result_savepoint``).
-        self._dropped: list[tuple[str, str]] = []  # (pending_id, label)
         for attempt in range(OPEN_ATTEMPTS):
             conn: sqlite3.Connection | None = None
             self.read_only = False  # (An attempt that failed may have set it.)
@@ -1524,11 +1513,12 @@ class CacheStore:
             return os.path.join(self.results_dir, file[len(RESULTS_DIRNAME) + 1:])
         return os.path.join(self.datasets_dir, file)
 
-    def start_result_job(self, path: str, lookup: str = "") -> SaveGuard:
+    def start_result_job(self, path: str) -> SaveGuard:
         """A guard for a job that may save a result of ``path``: the results' generation (Clear
         cached analysis of every result), the folder's results epoch and its root's (a root's Clear
-        cached analysis), and with ``lookup`` that key's own (Make room evicting it). Never the
-        dataset kinds' or ``root-clear://``: clearing cached data leaves results."""
+        cached analysis). Never the dataset kinds' or ``root-clear://``: clearing cached data leaves
+        results; nor Make room's eviction, which removes old saved results only: a newer copy of one,
+        saving or waiting, is checked against the budget in its own transaction like any save."""
         key = self._path_key(path)
         if not self._results_table:
             raise StoreReadOnly("This disk cache was written by a newer HeLab and is read-only")
@@ -1537,14 +1527,12 @@ class CacheStore:
                 epochs = {_results_epoch(key): self._epoch(_results_epoch(key))}
                 if root := _results_root_epoch(key):
                     epochs[root] = self._epoch(root)
-                if lookup:
-                    epochs[_result_key_epoch(key, lookup)] = self._epoch(_result_key_epoch(key, lookup))
                 generation = int(self._meta()["gen_results"])
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be read: {exc}") from exc
         return SaveGuard({"results": generation}, epochs)
 
-    def _check_result_guard(self, guard: SaveGuard, key: str, lookup: str = "") -> None:
+    def _check_result_guard(self, guard: SaveGuard, key: str) -> None:
         folder, root = _results_epoch(key), _results_root_epoch(key)
         if "results" not in guard.generations or folder not in guard.epochs:
             raise ValueError(f"The save guard doesn't cover results for {key}")
@@ -1552,9 +1540,6 @@ class CacheStore:
                 or self._epoch(folder) != guard.epochs[folder]
                 or (root is not None and self._epoch(root) != guard.epochs.get(root, 0))):
             raise SaveRejected("cleared", "Cached analysis was cleared before saving completed")
-        # (A guard taken without the key, as by an older HeLab's run, counts from 0: any eviction since.)
-        if lookup and self._epoch(_result_key_epoch(key, lookup)) != guard.epochs.get(_result_key_epoch(key, lookup), 0):
-            raise SaveRejected("cleared", "Make room removed this result before saving completed")
 
     def write_result_file(self, packed: bytes) -> str:
         """Publish a result's data file under its final name (``results/<name>``); no row names it
@@ -1595,11 +1580,11 @@ class CacheStore:
         text = _dumps(record)
         try:
             with self.transaction():
-                self._check_result_guard(guard, key, lookup)
+                self._check_result_guard(guard, key)
                 self._check_cacheable(key)
                 budget = self._active_budget(budget, budget_set_at)
                 self._conn.execute("SAVEPOINT result_fit")
-                previous = self._upsert_result(key, lookup, family, analysis_id, action, text, file, size,
+                previous, result_id = self._upsert_result(key, lookup, family, analysis_id, action, text, file, size,
                                                computed_at, now)
                 usage, writes = self._live(), self._writes()
                 if budget is not None and usage > budget:
@@ -1620,21 +1605,24 @@ class CacheStore:
             raise self._reject_result_file(file, rejection) from None
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
-        return ResultSave(True, "", size + len(text), usage, writes, budget)
+        return ResultSave(True, "", size + len(text), usage, writes, budget, result_id=result_id)
 
     def _upsert_result(self, key: str, lookup: str, family: str, analysis_id: str, action: str, record: str,
-                       file: str, size: int, computed_at: float, now: float) -> str | None:
-        """Write a result's row; the file of the one it replaces (the caller retires it), if any."""
+                       file: str, size: int, computed_at: float, now: float) -> tuple[str | None, str]:
+        """Write a result's row under a new ``result_id`` (a replacement's too, so Make room's plan,
+        which names ids, never removes a copy saved after it was made); the file of the one it
+        replaces (the caller retires it), if any, and the new id."""
         previous = self._conn.execute("SELECT file FROM results WHERE path = ? AND lookup = ?",
                                       (key, lookup)).fetchone()
+        result_id = uuid.uuid4().hex
         self._conn.execute(
             "INSERT INTO results (result_id, path, lookup, family, analysis_id, action, record, file, bytes, "
             "computed_at, saved_at, last_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT (path, lookup) DO UPDATE SET family = excluded.family, record = excluded.record, "
-            "file = excluded.file, bytes = excluded.bytes, computed_at = excluded.computed_at, "
-            "saved_at = excluded.saved_at, last_used = excluded.last_used",
-            (uuid.uuid4().hex, key, lookup, family, analysis_id, action, record, file, size, computed_at, now, now))
-        return None if previous is None else str(previous[0])
+            "ON CONFLICT (path, lookup) DO UPDATE SET result_id = excluded.result_id, family = excluded.family, "
+            "record = excluded.record, file = excluded.file, bytes = excluded.bytes, "
+            "computed_at = excluded.computed_at, saved_at = excluded.saved_at, last_used = excluded.last_used",
+            (result_id, key, lookup, family, analysis_id, action, record, file, size, computed_at, now, now))
+        return None if previous is None else str(previous[0]), result_id
 
     def _insert_pending_result(self, key: str, lookup: str, family: str, analysis_id: str, action: str, label: str,
                                record: str, file: str, size: int, computed_at: float, guard: SaveGuard,
@@ -1658,13 +1646,11 @@ class CacheStore:
         self._conn.execute("DELETE FROM pending_results WHERE path = ? AND lookup = ?", (key, lookup))
 
     def adopt_pending_result(self, pending_id: str, *, budget: int | None = None, budget_set_at: float | None = None,
-                             make_room: bool = False, expected_room: Sequence[str] | None = None,
-                             expected_dropped: Sequence[str] | None = None) -> ResultAdopt:
+                             make_room: bool = False, expected_room: Sequence[str] | None = None) -> ResultAdopt:
         """Save a waiting result (Make room): with ``make_room``, least recently shown **other saved
         results** are removed until it fits, in the same transaction (never cached datasets: Clear
-        cached data is the user's own); with ``expected_room`` (the result ids the user was told) and
-        ``expected_dropped`` (the waiting replacements it said it discards with them),
-        exactly those or nothing. Raises :class:`SaveRejected` (discarding it) if it is gone, its
+        cached data is the user's own; never a waiting result, nor a save running); with
+        ``expected_room`` (the result ids the user was told) exactly those or nothing. Raises :class:`SaveRejected` (discarding it) if it is gone, its
         run's guard no longer holds (a Clear cached analysis since) or the folder isn't to be cached.
         Not fitting, it keeps waiting and the answer says what Make room would remove."""
         now = time.time()
@@ -1673,16 +1659,15 @@ class CacheStore:
         try:
             with self.transaction():
                 row = self._conn.execute(
-                    "SELECT path, file, bytes, guard, lookup FROM pending_results WHERE pending_id = ?",
+                    "SELECT path, file, bytes, guard FROM pending_results WHERE pending_id = ?",
                     (pending_id,)).fetchone() if self._pending_results else None
                 if row is None:
                     raise SaveRejected("gone", "This save is no longer waiting")
                 path, file, size, guard_text = str(row[0]), str(row[1]), int(row[2]), json.loads(row[3])
-                waiting_lookup = str(row[4])
                 guard = SaveGuard(dict(guard_text["generations"]), dict(guard_text["epochs"]))
                 budget = self._active_budget(budget, budget_set_at)
                 try:
-                    self._check_result_guard(guard, path, waiting_lookup)
+                    self._check_result_guard(guard, path)
                     self._check_cacheable(path)
                 except SaveRejected as rejected:
                     rejection = rejected
@@ -1692,16 +1677,15 @@ class CacheStore:
                     self._retire(file, now)
                     self._conn.execute("DELETE FROM pending_results WHERE pending_id = ?", (pending_id,))
                 else:
-                    fits, removed = self._adopt_result_savepoint(pending_id, budget, make_room, keep=True,
-                                                                 expected=expected_room,
-                                                                 expected_dropped=expected_dropped)
+                    fits, removed, result_id = self._adopt_result_savepoint(pending_id, budget, make_room, keep=True,
+                                                                            expected=expected_room)
                     if fits:
                         removal = None if not removed else ResultRemoval(
                             tuple(sorted({self._source_path(item[1]) for item in removed})), len(removed),
                             sum(item[2] for item in removed),
-                            evicted=tuple((self._source_path(item[1]), item[4]) for item in removed),
-                            dropped=tuple(pending_id for pending_id, _ in self._dropped))
-                        result = ResultAdopt(True, self._source_path(path), size, removal=removal)
+                            evicted=tuple((self._source_path(item[1]), item[4], item[0]) for item in removed))
+                        result = ResultAdopt(True, self._source_path(path), size, removal=removal,
+                                             result_id=result_id)
                     else:
                         assert budget is not None
                         result = ResultAdopt(False, self._source_path(path), size,
@@ -1714,12 +1698,11 @@ class CacheStore:
         return result
 
     def _adopt_result_savepoint(self, pending_id: str, budget: int | None, make_room: bool, *, keep: bool,
-                                expected: Sequence[str] | None = None,
-                                expected_dropped: Sequence[str] | None = None
-                                ) -> tuple[bool, list[tuple[str, str, int, float, str]]]:
+                                expected: Sequence[str] | None = None
+                                ) -> tuple[bool, list[tuple[str, str, int, float, str]], str]:
         """Adopt a waiting result inside a savepoint, with Make room if asked; kept only if ``keep``
-        and it fits. Whether it fits, and the results Make room removed (or would): (result_id, path,
-        bytes, last_used)."""
+        and it fits. Whether it fits, the results Make room removed (or would): (result_id, path,
+        bytes, last_used, lookup), and the adopted row's id."""
         row = self._conn.execute(
             "SELECT path, lookup, family, analysis_id, action, record, file, bytes, computed_at FROM pending_results "
             "WHERE pending_id = ?", (pending_id,)).fetchone()
@@ -1727,10 +1710,9 @@ class CacheStore:
         now = time.time()
         self._conn.execute("SAVEPOINT adopt_result")
         removed: list[tuple[str, str, int, float, str]] = []
-        self._dropped = []
         try:
-            previous = self._upsert_result(path, lookup, str(row[2]), str(row[3]), str(row[4]), str(row[5]),
-                                           str(row[6]), int(row[7]), float(row[8]), now)
+            previous, result_id = self._upsert_result(path, lookup, str(row[2]), str(row[3]), str(row[4]),
+                                                      str(row[5]), str(row[6]), int(row[7]), float(row[8]), now)
             self._conn.execute("DELETE FROM pending_results WHERE pending_id = ?", (pending_id,))
             if previous is not None and previous != row[6]:
                 self._retire(previous, now)
@@ -1738,30 +1720,18 @@ class CacheStore:
                 others = self._conn.execute(
                     "SELECT result_id, path, bytes, last_used, file, lookup FROM results "
                     "WHERE NOT (path = ? AND lookup = ?) ORDER BY last_used, result_id", (path, lookup)).fetchall()
-                for result_id, other, size, last_used, file, key in others:
+                for other_id, other, size, last_used, file, key in others:
                     if self._live() <= budget:
                         break
-                    # Only these rows go, by the user's answer: no folder epoch moves (that is for clears),
-                    # so the folder's other saves and waiting results keep their guards; this key's own
-                    # moves, so a save of it already running can't write it back, and a replacement of it
-                    # waiting for an answer (its guard now broken) goes with it.
+                    # Only these saved rows go, by the user's answer, oldest shown first. No epoch moves
+                    # (that is for clears): a newer copy of one, waiting or being saved, keeps its guard
+                    # and is checked against the budget in its own transaction like any save.
                     self._retire(str(file), now)
-                    self._conn.execute("DELETE FROM results WHERE result_id = ?", (result_id,))
-                    self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
-                                       "DO UPDATE SET epoch = epoch + 1", (_result_key_epoch(str(other), str(key)),))
-                    for dropped, dropped_file, dropped_label in self._conn.execute(
-                            "SELECT pending_id, file, label FROM pending_results WHERE path = ? AND lookup = ?",
-                            (other, key)).fetchall():
-                        self._retire(str(dropped_file), now)
-                        self._dropped.append((str(dropped), str(dropped_label)))
-                    self._conn.execute("DELETE FROM pending_results WHERE path = ? AND lookup = ?", (other, key))
-                    removed.append((str(result_id), str(other), int(size), float(last_used), str(key)))
+                    self._conn.execute("DELETE FROM results WHERE result_id = ?", (other_id,))
+                    removed.append((str(other_id), str(other), int(size), float(last_used), str(key)))
             fits = budget is None or self._live() <= budget
             if expected is not None and make_room and {item[0] for item in removed} != set(expected):
                 fits = False  # Not what the user agreed to remove: nothing is.
-            if (expected_dropped is not None and make_room
-                    and {pending for pending, _ in self._dropped} != set(expected_dropped)):
-                fits = False  # A waiting result it would discard that the question didn't name: asked again.
         except BaseException:
             self._conn.execute("ROLLBACK TO adopt_result")
             self._conn.execute("RELEASE adopt_result")
@@ -1769,15 +1739,13 @@ class CacheStore:
         if not (keep and fits):
             self._conn.execute("ROLLBACK TO adopt_result")
         self._conn.execute("RELEASE adopt_result")
-        return fits, removed
+        return fits, removed, result_id
 
     def _result_room(self, pending_id: str, budget: int) -> ResultRoom:
-        fits, removed = self._adopt_result_savepoint(pending_id, budget, True, keep=False)
-        dropped = tuple(self._dropped) if fits else ()
+        fits, removed, _ = self._adopt_result_savepoint(pending_id, budget, True, keep=False)
         return ResultRoom(tuple(item[0] for item in removed) if fits else (),
                           sum(item[2] for item in removed) if fits else 0,
-                          max((item[3] for item in removed), default=None) if fits else None, fits,
-                          tuple(item[0] for item in dropped), tuple(item[1] for item in dropped))
+                          max((item[3] for item in removed), default=None) if fits else None, fits)
 
     def result_room_plan(self, pending_id: str, budget: int) -> ResultRoom:
         """What Make room would remove for a waiting result, tried in the store and rolled back."""
@@ -1901,10 +1869,6 @@ class CacheStore:
                     where, args = " WHERE path = ? OR substr(path, 1, ?) = ?", (top, len(top) + 1, top + "/")
                     self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
                                        "DO UPDATE SET epoch = epoch + 1", (_results_root_epoch(top),))
-                    # Its keys' own epochs are fenced by the root's from now on: dropped, never by age.
-                    for prefix in (_result_key_epoch(top, ""), _result_key_epoch(top + "/", "")[:-1]):
-                        self._conn.execute("DELETE FROM folder_epochs WHERE substr(path, 1, ?) = ?",
-                                           (len(prefix), prefix))
                 elif cutoff is not None:
                     where, args = " WHERE last_used < ?", (cutoff,)
                 elif paths is not None:
@@ -1914,9 +1878,6 @@ class CacheStore:
                     where, args = "", ()
                     self._conn.execute("UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) "
                                        "WHERE key = 'gen_results'")
-                    # Every key's own epoch is fenced by the generation from now on: dropped.
-                    prefix = _result_key_epoch("", "")[:-1]
-                    self._conn.execute("DELETE FROM folder_epochs WHERE substr(path, 1, ?) = ?", (len(prefix), prefix))
                 rows = self._conn.execute(f"SELECT path, file, bytes FROM results{where}", args).fetchall()
                 for _, file, _ in rows:
                     self._retire(str(file), now)
@@ -1944,10 +1905,6 @@ class CacheStore:
                     for folder in folders:
                         self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
                                            "DO UPDATE SET epoch = epoch + 1", (_results_epoch(folder),))
-                        # The folder's keys' own epochs are fenced by its epoch from now on: dropped.
-                        prefix = _result_key_epoch(folder, "")
-                        self._conn.execute("DELETE FROM folder_epochs WHERE substr(path, 1, ?) = ?",
-                                           (len(prefix), prefix))
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
         everything = root is None and cutoff is None and paths is None

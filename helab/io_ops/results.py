@@ -43,7 +43,7 @@ def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lo
             return
         guard: ResultGuard | None
         try:
-            guard = _guard_fields(store.start_result_job(path, lookup))
+            guard = _guard_fields(store.start_result_job(path))
         except StoreReadOnly:
             guard = None  # (Read, never saved: a newer HeLab's store.)
         found = store.find_result(path, lookup, family)
@@ -66,7 +66,7 @@ def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lo
                 pass  # (Only purges by age go by it.)
         event: ResultFoundEvent = {"kind": "result_found", "artifact": artifact, "exact": found.value.exact,
                                    "record": row["record"], "computed_at": row["computed_at"], "bytes": row["bytes"],
-                                   "lookup": row["lookup"]}
+                                   "lookup": row["lookup"], "result_id": row["result_id"]}
         if guard is not None:
             event["guard"] = guard
         send(event)
@@ -117,6 +117,7 @@ def result_save(path: str, cache_options: dict[str, Any] | None, blob_file: str,
             send({"kind": "result_not_saved", "reason": saved.reason, "message": "it doesn't fit the disk cache's budget",
                   "bytes": saved.bytes, "budget": saved.budget, "next_deadline": _deadline(store), **_usage(store)})
             return
-        send({"kind": "result_saved", "bytes": saved.bytes, "next_deadline": _deadline(store), **_usage(store)})
+        send({"kind": "result_saved", "bytes": saved.bytes, "result_id": saved.result_id,
+              "next_deadline": _deadline(store), **_usage(store)})
     finally:
         store.close()

@@ -177,14 +177,13 @@ def _usage(store: CacheStore) -> UsageFields:
 
 def _results_removed_event(removal: Any, *, evicted: bool = False) -> RemovedEvent:
     """What a removal of saved results did (``CacheStore.remove_results``), kind ``results``;
-    ``evicted``: saved results Make room removed for a waiting one, named by (folder, lookup): not a
-    clear, so only reads and marks of those results are affected."""
+    ``evicted``: saved results Make room removed for a waiting one, named by (folder, lookup,
+    result_id): not a clear, so only reads and marks of those very rows are affected."""
     event: RemovedEvent = {"kind": "removed", "kinds": ["results"],
                            "paths": None if removal.paths is None else list(removal.paths),
                            "results": removal.results, "bytes": removal.bytes, "root": removal.root}
     if evicted:
-        event["evicted"] = [[folder, lookup] for folder, lookup in removal.evicted]
-        event["dropped"] = list(removal.dropped)
+        event["evicted"] = [[folder, lookup, result_id] for folder, lookup, result_id in removal.evicted]
     return event
 
 
