@@ -45,7 +45,7 @@ and two runs before R-16's commit (`test_typing` on a test's `markers.os` patch,
 | R-9 details scan stats each subfolder a second time | low | Fixed | `6ddec21` |
 | R-10 `_on_event` and `_load` too long | quality | Part (three handlers lifted; rest declined, reasons in notes) | `f684720` |
 | R-11 no excepthook; unguarded source timestamps | low | Fixed: guards, then excepthook and log file, one file per HeLab (Tony's yes) | `e4d3f2d`, `1efcb87`, `752c638` |
-| R-12 window icon looked up from the launch folder | low | Fixed, and bundled by `HeLab.spec` | `fbb072f`, `4c9f2a8` |
+| R-12 window icon looked up from the launch folder | low | Fixed, and bundled by `HeLab.spec` and in wheels | `fbb072f`, `4c9f2a8`, and the wheel commit after `1ff3c72` |
 | R-13 Settings placeholders, WARNING on close, unused imports | low | Fixed: placeholders removed (Tony's yes) | `aad0ad4`, `c7eb0a3` |
 | R-14 `StatusReport` legacy fields, import-time default | quality | Fixed | `305f19a` |
 | R-15 unused/star imports, commented-out code, long functions | quality | Fixed, long functions declined | `f410ccb`, `0406507` |
@@ -148,9 +148,8 @@ test_settingsDialog.py, from before this branch). Notes and findings commits: `2
 - R-3: the reader change runs only in the frozen build (its test fakes the process); not yet seen
   in a packaged app.
 - R-6: the behaviour change hasn't been tried on a real duplicate root.
-- R-12: the packaged app now bundles `ai-icon.icns` (seen in a local macOS build; CI builds all
-  three OSes). `setup.py`'s `package_data` still takes only `helab/resources/*.svg`, so a wheel
-  install also lacks it and logs "Icon file not found"; add `"*.icns"` there if wheels matter.
+- R-12: the packaged app bundles `ai-icon.icns` (seen in a local macOS build; CI builds all three
+  OSes), and so does a wheel (`setup.py` `package_data`, by name: the unused `Beatunes.icns` stays out).
 - The DEBUG level of `coloredlogs.install` (`main.py`) is unchanged.
 
 ## Proposed doc changes (for the Coordinator)
@@ -196,7 +195,6 @@ test_settingsDialog.py, from before this branch). Notes and findings commits: `2
 **roadmaps/known-issues.md**
 - Open: old sessions' log files accumulate (R-11), until a removal rule is decided.
 - Open: R-1's residual (clock off > 2 s plus a change in the same mtime step after a listing).
-- Open: a wheel install lacks `ai-icon.icns` (`setup.py` `package_data`, R-12).
 - Fixed (this branch), with their commits: R-1, R-2, R-3, R-4, R-5, R-6, R-7, R-8, R-11 (excepthook,
   log file per HeLab), R-12 (icon looked up beside the package and bundled by `HeLab.spec`), R-16,
   R-17, R-20 (joblib gone from the code, requirements and lock), R-22 (the clocks-out-of-sync warning
@@ -206,8 +204,6 @@ test_settingsDialog.py, from before this branch). Notes and findings commits: `2
 - The quick check's rule (exact folder mtime, the 2 s margin, a listing after each Live save).
 - The R-7 behaviour, if the memory describes a status check cancelling a running load.
 
-**Other**
-- `setup.py`: `package_data` `"*.icns"` for wheels (R-12), if wanted.
 
 ## Lens's sign-off
 

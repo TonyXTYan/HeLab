@@ -34,3 +34,25 @@ def test_the_window_icon_is_bundled_where_the_window_looks_for_it() -> None:
 def test_every_bundled_file_exists() -> None:
     for source, _ in spec_datas():
         assert (ROOT / source).is_file(), source
+
+
+def setup_package_data() -> dict[str, list[str]]:
+    """setup.py's ``setup(package_data={...})``, read without running it."""
+    tree = ast.parse((ROOT / "setup.py").read_text(encoding="utf-8"))
+    call = next(node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name) and node.func.id == "setup")
+    data = next(keyword.value for keyword in call.keywords if keyword.arg == "package_data")
+    assert isinstance(data, ast.Dict)
+    found: dict[str, list[str]] = {}
+    for key, value in zip(data.keys, data.values):
+        if isinstance(key, ast.Constant) and isinstance(value, ast.List):
+            found[str(key.value)] = [str(item.value) for item in value.elts if isinstance(item, ast.Constant)]
+    return found
+
+
+def test_a_wheel_carries_the_window_icon_too() -> None:
+    """``pip install`` (a wheel) as well as the packaged app: the icon is package data of helab.resources."""
+    from fnmatch import fnmatch
+    patterns = setup_package_data()["helab.resources"]
+    assert any(fnmatch("ai-icon.icns", pattern) for pattern in patterns)
+    assert not any(fnmatch("Beatunes.icns", pattern) for pattern in patterns)  # (Unused: not shipped.)
