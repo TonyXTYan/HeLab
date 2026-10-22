@@ -28,6 +28,7 @@ from helab.views.plots.workspace import PlotWorkspace
 from helab.resources.icons import ToolIcons
 from helab.utils.constants import *
 from helab.utils.number_format import byte_size, fnum
+from helab.utils.settings_defaults import THREAD_STATUS_SETTING, read_setting
 from helab.utils.settings_store import app_settings
 from helab.views.CacheDialogs import CacheDialogs
 from helab.views.ElidedLabel import ElidedLabel
@@ -388,8 +389,8 @@ class HelabMainWindow(QMainWindow):
             settings = app_settings()
             self.view_toggle_thread_status = QAction('Toggle Thread Status Auto Pop-up', self)
             self.view_toggle_thread_status.setCheckable(True)
-            self.view_toggle_thread_status.setChecked(settings.value("view_toggle_thread_status", type=bool, defaultValue=True))
-            self.view_toggle_thread_status.triggered.connect(lambda checked: settings.setValue("view_toggle_thread_status", checked))
+            self.view_toggle_thread_status.setChecked(read_setting(settings, THREAD_STATUS_SETTING, typed=True))
+            self.view_toggle_thread_status.triggered.connect(lambda checked: settings.setValue(THREAD_STATUS_SETTING, checked))
             menu_view.addAction(self.view_toggle_thread_status)
 
             menu_view.addSeparator()
@@ -398,7 +399,7 @@ class HelabMainWindow(QMainWindow):
             self.view_toggle_auto_scan_visible.setCheckable(True)
             self.view_toggle_auto_scan_visible.setToolTip(
                 "Scan visible folders that have no saved scan results; use Check folder status to recheck cached folders.")
-            self.view_toggle_auto_scan_visible.setChecked(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
+            self.view_toggle_auto_scan_visible.setChecked(read_setting(settings, AUTO_SCAN_VISIBLE_SETTING, typed=True))
             self.view_toggle_auto_scan_visible.triggered.connect(self.set_auto_scan_visible)
             menu_view.addAction(self.view_toggle_auto_scan_visible)
             get_io_service().configure_concurrency(
@@ -658,7 +659,7 @@ class HelabMainWindow(QMainWindow):
         if (budget := self.plots.ram_budget) is not None:
             budget.auto_reload = read_plot_auto_reload(settings)
             budget.check()  # The plots' share of a new budget.
-        self.apply_auto_scan_visible(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
+        self.apply_auto_scan_visible(read_setting(settings, AUTO_SCAN_VISIBLE_SETTING, typed=True))
 
     @staticmethod
     def _apply_live_settings(settings: QSettings) -> None:

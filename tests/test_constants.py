@@ -7,6 +7,7 @@ from typing import Callable
 import pytest
 from PyQt6.QtCore import QSettings
 from helab.utils.constants import *
+from helab.utils.settings_defaults import DIR_CACHES_SETTING, DIR_TEMPS_SETTING
 
 @pytest.fixture
 def cleanup_settings(tmp_path: Path) -> Callable[[], QSettings]:
@@ -25,10 +26,10 @@ def test_returns_setting_if_valid(cleanup_settings: Callable[[], QSettings], tmp
     valid_dir = tmp_path / "valid_dir"
     valid_dir.mkdir()
     settings = cleanup_settings()
-    settings.setValue("test_key", str(valid_dir))
+    settings.setValue(DIR_TEMPS_SETTING, str(valid_dir))
     candidates = [str(tmp_path / "another_dir")]
 
-    result = get_path_from_setting_or_use_default("test_key", candidates, settings=settings)
+    result = get_path_from_setting_or_use_default(DIR_TEMPS_SETTING, candidates, settings=settings)
     assert result == str(valid_dir)
 
 def test_uses_first_candidate_if_setting_invalid(cleanup_settings: Callable[[], QSettings], tmp_path: Path) -> None:
@@ -36,10 +37,10 @@ def test_uses_first_candidate_if_setting_invalid(cleanup_settings: Callable[[], 
     valid_candidate = tmp_path / "valid_candidate"
     valid_candidate.mkdir()
     settings = cleanup_settings()
-    settings.setValue("test_key", invalid_path)
+    settings.setValue(DIR_TEMPS_SETTING, invalid_path)
     candidates = [str(valid_candidate), "/nope/nope"]
 
-    result = get_path_from_setting_or_use_default("test_key", candidates, settings=settings)
+    result = get_path_from_setting_or_use_default(DIR_TEMPS_SETTING, candidates, settings=settings)
     assert result == str(valid_candidate)
 
 def test_uses_first_candidate_if_setting_absent(cleanup_settings: Callable[[], QSettings], tmp_path: Path) -> None:
@@ -48,16 +49,16 @@ def test_uses_first_candidate_if_setting_absent(cleanup_settings: Callable[[], Q
     candidates = [str(valid_candidate)]
     settings = cleanup_settings()
 
-    result = get_path_from_setting_or_use_default("no_such_key", candidates, settings=settings)
+    result = get_path_from_setting_or_use_default(DIR_CACHES_SETTING, candidates, settings=settings)
     assert result == str(valid_candidate)
 
 def test_returns_empty_if_no_candidates_valid(cleanup_settings: Callable[[], QSettings], tmp_path: Path) -> None:
     settings = cleanup_settings()
-    settings.setValue("test_key", "/non/existing")
+    settings.setValue(DIR_TEMPS_SETTING, "/non/existing")
     candidates = [str(tmp_path / "cand1"), str(tmp_path / "cand2")]
 
     with pytest.raises(NotADirectoryError):
-        _ = get_path_from_setting_or_use_default("test_key", candidates, settings=settings)
+        _ = get_path_from_setting_or_use_default(DIR_TEMPS_SETTING, candidates, settings=settings)
 
 def test_setting_with_multiple_valid_candidates(cleanup_settings: Callable[[], QSettings], tmp_path: Path) -> None:
     valid_candidate1 = tmp_path / "valid_candidate1"
@@ -65,28 +66,28 @@ def test_setting_with_multiple_valid_candidates(cleanup_settings: Callable[[], Q
     valid_candidate1.mkdir()
     valid_candidate2.mkdir()
     settings = cleanup_settings()
-    settings.setValue("test_key", str(valid_candidate1))
+    settings.setValue(DIR_TEMPS_SETTING, str(valid_candidate1))
     candidates = [str(valid_candidate2), str(valid_candidate1)]
 
-    result = get_path_from_setting_or_use_default("test_key", candidates, settings=settings)
+    result = get_path_from_setting_or_use_default(DIR_TEMPS_SETTING, candidates, settings=settings)
     assert result == str(valid_candidate1)
 
 def test_setting_with_no_valid_candidates(cleanup_settings: Callable[[], QSettings], tmp_path: Path) -> None:
     settings = cleanup_settings()
-    settings.setValue("test_key", "/non/existing")
+    settings.setValue(DIR_TEMPS_SETTING, "/non/existing")
     candidates = ["/nope/nope1", "/nope/nope2"]
 
     with pytest.raises(NotADirectoryError):
-        _ = get_path_from_setting_or_use_default("test_key", candidates, settings=settings)
+        _ = get_path_from_setting_or_use_default(DIR_TEMPS_SETTING, candidates, settings=settings)
 
 def test_setting_with_mixed_valid_and_invalid_candidates(cleanup_settings: Callable[[], QSettings], tmp_path: Path) -> None:
     valid_candidate = tmp_path / "valid_candidate"
     valid_candidate.mkdir()
     settings = cleanup_settings()
-    settings.setValue("test_key", "/non/existing")
+    settings.setValue(DIR_TEMPS_SETTING, "/non/existing")
     candidates = ["/nope/nope1", str(valid_candidate), "/nope/nope2"]
 
-    result = get_path_from_setting_or_use_default("test_key", candidates, settings=settings)
+    result = get_path_from_setting_or_use_default(DIR_TEMPS_SETTING, candidates, settings=settings)
     assert result == str(valid_candidate)
 
 @pytest.mark.parametrize("platform, env, expected", [

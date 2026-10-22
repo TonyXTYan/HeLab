@@ -13,6 +13,8 @@ from PyQt6.QtCore import QSettings, QUrl
 from helab.utils.folder_cache import FolderCache, store_options
 from helab.utils.number_format import fnum
 from helab.utils.constants import *
+from helab.utils.settings_defaults import (
+    DIR_CACHES_SETTING, DIR_TEMPS_SETTING, EXAMPLE_CHECKBOX_SETTING, EXAMPLE_TEXT_SETTING, RETIRED, read_setting)
 from helab.utils.settings_store import app_settings
 from helab.views.DataRootsTab import DataRootsTab
 from helab.views.CacheTab import CacheTab
@@ -275,15 +277,16 @@ class SettingsDialog(QDialog):
 
     def load_settings(self) -> None:
         settings = self.settings
-        self.example_checkbox.setChecked(settings.value("example_checkbox", False, type=bool))
-        self.example_text.setText(settings.value("example_text", "", type=str))
-        self.dir_temps_edit.setText(settings.value("dir_temps", DIR_TEMPS, type=str))
+        self.example_checkbox.setChecked(read_setting(settings, EXAMPLE_CHECKBOX_SETTING, typed=True))
+        self.example_text.setText(read_setting(settings, EXAMPLE_TEXT_SETTING, typed=True))
+        # Unset only when its folder came from an override (tests, floors): show the one in use.
+        self.dir_temps_edit.setText(read_setting(settings, DIR_TEMPS_SETTING, typed=True) or DIR_TEMPS)
         self.dir_caches_edit.setText(cache_dir())
         self.load_mode_combo.setCurrentIndex(self.load_mode_combo.findData(read_load_mode(settings)))
         self.simultaneous_io_spin.setValue(read_io_concurrency(settings))
         self.check_level_combo.setCurrentIndex(self.check_level_combo.findData(read_check_level(settings)))
         self.live_interval_spin.setValue(read_live_interval(settings))
-        self.auto_scan_visible_checkbox.setChecked(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
+        self.auto_scan_visible_checkbox.setChecked(read_setting(settings, AUTO_SCAN_VISIBLE_SETTING, typed=True))
         logging.debug("Settings loaded")
 
     def save_settings(self) -> None:
@@ -308,15 +311,15 @@ class SettingsDialog(QDialog):
 
     def _write_settings(self) -> None:
         settings = self.settings
-        settings.setValue("example_checkbox", self.example_checkbox.isChecked())
-        settings.setValue("example_text", self.example_text.text())
-        settings.setValue("dir_temps", self.dir_temps_edit.text())
+        settings.setValue(EXAMPLE_CHECKBOX_SETTING, self.example_checkbox.isChecked())
+        settings.setValue(EXAMPLE_TEXT_SETTING, self.example_text.text())
+        settings.setValue(DIR_TEMPS_SETTING, self.dir_temps_edit.text())
         settings.setValue(LOAD_MODE_SETTING, self.load_mode_combo.currentData())
         settings.setValue(SIMULTANEOUS_IO_SETTING, self.simultaneous_io_spin.value())
         settings.setValue(CHECK_LEVEL_SETTING, self.check_level_combo.currentData())
         settings.setValue(LIVE_INTERVAL_SETTING, self.live_interval_spin.value())
-        settings.remove("simultaneous_folder_scans")
-        settings.remove("simultaneous_folder_loads")
+        for key in RETIRED:
+            settings.remove(key)
         settings.setValue(AUTO_SCAN_VISIBLE_SETTING, self.auto_scan_visible_checkbox.isChecked())
         self.cache_tab.save(settings)
         self.lab_tab.save(settings)
@@ -340,10 +343,10 @@ class SettingsDialog(QDialog):
             return
         settings = self.settings
         # Where the disk cache is isn't a preference: it stays (moving it is Change…).
-        caches = settings.value("dir_caches", type=str)
+        caches = read_setting(settings, DIR_CACHES_SETTING, typed=True)
         settings.clear()
         if caches:
-            settings.setValue("dir_caches", caches)
+            settings.setValue(DIR_CACHES_SETTING, caches)
         self.load_settings()
         self.lab_tab.load(settings)
         self.cache_tab.disk_budget.setValue(read_disk_budget(settings) / (1 << 30))

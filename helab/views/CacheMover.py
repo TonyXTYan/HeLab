@@ -32,6 +32,7 @@ from helab.utils import cache_move
 from helab.utils.cache_locks import FileLock, lock_for_move
 from helab.utils.cache_setting import write_cache_setting
 from helab.utils.constants import app_folder, cache_dir, set_cache_dir
+from helab.utils.settings_defaults import DIR_CACHES_SETTING
 from helab.utils.folder_cache import FolderCache
 from helab.utils.io_service import IORequest
 from helab.utils.number_format import byte_size
@@ -201,7 +202,7 @@ class CacheMover(QObject):
         resumes); the record stays and the next start saves the setting."""
         if event.get("store_at") != self.target:
             return False
-        self.settings.setValue("dir_caches", self.target)
+        self.settings.setValue(DIR_CACHES_SETTING, self.target)
         self._switch()
         self._finish(False, "Couldn't finish moving the disk cache",
                      f"{message} The cache is now in {self.target}; HeLab uses it and fixes the setting at the "
@@ -312,7 +313,7 @@ class CacheMover(QObject):
     def _setting_failed(self, record: dict[str, Any]) -> None:
         reason = "HeLab couldn't save the new cache folder setting."
         # A failed write can leave the attempted value in memory, to be saved later: put it back.
-        self.settings.setValue("dir_caches", self.source)
+        self.settings.setValue(DIR_CACHES_SETTING, self.source)
         if record["method"] == cache_move.COPY:
             self._abort(f"{reason} The cache stays in {self.source}.")
             return
@@ -320,7 +321,7 @@ class CacheMover(QObject):
             self._finish(False, FAILED, f"{reason} The cache stays in {self.source}.")
             return
         # The renamed folder is the only store: use it now; the next start fixes the setting.
-        self.settings.setValue("dir_caches", self.target)
+        self.settings.setValue(DIR_CACHES_SETTING, self.target)
         self._switch()
         self._finish(False, "Couldn't finish moving the disk cache",
                      f"{reason} HeLab uses {self.target} for now and fixes the setting at the next start.",
