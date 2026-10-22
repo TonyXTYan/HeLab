@@ -20,7 +20,8 @@ from helab.io_ops.icons import folder_icons
 from helab.io_ops.infra import Pause, SOURCE_GUARD, _end_trace, _guard, _isdir, _start_trace, emit
 from helab.io_ops.live import live_check
 from helab.io_ops.loading import load, read_cached
-from helab.io_ops.markers import create_root, reassign_root, remove_root, verify_known_roots, verify_volumes
+from helab.io_ops.markers import (create_root, reassign_root, remove_root, save_marker_copy, verify_known_roots,
+                                  verify_volumes)
 from helab.io_ops.save_held import save_held
 from helab.io_ops.scanning import save_scan_history, save_subtrees, scan
 from helab.io_ops.stores import _deadline, _removed_event, _usage
@@ -35,7 +36,7 @@ CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_adm
 # Requests acting on the source folder they name (``path``, or an icon batch's ``paths``), which
 # ``_guard`` checks first under tests; the others name a folder only as a cache key.
 SOURCE_OPERATIONS = frozenset({"list", "icons", "scan", "details", "load", "root_create", "root_reassign",
-                               "root_remove"})
+                               "root_remove", "marker_save"})
 
 
 def main() -> None:
@@ -126,6 +127,8 @@ def main() -> None:
             reassign_root(request["path"], request["cache"], request["old_uuid"], request["keep"])
         elif operation == "root_remove":
             remove_root(request["path"], request["cache"], request["uuid"], request.get("location", ""))
+        elif operation == "marker_save":
+            save_marker_copy(request["path"], request["contents"], bool(request.get("replace")))
         else:
             raise ValueError(f"Unknown operation: {operation}")
         emit({"kind": "done"})

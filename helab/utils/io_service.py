@@ -168,7 +168,7 @@ class IOService(QObject):
               "cache_move": "Move disk cache", "roots_verify": "Verify data roots",
               "volumes_verify": "Verify volumes", "root_create": "Enable disk cache",
               "root_reassign": "Make a copy's data root", "root_remove": "Remove .helab-root",
-              "trace_check": "Check I/O trace folder"}
+              "marker_save": "Save .helab-root to folder", "trace_check": "Check I/O trace folder"}
     NOUNS = {"load": "load", "cached": "cached data read", "list": "folder listing", "details": "folder details scan",
              "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup",
@@ -176,7 +176,7 @@ class IOService(QObject):
              "cache_move": "disk cache move", "roots_verify": "data-root verification",
              "volumes_verify": "volume verification", "root_create": "disk cache enabling",
              "root_reassign": "data-root reassignment", "root_remove": ".helab-root removal",
-             "trace_check": "I/O trace folder check"}
+             "marker_save": ".helab-root save", "trace_check": "I/O trace folder check"}
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -597,7 +597,7 @@ class IOService(QObject):
                   "drives": "Listing drives", "roots_verify": "Verifying data roots",
                   "volumes_verify": "Verifying volumes", "root_create": "Enabling disk cache",
                   "root_reassign": "Giving a copy its own data root", "root_remove": "Removing .helab-root",
-                  "trace_check": "Checking the I/O trace folder"}
+                  "marker_save": "Saving .helab-root", "trace_check": "Checking the I/O trace folder"}
 
     def activity_summary(self) -> str:
         """App-wide status-bar phrase from memory; zero counts are left out."""

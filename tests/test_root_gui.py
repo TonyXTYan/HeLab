@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox, QPushButton
 from pytestqt.qtbot import QtBot
 
 from helab.io_ops.browse import list_folder
-from helab.io_ops.markers import create_root
+from helab.io_ops.markers import create_root, save_marker_copy
 from helab.resources.icons import IconsInitUtil, StatusIcons
 from helab.utils import data_roots
 from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, PLACE_ROOT_TOOLTIP, RAM_ONLY, FolderCache,
@@ -248,7 +248,8 @@ def test_without_write_permission_the_dialog_hands_out_the_exact_file(
     assert clipboard is not None and clipboard.text() == text
     saved = tmp_path / "saved" / ".helab-root"
     saved.parent.mkdir()
-    dialog.write(str(saved.parent))
+    assert dialog.write(str(saved.parent))
+    run_save(qtbot, cache, str(saved.parent))
     assert saved.read_bytes() == contents
     dialog.close()
 
@@ -329,31 +330,123 @@ def test_confirmation_buttons_and_cancel_by_default_with_warnings(
     service.shutdown()
 
 
-def test_saving_by_hand_writes_the_exact_name_and_says_it_is_hidden(
-    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> None:
+def run_save(qtbot: QtBot, cache: FolderCache, target: str) -> IORequest:
+    """The dialog's save, as its helper runs it (``marker_save``), its events delivered in order."""
+    request = producer(cache, target, "marker_save")
+
+    def helper(send: Callable[[Any], None]) -> None:
+        try:
+            save_marker_copy(target, request.payload["contents"], request.payload["replace"], send)
+        except Exception as exc:  # (As the helper's main reports it.)
+            send({"kind": "error", "message": str(exc)})
+    replay(qtbot, cache, target, "marker_save", helper)
+    return request
+
+
+@pytest.fixture
+def manual(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[ManualMarkerDialog]:
+    """The manual-placement dialog for a share HeLab couldn't write, on a cache whose helpers the
+    test runs itself."""
+    service = frozen_service(monkeypatch)
     folder = str(tmp_path / "share")
     _, contents = data_roots.new_marker(folder)
-    monkeypatch.setattr(DataRootDialogs, "sys", types.SimpleNamespace(platform="darwin"))
-    dialog = ManualMarkerDialog(None, folder, ".helab-root", contents.decode("utf-8"), "Read-only file system")
+    dialog = ManualMarkerDialog(None, FolderCache(service), folder, ".helab-root", contents.decode("utf-8"),
+                                "Read-only file system")
     qtbot.addWidget(dialog)
+    yield dialog
+    service.shutdown()
+
+
+def test_saving_by_hand_writes_the_exact_name_and_says_it_is_hidden(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, manual: ManualMarkerDialog,
+) -> None:
+    dialog, cache = manual, manual.cache
+    contents = dialog.contents.encode("utf-8")
+    monkeypatch.setattr(DataRootDialogs, "sys", types.SimpleNamespace(platform="darwin"))
     save = next(button for button in dialog.findChildren(QPushButton) if button.text() == DataRootDialogs.SAVE_ACTION)
-    assert "⌘⇧." in save.toolTip()
     target = tmp_path / "saved"
     target.mkdir()
-    dialog.write(str(target))
-    assert (target / ".helab-root").read_bytes() == contents
+    assert dialog.write(str(target))
+    assert not save.isEnabled()  # (Until the helper has ended.)
+    assert cache._is_foreground(producer(cache, str(target), "marker_save"))  # (Like root_create.)
+    run_save(qtbot, cache, str(target))
+    assert (target / ".helab-root").read_bytes() == contents and save.isEnabled()
     assert dialog.intro.text() == DataRootDialogs.SAVED_TEXT.format(
-        name=".helab-root", target=target, hidden=DataRootDialogs.hidden_hint(), folder=folder)
+        name=".helab-root", target=target, hidden=DataRootDialogs.hidden_hint(), folder=dialog.folder)
     assert "⌘⇧." in dialog.intro.text()
-    # An existing file is replaced only on Yes.
+    # An existing file is replaced only on Yes, asked once the first save has ended.
     (target / ".helab-root").write_text("mine")
-    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.No)
+    asked: list[str] = []
+
+    def answer(button: QMessageBox.StandardButton) -> Callable[..., QMessageBox.StandardButton]:
+        def question(parent: Any, title: str, text: str, *args: Any, **kwargs: Any) -> QMessageBox.StandardButton:
+            asked.append(text)
+            return button
+        return question
+    monkeypatch.setattr(QMessageBox, "question", answer(QMessageBox.StandardButton.No))
     dialog.write(str(target))
-    assert (target / ".helab-root").read_text() == "mine"
-    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    run_save(qtbot, cache, str(target))
+    qtbot.waitUntil(lambda: len(asked) == 1)
+    assert asked == [DataRootDialogs.REPLACE_TEXT.format(target=target, name=".helab-root")]
+    assert (target / ".helab-root").read_text() == "mine" and ("marker_save", str(target)) not in cache.jobs
+    monkeypatch.setattr(QMessageBox, "question", answer(QMessageBox.StandardButton.Yes))
     dialog.write(str(target))
+    run_save(qtbot, cache, str(target))
+    qtbot.waitUntil(lambda: ("marker_save", str(target)) in cache.jobs)
+    assert run_save(qtbot, cache, str(target)).payload["replace"]
     assert (target / ".helab-root").read_bytes() == contents
+
+
+@pytest.mark.parametrize("error", [PermissionError(13, "Permission denied"), OSError(28, "No space left on device")],
+                         ids=["refused", "error"])
+def test_a_save_that_fails_says_why_and_can_be_tried_again(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, manual: ManualMarkerDialog,
+    error: OSError,
+) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, text, *args: warnings.append(text))
+
+    def refuse(*args: Any, **kwargs: Any) -> int:
+        raise error
+    target = tmp_path / "saved"
+    target.mkdir()
+    with monkeypatch.context() as patched:
+        patched.setattr(os, "open", refuse)  # (Only the helper, run here, opens files meanwhile.)
+        manual.write(str(target))
+        run_save(qtbot, manual.cache, str(target))
+    assert warnings == [f"Couldn't save {target / '.helab-root'}: {error}"]
+    assert not (target / ".helab-root").exists() and manual.save.isEnabled()
+    assert manual.intro.text().startswith("HeLab can't write")
+
+
+def test_the_gui_never_writes_the_saved_file_itself(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The picker may return a folder on a share that hangs: the file is written by a helper
+    process, never on the GUI thread."""
+    import builtins
+    service = IOService()
+    folder = str(tmp_path / "share")
+    _, contents = data_roots.new_marker(folder)
+    dialog = ManualMarkerDialog(None, FolderCache(service), folder, ".helab-root", contents.decode("utf-8"),
+                                "Read-only file system")
+    qtbot.addWidget(dialog)
+    target = tmp_path / "saved"
+    target.mkdir()
+    real_open, real_os_open = builtins.open, os.open
+
+    def guarded(opener: Callable[..., Any]) -> Callable[..., Any]:
+        def call(file: Any, *args: Any, **kwargs: Any) -> Any:
+            assert not str(file).endswith(".helab-root"), "the GUI process wrote the marker"
+            return opener(file, *args, **kwargs)
+        return call
+    monkeypatch.setattr(builtins, "open", guarded(real_open))
+    monkeypatch.setattr(os, "open", guarded(real_os_open))
+    assert dialog.write(str(target))
+    qtbot.waitUntil(lambda: dialog.intro.text().startswith("Saved"), timeout=10000)
+    monkeypatch.undo()
+    assert (target / ".helab-root").read_bytes() == contents
+    service.shutdown()
 
 
 def test_placing_at_the_top_lists_the_clicked_folder_again_too(

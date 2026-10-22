@@ -36,7 +36,7 @@ MOUNTED = ("\\\\no-such-server\\share\\run_1" if sys.platform == "win32"
 # Every handler ``main`` looks up in ``helab.io_helper``.
 HANDLERS = ("list_folder", "folder_icons", "scan", "save_scan_history", "save_subtrees", "live_check",
             "save_held", "load", "read_cached", "cache_move_job", "cache_admin", "verify_known_roots",
-            "verify_volumes", "trace_check", "create_root", "reassign_root", "remove_root")
+            "verify_volumes", "trace_check", "create_root", "reassign_root", "remove_root", "save_marker_copy")
 
 
 @pytest.fixture(autouse=True)
@@ -161,6 +161,9 @@ ROUTES: list[tuple[dict[str, Any], str, tuple[Any, ...], dict[str, Any]]] = [
      "remove_root", (PATH, CACHE, "u", "smb://h/s"), {}),
     ({"operation": "root_remove", "path": PATH, "cache": CACHE, "uuid": "u"}, "remove_root",
      (PATH, CACHE, "u", ""), {}),
+    ({"operation": "marker_save", "path": PATH, "contents": "{}", "replace": True}, "save_marker_copy",
+     (PATH, "{}", True), {}),
+    ({"operation": "marker_save", "path": PATH, "contents": "{}"}, "save_marker_copy", (PATH, "{}", False), {}),
 ]
 
 

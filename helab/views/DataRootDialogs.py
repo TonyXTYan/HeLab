@@ -5,13 +5,15 @@ from __future__ import annotations
 import ntpath
 import os
 import sys
+from typing import Any
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (QAbstractButton, QApplication, QDialog, QDialogButtonBox, QFileDialog, QLabel,
                              QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
 from helab.utils.folder_cache import PLACE_ROOT_ACTION, FolderCache, marker_path
+from helab.utils.io_service import IORequest
 
 TITLE = "Place .helab-root"
 CONFIRM = ("HeLab will write a small hidden file, .helab-root, in {path}. Its subfolders will use the "
@@ -130,13 +132,21 @@ def ask_place_root(parent: QWidget | None, cache: FolderCache, path: str) -> str
 
 
 class ManualMarkerDialog(QDialog):
-    """No write permission: the exact file name and contents, to Copy or save to a folder and move into place."""
+    """No write permission: the exact file name and contents, to Copy or save to a folder and move into place.
 
-    def __init__(self, parent: QWidget | None, folder: str, name: str, contents: str, reason: str) -> None:
+    Save to folder… writes through a helper (``marker_save``, foreground like ``root_create``): the
+    folder the picker returns may be on a share that hangs, which the GUI thread never waits on."""
+
+    def __init__(self, parent: QWidget | None, cache: FolderCache, folder: str, name: str, contents: str,
+                 reason: str) -> None:
         super().__init__(parent)
         self.setWindowTitle(MANUAL_TITLE)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.cache = cache
         self.folder, self.name, self.contents = folder, name, contents
+        self.owner = f"marker-save:{id(self)}"
+        self.target = ""  # The folder being saved to.
+        self._exists = False  # It had the file already: ask once the save has ended.
         layout = QVBoxLayout(self)
         intro = QLabel(MANUAL_TEXT.format(name=name, folder=folder, reason=reason))
         intro.setWordWrap(True)
@@ -152,13 +162,14 @@ class ManualMarkerDialog(QDialog):
         copy = QPushButton("Copy")
         copy.setToolTip("Copy the file's contents")
         copy.clicked.connect(self.copy)
-        save = QPushButton(SAVE_ACTION)
-        save.setToolTip(f"Save {name} in a folder you can write, then move it into {folder}.\n{hidden_hint()}")
-        save.clicked.connect(self.save_to_folder)
+        self.save = QPushButton(SAVE_ACTION)
+        self.save.setToolTip(f"Save {name} in a folder you can write, then move it into {folder}.\n{hidden_hint()}")
+        self.save.clicked.connect(self.save_to_folder)
         buttons.addButton(copy, QDialogButtonBox.ButtonRole.ActionRole)
-        buttons.addButton(save, QDialogButtonBox.ButtonRole.ActionRole)
+        buttons.addButton(self.save, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.rejected.connect(self.close)
         layout.addWidget(buttons)
+        cache.resultReady.connect(self._result)
 
     def copy(self) -> None:
         if (clipboard := QApplication.clipboard()) is not None:
@@ -168,20 +179,42 @@ class ManualMarkerDialog(QDialog):
         if target := QFileDialog.getExistingDirectory(self, f"Save {self.name} to folder", os.path.expanduser("~")):
             self.write(target)
 
-    def write(self, target: str) -> None:
-        """The exact bytes HeLab would have written, as {name} in a local folder the user chose (not the source)."""
-        path = os.path.join(target, self.name)
-        if os.path.lexists(path) and QMessageBox.question(
-                self, MANUAL_TITLE, REPLACE_TEXT.format(target=target, name=self.name),
-                defaultButton=QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            with open(path, "wb") as stream:
-                stream.write(self.contents.encode("utf-8"))
-        except OSError as exc:
-            QMessageBox.warning(self, MANUAL_TITLE, f"Couldn't save {path}: {exc}")
-            return
-        self.intro.setText(SAVED_TEXT.format(name=self.name, target=target, hidden=hidden_hint(), folder=self.folder))
+    def write(self, target: str, replace: bool = False) -> bool:
+        """Save the exact bytes HeLab would have written, as {name} in a folder the user chose (not the
+        source), through a helper; Save to folder… waits until it has ended. Whether it was submitted."""
+        if not self.cache.submit(self.owner, 0, target, "marker_save",
+                                 {"contents": self.contents, "replace": replace}, priority=True):
+            QMessageBox.warning(self, MANUAL_TITLE, f"Couldn't save {os.path.join(target, self.name)}: "
+                                                    "HeLab is quitting.")
+            return False
+        self.target, self._exists = target, False
+        self.save.setEnabled(False)
+        return True
 
+    def _result(self, request: IORequest, event: dict[str, Any]) -> None:
+        if request.owner != self.owner:
+            return
+        kind = event["kind"]
+        file = os.path.join(self.target, self.name)
+        if kind == "marker_saved":
+            self.intro.setText(SAVED_TEXT.format(name=self.name, target=self.target, hidden=hidden_hint(),
+                                                 folder=self.folder))
+        elif kind == "marker_save_exists":
+            self._exists = True
+        elif kind == "marker_save_refused":
+            QMessageBox.warning(self, MANUAL_TITLE, f"Couldn't save {file}: {event.get('reason', '')}")
+        elif kind in ("error", "cancelled"):
+            QMessageBox.warning(self, MANUAL_TITLE, f"Couldn't save {file}: {event.get('message', 'stopped')}")
+        if kind in ("done", "error", "cancelled"):
+            self.save.setEnabled(True)
+            if self._exists:
+                # Asked once the save has ended, so Yes saves again rather than joining it.
+                QTimer.singleShot(0, self._ask_replace)
+
+    def _ask_replace(self) -> None:
+        self._exists = False
+        if QMessageBox.question(self, MANUAL_TITLE, REPLACE_TEXT.format(target=self.target, name=self.name),
+                                defaultButton=QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            self.write(self.target, replace=True)
 
 __all__ = ["PLACE_ROOT_ACTION", "ManualMarkerDialog", "ask_place_root", "placement_checks"]

@@ -39,9 +39,9 @@ ENTRY_KEYS = {"datasets": ("disk_cached", "cache_info"), "summaries": ("scan_sta
               "histories": ("scan_history",), "subtrees": ("subtree",)}
 # The current tab's work that runs in the foreground I/O lane.
 # (``root_create``: the user's Enable disk cache here…, one small write, runs like a listing.)
-FOREGROUND_OPERATIONS = ("list", "resolve", "load", "root_create", "root_reassign", "root_remove")
+FOREGROUND_OPERATIONS = ("list", "resolve", "load", "root_create", "root_reassign", "root_remove", "marker_save")
 # The user's marker writes: in the foreground whoever asked (a tab, Settings or a window).
-MARKER_OPERATIONS = ("root_create", "root_reassign", "root_remove")
+MARKER_OPERATIONS = ("root_create", "root_reassign", "root_remove", "marker_save")
 
 
 @dataclass

@@ -660,6 +660,20 @@ class RootRemoveRefusedEvent(TypedDict):
     reason: str
 
 
+class MarkerSaveEvent(TypedDict):
+    """The manual marker dialog's copy (``marker_save``): written, or a file already there (not replaced)."""
+    kind: Literal["marker_saved", "marker_save_exists"]
+    path: str
+    file: str
+
+
+class MarkerSaveRefusedEvent(TypedDict):
+    kind: Literal["marker_save_refused"]
+    path: str
+    file: str
+    reason: str
+
+
 class VolumesVerifiedEvent(TypedDict):
     kind: Literal["volumes_verified"]
     volumes: list[list[str]]
@@ -686,8 +700,8 @@ HelperEvent = Union[
     MoveCheckEvent, MoveProgressEvent, MoveDoneEvent, MoveFailedEvent, MoveCleanedEvent, MoveAbortedEvent,
     MoveRecoveredEvent, TraceFolderEvent,
     RootFoundEvent, RootChangedEvent, RootDuplicateEvent, RootRekeyedEvent, RootConfirmedEvent, RootCreatedEvent,
-    RootManualEvent, RootReassignedEvent, RootRemovedEvent, RootRemoveRefusedEvent, VolumesVerifiedEvent,
-    RootsVerifiedEvent,
+    RootManualEvent, RootReassignedEvent, RootRemovedEvent, RootRemoveRefusedEvent, MarkerSaveEvent,
+    MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
 ]
 
 # Every kind a helper sends.
@@ -704,5 +718,5 @@ KINDS = frozenset({
     "trace_folder",
     "root_found", "root_changed", "root_duplicate", "root_rekeyed", "root_confirmed", "root_created",
     "root_adopted", "root_manual", "root_reassigned", "root_removed", "root_remove_refused",
-    "volumes_verified", "roots_verified",
+    "marker_saved", "marker_save_exists", "marker_save_refused", "volumes_verified", "roots_verified",
 })

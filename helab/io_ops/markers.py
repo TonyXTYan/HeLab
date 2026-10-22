@@ -321,6 +321,47 @@ def create_root(path: str, cache_options: dict[str, Any] | None, send: Emit = em
           "path": path, "uuid": found.uuid, "label": found.label})
 
 
+def save_marker_copy(folder: str, contents: str, replace: bool = False, send: Emit = emit) -> None:
+    """The manual marker dialog's Save to folder…: write the ``.helab-root`` HeLab couldn't place, its exact
+    contents under its exact name, in a folder the user chose, to move into place by hand. A copy to move,
+    not a data root: not hidden, read back or recorded. A file already there is replaced only with
+    ``replace`` (else ``marker_save_exists``); refused by the system (permission, a read-only volume),
+    ``marker_save_refused``; written, ``marker_saved``. Other errors fail the request."""
+    import errno
+    from helab.utils.data_roots import MARKER_NAME
+    file = os.path.join(folder, MARKER_NAME)
+    data = contents.encode("utf-8")
+    binary = getattr(os, "O_BINARY", 0)
+    try:
+        try:
+            # Truncating without O_CREAT: Windows refuses to re-create a hidden file in place.
+            descriptor = (os.open(file, os.O_WRONLY | os.O_TRUNC | binary) if replace
+                          else os.open(file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | binary, 0o644))
+        except FileNotFoundError:
+            if not replace:
+                raise
+            descriptor = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | binary, 0o644)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(data)
+        except OSError:
+            with contextlib.suppress(OSError):
+                os.remove(file)  # Never leave a partial copy.
+            raise
+    except FileExistsError:
+        _trace("marker_write", file, "marker_save", error="FileExistsError")
+        send({"kind": "marker_save_exists", "path": folder, "file": file})
+        return
+    except OSError as exc:
+        _traced_error("marker_write", file, "marker_save", exc)
+        if exc.errno not in (errno.EACCES, errno.EPERM, errno.EROFS):
+            raise
+        send({"kind": "marker_save_refused", "path": folder, "file": file, "reason": str(exc)})
+        return
+    _trace("marker_write", file, "marker_save", bytes=len(data))
+    send({"kind": "marker_saved", "path": folder, "file": file})
+
+
 def remove_root(path: str, cache_options: dict[str, Any], expected: str, location: str = "",
                 send: Emit = emit) -> None:
     """Settings › Data roots › Delete .helab-root…: delete the folder's marker, only when it is still
