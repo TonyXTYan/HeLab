@@ -268,12 +268,13 @@ uv's cache). Keep 1 and 2 both on or both off.
 
 **Private app folders**, for tests and any manual run (QSettings is **not** yet
 isolated, see below). Command 3 starts `.ai/local/floor-env.sh` afresh; 4 and
-5 add a line each.
+5 add a line each. Command 3 also makes `.ai/temp`, which a floor doesn't get
+(it is gitignored) and where `pytest --basetemp=.ai/temp/pytest` needs it.
 
-3. App folder (locks, `cache-move.json`):
+3. App folder (locks, `cache-move.json`) and the floor's `.ai/temp`:
 
    ```bash
-   mkdir -p "$MAESTRI_FLOOR_PATH/.ai/local" && echo "export HELAB_APP_DIR_OVERRIDE=\"$HOME/Library/Caches/HeLab/floors/$MAESTRI_FLOOR_NAME/app\"" > "$MAESTRI_FLOOR_PATH/.ai/local/floor-env.sh"
+   mkdir -p "$MAESTRI_FLOOR_PATH/.ai/local" "$MAESTRI_FLOOR_PATH/.ai/temp" && echo "export HELAB_APP_DIR_OVERRIDE=\"$HOME/Library/Caches/HeLab/floors/$MAESTRI_FLOOR_NAME/app\"" > "$MAESTRI_FLOOR_PATH/.ai/local/floor-env.sh"
    ```
 
 4. Cache folder:
@@ -307,9 +308,13 @@ folders.
    [ -n "$MAESTRI_FLOOR_NAME" ] && rm -rf "$HOME/Library/Caches/HeLab/floors/$MAESTRI_FLOOR_NAME"
    ```
 
-**(check)** That Maestri runs setup commands in order and stops or carries on
-after a failing one; that `.ai/local/floor-env.sh` reads correctly for a floor
-name with spaces.
+Checked 2026-10-22 on a test floor named "Hook Test": setup runs by itself
+when a floor is created, in order, in under a minute; `floor-env.sh` quotes a
+name with spaces correctly; the floor's venv imports the floor's `helab`; and
+the Worker's pytest command runs with no manual steps. Pasting a command from
+this guide can bring its closing ```` ``` ```` along on a second line the hook
+editor may not show: the step then exits with an error (under zsh it writes
+nothing). **(check)** Whether Maestri stops or carries on after a failing step.
 
 When creating a floor in the UI you can add **Excluded folders**; `build`
 and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
