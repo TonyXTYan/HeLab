@@ -36,3 +36,19 @@ correctness fix has a test that fails without it and passes with it (checked by 
 Batch checks after R-2..R-10 (`f684720`): full suite 2390 passed, 2 skipped, 2 xfailed, **no RERUN**
 (twice, the second run covering R-10); strict mypy (helab, tests) and pyright clean. Lens reviewed
 `265f35e..f684720`: no changes asked.
+
+### Areas 2 and 3 (models, views, analysis core, plots)
+
+| ID | Outcome | Commit | Notes |
+|---|---|---|---|
+| R-11 | Fixed (guards); **excepthook needs Tony** | `e4d3f2d` | The Modified column goes through `_date_text` (blank if the OS can't convert), shared with `_stamp`; Live's re-read warning prints such a time in ns (no test: a log-only path, same guard). Test: `tests/test_row_tooltip.py` (1e20). Not done: `sys.excepthook`. Nothing logs to a file, so a hook alone leaves no trace in the windowed build; installing one also stops PyQt6's abort, so HeLab would go on after an unhandled exception. Question for Tony: keep aborting, or log and go on; and should HeLab write a log file (app folder) so crashes leave a trace? |
+| R-12 | Fixed | `fbb072f` | Icon path from the package. Test: `tests/test_helabMainWindow.py` (started from a temp folder). Handoff: `HeLab.spec`'s `datas` lacks `ai-icon.icns`, so the packaged app still logs "Icon file not found" (the bundle has its own icon); add it or drop the check for frozen builds. |
+| R-13 | Part fixed; **controls need Tony** | `aad0ad4` | Close logged at DEBUG; unused imports gone. Question for Tony: remove "Enable feature X" and "Example Text" (and their `example_checkbox`/`example_text` keys) from Settings → General? |
+| R-14 | Fixed | `305f19a` | Dropped the unread fields, constants and ordering operators; `time_load_ram`'s one write. `time_last_updated` defaults to the time the report is made. Test: `tests/test_status_report.py`. |
+| R-15 | Part done | `f410ccb` | `FolderTabWidget.py`: imports by name, dead code and unused methods gone. Left: star imports in `HelabMainWindow.py`/`SettingsDialog.py` (their import blocks are the CI floor's to change now; do after it lands) and the long `_update_folder_summary`/`_load_to_ram_cache` (declined: wording-heavy UI code, no finding in it, a split risks the summary's exact text for little gain). |
+| R-16 | **Needs Tony** (note only) | — | Question: the manual marker's Save to folder… writes on the GUI thread into any folder the picker returns; say "a local folder" in the dialog and picker title, or send the write through a helper? |
+| R-17 | Fixed | `c530e7f` | `run_analysis` catches a failure making the plot (status-bar notice); the constructor calls `live_policy`/`constant_keys` before connecting signals; `start()` shows a settings failure in the dock; `_submit` guards `values()`. Test: `tests/test_analysis_gui.py` (parameters, live_policy, backends). |
+| R-18 | Fixed | `324ae2a` | Dropped `GroupData`, `GroupType`, `group_mapping`, `current_group`, `group_changed`; docstrings cut to what the panel does. Kept `ScriptsManager.get_script_metadata` (tests use it). |
+
+Batch checks after `f410ccb`: full suite 2396 passed, 2 skipped, 2 xfailed, **no RERUN**; strict mypy
+(helab, tests) and pyright clean.
