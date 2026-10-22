@@ -12,7 +12,7 @@ from helab.utils.io_service import IORequest, delete_io_traces, get_io_service, 
 from helab.utils.folder_cache import get_folder_cache, set_disk_budget, store_options
 from helab.utils.gui_watchdog import GUIWatchdog
 from helab.utils.lab_parameters import read_lab_constants
-from helab.utils import events
+from helab.utils import app_log, events
 from datetime import datetime
 from sys import getsizeof
 from typing import Any, Callable, List, Optional
@@ -30,7 +30,7 @@ from helab.utils.constants import (
     APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, DEFAULT_LOAD_MODE, DIR_TEMPS, LOAD_MODE_LABELS,
     QSPLITTER_STYLESHEET, TOOLBAR_STYLESHEET_LR, assert_warn, cache_dir_refused, read_check_level,
     read_disk_budget, read_io_concurrency, read_live_autosave, read_live_interval, read_load_mode,
-    read_plot_auto_reload, read_ram_budget,
+    app_folder, read_plot_auto_reload, read_ram_budget,
 )
 from helab.utils.number_format import byte_size, fnum
 from helab.utils.settings_defaults import (
@@ -38,6 +38,7 @@ from helab.utils.settings_defaults import (
 from helab.utils.settings_store import app_settings
 from helab.views.CacheDialogs import CacheDialogs
 from helab.views.ClockSkewWarning import ClockSkewWarning
+from helab.views.OldLogs import OldLogs
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HoverMenuToolButton import HoverMenuToolButton
@@ -128,6 +129,8 @@ class HelabMainWindow(QMainWindow):
                                           self.show_status_notice)
         # A folder's files dated ahead of this computer's clock: once per share or volume per session.
         self.clock_skew_warning = ClockSkewWarning(cache, self)
+        # Old log files: tidied once at startup (``main`` calls its ``start``), off the GUI thread.
+        self.old_logs = OldLogs(app_folder(), self)
         cache.autoLoadPauseChanged.connect(self._auto_load_pause_changed)
         # Folders whose cached data doesn't match them: one list for the app, and its status-bar button.
         self.missing_shots = MissingShotsWindow(cache, self)
@@ -521,6 +524,9 @@ class HelabMainWindow(QMainWindow):
             action_trace_folder = QAction("Show I/O trace folder", self)
             action_trace_folder.triggered.connect(self._show_io_trace_folder)
             menu_help.addAction(action_trace_folder)
+            action_log_folder = QAction("Show log folder", self)
+            action_log_folder.triggered.connect(self._show_log_folder)
+            menu_help.addAction(action_log_folder)
 
     def show_about_dialog(self) -> None:
         QMessageBox.about(self, "About HeLab", APP_BUILD_INFO.description())
@@ -590,6 +596,13 @@ class HelabMainWindow(QMainWindow):
     def _show_io_trace_folder(self) -> None:
         from PyQt6.QtGui import QDesktopServices
         folder = io_trace_folder(DIR_TEMPS)
+        os.makedirs(folder, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+    def _show_log_folder(self) -> None:
+        """Help › Show log folder: the app folder's ``logs``, where each HeLab writes its log."""
+        from PyQt6.QtGui import QDesktopServices
+        folder = app_log.log_folder(app_folder())
         os.makedirs(folder, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 

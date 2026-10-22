@@ -6,23 +6,37 @@ console, so the log file in the app folder is where such an error leaves its tra
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 from logging.handlers import RotatingFileHandler
 import math
 import os
+import re
 import sys
 import threading
 import time
 from types import TracebackType
 from typing import Callable
 
+from helab.utils.cache_locks import other_instances
+
 
 # Each HeLab writes its own file, helab-<process ID>.log (Tony, 2026-10-22): two at once never share
 # one, whose rollover on Windows would fail in the other. It grows to LOG_BYTES, then is renamed
-# helab-<pid>.log.1 (and so on, LOG_BACKUPS of them). Nothing deletes old sessions' files.
+# helab-<pid>.log.1 (and so on, LOG_BACKUPS of them). Old sessions' files go at startup: the oldest
+# beyond Settings → General → Log files to keep, and past ASK_BYTES the user is asked
+# (``helab.views.OldLogs``; Tony, 2026-10-22).
+MB = 1024 * 1024
 LOG_NAME = "helab-{pid}.log"
-LOG_BYTES = 2 * 1024 * 1024
-LOG_BACKUPS = 4
+LOG_FILE = re.compile(r"helab-(\d+)\.log(\.\d+)?")  # Rotated copies too; the group is the pid.
+LOG_BYTES = 1 * MB
+LOG_BACKUPS = 10
+# Past ASK_BYTES of logs (after the count rule) the user is asked, and Delete goes below TRIM_BYTES.
+ASK_BYTES = 50 * MB
+TRIM_BYTES = 20 * MB
+# A file modified this recently is never deleted: a HeLab starting up writes its log before it holds
+# its instance lock (``cache_locks.instance_lock``).
+STARTING_SECONDS = 60.0
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(process)d %(threadName)s] %(name)s: %(message)s"
 # The same unhandled exception (its type and where it was raised) is logged once in this time, and
 # the repeats are counted in the next one logged: a model's ``data()`` may raise on every repaint.
@@ -33,10 +47,15 @@ _seen: dict[tuple[str, str, int], tuple[float, int]] = {}  # (When last logged, 
 _lock = threading.Lock()
 
 
+def log_folder(folder: str) -> str:
+    """Where the log files are, in the app folder ``folder``."""
+    return os.path.join(folder, "logs")
+
+
 def start_log_file(folder: str, level: int = logging.INFO) -> RotatingFileHandler | None:
     """Log to ``<folder>/logs/helab-<pid>.log`` as well (``app_folder()``; tests' own folder), from
     ``level`` up. Its handler, or None if it can't be written there (logged)."""
-    path = os.path.join(folder, "logs", LOG_NAME.format(pid=os.getpid()))
+    path = os.path.join(log_folder(folder), LOG_NAME.format(pid=os.getpid()))
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         handler = RotatingFileHandler(path, maxBytes=LOG_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8")
@@ -48,6 +67,85 @@ def start_log_file(folder: str, level: int = logging.INFO) -> RotatingFileHandle
     logging.getLogger().addHandler(handler)
     logging.info(f"Logging to {path}")
     return handler
+
+
+@dataclass(frozen=True)
+class LogFile:
+    path: str
+    pid: int
+    size: int
+    mtime: float
+
+
+def scan_logs(folder: str) -> list[LogFile]:
+    """Every log file, rotated copies included, of every session, in the app folder ``folder``.
+    Never on the GUI thread (``OldLogs``)."""
+    files: list[LogFile] = []
+    try:
+        entries = list(os.scandir(log_folder(folder)))
+    except OSError:  # (None yet, or unreadable: nothing to tidy.)
+        return []
+    for entry in entries:
+        match = LOG_FILE.fullmatch(entry.name)
+        if match is None:
+            continue
+        try:
+            stat = entry.stat(follow_symlinks=False)
+        except OSError:  # (Gone meanwhile.)
+            continue
+        files.append(LogFile(entry.path, int(match.group(1)), stat.st_size, stat.st_mtime))
+    return files
+
+
+def deletable(folder: str, files: list[LogFile]) -> list[LogFile]:
+    """``files`` that may go, oldest first by mtime (process IDs come round again, so never by name):
+    not a running HeLab's (``cache_locks.other_instances``, this one's) and not one just written."""
+    running = set(other_instances(folder)) | {os.getpid()}
+    recent = time.time() - STARTING_SECONDS
+    return sorted((file for file in files if file.pid not in running and file.mtime < recent),
+                  key=lambda file: (file.mtime, file.path))
+
+
+def delete_logs(files: list[LogFile]) -> list[LogFile]:
+    """Delete ``files``; those deleted. One that can't be (on Windows, open in another process) is
+    skipped and logged."""
+    deleted: list[LogFile] = []
+    for file in files:
+        try:
+            os.remove(file.path)
+        except FileNotFoundError:
+            deleted.append(file)  # (Another HeLab got there first.)
+        except OSError as exc:
+            logging.info(f"Old log file {file.path} not deleted: {exc}")
+        else:
+            deleted.append(file)
+    if deleted:
+        logging.info(f"Deleted {len(deleted)} old log file(s), {sum(file.size for file in deleted) / MB:.1f} MB")
+    return deleted
+
+
+def tidy_logs(folder: str, keep: int) -> int:
+    """At startup: delete the oldest log files beyond ``keep`` of them (Settings → General → Log
+    files to keep, which counts every session's files), not a running HeLab's. The bytes of logs
+    left."""
+    files = scan_logs(folder)
+    gone = delete_logs(deletable(folder, files)[:max(0, len(files) - keep)])
+    return sum(file.size for file in files) - sum(file.size for file in gone)
+
+
+def trim_logs(folder: str, below: int = TRIM_BYTES) -> int:
+    """Delete the oldest log files, not a running HeLab's, until they total under ``below`` bytes
+    (the user said Delete). The bytes left."""
+    files = scan_logs(folder)
+    total = sum(file.size for file in files)
+    chosen: list[LogFile] = []
+    left = total
+    for file in deletable(folder, files):
+        if left < below:
+            break
+        chosen.append(file)
+        left -= file.size
+    return total - sum(file.size for file in delete_logs(chosen))
 
 
 def catch_unhandled(notice: Callable[[str], None] | None = None) -> None:

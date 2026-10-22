@@ -23,7 +23,7 @@ from helab.utils.settings_defaults import (
     PLOT_AUTO_RELOAD_SETTING as PLOT_AUTO_RELOAD_SETTING,
     RAM_BUDGET_SETTING as RAM_BUDGET_SETTING,
     SIMULTANEOUS_IO_SETTING as SIMULTANEOUS_IO_SETTING,
-    read_setting, setting_default)
+    LOG_KEEP_SETTING, read_setting, setting_default)
 # from PyQt6.QtGui import QFontDatabase, QFont
 
 # try:
@@ -196,6 +196,20 @@ def read_live_interval(settings: QSettings) -> float:
     except (TypeError, ValueError, OverflowError):
         return DEFAULT_LIVE_INTERVAL
     return max(MIN_LIVE_INTERVAL, min(MAX_LIVE_INTERVAL, value)) if math.isfinite(value) else DEFAULT_LIVE_INTERVAL
+
+
+# Log files to keep (Settings → General): every session's, rotated copies counted; at startup the
+# oldest beyond it are deleted (``helab.utils.app_log.tidy_logs``).
+DEFAULT_LOG_KEEP: int = setting_default(LOG_KEEP_SETTING)
+MAX_LOG_KEEP = 100_000
+
+
+def read_log_keep(settings: QSettings) -> int:
+    try:
+        value = int(read_setting(settings, LOG_KEEP_SETTING))
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_LOG_KEEP
+    return max(1, min(MAX_LOG_KEEP, value))
 
 
 def read_live_autosave(settings: QSettings) -> int:

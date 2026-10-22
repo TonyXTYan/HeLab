@@ -98,11 +98,11 @@ def test_the_log_file_keeps_tracebacks_and_rotates(tmp_path: Path, monkeypatch: 
         log = tmp_path / "logs" / f"helab-{os.getpid()}.log"
         assert "Traceback" in log.read_text(encoding="utf-8") and "ValueError: no such shot" in log.read_text(
             encoding="utf-8")
-        for index in range(200):
+        for index in range(600):
             logging.info(f"line {index} " + "x" * 40)
         names = sorted(path.name for path in (tmp_path / "logs").iterdir())
         own = f"helab-{os.getpid()}.log"
-        assert names == [own, *(f"{own}.{index}" for index in range(1, 5))]
+        assert names == sorted([own, *(f"{own}.{index}" for index in range(1, app_log.LOG_BACKUPS + 1))])
     finally:
         root.removeHandler(handler)
         handler.close()

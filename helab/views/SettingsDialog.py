@@ -10,13 +10,14 @@ from PyQt6.QtCore import QSettings, QUrl
 from helab.utils.folder_cache import FolderCache, store_options
 from helab.utils.number_format import fnum
 from helab.utils.constants import (
-    CHECK_LEVEL_LABELS, DIR_TEMPS, LOAD_MODE_LABELS, MAX_LIVE_INTERVAL, MAX_SIMULTANEOUS_IO, MIN_LIVE_INTERVAL,
-    cache_dir, default_app_dir, read_check_level, read_disk_budget, read_io_concurrency, read_live_autosave,
-    read_live_interval, read_load_mode, read_plot_auto_reload, read_ram_budget_steps,
+    CHECK_LEVEL_LABELS, DIR_TEMPS, LOAD_MODE_LABELS, MAX_LIVE_INTERVAL, MAX_LOG_KEEP, MAX_SIMULTANEOUS_IO,
+    MIN_LIVE_INTERVAL, cache_dir, default_app_dir, read_check_level, read_disk_budget, read_io_concurrency,
+    read_live_autosave, read_live_interval, read_load_mode, read_log_keep, read_plot_auto_reload,
+    read_ram_budget_steps,
 )
 from helab.utils.settings_defaults import (
     AUTO_SCAN_VISIBLE_SETTING, CHECK_LEVEL_SETTING, DIR_CACHES_SETTING, DIR_TEMPS_SETTING, LIVE_INTERVAL_SETTING,
-    LOAD_MODE_SETTING, RETIRED, SIMULTANEOUS_IO_SETTING, read_setting)
+    LOAD_MODE_SETTING, LOG_KEEP_SETTING, RETIRED, SIMULTANEOUS_IO_SETTING, read_setting)
 from helab.utils.settings_store import app_settings
 from helab.views.DataRootsTab import DataRootsTab
 from helab.views.CacheTab import CacheTab
@@ -92,6 +93,15 @@ class SettingsDialog(QDialog):
         self.auto_scan_visible_checkbox.setToolTip(
             "Scan visible folders that have no saved scan results. Cached results are kept until a manual scan or refresh.")
         self.general_layout.addWidget(self.auto_scan_visible_checkbox)
+        log_form = QFormLayout()
+        self.log_keep_spin = QSpinBox()
+        self.log_keep_spin.setRange(1, MAX_LOG_KEEP)
+        self.log_keep_spin.setToolTip(
+            "Each HeLab writes its own log file, renamed and started again every 1 MB. At startup HeLab "
+            "deletes the oldest log files beyond this number, every session's counted, never a running "
+            "HeLab's. Help › Show log folder shows them.")
+        log_form.addRow("Log files to keep:", self.log_keep_spin)
+        self.general_layout.addLayout(log_form)
 
 
         # DIR_TEMPS and DIR_CACHES
@@ -277,6 +287,7 @@ class SettingsDialog(QDialog):
         self.simultaneous_io_spin.setValue(read_io_concurrency(settings))
         self.check_level_combo.setCurrentIndex(self.check_level_combo.findData(read_check_level(settings)))
         self.live_interval_spin.setValue(read_live_interval(settings))
+        self.log_keep_spin.setValue(read_log_keep(settings))
         self.auto_scan_visible_checkbox.setChecked(read_setting(settings, AUTO_SCAN_VISIBLE_SETTING, typed=True))
         logging.debug("Settings loaded")
 
@@ -307,6 +318,7 @@ class SettingsDialog(QDialog):
         settings.setValue(SIMULTANEOUS_IO_SETTING, self.simultaneous_io_spin.value())
         settings.setValue(CHECK_LEVEL_SETTING, self.check_level_combo.currentData())
         settings.setValue(LIVE_INTERVAL_SETTING, self.live_interval_spin.value())
+        settings.setValue(LOG_KEEP_SETTING, self.log_keep_spin.value())
         for key in RETIRED:
             settings.remove(key)
         settings.setValue(AUTO_SCAN_VISIBLE_SETTING, self.auto_scan_visible_checkbox.isChecked())

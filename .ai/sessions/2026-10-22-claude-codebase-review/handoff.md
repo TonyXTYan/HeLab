@@ -222,3 +222,62 @@ Both floors landed (Lens's last findings note: merge `c13b225`). Question 3's wo
 as is. Question 1 wasn't answered: the old-log rule stays an open item in
 [known issues](../../../roadmaps/known-issues.md), not built. Question 2 (the `--upgrade` lock
 refresh) is undecided.
+
+## Follow-up: old log files (2026-10-22, brief `brief-old-logs.md`)
+
+Built in `fed0fae` on `agent/codebase-review` from `ae72673`, by Tony's rule (question 1 above, now
+answered):
+
+- Rotation within a session: 1 MB per file, 10 older files (`app_log.LOG_BYTES`, `LOG_BACKUPS`).
+- **Settings → General → Log files to keep** (`log_files_keep`, default 300, 1 to 100,000; a row in
+  `settings_defaults.py`, read untyped by `constants.read_log_keep`). It counts every session's
+  `helab-<pid>.log` files, rotated copies included. At startup HeLab deletes the oldest by mtime
+  beyond it (`app_log.tidy_logs`).
+- If the logs left pass 50 MB, HeLab asks once per session "Log files use X MB. Delete old ones?"
+  (Delete / Keep; Keep is the default and Escape button and lasts the session). Delete removes the
+  oldest until the total is under 20 MB (`app_log.trim_logs`).
+- **Help › Show log folder**: a detached reveal of `<app folder>/logs`.
+- Never deleted: a running HeLab's files (live instance lock: `cache_locks.other_instances`; this
+  process's pid). Files go oldest first by mtime, never by name. A file that can't be deleted is
+  skipped and logged at INFO.
+- The scan and the deletes run on a daemon thread of their own (`helab/views/OldLogs.py`), started by
+  `main` once the window is shown and this instance holds its lock. Results come back through queued
+  signals.
+
+**One addition beyond the brief, for Lens to judge:** a file modified within the last 60 s is never
+deleted either (`app_log.STARTING_SECONDS`). A HeLab starting up writes its log (`main`, first line)
+before it takes its instance lock in `_start_cache`, so for that moment its files look ended. That
+moment can be long if it is waiting out another HeLab's cache move and logging nothing; the guard
+covers only the usual case.
+
+**New wording, for Tony's read:**
+- The question's window title is "HeLab" (macOS doesn't show it); the buttons are "Delete" and
+  "Keep". X is whole binary MB (MiB, like the 1 MB rotation).
+- Setting label: "Log files to keep:". Tooltip: "Each HeLab writes its own log file, renamed and
+  started again every 1 MB. At startup HeLab deletes the oldest log files beyond this number, every
+  session's counted, never a running HeLab's. Help › Show log folder shows them."
+- After Delete nothing is shown; one INFO line logs "Deleted N old log file(s), X MB". A status-bar
+  note could follow if wanted.
+
+**Checks:** `pytest -n 12 --reruns 5 --reruns-delay 1 -rR`: 2474 passed, 2 skipped, 2 xfailed, **no
+RERUN**. `mypy helab/ --strict` (154 files), `mypy tests --strict` and `pyright helab tests` are
+clean. The new tests fail before `fed0fae`: `OldLogs` and the setting don't exist, and the rotation
+constants differ.
+
+**Proposed doc changes (for the Coordinator).** My role doesn't edit these; text ready to apply:
+
+- `AGENTS.md`, Running paragraph: replace "(INFO and up, rotated at 2 MB, 4 older files; macOS
+  `~/Library/Caches/HeLab/logs/`, Windows `%LOCALAPPDATA%\HeLab\logs\`)" with "(INFO and up, rotated
+  at 1 MB, 10 older files; macOS `~/Library/Caches/HeLab/logs/`, Windows `%LOCALAPPDATA%\HeLab\logs\`;
+  Help › Show log folder)". Replace "Nothing deletes old sessions' files." with: "At startup, off the
+  GUI thread (`helab/views/OldLogs.py`), HeLab deletes the oldest log files by mtime beyond Settings
+  → General → Log files to keep (default 300, every session's files and rotated copies counted);
+  past 50 MB left it asks once per session "Log files use X MB. Delete old ones?" (Keep the default,
+  for the session; Delete goes under 20 MB). Never a running HeLab's files (live instance locks, this
+  pid) or one modified in the last minute; one that can't be deleted is skipped and logged
+  (`app_log.tidy_logs`, `trim_logs`)."
+- `AGENTS.md`, Architecture › Threading: after "the single analysis worker thread (`AnalysisRunner`)…",
+  add "and the short-lived startup thread that tidies old log files (`OldLogs`)".
+- `roadmaps/known-issues.md`: move "Old log files pile up" to Fixed: "Old log files pile up
+  (2026-10-22, R-11): fixed in `fed0fae`: 1 MB × 10 rotation, Settings → General → Log files to keep
+  (300) at startup, the 50 MB question down to under 20 MB, Help › Show log folder."
