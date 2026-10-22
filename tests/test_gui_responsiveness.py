@@ -320,12 +320,14 @@ def test_output_close_failure_cannot_leave_dead_helper_in_active_queue(
     try:
         service.submit("first-tab", 0, "/first", "scan")
         service.submit("second-tab", 0, "/second", "scan")
-        qtbot.waitUntil(lambda: done == ["/first", "/second"] and not service.active, timeout=3000)
+        # The reader logs the failed close after it sends the helper's exit, so the second scan can
+        # finish first (RSPE Windows PC reruns); 10 s for Windows' slower process starts.
+        qtbot.waitUntil(lambda: done == ["/first", "/second"] and not service.active
+                        and "Could not close I/O helper output" in caplog.text, timeout=10_000)
         assert not service.pending and not service.retired
-        assert "Could not close I/O helper output" in caplog.text
     finally:
         service.shutdown()
-        qtbot.waitUntil(lambda: all(p.poll() is not None for p in processes), timeout=3000)
+        qtbot.waitUntil(lambda: all(p.poll() is not None for p in processes), timeout=10_000)
 
 
 def test_pending_queue_is_bounded(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

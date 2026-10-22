@@ -238,6 +238,7 @@ def _cache_move_step(mover: Any, action: str, app_dir: str, move: dict[str, Any]
               "store_at": mover.store_at(saved) if saved is not None and ours(saved) else ""})
     elif action == "recover":
         from helab.utils.cache_setting import open_settings, write_cache_setting
+        from helab.utils.settings_defaults import DIR_CACHES_SETTING, read_setting
         settings = open_settings(move["settings"])
         unsaved: list[str] = []
 
@@ -246,9 +247,10 @@ def _cache_move_step(mover: Any, action: str, app_dir: str, move: dict[str, Any]
                 return True
             unsaved.append(path)  # The attempted value may linger in memory here, never on disk.
             return False
-        message = mover.recover(app_dir, lambda: str(settings.value("dir_caches", "", type=str)), write)
+        message = mover.recover(app_dir, lambda: str(read_setting(settings, DIR_CACHES_SETTING, typed=True)), write)
         # Usable only if the setting HeLab will read names the store: never after a failed write.
-        usable = not unsaved and mover.usable_after_recovery(app_dir, str(settings.value("dir_caches", "", type=str)))
+        usable = not unsaved and mover.usable_after_recovery(
+            app_dir, str(read_setting(settings, DIR_CACHES_SETTING, typed=True)))
         send({"kind": "move_recovered", "message": message, "usable": usable})
     else:
         raise ValueError(f"Unknown cache move action: {action}")

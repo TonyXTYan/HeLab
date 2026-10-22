@@ -48,13 +48,33 @@ def test_serves_added_plot(servers: list[DashServer]) -> None:
         assert response.status == 200
 
 
-def test_stop_frees_the_port() -> None:
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind((DashServer.HOST_NAME, 0))
+        return int(sock.getsockname()[1])
+
+
+def test_stop_frees_the_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    """After stop, the next server (this HeLab's again, or another's) gets the port at once. On a
+    port of the test's own: suites running at once share 8050. Pages the server closed leave its
+    side of their connections in TIME_WAIT for a minute, which a plain bind refuses (reruns on
+    Ubuntu CI); a server binds as DashServer does, with SO_REUSEADDR off Windows."""
     server = DashServer()
+    monkeypatch.setattr(server, "HOST_PORT", free_port())
     port = server.start()
+    assert port == server.HOST_PORT
+    with socket.create_connection((DashServer.HOST_NAME, port), timeout=10) as page:
+        page.sendall(b"GET /_dash-layout HTTP/1.0\r\n\r\n")
+        while page.recv(65536):
+            pass  # Until the server closes it.
     server.stop()
     assert server._server is None
-    with socket.socket() as probe:
-        probe.bind((DashServer.HOST_NAME, port))
+    again = DashServer()
+    monkeypatch.setattr(again, "HOST_PORT", port)
+    try:
+        assert again.start() == port
+    finally:
+        again.stop()
 
 
 def test_a_newer_figure_replaces_the_shown_one_in_place() -> None:
