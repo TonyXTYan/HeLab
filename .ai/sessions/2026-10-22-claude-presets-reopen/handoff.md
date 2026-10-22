@@ -578,3 +578,27 @@ fresh start (names unknown until it sends rows; unsaved changes kept and checked
 write names its store and a helper finding another writes nothing; a change is cleared only by the
 current store holding it or a later choice; a change left unsaved when its job ends is written
 again if a replaced store answered it, else said not saved (`FolderCache` presets section)."
+
+## Review fix, round 10 (Flint on `3ba07eb..4fc315b`, the round-9 rule held): the commit after `4fc315b`, not pushed
+
+**Finding.** A change p is saved before the store's names are known. A second read is asked
+while the first is still running (`_presets_again`). HeLab starts quitting, and the first read
+fails. p was then marked "not saved" and `quitSavesChanged` fired while `quit_saves()` was
+briefly empty, so `QuitSaveDialog` accepted the quit. Only after that did the job's end queue the
+read that had been asked again. Quitting could therefore stop that retry and lose p.
+
+**Fix.** It follows from the round-9 rule: a job's continuation is queued before its end is
+announced.
+
+- `_preset_job_ended` queues the read asked again (`_presets_again`) before it emits
+  `quitSavesChanged` or `presetsChanged`.
+- `_names_unread` no longer marks changes "not saved" while such a read is already asked for.
+  They stay `PRESETS_WAIT_READ` and wait for that read, so they count as being saved. This covers
+  the earlier error notification from the failed answer (`_on_presets`), as well as a job that
+  fails outright.
+
+**Test.** `test_quitting_waits_for_a_read_asked_again_after_the_first_one_fails`, in
+`tests/test_presets_store.py`, uses the real `QuitSaveDialog` after `cancel_for_quit`. It runs
+twice: once with the first read's answer an error, once with the job itself failing. In both,
+every `quitSavesChanged` shows `["Presets"]`, the window stays open, the retry is queued, and p is
+saved before the window accepts. Both variants fail on `4fc315b`, where the window saw `[]`.

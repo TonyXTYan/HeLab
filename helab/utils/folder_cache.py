@@ -1159,7 +1159,8 @@ class FolderCache(QObject):
     # - When a job ends, a change it carried that is still unsaved, and no other job carries, is
     #   written again (to the current store) if the job's answer came from a replaced store;
     #   otherwise its save failed, and it says why until the next read tries again.
-    # So a change shown as being saved always has a job in flight that will settle it.
+    # So a change shown as being saved always has a job in flight that will settle it, and a job's
+    # continuation (a read asked again, a change written again) is queued before its end is told.
 
     def presets_session_only(self) -> str:
         """Why presets last only this session ("" if a helper saves them)."""
@@ -1329,8 +1330,10 @@ class FolderCache(QObject):
         self.presetsChanged.emit()
 
     def _names_unread(self, message: str) -> None:
-        """A read failed before the store's names were known: changes made meanwhile wait for the next."""
-        if not self.presets_read:
+        """A read failed before the store's names were known: changes made meanwhile wait for the
+        next, said not saved meanwhile, unless one is already asked for (``_presets_again``): they
+        wait for that, being saved (so quitting never sees nothing to wait for between the two)."""
+        if not self.presets_read and not self._presets_again:
             self.presets_unsaved.update(dict.fromkeys(self._presets_unknown,
                                                       f"not saved: the saved presets can't be read ({message})"))
 
@@ -1353,11 +1356,12 @@ class FolderCache(QObject):
                 self.presets_error = message  # (A job that writes reads after: it read nothing either.)
                 self._names_unread(message)
             logging.warning("Presets: %s", message)
-        self.quitSavesChanged.emit()
-        self.presetsChanged.emit()
         if self._presets_again and not carried:
+            # Queued before anyone hears of this job's end: quitting waits for it.
             self._presets_again = False
             self._read_presets()
+        self.quitSavesChanged.emit()
+        self.presetsChanged.emit()
 
     def load_file(self, path: str) -> str:
         """The TXY file a running load of ``path`` is reading now ("" if none), from memory."""

@@ -689,3 +689,42 @@ def test_a_replacement_stores_failed_read_leaves_its_names_unknown(qtbot: QtBot,
     assert cache.presets_conflicts == {(ARR, "", "r"): PRESET_FOUND}
     assert stores.held["B"]["q"]["record"] == '"mine"' and stores.held["B"]["r"]["record"] == '"theirs"'
     assert not cache.presets_unsaved and cache.quit_saves() == [] and cache.presets_known()
+
+
+# Review round 10 (Flint, 3ba07eb..4fc315b): a job's continuation is queued before its end is told
+
+
+@pytest.mark.parametrize("failure", ["error answer", "job error"])
+def test_quitting_waits_for_a_read_asked_again_after_the_first_one_fails(qtbot: QtBot, service: IOService,
+                                                                         failure: str) -> None:
+    """p is saved before the store's names are known, and a read is asked again while the first
+    runs; HeLab starts quitting; the first read fails (its answer an error, or the job itself).
+    The real quit window never sees nothing to wait for: the read asked again is queued before
+    anyone hears of the failure, p waits for it, and is saved before the window closes."""
+    from helab.views.QuitSaveDialog import QuitSaveDialog
+    stores = Stores()
+    jobs, cache = frozen()
+    assert cache.set_presets([(ARR, "", "p", '"mine"')]) == PRESETS_WAIT_READ
+    first = admin_job(jobs, 0)
+    cache.read_presets()  # (The Presets menu opened, say.)
+    assert cache._presets_again and preset_jobs(jobs) == [first]
+    cache.cancel_for_quit()
+    dialog = QuitSaveDialog(cache)
+    qtbot.addWidget(dialog)
+    results: list[int] = []
+    dialog.finished.connect(results.append)
+    dialog.open()
+    told: list[list[str]] = []
+    cache.quitSavesChanged.connect(lambda: told.append(cache.quit_saves()))
+    if failure == "error answer":
+        answer(jobs, first, {"kind": "presets", "saved": [], "error": "disk I/O error", "store": "A"},
+               {"kind": "done"})
+    else:
+        answer(jobs, first, {"kind": "error", "message": "disk I/O error"})
+    assert told and all(saves == [PRESETS_SAVING] for saves in told)
+    assert results == [] and cache.preset_unsaved(ARR, "", "p") == PRESETS_WAIT_READ
+    retry = admin_job(jobs, 0)
+    assert retry is not first
+    drain(jobs, stores, "A")  # The retry reads A; p is written to it.
+    qtbot.waitUntil(lambda: bool(results), timeout=5_000)
+    assert not dialog.skipped and stores.held["A"]["p"]["record"] == '"mine"' and not cache.presets_unsaved

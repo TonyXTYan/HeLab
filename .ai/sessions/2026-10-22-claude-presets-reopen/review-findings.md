@@ -251,3 +251,16 @@ helper output and a store recreated at the same path:
    (`folder_cache.py:1272-1281`): on A→B `presets_read` stays true, so B's error ("no such column:
    kind") still shows "(none saved)" and lets `set_presets` bypass PRESETS_WAIT_READ. Reset name
    knowledge on identity change until that store supplies rows.
+
+## Round 10 (Flint, 3ba07eb..4fc315b)
+
+Round-9 findings fixed; the rule held in all 1680 commit/delivery/end orders of three writes and all
+720 success/failure orders during quit. Suite 2592 passed, no RERUN; mypy/pyright clean. One P2:
+
+1. [P2] Quit can complete before an already requested read retry is queued
+   (`helab/utils/folder_cache.py:1356`, also `:1328`, `:1358-1360`): p saved before names are known,
+   `read_presets` asked again (`_presets_again`), quit, first read fails: p is marked not saved and
+   `quitSavesChanged` fires while `quit_saves` is briefly empty, so `QuitSaveDialog` accepts; only
+   then does `_preset_job_ended` queue the retry (p back to PRESETS_WAIT_READ, `quit_saves()==["Presets"]`).
+   The window may quit and stop that retry, losing p. Schedule the requested continuation before
+   publishing a quit-ready state (including the earlier presets-error notification).
