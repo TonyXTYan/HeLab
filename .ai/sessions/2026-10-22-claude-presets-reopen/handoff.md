@@ -239,3 +239,17 @@ strict mypy and pyright clean.
   tab's old pin held and a waiter made after each drop (mismatch → load → evicted; folder changed;
   cleared), a cached read racing a mismatch, and an arrangement applied over a pinned old dataset.
   Full suite 2549 passed, no RERUN; strict mypy and pyright clean.
+
+## Review fix, round 4 (Flint on `222bcdb`): the commit after `222bcdb`, not pushed
+
+**`helab/utils/folder_cache.py`, for the Result Cache merge (replaces round 3's condition):**
+`_mismatch` cancels the folder's in-flight `cached` job and marks its requests being delivered
+cancelled (as `_invalidate_data` does), so a read started before a mismatch never lands after it,
+even once a replacement load has cleared the mismatch. Round 3's `job.path in self.mismatched`
+condition in the `loaded` branch is removed (redundant: every caller that starts a cached read
+refuses while mismatched). The two changes in that file are these lines in `_mismatch` only.
+Recovery is unchanged (Load as it is now, the tab's own loads, cached reads asked after the
+folder matched again). Tests: `tests/test_presets_mismatch_tab.py` (Flint's order with a real
+`FolderExplorer`, ending with a post-resolution cached read that is taken) and the same order at
+`FolderCache` level in `tests/test_presets_plots.py`; both fail on `222bcdb`. Full suite 2551
+passed, no RERUN; strict mypy and pyright clean.
