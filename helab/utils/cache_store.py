@@ -59,6 +59,29 @@ TABLES: dict[Kind, str] = {"datasets": "datasets", **RECORD_TABLES}
 
 T = TypeVar("T")
 
+# Disk-cached analysis results (result caching R2, roadmaps/result-caching.md): kept beside the
+# datasets with a generation (``gen_results``) and clearing of their own, never touched by the
+# dataset kinds above (Rule 1), but within the one disk budget (Tony, 2026-10-22). One row per folder (``path``, its ``root://`` key, as datasets
+# are keyed) and exact reuse key: ``lookup`` is the SHA-256 of the canonical key JSON, without the
+# folder, so a nested root's re-key moves rows by ``path`` alone; ``family`` the SHA-256 of the same
+# plot and settings without the script's identity, environment and data, which finds an outdated
+# result of the folder. ``record`` is the result's record (JSON, no data); its data (NumPy arrays
+# and a JSON tree, never a pickle) is a file in ``results/``, retired and swept like dataset files
+# (``retired_files`` names it ``results/<file>``).
+RESULTS_DIRNAME = "results"
+RESULT_FORMAT = "npz-json-1"
+# What a result row takes in the records database beyond its text columns and their copies in the
+# indexes (ids, numbers, b-tree slack), measured: about 400 bytes.
+RESULT_ROW_BYTES = 400
+RESULT_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS results ("
+    "result_id TEXT PRIMARY KEY, path TEXT NOT NULL, lookup TEXT NOT NULL, family TEXT NOT NULL, "
+    "analysis_id TEXT NOT NULL, action TEXT NOT NULL, record TEXT NOT NULL, file TEXT NOT NULL, "
+    "bytes INTEGER NOT NULL, computed_at REAL NOT NULL, saved_at REAL NOT NULL, last_used REAL NOT NULL, "
+    "UNIQUE (path, lookup))",
+    "CREATE INDEX IF NOT EXISTS results_family ON results (path, family)",
+    "CREATE INDEX IF NOT EXISTS results_last_used ON results (last_used)")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS folder_epochs (
@@ -86,7 +109,7 @@ CREATE TABLE IF NOT EXISTS datasets (
     info TEXT NOT NULL, last_used REAL NOT NULL, job_seq INTEGER NOT NULL,
     raw_times TEXT NOT NULL DEFAULT '[]');
 CREATE INDEX IF NOT EXISTS datasets_last_used ON datasets (last_used);
-"""
+""" + "".join(f"{statement};\n" for statement in RESULT_SCHEMA)
 
 ROOT_SCHEMA = """
 CREATE TABLE IF NOT EXISTS roots (
@@ -105,6 +128,18 @@ def _root_epoch(key: str) -> str | None:
     """The ``folder_epochs`` row a data root's Clear bumps, for a ``root://<uuid>/…`` key (a name
     no folder key has)."""
     return f"root-clear://{key[7:].partition('/')[0]}" if key.startswith("root://") else None
+
+
+def _results_root_epoch(key: str) -> str | None:
+    """The ``folder_epochs`` row a data root's Clear cached analysis bumps (its results only; Clear
+    cached data's ``root-clear://`` leaves results, and their saves, alone)."""
+    return f"root-results-clear://{key[7:].partition('/')[0]}" if key.startswith("root://") else None
+
+
+def _results_epoch(key: str) -> str:
+    """The ``folder_epochs`` row a removal of one folder's results bumps (``results:<key>``): a
+    dataset removal of the folder bumps the folder's own row, which result saves don't check."""
+    return f"results:{key}"
 
 
 class StoreError(Exception):
@@ -360,6 +395,7 @@ class CacheStore:
         self._expected_layout = ROOT_LAYOUT_VERSION if root_mode else LAYOUT_VERSION
         self._root_mode = root_mode
         self.datasets_dir = os.path.join(root, "datasets")
+        self.results_dir = os.path.join(root, RESULTS_DIRNAME)
         self.database = os.path.join(root, "records.sqlite")
         self.read_only = False
         self._depth = 0
@@ -376,6 +412,8 @@ class CacheStore:
                 # no folder sets constants.)
                 self._raw_times = "raw_times" if _has_raw_times(self._conn) else "'[]'"
                 self._constants_table = _has_table(self._conn, "folder_constants")
+                # (Nor the results table: it then has no results saved, and saves none.)
+                self._results_table = _has_table(self._conn, "results")
                 meta = self._meta()
                 self.layout_version = int(meta["layout_version"])
                 self.store_id = str(meta["store_id"])
@@ -416,6 +454,7 @@ class CacheStore:
             if version is not None and version < self._expected_layout:
                 raise sqlite3.DatabaseError(f"unsupported layout version {version}")
         os.makedirs(self.datasets_dir, exist_ok=True)
+        os.makedirs(self.results_dir, exist_ok=True)
         conn = self._connect(busy_timeout, read_only=False)
         try:
             if _layout_version(conn) is None:
@@ -430,7 +469,7 @@ class CacheStore:
                             conn.execute(statement)
                     defaults: dict[str, object] = {
                         "layout_version": self._expected_layout, "store_id": uuid.uuid4().hex, "created_at": time.time(),
-                        **{f"gen_{kind}": 0 for kind in KINDS}}
+                        **{f"gen_{kind}": 0 for kind in KINDS}, "gen_results": 0}
                     # Another helper may have created it meanwhile: keep its values.
                     conn.executemany("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
                                      [(key, _dumps(value)) for key, value in defaults.items()])
@@ -1440,12 +1479,30 @@ class CacheStore:
         return (int(pages) - int(free)) * int(page_size)
 
     def _live(self) -> int:
-        """Live bytes: dataset files rows point to, plus the records database.
-        Retired files and pending saves don't count."""
+        """Live bytes: dataset and result files rows point to, plus the records database (saved
+        results count toward the one disk budget, Tony 2026-10-22). Retired files and pending
+        saves don't count."""
         datasets = self._conn.execute("SELECT COALESCE(SUM(bytes), 0) FROM datasets").fetchone()[0]
         # A pending save's record lives in the database too, but like its file it doesn't count.
         pending = self._conn.execute("SELECT COALESCE(SUM(LENGTH(record)), 0) FROM pending_saves").fetchone()[0]
-        return int(datasets) + max(0, self._records_bytes() - int(pending))
+        return int(datasets) + self._result_files() + max(0, self._records_bytes() - int(pending))
+
+    def _result_files(self) -> int:
+        if not self._results_table:
+            return 0
+        return int(self._conn.execute("SELECT COALESCE(SUM(bytes), 0) FROM results").fetchone()[0])
+
+    def _result_records(self) -> int:
+        """About what the results' rows take in the records database (their JSON and keys)."""
+        if not self._results_table:
+            return 0
+        return int(self._conn.execute(
+            "SELECT COALESCE(SUM(LENGTH(record) + 2 * (LENGTH(lookup) + LENGTH(family)) + 3 * LENGTH(path) + "
+            f"{RESULT_ROW_BYTES}), 0) FROM results").fetchone()[0])
+
+    def _results_live(self) -> int:
+        """What saved results take of the live bytes: their files and about their rows."""
+        return self._result_files() + self._result_records()
 
     def _dataset_bytes(self, path: str) -> int | None:
         row = self._conn.execute("SELECT bytes FROM datasets WHERE path = ?", (path,)).fetchone()
@@ -1728,24 +1785,32 @@ def _transient_io_error(exc: sqlite3.Error) -> bool:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Bring a store made by an earlier HeLab of this layout up to date, on every writable open:
-    the ``folder_constants`` table (F0b) and ``datasets.raw_times`` (D7; ``[]``: no raw times
-    known). ``SCHEMA`` gives a new store both; a store created before either is never created
-    again, so without this it would lack them for good. Older HeLabs name the tables and columns
-    they use, so they keep working with these. Checked again under the write lock: several
-    helpers may open an old store at once, and only the first one changes it."""
-    def missing() -> tuple[bool, bool]:
+    the ``folder_constants`` table (F0b), ``datasets.raw_times`` (D7; ``[]``: no raw times
+    known) and the ``results`` table with its ``gen_results`` generation (result caching R2).
+    ``SCHEMA`` gives a new store all of them; a store created before one is never created
+    again, so without this it would lack it for good. Older HeLabs name the tables and columns
+    they use, so they keep working with these (they never read or clear results). Checked again
+    under the write lock: several helpers may open an old store at once, and only the first one
+    changes it."""
+    def missing() -> tuple[bool, bool, bool]:
         return (not _has_table(conn, "folder_constants"),
-                _has_table(conn, "datasets") and not _has_raw_times(conn))
+                _has_table(conn, "datasets") and not _has_raw_times(conn),
+                not _has_table(conn, "results") or conn.execute(
+                    "SELECT 1 FROM meta WHERE key = 'gen_results'").fetchone() is None)
     if not any(missing()):
         return
     conn.execute("BEGIN IMMEDIATE")
     try:
-        constants, raw_times = missing()  # (Another helper may have added them meanwhile.)
+        constants, raw_times, results = missing()  # (Another helper may have added them meanwhile.)
         if constants:
             conn.execute("CREATE TABLE IF NOT EXISTS folder_constants "
                          "(path TEXT PRIMARY KEY, record TEXT NOT NULL, set_at REAL NOT NULL)")
         if raw_times:
             conn.execute("ALTER TABLE datasets ADD COLUMN raw_times TEXT NOT NULL DEFAULT '[]'")
+        if results:
+            for statement in RESULT_SCHEMA:
+                conn.execute(statement)
+            conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('gen_results', '0')")
         conn.execute("COMMIT")
     except BaseException:
         conn.execute("ROLLBACK")
