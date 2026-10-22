@@ -42,3 +42,43 @@ cross-folder reuse); add "clear a result reused from disk" to the manual checks.
 
 Gauge's checks at `6906d96` (detached worktree): full suite 2541 passed, 2 skipped, 2 xfailed, no
 RERUN; strict mypy (helab 158, tests 121) and pyright clean.
+
+## Round 2: Gauge's delta review, `6906d96..b2f342e`
+
+The four original fixes are accepted (Gauge's probes pass; codec errors normalised; sweep deadlines
+scheduled). No P0/P1 or schema blocker; the `pending_results` migration was checked against stores
+made by `c3d4b50` and `6906d96` code (both reopen, inventory, clear and sweep the migrated store).
+Fix the two new P2s before landing, and the P3 (small), each with a regression test through the real
+helper/GUI events, then reply to CoCo with the commits.
+
+1. **[P2] Make room can report its successfully adopted result as discarded when another result of
+   the same folder is evicted.** `helab/utils/folder_cache.py:2094-2100` (also `:2284-2291`;
+   `helab/io_ops/admin.py:190`). `adopt_result` first sends `removed` for the evicted rows' folders;
+   `removed()` treats every pending result of those folders as discarded, emitting
+   `resultPendingAnswered(id, False)` and forgetting it. If the adopted result belongs to one of
+   those folders (normal after changing a plot's settings), its `CachedRuns._waiting` entry is popped
+   by that False, and the following True has nothing to update. Reproduced with real helpers: save a
+   20,000-value random-array result; set the budget to current usage + 50,000; change Scale and run
+   again; Make room with its actual `result_ids` plan: the store ends with the new result saved
+   (1 row), but the plot's policy stays RAM and the status says discarded (answers [False, True] for
+   one adoption). Distinguish evicting chosen saved rows from discarding pending saves, or exclude the
+   pending id being adopted from the removal handling. (The store-only same-folder test passes because
+   it doesn't exercise GUI events; the plot test raises the budget and removes no rows.)
+2. **[P2] A delayed inventory snapshot drops pending results created since the request**, silently
+   removing their Make room / Discard question. `folder_cache.py:2252-2257`. Unlike the dataset
+   `pending_saves` merge just above it, the `pending_results` assignment keeps only ids in the
+   inventory. Reproduced: hold a real empty inventory response (and its `done`), finish an
+   over-budget plot so `result_pending` adds its question, release the old inventory:
+   `pending_results` becomes `{}` while the store still holds the file; `CacheDialogs` closes the
+   question and has nothing to ask until a fresh inventory or restart; `CachedRuns` keeps the waiting
+   result with no resolution. Merge in pending additions/changes made since that inventory request
+   (per-pending timestamps as appropriate), as the dataset merge does.
+3. **[P3] A successful adoption leaves the full/pending warning on the plot.**
+   `helab/views/plots/cached_results.py:175-179`, `helab/views/plots/instance.py:385-399`. The pending
+   event adds "not saved yet: the disk cache is full (Make room or Discard)" to
+   `_cache_status`/`status_label`; adoption only calls `_saved`. Reproduced without evictions
+   (over-budget result, raise the budget, adopt: policy disk, row exists, status still says not saved
+   yet). Clear that operation's pending warning when saved or discarded, keeping unrelated warnings.
+
+Gauge's checks at `b2f342e`: full suite 2560 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
+(helab 158, tests 122) and pyright clean; `git diff --check` clean.

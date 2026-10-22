@@ -44,6 +44,10 @@ if TYPE_CHECKING:
     from helab.utils.folder_cache import FolderCache
 
 
+# The plot's status while its result waits for the user's answer (replaced once answered).
+PENDING_NOTE = "not saved yet: the disk cache is full (Make room or Discard)"
+
+
 def reuse_on(settings: Optional[QSettings] = None) -> bool:
     """Settings → Cache › Reuse saved analysis results (on by default): off, no plot looks its runs
     up or saves them."""
@@ -266,7 +270,7 @@ class CachedRuns(QObject):
         if kind == "result_pending":
             # Doesn't fit the disk budget: the disk cache asks the user (Make room or Discard).
             self._waiting[str(event.get("pending_id"))] = (result, int(event.get("bytes") or 0))
-            self._note("not saved yet: the disk cache is full (Make room or Discard)")
+            self._note(PENDING_NOTE)
             return
         if kind == "result_saved":
             size = int(event.get("bytes") or 0)

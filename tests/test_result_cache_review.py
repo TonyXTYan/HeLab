@@ -167,3 +167,102 @@ def test_a_damaged_result_file_is_a_codec_error(damage: str) -> None:
         data = b""
     with pytest.raises(CodecError):
         result_codec.unpack(data)
+
+
+# Round 2: the Make room flow
+
+class Noisy(Costly):
+    """A result of 20,000 random values (about 160 kB, incompressible), one per Scale."""
+
+    def compute(self, action_name: str, context: Any) -> Any:
+        data = super().compute(action_name, context)
+        return type(data)(np.random.default_rng(int(context.parameters["scale"])).random(20_000), data.scale)
+
+
+def make_room_button(dialogs: Any) -> Any:
+    box = dialogs.dialog
+    assert box is not None
+    return next(button for button in box.buttons() if button.text() == "Make room")
+
+
+def test_make_room_evicting_a_result_of_the_same_folder_saves_the_new_one(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.utils import folder_cache
+    from helab.views.CacheDialogs import CacheDialogs
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    dialogs = CacheDialogs(cache, window, lambda: None)
+    instance = open_plot(window, qtbot, folder_view(tmp_path), Noisy())
+    qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
+    assert cache.disk_usage is not None
+    monkeypatch.setattr(folder_cache, "_disk_budget", cache.disk_usage + 50_000)
+    monkeypatch.setattr(folder_cache, "_disk_budget_set_at", time.time())
+    root = instance.parameter_root
+    assert root is not None
+    root.child("scale").setValue(2)  # Another result of the same folder: it doesn't fit beside the first.
+    instance.run()
+    qtbot.waitUntil(lambda: dialogs.dialog is not None, timeout=WAIT)
+    [entry] = cache.pending_results.values()
+    assert entry["room"]["possible"] and len(entry["room"]["result_ids"]) == 1
+    answers: list[bool] = []
+    cache.resultPendingAnswered.connect(lambda pending_id, done: answers.append(done))
+    make_room_button(dialogs).click()
+    qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
+    assert answers == [True] and results_saved() == 1
+    status = instance.status_label.text()
+    assert "discarded" not in status and "not saved yet" not in status
+    dialogs.detach()
+    close(window)
+
+
+def test_a_delayed_inventory_keeps_a_result_waiting_since(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.utils import folder_cache
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    held: list[tuple[IORequest, dict[str, Any]]] = []
+    real = cache._on_admin_event
+    owner = cache.cache_admin("inventory")  # Asked before the result waits; its answer is held.
+
+    def hold(producer: IORequest, event: dict[str, Any]) -> None:
+        if producer.owner == owner and not getattr(hold, "released", False):
+            held.append((producer, event))
+            return
+        real(producer, event)
+    monkeypatch.setattr(cache, "_on_admin_event", hold)
+    qtbot.waitUntil(lambda: any(event["kind"] == "done" for _, event in held), timeout=WAIT)
+    monkeypatch.setattr(folder_cache, "_disk_budget", 1)
+    monkeypatch.setattr(folder_cache, "_disk_budget_set_at", time.time())
+    instance = open_plot(window, qtbot, folder_view(tmp_path), Costly())
+    qtbot.waitUntil(lambda: bool(cache.pending_results), timeout=WAIT)
+    setattr(hold, "released", True)
+    for producer, event in held:
+        real(producer, event)
+    assert len(cache.pending_results) == 1  # The older inventory didn't drop it.
+    assert "not saved yet" in instance.status_label.text()
+    close(window)
+
+
+def test_a_result_saved_after_make_room_clears_the_plots_warning(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.utils import folder_cache
+    from helab.views.CacheDialogs import CacheDialogs
+    monkeypatch.setattr(folder_cache, "_disk_budget", 1)
+    monkeypatch.setattr(folder_cache, "_disk_budget_set_at", time.time())
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    dialogs = CacheDialogs(cache, window, lambda: None)
+    instance = open_plot(window, qtbot, folder_view(tmp_path), Costly())
+    qtbot.waitUntil(lambda: dialogs.dialog is not None, timeout=WAIT)
+    assert "not saved yet" in instance.status_label.text()
+    monkeypatch.setattr(folder_cache, "_disk_budget", 8 << 30)  # The user raised the budget meanwhile.
+    monkeypatch.setattr(folder_cache, "_disk_budget_set_at", time.time())
+    box = dialogs.dialog
+    assert box is not None
+    button = next((b for b in box.buttons() if b.text() == "Make room"), None)
+    if button is None:  # (Asked as "results alone can't make room": answered with the new budget.)
+        dialogs._answer(next(iter(cache.pending_results)), dialogs._asking[1], "adopt_result")
+        dialogs._close()
+    else:
+        button.click()
+    qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
+    assert "not saved yet" not in instance.status_label.text() and results_saved() == 1
+    dialogs.detach()
+    close(window)

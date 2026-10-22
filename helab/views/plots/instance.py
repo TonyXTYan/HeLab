@@ -36,7 +36,7 @@ from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache, sto
 from helab.utils.io_service import IORequest, get_io_service
 from helab.utils.number_format import byte_size
 from helab.utils.ram_buffers import Buffers, arrays_in, buffers
-from helab.views.plots.cached_results import CachedRuns
+from helab.views.plots.cached_results import PENDING_NOTE, CachedRuns
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.pictures import ReleasedPlot, snapshot
 if TYPE_CHECKING:
@@ -384,6 +384,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
 
     def _cached_saved(self, result: AnalysisResult, size: int) -> None:
         """The run's result is now in the disk cache: its record says so; a large one is said."""
+        if self._cache_status == PENDING_NOTE:
+            self._cached_status("")  # Saved after Make room: the question is answered.
         if size > result_cache.LARGE_RESULT_BYTES and self.workspace is not None:
             self.workspace.notice(f"Saved {self.name} ({self.view.identity.name}) in the disk cache: {byte_size(size)}")
         shown = self.shown
@@ -413,11 +415,13 @@ class AnalysisInstance(LinkedAnalysisInstance):
                                "; ".join(self._hook("parameter_warnings", [], self.shown.parameters)))
 
     def _cached_status(self, text: str) -> None:
-        """What the disk cache said of the run (not saved, couldn't be read): on the status line."""
-        self._cache_status = text
-        if not self.is_closed:
-            current = self.status_label.text()
-            self.status_label.setText(" · ".join(filter(None, (current, f"⚠ {text}"))))
+        """What the disk cache said of the run (not saved, couldn't be read, waiting for an answer): on
+        the status line, in place of what it said before ("" clears it); other warnings stay."""
+        previous, self._cache_status = self._cache_status, text
+        if self.is_closed:
+            return
+        parts = [part for part in self.status_label.text().split(" · ") if part and part != f"⚠ {previous}"]
+        self.status_label.setText(" · ".join([*parts, *([f"⚠ {text}"] if text else [])]))
 
     @pyqtSlot(object)
     def _finished(self, result: AnalysisResult) -> None:

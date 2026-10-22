@@ -187,7 +187,7 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 result.update({"adopted": False, "rejected": rejection.reason, "message": str(rejection)})
             else:
                 if taken.removal is not None:
-                    send(_results_removed_event(taken.removal))
+                    send(_results_removed_event(taken.removal, evicted=True))
                 result.update({"adopted": taken.adopted, "path": taken.path, "bytes": taken.bytes,
                                "room": None if taken.room is None else asdict(taken.room)})
         elif action == "discard_result":

@@ -485,6 +485,8 @@ class RemovedEvent(TypedDict):
     bytes: NotRequired[int]
     results: NotRequired[int]
     root: NotRequired[str | None]
+    # Saved results Make room removed for a waiting one: results waiting for an answer stay.
+    evicted: NotRequired[bool]
 
 
 class ResultGuard(TypedDict):

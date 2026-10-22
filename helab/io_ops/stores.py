@@ -175,11 +175,15 @@ def _usage(store: CacheStore) -> UsageFields:
         return {}
 
 
-def _results_removed_event(removal: Any) -> RemovedEvent:
-    """What a removal of saved results did (``CacheStore.remove_results``), kind ``results``."""
-    return {"kind": "removed", "kinds": ["results"],
-            "paths": None if removal.paths is None else list(removal.paths),
-            "results": removal.results, "bytes": removal.bytes, "root": removal.root}
+def _results_removed_event(removal: Any, *, evicted: bool = False) -> RemovedEvent:
+    """What a removal of saved results did (``CacheStore.remove_results``), kind ``results``;
+    ``evicted``: saved results Make room removed for a waiting one, which leaves waiting results be."""
+    event: RemovedEvent = {"kind": "removed", "kinds": ["results"],
+                           "paths": None if removal.paths is None else list(removal.paths),
+                           "results": removal.results, "bytes": removal.bytes, "root": removal.root}
+    if evicted:
+        event["evicted"] = True
+    return event
 
 
 def _removed_event(removal: Any) -> RemovedEvent:

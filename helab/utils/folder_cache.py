@@ -381,6 +381,8 @@ class FolderCache(QObject):
         # Analysis results that didn't fit the disk budget, waiting for Make room or Discard (R2), by
         # pending_id (several per folder): asked by CacheDialogs with the dataset saves.
         self.pending_results: dict[str, dict[str, Any]] = {}
+        # When an event added each (monotonic): an inventory asked for before keeps it.
+        self._pending_result_added: OrderedDict[str, float] = OrderedDict()
         # What late events must not undo: pending ids answered, superseded or expired; each
         # folder's newest job_seq whose save outcome arrived; when events last changed a folder's
         # pending save (an inventory requested before then doesn't override it).
@@ -1992,6 +1994,7 @@ class FolderCache(QObject):
             # Doesn't fit the disk budget: asked (Make room or Discard) with the dataset saves.
             self.pending_results[str(event["pending_id"])] = {**event, "result": True, "reason": "over_budget",
                                                               "created_at": time.time()}
+            self._pending_result_added[str(event["pending_id"])] = time.monotonic()
             self.pendingSavesChanged.emit()
         while len(self._result_ops) > self.MAX_RESULT_OPS:
             self._result_ops.popitem(last=False)
@@ -2070,8 +2073,11 @@ class FolderCache(QObject):
         self._full_warned = False
         self.update_auto_load_pause()
 
-    def removed(self, paths: list[str] | None, kinds: list[str]) -> None:
+    def removed(self, paths: list[str] | None, kinds: list[str], *, evicted: bool = False) -> None:
         """Forget what a disk cache removal took away: ``paths`` (None: every path) of ``kinds``.
+        ``evicted``: saved results Make room removed for a waiting one; results waiting for an answer
+        (the one being saved among them) aren't touched, and result reads and saves asked before aren't
+        made stale by it (a waiting result of the folder would be dropped).
 
         Cache flags and dates, saved summaries, histories and subfolder statuses go;
         datasets in RAM stay loaded but are no longer marked as cached. Results read
@@ -2080,6 +2086,8 @@ class FolderCache(QObject):
         now = time.monotonic()
         keys = None if paths is None else [self.key(path) for path in paths]
         for kind in kinds:
+            if evicted:
+                continue
             if keys is None:
                 self._removed_all[kind] = now
             else:
@@ -2091,7 +2099,7 @@ class FolderCache(QObject):
 
         def selected(known: Any) -> list[str]:
             return list(known) if keys is None else [path for path in keys if path in known]
-        if "results" in kinds:
+        if "results" in kinds and not evicted:
             # Results waiting for an answer go with the saved ones of their folders.
             gone = {pending_id for pending_id, entry in self.pending_results.items()
                     if keys is None or self.key(str(entry.get("path", ""))) in keys}
@@ -2165,6 +2173,8 @@ class FolderCache(QObject):
         results = [pending_id for pending_id in self.pending_results if pending_id in pending_ids]
         for pending_id in results:
             del self.pending_results[pending_id]
+        for pending_id in pending_ids:
+            self._pending_result_added.pop(pending_id, None)
         if gone or results:
             self.pendingSavesChanged.emit()
 
@@ -2219,7 +2229,7 @@ class FolderCache(QObject):
                 self.remember_prefs(path, cleared)
             return
         if kind == "removed":
-            self.removed(event["paths"], event["kinds"])
+            self.removed(event["paths"], event["kinds"], evicted=bool(event.get("evicted")))
             return
         started = self._started.get(producer.owner, 0.0)
         # A newer inventory was already applied: this one is stale, for the cache and its viewers.
@@ -2253,8 +2263,14 @@ class FolderCache(QObject):
             waiting = {str(entry["pending_id"]): entry for entry in event["inventory"].get("pending_results") or ()
                        if entry["pending_id"] not in self._pending_gone
                        and not self._removed_after(started, "results", self.key(entry["path"]))}
-            self.pending_results = {pending_id: {**self.pending_results.get(pending_id, {}), **entry}
-                                    for pending_id, entry in waiting.items()}
+            merged_results = {pending_id: {**self.pending_results.get(pending_id, {}), **entry}
+                                  for pending_id, entry in waiting.items()}
+            # Those an event added after this inventory was asked for stay (the store has them too).
+            for pending_id, entry in self.pending_results.items():
+                if pending_id not in merged_results and self._pending_result_added.get(
+                        pending_id, float("-inf")) > started:
+                    merged_results[pending_id] = entry
+            self.pending_results = merged_results
             self.pendingSavesChanged.emit()
             self._schedule_sweep(event["inventory"].get("next_deadline"))
         elif kind == "admin_result" and action in ("adopt", "discard"):

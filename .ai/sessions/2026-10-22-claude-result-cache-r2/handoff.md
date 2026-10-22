@@ -280,3 +280,20 @@ across folders.
 
 **Manual check to add**: clear cached analysis while a plot shows a result reused from disk: the plot
 stays, its record says "kept in RAM only", and its next Rerun computes.
+
+## Review fixes, round 2 (Gauge on `b2f342e`)
+
+1. **[P2] Make room evicting another result of the same folder.** The eviction's `removed` event says
+   `evicted`: `FolderCache.removed(..., evicted=True)` still resets the evicted folders' plots'
+   marks but leaves waiting results (the one being saved among them) and doesn't make reads or saves
+   asked before stale. One adoption now answers `[True]` and the plot shows "saved in disk cache".
+   Plots of that folder showing another saved result also say "kept in RAM only" after an eviction
+   (the event names folders, not results): conservative.
+2. **[P2] A delayed inventory** keeps waiting results an event added after it was asked for
+   (`_pending_result_added`), as the dataset merge does.
+3. **[P3] The plot's warning** "not saved yet: the disk cache is full (Make room or Discard)" is
+   replaced once answered: cleared when saved, replaced by "not saved in the disk cache (discarded)";
+   other warnings on the status line stay.
+
+Each has a regression test in `tests/test_result_cache_review.py` through real helpers, the dialog
+and FolderCache's events; all three fail without the fixes.
