@@ -2,13 +2,17 @@
 
 - **Script presets**: a plot's settings page has a Presets row (``PresetBar``): save the plot's
   settings under a name, apply a saved one, delete one. They belong to the script and action,
-  shared by every plot of it, saved under ``script_presets/<id>/<action>`` (one record per script).
+  shared by every plot of it.
 - **Arrangement presets** (``ArrangementPresets``, the main window's Presets menu): one folder,
   whether Live watched it, and its plots with their settings and places. Applying one selects
   the folder in the current tab as typing its path would, loads it as a deliberate selection
   (the normal rules: cache first, large-folder questions), opens the plots, each waiting for the
   folder's data, and turns Live on only once the folder's data shows (``PresetFolder``), saying
-  why if it can't. Saved under ``arrangement_presets/<name>``.
+  why if it can't.
+
+Both are saved in the disk cache store (its ``presets`` table, written only by helpers, like
+folder constants): Clear all, purges and Reset all settings leave them. Settings → Cache ›
+Presets… lists them (``helab/views/PresetsInspector.py``).
 
 Saved settings that don't fit the script now are named, never replaced or clamped
 (``helab.analysis.presets.check_plot``). A record that can't be read is named and left as it is.
@@ -17,12 +21,13 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 import time
 from typing import TYPE_CHECKING, Callable, List, Optional
-from urllib.parse import quote, unquote
+from urllib.parse import quote
 
 from PyQt6 import sip
-from PyQt6.QtCore import QObject, QSettings, Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (QApplication, QComboBox, QHBoxLayout, QInputDialog, QLabel, QMenu, QMessageBox,
                              QPushButton, QSizePolicy, QToolButton, QVBoxLayout, QWidget)
@@ -32,11 +37,9 @@ from helab.analysis.dataset_view import root_key
 from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.presets import (Arrangement, PlotCheck, RecordError, ScriptPreset, ScriptPresets, ScriptRef,
-                                    check_value, parse, preset_note)
+                                    check_value, dumps, parse, preset_note)
 from helab.utils.colours import AMBER
 from helab.utils.folder_cache import FolderCache
-from helab.utils.settings_defaults import ARRANGEMENT_PRESETS_PREFIX, SCRIPT_PRESETS_PREFIX, read_setting
-from helab.utils.settings_store import app_settings
 from helab.views.plots.arrangement import capture, folder_name, open_arrangement
 
 if TYPE_CHECKING:
@@ -46,81 +49,86 @@ if TYPE_CHECKING:
     from helab.views.plots.workspace import PlotWorkspace
 
 
-# Storage
+# Storage: the disk cache store's ``presets`` table, through the app's FolderCache (helpers read
+# and write it; ``FolderCache.read_presets``, ``set_presets``). Each write returns "" or why the
+# change lasts only this session for now (RAM only; saved once the store is there).
+
+SCRIPT, ARRANGEMENT = "script", "arrangement"
 
 
-def script_key(ref: ScriptRef) -> str:
-    return f"{SCRIPT_PRESETS_PREFIX}{quote(ref.analysis_id, safe='')}/{quote(ref.action, safe='')}"
+def preset_store() -> FolderCache:
+    """The app's FolderCache, which holds the presets (replaceable in tests)."""
+    from helab.utils.folder_cache import get_folder_cache
+    from helab.utils.io_service import get_io_service
+    return get_folder_cache(get_io_service())
 
 
-def read_script_presets(ref: ScriptRef, settings: Optional[QSettings] = None) -> ScriptPresets:
-    settings = settings or app_settings()
-    settings.sync()  # Another HeLab may have saved since.
-    found = ScriptPresets.parse(read_setting(settings, script_key(ref)))
-    if found.error:
-        logging.warning("Presets of %s can't be read (%s): %r", ref.label(), found.error,
-                        str(read_setting(settings, script_key(ref)))[:2000])
-    return found
+def script_scope(ref: ScriptRef) -> str:
+    """A script preset's ``scope``: its script's id and action, both percent-encoded."""
+    return f"{quote(ref.analysis_id, safe='')}/{quote(ref.action, safe='')}"
 
 
-def write_script_presets(ref: ScriptRef, text: str, settings: Optional[QSettings] = None) -> None:
-    settings = settings or app_settings()
-    settings.setValue(script_key(ref), text)
-    settings.sync()
-    signals().scriptPresetsChanged.emit(script_key(ref))
+def read_script_presets(ref: ScriptRef) -> ScriptPresets:
+    store = preset_store()
+    records = {name: text for (_, name), text in store.preset_records(SCRIPT, script_scope(ref)).items()}
+    return ScriptPresets.from_records(records, store.presets_error)
 
 
-def arrangement_key(name: str) -> str:
-    return f"{ARRANGEMENT_PRESETS_PREFIX}{quote(name, safe='')}"
+def presets_known() -> bool:
+    """The store's presets have been read (or this session's are all there are)."""
+    store = preset_store()
+    return store.presets_read or bool(store.presets_session_only())
 
 
-def arrangement_names(settings: Optional[QSettings] = None) -> List[str]:
-    settings = settings or app_settings()
-    settings.sync()
-    settings.beginGroup(ARRANGEMENT_PRESETS_PREFIX.rstrip("/"))
-    try:
-        keys = settings.childKeys()
-    finally:
-        settings.endGroup()
-    return sorted((unquote(key) for key in keys), key=str.casefold)
+def write_script_preset(preset: ScriptPreset) -> str:
+    """Save ``preset``; ``ValueError`` for a value JSON can't hold."""
+    return preset_store().set_presets([(SCRIPT, script_scope(preset.script), preset.name, dumps(preset))])
 
 
-def read_arrangement(name: str, settings: Optional[QSettings] = None) -> Arrangement:
+def delete_script_preset(ref: ScriptRef, name: str) -> str:
+    return preset_store().set_presets([(SCRIPT, script_scope(ref), name, None)])
+
+
+def arrangement_names() -> List[str]:
+    return sorted((name for _, name in preset_store().preset_records(ARRANGEMENT)), key=str.casefold)
+
+
+def read_arrangement(name: str) -> Arrangement:
     """The arrangement preset ``name``; ``RecordError`` (naming why) if it can't be read."""
-    settings = settings or app_settings()
-    text = read_setting(settings, arrangement_key(name))
+    text = preset_store().preset_records(ARRANGEMENT).get(("", name))
+    if text is None:
+        raise RecordError("it isn't saved now")
     try:
         return parse(text)
     except RecordError:
-        logging.warning("Preset %r can't be read: %r", name, str(text)[:2000])
+        logging.warning("Preset %r can't be read: %r", name, text[:2000])
         raise
 
 
-def write_arrangement(name: str, arrangement: Arrangement, settings: Optional[QSettings] = None) -> None:
-    settings = settings or app_settings()
-    settings.setValue(arrangement_key(name), arrangement.dumps())
-    settings.sync()
+def write_arrangement(name: str, arrangement: Arrangement) -> str:
+    """Save ``arrangement`` as ``name``; ``ValueError`` for a value JSON can't hold."""
+    return preset_store().set_presets([(ARRANGEMENT, "", name, dumps(arrangement))])
 
 
-def delete_arrangement(name: str, settings: Optional[QSettings] = None) -> None:
-    settings = settings or app_settings()
-    settings.remove(arrangement_key(name))
-    settings.sync()
+def delete_arrangement(name: str) -> str:
+    return preset_store().set_presets([(ARRANGEMENT, "", name, None)])
 
 
-class PresetSignals(QObject):
-    """A script's presets changed (its ``script_key``): every plot of it lists them again."""
-    scriptPresetsChanged = pyqtSignal(str)
+def folder_now(cache: FolderCache, key: str) -> str:
+    """Where the folder ``key`` (``root://<uuid>/<relative>``) is now, by its data root as seen this
+    session ("" if it hasn't been): an arrangement's folder that moved with its root."""
+    if not key.startswith("root://"):
+        return ""
+    identifier, _, relative = key[len("root://"):].partition("/")
+    for folder, (uuid, _) in cache.data_roots.items():
+        if uuid == identifier:
+            return os.path.join(folder, *relative.split("/")) if relative else folder
+    return ""
 
 
-_signals: Optional[PresetSignals] = None
-
-
-def signals() -> PresetSignals:
-    global _signals
-    if _signals is None or sip.isdeleted(_signals):
-        _signals = PresetSignals()
-    return _signals
+def saved_note(why: str) -> str:
+    """After saving: "" if a helper saves it, else " (RAM only: why)"."""
+    return f" ({why if why.startswith('RAM only') else f'RAM only for now: {why}'})" if why else ""
 
 
 # Questions (replaceable in tests)
@@ -235,7 +243,9 @@ class PresetBar(QWidget):
         self._marks_soon.setInterval(0)
         self._marks_soon.timeout.connect(self.update_marks)
         self.refresh()
-        signals().scriptPresetsChanged.connect(self._changed)
+        store = preset_store()
+        store.presetsChanged.connect(self._changed)
+        store.read_presets()  # Another HeLab may have changed them since.
         if plot.parameter_root is not None:
             plot.parameter_root.sigTreeStateChanged.connect(self._tree_changed)
 
@@ -309,20 +319,24 @@ class PresetBar(QWidget):
         self.combo.blockSignals(False)
         problems = []
         if self.presets.error:
-            problems.append(f"{self.plot.name}'s saved presets can't be read ({self.presets.error}); saving one "
-                            "asks to replace them")
+            problems.append(f"Saved presets can't be read ({self.presets.error}): only this session's are listed")
         problems += [f"Preset “{name}” can't be read ({why})" for name, why in self.presets.unreadable.items()]
         self._problems = problems
+        note = preset_store().presets_note()
         self.combo.setEnabled(bool(names))
-        self.combo.setToolTip("\n".join(problems) if problems else
-                              f"Presets of {self.ref.label()}, shared by every plot of it" if names else
-                              f"No presets of {self.ref.label()} yet: Save… saves these settings as one")
-        self.combo.setPlaceholderText("none saved" if not problems else "⚠ can't be read")
+        self.combo.setToolTip("\n".join(problems) if problems else "\n".join(filter(None, (
+            f"Presets of {self.ref.label()}, shared by every plot of it" if names else
+            f"No presets of {self.ref.label()} yet: Save… saves these settings as one", note))))
+        self.combo.setPlaceholderText("⚠ can't be read" if problems else "reading…" if not presets_known()
+                                      else "none saved")
         self.apply_button.setEnabled(bool(names))
         self.delete_button.setEnabled(bool(names))
         if problems and not self.note.isVisible():
             self._show_problems()
-        if self.applied is not None and not self.presets.error and self.applied.name not in self.presets.presets:
+        applied = self.applied
+        row = preset_store().presets.get((SCRIPT, script_scope(self.ref), applied.name)) if applied else None
+        if applied is not None and applied.name not in self.presets.presets and (
+                (row is not None and row["record"] is None) or (presets_known() and not self.presets.error)):
             self.set_applied(None)  # Deleted (by another plot of the script): nothing to compare with.
 
     def _show_problems(self) -> None:
@@ -330,9 +344,9 @@ class PresetBar(QWidget):
         problems = self._problems
         self._show(f"⚠ {problems[0]}" if problems else "", "\n".join(problems), amber=bool(problems))
 
-    @pyqtSlot(str)
-    def _changed(self, key: str) -> None:
-        if key == script_key(self.ref) and not sip.isdeleted(self):
+    @pyqtSlot()
+    def _changed(self) -> None:
+        if not sip.isdeleted(self):
             self.refresh()
 
     def set_note(self, what: str, check: PlotCheck, kept: str, quiet: bool = False) -> None:
@@ -371,27 +385,21 @@ class PresetBar(QWidget):
     def _save_as(self, name: str, ask: bool = True) -> None:
         plot = self.plot
         presets = read_script_presets(self.ref)
-        if presets.error:
-            if not self.confirm(self, "Replace unreadable presets?",
-                                f"{plot.name}'s saved presets can't be read ({presets.error}). Saving “{name}” "
-                                "replaces them (what was there is in HeLab's log).", "Replace them"):
-                return
-            presets = ScriptPresets()
-        elif ask and (name in presets.presets or name in presets.unreadable):
+        if ask and (name in presets.presets or name in presets.unreadable):
             if not self.confirm(self, "Replace preset?", f"A preset “{name}” of {plot.name} exists. Replace it?",
                                 "Replace"):
                 return
         preset = ScriptPreset(name, self.ref, plot.values(), plot.backend(), time.time())
         try:
-            text = presets.with_preset(preset)
+            why = write_script_preset(preset)
         except ValueError as error:  # A value JSON can't hold (not a finite number).
             self._show(f"⚠ Preset “{name}” not saved: {error}", str(error), amber=True)
             return
-        write_script_presets(self.ref, text)
         plot.preset_from = (name, preset.saved_at)
         self.combo.setCurrentText(name)
         self.set_applied(preset)
-        self._show(f"Saved preset “{name}”", f"Every plot of {self.ref.label()} lists it", amber=False)
+        self._show(f"Saved preset “{name}”{saved_note(why)}", f"Every plot of {self.ref.label()} lists it",
+                   amber=bool(why))
 
     def apply(self) -> None:
         name = self.combo.currentText()
@@ -412,14 +420,10 @@ class PresetBar(QWidget):
         if not name or not self.confirm(self, "Delete preset?", f"Delete the preset “{name}” of {self.plot.name}? "
                                         "Every plot of it loses it; plots keep their settings.", "Delete"):
             return
-        presets = read_script_presets(self.ref)
-        if presets.error:
-            self.refresh()
-            return
-        write_script_presets(self.ref, presets.without(name))
+        why = delete_script_preset(self.ref, name)
         if self.applied is not None and self.applied.name == name:
             self.set_applied(None)  # Nothing to compare with any more.
-        self._show(f"Deleted preset “{name}”", "", amber=False)
+        self._show(f"Deleted preset “{name}”{saved_note(why)}", "", amber=bool(why))
 
 
 # Arrangement presets
@@ -435,9 +439,10 @@ class PresetFolder(QObject):
     named once; its plots go on waiting. It gives up if the tab selects another folder or closes."""
 
     def __init__(self, explorer: FolderExplorer, folder: str, name: str, live: bool,
-                 notice: Callable[[str], None]) -> None:
+                 notice: Callable[[str], None], root_key: str = "") -> None:
         super().__init__(explorer)
         self.explorer, self.folder, self.name, self.live = explorer, folder, name, live
+        self.root_key = root_key
         self._notice = notice
         self.done = False
         self.load_asked = False
@@ -461,8 +466,10 @@ class PresetFolder(QObject):
             return
         node = explorer.model.nodes.get(self.folder)
         if node is not None and node.error:
+            now = folder_now(explorer.model.cache, self.root_key)
+            moved = f"; its data root is seen at another place now: {now}" if now and now != self.folder else ""
             self._notice(f"Preset “{self.name}”: {folder_name(self.folder)} can't be opened now "
-                         f"({node.error.removesuffix(' — Retry')}): its plots wait for its data")
+                         f"({node.error.removesuffix(' — Retry')}): its plots wait for its data{moved}")
             self.finish()
             return
         listed = node is not None and node.report is not None
@@ -532,6 +539,17 @@ class ArrangementPresets(QObject):
         self.replace_or_add: Callable[[Optional[QWidget], str, str], Optional[str]] = replace_or_add
         self.warn: Callable[[str, str], None] = self._warn
         self.applying: Optional[PresetFolder] = None
+        self._menu: Optional[QMenu] = None
+        store = preset_store()
+        store.presetsChanged.connect(self._presets_changed)
+        store.read_presets()  # At startup: the store's presets, for the menu and the plots' pages.
+
+    @pyqtSlot()
+    def _presets_changed(self) -> None:
+        """The store answered (or presets changed) while the menu shows: list them again."""
+        menu = self._menu
+        if menu is not None and not sip.isdeleted(menu) and menu.isVisible():
+            self.fill_menu(menu, read=False)
 
     def _warn(self, title: str, text: str) -> None:
         QMessageBox.warning(self.parent_widget, title, text)
@@ -546,8 +564,13 @@ class ArrangementPresets(QObject):
         from helab.utils.io_service import get_io_service
         return get_folder_cache(get_io_service())
 
-    def fill_menu(self, menu: QMenu) -> None:
-        """The Presets menu, as it shows: Save…, then each preset (applies it), then Delete ▸."""
+    def fill_menu(self, menu: QMenu, read: bool = True) -> None:
+        """The Presets menu, as it shows: Save…, then each preset (applies it), then Delete ▸; and,
+        when the store's presets aren't all known, why (they are read again as it opens)."""
+        self._menu = menu
+        store = preset_store()
+        if read:
+            store.read_presets()  # Another HeLab may have changed them; listed again when it answers.
         menu.clear()
         save = QAction("Save Folder and Plots as Preset…", menu)
         save.setToolTip("Save the current tab's folder, whether Live watches it, and its open plots with their "
@@ -556,6 +579,11 @@ class ArrangementPresets(QObject):
         menu.addAction(save)
         names = arrangement_names()
         menu.addSeparator()
+        note = store.presets_note()
+        if note:
+            shown = QAction(note, menu)
+            shown.setEnabled(False)
+            menu.addAction(shown)
         if not names:
             empty = QAction("No presets saved", menu)
             empty.setEnabled(False)
@@ -610,12 +638,12 @@ class ArrangementPresets(QObject):
         arrangement = capture(self.plots, mine, folder=key,
                               root_key=root_key(root[0], root[1], key) if root else "", live=live)
         try:
-            write_arrangement(name, arrangement)
+            why = write_arrangement(name, arrangement)
         except ValueError as error:
             self.warn("Preset not saved", f"“{name}” couldn't be saved: {error}")
             return None
         self.plots.notice(f"Saved preset “{name}”: {folder_name(folder)}, {len(mine):,} plot"
-                          f"{'' if len(mine) == 1 else 's'}" + (", Live" if live else ""))
+                          f"{'' if len(mine) == 1 else 's'}" + (", Live" if live else "") + saved_note(why))
         return arrangement
 
     def apply(self, name: str) -> List[AnalysisInstance]:
@@ -656,7 +684,8 @@ class ArrangementPresets(QObject):
             self.plots.notice(f"Preset “{name}”: Live off for {folder_name(folder)}")
         opened, failed = open_arrangement(self.scripts, self.cache(), arrangement, folder=folder,
                                           layout=how == "replace")
-        presets = {plot.script: read_script_presets(plot.script) for plot in arrangement.plots if plot.preset}
+        presets = ({plot.script: read_script_presets(plot.script) for plot in arrangement.plots if plot.preset}
+                   if presets_known() else {})
         for instance, saved in opened:
             # Its values are the arrangement's own; the script preset they came from may have changed.
             note = preset_note(saved, presets.get(saved.script))
@@ -671,14 +700,15 @@ class ArrangementPresets(QObject):
         if missing:
             self.plots.notice(f"Preset “{name}”: not opened: {'; '.join(missing)}")
         # Loaded as a deliberate selection, and Live once its data shows (``PresetFolder``).
-        self.applying = PresetFolder(explorer, folder, name, arrangement.live, self.plots.notice)
+        self.applying = PresetFolder(explorer, folder, name, arrangement.live, self.plots.notice,
+                                     arrangement.root_key)
         return [instance for instance, _ in opened]
 
     def delete(self, name: str) -> bool:
         if not self.confirm(self.parent_widget, "Delete preset?", f"Delete the preset “{name}”? Open plots stay.",
                             "Delete"):
             return False
-        delete_arrangement(name)
-        self.plots.notice(f"Deleted preset “{name}”")
+        why = delete_arrangement(name)
+        self.plots.notice(f"Deleted preset “{name}”{saved_note(why)}")
         return True
 

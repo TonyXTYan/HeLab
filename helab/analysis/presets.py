@@ -4,7 +4,7 @@
 A **script preset** (``ScriptPreset``) is one script's settings under a name: every parameter's
 value as stored and its drawing library (not its Live group: when a plot reruns during Live is
 about watching a folder, not about what the analysis computes), shared by every plot of that
-script and action (``ScriptPresets``, one record per script).
+script and action (``ScriptPresets``; each saved as its own record).
 
 An **arrangement** is one folder's: the folder (its source path and, if known, its ``root://``
 key), whether Live watches it, the plots open on it and where they sit (``dock_state``: the
@@ -391,58 +391,35 @@ class ScriptPreset:
 @dataclass(frozen=True)
 class ScriptPresets:
     """One script's saved presets, as read: those that can be read, those that can't (name →
-    why), and ``error`` when the whole record can't (then nothing is read, and ``raw`` keeps what
-    was there). Changing it keeps every entry it doesn't change as it was, unreadable ones too."""
+    why), and ``error`` when the saved ones couldn't be read at all (then those known are
+    this session's, never "none saved")."""
     presets: Mapping[str, ScriptPreset] = field(default_factory=dict)
     unreadable: Mapping[str, str] = field(default_factory=dict)
     error: str = ""
-    raw: Mapping[str, Any] = field(default_factory=dict)  # Every entry as saved, by name
 
     @classmethod
-    def parse(cls, text: Any) -> ScriptPresets:
-        """``text`` as saved ("" or None: no presets); never raises."""
-        if text is None or text == "":
-            return cls()
-        if not isinstance(text, str):
-            return cls(error="not text")
-        try:
-            data = json.loads(text)
-        except ValueError as error:
-            return cls(error=f"not valid JSON ({error})")
-        if not isinstance(data, dict) or not isinstance(data.get("presets"), dict):
-            return cls(error="not a presets record")
-        version = data.get("format")
-        if not isinstance(version, int) or isinstance(version, bool):
-            return cls(error="no format version")
-        if version > FORMAT:
-            return cls(error=f"saved by a newer HeLab (format {version}; this HeLab reads {FORMAT})")
+    def from_records(cls, records: Mapping[str, str], error: str = "") -> ScriptPresets:
+        """The presets saved as ``records`` (name → JSON text, one per preset); never raises."""
         presets: dict[str, ScriptPreset] = {}
         unreadable: dict[str, str] = {}
-        for name, entry in data["presets"].items():
+        for name, text in records.items():
             try:
-                presets[name] = ScriptPreset.from_json(name, entry)
-            except RecordError as error:
-                unreadable[name] = str(error)
-        return cls(presets, unreadable, "", dict(data["presets"]))
+                presets[name] = ScriptPreset.from_json(name, json.loads(text))
+            except ValueError as error_:  # (RecordError too)
+                unreadable[name] = str(error_) if isinstance(error_, RecordError) else f"not valid JSON ({error_})"
+        return cls(presets, unreadable, error)
 
     def names(self) -> list[str]:
         """The readable presets' names, sorted without case."""
         return sorted(self.presets, key=str.casefold)
 
-    def with_preset(self, preset: ScriptPreset) -> str:
-        """The record with ``preset`` added or replaced (JSON). Not for an unreadable record."""
-        if self.error:
-            raise RecordError(f"the saved presets can't be read ({self.error})")
-        return self._dumps({**self.raw, preset.name: preset.to_json()})
 
-    def without(self, name: str) -> str:
-        if self.error:
-            raise RecordError(f"the saved presets can't be read ({self.error})")
-        return self._dumps({key: value for key, value in self.raw.items() if key != name})
-
-    @staticmethod
-    def _dumps(entries: Mapping[str, Any]) -> str:
-        return json.dumps({"format": FORMAT, "presets": dict(entries)}, allow_nan=False, separators=(",", ":"))
+def dumps(record: ScriptPreset | Arrangement) -> str:
+    """A preset's record as saved (JSON); ``ValueError`` for a value JSON can't hold (not a finite
+    number)."""
+    if isinstance(record, Arrangement):
+        return record.dumps()
+    return json.dumps(record.to_json(), allow_nan=False, separators=(",", ":"))
 
 
 def _text(value: Any) -> str:

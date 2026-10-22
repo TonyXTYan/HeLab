@@ -34,13 +34,31 @@ from helab.utils.settings_store import app_settings
 from helab.views.plots.arrangement import FolderWait, PlotReopen, capture, open_arrangement
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.instance import AnalysisInstance
-from helab.views.plots.presets import (ArrangementPresets, PresetBar, arrangement_key,
-                                       arrangement_names, read_arrangement, read_script_presets, script_key,
-                                       write_arrangement, write_script_presets)
+from helab.views.plots.presets import (ARRANGEMENT, SCRIPT, ArrangementPresets, PresetBar, arrangement_names, preset_store,
+                                       read_arrangement, read_script_presets, script_scope, write_arrangement,
+                                       write_script_preset)
 from helab.views.plots.script_tree import TreePanelWidget
 from helab.views.plots.workspace import PlotWorkspace
 
 ROWS = 10
+
+
+@pytest.fixture(autouse=True)
+def fresh_presets(qtbot: QtBot) -> Iterator[None]:
+    """The app's FolderCache lasts the worker's run: each test starts with no presets known, and
+    its preset helpers end with it (their store is the test's own)."""
+    store = preset_store()
+    store.presets.clear()
+    store.presets_unsaved.clear()
+    store.presets_read, store.presets_error = False, ""
+    yield
+    qtbot.waitUntil(lambda: store.service.closed or not store._preset_jobs, timeout=30_000)
+
+
+def stored(qtbot: QtBot) -> None:
+    """Wait for the store to have the presets saved so far, and to have answered."""
+    store = preset_store()
+    qtbot.waitUntil(lambda: store.presets_read and not store._preset_jobs, timeout=30_000)
 
 
 def folder(name: str) -> str:
@@ -402,11 +420,12 @@ def test_values_a_preset_holds_that_dont_fit_are_named_not_marked(qtbot: QtBot, 
     window = new_window(qtbot, cache, windows)
     ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
     instance = waiting_plot(window, cache, ref)
-    data = {"format": FORMAT, "presets": {"odd": {"format": FORMAT, "script": ref.to_json(), "saved_at": 1.0,
+    data: dict[str, Any] = {"format": FORMAT, "presets": {"odd": {"format": FORMAT, "script": ref.to_json(), "saved_at": 1.0,
                                                   "values": {"bins": "many", "mode": "rate"}, "backend": None},
                                           "odder": {"format": FORMAT, "script": ref.to_json(), "saved_at": 1.0,
                                                     "values": {"bins": None, "mode": ["a"]}, "backend": [1]}}}
-    app_settings().setValue(script_key(ref), json.dumps(data))
+    preset_store().set_presets([(SCRIPT, script_scope(ref), name, json.dumps(entry))
+                                for name, entry in data["presets"].items()])
     presets = bar(instance)
     presets.refresh()
     for name in ("odd", "odder"):
@@ -447,7 +466,7 @@ def test_applying_a_preset_is_an_edit_and_names_what_doesnt_fit(qtbot: QtBot, ca
     set_values(instance, {"bins": 7, "mode": "rate"})
     preset = ScriptPreset("old", ScriptRef("tests.counted", "Plot", "0", "", "Counted"),
                           {"bins": 500, "mode": "radial", "gone": 1}, "Bokeh", 1.0)
-    write_script_presets(ref, ScriptPresets().with_preset(preset))
+    write_script_preset(preset)
     presets = bar(instance)
     presets.combo.setCurrentText("old")
     runs = len(Counted.runs)
@@ -463,22 +482,26 @@ def test_applying_a_preset_is_an_edit_and_names_what_doesnt_fit(qtbot: QtBot, ca
     assert len(Counted.runs) == runs and instance.waiting()
 
 
-def test_corrupt_script_presets_are_named_and_replaced_only_when_asked(qtbot: QtBot, cache: FolderCache,
-                                                                        windows: Windows) -> None:
+def test_an_unreadable_script_preset_is_named_and_replaced_only_when_asked(qtbot: QtBot, cache: FolderCache,
+                                                                           windows: Windows) -> None:
     window = new_window(qtbot, cache, windows)
     ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
-    app_settings().setValue(script_key(ref), "{broken")
+    preset_store().set_presets([(SCRIPT, script_scope(ref), "broken", "{broken")])
     instance = waiting_plot(window, cache, ref)
     presets = bar(instance)
-    assert presets.note.text().startswith("⚠ Counted's saved presets can't be read (not valid JSON")
+    assert presets.note.text().startswith("⚠ Preset “broken” can't be read (not valid JSON")
     assert not presets.combo.isEnabled()
     presets.ask_name = lambda *_: "new"
+    presets.save()  # Another name: nothing to ask, and the unreadable one stays as it was.
+    records = preset_store().preset_records(SCRIPT, script_scope(ref))
+    assert records[(script_scope(ref), "broken")] == "{broken" and read_script_presets(ref).names() == ["new"]
+    presets.ask_name = lambda *_: "broken"
     presets.confirm = lambda *_: False
     presets.save()
-    assert read_setting(app_settings(), script_key(ref)) == "{broken"  # Left as it was.
+    assert preset_store().preset_records(SCRIPT, script_scope(ref))[(script_scope(ref), "broken")] == "{broken"
     presets.confirm = lambda *_: True
     presets.save()
-    assert read_script_presets(ref).names() == ["new"]
+    assert read_script_presets(ref).names() == ["broken", "new"]
 
 
 # Arrangements: placement, and reopening at start
@@ -995,12 +1018,13 @@ def test_a_missing_script_and_a_changed_script_preset_are_named(qtbot: QtBot, ca
                                                                 windows: Windows) -> None:
     window = new_window(qtbot, cache, windows)
     ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
-    write_script_presets(ref, ScriptPresets().with_preset(ScriptPreset("p", ref, {"bins": 3}, "", 5.0)))
+    write_script_preset(ScriptPreset("p", ref, {"bins": 3}, "", 5.0))
     saved = full(window, ref, folder("a"), bins=4)
     write_arrangement("mixed", Arrangement((
         SavedPlot(ScriptRef("user.gone", "Plot", "1", "", "Gone"), folder("a")),
         SavedPlot(saved.script, saved.path, values=saved.values, backend=saved.backend, live=saved.live,
                   preset="p", preset_saved_at=1.0)), folder("a")))
+    stored(qtbot)
     [plot] = presets_for(window, Explorer(folder("a")), cache).apply("mixed")
     assert plot.values()["bins"] == 4  # The arrangement's own values.
     assert bar(plot).note.text() == "Preset “mixed” · preset “p” changed since: this arrangement's values are used"
@@ -1009,9 +1033,10 @@ def test_a_missing_script_and_a_changed_script_preset_are_named(qtbot: QtBot, ca
 
 def test_a_corrupt_arrangement_preset_is_named_and_kept(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
     window = new_window(qtbot, cache, windows)
-    app_settings().setValue(arrangement_key("bad/one"), "{nope")
+    preset_store().set_presets([(ARRANGEMENT, "", "bad/one", "{nope")])
     write_arrangement("good", Arrangement((), folder("a")))
     presets = presets_for(window, Explorer(folder("a")), cache)
+    stored(qtbot)
     warned: List[str] = []
     presets.warn = lambda title, text: warned.append(text)
     assert presets.apply("bad/one") == []
@@ -1022,7 +1047,7 @@ def test_a_corrupt_arrangement_preset_is_named_and_kept(qtbot: QtBot, cache: Fol
     texts = [action.text() for action in actions]
     assert texts[:3] == ["Save Folder and Plots as Preset…", "⚠ bad/one (can't be read)", "good"]
     assert not actions[1].isEnabled() and "not valid JSON" in actions[1].toolTip()
-    assert read_setting(app_settings(), arrangement_key("bad/one")) == "{nope"
+    assert preset_store().preset_records(ARRANGEMENT)[("", "bad/one")] == "{nope"
     # Delete asks first.
     presets.confirm = lambda *_: False
     assert not presets.delete("good") and arrangement_names() == ["bad/one", "good"]
@@ -1140,7 +1165,7 @@ def test_a_layout_that_cant_be_read_is_named_and_the_plots_still_open(
         opened[1].dock_widget]
     assert window.notices == ["The plots open last time reopened in their tab groups: its saved layout can't be read"]
     # An arrangement preset: applied all the same (folder, plots), and said.
-    app_settings().setValue(arrangement_key("bad layout"), json.dumps(record))
+    preset_store().set_presets([(ARRANGEMENT, "", "bad layout", json.dumps(record))])
     explorer = Explorer(folder("b"))
     applied = presets_for(window, explorer, cache).apply("bad layout")
     assert len(applied) == 3 and explorer.calls[:2] == [("open_to_path", folder("a")), ("load", (folder("a"), False, True))]

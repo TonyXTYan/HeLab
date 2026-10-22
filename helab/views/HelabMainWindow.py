@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import QMainWindow, QStatusBar, QMenuBar, QWidget, QVBoxLay
 
 from helab.views.plots.arrangement import PlotReopen
 from helab.views.plots.presets import ArrangementPresets
+from helab.views.PresetsInspector import set_script_finder
 from helab.views.plots.script_tree import TreePanelWidget
 from helab.views.plots.workspace import PlotWorkspace
 from helab.resources.icons import ToolIcons
@@ -150,7 +151,8 @@ class HelabMainWindow(QMainWindow):
         self.arrangement_presets = ArrangementPresets(self.plots, self.panel_right_bottom_script_selector,
                                                       self.current_explorer, self, cache)
         self.menu_presets.aboutToShow.connect(lambda: self.arrangement_presets.fill_menu(self.menu_presets))
-        self.arrangement_presets.fill_menu(self.menu_presets)
+        self.arrangement_presets.fill_menu(self.menu_presets, read=False)  # (It has asked for them.)
+        set_script_finder(self.panel_right_bottom_script_selector.find_script)  # Settings → Cache › Presets…
 
         # Create Left Panel (File Tree View)
         self.tab_widget.currentChanged.connect(self.on_current_tab_changed)

@@ -348,8 +348,8 @@ class SettingsDialog(QDialog):
         if not self.cache_tab.confirm(
                 "Reset all settings?",
                 "Resets every HeLab setting to its default: folders, load options, both cache budgets, window "
-                "and view choices, and deletes every preset and the list of plots to reopen. The disk cache's "
-                "contents are kept.", "Reset all settings"):
+                "and view choices, and the list of plots to reopen. The disk cache's contents and your presets "
+                "are kept.", "Reset all settings"):
             return
         settings = self.settings
         # Where the disk cache is isn't a preference: it stays (moving it is Change…).

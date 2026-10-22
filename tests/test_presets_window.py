@@ -3,6 +3,7 @@ they close) and come back at the next start; the Presets menu lists the saved ar
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 from PyQt6 import QtWebEngineWidgets  # noqa: F401  (before any QApplication: the main window)
@@ -15,9 +16,21 @@ from helab.utils.settings_defaults import OPEN_PLOTS_SETTING, read_setting
 from helab.utils.settings_store import app_settings
 from helab.views.plots.arrangement import FolderWait
 from helab.views.plots.instance import AnalysisInstance
-from helab.views.plots.presets import write_arrangement
+from helab.views.plots.presets import preset_store, write_arrangement
 
 PATH = "/helab-test-nowhere/run"  # Never read: reopened plots don't touch their folder.
+
+
+@pytest.fixture(autouse=True)
+def fresh_presets(qtbot: QtBot) -> Iterator[None]:
+    """The app's FolderCache lasts the worker's run: each test starts with no presets known, and
+    its preset helpers end with it (their store is the test's own)."""
+    store = preset_store()
+    store.presets.clear()
+    store.presets_unsaved.clear()
+    store.presets_read, store.presets_error = False, ""
+    yield
+    qtbot.waitUntil(lambda: store.service.closed or not store._preset_jobs, timeout=30_000)
 
 
 def test_plots_open_at_quit_reopen_at_the_next_start(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -48,6 +61,8 @@ def test_the_presets_menu_lists_saved_arrangements(qtbot: QtBot) -> None:
     write_arrangement("Morning run", Arrangement((), PATH, live=True))
     window = HelabMainWindow()
     qtbot.addWidget(window)
+    store = preset_store()
+    qtbot.waitUntil(lambda: store.presets_read and not store._preset_jobs, timeout=30_000)
     window.arrangement_presets.fill_menu(window.menu_presets)
     texts = [action.text() for action in window.menu_presets.actions() if not action.isSeparator()]
     assert texts[:2] == ["Save Folder and Plots as Preset…", "Morning run"]

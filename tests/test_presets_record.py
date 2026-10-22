@@ -4,6 +4,7 @@ read named, and the formats round-tripping."""
 from __future__ import annotations
 
 import json
+import math
 
 import pytest
 
@@ -11,8 +12,8 @@ from helab.analysis.follow import LivePolicy, live_specs
 from helab.analysis.identity import AnalysisIdentity
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.presets import (FORMAT, Arrangement, RecordError, SavedPlot, ScriptPreset, ScriptPresets,
-                                    ScriptRef, check_plot, check_value, check_values, is_waiting, parse, preset_note,
-                                    waiting_view)
+                                    ScriptRef, check_plot, check_value, check_values, dumps, is_waiting, parse,
+                                    preset_note, waiting_view)
 
 SPECS = [
     ParameterSpec("bins", "Bins", "int", 100, (1, 1000)),
@@ -123,40 +124,33 @@ def test_an_unreadable_plot_is_left_out_and_named() -> None:
     assert arrangement.unreadable == ("x: no folder", "no script id", "not a plot record")
 
 
-def test_script_presets_keep_what_they_cant_read() -> None:
+def test_script_presets_name_what_they_cant_read() -> None:
     first = ScriptPreset("fast", REF, {"bins": 5}, "", 1.0)
-    text = ScriptPresets().with_preset(first)
-    data = json.loads(text)
-    data["presets"]["broken"] = {"format": FORMAT, "values": 3}
-    data["presets"]["newer"] = {"format": FORMAT + 1}
-    presets = ScriptPresets.parse(json.dumps(data))
+    presets = ScriptPresets.from_records({
+        "fast": dumps(first), "broken": json.dumps({"format": FORMAT, "values": 3}),
+        "newer": json.dumps({"format": FORMAT + 1}), "oops": "{oops"})
     assert presets.names() == ["fast"] and presets.presets["fast"] == first
-    assert presets.unreadable == {"broken": "its settings aren't a record", "newer": "saved by a newer HeLab (format 2)"}
-    # Saving or deleting another keeps the unreadable ones as they were.
-    kept = json.loads(presets.with_preset(ScriptPreset("slow", REF, {}, "", 2.0)))["presets"]
-    assert kept["broken"] == data["presets"]["broken"] and set(kept) == {"fast", "broken", "newer", "slow"}
-    assert set(json.loads(presets.without("fast"))["presets"]) == {"broken", "newer"}
+    assert presets.unreadable["broken"] == "its settings aren't a record"
+    assert presets.unreadable["newer"] == "saved by a newer HeLab (format 2)"
+    assert presets.unreadable["oops"].startswith("not valid JSON")
+    # The store couldn't be read: named, never "none saved".
+    assert ScriptPresets.from_records({}, "disk I/O error").error == "disk I/O error"
 
 
-@pytest.mark.parametrize("text, reason", [
-    ("{oops", "not valid JSON"), ('{"presets": {}}', "no format version"), ('{"format": 1}', "not a presets record"),
-    (json.dumps({"format": FORMAT + 1, "presets": {}}), "saved by a newer HeLab")])
-def test_unreadable_script_presets_are_named_never_raised(text: str, reason: str) -> None:
-    presets = ScriptPresets.parse(text)
-    assert reason in presets.error and presets.names() == []
-    with pytest.raises(RecordError, match="can't be read"):
-        presets.with_preset(ScriptPreset("x", REF))
-    assert ScriptPresets.parse(None).error == "" and ScriptPresets.parse("").names() == []
+def test_a_value_json_cant_hold_isnt_saved() -> None:
+    with pytest.raises(ValueError):
+        dumps(ScriptPreset("x", REF, {"bins": math.nan}))
 
 
 def test_a_preset_changed_or_deleted_since_is_said() -> None:
     plot = SavedPlot(REF, "/d", preset="fast", preset_saved_at=1.0)
-    same = ScriptPresets.parse(ScriptPresets().with_preset(ScriptPreset("fast", REF, {}, "", 1.0)))
-    changed = ScriptPresets.parse(ScriptPresets().with_preset(ScriptPreset("fast", REF, {}, "", 2.0)))
+    same = ScriptPresets.from_records({"fast": dumps(ScriptPreset("fast", REF, {}, "", 1.0))})
+    changed = ScriptPresets.from_records({"fast": dumps(ScriptPreset("fast", REF, {}, "", 2.0))})
     assert preset_note(plot, same) == ""
     assert preset_note(plot, changed) == "preset “fast” changed since: this arrangement's values are used"
     assert preset_note(plot, ScriptPresets()) == "preset “fast” deleted since: this arrangement's values are used"
     assert preset_note(SavedPlot(REF, "/d"), changed) == ""
+    assert preset_note(plot, ScriptPresets(error="disk I/O error")) == ""  # Unknown: nothing said.
 
 
 def test_a_waiting_view_has_no_data() -> None:
