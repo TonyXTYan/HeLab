@@ -362,6 +362,8 @@ class FolderCache(QObject):
         self._markers_timer.timeout.connect(self._verify_markers)
         # cache_admin jobs by owner: their action.
         self._admin: dict[str, str] = {}
+        # Saved analysis results' reads and saves in flight (R2), by their owner: the folder.
+        self._result_ops: dict[str, str] = {}
         # When cache_admin jobs and history writes started: removals since then void their results.
         self._started: dict[str, float] = {}
         # When each kind was last removed from the disk cache, for every path or per path;
@@ -1920,6 +1922,58 @@ class FolderCache(QObject):
         self._started[owner] = time.monotonic()
         return owner
 
+    # Saved analysis results (result caching R2): reads and saves on the local lane, never of a
+    # source folder. The plot that asked gets the helper's events through ``resultReady`` under
+    # the owner it gave; the disk usage they report is noted here (results count toward the disk
+    # budget, Tony 2026-10-22).
+
+    def result_cache_off(self, path: str) -> str:
+        """Why ``path`` keeps results in RAM only, as far as this session knows ("" when it may have
+        a disk cache: a helper finds out). The disk cache off, no data root, a pending duplicate."""
+        if not store_options():
+            return "the disk cache is off"
+        if self.no_root(path):
+            return "no .helab-root found here or above"
+        if self.pending_root(path) is not None:
+            return "this .helab-root is also at another location"
+        return ""
+
+    def find_result(self, owner: str, path: str, lookup: str, family: str = "") -> bool:
+        """Ask for ``path``'s result saved under ``lookup`` (else, with ``family``, an outdated one):
+        ``result_found``, ``result_missing`` or ``error``, with the save guard a save of the run
+        takes. False if it can't be asked (no disk cache for the folder, HeLab quitting)."""
+        options = store_options()
+        if not options or self.service.closed or self.quitting or self.result_cache_off(path):
+            return False
+        if not self.service.submit(owner, 0, self.key(path), "result_find",
+                                   {"cache": options, "lookup": lookup, "family": family,
+                                    "verified_volumes": self.verified_volumes()}, priority=True):
+            return False
+        self._result_ops[owner] = self.key(path)
+        return True
+
+    def save_result(self, owner: str, path: str, packed: bytes, *, lookup: str, family: str, record: Any,
+                    analysis_id: str, action: str, computed_at: float, guard: Any) -> bool:
+        """Save a run's packed result (``result_codec.pack``) under the guard its lookup gave:
+        ``result_saved`` or ``result_not_saved``. False if it can't be asked."""
+        options = store_options()
+        if not options or self.service.closed or self.quitting or self.result_cache_off(path):
+            return False
+        if not self.service.submit(owner, 0, self.key(path), "result_save",
+                                   {"cache": options, "lookup": lookup, "family": family, "record": record,
+                                    "analysis_id": analysis_id, "action": action, "computed_at": computed_at,
+                                    "guard": guard, "verified_volumes": self.verified_volumes()},
+                                   priority=True, blob=packed):
+            return False
+        self._result_ops[owner] = self.key(path)
+        return True
+
+    def _on_result_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        self._note_usage(event.get("usage"), event.get("usage_seq"))
+        if event["kind"] in ("done", "error", "cancelled", "exit"):
+            self._result_ops.pop(producer.owner, None)
+        self.resultReady.emit(producer, event)
+
     def _schedule_sweep(self, deadline: object) -> None:
         """Keep one timer for the earliest cleanup deadline any helper reported."""
         if not isinstance(deadline, (int, float)) or not math.isfinite(deadline) or self.service.closed:
@@ -2372,6 +2426,9 @@ class FolderCache(QObject):
             return
         if producer.owner in self._admin:
             self._on_admin_event(producer, event)
+            return
+        if producer.owner in self._result_ops:
+            self._on_result_event(producer, event)
             return
         if producer.owner == self._subtree_writer:
             if event["kind"] in ("error", "cancelled"):

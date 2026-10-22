@@ -245,6 +245,51 @@ class Removal:
 
 
 @dataclass(frozen=True)
+class ResultRemoval:
+    """What one removal of saved results did. ``paths`` is None for every result; ``root`` the
+    data root's UUID for a root's Clear cached analysis."""
+    paths: tuple[str, ...] | None
+    results: int = 0
+    bytes: int = 0
+    root: str | None = None
+
+
+class ResultRow(TypedDict):
+    """A saved result's row: its record (the result without data, JSON) and data file."""
+    result_id: str
+    path: str
+    lookup: str
+    family: str
+    analysis_id: str
+    action: str
+    record: Any
+    file: str
+    bytes: int
+    computed_at: float
+    saved_at: float
+    last_used: float
+
+
+@dataclass(frozen=True)
+class ResultFound:
+    """A saved result found: its row and data file's bytes; ``exact`` False for an outdated one."""
+    row: ResultRow
+    data: bytes
+    exact: bool
+
+
+@dataclass(frozen=True)
+class ResultSave:
+    """A result save: made, or not (``reason`` "over_budget": it doesn't fit the disk budget)."""
+    saved: bool
+    reason: str = ""
+    bytes: int = 0  # its file (and, saved, its record)
+    usage: int = 0  # live bytes when the save was decided
+    usage_seq: int = 0
+    budget: int | None = None
+
+
+@dataclass(frozen=True)
 class Usage:
     """The store's live bytes as of its ``writes``-th write transaction.
 
@@ -657,9 +702,33 @@ class CacheStore:
                                 continue
                             self._conn.execute(f"DELETE FROM {table} WHERE path=?", (target,))
                         self._conn.execute(f"UPDATE {table} SET path=? WHERE path=?", (target, source))
+                moved.update(self._rekey_results(old, new))
             return sorted(moved)
         except sqlite3.Error as exc:
             raise StoreError(f"Data-root subtree could not be re-keyed: {exc}") from exc
+
+    def _rekey_results(self, old: str, new: str) -> set[str]:
+        """:meth:`rekey_subtree` of saved results (many rows per folder): each moves to its new
+        key; under one key saved at both, the newer one wins and the other's file is retired."""
+        if not self._results_table:
+            return set()
+        moved: set[str] = set()
+        rows = self._conn.execute("SELECT result_id, path, lookup, saved_at, file FROM results "
+                                  "WHERE path=? OR (path>=? AND path<?)", (old, old + "/", old + "0")).fetchall()
+        for result_id, source, lookup, saved_at, file in rows:
+            target = new + str(source)[len(old):]
+            moved.add(str(source))
+            previous = self._conn.execute("SELECT result_id, saved_at, file FROM results WHERE path=? AND lookup=?",
+                                          (target, lookup)).fetchone()
+            if previous is not None:
+                if float(previous[1]) >= float(saved_at):
+                    self._retire(str(file), time.time())
+                    self._conn.execute("DELETE FROM results WHERE result_id=?", (result_id,))
+                    continue
+                self._retire(str(previous[2]), time.time())
+                self._conn.execute("DELETE FROM results WHERE result_id=?", (previous[0],))
+            self._conn.execute("UPDATE results SET path=? WHERE result_id=?", (target, result_id))
+        return moved
 
     @contextlib.contextmanager
     def transaction(self, write: bool = True) -> Generator[None, None, None]:
@@ -1305,7 +1374,7 @@ class CacheStore:
         return result
 
     def _read_file(self, file: str) -> bytes:
-        with open(os.path.join(self.datasets_dir, file), "rb") as handle:
+        with open(self._store_file(file), "rb") as handle:
             return handle.read()
 
     def read_dataset(self, path: str) -> Read[tuple[DatasetRow, bytes]]:
@@ -1384,10 +1453,220 @@ class CacheStore:
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
 
+    # Results (result caching R2): saved analysis results, reused on an exact key match.
+
+    def _store_file(self, file: str) -> str:
+        """A file the store names: a dataset file, or a result file (``results/<name>``)."""
+        if file.startswith(RESULTS_DIRNAME + "/"):
+            return os.path.join(self.results_dir, file[len(RESULTS_DIRNAME) + 1:])
+        return os.path.join(self.datasets_dir, file)
+
+    def start_result_job(self, path: str) -> SaveGuard:
+        """A guard for a job that may save a result of ``path``: the results' generation (Clear
+        cached analysis of every result), the folder's results epoch and its root's (a root's Clear
+        cached analysis). Never the dataset kinds' or ``root-clear://``: clearing cached data
+        leaves results."""
+        key = self._path_key(path)
+        if not self._results_table:
+            raise StoreReadOnly("This disk cache was written by a newer HeLab and is read-only")
+        try:
+            with self.transaction(write=False):
+                epochs = {_results_epoch(key): self._epoch(_results_epoch(key))}
+                if root := _results_root_epoch(key):
+                    epochs[root] = self._epoch(root)
+                generation = int(self._meta()["gen_results"])
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be read: {exc}") from exc
+        return SaveGuard({"results": generation}, epochs)
+
+    def _check_result_guard(self, guard: SaveGuard, key: str) -> None:
+        folder, root = _results_epoch(key), _results_root_epoch(key)
+        if "results" not in guard.generations or folder not in guard.epochs:
+            raise ValueError(f"The save guard doesn't cover results for {key}")
+        if (int(self._meta()["gen_results"]) != guard.generations["results"]
+                or self._epoch(folder) != guard.epochs[folder]
+                or (root is not None and self._epoch(root) != guard.epochs.get(root, 0))):
+            raise SaveRejected("cleared", "Cached analysis was cleared before saving completed")
+
+    def write_result_file(self, packed: bytes) -> str:
+        """Publish a result's data file under its final name (``results/<name>``); no row names it
+        yet (a killed writer's file is an orphan the sweep deletes after an hour)."""
+        if self.read_only:
+            raise StoreReadOnly("This disk cache was written by a newer HeLab and is read-only")
+        name = uuid.uuid4().hex
+        temporary = os.path.join(self.results_dir, f"tmp-{name}")
+        final = f"{name}.npz"
+        try:
+            os.makedirs(self.results_dir, exist_ok=True)
+            with open(temporary, "wb") as handle:
+                handle.write(packed)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, os.path.join(self.results_dir, final))
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                os.remove(temporary)
+            raise StoreError(f"Cached result file could not be written: {exc}") from exc
+        _fsync_dir(self.results_dir)
+        return f"{RESULTS_DIRNAME}/{final}"
+
+    def save_result(self, path: str, lookup: str, family: str, record: Mapping[str, Any], file: str,
+                    guard: SaveGuard, *, analysis_id: str, action: str, computed_at: float,
+                    budget: int | None = None, budget_set_at: float | None = None) -> ResultSave:
+        """Point the row of ``path``'s result ``lookup`` at a file from :meth:`write_result_file`,
+        replacing (retiring) one saved before under the same key, if ``guard`` still holds and the
+        folder may be cached (``no_cache``). Within the one disk budget, measured in the same
+        transaction with the row written: a save that doesn't fit isn't made (``saved`` False,
+        nothing removed to make room) and its file is retired. A rejected save raises
+        :class:`SaveRejected` and retires ``file`` too."""
+        key = self._path_key(path)
+        now = time.time()
+        size = self._size(file)
+        try:
+            with self.transaction():
+                self._check_result_guard(guard, key)
+                self._check_cacheable(key)
+                budget = self._active_budget(budget, budget_set_at)
+                self._conn.execute("SAVEPOINT result_fit")
+                previous = self._conn.execute("SELECT file FROM results WHERE path = ? AND lookup = ?",
+                                              (key, lookup)).fetchone()
+                self._conn.execute(
+                    "INSERT INTO results (result_id, path, lookup, family, analysis_id, action, record, file, bytes, "
+                    "computed_at, saved_at, last_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT (path, lookup) DO UPDATE SET family = excluded.family, record = excluded.record, "
+                    "file = excluded.file, bytes = excluded.bytes, computed_at = excluded.computed_at, "
+                    "saved_at = excluded.saved_at, last_used = excluded.last_used",
+                    (uuid.uuid4().hex, key, lookup, family, analysis_id, action, _dumps(record), file, size,
+                     computed_at, now, now))
+                usage, writes = self._live(), self._writes()
+                if budget is not None and usage > budget:
+                    self._conn.execute("ROLLBACK TO result_fit")
+                    self._conn.execute("RELEASE result_fit")
+                    self._retire(file, now)
+                    return ResultSave(False, "over_budget", size, self._live(), writes, budget)
+                self._conn.execute("RELEASE result_fit")
+                if previous is not None and previous[0] != file:
+                    self._retire(str(previous[0]), now)
+        except SaveRejected as rejection:
+            raise self._reject_result_file(file, rejection) from None
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return ResultSave(True, "", size + len(_dumps(record)), usage, writes, budget)
+
+    def _size(self, file: str) -> int:
+        try:
+            return os.path.getsize(self._store_file(file))
+        except OSError as exc:
+            raise StoreError(f"Cached file is unavailable: {exc}") from exc
+
+    def _reject_result_file(self, file: str, rejection: SaveRejected) -> SaveRejected:
+        with contextlib.suppress(sqlite3.Error, StoreError):
+            with self.transaction():
+                if self._conn.execute("SELECT 1 FROM results WHERE file = ?", (file,)).fetchone() is None:
+                    self._retire(file, time.time())
+        return rejection
+
+    def _result_row(self, key: str, where: str, args: tuple[Any, ...]) -> ResultRow | None:
+        row = self._conn.execute(
+            "SELECT result_id, path, lookup, family, analysis_id, action, record, file, bytes, computed_at, "
+            f"saved_at, last_used FROM results WHERE path = ? AND {where} ORDER BY computed_at DESC LIMIT 1",
+            (key, *args)).fetchone()
+        if row is None:
+            return None
+        return ResultRow(result_id=str(row[0]), path=self._source_path(str(row[1])), lookup=str(row[2]),
+                         family=str(row[3]), analysis_id=str(row[4]), action=str(row[5]), record=json.loads(row[6]),
+                         file=str(row[7]), bytes=int(row[8]), computed_at=float(row[9]), saved_at=float(row[10]),
+                         last_used=float(row[11]))
+
+    def find_result(self, path: str, lookup: str, family: str = "") -> Read[ResultFound]:
+        """``path``'s result saved under ``lookup`` with its data file (``exact``), else with a
+        ``family`` the newest one of the same plot and settings whose script or data differ (an
+        outdated result, ``exact`` False), else missing. A file replaced meanwhile is answered by
+        looking again once (as :meth:`read_dataset`); an error is never "nothing saved"."""
+        if self._depth:
+            raise RuntimeError("find_result can't run inside a transaction")
+        key = self._path_key(path)
+        if not self._results_table:
+            return _missing()  # (A read-only store without results: none saved.)
+        for attempt in range(2):
+            try:
+                with self.transaction(write=False):
+                    row = self._result_row(key, "lookup = ?", (lookup,))
+                    exact = row is not None
+                    if row is None and family:
+                        row = self._result_row(key, "family = ? AND lookup <> ?", (family, lookup))
+            except (sqlite3.Error, StoreError, ValueError) as exc:
+                return _error(f"Disk cache could not be read: {exc}")
+            if row is None:
+                return _missing()
+            try:
+                with open(self._store_file(row["file"]), "rb") as handle:
+                    return _found(ResultFound(row, handle.read(), exact))
+            except FileNotFoundError:
+                if attempt:
+                    return _error("Cached result file is missing")
+            except OSError as exc:
+                return _error(f"Cached result file could not be read: {exc}")
+        return _error("Cached result file is missing")  # (Not reached.)
+
+    def touch_result(self, path: str, lookup: str, now: float | None = None) -> None:
+        """Record that a saved result was shown (purges by age go by it)."""
+        key = self._path_key(path)
+        try:
+            with self.transaction():
+                self._conn.execute("UPDATE results SET last_used = ? WHERE path = ? AND lookup = ?",
+                                   (time.time() if now is None else now, key, lookup))
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+
+    def remove_results(self, paths: Iterable[str] | None = None, *, root: str | None = None,
+                       cutoff: float | None = None, _stored_keys: bool = False) -> ResultRemoval:
+        """The one removal of saved results (Clear cached analysis, purges by age): every result
+        (bumping ``gen_results``), a data root's (``root``, its UUID: bumping its results epoch),
+        those of ``paths`` (each folder's results epoch), or those not used since ``cutoff``
+        (each folder's results epoch). One transaction; files are retired. Datasets and records
+        stay."""
+        now = time.time()
+        args: tuple[Any, ...]
+        if not self._results_table:
+            raise StoreReadOnly("This disk cache was written by a newer HeLab and is read-only")
+        try:
+            with self.transaction():
+                if root is not None:
+                    top = f"root://{root}"
+                    where, args = " WHERE path = ? OR substr(path, 1, ?) = ?", (top, len(top) + 1, top + "/")
+                    self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
+                                       "DO UPDATE SET epoch = epoch + 1", (_results_root_epoch(top),))
+                elif cutoff is not None:
+                    where, args = " WHERE last_used < ?", (cutoff,)
+                elif paths is not None:
+                    keys = tuple(dict.fromkeys(path if _stored_keys else self._path_key(path) for path in paths))
+                    where, args = f" WHERE path IN ({','.join('?' * len(keys)) or 'NULL'})", keys
+                else:
+                    where, args = "", ()
+                    self._conn.execute("UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) "
+                                       "WHERE key = 'gen_results'")
+                rows = self._conn.execute(f"SELECT path, file, bytes FROM results{where}", args).fetchall()
+                for _, file, _ in rows:
+                    self._retire(str(file), now)
+                self._conn.execute(f"DELETE FROM results{where}", args)
+                by_path = root is None and cutoff is None and paths is not None
+                folders = sorted({str(path) for path, _, _ in rows} | (set(map(str, args)) if by_path else set()))
+                if root is not None or cutoff is not None or paths is not None:
+                    for folder in folders:
+                        self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
+                                           "DO UPDATE SET epoch = epoch + 1", (_results_epoch(folder),))
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        everything = root is None and cutoff is None and paths is None
+        return ResultRemoval(None if everything else tuple(self._source_path(path) for path in folders),
+                             len(rows), sum(int(size) for _, _, size in rows), root)
+
     # Removals and cleanup
 
     def root_usage(self) -> dict[str, dict[str, int]]:
-        """Per data root UUID: folders with cached records or data, and their datasets' bytes."""
+        """Per data root UUID: folders with cached records or data, and their datasets' bytes; its
+        saved results (``results``) and their files' bytes (``result_bytes``) apart."""
         usage: dict[str, dict[str, int]] = {}
         folders: dict[str, set[str]] = {}
         try:
@@ -1400,10 +1679,19 @@ class CacheStore:
                         entry = usage.setdefault(identifier, {"folders": 0, "bytes": 0})
                         entry["bytes"] += int(size)
                         folders.setdefault(identifier, set()).add(str(path))
+                if self._results_table:
+                    for path, size in self._conn.execute(
+                            "SELECT path, bytes FROM results WHERE substr(path, 1, 7) = 'root://'"):
+                        entry = usage.setdefault(str(path)[7:].partition("/")[0], {"folders": 0, "bytes": 0})
+                        entry["results"] = entry.get("results", 0) + 1
+                        entry["result_bytes"] = entry.get("result_bytes", 0) + int(size)
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be read: {exc}") from exc
         for identifier, paths in folders.items():
             usage[identifier]["folders"] = len(paths)
+        for entry in usage.values():
+            entry.setdefault("results", 0)
+            entry.setdefault("result_bytes", 0)
         return usage
 
     def clear_root(self, identifier: str) -> Removal:
@@ -1625,11 +1913,13 @@ class CacheStore:
                                "COALESCE(d.bytes, 0), p.created_at, p.job_seq FROM pending_saves p "
                                "LEFT JOIN datasets d ON d.path = p.path ORDER BY p.created_at")]
                 retired = [file for (file,) in self._conn.execute("SELECT file FROM retired_files")]
-                known = {file for (file,) in self._conn.execute(
-                    "SELECT file FROM datasets UNION SELECT file FROM pending_saves UNION "
-                    "SELECT file FROM retired_files")}
+                known = self._known_files()
+                result_ages = [[float(last_used), int(size)] for last_used, size in self._conn.execute(
+                    "SELECT last_used, bytes FROM results ORDER BY last_used")] if self._results_table else []
+                ages["results"] = result_ages
+                result_bytes = self._results_live()
                 live, writes = self._live(), self._writes()
-                records_bytes = live - sum(size for _, size in dataset_ages)
+                records_bytes = live - sum(size for _, size in dataset_ages) - self._result_files()
                 no_cache, no_auto_load = self._conn.execute(
                     "SELECT COALESCE(SUM(no_cache), 0), COALESCE(SUM(no_auto_load), 0) FROM folder_prefs").fetchone()
                 prefs = {"no_cache": int(no_cache), "no_auto_load": int(no_auto_load)}
@@ -1637,16 +1927,16 @@ class CacheStore:
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be read: {exc}") from exc
         retired_bytes = sum(self._size_or_zero(file) for file in retired)
-        try:
-            orphans = [name for name in os.listdir(self.datasets_dir) if name not in known]
-        except OSError:
-            orphans = []
+        orphans = [name for name in self._listed_files() if name not in known]
         return {
             "layout_version": self.layout_version, "store_id": self.store_id, "read_only": self.read_only,
             "root": self.root, "usage": live, "budget": budget, "records_bytes": records_bytes,
             "datasets": {"count": len(dataset_ages), "bytes": sum(size for _, size in dataset_ages),
                          "ram_bytes": ram_bytes,
                          "last_used": dataset_ages[-1][0] if dataset_ages else None},
+            # Saved results (R2): their files and rows, within ``usage``.
+            "results": {"count": len(result_ages), "bytes": result_bytes,
+                        "last_used": max((used for used, _ in result_ages), default=None)},
             "summaries": {"count": len(ages["summaries"])}, "subtrees": {"count": len(ages["subtrees"])},
             "histories": {"count": len(ages["histories"]), "blocked": blocked}, "prefs": prefs,
             "pending": pending,
@@ -1657,9 +1947,30 @@ class CacheStore:
 
     def _size_or_zero(self, file: str) -> int:
         try:
-            return os.path.getsize(os.path.join(self.datasets_dir, file))
+            return os.path.getsize(self._store_file(file))
         except OSError:
             return 0
+
+    def _known_files(self) -> set[str]:
+        """Every file a row names: datasets, pending saves, results and retired files (inside a
+        transaction)."""
+        known = {str(file) for (file,) in self._conn.execute(
+            "SELECT file FROM datasets UNION SELECT file FROM pending_saves UNION SELECT file FROM retired_files")}
+        if self._results_table:
+            known.update(str(file) for (file,) in self._conn.execute("SELECT file FROM results"))
+        return known
+
+    def _listed_files(self) -> list[str]:
+        """The files in ``datasets/`` and ``results/``, by the names rows give them ([] for a folder
+        that can't be listed: leftovers are only tidied up, the next sweep tries again)."""
+        names: list[str] = []
+        for folder, prefix in ((self.datasets_dir, ""), (self.results_dir, RESULTS_DIRNAME + "/")):
+            try:
+                names += [prefix + name for name in os.listdir(folder)
+                          if not (prefix == "" and name == RESULTS_DIRNAME)]
+            except OSError:
+                continue
+        return names
 
     def next_deadline(self) -> float | None:
         """When the next sweep has something to do: a retired file's or pending save's expiry."""
@@ -1691,7 +2002,7 @@ class CacheStore:
             deleted, still_open = 0, []
             for file in due:
                 try:
-                    os.remove(os.path.join(self.datasets_dir, file))
+                    os.remove(self._store_file(file))
                     deleted += 1
                 except FileNotFoundError:
                     pass
@@ -1711,19 +2022,14 @@ class CacheStore:
         return Sweep(deleted, len(expired), [pending_id for pending_id, _ in expired], still_open, deadline)
 
     def _sweep_orphans(self, now: float) -> int:
-        try:
-            names = os.listdir(self.datasets_dir)
-        except OSError:
-            # Leftovers are only tidied up; the next sweep tries again.
-            return 0
+        names = self._listed_files()
         with self.transaction(write=False):
-            known = {file for (file,) in self._conn.execute(
-                "SELECT file FROM datasets UNION SELECT file FROM pending_saves UNION SELECT file FROM retired_files")}
+            known = self._known_files()
         deleted = 0
         for name in names:
             if name in known:
                 continue
-            full = os.path.join(self.datasets_dir, name)
+            full = self._store_file(name)
             try:
                 # Younger files may belong to a writer that hasn't committed yet.
                 if os.path.getmtime(full) > now - ORPHAN_MIN_AGE:

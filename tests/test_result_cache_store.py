@@ -1,0 +1,292 @@
+"""Saved analysis results in the store and the local-lane helper (result caching R2): saves under
+a guard taken when the run started, within the one disk budget, found by their exact key or as an
+outdated one of their family; Clear cached analysis (all, a root's) beside Clear cached data
+(Clear all, a root's), each leaving the other's; files retired, then swept; a nested root's re-key
+moves them; a folder without a disk cache saves nothing."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import time
+from typing import Any
+
+import numpy as np
+import pytest
+
+from helab.analysis import result_codec
+from helab.io_ops import stores
+from helab.io_ops.admin import cache_admin
+from helab.io_ops.results import result_find, result_save
+from helab.utils import cache_store
+from helab.utils.cache_store import KINDS, CacheStore, DatasetRecord, SaveGuard, SaveRejected
+
+A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+RUN = f"root://{A}/run"
+
+
+def packed(size: int = 10) -> bytes:
+    return result_codec.pack(*result_codec.encode({"x": np.arange(size, dtype=np.float64), "note": "ok"}))
+
+
+def save(store: CacheStore, path: str = RUN, lookup: str = "k1", family: str = "f1", *,
+         guard: SaveGuard | None = None, data: bytes | None = None, **kwargs: Any) -> cache_store.ResultSave:
+    guard = guard or store.start_result_job(path)
+    file = store.write_result_file(data or packed())
+    return store.save_result(path, lookup, family, {"record": lookup}, file, guard, analysis_id="a", action="Plot",
+                             computed_at=kwargs.pop("computed_at", time.time()), **kwargs)
+
+
+def dataset(store: CacheStore, path: str = RUN) -> None:
+    record: DatasetRecord = {"ram_bytes": 1, "rows": 1, "shots": 1, "fingerprint": [], "problematic": [], "info": {}}
+    store.save_dataset(path, store.write_dataset_file(b"data"), record, store.start_dataset_job(path))
+
+
+@pytest.mark.no_auto_data_root
+def test_a_result_is_found_by_its_exact_key_or_as_outdated(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        assert save(store, computed_at=100.0).saved
+        exact = store.find_result(RUN, "k1", "f1").value
+        assert exact is not None and exact.exact and exact.row["record"] == {"record": "k1"}
+        assert result_codec.unpack(exact.data)[0] == result_codec.encode({"x": np.arange(10.0), "note": "ok"})[0]
+        assert save(store, lookup="k2", computed_at=200.0).saved
+        outdated = store.find_result(RUN, "k3", "f1").value
+        assert outdated is not None and not outdated.exact and outdated.row["lookup"] == "k2"  # The newest.
+        assert store.find_result(RUN, "k3", "other").missing
+        assert store.find_result(RUN, "k3").missing  # (No family: exact only.)
+        assert store.find_result(f"root://{A}/elsewhere", "k1", "f1").missing
+
+
+@pytest.mark.no_auto_data_root
+def test_saving_the_same_key_again_retires_the_old_file(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        save(store)
+        first = store.find_result(RUN, "k1").value
+        save(store)
+        second = store.find_result(RUN, "k1").value
+        assert first is not None and second is not None and first.row["file"] != second.row["file"]
+        assert store._conn.execute("SELECT COUNT(*) FROM results").fetchone()[0] == 1
+        assert store._conn.execute("SELECT 1 FROM retired_files WHERE file = ?", (first.row["file"],)).fetchone()
+        assert os.path.exists(store._store_file(first.row["file"]))  # Retired, not deleted at once.
+        store.sweep(time.time() + cache_store.RETIRE_GRACE + 1)
+        assert not os.path.exists(store._store_file(first.row["file"]))
+        assert os.path.exists(store._store_file(second.row["file"]))
+
+
+@pytest.mark.no_auto_data_root
+def test_the_sweep_deletes_old_orphan_result_files_only(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        save(store)
+        orphan = store.write_result_file(packed())  # (A writer killed before its row.)
+        young = store.write_result_file(packed())
+        old = time.time() - cache_store.ORPHAN_MIN_AGE - 10
+        os.utime(store._store_file(orphan), (old, old))
+        assert store.inventory()["orphans"]["count"] == 2
+        store.sweep()
+        assert not os.path.exists(store._store_file(orphan)) and os.path.exists(store._store_file(young))
+        row = store.find_result(RUN, "k1").value
+        assert row is not None
+
+
+@pytest.mark.no_auto_data_root
+@pytest.mark.parametrize("clear", ["all", "root", "folder"])
+def test_clearing_cached_analysis_rejects_a_save_already_running(tmp_path: Path, clear: str) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        save(store, lookup="old")
+        guard = store.start_result_job(RUN)  # The run starts...
+        removal = (store.remove_results() if clear == "all" else store.remove_results(root=A) if clear == "root"
+                   else store.remove_results([RUN]))  # ...the user clears...
+        assert removal.results == 1 and removal.paths == (None if clear == "all" else (RUN,))
+        with pytest.raises(SaveRejected) as rejected:
+            save(store, guard=guard)  # ...and its save can't bring results back.
+        assert rejected.value.reason == "cleared"
+        assert store.find_result(RUN, "k1").missing and store.find_result(RUN, "old").missing
+        assert store._conn.execute("SELECT COUNT(*) FROM results").fetchone()[0] == 0
+        assert save(store).saved  # A run started after the clear saves.
+
+
+@pytest.mark.no_auto_data_root
+def test_clear_cached_data_leaves_results_and_their_saves(tmp_path: Path) -> None:
+    """Tony, 2026-10-22: Clear cached data (Clear all, a root's) and Clear cached analysis are
+    separate; neither touches the other's."""
+    with CacheStore(str(tmp_path / "store")) as store:
+        dataset(store)
+        save(store, lookup="kept")
+        guard = store.start_result_job(RUN)
+        store.remove(KINDS)  # Clear all of the dataset cache.
+        store.clear_root(A)  # The root's Clear cached data.
+        store.remove(("datasets",), [RUN], _stored_keys=True)  # The folder's cached data.
+        assert store.find_result(RUN, "kept").found
+        assert save(store, guard=guard).saved  # Its epoch isn't the results'.
+        dataset(store)
+        store.remove_results(root=A)  # Clear cached analysis leaves the dataset.
+        assert store.read_dataset_row(RUN).found and store.find_result(RUN, "kept").missing
+
+
+@pytest.mark.no_auto_data_root
+def test_another_roots_clear_leaves_these_results(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        guard = store.start_result_job(RUN)
+        save(store, f"root://{B}/run")
+        store.remove_results(root=B)
+        assert save(store, guard=guard).saved
+        assert store.find_result(RUN, "k1").found and store.find_result(f"root://{B}/run", "k1").missing
+
+
+@pytest.mark.no_auto_data_root
+def test_results_count_toward_the_budget_and_one_that_doesnt_fit_isnt_saved(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        dataset(store)
+        before = store.usage()
+        noise = np.random.default_rng(0).random(20_000)  # (Incompressible: ~160 kB.)
+        big = result_codec.pack(*result_codec.encode({"x": noise}))
+        saved = save(store, data=big, budget=before + 250_000, budget_set_at=1.0)
+        assert saved.saved and store.usage() >= before + len(big)
+        refused = save(store, lookup="k2", data=big, budget=before + 250_000, budget_set_at=1.0)
+        assert not refused.saved and refused.reason == "over_budget"
+        assert store.find_result(RUN, "k2").missing
+        # Its file is retired at once (nothing removed to make room), and the budget is the store's.
+        assert store._conn.execute("SELECT COUNT(*) FROM retired_files").fetchone()[0] == 1
+        assert store.inventory(before + 250_000)["results"]["count"] == 1
+        # A budget set later (recorded by the store) wins over an older job's.
+        assert not save(store, lookup="k3", data=big, budget=10 ** 12, budget_set_at=0.5).saved
+
+
+@pytest.mark.no_auto_data_root
+def test_dont_cache_this_folder_refuses_result_saves(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        guard = store.start_result_job(RUN)
+        store.set_prefs(RUN, True, False, time.time())
+        with pytest.raises(SaveRejected) as rejected:
+            save(store, guard=guard)
+        assert rejected.value.reason == "no_cache"
+
+
+@pytest.mark.no_auto_data_root
+def test_a_nested_roots_rekey_moves_results(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        save(store, f"root://{A}/inner/run", lookup="k1", computed_at=1.0)
+        save(store, f"root://{B}/run", lookup="k1", computed_at=2.0)  # Already at the new key, newer.
+        save(store, f"root://{A}/inner/other", lookup="k9")
+        time.sleep(0.01)
+        moved = store.rekey_subtree(f"root://{A}/inner", f"root://{B}")
+        assert f"root://{A}/inner/run" in moved
+        assert store.find_result(f"root://{B}/other", "k9").found
+        kept = store.find_result(f"root://{B}/run", "k1").value
+        assert kept is not None and kept.row["computed_at"] == 2.0  # The one saved later wins.
+        assert store._conn.execute("SELECT COUNT(*) FROM results").fetchone()[0] == 2
+
+
+@pytest.mark.no_auto_data_root
+def test_root_usage_and_inventory_show_results_apart(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        dataset(store)
+        save(store)
+        usage = store.root_usage()[A]
+        assert usage["results"] == 1 and usage["result_bytes"] > 0 and usage["bytes"] == 4
+        inventory = store.inventory()
+        assert inventory["results"]["count"] == 1 and inventory["results"]["bytes"] > usage["result_bytes"]
+        assert inventory["datasets"]["count"] == 1 and inventory["ages"]["results"]
+
+
+@pytest.mark.no_auto_data_root
+def test_purging_results_by_age(tmp_path: Path) -> None:
+    with CacheStore(str(tmp_path / "store")) as store:
+        save(store, lookup="old")
+        store._conn.execute("UPDATE results SET last_used = 1")
+        save(store, lookup="new")
+        guard = store.start_result_job(RUN)
+        removal = store.remove_results(cutoff=time.time() - 60)
+        assert removal.results == 1 and removal.paths == (RUN,)
+        assert store.find_result(RUN, "new").found and store.find_result(RUN, "old").missing
+        with pytest.raises(SaveRejected):
+            save(store, guard=guard)  # (Its folder's results epoch moved.)
+
+
+# The helper's operations (local lane)
+
+def options(tmp_path: Path) -> dict[str, Any]:
+    return {"directory": str(tmp_path / "caches" / "store-v3"), "budget": 8 << 30, "budget_set_at": 1.0}
+
+
+def find(tmp_path: Path, folder: Path, cache: dict[str, Any] | None, lookup: str = "k1",
+         family: str = "f1") -> list[Any]:
+    output = tmp_path / f"out-{time.monotonic_ns()}"
+    output.mkdir()
+    events: list[Any] = []
+    result_find(str(folder), str(output), cache, lookup, family, events.append)
+    return events
+
+
+def save_through_helper(tmp_path: Path, folder: Path, cache: dict[str, Any] | None, guard: Any,
+                        data: bytes | None = None, lookup: str = "k1") -> list[Any]:
+    blob = tmp_path / f"blob-{time.monotonic_ns()}"
+    blob.write_bytes(data or packed())
+    events: list[Any] = []
+    result_save(str(folder), cache, str(blob), lookup=lookup, family="f1", record={"r": 1}, analysis_id="a",
+                action="Plot", computed_at=5.0, guard=guard, send=events.append)
+    return events
+
+
+def test_the_helper_finds_saves_and_finds_again(tmp_path: Path) -> None:
+    folder = tmp_path / "data" / "run"
+    folder.mkdir(parents=True)
+    cache = options(tmp_path)
+    missing = find(tmp_path, folder, cache)
+    assert missing[-1]["kind"] == "result_missing" and "guard" in missing[-1]
+    saved = save_through_helper(tmp_path, folder, cache, missing[-1]["guard"])
+    assert saved[-1]["kind"] == "result_saved" and saved[-1]["usage"] > 0
+    found = find(tmp_path, folder, cache)[-1]
+    assert found["kind"] == "result_found" and found["exact"] and found["record"] == {"r": 1}
+    assert found["computed_at"] == 5.0 and os.path.exists(found["artifact"])
+    tree, arrays = result_codec.unpack(Path(found["artifact"]).read_bytes())
+    assert result_codec.decode(tree, arrays)["note"] == "ok"
+    outdated = find(tmp_path, folder, cache, lookup="k2")[-1]
+    assert outdated["kind"] == "result_found" and not outdated["exact"]
+
+
+def test_the_helpers_guard_wins_over_a_clear(tmp_path: Path) -> None:
+    folder = tmp_path / "data" / "run"
+    folder.mkdir(parents=True)
+    cache = options(tmp_path)
+    guard = find(tmp_path, folder, cache)[-1]["guard"]
+    events: list[Any] = []
+    cache_admin(cache, "clear_results", events.append)
+    assert any(event["kind"] == "removed" and event["kinds"] == ["results"] and event["paths"] is None
+               for event in events)
+    refused = save_through_helper(tmp_path, folder, cache, guard)[-1]
+    assert refused["kind"] == "result_not_saved" and refused["reason"] == "cleared"
+    assert find(tmp_path, folder, cache)[-1]["kind"] == "result_missing"
+
+
+def test_a_roots_clear_cached_analysis_through_the_admin(tmp_path: Path) -> None:
+    folder = tmp_path / "data" / "run"
+    folder.mkdir(parents=True)
+    cache = options(tmp_path)
+    save_through_helper(tmp_path, folder, cache, find(tmp_path, folder, cache)[-1]["guard"])
+    with stores._cache_store(cache["directory"], [str(folder)]) as store:
+        key = store._path_key(str(folder))
+    identifier = key[len("root://"):].partition("/")[0]
+    events: list[Any] = []
+    cache_admin(cache, "clear_root", events.append, uuid=identifier)  # Clear cached data: results stay.
+    assert find(tmp_path, folder, cache)[-1]["kind"] == "result_found"
+    cache_admin(cache, "clear_root_results", events.append, uuid=identifier)
+    removed = [event for event in events if event["kind"] == "removed" and event["kinds"] == ["results"]]
+    assert removed and removed[0]["root"] == identifier and removed[0]["paths"] == [str(folder)]
+    assert next(event for event in events if event["kind"] == "admin_result"
+                and event["action"] == "clear_root_results")["results"] == 1
+    assert find(tmp_path, folder, cache)[-1]["kind"] == "result_missing"
+
+
+@pytest.mark.no_auto_data_root
+def test_a_folder_without_a_data_root_reads_and_writes_nothing(tmp_path: Path) -> None:
+    folder = tmp_path / "plain"
+    folder.mkdir()
+    cache = options(tmp_path)
+    missing = find(tmp_path, folder, cache)
+    assert missing[-1] == {"kind": "result_missing", "ram_only": True}
+    assert any(event["kind"] == "cache_skipped" for event in missing)
+    refused = save_through_helper(tmp_path, folder, cache, {"generations": {"results": 0}, "epochs": {}})
+    assert refused[-1]["kind"] == "result_not_saved" and refused[-1]["reason"] == "ram_only"
+    results = Path(cache["directory"]) / cache_store.RESULTS_DIRNAME
+    assert not results.exists() or not os.listdir(results)

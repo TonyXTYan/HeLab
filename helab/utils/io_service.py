@@ -62,6 +62,9 @@ class IORequest:
     # Arrays the helper needs from this process (Live's save: the data in RAM), by shot: written to
     # its private folder before it starts (``held_dir``), off the GUI thread.
     arrays: dict[int, Any] | None = None
+    # Bytes the helper needs from this process (a result save's packed data, R2): written to its
+    # private folder before it starts (``blob_file``), off the GUI thread.
+    blob: bytes | None = None
 
 
 # Help › Record I/O trace (this session): every helper's operations on source folders, one JSON line
@@ -150,10 +153,12 @@ class IOService(QObject):
     # Operations in the local lane: they never wait for or pause with source-folder I/O.
     # (``volumes_verify`` reads mounted volumes' IDs, never source folders.)
     # (``trace_check`` reads HeLab's temp folder and the mount table, before the I/O trace starts.)
-    LOCAL_OPERATIONS = ("cached", "subtree_save", "cache_admin", "cache_move", "volumes_verify", "trace_check")
+    # (``result_find`` and ``result_save``: saved analysis results, in the local disk cache only.)
+    LOCAL_OPERATIONS = ("cached", "subtree_save", "cache_admin", "cache_move", "volumes_verify", "trace_check",
+                        "result_find", "result_save")
     # Operations that open the disk cache whatever their payload says.
     CACHE_OPERATIONS = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify",
-                        "volumes_verify")
+                        "volumes_verify", "result_find", "result_save")
     LOCAL_CAP = 2
     PAUSABLE = ("load", "list", "details", "scan", "icons", "roots_verify")
     # Held while cached data doesn't match several folders (``mismatch_hold``): loads and scans.
@@ -168,7 +173,8 @@ class IOService(QObject):
               "cache_move": "Move disk cache", "roots_verify": "Verify data roots",
               "volumes_verify": "Verify volumes", "root_create": "Enable disk cache",
               "root_reassign": "Make a copy's data root", "root_remove": "Remove .helab-root",
-              "marker_save": "Save .helab-root to folder", "trace_check": "Check I/O trace folder"}
+              "marker_save": "Save .helab-root to folder", "trace_check": "Check I/O trace folder",
+              "result_find": "Read cached analysis", "result_save": "Save analysis to disk cache"}
     NOUNS = {"load": "load", "cached": "cached data read", "list": "folder listing", "details": "folder details scan",
              "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup",
@@ -176,7 +182,8 @@ class IOService(QObject):
              "cache_move": "disk cache move", "roots_verify": "data-root verification",
              "volumes_verify": "volume verification", "root_create": "disk cache enabling",
              "root_reassign": "data-root reassignment", "root_remove": ".helab-root removal",
-             "marker_save": ".helab-root save", "trace_check": "I/O trace folder check"}
+             "marker_save": ".helab-root save", "trace_check": "I/O trace folder check",
+             "result_find": "cached analysis read", "result_save": "analysis save"}
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -234,9 +241,11 @@ class IOService(QObject):
 
     def submit(self, owner: str, generation: int, path: str, operation: str,
                payload: dict[str, Any] | None = None, *, priority: bool = False,
-               timeout: float | None = None, arrays: dict[int, Any] | None = None) -> bool:
-        """Queue a helper; ``timeout`` is seconds without progress (``math.inf``: none). ``arrays``: data
-        from this process the helper reads from its private folder (``IORequest.arrays``)."""
+               timeout: float | None = None, arrays: dict[int, Any] | None = None,
+               blob: bytes | None = None) -> bool:
+        """Queue a helper; ``timeout`` is seconds without progress (``math.inf``: none). ``arrays`` and
+        ``blob``: data from this process the helper reads from its private folder
+        (``IORequest.arrays``, ``IORequest.blob``)."""
         if self.closed:
             return False
         if any((r.owner, r.generation, r.path, r.operation) == (owner, generation, path, operation)
@@ -249,7 +258,7 @@ class IOService(QObject):
             return False
         request = IORequest(owner, generation, path, operation, payload or {},
                             self.NO_PROGRESS_TIMEOUT if timeout is None else timeout,
-                            priority=priority or operation == "load", arrays=arrays)
+                            priority=priority or operation == "load", arrays=arrays, blob=blob)
         # Navigation and loads precede bulk scans, which precede maintenance; FIFO within each group.
         if request.priority:
             index = next((i for i, r in enumerate(self.pending) if not r.priority), len(self.pending))
@@ -597,7 +606,8 @@ class IOService(QObject):
                   "drives": "Listing drives", "roots_verify": "Verifying data roots",
                   "volumes_verify": "Verifying volumes", "root_create": "Enabling disk cache",
                   "root_reassign": "Giving a copy its own data root", "root_remove": "Removing .helab-root",
-                  "marker_save": "Saving .helab-root", "trace_check": "Checking the I/O trace folder"}
+                  "marker_save": "Saving .helab-root", "trace_check": "Checking the I/O trace folder",
+                  "result_find": "Reading cached analysis", "result_save": "Saving analysis to disk cache"}
 
     def activity_summary(self) -> str:
         """App-wide status-bar phrase from memory; zero counts are left out."""
@@ -738,6 +748,12 @@ class IOService(QObject):
                     # up the no-progress time before the helper starts (a float store: atomic).
                     request.last_activity = time.monotonic()
                 payload["held_dir"] = held
+            if request.blob is not None:
+                blob_file = os.path.join(request.output, "blob.bin")
+                with open(blob_file, "wb") as handle:
+                    handle.write(request.blob)
+                request.last_activity = time.monotonic()
+                payload["blob_file"] = blob_file
             response_file: str | None = None
             if getattr(sys, "frozen", False):
                 input_file = os.path.join(request.output, "request.json")
@@ -776,6 +792,17 @@ class IOService(QObject):
                     artifact = event.pop("artifact")
                     event["array"] = np.load(artifact, allow_pickle=False)
                     os.remove(artifact)
+                elif event["kind"] == "result_found":
+                    # A saved result's data (R2), read here, off the GUI thread, without pickle.
+                    from helab.analysis import result_codec
+                    artifact = event.pop("artifact")
+                    try:
+                        with open(artifact, "rb") as handle:
+                            event["tree"], event["arrays"] = result_codec.unpack(handle.read())
+                    except (OSError, result_codec.CodecError) as exc:
+                        event["unreadable"] = str(exc)
+                    with contextlib.suppress(OSError):
+                        os.remove(artifact)
                 if event["kind"] in ("done", "error"):
                     complete = True
                 self._put(request, event)

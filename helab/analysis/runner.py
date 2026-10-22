@@ -47,6 +47,18 @@ class AnalysisRunner(QObject):
         ``RuntimeError`` while the runner is stopping (until its worker has exited)."""
         return self.core.submit(script, metadata, action, view, values, constants, owner=owner, live=live)
 
+    def prepare(self, script: DatasetAnalysis, metadata: ScriptMetadata, action: str,
+                view: DatasetView, values: Optional[Mapping[str, Any]] = None,
+                constants: Optional[Mapping[str, Mapping[str, float]]] = None, owner: str = "",
+                live: bool = False, to_cache: bool = False) -> AnalysisContext:
+        """A run's context without queuing it (``AnalysisQueue.prepare``): ``enqueue`` runs it."""
+        return self.core.prepare(script, metadata, action, view, values, constants, owner=owner, live=live,
+                                 to_cache=to_cache)
+
+    def enqueue(self, script: DatasetAnalysis, context: AnalysisContext) -> None:
+        """Queue a prepared run (``AnalysisQueue.enqueue``); ``RuntimeError`` while stopping."""
+        self.core.enqueue(script, context)
+
     def cancel(self, job_id: str) -> None:
         """Ask a queued or running job to stop; it ends as ``cancelled`` (cooperatively)."""
         self.core.cancel(job_id)

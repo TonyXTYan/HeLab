@@ -1,8 +1,9 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Any, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Dict, List, Any, Mapping, Optional, Sequence
 
+from helab.analysis import result_codec
 from helab.analysis.constant_layers import constant_keys, resolve_for_run, without_constants
 from helab.analysis.physics import ResolvedConstants
 from helab.analysis.follow import LivePolicy
@@ -227,6 +228,47 @@ class DatasetAnalysis(HelabAnalysisScript):
         keeping what the user did to the view (e.g. a 3D scatter's camera); GUI thread. Whether
         it did: if not, ``render`` draws the plot anew. Default: not."""
         return False
+
+    # Disk-cached results (result caching R2, Rule 4 ``cache_supported``): a completed one-off run
+    # (never a Live rerun) of an action that supports it is saved in the disk cache, and a later
+    # run with exactly the same key (``helab.analysis.result_cache``) shows it instead of
+    # computing, also after a restart. Its data is saved without pickle: as NumPy arrays and a
+    # JSON tree (``cache_pack``), read back with ``cache_unpack``, which never runs code from the
+    # file. Drawing goes through ``draw``/``update`` as for a computed result.
+
+    def cache_supported(self, action_name: str) -> bool:
+        """Whether the action's completed one-off runs may be saved in the disk cache and reused:
+        for costly runs (a bootstrap, pair counting), not for quick ones. Default: no."""
+        return False
+
+    def cache_types(self, action_name: str) -> Sequence[type]:
+        """The dataclasses and enums ``compute``'s data may hold, for the default ``cache_pack``
+        and ``cache_unpack`` (``helab.analysis.result_codec``): only these are rebuilt from a
+        file. Default: none (plain values, tuples, dicts and NumPy arrays only)."""
+        return ()
+
+    def cache_pack(self, action_name: str, data: Any) -> tuple[Any, Dict[str, Any]]:
+        """``compute``'s data as a JSON tree and the NumPy arrays it names (worker thread). Default:
+        ``result_codec.encode`` with ``cache_types``; raise to keep a result out of the cache."""
+        return result_codec.encode(data, self.cache_types(action_name))
+
+    def cache_unpack(self, action_name: str, tree: Any, arrays: Mapping[str, Any]) -> Any:
+        """What ``cache_pack`` gave, rebuilt as ``compute``'s data (GUI thread; arrays read-only).
+        Default: ``result_codec.decode`` with ``cache_types``."""
+        return result_codec.decode(tree, arrays, self.cache_types(action_name))
+
+    def cache_holds_state(self, action_name: str, owner: str) -> bool:
+        """Whether the script keeps something for the plot ``owner`` between runs that a next run
+        may start from (a box or a detection kept, pairs counted): its run may then differ from a
+        plot's first run, so it is neither looked up in nor, unless ``cache_result`` says it is
+        the same, saved to the disk cache. Default: nothing kept."""
+        return False
+
+    def cache_result(self, action_name: str, result: AnalysisResult) -> bool:
+        """Whether a completed one-off run gave what a plot keeping nothing would give (nothing
+        kept from an earlier run used, every shot counted), so it may be saved (worker thread).
+        Default: yes."""
+        return True
 
     def execute_action(self, action_name: str, **kwargs: Any) -> None:
         context = kwargs.get("context")

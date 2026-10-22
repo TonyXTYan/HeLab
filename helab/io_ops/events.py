@@ -97,6 +97,7 @@ class AdminResultFields(TypedDict, total=False):
     confirmed: bool
     budget: int
     recorded: bool
+    results: int  # saved results removed (R2)
 
 
 # Process and progress
@@ -474,12 +475,57 @@ class PendingSaveEvent(TypedDict):
 
 
 class RemovedEvent(TypedDict):
-    """What a removal did (``FolderCache.removed``); ``paths`` None: every path of those kinds."""
+    """What a removal did (``FolderCache.removed``); ``paths`` None: every path of those kinds.
+    Kind ``results`` (saved analysis results, R2): ``results`` removed, and for a data root's
+    Clear cached analysis its ``root`` UUID."""
     kind: Literal["removed"]
     kinds: list[str]
     paths: list[str] | None
     datasets: NotRequired[int]
     bytes: NotRequired[int]
+    results: NotRequired[int]
+    root: NotRequired[str | None]
+
+
+class ResultGuard(TypedDict):
+    """A result save's guard (``CacheStore.start_result_job``), taken when its run started."""
+    generations: dict[str, int]
+    epochs: dict[str, int]
+
+
+class ResultFoundEvent(TypedDict):
+    """A saved result for a run (``io_ops.results.result_find``): exact, or an outdated one of the
+    same plot and settings. Its data file is ``artifact`` in the helper's private folder."""
+    kind: Literal["result_found"]
+    artifact: str
+    exact: bool
+    record: Any
+    computed_at: float
+    bytes: int
+    guard: NotRequired[ResultGuard]
+
+
+class ResultMissingEvent(TypedDict):
+    """None saved for the run; ``ram_only``: the folder has no disk cache; ``no_cache``: the user
+    chose not to cache it."""
+    kind: Literal["result_missing"]
+    guard: NotRequired[ResultGuard]
+    ram_only: NotRequired[bool]
+    no_cache: NotRequired[bool]
+
+
+class ResultSavedEvent(UsageFields):
+    kind: Literal["result_saved"]
+    bytes: int
+
+
+class ResultNotSavedEvent(UsageFields):
+    """Why not: ``over_budget``, ``cleared`` (the guard), ``no_cache``, ``ram_only``."""
+    kind: Literal["result_not_saved"]
+    reason: str
+    message: str
+    bytes: int  # its file (0 when not known)
+    budget: int | None
 
 
 class InventoryEvent(TypedDict):
@@ -711,6 +757,7 @@ HelperEvent = Union[
     RootFoundEvent, RootChangedEvent, RootDuplicateEvent, RootRekeyedEvent, RootConfirmedEvent, RootCreatedEvent,
     RootManualEvent, RootReassignedEvent, RootRemovedEvent, RootRemoveRefusedEvent, ClockSkewEvent, MarkerSaveEvent,
     MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
+    ResultFoundEvent, ResultMissingEvent, ResultSavedEvent, ResultNotSavedEvent,
 ]
 
 # Every kind a helper sends.
@@ -728,5 +775,5 @@ KINDS = frozenset({
     "root_found", "root_changed", "root_duplicate", "root_rekeyed", "root_confirmed", "root_created",
     "root_adopted", "root_manual", "root_reassigned", "root_removed", "root_remove_refused",
     "clock_skew", "marker_saved", "marker_save_exists", "marker_save_refused", "volumes_verified",
-    "roots_verified",
+    "roots_verified", "result_found", "result_missing", "result_saved", "result_not_saved",
 })

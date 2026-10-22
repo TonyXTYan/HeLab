@@ -10,7 +10,7 @@ from helab.io_ops import stores
 from helab.io_ops.events import AdminResultFields, MoveCheckFields
 from helab.io_ops.infra import Emit, Heartbeat, emit
 from helab.io_ops.markers import _location_path, _root_rows
-from helab.io_ops.stores import _cache_info, _deadline, _removed_event, _usage
+from helab.io_ops.stores import _cache_info, _deadline, _removed_event, _results_removed_event, _usage
 
 
 # Why a folder's constants weren't saved (``cache_admin`` "constants"; the app keeps them for the
@@ -20,7 +20,7 @@ NO_ROOT_CONSTANTS = "no .helab-root found here or above"
 UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
-                 "constants", "forget_root", "root_same", "clear_root")
+                 "constants", "forget_root", "root_same", "clear_root", "clear_results", "clear_root_results")
 
 
 def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, **params: Any) -> None:
@@ -84,7 +84,14 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             send(_removed_event(store.remove(kinds)))
         elif action == "purge":
             cutoff = float(params["cutoff"])
-            if params["what"] == "datasets":
+            if params["what"] == "results":
+                # Saved analysis results not shown since ``cutoff`` (R2).
+                purged = store.remove_results(cutoff=cutoff)
+                send(_results_removed_event(purged))
+                result["removed"] = {"results": purged.results}
+                result["bytes"] = purged.bytes
+                removals = []
+            elif params["what"] == "datasets":
                 removals = [store.purge_datasets(cutoff)]
             elif params["what"] == "records":
                 removals = store.purge_records(cutoff, bool(params.get("include_failures")))
@@ -92,8 +99,9 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 raise ValueError(f"Unknown purge: {params['what']}")
             for removal in removals:
                 send(_removed_event(removal))
-            result["removed"] = {kind: len(removal.paths or ()) for removal in removals for kind in removal.kinds}
-            result["bytes"] = sum(removal.dataset_bytes for removal in removals)
+            if removals:
+                result["removed"] = {kind: len(removal.paths or ()) for removal in removals for kind in removal.kinds}
+                result["bytes"] = sum(removal.dataset_bytes for removal in removals)
         elif action == "trim":
             removal = store.trim(int(budget or params["budget"]), budget_set_at)
             send(_removed_event(removal))
@@ -157,8 +165,19 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             if path:
                 send({"kind": "root_changed", "path": path, "location": location, "reason": "forgotten"})
         elif action == "clear_root":
-            # Everything cached below one data root on this computer; roots, flags and marker stay.
+            # Everything cached below one data root on this computer but its saved results (Clear
+            # cached analysis, Tony 2026-10-22); roots, flags and marker stay.
             send(_removed_event(store.clear_root(str(params["uuid"]))))
+        elif action == "clear_root_results":
+            # A data root's Clear cached analysis: its saved results only (R2).
+            cleared = store.remove_results(root=str(params["uuid"]))
+            send(_results_removed_event(cleared))
+            result.update({"results": cleared.results, "bytes": cleared.bytes})
+        elif action == "clear_results":
+            # The Cache tab's Clear cached analysis: every saved result; datasets and records stay.
+            cleared = store.remove_results()
+            send(_results_removed_event(cleared))
+            result.update({"results": cleared.results, "bytes": cleared.bytes})
         elif action == "root_same":
             # Same folder (D4): the pending location uses the root's cached data from now on.
             location, identifier = str(params["location"]), str(params["uuid"])
