@@ -23,6 +23,13 @@ How to use it:
   (Windows caches attributes 10 s); details scans for visible rows only; icons kept
   across Refresh; the startup "database is locked" on a fresh store; refuse a
   network or synced temp folder at startup, as the cache folder is.
+- [ ] Old log files pile up (2026-10-22, R-11): each HeLab writes its own
+  `<app folder>/logs/helab-<pid>.log` (2 MB × 5 files) and nothing removes earlier
+  sessions' files. Proposed, not yet decided: Help › Show log folder, and at startup,
+  when earlier sessions' logs (no live instance lock) pass about 50 MB or 30 days, ask
+  once "Delete old log files?" (Delete / Keep, Keep the default, lasting the session),
+  going by each file's mtime since process IDs come round again
+  ([handoff](../.ai/sessions/2026-10-22-claude-codebase-review/handoff.md), question 1).
 - [ ] With the default of one background lane, folder details and status checks
   (including manual ones) wait for the selected load. As planned; revisit if
   it feels slow.
@@ -55,7 +62,7 @@ Landed in `dev/v0.0.6` from the Codebase Review floor's follow-up (merge `855bda
   computers' clocks are out of sync, once per share or volume per session (`ClockSkewWarning`),
   and Live stops like an error stop (`cdc255f`, `bf05b59`).
 - [x] Two HeLabs shared `<app folder>/logs/helab.log` and lost records at rollover; each now writes
-  `helab-<pid>.log` (R-11, `752c638`). Nothing deletes old sessions' files yet.
+  `helab-<pid>.log` (R-11, `752c638`). Nothing deletes old sessions' files yet (open, under App).
 - [x] The packaged app and wheels lacked `ai-icon.icns` ("Icon file not found") (R-12, `4c9f2a8`,
   `be12b7d`).
 - [x] joblib stayed in the requirements with no importer (R-20, `ccce741`).

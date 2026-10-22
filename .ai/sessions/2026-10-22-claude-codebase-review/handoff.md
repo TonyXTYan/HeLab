@@ -215,3 +215,10 @@ Lens reviewed every fix commit by diff and accepted them with no changes asked: 
 `752c638`, R-12 `4c9f2a8` and R-20 `ccce741` (records in `findings.md`; Lens checked several
 fail-before claims in a scratch worktree). Lens reruns the full suite with `-rR`, strict mypy and
 pyright on the final head before the push.
+
+## Tony's answers (2026-10-22, after his check of the app)
+
+Both floors landed (Lens's last findings note: merge `c13b225`). Question 3's wording is approved
+as is. Question 1 wasn't answered: the old-log rule stays an open item in
+[known issues](../../../roadmaps/known-issues.md), not built. Question 2 (the `--upgrade` lock
+refresh) is undecided.
