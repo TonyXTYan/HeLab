@@ -1482,15 +1482,17 @@ class FolderCache(QObject):
             self.mismatched.popitem(last=False)  # The oldest.
         for key in [key for key in self.datasets if key[0] == path]:
             del self.datasets[key]
-        # A cached read in flight holds that same data: it never lands, whatever completes before it
-        # would (a replacement load clearing the mismatch first). Reads asked after this wait for a
-        # load to match the folder (those asking check ``mismatched``).
-        job = self.jobs.get(("cached", path))
-        if job is not None:
-            self._cancel_job(job)
-        for request in self._deliveries:
-            if request.operation == "cached" and request.path == path:
+        # Fence the folder's work from before: every load, memory check, Live check, held save and
+        # cached read started before now is cancelled when it reports (its ``loaded`` fails the epoch
+        # check), so none brings the old data back or clears the mismatch, whatever completes before
+        # it; nothing held from before is a later load's base; RAM answers queued are cancelled. Not a
+        # clear: the record, its window and Review / Retry stay; a load started now clears it.
+        self._epochs[path] = self._epochs.get(path, 0) + 1
+        self._base_floor[path] = self._epochs[path]
+        for request in list(self._deliveries):
+            if request.operation in ("load", "cached") and request.path == path and not request.cancelled.is_set():
                 request.cancelled.set()
+                self.resultReady.emit(request, {"kind": "cancelled"})
         self.datasetChanged.emit(path)
         if earlier is None:
             self.mismatch_count += 1
@@ -2655,7 +2657,6 @@ class FolderCache(QObject):
                     # nor is a Live save's listing older than the folder's).
                     if not job.behind_listing:
                         event["checked_at"] = time.monotonic()
-                    self._matched(job.path)
                 if job.operation == "load" and job.clock.total_bytes:
                     # Only a load that read TXY files has a load time; a check
                     # answered from memory or the cache would show "took 0:00".
@@ -2701,6 +2702,9 @@ class FolderCache(QObject):
                 event = {**event, "raw_times": dataset_raw_times(job.base, event, job.raw_times)}
                 # The helper may still be updating the disk cache; the data is
                 # complete, so later shared loads must not wait for that.
+                if job.operation == "load":
+                    # Accepted (its epoch, signature and base hold): the folder matches its data again.
+                    self._matched(job.path)
                 self._forget_job(job)
                 self._finishing[job.owner] = job.path
                 self._finishing_epochs[job.owner] = job.epoch

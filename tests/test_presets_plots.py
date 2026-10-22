@@ -1221,9 +1221,9 @@ def test_a_cached_read_racing_a_mismatch_isnt_kept_by_the_cache(qtbot: QtBot, ca
     wait, found, noted = new_waiter(cache, path)
     wait.look()
     read = helper_request(cache, "cached", path)
-    mismatch_through_the_cache(cache, path, [1])
-    assert ("cached", path) not in cache.jobs  # Fenced: the read in flight is cancelled.
+    mismatch_through_the_cache(cache, path, [1])  # Fences the read in flight: refused when it reports.
     send(cache, read, *read_events(range(1, 4), "old"))
+    assert ("cached", path) not in cache.jobs
     assert found == [] and cache.latest_dataset(path) is None
     assert noted[-1].startswith("raced2's cached data doesn't match the folder")
     fresh = load_through_the_cache(cache, path, range(2, 4), "fresh")

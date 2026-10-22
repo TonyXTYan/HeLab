@@ -131,3 +131,49 @@ Name the change in the handoff (`folder_cache.py`, for the Result Cache merge).
 
 Flint's checks at `222bcdb`: full suite 2549 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
 (156 / 117) and pyright clean.
+
+## Round 5: Flint, `222bcdb..760a69f`
+
+The late cached-job probe passes: the narrow cached-job fence works.
+
+**[P1] The mismatch fence is incomplete for other work started before the mismatch.**
+`helab/utils/folder_cache.py:1488-1493` cancels only `cached` jobs and deliveries, and the `loaded`
+handling at `:2653-2658` clears `mismatched` for **every** load (Live and held saves included)
+*before* the epoch / signature / base validation; `_mismatch` doesn't move the folder's epoch or
+fence load / Live jobs. Each family tested through the real producer-event handler (helpers paused,
+no source I/O): start the old job; a *different* details helper sends `cache_mismatch(missing=[1])`,
+held before its final status (the mismatch known before the replacement's signature is published);
+then deliver the earlier job's `loaded`:
+- **ordinary load**: mismatch gone, `cache.latest_dataset` old, a new `FolderWait` emits (1,);
+- **memory_check** (payload has `memory_check`): its old `memory_shots=[1]` clears the mismatch,
+  rebuilds and stores the old data, a new waiter emits (1,);
+- **Live check** (separate `("live", path)` job, `live=True`): same;
+- **save_held** (`save_memory=True`, `save=True`, held arrays): same;
+- **cache_base check**: its `cached` job is cancelled, but its older `loaded(memory_shots=[1],
+  base_signature=old)` calls `_matched` first, then fails at `:2689` (no cached base): no dataset
+  **and no mismatch warning**: a failed old check must not resolve the mismatch.
+- **queued RAM fast path**: with a checked old dataset, `cache.submit(fast-tab, …, load,
+  signature=old)` queues `_deliver(loaded)` instead of a helper; recording the mismatch before the
+  zero-timer runs leaves that load delivery live, so it still hands the rejected dataset to the tab
+  (FolderWait rejects it, since the cache no longer holds it, but a tab gets it back).
+
+**CoCo: these races predate the branch** (tabs hit them too); fix them once, contained, here, since
+reopened plots depend on the invariant and you have the context:
+1. `_mismatch` fences every generation of the folder's work, not one job kind: e.g. move the
+   folder's epoch (so `job.epoch != self._epochs[path]` cancels loads, Live checks, memory checks,
+   held saves and cached reads started before it) and mark pending deliveries of the folder
+   cancelled (load as well as cached), as `_invalidate_data` does for jobs and deliveries; but keep
+   the mismatch record, its window and Review / Retry, and don't treat it as a cache clear.
+2. Only an **accepted** post-fence load clears the mismatch, **after** epoch / signature / base
+   validation (move `_matched` after it; a failed or cancelled load leaves the mismatch).
+3. Recovery still works: Load as it is now (`allow_missing`), the tab's own loads and Live after the
+   mismatch, cached reads asked after resolution.
+4. Tests through the real producer events, one per family above plus the queued RAM delivery, and
+   the recovery paths; show first (for `known-issues.md`) that the ordinary-load case fails on
+   `c3d4b50` too.
+Name the change in the handoff (net diff of `folder_cache.py` vs `c3d4b50`). If this needs more than
+a contained change in `_mismatch`, the `loaded` branch and the delivery path, stop and tell CoCo:
+it then becomes its own floor.
+
+Flint's checks at `760a69f`: full suite 2551 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
+(156 / 118) and pyright clean.

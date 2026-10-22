@@ -64,12 +64,12 @@ def test_a_tabs_cached_read_from_before_a_mismatch_never_lands_after_load_as_it_
     qtbot.waitUntil(lambda: ("cached", path) in cache.jobs and ("load", path) in cache.jobs)
     read, check = producer(cache, path, "cached"), producer(cache, path, "load")
     # (2) A folder status check (not the tab's) finds shot 1 gone, and the tab's check errors: the
-    # folder is mismatched, and the read still in flight is fenced.
+    # folder is mismatched, and the read still in flight is fenced (it is refused when it reports).
     assert cache.submit("status-check", 0, path, "details", {}, priority=True, force=True)
     send(cache, producer(cache, path, "details"), {**MISSING, "kind": "cache_mismatch"},
          {"kind": "error", "message": "Folder details failed"})
     send(cache, check, {"kind": "error", "message": "Load failed — Retry"})
-    assert path in cache.mismatched and ("cached", path) not in cache.jobs
+    assert path in cache.mismatched
     # (3) Load as it is now: shot 9 shows, the mismatch clears.
     browser.load_as_it_is_now(path)
     qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
