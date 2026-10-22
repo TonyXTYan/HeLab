@@ -264,6 +264,12 @@ def open_arrangement(scripts: TreePanelWidget, cache: FolderCache, arrangement: 
             fronts.append(dock)
         opened.append((made, saved))
     if arrangement.dock_state and opened:
+        # Docks closed just before (an arrangement preset replacing the open plots) are deleted
+        # later and still carry recorded names: Qt's restoreState mustn't take them for these.
+        mine = {id(instance.dock_widget) for instance, _ in opened}
+        for other in area.findChildren(QDockWidget):
+            if id(other) not in mine and other.objectName().startswith(DOCK_NAME.format("")):
+                other.setObjectName("")
         state = QByteArray.fromBase64(QByteArray(arrangement.dock_state.encode("ascii")))
         if not area.restoreState(state):
             logging.info("Plot area: its recorded layout couldn't be restored; plots are in their tab groups")

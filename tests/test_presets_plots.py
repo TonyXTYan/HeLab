@@ -682,6 +682,22 @@ def test_applying_replaces_open_plots_after_asking(qtbot: QtBot, cache: FolderCa
     assert kept.is_closed and opened.values()["bins"] == 2 and opened.path == folder("a")
 
 
+def test_a_replaced_plots_dock_isnt_taken_for_a_new_one(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """The plots an arrangement replaces are deleted later, with the names a recorded layout uses:
+    the layout places the new plots, never those."""
+    window = new_window(qtbot, cache, windows)
+    ref = ScriptRef("tests.counted", "Plot", "1")
+    first = waiting_plot(window, cache, ref, folder("a"))
+    first_dock = first.dock_widget
+    arrangement = capture(window.plots, [first], folder=folder("a"))
+    write_arrangement("same", arrangement)
+    assert first_dock is not None and first_dock.objectName() == "helab-plot-0"
+    [opened] = presets_for(window, Explorer(folder("b")), cache).apply("same")
+    new_dock = cast(QDockWidget, opened.dock_widget)
+    assert new_dock.objectName() == "helab-plot-0" and first_dock.objectName() == ""
+    assert window.plots.middle_mainwindow.dockWidgetArea(new_dock) != Qt.DockWidgetArea.NoDockWidgetArea
+
+
 def test_live_is_never_forced(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
     """Live can't start (the load failed): the preset says why, and stops trying."""
     window = new_window(qtbot, cache, windows)
