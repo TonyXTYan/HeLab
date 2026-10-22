@@ -190,6 +190,9 @@ class FolderCache(QObject):
     # A finished load's disk cache save ended: the folder, and "saved", "pending" (waiting for the
     # user's answer), "superseded" (a later save covers it) or "failed".
     saveEnded = pyqtSignal(str, str)
+    # A folder's files dated ahead of this computer's clock (path, seconds): once per share or volume
+    # (the helper's ``location``) per session (``clock_skew_seen``).
+    clockSkew = pyqtSignal(str, float)
     # The saves the quit window waits for changed (``quit_saves``).
     quitSavesChanged = pyqtSignal()
     MAX_FOLDER_ICONS = 4096
@@ -394,6 +397,8 @@ class FolderCache(QObject):
         # Subscriber owners of the current tab (its model, and in queue mode its
         # background loads); their listings and loads use the foreground lane.
         self.foreground_owners: set[str] = set()
+        # Shares and volumes whose clock this session found ahead of ours (``clockSkew``).
+        self.clock_skew_seen: set[str] = set()
         service.is_foreground = self._is_foreground
         service.owners_of = self._owners_of
         service.before_start = self._before_start
@@ -2353,6 +2358,12 @@ class FolderCache(QObject):
 
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
         if self._on_root_event(producer, event) or self._on_verification_event(producer, event):
+            return
+        if event["kind"] == "clock_skew":
+            location = str(event.get("location") or event["path"])
+            if location not in self.clock_skew_seen:
+                self.clock_skew_seen.add(location)
+                self.clockSkew.emit(str(event["path"]), float(event["seconds"]))
             return
         if event["kind"] == "cache_skipped":
             self._remember_mount_warning(event)

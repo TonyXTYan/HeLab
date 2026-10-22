@@ -7,17 +7,27 @@ from typing import Any
 
 from helab.io_ops import fingerprints, infra
 from helab.io_ops.events import LiveState, ProgressEvent, RawMtimeField
-from helab.io_ops.fingerprints import (DEFAULT_CHECK_LEVEL, _fingerprint_signature, _raw_list,
+from helab.io_ops.fingerprints import (DEFAULT_CHECK_LEVEL, _clock_ahead, _fingerprint_signature, _raw_list,
                                        _sample_indices, _settled)
 from helab.io_ops.identity import _folder_identity
 from helab.io_ops.infra import Emit, Heartbeat, Pause, _is_dir, _read_gate, _scandir, _stat, emit
 from helab.io_ops.summary import _summary
 from helab.utils import file_kinds
+from helab.utils.time_format import span
 
 
 # A folder modified this close to a check (or later: another computer's clock) may change again
 # within the same timestamp tick, which the next check's stat wouldn't see: that check lists it.
 RACY_SECONDS = 2.0
+
+
+def _stop_if_ahead(path: str, files: list[tuple[int, int, int]], send: Emit) -> None:
+    """New files dated in the future (another computer's clock ahead of ours) are never settled, so
+    Live would wait for them for as long as the clocks differ: the check fails instead, as an error
+    stop (Live keeps its data, says why, and offers Retry), by Tony's decision (2026-10-22, R-22)."""
+    if ahead := _clock_ahead(path, files, send):
+        raise ValueError(f"the folder's new files are dated {span(ahead)} ahead of this computer's clock: "
+                         "the computers' clocks are out of sync — Retry")
 
 
 def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]] | None = None,
@@ -107,6 +117,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
             pending.append((int(shot), info.st_size, info.st_mtime_ns))
             file_names[int(shot)] = name
         if pending is not None:
+            _stop_if_ahead(path, pending, send)
             aged = {item[0] for item in _settled(pending)}
             if not any(item[0] in aged and previous.get(item[0]) == item[1:] for item in pending):
                 waiting[:] = [list(item) for item in pending]
@@ -185,6 +196,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     still_failed = [item for item in candidates if failed.get(item[0]) == item[1:]]
     # Changed held shots Live read recently are read again as new files are.
     candidates += rereads
+    _stop_if_ahead(path, candidates, send)
     aged = {item[0] for item in _settled(candidates)}
     # Settled by age, and the same size and mtime as the previous check saw.
     to_read = [item for item in candidates if failed.get(item[0]) != item[1:]

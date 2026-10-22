@@ -37,6 +37,7 @@ from helab.utils.settings_defaults import (
     AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, THREAD_STATUS_SETTING, read_setting)
 from helab.utils.settings_store import app_settings
 from helab.views.CacheDialogs import CacheDialogs
+from helab.views.ClockSkewWarning import ClockSkewWarning
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HoverMenuToolButton import HoverMenuToolButton
@@ -125,6 +126,8 @@ class HelabMainWindow(QMainWindow):
         cache = get_folder_cache(get_io_service())
         self.cache_dialogs = CacheDialogs(cache, self, lambda: self.show_settings_dialog(purge=True),
                                           self.show_status_notice)
+        # A folder's files dated ahead of this computer's clock: once per share or volume per session.
+        self.clock_skew_warning = ClockSkewWarning(cache, self)
         cache.autoLoadPauseChanged.connect(self._auto_load_pause_changed)
         # Folders whose cached data doesn't match them: one list for the app, and its status-bar button.
         self.missing_shots = MissingShotsWindow(cache, self)
@@ -1444,6 +1447,7 @@ class HelabMainWindow(QMainWindow):
         self.plots.detach()  # The RAM budget, then the Settings panel.
         if not self._cache_dialogs_detached:
             self.cache_dialogs.detach()
+        self.clock_skew_warning.detach()
         self.watchdog.stop()
         for timer in self.findChildren(QTimer):
             timer.stop()

@@ -1051,3 +1051,37 @@ def test_settings_dialog_edits_both_live_settings(qtbot: QtBot, tmp_path: Path) 
     dialog.cache_tab.live_autosave.setValue(4)
     dialog._write_settings()
     assert read_live_interval(settings) == 5.5 and read_live_autosave(settings) == 4
+
+
+def test_new_files_dated_ahead_of_this_clock_stop_live_like_an_error(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path,
+) -> None:
+    """A new shot dated a minute in the future (the server's clock ahead of ours) is never settled, so
+    Live would wait for it while the clocks differ: the check stops like an error stop (data kept, the
+    amber line, Retry), and the app warns once that the clocks are out of sync (R-22)."""
+    path = str(run)
+    explorer = open_loaded(qtbot, service, run, tmp_path)
+    cache = explorer.model.cache
+    data = explorer.folder_opened_data
+    warned: list[tuple[str, float]] = []
+    cache.clockSkew.connect(lambda folder, seconds: warned.append((folder, seconds)))
+    assert explorer.start_live()
+    write_shot(run, 3, age=-60)
+    next_request(qtbot, explorer, path)
+    events = replay(cache, path, tmp_path)
+    assert [event["kind"] for event in events][-2:] == ["clock_skew", "error"]
+    session = explorer.live
+    assert session is not None and "the computers' clocks are out of sync" in session.error
+    explorer._update_activity()
+    assert explorer.folder_freshness_label.text().startswith("Live stopped: the folder's new files are dated ")
+    assert "color" in explorer.folder_freshness_label.styleSheet()
+    assert explorer.folder_opened_data is data and not explorer.retry_button.isHidden()
+    assert len(warned) == 1 and warned[0][0] == path and 55 < warned[0][1] < 61
+    qtbot.wait(100)
+    assert job_of(cache, path) is None  # (No retries by itself.)
+    # Retry while the clocks still differ stops again, without another warning.
+    explorer.retry_button.click()
+    next_request(qtbot, explorer, path)
+    assert replay(cache, path, tmp_path)[-1]["kind"] == "error" and len(warned) == 1
+    explorer.stop_live(save=False)
+    explorer.close_cleanup()

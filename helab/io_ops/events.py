@@ -660,6 +660,15 @@ class RootRemoveRefusedEvent(TypedDict):
     reason: str
 
 
+class ClockSkewEvent(TypedDict):
+    """A source file dated more than ``fingerprints.FUTURE_SECONDS`` ahead of this computer's clock:
+    the computers' clocks are out of sync (``clock_skew``; the app tells the user once per location)."""
+    kind: Literal["clock_skew"]
+    path: str  # the folder
+    seconds: float  # how far its newest file is ahead
+    location: str  # its share or volume (the mount's source), else the folder
+
+
 class MarkerSaveEvent(TypedDict):
     """The manual marker dialog's copy (``marker_save``): written, or a file already there (not replaced)."""
     kind: Literal["marker_saved", "marker_save_exists"]
@@ -700,7 +709,7 @@ HelperEvent = Union[
     MoveCheckEvent, MoveProgressEvent, MoveDoneEvent, MoveFailedEvent, MoveCleanedEvent, MoveAbortedEvent,
     MoveRecoveredEvent, TraceFolderEvent,
     RootFoundEvent, RootChangedEvent, RootDuplicateEvent, RootRekeyedEvent, RootConfirmedEvent, RootCreatedEvent,
-    RootManualEvent, RootReassignedEvent, RootRemovedEvent, RootRemoveRefusedEvent, MarkerSaveEvent,
+    RootManualEvent, RootReassignedEvent, RootRemovedEvent, RootRemoveRefusedEvent, ClockSkewEvent, MarkerSaveEvent,
     MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
 ]
 
@@ -718,5 +727,6 @@ KINDS = frozenset({
     "trace_folder",
     "root_found", "root_changed", "root_duplicate", "root_rekeyed", "root_confirmed", "root_created",
     "root_adopted", "root_manual", "root_reassigned", "root_removed", "root_remove_refused",
-    "marker_saved", "marker_save_exists", "marker_save_refused", "volumes_verified", "roots_verified",
+    "clock_skew", "marker_saved", "marker_save_exists", "marker_save_refused", "volumes_verified",
+    "roots_verified",
 })
