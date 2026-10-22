@@ -155,3 +155,42 @@ order too (no failure found there).
 
 Gauge's checks at `de6825f`: full suite 2582 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
 (158 / 123) and pyright clean; `git diff --check` clean.
+
+## Round 5: Gauge, `de6825f..4c50d01`
+
+The per-key store guard is accepted (a pre-eviction guard is refused; a sibling key's pending save
+adopts; a fresh keyed guard saves). No P0/P1, no wrong result. Fix before landing:
+
+1. **[P2] A late `result_pending` restores a permanently unresolved plot state after eviction
+   already dropped that pending row.** `helab/utils/folder_cache.py:2005-2013, 2023-2026`;
+   `helab/views/plots/cached_results.py:287-290`. `_results_evicted` remembers dropped ids in
+   `_pending_gone`, but when their `result_pending` arrives later, `_on_result_event` only skips
+   inserting it in `pending_results` and still forwards it to `CachedRuns`, which puts the result in
+   `_waiting` ("not saved yet: the disk cache is full (Make room or Discard)") with no question and
+   no answer to come, and keeps its arrays alive. Reproduced through real helpers: two Scale 1 runs
+   look up before saving; save the first, lower the budget and send the second's replacement,
+   holding its `result_pending`; Make room for Scale 2 evicts Scale 1 and drops that replacement;
+   deliver the held message: store (1 saved, 0 waiting), `pending_results` `{}`, but the plot waits
+   with that status. Turn a pending event for a known-gone id into a terminal `result_not_saved`
+   before forwarding; add this message-in-transit variant to the table (the Waiting tests start with
+   the question already open).
+
+**Tony-facing choices (Gauge's judgement, CoCo agrees; do these):**
+2. **Dropping a waiting replacement when Make room evicts its exact saved key** stays (consistent
+   with the per-key guard), but **the Make room confirmation must say so**:
+   `CacheDialogs.result_room_text` names only the saved results and their bytes; add the waiting
+   replacements of those keys it will also discard (count / names). Don't rebase old guards.
+3. **Per-key `folder_epochs` rows (`result-key:…`) grow without bound** (20 evictions of distinct
+   keys → 20 rows, kept through all / root clears and the sweep; their bytes count in `_live()`, so
+   budgeted). Compact them where a broader fence already covers them, never by age: in a global
+   result clear, bump `gen_results`, then delete the per-key rows; in a root clear, bump the
+   root-results epoch, then delete that root's per-key rows; a folder purge / clear likewise with the
+   folder-results epoch. Write the lifetime rule in the handoff.
+4. **Stale table cell and comment:** "Lookup × same-key eviction" says it may save with a fresh key
+   epoch, but `_on_result_event:2001` keeps the pre-eviction guard, so the fallback computation's
+   save is refused (a later, newly asked run can save); the comment "its guard holds" is stale.
+   Describe the conservative RAM-only fallback (or reacquire a fresh guard for a newly authorised
+   restart; never reuse the invalid one).
+
+Gauge's checks at `4c50d01`: full suite 2590 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
+(158 / 123) and pyright clean; `git diff --check` clean.

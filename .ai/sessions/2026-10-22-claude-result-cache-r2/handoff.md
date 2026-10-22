@@ -347,10 +347,10 @@ store-only cells in `tests/test_result_cache_store.py`):
 
 | In flight ↓ / meanwhile → | Make room evicts the same key | Make room evicts another key of the folder | Clear cached analysis (all / root) | Purge by age | Discard |
 |---|---|---|---|---|---|
-| **Lookup** | computes; may save again (fresh key epoch) · `lookup_x_eviction_of_the_same_result_computes` | shown from disk · `lookup_x_eviction_of_another_result_shows_it_from_disk` | computes, RAM only · `lookup_x_clear_or_purge_computes[all, root]` | computes, RAM only · `…[purge]` | of a waiting replacement of the key: the saved row is shown · `lookup_x_discard_of_a_waiting_replacement_shows_the_saved_row` |
+| **Lookup** | computes, RAM only (its pre-eviction guard: the save is refused); a run asked for later saves it · `lookup_x_eviction_of_the_same_result_computes_ram_only_then_a_rerun_saves` | shown from disk · `lookup_x_eviction_of_another_result_shows_it_from_disk` | computes, RAM only · `lookup_x_clear_or_purge_computes[all, root]` | computes, RAM only · `…[purge]` | of a waiting replacement of the key: the saved row is shown · `lookup_x_discard_of_a_waiting_replacement_shows_the_saved_row` |
 | **Save**, answer after its transaction | RAM only · `save_x_eviction_of_the_same_result_is_ram_only` | saved · `save_x_eviction_of_another_result_is_saved` | RAM only · `save_x_clear_or_purge_is_ram_only[all, root]` | RAM only · `…[purge]` | can't happen (per request) |
 | **Save**, transaction after the eviction | refused by the key's epoch, nothing written, RAM only · `save_x_eviction_of_the_same_key_before_its_transaction_is_refused`; store: `a_save_running_since_before_an_eviction_cant_write_the_key_back` | saved (its guard holds) · same store test | refused (folder/root epoch), as before | refused (folder epoch) | — |
-| **Waiting result** | its replacement goes with the evicted saved row: question gone, "discarded" · `waiting_x_eviction_of_its_keys_saved_row_drops_the_replacement`; store: `a_waiting_replacement_goes_when_its_saved_row_is_evicted` | stays, its Make room saves it · `waiting_x_another_waiting_ones_eviction_keeps_its_question_and_saves` | question gone, "discarded" · `waiting_x_clear_drops_the_question[all, root]` | question gone, "discarded" · `waiting_x_purge_of_its_folder_drops_the_question` | question gone, "discarded" · `waiting_x_discard` |
+| **Waiting result** | its replacement goes with the evicted saved row (Make room's question says so): question gone, "discarded" · `waiting_x_eviction_of_its_keys_saved_row_drops_the_replacement`; store: `a_waiting_replacement_goes_when_its_saved_row_is_evicted`; its `result_pending` still in transit: ends "discarded", nothing kept · `waiting_in_transit_x_eviction_of_its_key_ends_not_saved` | stays, its Make room saves it · `waiting_x_another_waiting_ones_eviction_keeps_its_question_and_saves` | question gone, "discarded" · `waiting_x_clear_drops_the_question[all, root]` | question gone, "discarded" · `waiting_x_purge_of_its_folder_drops_the_question` | question gone, "discarded" · `waiting_x_discard` |
 | **Adoption** (Make room asked) | "gone" · `adoption_x_eviction_of_its_keys_saved_row_is_gone` | the plan changed: nothing removed, asked again · `adoption_x_another_adoptions_eviction_asks_again_with_the_new_plan` | the clear first: "gone" · `adoption_x_clear_before_it_is_gone[all, root]`; the adoption first, its acknowledgement after the clear: not saved · `adoption_acknowledged_after_a_clear_is_not_saved` | "gone" · `adoption_x_purge_before_it_is_gone` | another HeLab's Discard at once: one wins, the other is "gone" · `two_processes_answering_one_waiting_result_one_wins` (4 rounds, two processes) |
 
 **Scope.** One question per waiting result in one HeLab (CacheDialogs asks one at a time and sends one
@@ -359,3 +359,26 @@ transactions (one success, one "gone"). Message order (answers held until the re
 transaction order (a save or adoption reaching the store after the removal) are both covered where they
 differ. Conservative, as before: a save acknowledged after an eviction of its own key reads as not
 saved, and a purge that took another result of a folder makes a save in flight there read as not saved.
+
+
+## Review fixes, round 5 (Gauge on `4c50d01`)
+
+1. **[P2] A late `result_pending` for an id already gone** (dropped by Make room's eviction of its
+   key, or otherwise answered) becomes a terminal `result_not_saved` (reason `dropped`) in
+   `FolderCache._on_result_event`: the plot says "not saved in the disk cache (discarded)" and keeps
+   nothing waiting. The table's Waiting row gains the in-transit cell
+   (`waiting_in_transit_x_eviction_of_its_key_ends_not_saved`).
+2. **Make room's question names what it also discards.** The room plan carries the waiting
+   replacements of the keys it evicts (`ResultRoom.dropped`, `dropped_labels`), and
+   `CacheDialogs.result_room_text` adds: "It also discards 1 newer result of it still waiting to be
+   saved (Correlations)." Old guards aren't rebased.
+3. **Lifetime of the per-key epochs** (`folder_epochs` rows `result-key:<root key>#<lookup>`): made by
+   Make room's eviction of that key; deleted only where a broader fence now covers them, in the same
+   transaction after that fence moves: Clear cached analysis of everything (after `gen_results`)
+   deletes them all; a root's (after its `root-results-clear://` epoch) deletes that root's; a
+   folder's clear or a purge that took the folder's results (after its `results:` epoch) deletes that
+   folder's. Never by age or by the sweep. A guard taken before stays refused by the broader fence;
+   one taken after counts the key from 0 again (`key_epochs_are_compacted_under_the_broader_fence`).
+4. **The lookup cell and comment corrected**: a lookup answered after Make room evicted its key
+   computes and stays in RAM (the store refuses that run's save: its guard predates the eviction); a
+   run asked for later takes a fresh guard and saves it.

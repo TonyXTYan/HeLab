@@ -50,9 +50,15 @@ def result_room_text(room: dict[str, Any] | None) -> str:
     if isinstance(since, (int, float)):
         day = datetime.fromtimestamp(since)
         when = f" not shown since {day.day} {day:%b}"
-    return (f"Make room removes {count} saved analysis result{'' if count == 1 else 's'} "
-            f"({byte_size(int(room.get('bytes', 0)))}){when}, least recently shown first. Cached data isn't "
-            "touched.")
+    text = (f"Make room removes {count} saved analysis result{'' if count == 1 else 's'} "
+            f"({byte_size(int(room.get('bytes', 0)))}){when}, least recently shown first.")
+    dropped = list(room.get("dropped_labels") or ())
+    if dropped:
+        # A newer result of one of those, waiting for its own answer, goes with it.
+        names = ", ".join(dict.fromkeys(label or "a plot" for label in dropped))
+        text += (f" It also discards {len(dropped)} newer result{'' if len(dropped) == 1 else 's'} of "
+                 f"{'it' if count == 1 else 'them'} still waiting to be saved ({names}).")
+    return text + " Cached data isn't touched."
 
 
 class CacheDialogs(QObject):

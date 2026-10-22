@@ -180,7 +180,7 @@ def shown(instance: AnalysisInstance) -> AnalysisResult:
 
 # A lookup in flight
 
-def test_lookup_x_eviction_of_the_same_result_computes(lab: Lab) -> None:
+def test_lookup_x_eviction_of_the_same_result_computes_ram_only_then_a_rerun_saves(lab: Lab) -> None:
     lab.saved_plot(1)
     release = lab.hold("result_found")
     instance, script = lab.plot(1, wait=False)
@@ -189,6 +189,14 @@ def test_lookup_x_eviction_of_the_same_result_computes(lab: Lab) -> None:
     release()
     lab.qtbot.waitUntil(lambda: settled(instance), timeout=WAIT)
     assert script.computed == 1 and shown(instance).source != FROM_DISK
+    # Its guard predates the eviction: the store refuses that run's save (RAM only)...
+    lab.qtbot.wait(300)
+    assert shown(instance).policy != DISK_CACHED and lab.store_rows() == (1, 0)
+    # ...and a run asked for later takes a fresh guard and saves Scale 1 again.
+    lab.budget(8 << 30)
+    instance.run()
+    lab.qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
+    assert lab.store_rows() == (2, 0)
 
 
 def test_lookup_x_eviction_of_another_result_shows_it_from_disk(lab: Lab) -> None:
@@ -398,9 +406,13 @@ def test_save_x_eviction_of_the_same_key_before_its_transaction_is_refused(lab: 
 
 
 def test_waiting_x_eviction_of_its_keys_saved_row_drops_the_replacement(lab: Lab) -> None:
+    from helab.views.CacheDialogs import result_room_text
     replacement_plot, replacement = saved_with_waiting_replacement(lab)
     lab.tight()
     _, other = lab.waiting(2)
+    room = lab.cache.pending_results[other]["room"]
+    assert room["dropped"] == [replacement] and room["dropped_labels"] == ["Costly"]
+    assert "It also discards 1 newer result of it still waiting to be saved (Costly)." in result_room_text(room)
     assert lab.make_room(other)["adopted"] is True  # Evicts saved Scale 1: its waiting replacement goes too.
     assert replacement not in lab.cache.pending_results and (replacement, False) in lab.answers
     assert lab.store_rows() == (1, 0)
@@ -454,3 +466,43 @@ def test_adoption_acknowledged_after_a_clear_is_not_saved(lab: Lab) -> None:
         real(producer, event)
     assert (pending_id, False) in lab.answers and shown(instance).policy != DISK_CACHED
     assert lab.store_rows() == (0, 0)
+
+
+def test_waiting_in_transit_x_eviction_of_its_key_ends_not_saved(lab: Lab) -> None:
+    """The replacement's result_pending is still on its way when Make room drops it: the plot doesn't
+    wait for a question that will never come."""
+    deferred = Deferred(lab)
+    first, _ = lab.plot(1)
+    second, _ = lab.plot(1)
+    deferred.ready(2)
+    deferred.run(0)
+    lab.qtbot.waitUntil(lambda: saved(first), timeout=WAIT)
+    first.close()
+    with CacheStore(store_root(cache_dir())) as store:
+        usage = store.usage()
+    lab.budget(usage - 1)
+    replacement_owner = deferred.calls[1][0][0]
+    held: list[tuple[IORequest, dict[str, Any]]] = []
+    real = lab.cache._on_result_event
+
+    def hold(producer: IORequest, event: dict[str, Any]) -> None:
+        if producer.owner == replacement_owner and event["kind"] == "result_pending" and not getattr(hold, "go", False):
+            held.append((producer, event))
+            return
+        real(producer, event)
+    lab.monkeypatch.setattr(lab.cache, "_on_result_event", hold)
+    deferred.run(1)
+    lab.qtbot.waitUntil(lambda: bool(held), timeout=WAIT)  # Waiting in the store; its message held.
+    lab.monkeypatch.setattr(lab.cache, "save_result", deferred.real)
+    assert lab.store_rows() == (1, 1)
+    lab.tight()
+    _, other = lab.waiting(2)
+    assert lab.make_room(other)["adopted"] is True  # Evicts Scale 1, dropping the replacement.
+    setattr(hold, "go", True)
+    for producer, event in held:
+        real(producer, event)
+    assert not lab.cache.pending_results and lab.store_rows() == (1, 0)
+    lab.qtbot.waitUntil(lambda: "discarded" in second.status_label.text(), timeout=WAIT)
+    assert "not saved yet" not in second.status_label.text()
+    link = second._cached_link
+    assert link is not None and not link._waiting  # (Nothing kept for an answer that never comes.)

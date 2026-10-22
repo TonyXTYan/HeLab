@@ -319,6 +319,9 @@ class ResultRoom:
     bytes: int
     newest_last_used: float | None
     possible: bool
+    # The waiting replacements of those keys it discards too (their guards break), and their plots' names.
+    dropped: tuple[str, ...] = ()
+    dropped_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -490,7 +493,7 @@ class CacheStore:
         self._unverified_mounts: list[str] = []
         self._writing = False
         # Waiting results Make room's eviction dropped in the adoption being decided (``_adopt_result_savepoint``).
-        self._dropped: list[str] = []
+        self._dropped: list[tuple[str, str]] = []  # (pending_id, label)
         for attempt in range(OPEN_ATTEMPTS):
             conn: sqlite3.Connection | None = None
             self.read_only = False  # (An attempt that failed may have set it.)
@@ -1694,7 +1697,7 @@ class CacheStore:
                             tuple(sorted({self._source_path(item[1]) for item in removed})), len(removed),
                             sum(item[2] for item in removed),
                             evicted=tuple((self._source_path(item[1]), item[4]) for item in removed),
-                            dropped=tuple(self._dropped))
+                            dropped=tuple(pending_id for pending_id, _ in self._dropped))
                         result = ResultAdopt(True, self._source_path(path), size, removal=removal)
                     else:
                         assert budget is not None
@@ -1742,11 +1745,11 @@ class CacheStore:
                     self._conn.execute("DELETE FROM results WHERE result_id = ?", (result_id,))
                     self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
                                        "DO UPDATE SET epoch = epoch + 1", (_result_key_epoch(str(other), str(key)),))
-                    for dropped, dropped_file in self._conn.execute(
-                            "SELECT pending_id, file FROM pending_results WHERE path = ? AND lookup = ?",
+                    for dropped, dropped_file, dropped_label in self._conn.execute(
+                            "SELECT pending_id, file, label FROM pending_results WHERE path = ? AND lookup = ?",
                             (other, key)).fetchall():
                         self._retire(str(dropped_file), now)
-                        self._dropped.append(str(dropped))
+                        self._dropped.append((str(dropped), str(dropped_label)))
                     self._conn.execute("DELETE FROM pending_results WHERE path = ? AND lookup = ?", (other, key))
                     removed.append((str(result_id), str(other), int(size), float(last_used), str(key)))
             fits = budget is None or self._live() <= budget
@@ -1763,9 +1766,11 @@ class CacheStore:
 
     def _result_room(self, pending_id: str, budget: int) -> ResultRoom:
         fits, removed = self._adopt_result_savepoint(pending_id, budget, True, keep=False)
+        dropped = tuple(self._dropped) if fits else ()
         return ResultRoom(tuple(item[0] for item in removed) if fits else (),
                           sum(item[2] for item in removed) if fits else 0,
-                          max((item[3] for item in removed), default=None) if fits else None, fits)
+                          max((item[3] for item in removed), default=None) if fits else None, fits,
+                          tuple(item[0] for item in dropped), tuple(item[1] for item in dropped))
 
     def result_room_plan(self, pending_id: str, budget: int) -> ResultRoom:
         """What Make room would remove for a waiting result, tried in the store and rolled back."""
@@ -1889,6 +1894,10 @@ class CacheStore:
                     where, args = " WHERE path = ? OR substr(path, 1, ?) = ?", (top, len(top) + 1, top + "/")
                     self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
                                        "DO UPDATE SET epoch = epoch + 1", (_results_root_epoch(top),))
+                    # Its keys' own epochs are fenced by the root's from now on: dropped, never by age.
+                    for prefix in (_result_key_epoch(top, ""), _result_key_epoch(top + "/", "")[:-1]):
+                        self._conn.execute("DELETE FROM folder_epochs WHERE substr(path, 1, ?) = ?",
+                                           (len(prefix), prefix))
                 elif cutoff is not None:
                     where, args = " WHERE last_used < ?", (cutoff,)
                 elif paths is not None:
@@ -1898,6 +1907,9 @@ class CacheStore:
                     where, args = "", ()
                     self._conn.execute("UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) "
                                        "WHERE key = 'gen_results'")
+                    # Every key's own epoch is fenced by the generation from now on: dropped.
+                    prefix = _result_key_epoch("", "")[:-1]
+                    self._conn.execute("DELETE FROM folder_epochs WHERE substr(path, 1, ?) = ?", (len(prefix), prefix))
                 rows = self._conn.execute(f"SELECT path, file, bytes FROM results{where}", args).fetchall()
                 for _, file, _ in rows:
                     self._retire(str(file), now)
@@ -1925,6 +1937,10 @@ class CacheStore:
                     for folder in folders:
                         self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
                                            "DO UPDATE SET epoch = epoch + 1", (_results_epoch(folder),))
+                        # The folder's keys' own epochs are fenced by its epoch from now on: dropped.
+                        prefix = _result_key_epoch(folder, "")
+                        self._conn.execute("DELETE FROM folder_epochs WHERE substr(path, 1, ?) = ?",
+                                           (len(prefix), prefix))
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
         everything = root is None and cutoff is None and paths is None

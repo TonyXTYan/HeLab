@@ -296,6 +296,8 @@ class CachedRuns(QObject):
                                 result.input.identity.source_path, byte_size(size))
             if not self._closed():
                 self._saved(replace(result, policy=DISK_CACHED), size)
+        elif kind == "result_not_saved" and event.get("reason") == "dropped":
+            self._note("not saved in the disk cache (discarded)")
         elif kind == "result_not_saved":
             logging.info("%s: result not saved in the disk cache (%s)", self.name, event.get("message"))
         else:

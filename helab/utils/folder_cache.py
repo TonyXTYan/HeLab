@@ -1996,9 +1996,15 @@ class FolderCache(QObject):
             # saved is gone, and its guard, taken before, would never save. Never shown as current.
             event = self._stale_result(event)
         elif event["kind"] == "result_found" and self._evicted_after(started, path, str(event.get("lookup") or lookup)):
-            # Make room evicted that very result since: not found, but the run may still save (its
-            # guard holds: an eviction is no clear).
+            # Make room evicted that very result since: not found, so the run computes. Its guard predates
+            # the eviction, so the store refuses that run's save (the key's epoch): RAM only; a run asked
+            # for later takes a fresh guard and saves it.
             event = {"kind": "result_missing", "evicted": True, **({"guard": event["guard"]} if "guard" in event else {})}
+        elif event["kind"] == "result_pending" and str(event.get("pending_id")) in self._pending_gone:
+            # Already gone when this arrives (Make room evicted its key's saved row and dropped it, or it
+            # was answered): never a question nor a wait, but not saved.
+            event = {"kind": "result_not_saved", "reason": "dropped", "bytes": int(event.get("bytes") or 0),
+                     "budget": event.get("budget"), "message": "Make room discarded it with its key's saved result"}
         elif event["kind"] == "result_saved" and self._evicted_after(started, path, lookup):
             event = {"kind": "result_not_saved", "reason": "evicted", "bytes": int(event.get("bytes") or 0),
                      "budget": None, "message": "Make room removed it again"}

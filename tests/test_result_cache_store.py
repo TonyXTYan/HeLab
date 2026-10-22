@@ -451,3 +451,45 @@ def test_two_processes_answering_one_waiting_result_one_wins(tmp_path: Path) -> 
         with CacheStore(str(directory)) as store:
             assert store._conn.execute("SELECT COUNT(*) FROM pending_results").fetchone()[0] == 0
             assert store.find_result(RUN, f"k{round_}").found is (outcomes[0] == "won")
+
+
+@pytest.mark.no_auto_data_root
+@pytest.mark.parametrize("fence", ["all", "root", "folder"])
+def test_key_epochs_are_compacted_under_the_broader_fence(tmp_path: Path, fence: str) -> None:
+    """Make room's per-key epochs (``result-key:``) go when a broader fence covers them, never by age:
+    Clear cached analysis (after gen_results), a root's (after its epoch), a folder's clear or purge
+    (after its epoch); guards taken before stay refused, other roots' and folders' rows stay."""
+    other_root, other_folder = f"root://{B}/run", f"root://{A}/other"
+
+    def evict(path: str, lookup: str, at: float) -> None:
+        assert save(store, path, lookup, data=big_result(int(at)), budget=10 ** 12, budget_set_at=at).saved
+        # (This one is the least recently shown: Make room evicts it, and only it.)
+        store._conn.execute("UPDATE results SET last_used = CASE WHEN path = ? AND lookup = ? THEN 1 ELSE 1e10 END",
+                            (path, lookup))
+        budget = store.usage() + 50_000
+        held = save(store, path, f"{lookup}-new", data=big_result(int(at) + 1), budget=budget, budget_set_at=at + 1)
+        assert store.adopt_pending_result(held.pending_id, budget=budget, budget_set_at=at + 1, make_room=True).adopted
+
+    def keys() -> set[str]:
+        return {str(path) for (path,) in store._conn.execute(
+            "SELECT path FROM folder_epochs WHERE substr(path, 1, 11) = 'result-key:'")}
+    with CacheStore(str(tmp_path / "store")) as store:
+        evict(RUN, "k", 10.0)
+        evict(other_folder, "k", 20.0)
+        evict(other_root, "k", 30.0)
+        before = keys()
+        assert len(before) == 3
+        stale = store.start_result_job(RUN, "k")
+        if fence == "all":
+            store.remove_results()
+            assert keys() == set()
+        elif fence == "root":
+            store.remove_results(root=A)
+            assert keys() == {f"result-key:{other_root}#k"}
+        else:
+            store.remove_results([RUN])
+            assert keys() == before - {f"result-key:{RUN}#k"}
+        with pytest.raises(SaveRejected):  # The broader fence still refuses a guard from before.
+            save(store, RUN, "k", data=big_result(0), guard=stale, budget=10 ** 12, budget_set_at=99.0)
+        assert save(store, RUN, "k", data=big_result(0), guard=store.start_result_job(RUN, "k"),
+                    budget=10 ** 12, budget_set_at=99.0).saved
