@@ -423,3 +423,55 @@ rows left `settings_defaults.py`; nothing was released, so old keys get no migra
 > (`helab/views/PresetsInspector.py`) opens; RAM only while the disk cache is off or its folder
 > refused (saved by the next read once it's there); a store that can't be read is named
 > (`presets_note`), never "no presets"; `quit_saves` waits for their writes.
+
+## Review fixes, round 7 (Flint on `5923fe7..9a338fd`): the commit after `65ff7e1`, not pushed
+
+1. **(P1) Saving before the first read could replace a stored preset unasked.**
+   - Changes made before the store's names are known (`presets_read`, which is set by a successful
+     answer) are kept in `_presets_unknown`, marked `PRESETS_WAIT_READ`, and not written. A read
+     carries no rows until then.
+   - When the first successful answer lands, any of those names that the store holds with a record
+     keeps the stored preset, and `presets_conflicts` says so once (`PRESET_FOUND`, "… save again
+     to replace it"). The plot's Presets row shows it, and an arrangement shows it as a notice. The
+     rest are written then.
+   - If that read fails, they say "not saved: the saved presets can't be read (…)" and wait for the
+     next successful read. An unknown or unreadable list of names never authorizes a replace.
+   - `quit_saves` waits for changes waiting for a read in flight.
+   - A save then says "Saved preset “p” (saved once the saved presets are read)".
+2. **(P2) An older read snapshot could remove a just-written preset.**
+   - **The rule now:** within one store, a row never goes away (a delete keeps its row), so no read
+     answer, however old, removes anything from RAM. Newest `set_at` merges the rest.
+   - Only an answer from another store (`store_id`, now sent as the event's `store`; a store
+     deleted and recreated by hand) drops what the previous store said, keeping this session's
+     unsaved changes.
+   - This is ordering by store identity rather than by the store's write count: write counts
+     would only matter if rows could vanish within a store, and they can't.
+   - The submission-time rule is gone, and `_preset_jobs` now holds only each job's rows.
+3. **(P2) Empty claimed before a successful read.**
+   - "No presets saved" appears in the menu, and "(none saved)" in the inspector, only once
+     `presets_known()` is true: a successful read, or RAM only, where there is no store.
+   - Before that, the menu shows only the note ("Reading saved presets…" or "⚠ Saved presets
+     can't be read: …"), the inspector shows "(none known yet)", and Settings → Cache's line says
+     "… known · <note>". The plot row's "No presets of X yet" tooltip is gated the same way.
+
+Tests:
+- `tests/test_presets_store.py`, four new:
+  - A save before the first read, with real helpers: no write before the names are known, the
+    stored "p" is kept and said, "q" is written, and saving again then writes it.
+  - Unreadable names first: the change waits and is checked once the store is readable.
+  - The older snapshot after a write, through frozen helpers, in Flint's order; and another
+    store's answer.
+  - Empty claimed only after a read: the inspector and the Cache tab's line, before, after a
+    failed read, and after a successful one.
+- `tests/test_presets_plots.py`, three new:
+  - A plot's Save… before the first read: no question; the stored one kept and said; asks once the
+    name is known.
+  - The menu's Save Folder and Plots as Preset… before the first read: the stored one kept, with a
+    notice.
+  - The menu's "No presets saved" only after a successful read.
+- **All seven fail on `65ff7e1`** (run in a scratch worktree with only the new names added). The
+  snapshot test fails with the preset pruned from RAM.
+- The plot tests' fixture now starts each test with the store read, as after startup.
+
+Checks: full suite 2583 passed, 2 skipped, 2 xfailed, **no RERUN**; mypy --strict (helab, tests)
+and pyright clean.

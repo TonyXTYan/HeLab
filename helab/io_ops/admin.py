@@ -153,7 +153,8 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             if stored.failed:
                 send({"kind": "presets", "saved": written, "error": stored.error})
             else:
-                send({"kind": "presets", "saved": written, "rows": cast(list[PresetRowFields], stored.value or [])})
+                send({"kind": "presets", "saved": written, "rows": cast(list[PresetRowFields], stored.value or []),
+                      "store": store.store_id})
         elif action == "clear_prefs":
             cleared_at = time.time()
             send({"kind": "prefs_cleared", "paths": store.clear_prefs(cleared_at), "set_at": cleared_at})

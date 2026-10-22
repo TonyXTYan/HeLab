@@ -23,11 +23,11 @@ from helab.analysis.dataset_view import DatasetView
 from helab.analysis.follow import DELAY, EVERY, FOLLOW, live_specs
 from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
-from helab.analysis.presets import FORMAT, Arrangement, SavedPlot, ScriptPreset, ScriptPresets, ScriptRef, parse
+from helab.analysis.presets import FORMAT, Arrangement, SavedPlot, ScriptPreset, ScriptPresets, ScriptRef, dumps, parse
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.runner import AnalysisRunner
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
-from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache
+from helab.utils.folder_cache import PRESET_FOUND, Dataset, FolderCache, get_folder_cache
 from helab.utils.io_service import IOService
 from helab.utils.settings_defaults import OPEN_PLOTS_SETTING, REOPEN_PLOTS_SETTING, read_setting
 from helab.utils.settings_store import app_settings
@@ -50,7 +50,12 @@ def fresh_presets(qtbot: QtBot) -> Iterator[None]:
     store = preset_store()
     store.presets.clear()
     store.presets_unsaved.clear()
-    store.presets_read, store.presets_error = False, ""
+    store.presets_conflicts.clear()
+    store._presets_unknown.clear()
+    store.presets_read, store.presets_error, store._presets_store = False, "", ""
+    # As after startup: the store's presets read (a test of the time before says so).
+    store.read_presets()
+    qtbot.waitUntil(lambda: store.presets_read and not store._preset_jobs, timeout=30_000)
     yield
     qtbot.waitUntil(lambda: store.service.closed or not store._preset_jobs, timeout=30_000)
 
@@ -1435,7 +1440,7 @@ def test_settings_cache_tab_counts_presets_and_opens_the_inspector(qtbot: QtBot,
     store = preset_store()
     tab = CacheTab(store, QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat))
     qtbot.addWidget(tab)
-    assert tab.presets_label.text() == "0 script presets, 0 arrangements · Reading saved presets…"
+    assert tab.presets_label.text() == "0 script presets, 0 arrangements"
     write_arrangement("run", Arrangement((), folder("a")))
     stored(qtbot)
     assert tab.presets_label.text() == "0 script presets, 1 arrangement"
@@ -1445,3 +1450,79 @@ def test_settings_cache_tab_counts_presets_and_opens_the_inspector(qtbot: QtBot,
     tab.presets_button.click()
     assert tab.presets_window is first  # One at a time.
     first.close()
+
+
+# Review round 7 (Flint, 5923fe7..9a338fd): names not yet known never authorize replacing
+
+
+def before_the_first_read(qtbot: QtBot, *rows: tuple[str, str, str, str]) -> FolderCache:
+    """Another session saved ``rows``; this one starts, its first read not answered yet."""
+    from helab.utils.cache_store import CacheStore
+    from helab.utils.folder_cache import store_options
+    stored(qtbot)
+    with CacheStore(store_options()["directory"]) as saved:
+        saved.write_presets([{"kind": kind, "scope": scope, "name": name, "record": record, "set_at": 1.0}
+                             for kind, scope, name, record in rows])
+    store = preset_store()
+    store.presets.clear()
+    store.presets_read = False
+    return store
+
+
+def test_a_plots_save_before_the_first_read_keeps_the_stored_preset_and_says_so(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    window = new_window(qtbot, cache, windows)
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    theirs = ScriptPreset("p", ref, {"bins": 77, "mode": "rate"}, "", 1.0)
+    store = before_the_first_read(qtbot, (SCRIPT, script_scope(ref), "p", dumps(theirs)))
+    instance = waiting_plot(window, cache, ref)  # Its settings page asks for a read.
+    presets = bar(instance)
+    set_values(instance, {"bins": 5})
+    presets.ask_name = lambda *_: "p"
+    asked: List[str] = []
+
+    def confirm(parent: Optional[QWidget], title: str, text: str, action: str) -> bool:
+        asked.append(text)
+        return True
+    presets.confirm = confirm
+    presets.save()  # Not a known name yet: nothing to ask.
+    assert asked == [] and presets.note.text() == "Saved preset “p” (saved once the saved presets are read)"
+    stored(qtbot)
+    assert read_script_presets(ref).presets["p"].values["bins"] == 77  # The stored one stays.
+    assert presets.note.text() == f"⚠ Preset “p” not saved: {PRESET_FOUND}" and presets.applied is None
+    # Now the name is known: saving again asks first.
+    presets.save()
+    assert asked == ["A preset “p” of Counted exists. Replace it?"]
+    stored(qtbot)
+    assert read_script_presets(ref).presets["p"].values["bins"] == 5 and not store.presets_conflicts
+
+
+def test_a_folder_preset_saved_before_the_first_read_keeps_the_stored_one(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    window = new_window(qtbot, cache, windows)
+    before_the_first_read(qtbot, (ARRANGEMENT, "", "run", Arrangement((), folder("theirs")).dumps()))
+    explorer = Explorer(folder("mine"))
+    presets = presets_for(window, explorer, cache)  # Asks for the read at startup.
+    presets.ask_name = lambda *_: "run"
+    presets.save()
+    stored(qtbot)
+    assert read_arrangement("run").folder == folder("theirs")
+    assert window.notices[-1] == f"Preset “run” not saved: {PRESET_FOUND}"
+
+
+def test_the_menu_says_no_presets_saved_only_after_a_successful_read(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    window = new_window(qtbot, cache, windows)
+    presets = presets_for(window, Explorer(folder("a")), cache)
+    stored(qtbot)
+    store = preset_store()
+    menu = QMenu()
+
+    def texts() -> List[str]:
+        presets.fill_menu(menu, read=False)
+        return [action.text() for action in menu.actions() if not action.isSeparator()]
+    assert texts() == ["Save Folder and Plots as Preset…", "No presets saved"]
+    store.presets_read = False
+    assert texts() == ["Save Folder and Plots as Preset…", "Reading saved presets…"]
+    store.presets_error = "disk I/O error"
+    assert texts() == ["Save Folder and Plots as Preset…", "⚠ Saved presets can't be read: disk I/O error"]

@@ -19,7 +19,8 @@ from pytestqt.qtbot import QtBot
 from helab.io_ops.admin import cache_admin
 from helab.utils import cache_store
 from helab.utils.cache_store import KINDS, CacheStore, StoreError, StoreReadOnly
-from helab.utils.folder_cache import PRESETS_SAVING, FolderCache, get_folder_cache, store_options
+from helab.utils.folder_cache import (PRESET_FOUND, PRESETS_SAVING, PRESETS_WAIT_READ, FolderCache, get_folder_cache,
+                                      store_options)
 from helab.utils.io_service import IOService
 
 ARR, SCR = "arrangement", "script"
@@ -120,7 +121,8 @@ def test_a_read_only_store_without_the_table_reads_as_none_and_is_left_as_it_was
     # Through the helper's action: a read answers (none), a write fails (named by the error event).
     events: list[Any] = []
     cache_admin({"directory": str(directory)}, "presets", events.append)
-    assert [event for event in events if event["kind"] == "presets"] == [{"kind": "presets", "saved": [], "rows": []}]
+    [answered] = [event for event in events if event["kind"] == "presets"]
+    assert answered["saved"] == [] and answered["rows"] == []
     with pytest.raises(StoreReadOnly):
         cache_admin({"directory": str(directory)}, "presets", events.append, rows=[row("run", "{}", 1.0)])
 
@@ -169,7 +171,8 @@ def restarted(qtbot: QtBot, service: IOService) -> FolderCache:
 def test_a_saved_preset_is_read_back_after_a_restart(qtbot: QtBot, service: IOService) -> None:
     cache = get_folder_cache(service)
     assert store_options() and cache.presets_note() == "Reading saved presets…"
-    assert cache.set_presets([(ARR, "", "run", '{"format": 1}'), (SCR, "x/Plot", "p", "{}")]) == ""
+    # (Before the first read: written once the store's names are known.)
+    assert cache.set_presets([(ARR, "", "run", '{"format": 1}'), (SCR, "x/Plot", "p", "{}")]) == PRESETS_WAIT_READ
     assert cache.preset_records(ARR) == {("", "run"): '{"format": 1}'}  # Shown at once.
     assert cache.quit_saves() == [PRESETS_SAVING]  # Quitting waits for the write.
     settled(qtbot, cache)
@@ -295,3 +298,124 @@ def test_the_quit_window_names_presets_being_saved(qtbot: QtBot, service: IOServ
     assert dialog.folders.count() == 1 and item is not None and item.text() == "Presets — saving"
     qtbot.waitUntil(lambda: bool(results), timeout=30_000)  # Saved: it closes by itself.
     assert not dialog.skipped and cache.quit_saves() == []
+
+
+# Review round 7 (Flint, 5923fe7..9a338fd)
+
+
+def stored_in(name: str) -> tuple[str | None, float] | None:
+    with CacheStore(store_options()["directory"]) as store:
+        return rows_of(store).get(name)
+
+
+def test_a_save_before_the_first_read_never_replaces_a_stored_preset_unasked(qtbot: QtBot,
+                                                                            service: IOService) -> None:
+    """(1, P1) The store holds "p" (another session's); this session saves "p" and "q" before its
+    first read answers: nothing is written until the names are known, then "p" stays the stored
+    one (said once), and "q" is written."""
+    with CacheStore(store_options()["directory"]) as store:
+        store.write_presets([row("p", '"theirs"', 1.0)])
+    cache = get_folder_cache(service)
+    why = cache.set_presets([(ARR, "", "p", '"mine"'), (ARR, "", "q", '"new"')])
+    assert why == PRESETS_WAIT_READ and cache.preset_records(ARR)[("", "p")] == '"mine"'  # Shown at once.
+    assert all(not keys for keys in cache._preset_jobs.values())  # Only a read: no write yet.
+    assert cache.quit_saves() == [PRESETS_SAVING]  # Quitting waits for it all the same.
+    settled(qtbot, cache)
+    assert cache.preset_records(ARR) == {("", "p"): '"theirs"', ("", "q"): '"new"'}
+    assert cache.presets_conflicts == {(ARR, "", "p"): PRESET_FOUND} and not cache.presets_unsaved
+    assert stored_in("p") == ('"theirs"', 1.0) and stored_in("q") is not None and cache.quit_saves() == []
+    # Saved again, now that the names are known: the user's word (the UI asks first), written.
+    cache.set_presets([(ARR, "", "p", '"mine"')])
+    settled(qtbot, cache)
+    assert stored_in("p") == ('"mine"', cache.presets[(ARR, "", "p")]["set_at"])
+
+
+def test_with_the_names_unreadable_a_change_waits_and_is_checked_once_they_are_read(
+        qtbot: QtBot, service: IOService, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    with CacheStore(store_options()["directory"]) as store:
+        store.write_presets([row("p", '"theirs"', 1.0)])
+    cache = get_folder_cache(service)
+    good = store_options()
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "records.sqlite").write_bytes(b"not a database" * 100)
+    monkeypatch.setattr(cache.service, "cache_options", lambda: {"directory": str(broken)})
+    cache.set_presets([(ARR, "", "p", '"mine"')])
+    settled(qtbot, cache)
+    assert not cache.presets_read and cache.presets_note().startswith("⚠ Saved presets can't be read")
+    assert cache.preset_unsaved(ARR, "", "p").startswith("not saved: the saved presets can't be read (")
+    assert cache.quit_saves() == []  # Nothing will write it now: quitting doesn't wait.
+    monkeypatch.setattr(cache.service, "cache_options", lambda: good)
+    cache.read_presets()
+    settled(qtbot, cache)
+    assert cache.preset_records(ARR) == {("", "p"): '"theirs"'} and (ARR, "", "p") in cache.presets_conflicts
+    assert stored_in("p") == ('"theirs"', 1.0)
+
+
+def frozen() -> tuple[IOService, FolderCache]:
+    """A cache whose helpers never run: the test sends their events, in the order it chooses."""
+    made = IOService()
+    made.timer.stop()
+    made._dispatch = lambda: None  # type: ignore[method-assign]
+    _sessions.append(made)
+    return made, FolderCache(made)
+
+
+def admin_job(service: IOService, rows: int) -> Any:
+    """The newest presets job writing ``rows`` rows (0: a read)."""
+    return next(request for request in reversed(service.pending) if request.operation == "cache_admin"
+                and request.payload["action"] == "presets" and len(request.payload["params"]["rows"]) == rows)
+
+
+def answer(service: IOService, request: Any, *events: dict[str, Any]) -> None:
+    for event in events:
+        service.resultReady.emit(request, event)
+    service.pending.remove(request)
+
+
+def test_an_older_snapshot_landing_after_a_write_removes_nothing(service: IOService) -> None:
+    """(2, P2) A read asked after a write, whose snapshot was taken before the write committed
+    (two local-lane helpers), lands after it: the preset stays. Rows never leave a store."""
+    jobs, cache = frozen()
+    cache.read_presets()
+    answer(jobs, admin_job(jobs, 0), {"kind": "presets", "saved": [], "rows": [], "store": "S"}, {"kind": "done"})
+    assert cache.presets_read
+    cache.set_presets([(ARR, "", "p", "{}")])
+    write = admin_job(jobs, 1)
+    cache.read_presets()
+    late = admin_job(jobs, 0)
+    saved = row("p", "{}", cache.presets[(ARR, "", "p")]["set_at"])
+    answer(jobs, write, {"kind": "presets", "saved": [saved], "rows": [saved], "store": "S"}, {"kind": "done"})
+    answer(jobs, late, {"kind": "presets", "saved": [], "rows": [], "store": "S"}, {"kind": "done"})
+    assert cache.preset_records(ARR) == {("", "p"): "{}"}
+    # Another store (recreated by hand): what the last one said goes, this session's unsaved stays.
+    cache.set_presets([(ARR, "", "mine", "{}")])
+    cache.read_presets()
+    answer(jobs, admin_job(jobs, 0), {"kind": "presets", "saved": [], "rows": [], "store": "T"}, {"kind": "done"})
+    assert set(cache.preset_records(ARR)) == {("", "mine")}
+
+
+def empty_lines(inspector: Any) -> list[str]:
+    """What the inspector's two groups say when they list nothing."""
+    lines = []
+    for index in range(inspector.tree.topLevelItemCount()):
+        child = inspector.tree.topLevelItem(index).child(0)
+        lines.append(child.text(0) if child is not None else "")
+    return lines
+
+
+def test_names_are_claimed_empty_only_after_a_successful_read(qtbot: QtBot) -> None:
+    """(3, P2) Before the store answers, or when it can't be read, no list says "none saved"."""
+    from helab.views.PresetsInspector import PresetsInspector, presets_summary
+    jobs, cache = frozen()
+    inspector = PresetsInspector(cache)
+    qtbot.addWidget(inspector)
+    assert empty_lines(inspector) == ["(none known yet)"] * 2
+    assert presets_summary(cache) == "0 script presets, 0 arrangements known · Reading saved presets…"
+    answer(jobs, admin_job(jobs, 0), {"kind": "error", "message": "disk I/O error"})
+    assert empty_lines(inspector) == ["(none known yet)"] * 2
+    assert presets_summary(cache).endswith(" known · ⚠ Saved presets can't be read: disk I/O error")
+    cache.read_presets()
+    answer(jobs, admin_job(jobs, 0), {"kind": "presets", "saved": [], "rows": [], "store": "S"}, {"kind": "done"})
+    assert empty_lines(inspector) == ["(none saved)"] * 2
+    assert presets_summary(cache) == "0 script presets, 0 arrangements"

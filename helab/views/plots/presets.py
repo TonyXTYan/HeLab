@@ -39,7 +39,7 @@ from helab.analysis.parameters import ParameterSpec
 from helab.analysis.presets import (Arrangement, PlotCheck, RecordError, ScriptPreset, ScriptPresets, ScriptRef,
                                     check_value, dumps, parse, preset_note)
 from helab.utils.colours import AMBER
-from helab.utils.folder_cache import FolderCache
+from helab.utils.folder_cache import PRESETS_WAIT_READ, FolderCache
 from helab.views.plots.arrangement import capture, folder_name, open_arrangement
 
 if TYPE_CHECKING:
@@ -76,8 +76,15 @@ def read_script_presets(ref: ScriptRef) -> ScriptPresets:
 
 def presets_known() -> bool:
     """The store's presets have been read (or this session's are all there are)."""
+    return preset_store().presets_known()
+
+
+def take_conflicts(kind: str, scope: str | None = None) -> List[str]:
+    """The presets of ``kind`` (``scope``) saved before the store's names were read under a name it
+    held: each said once, as "Preset “p” not saved: …" (the saved one is kept)."""
     store = preset_store()
-    return store.presets_read or bool(store.presets_session_only())
+    found = [key for key in store.presets_conflicts if key[0] == kind and (scope is None or key[1] == scope)]
+    return [f"Preset “{key[2]}” not saved: {store.presets_conflicts.pop(key)}" for key in found]
 
 
 def write_script_preset(preset: ScriptPreset) -> str:
@@ -127,7 +134,10 @@ def folder_now(cache: FolderCache, key: str) -> str:
 
 
 def saved_note(why: str) -> str:
-    """After saving: "" if a helper saves it, else " (RAM only: why)"."""
+    """After saving: "" if a helper saves it now, else why not yet: " (RAM only: why)", or " (saved
+    once the saved presets are read)" before the store's names are known."""
+    if why == PRESETS_WAIT_READ:
+        return " (saved once the saved presets are read)"
     return f" ({why if why.startswith('RAM only') else f'RAM only for now: {why}'})" if why else ""
 
 
@@ -326,13 +336,19 @@ class PresetBar(QWidget):
         self.combo.setEnabled(bool(names))
         self.combo.setToolTip("\n".join(problems) if problems else "\n".join(filter(None, (
             f"Presets of {self.ref.label()}, shared by every plot of it" if names else
-            f"No presets of {self.ref.label()} yet: Save… saves these settings as one", note))))
+            f"No presets of {self.ref.label()} yet: Save… saves these settings as one" if presets_known() else
+            "", note))))
         self.combo.setPlaceholderText("⚠ can't be read" if problems else "reading…" if not presets_known()
                                       else "none saved")
         self.apply_button.setEnabled(bool(names))
         self.delete_button.setEnabled(bool(names))
         if problems and not self.note.isVisible():
             self._show_problems()
+        conflicts = take_conflicts(SCRIPT, script_scope(self.ref))
+        if conflicts:
+            self._show(f"⚠ {conflicts[0]}", "\n".join(conflicts), amber=True)
+            if self.applied is not None and any(f"“{self.applied.name}”" in text for text in conflicts):
+                self.set_applied(None)  # The saved one is kept: these settings aren't it.
         applied = self.applied
         row = preset_store().presets.get((SCRIPT, script_scope(self.ref), applied.name)) if applied else None
         if applied is not None and applied.name not in self.presets.presets and (
@@ -547,6 +563,8 @@ class ArrangementPresets(QObject):
     @pyqtSlot()
     def _presets_changed(self) -> None:
         """The store answered (or presets changed) while the menu shows: list them again."""
+        for conflict in take_conflicts(ARRANGEMENT):
+            self.plots.notice(conflict)
         menu = self._menu
         if menu is not None and not sip.isdeleted(menu) and menu.isVisible():
             self.fill_menu(menu, read=False)
@@ -585,9 +603,10 @@ class ArrangementPresets(QObject):
             shown.setEnabled(False)
             menu.addAction(shown)
         if not names:
-            empty = QAction("No presets saved", menu)
-            empty.setEnabled(False)
-            menu.addAction(empty)
+            if store.presets_known():  # (Else the note says why none are listed yet.)
+                empty = QAction("No presets saved", menu)
+                empty.setEnabled(False)
+                menu.addAction(empty)
             return
         delete = QMenu("Delete Preset", menu)
         for name in names:

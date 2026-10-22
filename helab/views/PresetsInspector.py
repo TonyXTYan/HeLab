@@ -112,7 +112,7 @@ def presets_summary(cache: FolderCache) -> str:
     """Settings → Cache's line: how many presets, and what may be missing."""
     scripts, arrangements = len(cache.preset_records(SCRIPT)), len(cache.preset_records(ARRANGEMENT))
     text = (f"{scripts:,} script preset{'' if scripts == 1 else 's'}, {arrangements:,} arrangement"
-            f"{'' if arrangements == 1 else 's'}")
+            f"{'' if arrangements == 1 else 's'}" + ("" if cache.presets_known() else " known"))
     note = cache.presets_note()
     return f"{text} · {note}" if note else text
 
@@ -223,7 +223,8 @@ class PresetsInspector(QDialog):
             self._add(arrangements, Entry(ARRANGEMENT, scope, name, text), finder)
         for top in (scripts, arrangements):
             if not top.childCount():
-                QTreeWidgetItem(top, ["(none saved)"]).setDisabled(True)
+                QTreeWidgetItem(top, ["(none saved)" if self.cache.presets_known() else "(none known yet)"]
+                                ).setDisabled(True)
         self.tree.expandAll()
         if chosen is not None:
             for item_id, entry in self.entries.items():
