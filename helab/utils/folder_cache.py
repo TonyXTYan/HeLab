@@ -1371,7 +1371,8 @@ class FolderCache(QObject):
             if self.verified(base) and base.metadata.get("listed_at") and base.metadata.get("identity"):
                 # The quick check of the data in RAM when no cached dataset has one (``io_ops.loading``).
                 payload["memory_check"] = {key: base.metadata.get(key) for key in (
-                    "listed_at", "names", "identity", "fingerprint", "problematic", "data_root")} | {
+                    "listed_at", "names", "identity", "fingerprint", "problematic", "data_root",
+                    "folder_mtime_ns")} | {
                     "signature": base.signature, "unsettled": base.metadata.get("unsettled_files", 0)}
         arrays: dict[int, npt.NDArray[np.float64]] | None = None
         if operation == "load" and payload.get("save_memory"):

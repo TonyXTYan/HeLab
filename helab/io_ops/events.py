@@ -386,6 +386,7 @@ class UnchangedHeldLoadedEvent(_LoadedBase):
     listed_at: float
     names: list[str]
     identity: str
+    folder_mtime_ns: int | None
     data_root: NotRequired[DataRoot]
 
 
@@ -397,6 +398,7 @@ class LoadedEvent(_LoadedBase):
     listed_at: float
     names: list[str]
     identity: str
+    folder_mtime_ns: int | None
     data_root: NotRequired[DataRoot]
     disk_cached: NotRequired[bool]
 
@@ -410,6 +412,7 @@ class HeldLoadedEvent(_LoadedBase):
     listed_at: float
     names: list[str]
     identity: str
+    folder_mtime_ns: int | None
     data_root: NotRequired[DataRoot]
 
 

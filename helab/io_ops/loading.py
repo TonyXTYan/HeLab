@@ -10,8 +10,9 @@ from typing import Any, TYPE_CHECKING
 from helab.io_ops import fingerprints, infra
 from helab.io_ops.events import DiskCachedField, PendingSaveEvent, RawMtimeField
 from helab.io_ops.fingerprints import (DEFAULT_CHECK_LEVEL, _as_of, _cached_signature,
-                                       _fingerprint_signature, _raw_list, _samples_unchanged,
-                                       _saved_fingerprint, _saved_raw_times, _settled, _touch)
+                                       _fingerprint_signature, _mtime_unchanged, _quick_mtime, _raw_list,
+                                       _samples_unchanged, _saved_fingerprint, _saved_raw_times, _settled,
+                                       _touch)
 from helab.io_ops.identity import _location_identity
 from helab.io_ops.infra import (Emit, Heartbeat, Pause, _entry_stat, _is_dir, _read_gate, _read_marker,
                                 _scandir, _stat, emit)
@@ -113,8 +114,8 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
     """One folder stat instead of listing and checking every file.
 
     When the caller holds the cached dataset (``base_signature``), the cache has
-    no files that were still being written, and the folder has not been modified
-    since the dataset's file list was taken, nothing can have been added or
+    no files that were still being written, and the folder's mtime is the one its
+    listing saw (``_mtime_unchanged``), nothing can have been added or
     removed: ``loaded`` names the caller's shots and True is returned. None: the
     check doesn't apply (no such cached dataset), and the folder wasn't looked at.
     """
@@ -126,9 +127,11 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
     as_of = _as_of(info)
     if info.get("signature") != base_signature or info.get("unsettled") or as_of is None:
         return None
-    modified = _stat(path, "cached check: folder").st_mtime
+    folder = _stat(path, "cached check: folder")
+    modified = folder.st_mtime
     fingerprint = [list(entry) for entry in _saved_fingerprint(row)]
-    if modified > as_of or not _samples_unchanged(path, fingerprint, info.get("names"), check_level):
+    if (not _mtime_unchanged(info, folder, as_of)
+            or not _samples_unchanged(path, fingerprint, info.get("names"), check_level)):
         return False
     held = sorted({int(entry[0]) for entry in memory} & {int(entry[0]) for entry in fingerprint})
     problematic = [value for value in row["problematic"] if isinstance(value, int) and value in held]
@@ -152,8 +155,8 @@ def _unchanged_since_memory(path: str, send: Emit, store: CacheStore | None, bas
                             memory: list[list[int]], check: dict[str, Any], check_level: str) -> bool:
     """The quick check of data held in RAM without a disk cache (no .helab-root, Don't cache, or one
     not saved yet), as ``_unchanged_since_cache`` from the dataset's own load: its listing time,
-    file names and identity (``memory_check``). The folder must be at the same location (and under
-    the same data root, whose marker is read), not modified since that listing, with no file then
+    file names, identity and folder mtime (``memory_check``). The folder must be at the same location
+    (and under the same data root, whose marker is read), not modified since that listing, with no file then
     still being written, and a sample of its files unchanged; else the load checks every file."""
     fingerprint, names, listed_at = check.get("fingerprint"), check.get("names"), check.get("listed_at")
     if (check.get("signature") != base_signature or check.get("unsettled")
@@ -170,8 +173,10 @@ def _unchanged_since_memory(path: str, send: Emit, store: CacheStore | None, bas
                 return False
         except (OSError, ValueError):
             return False
-    modified = _stat(path, "memory check: folder").st_mtime
-    if modified > listed_at or not _samples_unchanged(path, fingerprint, names, check_level, "memory check: sample"):
+    folder = _stat(path, "memory check: folder")
+    modified = folder.st_mtime
+    if (not _mtime_unchanged(check, folder, listed_at)
+            or not _samples_unchanged(path, fingerprint, names, check_level, "memory check: sample")):
         return False
     held = sorted({int(entry[0]) for entry in memory} & {int(entry[0]) for entry in fingerprint})
     problematic = [value for value in check.get("problematic") or () if isinstance(value, int) and value in held]
@@ -186,7 +191,8 @@ def _unchanged_since_memory(path: str, send: Emit, store: CacheStore | None, bas
           "cache_reason": "Folder not modified since loaded", "fingerprint": fingerprint,
           "memory_shots": held, "base_signature": base_signature, "signature": base_signature,
           # Still the folder as of that listing, for the next quick check.
-          "listed_at": listed_at, "names": names, "identity": identity})
+          "listed_at": listed_at, "names": names, "identity": identity,
+          "folder_mtime_ns": check.get("folder_mtime_ns")})
     return True
 
 
@@ -285,6 +291,9 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     has_dirs = False
     # Files added after this listing are not in the dataset; freshness compares against it.
     listed_at = time.time()
+    # Before the listing: a later quick check needs the folder's mtime still this one (``_quick_mtime``).
+    folder = _stat(path, "folder mtime")
+    folder_mtime_ns = _quick_mtime(folder, listed_at)
     beat = Heartbeat(send, "listing")
     # The fingerprint comes with the listing: each TXY entry's stat (free on Windows, where the
     # listing has it; one call on macOS and Linux, as a separate stat would be).
@@ -332,7 +341,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # browsing skips its details scan (step 2) while this load runs, unless the
     # folder has subfolders (their dates come from step 2). Sent and saved before any
     # file is read; a basic scan's success is still needed to clear a failure.
-    summary = _summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, False, fingerprint, listed_at)
+    summary = _summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, False, fingerprint, listed_at,
+                       folder)
     summary["unsettled"] = len(young)
     send({"kind": "scan_summary", "status": summary})
     current = {shot: (size, modified) for shot, size, modified in fingerprint}
@@ -578,7 +588,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           "fingerprint": fingerprint, "memory_shots": sorted(in_memory), "base_signature": base_signature,
           "signature": hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest(),
           # For a quick check of this data held in RAM (``_unchanged_since_memory``).
-          "listed_at": listed_at, "names": names, "identity": _location_identity(path, "load: identity")})
+          "listed_at": listed_at, "names": names, "identity": _location_identity(path, "load: identity"),
+          "folder_mtime_ns": folder_mtime_ns})
     if store is not None and (cached or reused):
         _touch(store, path)
     if cached and not young and store is not None and guard is not None and not no_cache:
@@ -588,7 +599,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         filled = _raw_list(raw_times, current)
         try:
             store.confirm_dataset(path, fingerprint, names, listed_at, guard,
-                                  filled if filled != _raw_list(saved_raw, current) else None)
+                                  filled if filled != _raw_list(saved_raw, current) else None, folder_mtime_ns)
         except (StoreError, SaveRejected):
             pass  # Best effort: the next full check tries again.
     if store is None or guard is None or cached or no_cache:
@@ -613,7 +624,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         if reread and changed():
             raise ValueError("Folder changed before cache could be saved")
         _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, load_counts,
-                       unsettled, bool(had_dataset), budget, budget_set_at, send, raw_times)
+                       unsettled, bool(had_dataset), budget, budget_set_at, send, raw_times, folder_mtime_ns)
     except Exception as exc:
         _save_failed(store, exc, send)
 
@@ -622,17 +633,19 @@ def _write_dataset(store: CacheStore, path: str, guard: SaveGuard, data: dict[in
                    fingerprint: list[tuple[int, int, int]], problematic: list[int], names: list[str],
                    listed_at: float, counts: dict[str, int], unsettled: int, had_dataset: bool,
                    budget: int | None, budget_set_at: float | None, send: Emit,
-                   raw_times: dict[int, int] | None = None) -> None:
+                   raw_times: dict[int, int] | None = None, folder_mtime_ns: int | None = None) -> None:
     """Save a folder's dataset to the disk cache within the budget (a pending save that doesn't fit),
     under the guard its job took when it started; ``cache_saved`` and ``disk_cached``, or the pending
-    event. ``raw_times``: its shots' times, where known. Raises on failure (``_save_failed``)."""
+    event. ``raw_times``: its shots' times, where known. ``folder_mtime_ns``: the folder's mtime before
+    the listing (``_quick_mtime``; None: no quick check until a listing records one). Raises on
+    failure (``_save_failed``)."""
     from helab.utils.cache_store import DATASET_FORMAT, pack_dataset
     file = store.write_dataset_file(pack_dataset(data))
     info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(
         json.dumps(fingerprint).encode()).hexdigest(), "action": "updated" if had_dataset else "created",
         "counts": counts, "unsettled": unsettled, "kind": file_kinds.TXY.name, "format": DATASET_FORMAT,
         # Its TXY files' names, in fingerprint order, for the quick check's samples.
-        "names": names,
+        "names": names, "folder_mtime_ns": folder_mtime_ns,
         # For the large-folder check before a later cached read.
         "txy_bytes": large_folder.estimate(fingerprint),
         "ram_bytes": sum(int(array.nbytes) for array in data.values()),
