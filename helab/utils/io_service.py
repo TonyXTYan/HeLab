@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import deque
+import contextlib
 from dataclasses import dataclass, field
 import itertools
 import json
@@ -749,9 +750,12 @@ class IOService(QObject):
             env = os.environ.copy()
             package_root = str(Path(__file__).resolve().parents[2])
             env["PYTHONPATH"] = os.pathsep.join(filter(None, (package_root, env.get("PYTHONPATH", ""))))
-            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                       stderr=subprocess.DEVNULL, text=True, env=env,
-                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0)
+            # What a helper that dies says (a traceback, a failed import): logged if it never ends.
+            errors_file = os.path.join(request.output, "stderr.txt")
+            with open(errors_file, "wb") as errors:
+                process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                           stderr=errors, text=True, env=env,
+                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0)
             request.process = process
             if request.cancelled.is_set():
                 process.kill()
@@ -778,6 +782,11 @@ class IOService(QObject):
                 if request.cancelled.is_set():
                     break
             if not complete and not request.cancelled.is_set():
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    process.wait(1)  # (Its output has ended: it is exiting.)
+                if output := self._tail(errors_file):
+                    logging.warning("I/O helper exited unexpectedly: %s %s; it said:\n%s",
+                                    request.operation, request.path, output)
                 self._put(request, {"kind": "error", "message": "I/O helper exited unexpectedly"})
         except Exception as exc:
             self._put(request, {"kind": "error", "message": str(exc)})
@@ -838,6 +847,16 @@ class IOService(QObject):
                     break
                 else:
                     time.sleep(0.01)
+
+    @staticmethod
+    def _tail(filename: str, limit: int = 2048) -> str:
+        """The last ``limit`` bytes of a helper's error output, as text."""
+        try:
+            with open(filename, "rb") as stream:
+                stream.seek(max(0, stream.seek(0, os.SEEK_END) - limit))
+                return stream.read().decode("utf-8", "replace").strip()
+        except OSError:
+            return ""
 
     @staticmethod
     def release(request: IORequest) -> None:

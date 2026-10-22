@@ -2,7 +2,10 @@
 daemon thread before and after the helper process runs."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+import subprocess
+import sys
 import time
 from typing import Any
 
@@ -54,3 +57,25 @@ def test_the_frozen_reader_reads_lines_written_just_before_the_helper_exited(
     request = IORequest("tab", 0, "/data", "list", {}, 60.0)
     monkeypatch.setattr(request, "process", Exiting())
     assert list(IOService._file_lines(request, str(response))) == ['{"kind": "status"}\n', '{"kind": "done"}\n']
+
+
+def test_a_helper_that_dies_leaves_what_it_said_in_the_log(
+        qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    service = IOService()
+    service.timer.stop()
+    started = subprocess.Popen
+
+    def dying(command: list[str], **kwargs: Any) -> subprocess.Popen[str]:
+        return started([sys.executable, "-c", "import sys; sys.stderr.write('ImportError: no blosc\\n'); "
+                        "sys.exit(1)"], **kwargs)
+
+    monkeypatch.setattr("helab.utils.io_service.subprocess.Popen", dying)
+    request = IORequest("tab", 0, "/data", "list", {}, 60.0)
+    with caplog.at_level(logging.WARNING):
+        service._run(request)
+    events = []
+    while not service.messages.empty():
+        events.append(service.messages.get_nowait()[1])
+    assert {"kind": "error", "message": "I/O helper exited unexpectedly"} in events
+    assert "ImportError: no blosc" in caplog.text
+    service.shutdown()
