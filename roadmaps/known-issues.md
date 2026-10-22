@@ -44,6 +44,26 @@ How to use it:
   fail in 60 local runs under load (2026-10-21). The Windows rerun was the web-view crash
   (fixed, below); the macOS rerun (`f9faefd`) was a teardown failure, cause unknown, and 160 local
   runs passed. CI now prints rerun reasons: read them at its next rerun (2026-10-22).
+- [ ] `test_cache_first.py::test_a_folder_changed_within_its_mtime_tick_is_listed[cached]` reran
+  in 2 of the 9 CI runs that have it (2026-10-22: run 39731793369, Ubuntu once and Windows twice;
+  39734271694, Windows once): `assert <mtime> is None` at line 841. Probable cause, unconfirmed
+  (no traceback of the first attempt): the test sets the folder's mtime to the start of the
+  current 2 s step, spending 0 to 2 s of `RACY_SECONDS` before the first load, so a slow runner
+  records a real mtime. A test-only fix (a wider `RACY_SECONDS` in this test) is saved, not
+  applied (Codebase Review findings, R-23).
+- [ ] `test_live_plots.py::test_a_following_scatter_updates_its_page_in_place` reran once on
+  Ubuntu CI (2026-10-22, run 39731793369): teardown error "Exceptions caught in Qt event loop:
+  TypeError: 'NoneType' object is not callable". Cause unknown.
+- [ ] `test_live_io.py::test_a_live_check_pauses_background_work_only_while_it_reads` reran once
+  on Windows CI (2026-10-22, run 39731793369): `waitUntil` timed out in 10 s at line 102. Cause
+  unknown.
+- [ ] `test_io_service_run.py::test_a_helper_that_dies_leaves_what_it_said_in_the_log` reran twice
+  on macOS CI (2026-10-22, run 39734426913): the helper's error was "[Errno 32] Broken pipe", not
+  the expected "I/O helper exited unexpectedly" (line 79). Cause unknown.
+
+Tony (2026-10-22): note these four, no fixes for now; raise them again only if they keep
+happening. Counted over the last 12 CI runs from `gh api repos/TonyXTYan/HeLab/actions/jobs/<id>/logs`
+(whose Windows logs include the test output; `gh run view --log` can return nothing).
 
 ## Fixed
 
