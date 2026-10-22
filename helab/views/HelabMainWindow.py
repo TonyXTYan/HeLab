@@ -89,7 +89,7 @@ class HelabMainWindow(QMainWindow):
         signal.signal(signal.SIGTERM, self.handle_exit)
 
         self.process = psutil.Process()
-        icon_path = os.path.abspath("./helab/resources/ai-icon.icns")
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "ai-icon.icns")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         else:
