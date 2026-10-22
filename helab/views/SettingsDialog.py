@@ -1,8 +1,5 @@
 # SettingsDialog.py
 import logging
-import sys
-import time
-from re import S
 from typing import Optional, Dict, Any
 
 from PyQt6.QtGui import QCloseEvent, QDesktopServices
@@ -328,7 +325,7 @@ class SettingsDialog(QDialog):
         # TODO warning box if unsaved changes
 
 
-        logging.warning("Settings dialog closed")
+        logging.debug("Settings dialog closed")
         super().closeEvent(a0)
         self.deleteLater()
 
