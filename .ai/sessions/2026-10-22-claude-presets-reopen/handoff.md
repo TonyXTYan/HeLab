@@ -346,9 +346,10 @@ the `quit_saves` entry):
   RAM keeps what it knew, and changes stay "couldn't be saved (…)" until the next read succeeds.
   It is never "no presets". Before the first answer, the note says "Reading saved presets…".
 - `quit_saves` lists **"Presets"** (`PRESETS_SAVING`) while a preset write is in flight.
-  QuitSaveDialog then shows "Presets — waiting for its previous save". It is a folder-oriented
-  window that isn't in my owned paths; I asked CoCo whether I may add a two-line case so it reads
-  "Presets — saving". *Open.*
+- **`helab/views/QuitSaveDialog.py`** (added to my owned paths by CoCo; Cellar hasn't touched it):
+  that entry reads "Presets — saving", and the heading counts only folders ("Saving presets to the
+  disk cache before HeLab quits:", or "Saving 2 folders and presets …"). The commit after
+  `9a338fd`; test `test_the_quit_window_names_presets_being_saved`.
 - Refused while quitting (`QUITTING`), like constants.
 
 **Views:**

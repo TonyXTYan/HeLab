@@ -279,3 +279,19 @@ def test_clear_all_and_reset_all_settings_leave_presets(qtbot: QtBot, service: I
     assert not settings.contains("open_plots")  # The plots to reopen go; presets stay.
     dialog.close()
     assert restarted(qtbot, service).preset_records(ARR) == {("", "run"): "{}"}
+
+
+def test_the_quit_window_names_presets_being_saved(qtbot: QtBot, service: IOService) -> None:
+    from helab.views.QuitSaveDialog import QuitSaveDialog
+    cache = get_folder_cache(service)
+    cache.set_presets([(ARR, "", "run", "{}")])
+    dialog = QuitSaveDialog(cache)
+    qtbot.addWidget(dialog)
+    results: list[int] = []
+    dialog.finished.connect(results.append)
+    dialog.open()
+    item = dialog.folders.item(0)
+    assert dialog.label.text() == "Saving presets to the disk cache before HeLab quits:"
+    assert dialog.folders.count() == 1 and item is not None and item.text() == "Presets — saving"
+    qtbot.waitUntil(lambda: bool(results), timeout=30_000)  # Saved: it closes by itself.
+    assert not dialog.skipped and cache.quit_saves() == []
