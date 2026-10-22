@@ -733,6 +733,9 @@ class IOService(QObject):
                     if request.cancelled.is_set():
                         return
                     np.save(os.path.join(held, f"{shot}.npy"), array, allow_pickle=False)
+                    # Writing the data out is progress: a large dataset on a slow disk must not use
+                    # up the no-progress time before the helper starts (a float store: atomic).
+                    request.last_activity = time.monotonic()
                 payload["held_dir"] = held
             response_file: str | None = None
             if getattr(sys, "frozen", False):
