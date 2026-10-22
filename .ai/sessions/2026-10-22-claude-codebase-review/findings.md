@@ -582,3 +582,23 @@ my final check (below).
 stays out); the new test reads `setup(package_data=…)` by AST (3 tests pass, strict mypy clean). A wheel I built
 from the floor (`pip wheel . --no-deps --no-build-isolation`, into the scratchpad, removed after) holds
 `helab/resources/ai-icon.icns` and `menu-right.svg` and nothing else from the folder.
+
+### Follow-up: old log files (2026-10-22, brief `brief-old-logs.md`, base `ae72673`)
+
+**`fed0fae` (code + tests) and `bf38333` (handoff): accepted.** Checked against the brief: rotation fixed at
+1 MB × 10 (`app_log.LOG_BYTES`, `LOG_BACKUPS`); Settings → General → Log files to keep as a row of
+`settings_defaults.SETTINGS` (`log_files_keep`, 300), read untyped by `constants.read_log_keep` and clamped
+1–100,000, with its spin box; at startup `app_log.tidy_logs` deletes the oldest by mtime (never by name:
+`LOG_FILE` takes the pid only to match running instances), rotated copies counted; `deletable` excludes
+pids with a live instance lock (`cache_locks.other_instances`) and this process, and files modified within
+60 s (`STARTING_SECONDS`, Mend's addition: a HeLab logs before `_start_cache` takes its lock; sound);
+past 50 MB one question per session, Keep the default and Escape button, Delete trims to under 20 MB
+(`trim_logs`); Help › Show log folder is a detached `QDesktopServices.openUrl` like the trace folder; the
+scan and every delete run on a daemon thread (`views/OldLogs.py`), results by queued signals, and the
+tests assert the main thread never scans or deletes; `main` starts it after the window shows, when this
+instance holds its lock. A file that can't be deleted is skipped and logged at INFO. Tests use temp app
+folders only. My checks at `bf38333`: full suite -n 4 --reruns 5 -rR 2474 passed, 2 skipped, 2 xfailed,
+no RERUN; strict mypy (153 + 114 files) and pyright clean. Notes, no change asked: the question box is
+application-modal under `show()` (CacheDialogs uses window-modal `open()`), the same at startup; the
+AGENTS.md (Running, Threading) and known-issues edits the brief lists are proposed in the handoff for
+the Coordinator, per the floor's standing rule.
