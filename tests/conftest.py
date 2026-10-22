@@ -125,15 +125,30 @@ def no_real_data(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def private_store(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """Each test's disk cache is a store of its own (``constants.cache_dir()``, which helpers are
+    sent). A worker's tests shared one, so what a test left there (a pending save, a budget, roots)
+    changed a later test's results. In a folder apart from ``tmp_path``, which tests list."""
+    from helab.utils import constants
+    folder = str(tmp_path_factory.mktemp("caches"))
+    before = (constants.cache_dir(), constants.cache_dir_refused(), constants.cache_dir_enabled())
+    monkeypatch.setenv("HELAB_DIR_CACHES_OVERRIDE", folder)
+    monkeypatch.setattr(constants, "_dir_caches_override", folder)
+    constants.set_cache_dir(folder)
+    yield folder
+    constants.set_cache_dir(*before)
+
+
+@pytest.fixture(autouse=True)
 def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                        request: pytest.FixtureRequest) -> Iterator[None]:
+                        request: pytest.FixtureRequest, private_store: str) -> Iterator[None]:
     """Give existing cache tests a marker and stable fake volume ID in test dirs.
 
     Individual root tests opt out and construct their own marker state. The
     wrapper seeds each test store through its roots table before the production
-    helper resolver opens it; no production fallback is introduced. The worker's
-    shared store forgets the test's roots afterwards, so a later test's
-    ``roots_verify`` checks only its own.
+    helper resolver opens it; no production fallback is introduced. The store
+    is the test's own (``private_store``), so a later test's ``roots_verify``
+    checks only its own roots.
     """
     from helab.io_ops import infra, stores
     from helab.utils import cache_paths, data_roots
@@ -160,8 +175,7 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                         encoding="utf-8")
         return identifier
 
-    main_store = store_root(os.environ["HELAB_DIR_CACHES_OVERRIDE"])
-    seeded: set[str] = set()  # Root locations recorded in the shared store.
+    main_store = store_root(private_store)
 
     def seed(store_dir: str, source: str) -> None:
         mounts = cache_paths.current_mounts()
@@ -184,8 +198,6 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
         with CacheStore(store_dir, root_mode=True) as store:
             if store.read_only:
                 return
-            if store_dir == main_store:
-                seeded.add(location)
             if store.root_at(location) is None:
                 store.record_root(location, identifier,
                                   "smb" if location.startswith("smb://") else "vol",
@@ -207,26 +219,6 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 
     monkeypatch.setattr(stores, "_cache_store", open_seeded)
     yield
-    if not seeded:
-        return
-    monkeypatch.undo()  # Tests that forbid I/O patch it out; this cleanup reads the store.
-    from helab.utils.cache_store import StoreError
-    try:
-        with CacheStore(main_store, root_mode=True) as store:
-            for location, _, _ in store.root_locations():
-                if any(location == root or location.startswith(root + "/") for root in seeded):
-                    store.forget_root(location)
-    except (StoreError, OSError):
-        pass  # (A test that left the store unusable; the next one's roots are its own anyway.)
-
-
-@pytest.fixture(autouse=True)
-def default_budget_is_newest(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Each worker shares one store, which keeps the newest budget it was sent; a budget an
-    earlier test lowered must not hold later tests' saves. Budget tests set their own again."""
-    import time
-    from helab.utils import folder_cache
-    monkeypatch.setattr(folder_cache, "_disk_budget_set_at", time.time())
 
 
 @pytest.fixture(autouse=True)
