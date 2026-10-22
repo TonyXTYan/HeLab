@@ -602,3 +602,19 @@ no RERUN; strict mypy (153 + 114 files) and pyright clean. Notes, no change aske
 application-modal under `show()` (CacheDialogs uses window-modal `open()`), the same at startup; the
 AGENTS.md (Running, Threading) and known-issues edits the brief lists are proposed in the handoff for
 the Coordinator, per the floor's standing rule.
+
+**CI on `c148c9e` (run 39734271694)**: success; builds green; py3.13 Tests macOS 2474 passed, Ubuntu 2472, Windows
+2454, 0 failures; ONE RERUN on Windows: `tests/test_cache_first.py::test_a_folder_changed_within_its_mtime_tick_is_listed[cached]`
+(passed on its second attempt; pytest doesn't keep the first attempt's traceback).
+
+### R-23 · low · `tests/test_cache_first.py:838-841` (the R-1 test's timing margin; confirmed by CoCo: the same assert at line 841 failed in run 39731793369, twice on Windows and once on Ubuntu)
+
+The test sets the folder's mtime to `tick = floor(now / 2) * 2`, so between 0 and 2 s of the 2 s
+`RACY_SECONDS` margin is already spent when it starts; `first_load` (the `cached` variant writes a store)
+must then begin its listing within the rest, else `_quick_mtime` records a real mtime and
+`first["folder_mtime_ns"] is None` fails. On a loaded Windows runner that is plausible, and the rerun
+passed. Unsure: the first attempt's traceback isn't in the log. **Fix** (test only): make the margin
+deterministic, e.g. monkeypatch `fingerprints.RACY_SECONDS` to a large value for `first_load` and the
+same-tick check (both must see None) and to 2.0 only for the later listing at `now − 60`, which must
+record a usable mtime; or set the folder's mtime to `time.time()` right before each load rather than
+the floor of the tick. Known-issues lists it until confirmed, per the RERUN rule.
