@@ -68,6 +68,36 @@ def pytest_configure(config: pytest.Config) -> None:
                                 f"{constants.DIR_TEMPS}, {constants.app_folder()}), not {expected}")
 
 
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item: pytest.Item) -> Iterator[None]:
+    result = yield
+    delete_left_widgets(item.nodeid)
+    return result
+
+
+def delete_left_widgets(test: str) -> None:
+    """Widgets a test leaves go with it. pytest-qt and fixtures only ``deleteLater()`` them, so a
+    later test's event loop, or the interpreter's exit, deleted them; a QWebEngineView outliving
+    its test that way crashed Qt (segfaults in ``test_live_plots.py`` on CI). Deferred deletes are
+    sent at each test's teardown, and a web view still alive after that fails the test: nothing
+    would delete it."""
+    if "PyQt6.QtWebEngineWidgets" not in sys.modules:
+        return
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWidgets import QApplication
+    if QApplication.instance() is None:
+        return
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    alive = [view for view in QApplication.allWidgets() if isinstance(view, QWebEngineView)]
+    if alive:
+        for view in alive:  # (So the next test doesn't fail for this one too.)
+            view.close()
+            view.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        pytest.fail(f"{test} left {len(alive)} web view(s) alive: close or delete its plots", pytrace=False)
+
+
 @pytest.fixture(autouse=True)
 def private_settings(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Each test's app settings are an ini file of its own (``settings_store.app_settings``), never
