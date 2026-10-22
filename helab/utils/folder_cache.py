@@ -1613,6 +1613,15 @@ class FolderCache(QObject):
                     if key[0] == entry.path and key[1] != entry.signature and id(dataset) not in shown]:
             del self.datasets[key]
 
+    def _folder_changed(self, path: str) -> None:
+        """A status check found other files than the folder's snapshot: its datasets describe files
+        the folder has moved past (a tab still shows its own, pinned). Unlike a clear
+        (``_invalidate_data``), running loads, Live checks and cached reads go on: each checks the
+        folder itself, and a ``loaded`` from before the change fails its signature check."""
+        for key in [key for key in self.datasets if key[0] == path]:
+            del self.datasets[key]
+        self.datasetChanged.emit(path)
+
     def _invalidate_data(self, path: str) -> None:
         self._epochs[path] = self._epochs.get(path, 0) + 1
         for operation in ("load", "live", "cached"):
@@ -2523,7 +2532,7 @@ class FolderCache(QObject):
                 old = self.snapshot(job.path)
                 signature = job.status.get("signature")
                 if old and signature and old.status.get("signature") not in (None, "", signature):
-                    self._invalidate_data(job.path)
+                    self._folder_changed(job.path)
                 checked_at = time.monotonic() - max(0, time.time() - job.status.get("scanned_at", time.time()))
                 # A late status check must not replace a newer refresh's names,
                 # including snapshots used by tabs opened after both jobs finish.
