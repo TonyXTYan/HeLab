@@ -213,3 +213,24 @@ dropped pending ids in the plan's validation and the question's identity, so a c
 
 Gauge's checks at `339ed5b`: full suite 2594 passed, 2 skipped, 2 xfailed, no RERUN; strict mypy
 (158 / 123) and pyright clean.
+
+## Round 7 (Gauge, a2c581f..ca7e4cd, Follow-up 2)
+
+No P0/P1. Suite 2601 passed, no RERUN; mypy/pyright clean. Per-key epoch removal matches Tony's policy.
+
+1. [P2] A delayed successful adoption acknowledgement can mark an already evicted row as disk-cached
+   (`helab/utils/folder_cache.py:2402-2407`, `helab/views/plots/cached_results.py:188-201`). The
+   `result_saved` path checks `event.result_id` against `_evicted`; the `adopt_result` admin-result
+   path checks only clears/purges (`_removed_after`). Adoption A commits, Make room B evicts A's row,
+   then A's ack arrives: `resultPendingAnswered` sends saved=True with the evicted id; `CachedRuns`
+   installs it after the eviction signal and the plot shows disk. Fix: include result_id eviction in
+   `saved_now` (without invalidating a newer copy with another id); add "adoption ack after its row
+   is evicted" to the lifecycle table (adopted_then_evicted tests only the other order).
+2. [P3] The report badge shows on Don't cache folders although the helper refuses reuse
+   (`folder_cache.py:2035-2041`, `result_cache_off` 1958-1969; `io_ops/results.py:38-43`):
+   `analysis_cached` ignores the folder's `no_cache`. Hide it while no_cache is set (in-memory
+   preference; the prefs-change repaint updates it).
+
+## Round 8 (Gauge, ca7e4cd..81e6a2a)
+
+REVIEW COMPLETE, no findings. Both round-7 fixes accepted (eviction check by row id, a newer copy of the same key stays disk-cached; badge hidden under no_cache). Suite 2602 passed, no RERUN; mypy/pyright clean; 3 probes passed.

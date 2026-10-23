@@ -173,3 +173,28 @@ CoCo tells you when to merge.
 Owned paths add `helab/views/CacheDialogs.py`, `helab/models/SnapshotFileSystemModel.py` (the badge),
 `helab/io_ops/browse.py` (the listing's flag), `helab/views/FolderDetailsPanel.py` (its cache line)
 and `helab/views/SettingsDialog.py` (the reuse setting only).
+
+## Follow-up 2 (Tony, Chat, 2026-10-22)
+
+Tony: keep Make room (no "doesn't fit" fallback), and:
+
+1. **Folder-row badge: yes**, as Follow-up 1 item 2 read it. Use one of the icons Tony already
+   chose, in Debug › Show all Icons (`StatusIcons.STATUS_ICONS_EXTRA_NAME`, `helab/resources/icons.py`),
+   rather than a new one: `report` (`ICON_REPORT`, REPORT_ANALYTICS) and `chart3d` are there and
+   unused so far; CoCo suggests `report`. Pick, say why, and add its row's description in
+   `DebugIconsWindow.py` if that window describes where each is used.
+2. **Make room removes only old saved results** (Tony: "make room only should remove very old saved
+   results so any newer copy saving in cache is fine"). Make room evicts the oldest saved results
+   (by `last_used`, as datasets do) and never drops or fences a newer copy of the same result that
+   is waiting or being saved: that copy goes through the budget check in its own save transaction
+   like any save (and may become its own question). The user's clears (Clear cached analysis…,
+   Clear all, a root's Clear cached data…) keep fencing running saves as now. Drop the
+   confirmation's disclosure about waiting copies. Say whether Make room should also skip results
+   used this session or by a shown plot.
+3. The `run_reopened` seam and the merge are unchanged: wait for CoCo's word to merge. Presets
+   Reopen will also add a presets table to `cache_store.py`, a presets action in `io_ops/admin.py`
+   and a hook in `CacheTab.py` (its preset inspector), so expect conflicts there at the merge.
+
+Then: commit, tell CoCo; Gauge reviews the delta before you push once.
+
+Owned paths add `helab/views/DebugIconsWindow.py` (the badge's description only).
