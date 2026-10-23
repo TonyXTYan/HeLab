@@ -41,8 +41,7 @@ def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lo
         if flags.failed:
             raise ValueError(f"The folder's settings couldn't be read: {flags.error}")
         if flags.value and flags.value.get("no_cache"):
-            send({"kind": "result_missing", "no_cache": True, "store": store.store_id,
-                  "store_created": store.created_at})
+            send({"kind": "result_missing", "no_cache": True, "store": store.store_id})
             return
         guard: ResultGuard | None
         try:
@@ -53,8 +52,7 @@ def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lo
         if found.failed:
             raise ValueError(found.error)
         if found.value is None:
-            missing: ResultMissingEvent = {"kind": "result_missing", "store": store.store_id,
-                                           "store_created": store.created_at}
+            missing: ResultMissingEvent = {"kind": "result_missing", "store": store.store_id}
             if guard is not None:
                 missing["guard"] = guard
             send(missing)
@@ -70,8 +68,7 @@ def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lo
                 pass  # (Only purges by age go by it.)
         event: ResultFoundEvent = {"kind": "result_found", "artifact": artifact, "exact": found.value.exact,
                                    "record": row["record"], "computed_at": row["computed_at"], "bytes": row["bytes"],
-                                   "lookup": row["lookup"], "result_id": row["result_id"], "store": store.store_id,
-                                   "store_created": store.created_at}
+                                   "lookup": row["lookup"], "result_id": row["result_id"], "store": store.store_id}
         if guard is not None:
             event["guard"] = guard
         send(event)
@@ -98,8 +95,7 @@ def result_save(path: str, cache_options: dict[str, Any] | None, blob_file: str,
             # Its guard was taken in another store (since recreated at the cache folder): its
             # generations and epochs mean nothing here, so it writes nothing.
             send({"kind": "result_not_saved", "reason": "store_replaced", "bytes": len(packed), "budget": None,
-                  "message": "the disk cache was recreated before saving completed", "store": store.store_id,
-                  "store_created": store.created_at})
+                  "message": "the disk cache was recreated before saving completed", "store": store.store_id})
             return
         file = store.write_result_file(packed)
         options = cache_options or {}

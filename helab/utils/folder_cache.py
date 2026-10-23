@@ -8,7 +8,7 @@ import logging
 import math
 import os
 import time
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 from uuid import uuid4
 import weakref
 
@@ -279,10 +279,18 @@ class FolderCache(QObject):
         self._presets_unknown: set[tuple[str, str, str]] = set()
         # Those the store turned out to hold already: kept as saved, the user told (``PRESET_FOUND``).
         self.presets_conflicts: dict[tuple[str, str, str], str] = {}
-        # The disk cache store whose answers count (``store_answer``): its identity, (created_at,
-        # store_id) ("": none has answered yet), and the stores retired since (replaced, or older).
-        self._store: tuple[float, str] = (0.0, "")
-        self._stores_retired: set[str] = set()
+        # The disk cache store whose answers count (``store_answer``): its ``store_id`` ("": none has
+        # answered yet). While an identity probe is out (its owner), no answer counts and writes
+        # wait (``_probe_held``); stores other than the one in use named meanwhile are probed again after.
+        self._store = ""
+        self._probe_owner = ""
+        self._probe_seen: set[str] = set()
+        self._probe_held: list[Callable[[], None]] = []
+        # Answers waiting for the probe (and their jobs' later events, in order), replayed once the
+        # folder has answered; ``_replaying`` while they are.
+        self._probe_waiting: list[tuple[IORequest, dict[str, Any]]] = []
+        self._probe_waiting_owners: set[str] = set()
+        self._replaying = False
         self._presets_stale: set[str] = set()  # Jobs a replaced store answered: their changes go to the current one.
         # Failures noted while other preset jobs run, said once none is (``_presets_settle``): why
         # each change couldn't be written, and why the store's names couldn't be read.
@@ -436,7 +444,8 @@ class FolderCache(QObject):
         self._save_seq: dict[str, int] = {}
         self._pending_changed: dict[str, float] = {}
         # When the newest inventory applied was requested; an older one arriving later is stale.
-        self._inventory_started = float("-inf")
+        # When the newest inventory applied was asked for, by store: never compared across stores.
+        self._inventory_started: dict[str, float] = {}
         # One timer for the store's next cleanup deadline (wall clock).
         self._sweep_deadline: float | None = None
         # ``sync_budget``: the job telling the store the app's disk budget, retried until it has.
@@ -1181,64 +1190,160 @@ class FolderCache(QObject):
 
     # The disk cache store answers come from: one identity for presets and saved results.
 
-    def store_answer(self, store: object, created: object = None) -> bool:
-        """Whether an answer from the store ``store`` (its ``store_id``) made at ``created`` (its
-        ``created_at``) counts: it is the store in use. The one rule for every answer naming a
-        store, presets and saved results alike (presets reads and writes, result reads and saves,
-        Make room for a result, inventories, saved-result counts):
+    def store_answer(self, store: object) -> bool:
+        """Whether an answer from the store ``store`` (its ``store_id``) counts. The one rule for
+        every answer naming a store, presets and saved results alike (presets reads and writes,
+        result reads and saves, Make room for a result, inventories, saved-result counts, the disk
+        usage any helper measures), checked before anything in the answer is used: **the cache
+        folder decides** which store is in use, never a clock or a counter.
 
-        - A store's identity is (``created_at``, ``store_id``), from its meta. A store recreated at
-          the cache folder while HeLab runs (deleted by hand, then made again by the next helper)
-          was made after the one it replaces, so it sorts after it. Equal times sort by
-          ``store_id``: of two stores, neither can retire the other in turn.
-        - The store in use is the newest identity an answer has named. An answer naming a newer
-          one makes it the store in use (``_store_changed``): the old one is retired, and what it
-          said goes, for both features at once. Presets start afresh as at startup (what it said
-          goes, the new store's names are unknown until its rows come, this session's unsaved
-          changes stay and are written there); saved results drop its plots' "saved in disk cache",
-          the folders' counts and the results waiting there for Make room.
-        - An answer naming a retired store, or one older than the store in use, counts for nothing
-          (False); each caller takes it as stale. An older store not seen before is retired at
-          once, with one WARNING naming both identities (one made after the clock was set back
-          would sort so): the store in use is kept.
-        - So the order helpers answer in doesn't matter: the newest store wins, and once it has,
-          no answer from an older one is taken.
-        - Writes name their store and the helper writes nothing in another: a result save the
+        - The store in use is the first one an answer names, then whatever the cache folder holds
+          when an identity probe opens it.
+        - An answer naming another store disagrees: one identity probe (``cache_admin identity``,
+          local lane) asks the folder which store is there. It is sent after that answer arrived,
+          so it opens the folder after both stores were seen.
+        - While the probe is out, nothing claims anything: every answer naming a store, whichever,
+          waits for it with its job's later events (``_waits_for_folder``); measurements (counts,
+          usage) count for nothing; writes wait (``_probe_held``: result saves, Make room for a
+          result, presets reads and writes; quitting waits for them). So nothing reads or writes
+          again until the folder has answered.
+        - The probe's store is the store in use. If it isn't the one before, both features drop the
+          old one's state together (``_store_changed``): presets start afresh as at startup (what it
+          said goes; the new store's names are unknown until read; this session's unsaved changes
+          stay and are written there; ``presetsChanged``), and saved results drop plots' "saved in
+          disk cache", the folders' counts, the results waiting there and the disk usage. Then the
+          answers that waited are replayed in order: the folder's store's count, the others are
+          stale (a stale presets read is asked again). Then the held writes go, and the store's
+          waiting results are asked for again (an inventory).
+        - A store other than the probe's named while it was out is probed again once it answers: a
+          replacement meanwhile only starts another probe, so it converges. A probe that fails
+          changes nothing (what waited is judged against the store in use; the held writes go and
+          meet the folder themselves).
+        - Writes name their store, and the helper writes nothing in another: a result save the
           store its guard was taken in (``ResultGuard.store``), Make room for a result the store it
           waits in, a presets write the store whose names were read.
-        - An answer naming no store (a folder without a disk cache) says nothing of one: True.
-        - A cache move keeps the store (its target must be empty or new; a rename or a verified
-          copy keeps ``store_id`` and ``created_at``), so it keeps its identity: nothing starts afresh."""
+        - Inventories are ordered against inventories of the same store only.
+        - An answer naming no store (a folder without a disk cache) says nothing of one: True. A
+          cache move keeps the store (its target must be empty or new, and a rename or a verified
+          copy keeps ``store_id``), so nothing changes."""
         if not isinstance(store, str) or not store:
             return True
-        if store == self._store[1]:
+        if self._probe_owner:
+            if store != self._store:
+                self._probe_seen.add(store)
+            return False
+        if self._replaying:
+            return store == self._store  # (Waited for the probe, which opened the folder after it.)
+        if not self._store:
+            self._store = store
+            self._store_changed(replaced=False)
             return True
-        if store in self._stores_retired:
+        if store == self._store:
+            return True
+        logging.info("Disk cache: an answer came from store %s, not %s in use: asking the cache folder", store,
+                     self._store)
+        self._probe()
+        return False
+
+    def _waits_for_folder(self, producer: IORequest, event: dict[str, Any]) -> bool:
+        """An answer naming a store other than the one in use, or any answer naming a store while
+        an identity probe is out, waits for the folder's answer (``store_answer``), and so do its
+        job's later events, in order. True: it waits."""
+        if producer.owner == self._probe_owner or self._replaying:
             return False
-        identity = (float(created) if isinstance(created, (int, float)) and not isinstance(created, bool) else 0.0,
-                    store)
-        if self._store[1] and identity < self._store:
-            self._stores_retired.add(store)
-            logging.warning("Disk cache: an answer came from store %s (made %s), older than the one in use, %s "
-                            "(made %s); kept the one in use", store, identity[0], self._store[1], self._store[0])
+        store = event["inventory"].get("store_id") if event["kind"] == "inventory" else event.get("store")
+        store = store if isinstance(store, str) else ""
+        if not self._probe_owner:
+            if not (store and self._store and store != self._store):
+                return False
+            logging.info("Disk cache: an answer came from store %s, not %s in use: asking the cache folder",
+                         store, self._store)
+            self._probe()
+            if not self._probe_owner:
+                return False  # (Couldn't ask: judged now, as from another store.)
+        elif store and store != self._store:
+            self._probe_seen.add(store)
+        elif not store and producer.owner not in self._probe_waiting_owners:
             return False
-        old, self._store = self._store, identity
-        if old[1]:
-            self._stores_retired.add(old[1])
-            logging.info("Disk cache: store %s replaced %s (recreated at the cache folder?)", store, old[1])
-        self._store_changed(bool(old[1]))
+        self._probe_waiting.append((producer, event))
+        self._probe_waiting_owners.add(producer.owner)
         return True
+
+    def _answered_from(self, event: Mapping[str, Any]) -> bool:
+        """``store_answer`` for an event naming its store (``store``)."""
+        return self.store_answer(event.get("store"))
+
+    def _probe(self) -> None:
+        """Ask the cache folder which store it holds (``store_answer``)."""
+        if self._probe_owner or self.service.closed:
+            return
+        self._probe_owner = self.cache_admin("identity")
+        if self._probe_owner:
+            self._probe_seen.clear()
+            self.quitSavesChanged.emit()
+
+    def _probe_answered(self, store: str) -> None:
+        """The cache folder holds ``store`` ("": the probe failed, nothing changes)."""
+        self._probe_owner = ""
+        seen, self._probe_seen = self._probe_seen, set()
+        if store and store != self._store:
+            old, self._store = self._store, store
+            logging.info("Disk cache: the cache folder holds store %s now (was %s): its saved results and "
+                         "presets are read afresh", store, old or "none")
+            self._store_changed(replaced=bool(old))
+        # The answers that waited: those of the folder's store count, the others are stale (the
+        # folder was opened after they arrived), in the order they came.
+        waiting, self._probe_waiting = self._probe_waiting, []
+        self._probe_waiting_owners.clear()
+        self._replaying = True
+        try:
+            for producer, event in waiting:
+                self._on_event(producer, event)
+        finally:
+            self._replaying = False
+        held, self._probe_held = self._probe_held, []
+        for write in held:
+            write()
+        if store:
+            # The store's waiting results and usage: answers dropped while the probe was out may
+            # have named some.
+            self.restore_pending()
+        if self._presets_again:
+            self._presets_again = False
+            self._read_presets()
+        self._presets_settle()
+        self.quitSavesChanged.emit()
+        self.presetsChanged.emit()
+        if store and any(other != self._store for other in seen):
+            self._probe()
 
     def _store_changed(self, replaced: bool) -> None:
         """Another store is in use (``store_answer``): presets start afresh; if it ``replaced`` one,
-        that store's saved results are gone from here too."""
+        that store's saved results, waiting results and usage are gone from here too."""
+        known = self.presets_read
         self._presets_fresh_start()
+        if known:
+            self.presetsChanged.emit()  # Its names are unknown now: views say so, and read when they open.
         if replaced:
-            self._results_store_replaced(self._store[1])
+            self._results_store_replaced(self._store)
+            self._usage_seq, self.disk_usage = None, None
+            self.diskUsageChanged.emit()
+            self.update_auto_load_pause()
+            self._inventory_started.clear()
 
-    def _answered_from(self, event: Mapping[str, Any]) -> bool:
-        """``store_answer`` for an event naming its store (``store``, ``store_created``)."""
-        return self.store_answer(event.get("store"), event.get("store_created"))
+    def _hold_or_submit(self, owner: str, path: str, operation: str, payload: dict[str, Any], *,
+                        blob: bytes | None = None) -> bool:
+        """Submit a write naming its store, or hold it while an identity probe is out (True: it will
+        be submitted). One that can't be queued then ends with an error, as a helper's would."""
+        if not self._probe_owner:
+            return self.service.submit(owner, 0, path, operation, payload, priority=True, blob=blob)
+
+        def submit() -> None:
+            if not self.service.submit(owner, 0, path, operation, payload, priority=True, blob=blob):
+                request = IORequest(owner, 0, path, operation, payload, 0.0)
+                self.service.resultReady.emit(request, {"kind": "error", "message": "HeLab's work queue is full"})
+        self._probe_held.append(submit)
+        return True
 
     # Presets (helab/views/plots/presets.py): the store's ``presets`` table, through helpers only.
     # Read at startup and whenever they could have changed (the Presets menu, a plot's settings
@@ -1246,11 +1351,12 @@ class FolderCache(QObject):
     # them. RAM only while the disk cache is off or its saved folder refused, saved once it's there.
     #
     # One rule keeps ``presets_unsaved`` right whatever order helpers answer in:
-    # - RAM follows one store, the one in use (``store_answer``, shared with saved results). An
-    #   answer from a store retired since changes nothing. A newer store becoming the one in use is a
-    #   fresh start (``_presets_fresh_start``): what the last one said goes, its names are unknown
-    #   until it sends its rows (``presets_read``), and this session's unsaved changes stay, to be
-    #   checked against them.
+    # - RAM follows one store, the one in use (``store_answer``, shared with saved results: the cache
+    #   folder decides). An answer from another store changes nothing. Another store becoming the
+    #   one in use is a fresh start (``_presets_fresh_start``): what the last one said goes, its
+    #   names are unknown until it sends its rows (``presets_read``), and this session's unsaved
+    #   changes stay, to be checked against them. While an identity probe is out, reads and writes
+    #   wait for it (``_presets_again``), so nothing re-reads a store the folder may not hold.
     # - A change is written only once the current store's names are known, and only to that store:
     #   each write names it, and a helper finding another store writes nothing. Until then it waits
     #   (PRESETS_WAIT_READ); a name the store turns out to hold is never replaced unasked
@@ -1316,6 +1422,9 @@ class FolderCache(QObject):
     def _read_presets(self) -> None:
         if self.presets_session_only() or self.service.closed:
             return
+        if self._probe_owner:
+            self._presets_again = True  # After the cache folder has said which store it holds.
+            return
         if any(not keys for keys in self._preset_jobs.values()):
             self._presets_again = True
             return
@@ -1360,8 +1469,15 @@ class FolderCache(QObject):
     def _write_presets(self, keys: list[tuple[str, str, str]]) -> bool:
         """Write these changes to the current store (its names known), then read it; none: a read."""
         keys = [key for key in keys if key in self.presets]
+        if self._probe_owner:
+            # Owed, written after the cache folder has said which store it holds (``_read_presets``).
+            self.presets_unsaved.update(dict.fromkeys(keys, ""))
+            self._presets_again = True
+            if keys:
+                self.quitSavesChanged.emit()
+            return True
         rows = [{"kind": key[0], "scope": key[1], "name": key[2], **self.presets[key]} for key in keys]
-        owner = self.cache_admin("presets", rows=rows, store=self._store[1])
+        owner = self.cache_admin("presets", rows=rows, store=self._store)
         if not owner:
             full = "couldn't be saved (HeLab's work queue is full)"
             self.presets_unsaved.update(dict.fromkeys(keys, ""))  # Owed, and decided with the rest.
@@ -1404,11 +1520,14 @@ class FolderCache(QObject):
         self.presets_read = False
         self._presets_unknown.update(self.presets_unsaved)
 
-    def _on_presets(self, producer: IORequest, event: Mapping[str, Any]) -> None:
-        if not self._answered_from(event):
-            # It saved nothing that is still there, and says nothing about the store in use: its
-            # changes are written again, to that one, when the job ends.
+    def _on_presets(self, producer: IORequest, event: Mapping[str, Any], in_use: bool) -> None:
+        if not in_use:
+            # It says nothing about the store in use (or the cache folder is being asked which that
+            # is): its changes are written again, to that one, when the job ends, and its read is
+            # asked again (after the folder has answered).
             self._presets_stale.add(producer.owner)
+            if not self._preset_jobs.get(producer.owner):
+                self._presets_again = True  # (A write is written again, and so read, when it ends.)
             return
         for row in event.get("saved") or ():
             self._remember_preset(row)
@@ -2292,8 +2411,9 @@ class FolderCache(QObject):
         waiting = self.pending_results.get(str(params.get("pending_id") or ""), {}) if action == "adopt_result" else {}
         if waiting.get("store"):
             params["store"] = waiting["store"]  # Make room in the store it waits in, or nothing.
-        if not self.service.submit(owner, 0, options["directory"], "cache_admin",
-                                   {"cache": options, "action": action, "params": params}, priority=True):
+        payload = {"cache": options, "action": action, "params": params}
+        if not (self._hold_or_submit(owner, options["directory"], "cache_admin", payload) if action == "adopt_result"
+                else self.service.submit(owner, 0, options["directory"], "cache_admin", payload, priority=True)):
             logging.warning("Disk cache %s: queue full", action)
             return ""
         self._admin[owner] = action
@@ -2341,11 +2461,11 @@ class FolderCache(QObject):
         options = store_options()
         if not options or self.service.closed or self.quitting or self.result_cache_off(path):
             return False
-        if not self.service.submit(owner, 0, self.key(path), "result_save",
-                                   {"cache": options, "lookup": lookup, "family": family, "record": record,
-                                    "analysis_id": analysis_id, "action": action, "computed_at": computed_at,
-                                    "guard": guard, "label": label, "verified_volumes": self.verified_volumes()},
-                                   priority=True, blob=packed):
+        if not self._hold_or_submit(owner, self.key(path), "result_save",
+                                    {"cache": options, "lookup": lookup, "family": family, "record": record,
+                                     "analysis_id": analysis_id, "action": action, "computed_at": computed_at,
+                                     "guard": guard, "label": label, "verified_volumes": self.verified_volumes()},
+                                    blob=packed):
             return False
         self._result_ops[owner] = (self.key(path), time.monotonic(), lookup)
         self._result_writes[owner] = self.key(path)
@@ -2355,14 +2475,16 @@ class FolderCache(QObject):
     def _on_result_event(self, producer: IORequest, event: dict[str, Any]) -> None:
         if event["kind"] in ("done", "error", "cancelled") and self._result_writes.pop(producer.owner, None) is not None:
             self.quitSavesChanged.emit()  # (Its helper has ended: the save is in the store, or never will be.)
-        self._note_usage(event.get("usage"), event.get("usage_seq"))
-        if "next_deadline" in event:
-            # A save that replaced or refused a result retired its file; a waiting one expires.
-            self._schedule_sweep(event["next_deadline"])
+        # Its store first (``store_answer``): from another one, nothing in it counts.
+        in_use = self._answered_from(event)
+        if in_use:
+            self._note_usage(event.get("usage"), event.get("usage_seq"))
+            if "next_deadline" in event:
+                # A save that replaced or refused a result retired its file; a waiting one expires.
+                self._schedule_sweep(event["next_deadline"])
         path, started, _ = self._result_ops.get(producer.owner, ("", time.monotonic(), ""))
-        if (event["kind"] in ("result_found", "result_missing", "result_saved", "result_pending")
-                and not self._answered_from(event)):
-            # From a store recreated at the cache folder since: what it found or saved isn't in the
+        if not in_use and event["kind"] in ("result_found", "result_missing", "result_saved", "result_pending"):
+            # From a store the cache folder may not hold: what it found or saved may not be in the
             # store in use, and its guard means nothing there.
             event = self._replaced_store_result(event)
         elif (event["kind"] in ("result_found", "result_saved", "result_pending")
@@ -2423,8 +2545,8 @@ class FolderCache(QObject):
                 order = (str(seq[0]), int(seq[1]))
             except (KeyError, TypeError, ValueError, IndexError):
                 continue
-            if not self.store_answer(order[0], value.get("store_created")):
-                continue  # Measured in a store retired since.
+            if not self.store_answer(order[0]):
+                continue  # Measured in a store not in use.
             key = self.key(path)
             if started is not None and self._removed_after(started, "results", key):
                 continue
@@ -2468,12 +2590,11 @@ class FolderCache(QObject):
         if gone:
             self._forget_pending(gone)
             self.pendingSavesChanged.emit()
-        logging.info("Disk cache: another store answered (recreated?); saved analysis results of the old one dropped")
         self.cacheRemoved.emit(None, ["results"])
 
     def _replaced_store_result(self, event: dict[str, Any]) -> dict[str, Any]:
-        """An answer to a result read or save from a store replaced since: nothing found (and no
-        guard: a save of the run would check it against another store), or not saved."""
+        """An answer to a result read or save from a store not in use (``store_answer``): nothing
+        found (and no guard: a save of the run would check it against another store), or not saved."""
         if event["kind"] in ("result_found", "result_missing"):
             return {"kind": "result_missing", "stale": True}
         return {"kind": "result_not_saved", "reason": "store_replaced", "bytes": int(event.get("bytes") or 0),
@@ -2508,11 +2629,14 @@ class FolderCache(QObject):
 
     def _note_usage(self, usage: object, seq: object) -> None:
         """A helper measured the disk cache's live usage; keep the newest measurement, by the
-        store's write count when it was taken (a different store, e.g. recreated, starts over)."""
+        store's write count when it was taken. Only the store in use's (``store_answer``: another
+        store's usage counts for nothing, and a change of store forgets the old one's)."""
         if (not isinstance(usage, int) or isinstance(usage, bool) or not isinstance(seq, (list, tuple))
                 or len(seq) != 2 or not isinstance(seq[0], str) or not isinstance(seq[1], int)):
             return
         store_id, writes = seq
+        if not self.store_answer(store_id):
+            return
         if self._usage_seq is not None and self._usage_seq[0] == store_id and writes < self._usage_seq[1]:
             return
         self._usage_seq = (store_id, writes)
@@ -2686,9 +2810,16 @@ class FolderCache(QObject):
     def _on_admin_event(self, producer: IORequest, event: dict[str, Any]) -> None:
         action = self._admin[producer.owner]
         kind = event["kind"]
-        if "next_deadline" in event:
-            self._schedule_sweep(event["next_deadline"])
-        self._note_usage(event.get("usage"), event.get("usage_seq"))
+        if producer.owner == self._probe_owner and kind in ("admin_result", "error", "cancelled"):
+            # The cache folder said which store it holds (``store_answer``), or couldn't.
+            self._probe_answered(str(event.get("store") or "") if kind == "admin_result" else "")
+        # Its store first (``store_answer``): from another one, nothing in it counts.
+        in_use = self.store_answer(event["inventory"].get("store_id")) if kind == "inventory" else (
+            self._answered_from(event))
+        if in_use:
+            if "next_deadline" in event:
+                self._schedule_sweep(event["next_deadline"])
+            self._note_usage(event.get("usage"), event.get("usage_seq"))
         if kind == "folder_prefs":
             self.remember_prefs(event["path"], event["prefs"])
             return
@@ -2705,7 +2836,7 @@ class FolderCache(QObject):
             self._remember_constant_folders(event.get("folders"), known=True)
             return
         if kind == "presets" and producer.owner in self._preset_jobs:
-            self._on_presets(producer, event)
+            self._on_presets(producer, event, in_use)
             return
         if kind == "prefs_cleared":
             # As of the Clear's own time: a choice saved after it (arriving first) stays.
@@ -2720,15 +2851,15 @@ class FolderCache(QObject):
             self.removed(event["paths"], event["kinds"])
             return
         started = self._started.get(producer.owner, 0.0)
-        # A newer inventory was already applied: this one is stale, for the cache and its viewers.
-        # An inventory of a store retired since says nothing of the one in use.
-        stale = kind == "inventory" and (not self.store_answer(
-            event["inventory"].get("store_id"), event["inventory"].get("store_created"))
-            or started < self._inventory_started)
+        # A newer inventory of the same store was already applied, or it is of a store not in use:
+        # stale, for the cache and its viewers.
+        inventory_store = str(event["inventory"].get("store_id") or "") if kind == "inventory" else ""
+        stale = kind == "inventory" and (not in_use or started < self._inventory_started.get(
+            inventory_store, float("-inf")))
         if stale:
             pass
         elif kind == "inventory":
-            self._inventory_started = started
+            self._inventory_started[inventory_store] = started
             # First: the questions about its pending saves show this usage.
             self._note_usage(event["inventory"].get("usage"), event["inventory"].get("usage_seq"))
             # The store's list is the truth; keep what events added (e.g. a room plan) for the same
@@ -2752,8 +2883,7 @@ class FolderCache(QObject):
             self.pending_saves = merged
             # Waiting results (R2): the store's list, with what events added for the same one.
             # Each tagged with its store: it waits there (Make room names it; another store drops it).
-            store = event["inventory"].get("store_id")
-            waiting = {str(entry["pending_id"]): {**entry, "store": store}
+            waiting = {str(entry["pending_id"]): {**entry, "store": inventory_store}
                        for entry in event["inventory"].get("pending_results") or ()
                        if entry["pending_id"] not in self._pending_gone
                        and not self._removed_after(started, "results", self.key(entry["path"]))}
@@ -2794,14 +2924,16 @@ class FolderCache(QObject):
         elif kind == "admin_result" and action in ("adopt_result", "discard_result"):
             pending_id = str(producer.payload["params"].get("pending_id") or "")
             if event.get("adopted") is False and event.get("room") is not None and pending_id in self.pending_results:
-                # Still waiting: Make room wasn't enough or changed; asked again with the new plan.
-                self.pending_results[pending_id] = {**self.pending_results[pending_id], "room": event["room"]}
+                # Still waiting: Make room wasn't enough or changed; asked again with the new plan (a
+                # plan from a store not in use changes nothing: the question stays as it was).
+                if in_use:
+                    self.pending_results[pending_id] = {**self.pending_results[pending_id], "room": event["room"]}
             elif pending_id:
                 self._forget_pending({pending_id})
                 # Saved, unless a Clear cached analysis (all, the root's, a purge) of its folder came since
                 # Make room was asked, or another Make room evicted that very row (by its id; a newer
                 # copy has another): its acknowledgement then names a row that is gone.
-                saved_now = (bool(event.get("adopted")) and self._answered_from(event)
+                saved_now = (bool(event.get("adopted")) and in_use
                              and str(event.get("result_id") or "") not in self._evicted
                              and not self._removed_after(started, "results", self.key(str(event.get("path") or ""))))
                 if isinstance(event.get("folder_results"), dict):
@@ -3012,10 +3144,12 @@ class FolderCache(QObject):
                 job.cache_off = True
             return
         if producer.owner in self._admin:
-            self._on_admin_event(producer, event)
+            if not self._waits_for_folder(producer, event):
+                self._on_admin_event(producer, event)
             return
         if producer.owner in self._result_ops or producer.owner in self._result_writes:
-            self._on_result_event(producer, event)
+            if not self._waits_for_folder(producer, event):
+                self._on_result_event(producer, event)
             return
         if producer.owner == self._subtree_writer:
             if event["kind"] in ("error", "cancelled"):

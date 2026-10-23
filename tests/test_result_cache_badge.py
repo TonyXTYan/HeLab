@@ -63,8 +63,15 @@ def test_a_folder_without_a_data_root_sends_no_count(tmp_path: Path) -> None:
 
 
 def counts(count: int, size: int, writes: int, store: str = "s") -> dict[str, Any]:
-    """A count measured in ``store`` ("other": one made later, as a store recreated at the cache folder)."""
-    return {"count": count, "bytes": size, "seq": [store, writes], "store_created": 2.0 if store == "other" else 1.0}
+    return {"count": count, "bytes": size, "seq": [store, writes]}
+
+
+def folder_holds(cache: FolderCache, store: str) -> None:
+    """The cache folder answers the identity probe a count from another store started."""
+    probe = next(r for r in cache.service.pending if r.operation == "cache_admin" and r.payload["action"] == "identity")
+    for event in ({"kind": "admin_result", "action": "identity", "store": store}, {"kind": "done"}):
+        cache.service.resultReady.emit(probe, event)
+    cache.service.pending.remove(probe)
 
 
 def test_folder_cache_keeps_the_newest_measurement_and_drops_counts_with_a_clear(
@@ -83,7 +90,11 @@ def test_folder_cache_keeps_the_newest_measurement_and_drops_counts_with_a_clear
     assert cache.analysis_cached("/r/a") == (2, 2_000_000)
     cache._note_result_counts({"/r/a": counts(3, 3 << 20, 11)})
     assert analysis_cached_text(cache, "/r/a") == "Cached analysis: 3 results, 3.0 MB"
-    cache._note_result_counts({"/r/a": counts(1, 500, 1, store="other")})  # Another store (recreated): taken.
+    cache._note_result_counts({"/r/a": counts(1, 500, 1, store="other")})  # Another store: the folder is asked…
+    assert analysis_cached_text(cache, "/r/a") == "Cached analysis: 3 results, 3.0 MB"
+    folder_holds(cache, "other")  # …and holds it (recreated): the old store's counts go.
+    assert cache.analysis_cached("/r/a") is None
+    cache._note_result_counts({"/r/a": counts(1, 500, 1, store="other")})
     assert analysis_cached_text(cache, "/r/a") == "Cached analysis: 1 result, 500 B"
     started = time.monotonic()
     cache.removed(["/r/a"], ["results"])  # Clear cached analysis of the folder.

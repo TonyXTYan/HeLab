@@ -167,8 +167,8 @@ def _deadline(store: CacheStore) -> float | None:
 
 
 def _store_fields(store: CacheStore) -> StoreField:
-    """The store an answer comes from: its identity (``store_id``, ``created_at``)."""
-    return {"store": store.store_id, "store_created": store.created_at}
+    """The store an answer comes from (its ``store_id``: ``FolderCache.store_answer``)."""
+    return {"store": store.store_id}
 
 
 def _usage(store: CacheStore) -> UsageFields:

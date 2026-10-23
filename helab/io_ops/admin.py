@@ -22,7 +22,7 @@ UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
                  "constants", "presets", "forget_root", "root_same", "clear_root", "clear_results",
-                 "clear_root_results", "adopt_result", "discard_result")
+                 "clear_root_results", "adopt_result", "discard_result", "identity")
 
 
 def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, **params: Any) -> None:
@@ -166,11 +166,10 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             written = cast(list[PresetRowFields], store.write_presets(rows) if rows else [])
             stored = store.read_presets()
             if stored.failed:
-                send({"kind": "presets", "saved": written, "error": stored.error, "store": store.store_id,
-                      "store_created": store.created_at})
+                send({"kind": "presets", "saved": written, "error": stored.error, "store": store.store_id})
             else:
                 send({"kind": "presets", "saved": written, "rows": cast(list[PresetRowFields], stored.value or []),
-                      "store": store.store_id, "store_created": store.created_at})
+                      "store": store.store_id})
         elif action == "clear_prefs":
             cleared_at = time.time()
             send({"kind": "prefs_cleared", "paths": store.clear_prefs(cleared_at), "set_at": cleared_at})
@@ -227,6 +226,8 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 found = store.root_at(location)
                 send({"kind": "root_confirmed", "location": location, "uuid": identifier,
                       "path": _location_path(store, location), "label": found[1] if found else ""})
+        elif action == "identity":
+            pass  # Which store is in the cache folder now: its ``store`` (FolderCache.store_answer's probe).
         elif action == "budget":
             if budget is not None and budget_set_at is not None:
                 # Lowering it (``fit``): not recorded if the data cached by now doesn't fit.

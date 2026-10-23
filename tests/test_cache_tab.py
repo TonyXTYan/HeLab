@@ -530,9 +530,17 @@ def test_80_percent_dialog_once_per_crossing_and_ignore_lasts_the_session(
         # ...until usage rises another 10% of the budget.
         usage_event(cache, 920)
         assert cache.auto_load_paused and warnings == [True, True, True]
-        # An older measurement arriving late changes nothing; another store's (recreated) does.
+        # An older measurement arriving late changes nothing; another store's (recreated) counts
+        # once the cache folder says it holds that store (FolderCache.store_answer).
         usage_event(cache, 100, writes=0)
         assert cache.disk_usage == 920 and cache.auto_load_paused
+        usage_event(cache, 930, writes=0, store_id="new")
+        assert cache.disk_usage == 920
+        probe = next(r for r in service.pending if r.operation == "cache_admin" and r.payload["action"] == "identity")
+        for event in ({"kind": "admin_result", "action": "identity", "store": "new"}, {"kind": "done"}):
+            service.resultReady.emit(probe, event)
+        service.pending.remove(probe)
+        assert cache.disk_usage is None  # The old store's usage goes with it.
         usage_event(cache, 930, writes=0, store_id="new")
         assert cache.disk_usage == 930
         # A larger budget resumes at once.

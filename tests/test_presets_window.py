@@ -30,7 +30,7 @@ def fresh_presets(qtbot: QtBot) -> Iterator[None]:
     store.presets_unsaved.clear()
     store.presets_conflicts.clear()
     store._presets_unknown.clear()
-    store.presets_read, store.presets_error, store._store = False, "", (0.0, "")
+    store.presets_read, store.presets_error, store._store = False, "", ""
     yield
     qtbot.waitUntil(lambda: store.service.closed or not store._preset_jobs, timeout=30_000)
 
