@@ -95,12 +95,26 @@ def test_a_live_check_pauses_background_work_only_while_it_reads(
     assert service.submit("other tab", 0, str(background), "load")
     qtbot.waitUntil(lambda: seen("other tab", "file_finished"), timeout=10000)
 
+    submitted: dict[str, float] = {}
+
     def check(owner: str, payload: dict[str, Any]) -> None:
+        submitted[owner] = time.monotonic()
         assert service.submit(owner, 0, str(watched), "load", {"live": True, "memory": held, **payload})
 
     def finished(owner: str) -> list[dict[str, Any]]:
-        qtbot.waitUntil(lambda: seen(owner, "done") or seen(owner, "error"), timeout=10000)
-        return [e for r, e, _ in events if r.owner == owner]
+        """Its events, once it is done: it fails only after 10 s without an event from it (a check
+        reading 201 files is slower on Windows CI, which once took over 10 s for all of it)."""
+        def last() -> float:
+            return max([at for r, _, at in events if r.owner == owner], default=submitted[owner])
+
+        qtbot.waitUntil(lambda: seen(owner, "done") or seen(owner, "error") or time.monotonic() - last() > 10,
+                        timeout=60000)
+        mine = [e for r, e, _ in events if r.owner == owner]
+        kinds = {kind: [e["kind"] for e in mine].count(kind) for kind in dict.fromkeys(e["kind"] for e in mine)}
+        assert seen(owner, "done") or seen(owner, "error"), (
+            f"{owner}: no event for 10 s, {time.monotonic() - submitted[owner]:.1f} s after it was submitted; "
+            f"its events: {kinds}; last: {str(mine[-1])[:300] if mine else None}")
+        return mine
 
     # Nothing new: the check lists the folder and never holds the other tab's load, which reads on.
     check("live 1", {})
