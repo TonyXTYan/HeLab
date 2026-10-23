@@ -833,7 +833,10 @@ def test_a_folder_changed_within_its_mtime_tick_is_listed(
     listing leaves the mtime as the listing saw it. A folder modified within ``RACY_SECONDS`` of its
     listing is listed again by the next check, until a listing sees an older mtime."""
     from helab.io_ops import fingerprints
-    monkeypatch.setattr(fingerprints, "RACY_SECONDS", 2.0)  # (Tests set no settle age, hence no margin.)
+    # (Tests set no settle age, hence no margin.) The tick spends up to 2 s of a 2 s margin before
+    # the first listing starts, which a slow runner may not leave: a wide one while the folder's
+    # mtime is the tick, and 2 s again for the listing of an older mtime.
+    monkeypatch.setattr(fingerprints, "RACY_SECONDS", 30.0)
     source = source_folder(tmp_path)
     tick = math.floor(time.time() / 2) * 2
     os.utime(source, (tick, tick))
@@ -843,6 +846,7 @@ def test_a_folder_changed_within_its_mtime_tick_is_listed(
     os.utime(source, (tick, tick))  # (The same 2 s step.)
     result = check_again(source, tmp_path, first, held)
     assert not result.get("unchanged") and result["load_counts"]["new_loaded"] == 1
+    monkeypatch.setattr(fingerprints, "RACY_SECONDS", 2.0)
     older = time.time() - 60
     os.utime(source, (older, older))
     listed = check_again(source, tmp_path, result, held)
