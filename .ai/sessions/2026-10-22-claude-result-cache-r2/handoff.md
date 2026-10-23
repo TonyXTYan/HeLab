@@ -4,6 +4,82 @@ Branch `agent/result-cache-r2` from `c3d4b50`; commits `c31ac10` (schema, report
 `ef486d3` (back end), `bcdc12d` (plots), `3e5a934` (Settings), plus this session folder. Measurements
 and evidence: [notes.md](notes.md).
 
+## Round 10: one store identity for presets and saved results (`ee84391`, 2026-10-23)
+
+Gauge's four findings all came from a store recreated at the cache folder while HeLab runs (the
+folder deleted by hand, then made again by the next helper). Instead of patching each one, presets
+and saved results now follow one rule, `FolderCache.store_answer`, whose docstring is the rule.
+CoCo agreed to order stores by when they were made rather than by request sequence numbers: submit
+order says nothing about which store one of the local lane's two parallel helpers opened.
+
+**The rule:**
+- **Identity.** A store's identity is (`created_at`, `store_id`), from its meta; every store-v3 store
+  already records both. A recreated store was made after the one it replaces, so it sorts after
+  it. Equal times sort by `store_id`, so of two stores neither can retire the other in turn.
+- **The store in use.** It is the newest identity any answer has named. An answer naming a newer
+  one makes it the store in use (`_store_changed`). The old store is retired, and what it said is
+  dropped for both features at once:
+  - presets start afresh, as at startup: what the old store said goes, the new store's names are
+    unknown until its rows come, and this session's unsaved changes stay and are written there;
+  - saved results drop the old store's plot marks ("saved in disk cache"), the folders' counts and
+    the results waiting there for Make room.
+- **Stale answers.** An answer from a retired store, or from one older than the store in use,
+  counts for nothing, and each caller treats it as stale. An older store never seen before is
+  retired at once, with one WARNING naming both identities (a store made after the clock was set
+  back would sort that way), and the store in use is kept.
+- **Order doesn't matter.** Whatever order helpers answer in, the newest store wins, and after
+  that no answer from an older one is taken.
+- **Writes name their store.** A result guard carries the store it was taken in
+  (`ResultGuard.store`), and `result_save` writes nothing in another store (not saved, reason
+  `store_replaced`). Make room for a result names the store its question waits in. Presets writes
+  already named the store whose names were read.
+- **No store named.** An answer from a folder without a disk cache says nothing about any store.
+- **Cache moves.** A move keeps the store: its target must be empty or new, and both a rename and a
+  verified copy keep `store_id` and `created_at`. So a move keeps its identity and nothing starts
+  afresh. (CoCo asked whether a move could land on an older store: it can't.)
+
+**Where it lives:** the presets and results identity fields (`_presets_store`, `_presets_retired`,
+`_results_store`, `_results_retired`) are replaced by `_store` and `_stores_retired`. Every answer
+naming a store goes through `store_answer`: presets (`_on_presets`), result events, `adopt_result`'s
+answer, inventories (`store_id`, `store_created`) and saved-result counts. `_new_presets_store`
+becomes `_presets_fresh_start`, called on every change of store. Presets keep their rules otherwise
+(a change cleared only by the store in use, settled in one place).
+
+**The findings:**
+1. A guard from A saves nothing in B: the helper checks the guard's store, including for a save
+   queued before B existed.
+2. Waiting results restored by an inventory are tagged with the inventory's store, and inventories
+   go through `store_answer`. A later B answer keeps B's questions and drops only A's.
+3. A delayed first answer from A sorts before B, so A is retired and never switched to.
+4. When results learn of B first, presets start afresh on B too, and a later A presets answer is
+   stale: its changes are written again to B when its job ends.
+
+**Tests** (`tests/test_store_identity.py`):
+- An enumeration of every order of A's answer (found, missing, saved, pending, adopted, presets,
+  inventory, counts) against B's first answer (presets, missing, inventory, counts), from a fresh
+  start and with A in use: 128 cells. In every cell B ends in use with A retired, and no preset
+  row, waiting question or count of A's stays. Whatever said "saved in disk cache" or handed out a
+  guard from A is followed by dropping A's saved results; with B first, nothing from A is taken.
+- The older-store WARNING and the tie-break.
+- A moved (copied) store keeps its identity.
+- Finding 1 through the real helpers.
+
+The enumeration uses the new API, so it can't run on the round-9 code. Its cells cover Gauge's
+round-10 repros: B then A with a fresh start (3), inventory (2), and B confirmed by `missing` (4).
+Two tests changed with the rule: a recreated store's count is now made later, and adoption names
+its store. Fixtures that reset presets for a new test reset `_store`.
+
+**Checks at `ee84391`:** full suite (`-n 12 --reruns 5 --reruns-delay 1`) 2861 passed, 2 skipped,
+2 xfailed, **no RERUN**. An earlier run had 10 reruns: the two `test_typing` mypy tests failed
+every time (5 each) on a type error in the new test file, fixed before the commit. `mypy --strict
+helab` (162) and `tests` (132), `pyright helab tests` and `git diff --check` are clean.
+
+**Proposed doc edit (AGENTS.md › Caching, after "Only helpers open it"):** "Answers name their
+store by (`created_at`, `store_id`); `FolderCache.store_answer` keeps the newest as the store in
+use for presets and saved results alike, retiring older ones, so a store recreated at the cache
+folder while HeLab runs replaces the old one's presets and results state at once, whatever order
+helpers answer in, and writes (a result's guard, Make room, presets) name their store."
+
 ## Review fixes, round 9 (Gauge on `81e6a2a..7fb9faa`, 2026-10-23)
 
 Gauge accepted the merge, the removers keeping presets, `_migrate` and the seam. Its two findings are
