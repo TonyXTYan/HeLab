@@ -24,6 +24,7 @@ from helab.analysis import result_cache
 from helab.analysis.budget import RamBudget
 from helab.analysis.dataset_view import DatasetView, build_view
 from helab.analysis.parameters import ParameterSpec
+from helab.analysis.presets import SavedPlot, ScriptRef
 from helab.analysis.result_codec import Declared
 from helab.analysis.results import DISK_CACHED, FROM_DISK, AnalysisContext, AnalysisResult
 from helab.analysis.runner import AnalysisRunner
@@ -33,6 +34,7 @@ from helab.utils.constants import cache_dir
 from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache
 from helab.utils.io_service import IOService
 from helab.utils.ram_buffers import buffer_of
+from helab.views.plots.arrangement import FolderWait
 from helab.views.plots.instance import AnalysisInstance
 from helab.views.plots.script_tree import TreePanelWidget
 from helab.views.plots.workspace import PlotWorkspace
@@ -210,6 +212,35 @@ def test_a_saved_result_is_shown_after_a_restart_without_computing(
     second.run()
     qtbot.waitUntil(lambda: saved(second) and again.computed == 1, timeout=WAIT)
     assert cast(AnalysisResult, second.shown).source != FROM_DISK and results_saved() == 2
+    close(window)
+
+
+def test_a_reopened_plot_shows_its_exact_saved_result_without_computing(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A plot reopened at start (or from an arrangement preset) runs as the user's first run does
+    once its folder's data is found (``run_reopened``): it looks in the disk cache first."""
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    first = open_plot(window, qtbot, folder_view(tmp_path), Costly())
+    qtbot.waitUntil(lambda: saved(first), timeout=WAIT)
+    close(window)
+    # A restart: the plot reopens from its record and waits for its folder's data.
+    script = Costly()
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    panel = TreePanelWidget(window.plots)
+    qtbot.addWidget(panel)
+    metadata = script.get_metadata()
+    monkeypatch.setattr(panel, "find_script", lambda ref: (metadata, script))
+    view = folder_view(tmp_path)
+    wait = FolderWait(cache, view.identity.source_path)
+    monkeypatch.setattr(wait, "look", lambda deliberate=False: None)  # (Found below, as RAM or a cached read finds it.)
+    instance = panel.reopen_plot(SavedPlot(ScriptRef.of(metadata.identity(), "Plot", metadata.name),
+                                           view.identity.source_path, values={"scale": 1}), wait)
+    assert isinstance(instance, AnalysisInstance) and instance.waiting()
+    wait.found.emit(view)
+    qtbot.waitUntil(lambda: settled(instance), timeout=WAIT)
+    shown = cast(AnalysisResult, instance.shown)
+    assert script.computed == 0 and shown.source == FROM_DISK and not shown.outdated
+    assert np.array_equal(shown.data.totals, [30.0, 60.0, 90.0]) and results_saved() == 1
     close(window)
 
 

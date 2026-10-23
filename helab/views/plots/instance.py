@@ -338,8 +338,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def _submit(self, view: DatasetView, values: Optional[Dict[str, Any]] = None, *, reloading: bool = False,
                 constants: Optional[Mapping[str, Mapping[str, float]]] = None, live: bool = False,
                 one_off: bool = False) -> None:
-        """Run on ``view``. A ``one_off`` run (the user's: Rerun, the first run, a reload; never Live's)
-        of a script whose results may be saved looks itself up in the disk cache first (R2)."""
+        """Run on ``view``. A ``one_off`` run (the user's: Rerun, the first run, a reload, a reopened
+        plot's; never Live's) of a script whose results may be saved looks itself up in the disk
+        cache first (R2)."""
         self._follow_timer.stop()
         if not reloading:
             self._reload_note = ""
@@ -681,12 +682,12 @@ class AnalysisInstance(LinkedAnalysisInstance):
     @pyqtSlot(object)
     def run_reopened(self, view: DatasetView) -> None:
         """The one place a reopened plot decides to run: its folder's data was found (in RAM or
-        the disk cache, ``FolderWait``), so it runs on it with its settings. (Result Cache, R2: a
-        result cached for exactly these settings and data can be shown here instead.)"""
+        the disk cache, ``FolderWait``), so it runs on it with its settings, as the user's first run
+        does: a result saved for exactly these settings and data shows instead (R2)."""
         if self.is_closed or not self.waiting():
             return
         self._end_wait()
-        self._submit(view)
+        self._submit(view, one_off=True)
 
     @pyqtSlot(str)
     def _waiting_noted(self, text: str) -> None:

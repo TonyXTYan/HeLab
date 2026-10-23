@@ -293,6 +293,38 @@ def test_purging_results_by_age(tmp_path: Path) -> None:
             save(store, guard=guard)  # (Its folder's results epoch moved.)
 
 
+def presets(store: CacheStore) -> list[tuple[str, str | None]]:
+    found = store.read_presets()
+    assert found.found
+    return sorted((str(row["name"]), row["record"]) for row in found.value or [])
+
+
+@pytest.mark.no_auto_data_root
+def test_no_removal_of_results_touches_presets(tmp_path: Path) -> None:
+    """Presets (Presets Reopen) are the user's: Clear cached analysis (all, a root's, a folder's),
+    purges by age, Make room, Clear all and a root's Clear cached data… all keep them."""
+    with CacheStore(str(tmp_path / "store")) as store:
+        store.write_presets([{"kind": "script", "scope": "a/Plot", "name": "mine", "record": "{}", "set_at": 1.0},
+                             {"kind": "arrangement", "scope": "", "name": "desk", "record": "{}", "set_at": 1.0}])
+        kept = presets(store)
+        dataset(store)
+        budget = store.usage() + 400_000
+        for index, lookup in enumerate(("old", "new")):
+            assert save(store, lookup=lookup, data=big_result(index), budget=budget, budget_set_at=1.0).saved
+        held = save(store, lookup="k3", data=big_result(3), budget=budget, budget_set_at=1.0)
+        assert held.pending_id
+        room = store.result_room_plan(held.pending_id, budget)
+        assert store.adopt_pending_result(held.pending_id, budget=budget, budget_set_at=1.0, make_room=True,
+                                          expected_room=list(room.result_ids)).adopted
+        assert presets(store) == kept
+        for removal in (lambda: store.remove_results(cutoff=time.time() + 60), lambda: store.remove_results([RUN]),
+                        lambda: store.remove_results(root=A), lambda: store.remove_results(),
+                        lambda: store.remove(list(KINDS)), lambda: store.clear_root(A)):
+            save(store, lookup="again")
+            removal()
+            assert presets(store) == kept
+
+
 # The helper's operations (local lane)
 
 def options(tmp_path: Path) -> dict[str, Any]:
