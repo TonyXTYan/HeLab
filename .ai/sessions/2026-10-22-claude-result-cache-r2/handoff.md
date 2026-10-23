@@ -4,6 +4,55 @@ Branch `agent/result-cache-r2` from `c3d4b50`; commits `c31ac10` (schema, report
 `ef486d3` (back end), `bcdc12d` (plots), `3e5a934` (Settings), plus this session folder. Measurements
 and evidence: [notes.md](notes.md).
 
+## Round 12: failed probes and held writes (`ffeee5a`, 2026-10-23)
+
+Gauge found the rule sound when the folder answers (A → B → C converges, two HeLabs agree, no
+write lands in the wrong store, replay is once and in order). Its two P2s are fixed, and both are
+now part of the rule in `store_answer`'s docstring:
+
+1. **A probe that fails, or can't be asked, leaves the folder's store unknown** (`_store_unknown`).
+   Before, a successful B presets read waited, the probe failed, the replay marked it stale, its
+   end read again, which probed again, and so on forever, with quit waiting on Presets. Now:
+   - The store in use stays, and what waited is stale.
+   - Presets get the state they already have for a store that can't be read. Owed changes stay
+     in RAM and say "couldn't be saved (the disk cache's store couldn't be confirmed (…))", and
+     the Presets note says "Saved presets can't be read: …".
+   - Held result saves and Make room end as not saved.
+   - Nothing is asked again by itself: no stale re-read, no rewrite, no inventory, no re-probe.
+     So quitting waits for none of it.
+   - The next answer naming another store, or a deliberate read (the Presets menu, a plot's
+     settings page, the presets window), asks the folder again. One probe at a time, never a chain.
+2. **Held writes have owners.** They are now `HeldWrite` records with their owner, path,
+   operation, payload and blob, instead of closures. `FolderCache.cancel(owner, …)` ends one as
+   cancelled. `FolderCache.shutdown`, which `IOService.shutdown` calls before it cancels requests,
+   first ends them all and drops the waiting answers; a probe answered or cancelled while closing
+   launches nothing. `io_service.py` isn't mine, so the cancel path is `FolderCache.cancel`, not
+   `IOService.cancel`, which only knows queued requests. Nothing cancels a result save by owner
+   today: `CachedRuns` cancels only lookups, which are never held. Starting to quit
+   (`cancel_for_quit`) does not drop held writes, because quit waits for result saves (round 9);
+   only shutdown, including Quit now, does.
+
+**Tests** (`tests/test_store_identity.py`, now 971):
+- The enumeration gains a first probe that fails: 960 cells. After the failure, the store in use is
+  unchanged, nothing waits or is held, quit waits for nothing and nothing of the other store stays.
+  A later B answer and a successful probe then end on B.
+- Gauge's repros:
+  - Five failed probes in a row with an owed change: quit ends each time, the change is said not
+    saved and nothing re-reads; a later successful probe writes it to B.
+  - A failed probe ends a held save as not saved.
+  - `cancel` on a held save ends it cancelled, and it is never sent.
+  - Shutdown during a hold submits nothing.
+
+**A RERUN, and its cause:** one full run had 2 reruns of
+`test_presets_store::test_every_order_of_the_three_writes_answers_settles_every_change`. The cause
+was my round 11 test helper. It kept the stores each session named by `id(service)`, and a later
+test's IOService could reuse that id, inherit another test's stores and answer the probe with the
+wrong one. It now uses a `WeakKeyDictionary` keyed by the service.
+
+**Checks at `ffeee5a`:** the full suite (`-n 12 --reruns 5 --reruns-delay 1`) ran twice after that
+fix: 3701 passed, 2 skipped, 2 xfailed, **no RERUN** both times. `mypy --strict helab` (162) and
+`tests` (132), `pyright helab tests` and `git diff --check` are clean.
+
 ## Round 11: the cache folder decides which store is in use (`bcee2be`, 2026-10-23)
 
 This replaces round 10's rule (below, kept for the record). Round 10 ordered stores by
