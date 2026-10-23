@@ -109,7 +109,7 @@ of events or closing of widgets at teardown.
 `test_live_plots.py::test_a_following_scatter_updates_its_page_in_place` teardown error on Ubuntu CI
 (2 of 23 jobs): "TypeError: 'NoneType' object is not callable" with no traceback, so raised by Qt
 from C. Not reproduced (12 module runs and 11 full suites in a Linux container). Such an exception
-now gets a note naming the code that was running Qt's event loop (`<commit>`): read it in the next
+now gets a note naming the code that was running Qt's event loop (`e326fdf`): read it in the next
 rerun's reasons.
 
 ## Job 3: `test_a_live_check_pauses_background_work_only_while_it_reads` (Windows, line 102)
@@ -139,7 +139,7 @@ no event for 10 s, …; its events: {… 'file_started': 201, 'shot': 200 …}; 
 `test_live_io.py::test_a_live_check_pauses_background_work_only_while_it_reads`'s Windows rerun was
 at `finished()`'s 10 s wait for a Live check's `done` (line 102): probably the check's 201 reads on
 a slow Windows runner (this test takes 4.7 to 11.9 s there, 1.7 to 3.9 s on Ubuntu). The wait now
-fails only after 10 s without an event from the check, naming what it had done (`<commit>`); a
+fails only after 10 s without an event from the check, naming what it had done (`6dcf8f2`); a
 failure after that is a stall, and says where.
 
 ## Job 4: `test_a_helper_that_dies_leaves_what_it_said_in_the_log` ("[Errno 32] Broken pipe")
@@ -167,7 +167,7 @@ Before the fix the new case fails every time with CI's message (`{'kind': 'error
 `test_io_service_run.py::test_a_helper_that_dies_leaves_what_it_said_in_the_log`'s macOS reruns
 ("[Errno 32] Broken pipe"): a helper that exited before its request was written made the write
 raise, so the error named the pipe and its stderr wasn't logged. The app now treats that as the
-helper having exited (its stderr logged); the test covers both orders (`<commit>`).
+helper having exited (its stderr logged); the test covers both orders (`6597740`).
 
 ## Job 5: `test_a_folder_changed_within_its_mtime_tick_is_listed[cached]` (R-23)
 
@@ -184,11 +184,11 @@ listing of the mtime 60 s back, which must record it. Passes as before and with 
 **Proposed known-issues line** (Fixed):
 `test_cache_first.py::test_a_folder_changed_within_its_mtime_tick_is_listed[cached]` (7 reruns in 4
 CI jobs, mostly Windows): the test's 2 s tick spent up to all of the 2 s `RACY_SECONDS` margin before
-its first listing; it now uses 30 s while the mtime is the tick (R-23; `<commit>`).
+its first listing; it now uses 30 s while the mtime is the tick (R-23; `73ec41b`).
 
 ## Job 7: `helab/views/plots/presets.py`'s extra blank line at the end
 
-Removed (`git diff --check` clean for it). `<commit>`.
+Removed (`git diff --check` clean for it). `3a529cd`.
 
 ## Job 6: `test_plot_settings_panel.py::test_activation_sources` (macOS teardown failure)
 
@@ -201,4 +201,4 @@ teardown with no traceback, the same shape as job 2's frameless Qt exception, so
 passed (CI Robustness 2).
 
 **Proposed known-issues line** (still open): unchanged, plus "no rerun in the 23 CI runs to
-2026-10-23; a frameless Qt exception there now names where the event loop ran (`<job 2 commit>`)".
+2026-10-23; a frameless Qt exception there now names where the event loop ran (`e326fdf`)".
