@@ -4,6 +4,178 @@ Branch `agent/result-cache-r2` from `c3d4b50`; commits `c31ac10` (schema, report
 `ef486d3` (back end), `bcdc12d` (plots), `3e5a934` (Settings), plus this session folder. Measurements
 and evidence: [notes.md](notes.md).
 
+## Final state, for landing (2026-10-23)
+
+Branch `agent/result-cache-r2`, from `c3d4b50`, with `dev/v0.0.6` merged at `c204d4b` (Presets
+Reopen) in `29429fb`. Gauge's round 14 found no blocker and nothing above P3; that P3 is fixed in
+`71fc8ed`, which also commits Gauge's review findings (rounds 1–14, `review-findings.md`). The
+sections below this one are the history, newest first; this one is what stands.
+
+### What it does
+
+- **Saving and reuse.** A completed one-off run (the plot's first run, Rerun, a reload, a reopened
+  or preset-opened plot; never Live's reruns) of a script that opts in (`cache_supported`:
+  Correlations and Release time) is saved in the disk cache.
+- **Lookup.** Before such a run the plot asks a local-lane helper. An exact match (same data,
+  script, settings, constants and environment) shows at once and the run is skipped, also after a
+  restart. A saved result of the same plot and settings whose script, environment, data or
+  constants changed shows marked outdated, in amber, while the run replaces it.
+- **Budget and Make room.** Saved results count toward the one disk budget. One that doesn't fit
+  waits for **Make room** or **Discard**. Make room removes only the least recently shown other
+  saved results, never cached data and never a newer copy being saved or waiting.
+- **Where it shows.** The plot's source line marks reuse ("disk cache reuse on", "saved in disk
+  cache", "from disk cache, computed …"). A folder row with saved results shows the REPORT badge,
+  and Folder details says "Cached analysis: N results, X MB".
+- **Settings.** Settings → Cache adds the Cached analysis row (Clear…, purge by age) and **Reuse
+  saved analysis results** (`result_reuse`, on by default). Settings → Data roots adds Clear
+  cached analysis…
+- **Quitting** waits for result saves and Make room, as for datasets and presets.
+
+### The store rule as it stands (`FolderCache.store_answer`, written in its docstring)
+
+There is one store identity for presets and saved results: the cache folder decides which store
+is in use, never a clock or a counter.
+
+1. **The store in use** is the first store an answer names, then whatever the cache folder holds
+   when an identity probe (`cache_admin identity`, local lane) opens it.
+2. **An answer naming another store starts one probe.** While the probe is out, nothing claims
+   anything:
+   - every answer naming a store waits for it, in order, with its job's later events;
+   - measurements (counts, usage) count for nothing;
+   - writes are held (`HeldWrite`, with their owner), and quitting waits for them.
+3. **When the folder answers:**
+   - If it holds another store, both features drop the old one's state together. Presets start
+     afresh and views are told; saved results drop their disk marks, counts, waiting results and
+     the disk usage.
+   - The waiting answers are replayed: those from the folder's store count, the rest are stale.
+   - Then the held writes go, and an inventory asks for the store's waiting results again.
+4. **A probe that fails or can't be asked** leaves the store unknown (`_store_not_confirmed`):
+   - Until a probe succeeds, no answer counts, the store in use's included.
+   - Held writes end not saved. Owed preset changes stay in RAM and are said not saved, with the
+     note "Saved presets can't be read: the disk cache's store couldn't be confirmed (…)".
+   - Nothing is asked again by itself, so quitting waits for none of it. The next presets or result
+     answer asks again, one probe at a time.
+   - Only a successful probe ends it. The same store means a recovery: what waited counts, owed
+     changes are written and the note clears. Another store means the change in item 3.
+5. **Writes name their store,** and the helper writes nothing in another: a result guard carries
+   its store, Make room the store its question waits in, and presets writes the store whose names
+   were read.
+6. **Other rules:**
+   - Inventories are ordered within one store only.
+   - Shutdown, including Quit now, ends held writes before it cancels the probe, and a probe that
+     ends during shutdown launches nothing. `FolderCache.cancel(owner)` ends a held write.
+   - A cache move keeps the store (an empty or new target, the same `store_id`).
+
+### Tony's decisions
+
+- Saved results count toward the one disk budget; there is no separate budget (2026-10-22).
+- The opt-in list is Correlations and Release time, from measured run times (`notes.md`).
+- Make room / Discard instead of refusing a result that doesn't fit (Follow-up 1). Keep Make room
+  (Follow-up 2).
+- Make room removes only old saved results, never a newer copy waiting or being saved (Follow-up 2).
+  It keeps its order, least recently shown first, with no extra skip for results used this session
+  or on screen (2026-10-23).
+- Settings → Cache › Reuse saved analysis results, on by default.
+- The folder-row badge is `report`, from Debug › Show all Icons.
+- A reopened or preset-opened plot looks in the result cache like a user's run (the
+  `run_reopened` seam).
+- The presets inspector stays as built.
+- On a store recreated while HeLab runs, refine the rule rather than fail closed (round 11). The
+  cache folder decides (rounds 11–14).
+
+### Proposed documentation edits (for the Coordinator; I edit none of these)
+
+**AGENTS.md › Caching**, after the dataset cache paragraph:
+> **Saved analysis results** (result caching R2): a completed one-off run of a plot whose script
+> sets `cache_supported` (Correlations, Release time) is saved in `store-v3`'s `results` table
+> (one row per folder `root://` key and exact lookup key, a new `result_id` every save; data in
+> `results/<uuid>.npz`, NumPy arrays and a JSON tree, never a pickle: `helab/analysis/result_codec.py`)
+> by a local-lane helper (`result_save`), under the guard its lookup took as the run started
+> (`gen_results`, the folder's `results:` epoch and the root's `root-results-clear://` epoch; the
+> guard names its store). Before such a run the plot asks `result_find` (`CachedRuns`,
+> `helab/views/plots/cached_results.py`). An exact match (`result_cache.lookup_key`: `reuse_key`
+> without the folder, `found`, and Python, NumPy, SciPy and HeLab versions) shows at once and skips
+> the run; one of the same plot and settings whose script, environment, data or constants changed
+> shows outdated, in amber, until the run replaces it. Never Live's reruns; a folder without a disk
+> cache, or with Don't cache, saves nothing. Results count toward the one disk budget. One that
+> doesn't fit waits in `pending_results`, and CacheDialogs asks Make room (the least recently
+> shown other saved results by `last_used`, never datasets, never a newer copy being saved or
+> waiting: the plan names `result_id`s, so a copy saved after the question makes it ask again) or
+> Discard. Clear cached analysis (Settings → Cache, and per root in Settings → Data roots) removes
+> only results (`cache_admin clear_results` / `clear_root_results`, `removed` kind `results`) and
+> fences saves already running. Clear all and a root's Clear cached data leave results, and presets
+> are never removed. Purges go by `last_used`. Quitting waits for result saves and Make room
+> (`quit_saves`); results still waiting for an answer stay for the next session.
+
+> **Store identity** (`FolderCache.store_answer`, one rule for presets and saved results): answers
+> name their store (`store_id`). An answer from a store other than the one in use makes a
+> local-lane identity probe ask the cache folder. Meanwhile nothing claims anything, answers wait
+> and are replayed, and writes are held. The folder's store is then the store in use: a store
+> recreated at the cache folder while HeLab runs replaces the old one's presets and results state
+> at once, whatever order helpers answer in. A probe that fails leaves the store unknown (nothing
+> counts, owed changes are said not saved, nothing retries by itself) until a probe succeeds.
+> Writes (a result's guard, Make room, presets) name their store, and helpers write nothing in
+> another.
+
+**AGENTS.md › Script system**, after the Hooks paragraph:
+> **Saved results** (R2): `cache_supported` (default off; on for Correlations and Release time),
+> `cache_types` (dataclasses, enums, `result_codec.Reducer`s such as `result_types.FIT_MODEL`),
+> `cache_pack`/`cache_unpack` (default: the codec), `cache_holds_state` (kept plot state: no
+> lookup) and `cache_result` (a fresh plot's result: may be saved). `AnalysisQueue.prepare` and
+> `enqueue` split `submit`; a run to be saved has its result packed on the worker
+> (`AnalysisResult.packed`). The source line marks reuse ("disk cache reuse on", "saved in disk
+> cache", "from disk cache, computed …", "saved result of …, outdated"). A folder with saved results
+> that reuse will use shows REPORT after the data cache's badge, and its tooltip and Folder
+> details' cache line say "Cached analysis: N results, X MB" (listing counts, memory only).
+Also add `result_cache`, `result_codec` and `result_types` to the list of Qt-free modules.
+
+**AGENTS.md › Settings persistence:** `result_reuse` (Settings → Cache › Reuse saved analysis
+results, default on; off: no lookups and no saves, and saved results stay until cleared) is a
+`settings_defaults.py` row.
+
+**roadmaps/result-caching.md:**
+- R2 row → "done 2026-10-23 (`agent/result-cache-r2`): disk-cached one-off results
+  (`cache_supported`: Correlations, Release time), exact lookup key with the execution environment,
+  outdated marker, results in the one disk budget with Make room / Discard, Clear cached analysis
+  in Settings → Cache and Data roots, the reuse setting, the folder-row badge, reopened plots
+  included".
+- Rule 6: "The disk result cache has its own budget" → "Saved results count toward the disk cache's
+  budget (Tony, 2026-10-22)".
+- Rule 1: "budgets … never touch the other" → "clearing and eviction never touch the other".
+- Open decisions: "Result storage format and location … budget default" → "Decided: `store-v3`
+  `results` + `pending_results` tables and `results/` `.npz` files, owned by helpers; no separate
+  budget".
+
+**roadmaps/cache-storage-and-settings.md:** the `results` and `pending_results` tables and the
+`results/` folder under the store layout; the Cached analysis row, purge and Reuse setting under
+Settings → Cache; Clear cached analysis… under Data roots; the store identity rule.
+
+**roadmaps/known-issues.md** (open):
+- `cache_move.verify` doesn't check result files' sizes. They are copied with the folder but not
+  verified; the fix is to add `SELECT file, bytes FROM results` beside datasets.
+- A folder whose data root is forgotten while HeLab runs keeps its last saved-result count in
+  memory, hidden, until a listing says otherwise.
+- An identity probe waits its turn in the local lane (2 processes). Behind long local work it
+  starts late, and only its no-progress timeout is capped, so quitting waits that long (Quit now
+  skips it).
+
+**.ai/MANUAL_TODO.md**, "Result cache R2 on screen", on the Mac and on a lab PC: the eight checks in
+"What Tony should check on screen" below, plus:
+9. While HeLab runs, move the cache folder's `store-v3` aside by hand. Open a
+   Correlations plot: it computes, and nothing claims "saved in disk cache" until the new store
+   has answered. Presets show "Reading saved presets…" or their names again, never an old
+   store's.
+10. On a lab PC, the lookup's helper start (Windows, ~0.1–0.5 s) still beats the runs.
+
+**.ai/memory/results/disk-cache-and-budgets.md:** Make room for results, and the store identity
+rule, as above.
+
+### Checks at `71fc8ed`
+
+Full suite (`pytest -n 12 --reruns 5 --reruns-delay 1`): 4306 passed, 2 skipped, 2 xfailed, **no
+RERUN**. `mypy --strict helab` (162 files) and `tests` (132), `pyright helab tests` and `git diff
+--check` are clean.
+
 ## Round 13: the unknown store is part of the rule (`0c95a11`, 2026-10-23)
 
 Gauge confirmed that round 12's fixes hold, that the probe's 60 s no-progress timeout frees quit,
