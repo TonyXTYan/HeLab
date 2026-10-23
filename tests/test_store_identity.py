@@ -545,3 +545,25 @@ def test_a_probe_that_cant_be_asked_fails_the_same_way(cache: FolderCache, monke
     assert cache.preset_unsaved("arrangement", "", "desk").startswith("couldn't be saved")
     assert cache.quit_saves() == [] and not [r for r in cache.service.pending if r.operation == "cache_admin"
                                              and r.payload["action"] == "presets"]
+
+
+def test_a_recovery_started_by_a_result_answer_clears_the_confirmation_note(cache: FolderCache) -> None:
+    """Gauge's round-14 P3: the store unknown with no preset change owed; a plot's lookup answered
+    by A (in use) asks the folder, which holds A: the "store couldn't be confirmed" note goes at
+    once. A real error reading presets is a different note, and stays."""
+    send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": A}, {"kind": "done"})
+    answer_of(cache, B, "missing", "b")()
+    folder_fails(cache)
+    assert cache.presets_note().startswith("⚠ Saved presets can't be read: the disk cache's store")
+    assert not cache.presets_unsaved
+    answer_of(cache, A, "missing", "a")()
+    assert probes(cache)
+    folder(cache, A)
+    assert not cache._store_unknown and cache.presets_note() == ""
+    # Another failure, then a real read error, then a recovery: the read error stays.
+    answer_of(cache, B, "missing", "b2")()
+    folder_fails(cache)
+    send(cache, presets_job(cache), {"kind": "presets", "saved": [], "error": "disk I/O error", "store": A},
+         {"kind": "done"})
+    folder(cache, A)
+    assert cache.presets_note() == "⚠ Saved presets can't be read: disk I/O error"

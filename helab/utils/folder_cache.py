@@ -1364,8 +1364,14 @@ class FolderCache(QObject):
             # The store's waiting results and usage: answers dropped while the probe was out may
             # have named some.
             self.restore_pending()
-        if recovered and any(not self._preset_carried(key) for key in self.presets_unsaved):
-            self._presets_again = True  # Changes owed while the store was unknown: written now.
+        if recovered:
+            # The folder's store is known again: its note goes (a real error reading presets stays).
+            if self.presets_error.startswith(STORE_NOT_CONFIRMED):
+                self.presets_error = ""
+            if self._presets_unread.startswith(STORE_NOT_CONFIRMED):
+                self._presets_unread = ""
+            if any(not self._preset_carried(key) for key in self.presets_unsaved):
+                self._presets_again = True  # Changes owed while the store was unknown: written now.
         if self._presets_again:
             self._presets_again = False
             if store:
@@ -1383,7 +1389,7 @@ class FolderCache(QObject):
         said not saved (written by the next read that reaches the store), and nothing is asked again
         by itself."""
         self._store_unknown = why
-        message = f"the disk cache's store couldn't be confirmed ({why})"
+        message = f"{STORE_NOT_CONFIRMED} ({why})"
         logging.warning("Disk cache: which store the cache folder holds couldn't be confirmed (%s): no answer is "
                         "taken and nothing is saved until it is asked again", why)
         self._drop_held(None, {"kind": "error", "message": message})
@@ -1644,7 +1650,7 @@ class FolderCache(QObject):
         left = [key for key in carried if self.presets_unsaved.get(key) == "" and not self._preset_carried(key)]
         if stale and self._store_unknown:
             # Its store isn't known to be the folder's: not saved, and not written again by itself.
-            message = f"the disk cache's store couldn't be confirmed ({self._store_unknown})"
+            message = f"{STORE_NOT_CONFIRMED} ({self._store_unknown})"
             self._presets_failed.update(dict.fromkeys(left, f"couldn't be saved ({message})"))
         elif stale:
             if left and self.presets_read:
@@ -3660,6 +3666,9 @@ UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 QUITTING = "HeLab is quitting"
 # ``quit_saves``' entry while presets are being written (it names folders otherwise).
 PRESETS_SAVING = "Presets"
+# Why presets and saved results weren't taken while the cache folder's store was unknown (a failed
+# identity probe, FolderCache.store_answer): the note ends once a probe succeeds.
+STORE_NOT_CONFIRMED = "the disk cache's store couldn't be confirmed"
 # quit_saves's entry for a result Make room saves whose folder isn't known here.
 RESULTS_SAVING = "Analysis results"
 # A preset changed before the store's names were read: written once they are.

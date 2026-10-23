@@ -234,3 +234,55 @@ No P0/P1. Suite 2601 passed, no RERUN; mypy/pyright clean. Per-key epoch removal
 ## Round 8 (Gauge, ca7e4cd..81e6a2a)
 
 REVIEW COMPLETE, no findings. Both round-7 fixes accepted (eviction check by row id, a newer copy of the same key stays disk-cached; badge hidden under no_cache). Suite 2602 passed, no RERUN; mypy/pyright clean; 3 probes passed.
+
+## Round 9 (Gauge on 81e6a2a..7fb9faa: the merge of dev/v0.0.6 at c204d4b and the reopen seam fix)
+
+Verdict: not complete. Conflict resolutions, auto-merges, removers keeping presets, `_migrate` (all 16 combinations of missing parts, idempotent) and the seam (startup and Add/Replace through `run_reopened` → `_submit(one_off=True)`; reuse off, Don't cache, not opted in, miss/save and over-budget pending all probed) are fine. Suite 2727 passed, no RERUN; strict mypy and pyright clean.
+
+1. **P2** `helab/utils/folder_cache.py:2006–2007`: `quit_saves` lists presets, dataset writers and folder settings, but not a queued or running `result_save` or an in-flight `adopt_result`. With a result save and a preset write queued, the list is only ["Presets"]; once the preset events complete, the real `QuitSaveDialog` accepts with the result save still queued, and shutdown cancels it. A costly plot recorded for reopening then loses its result on an ordinary quit and recomputes at the next start. Fix: track result writes and explicit adoption in quit (and its notifications), keeping the dialog open until those helpers finish. Results already waiting for Make room stay for the next session.
+2. **P3** `helab/utils/folder_cache.py:1330–1341`, `:2277–2288`: a store recreated while HeLab runs retires preset state, but result state and answers stay attached to the old store. Hold an exact `result_found` from store A, recreate the store (empty B), release A's answer: the plot shows policy=disk though B has no saved results. Result events carry no store identity. Fix: give result answers and state the store identity presets use, so an old store's answer can't claim disk retention.
+
+Cosmetic: `helab/views/plots/presets.py:733` blank line at EOF (`git diff --check`).
+
+## Round 10 (Gauge on 7fb9faa..23728d2: Cellar's round-9 fixes in 78b8bad)
+
+Verdict: not complete, no P0/P1. Round-9 repros pass; the quit fix holds (cancelled/error/done writes and a cancelled adoption free quit; waiting-only Make room doesn't block). Suite 2730 passed, no RERUN; strict mypy and pyright clean. All four findings are about a store recreated while HeLab runs:
+
+1. **P2** `folder_cache.py:2418–2434`, `io_ops/results.py:97–99`: a guard already handed to a running analysis isn't bound to its store. A missing lookup from A gives a running Costly plot its guard; (Clear cached analysis in A;) the store is recreated as B and confirmed by a presets read; the run's `result_save` passes B's reset epochs: B gains the result and the plot shows disk. Carry and check the originating store through the save request, including a helper that opens B after the save was queued.
+2. **P2** `folder_cache.py:2427–2431`, inventory merge `:2713–2723`: inventory-restored waiting results have no store, and the inventory's `store_id` isn't fed to store tracking. A B inventory restores a question; a later B presets read runs the replacement, treats the store-less question as old, answers it discarded and suppresses it for the session while its row stays waiting on disk.
+3. **P2** `folder_cache.py:2411–2415`: any unseen store id is taken as newer. A fresh FolderCache's first answer from A held back; B recreated and confirmed by presets; A's answer released: results switch B → A, retire B, show A's result as disk, and reject the real B for the session. Needs ordering (request vs replacement) or a fresh confirmation, not a set of seen ids.
+4. **P3** `folder_cache.py:2411–2415`, `:1350–1359`: discovery is coordinated presets → results only. B first learned from `result_missing` leaves presets on A with its rows offered; `_on_presets` ignores `_results_store_seen`'s False, so an A preset answer is still taken after results retired A.
+
+## Round 11 (Gauge on 23728d2..cd6e147: one store-identity rule, ee84391)
+
+Verdict: not complete. The four round-10 repros pass; corrupt meta gives an error, not "no presets"; moves keep identity; presets rounds 7–12 tests pass. Suite 2861 passed, no RERUN; strict mypy and pyright clean.
+
+1. **P2** `folder_cache.py:1220–1224`, `:1444–1450`: created_at is wall-clock, not a replacement order. After a clock correction (or an equal-time lower UUID) the store physically in the folder sorts older and is retired; an owed preset change then re-reads it forever (each helper succeeds, so no timeout ends it) and quit waits on "Presets" for good.
+2. **P2** `folder_cache.py:2725–2727`: inventories still compare submit times across stores. B's inventory submitted first, A's second; A answers first and sets `_inventory_started`; B's answer switches the store but its inventory is discarded as older, so B's waiting result is lost.
+3. **P2** `folder_cache.py:2358–2364`, `:2689–2691`: a retired store's answer applies its usage before the identity check: a retired A `result_saved` with usage = budget makes empty B look 8 GiB full and pauses automatic loads.
+4. **P3** `folder_cache.py:2363–2364`, `:2804`: `result_not_saved` and unsuccessful adoptions never reach `store_answer`, so B's first answer (often `store_replaced`) leaves A current.
+5. **P3** `folder_cache.py:1232–1237`, `:1397–1405`: a replacement learned through results clears presets in RAM without `presetsChanged`; an open inspector keeps A's names.
+
+Tony (2026-10-23, Chat): keep refining rather than fail closed. CoCo proposed "the folder decides": on any disagreement an identity probe; Cellar built it in bcee2be (answers during the probe wait and are replayed, not dropped).
+
+## Round 12 (Gauge on cd6e147..5aa7519: the cache folder decides, bcee2be)
+
+Verdict: not complete, no P0/P1. Round-11 repros pass under successful confirmation; A → B → C converges; two HeLabs agree; no wrong-store write path; replay once and in order. Suite 3217 passed, no RERUN; strict mypy and pyright clean.
+
+1. **P2** `folder_cache.py:1285–1314`, `:1523–1531`, `:1563–1580`: repeated failed identity probes with an owed preset change loop forever: B's successful presets answer waits, the probe fails, the replay marks it stale, `done` asks another read, which starts another probe… Every helper succeeds, so no timeout ends it; quit waits on "Presets". Distinguish a failed confirmation from a confirmed stale answer; give it a recoverable failure state or bound the chain.
+2. **P2** `folder_cache.py:1334–1346`, `:1304–1306`, `io_service.py:1023`: held writes are bare closures outside IOService's requests. Shutdown cancels the probe; its cancelled event releases the held `result_save` before `closed` is set, queuing work shutdown doesn't know (can start a helper during Quit now). `service.cancel(owner)` on a held save does nothing. Give held writes an owner and cancellation; discard them before shutdown cancels the probe; a probe cancelled during shutdown launches nothing.
+
+## Round 13 (Gauge on 5aa7519..d5da0a3: failed probes, held writes, ffeee5a)
+
+Verdict: not complete. Round-12 repros pass; the 60 s no-progress timeout on the identity probe ends held writes and frees quit; Gauge accepts FolderCache.cancel owning held work and cancel_for_quit keeping result saves (only shutdown / Quit now drops them). Suite 3701 passed, no RERUN; strict mypy and pyright clean.
+
+1. **P2** `folder_cache.py:1263–1270`, replay at `:1344–1348`: `_store_unknown` isn't part of `store_answer`, so a failed probe's replay accepts waited answers from the previous in-use store. A's presets acknowledgement clears the owed change; a later B confirmation then drops the preset from RAM with nothing owed: the user's change is lost. A waited A `result_saved` is shown saved. Also: a deliberate read answered by A while unknown issues no probe, leaves unknown set and clears the note. Fix: with the store unknown, every waited store-bearing answer is stale, the previous store's included; same-store recovery needs its own transition.
+2. **P3** `folder_cache.py:1312–1313`: an unaskable probe (queue full) sets unknown without presets' error state, so "Saved presets can't be read" isn't shown. One failure transition for failed and unaskable probes.
+
+Enumeration gaps: waited answers of the previous in-use store after a failure; a presets acknowledgement carrying an owed change; same-store recovery when the first identity is B.
+
+## Round 14 (Gauge on d5da0a3..89a8aa1: the unknown store inside the rule, 0c95a11)
+
+**No blocker: nothing above P3.** Round-13 repros pass; counts and usage never probe; a burst of 50 answers starts one probe; five failed recoveries with deliberate reads each settle; same-store recovery writes the owed preset. Suite 4305 passed, no RERUN; strict mypy and pyright clean.
+
+- **P3** `folder_cache.py:1341`, `:1367–1372`: a same-store recovery started by a result answer, with no owed preset change, leaves the identity-failure "Saved presets can't be read" note until the next presets read. Clear that confirmation-specific note on recovery (not an unrelated presets-read error).
