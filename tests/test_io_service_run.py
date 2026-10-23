@@ -59,15 +59,21 @@ def test_the_frozen_reader_reads_lines_written_just_before_the_helper_exited(
     assert list(IOService._file_lines(request, str(response))) == ['{"kind": "status"}\n', '{"kind": "done"}\n']
 
 
+@pytest.mark.parametrize("exited", [False, True], ids=["dies", "died before its request was written"])
 def test_a_helper_that_dies_leaves_what_it_said_in_the_log(
-        qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+        qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, exited: bool) -> None:
+    """Whether it exits before or after its request is written to it (then the write finds its
+    pipe closed: "Broken pipe" on macOS CI), it exited unexpectedly, and what it said is logged."""
     service = IOService()
     service.timer.stop()
     started = subprocess.Popen
 
     def dying(command: list[str], **kwargs: Any) -> subprocess.Popen[str]:
-        return started([sys.executable, "-c", "import sys; sys.stderr.write('ImportError: no blosc\\n'); "
-                        "sys.exit(1)"], **kwargs)
+        process = started([sys.executable, "-c", "import sys; sys.stderr.write('ImportError: no blosc\\n'); "
+                           "sys.exit(1)"], **kwargs)
+        if exited:
+            process.wait()
+        return process
 
     monkeypatch.setattr("helab.utils.io_service.subprocess.Popen", dying)
     request = IORequest("tab", 0, "/data", "list", {}, 60.0)

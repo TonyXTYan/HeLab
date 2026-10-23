@@ -765,8 +765,13 @@ class IOService(QObject):
                 process.stdin.close()
                 lines = self._file_lines(request, response_file)
             else:
-                process.stdin.write(json.dumps(payload) + "\n")
-                process.stdin.close()
+                try:
+                    process.stdin.write(json.dumps(payload) + "\n")
+                    process.stdin.flush()
+                except OSError:
+                    pass  # Its pipe is closed: it exited before reading it (said below, with what it wrote).
+                with contextlib.suppress(OSError):
+                    process.stdin.close()
                 lines = iter(process.stdout)
             complete = False
             for line in lines:
