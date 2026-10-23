@@ -4,6 +4,49 @@ Branch `agent/result-cache-r2` from `c3d4b50`; commits `c31ac10` (schema, report
 `ef486d3` (back end), `bcdc12d` (plots), `3e5a934` (Settings), plus this session folder. Measurements
 and evidence: [notes.md](notes.md).
 
+## Review fixes, round 9 (Gauge on `81e6a2a..7fb9faa`, 2026-10-23)
+
+Gauge accepted the merge, the removers keeping presets, `_migrate` and the seam. Its two findings are
+fixed in `78b8bad` (not pushed):
+
+1. **P2: quitting waits for a plot's result being saved.** `quit_saves` now also lists the folder of
+   each result save (`save_result`) and each Make room for a result (`cache_admin adopt_result`),
+   from submit until the helper ends (`FolderCache._result_writes`; `quitSavesChanged` both
+   times). The quit window names them "<folder> — saving a plot's result"
+   (`FolderCache.result_saving`). Results waiting for Make room aren't waited for: they stay in the
+   store for the next session, as datasets do.
+2. **P3: result answers name their store.** Every result answer from a store (`result_found`,
+   `result_missing`, `result_saved`, `result_pending`, `result_not_saved`, and `adopt_result`'s
+   `admin_result`) carries `store` (its `store_id`), as presets' answers do.
+   - FolderCache keeps the store in use for results (`_results_store_seen`). It learns of stores
+     from result events, saved-result counts (listings, saves, Make room) and presets answers.
+   - An answer from a store replaced since is stale. A `result_found` or `result_missing` from it
+     becomes nothing found, with no guard: a save of the run would check that guard against
+     another store. A `result_saved` or `result_pending` from it becomes not saved.
+   - When a new store is seen, what the old one said is dropped (`_results_store_replaced`). Plots
+     showing its results say RAM only (`cacheRemoved` with kind `results`, as a clear does), and the
+     folders' counts and the results waiting there are dropped too.
+
+Tests in `tests/test_result_cache_quit.py`, all failing before the fix:
+- `quit_saves` at the cache level: a result save beside a preset write, with the presets finishing
+  first; the save is waited for until its helper ends, a waiting result isn't, Make room is, and a
+  failed save ends too.
+- The real `QuitSaveDialog` stays open after the presets are saved, then closes once the result
+  save's helper ends.
+- Real helpers: an exact answer from store A is held while the store is recreated as B (seen
+  through a presets read). Released, it makes the plot compute, keep its result in RAM only and save
+  nothing in B. The plot that showed A's result now says RAM only.
+
+**Checks at `78b8bad`:** full suite (`-n 12 --reruns 5 --reruns-delay 1`) 2730 passed, 2 skipped,
+2 xfailed, **no RERUN**. `mypy --strict helab` (162 files) and `tests` (131), `pyright helab tests`
+and `git diff --check` on `helab/` and `tests/` are clean. (The blank line at the end of
+`helab/views/plots/presets.py` comes from dev and is left for CoCo, as asked.)
+
+**Proposed doc edits (AGENTS.md › Live, the quit paragraph):** add "a plot's result being saved
+(its run's save or Make room for it; results waiting for Make room stay for the next session)" to
+what `quit_saves` waits for. **› Caching:** "Result answers carry their store's `store_id`; an
+answer from a store recreated since is never taken as saved."
+
 ## Merged with `dev/v0.0.6` (Presets Reopen, 2026-10-23)
 
 `7daa133` commits CoCo's session notes. `29429fb` merges `dev/v0.0.6` at `c204d4b`. `8cb7886` fixes the
