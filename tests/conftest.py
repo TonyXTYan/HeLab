@@ -4,8 +4,10 @@ import sys
 import tempfile
 import json
 import re
+import traceback
 import uuid
 from pathlib import Path
+from types import TracebackType
 from typing import Any, Iterator
 
 # Run Qt headless (offscreen) by default so tests don't pop up windows.
@@ -274,6 +276,25 @@ def no_quitting_cache() -> Iterator[None]:
     cache = service.folder_cache if service is not None else None
     if service is not None and cache is not None and cache.quitting:
         service.shutdown()  # (Once closed, nothing.)
+
+
+@pytest.fixture(autouse=True)
+def where_qt_raised(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An exception Qt reports from C, before any Python frame (a callable that is None when Qt
+    calls it), has no traceback, so pytest-qt's "Exceptions caught in Qt event loop" names no line
+    (``test_live_plots.py``'s scatter test on Ubuntu CI: "TypeError: 'NoneType' object is not
+    callable" at teardown). It gets a note: the test's or HeLab's code that was running Qt's event loop.
+    (Wraps pytest-qt's hook, which it installs before the test's fixtures.)"""
+    hook = sys.excepthook
+
+    def noted(kind: type[BaseException], value: BaseException, tback: TracebackType | None) -> None:
+        if tback is None:
+            ours = [frame for frame in traceback.extract_stack()[:-1] if "site-packages" not in frame.filename]
+            stack = "".join(traceback.format_list(ours[-4:]))  # (Short: the rerun reason keeps 600 characters.)
+            value.add_note(f"(No traceback: raised by Qt outside Python code, while this ran its event loop:)\n{stack}")
+        hook(kind, value, tback)
+
+    monkeypatch.setattr(sys, "excepthook", noted)
 
 
 @pytest.fixture(autouse=True)
