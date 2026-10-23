@@ -4,6 +4,102 @@ Branch `agent/result-cache-r2` from `c3d4b50`; commits `c31ac10` (schema, report
 `ef486d3` (back end), `bcdc12d` (plots), `3e5a934` (Settings), plus this session folder. Measurements
 and evidence: [notes.md](notes.md).
 
+## Round 11: the cache folder decides which store is in use (`bcee2be`, 2026-10-23)
+
+This replaces round 10's rule (below, kept for the record). Round 10 ordered stores by
+`created_at`, which is a wall clock. After a clock correction, the store actually in the folder
+could sort as older and be retired; an owed preset change then re-read it forever and quit
+waited for good (Gauge's finding 1). Tony chose to refine the rule rather than fail closed, and
+CoCo proposed letting the folder decide. The rule is in `FolderCache.store_answer`'s docstring:
+
+- **Which store is in use.** It is the first store an answer names, then whatever the cache
+  folder holds when an identity probe opens it. No clock or counter orders stores.
+- **A disagreement.** An answer naming another store starts one identity probe
+  (`cache_admin identity`, local lane: it opens the store and answers its `store_id`). It is sent
+  after that answer arrived, so it opens the folder after both stores were seen.
+- **While the probe is out, nothing claims anything.**
+  - Every answer naming a store waits for it, with its job's later events, in order
+    (`_waits_for_folder`).
+  - Measurements (folder counts, any helper's usage) count for nothing.
+  - Writes are held (`_probe_held`): result saves, Make room for a result, and presets reads and
+    writes. Quitting waits for them.
+- **When the folder answers:**
+  - If its store isn't the one in use, both features drop the old one's state together
+    (`_store_changed`). Presets start afresh as at startup and views are told (`presetsChanged`).
+    Saved results drop plots' "saved in disk cache", the folders' counts, the results waiting
+    there and the disk usage.
+  - The answers that waited are replayed in order. Those from the folder's store count; the others
+    are stale, and a stale presets read is asked again.
+  - Then the held writes go, and an inventory asks for the store's waiting results again.
+- **Convergence.** A store other than the probe's answer that was named while it was out starts
+  another probe. A replacement meanwhile therefore converges. A probe that fails changes nothing.
+- **Writes still name their store.** That is the result guard's store, the store Make room waits
+  in, and the store whose preset names were read; the helper writes nothing in another.
+- **Other rules.** Inventories are ordered against inventories of the same store only. An answer
+  naming no store says nothing about any store. A cache move keeps the store: its target must be
+  empty or new, and both a rename and a copy keep `store_id`.
+
+**One difference from CoCo's sketch:** answers that arrive while the probe is out wait and are
+replayed instead of being dropped. They still claim nothing until the folder answers, and nothing
+the folder's store said is lost: B's inventory, its preset rows and a result it found. It also
+kept Loom's presets tests valid: their frozen helpers only needed to answer the probe as the
+folder would. It costs about 40 lines (the waiting list and its replay).
+
+**Round 11's findings:**
+1. Nothing is ordered, so a store in the folder never loses. The owed change is written to it,
+   and quit ends (tested through real helpers).
+2. Inventories are ordered per store. One that waited for the probe is applied once the folder
+   holds its store.
+3. The store is checked before usage, deadlines or anything else in an answer, including any
+   helper's usage.
+4. Every answer naming a store reaches the rule: `result_not_saved`, failed adoptions and
+   replanned adoptions included. A replanned plan from another store leaves the question as it was.
+5. `presetsChanged` is emitted when a change of store makes preset names unknown.
+
+`created_at` ordering, `store_created`, the tie-break and the clock warning are gone. Events carry
+the `store_id` only.
+
+**Tests** (`tests/test_store_identity.py`, 487 in all):
+- The enumeration: 12 kinds of A answer × 5 kinds of B first answer × which arrives first × which
+  was asked first × {fresh start, A in use} = 480 cells. The A kinds are found, missing, saved,
+  not_saved, pending, adopted, failed adoption, replanned adoption, presets, inventory, counts and
+  a helper's usage (it fills the budget). The B kinds are presets, missing, not_saved, inventory
+  and counts.
+  - Each cell first has the folder answer A, then a later B answer and the folder answering B.
+  - After each answer, the folder's store is in use with no probe or waiting answer left. No
+    preset row, waiting question, room plan, count or usage of the other store stays, and
+    whatever claimed "saved", gave a guard or said an adoption was saved is followed by dropping
+    the saved results' marks.
+- B's waited inventory is kept.
+- Writes are held during the probe, then sent.
+- A probe that fails changes nothing.
+- Views are told when preset names become unknown.
+- Finding 1 through real helpers: the store is recreated with a preset change owed, quit ends,
+  and the change is in the new store.
+- A moved store keeps its identity, and round 10's guard test still holds.
+
+**Existing tests that changed with the rule:**
+- The presets tests' frozen `answer()`/`emit()` now answer identity probes with "the store made
+  last" (letter order: B after A, T after S).
+- The fixtures reset `_store`.
+- The badge test and the 80% test confirm another store through the folder before its counts or
+  usage count.
+
+**Checks at `bcee2be`:** the full suite (`-n 12 --reruns 5 --reruns-delay 1`) ran twice: 3217
+passed, 2 skipped, 2 xfailed, **no RERUN** both times. Two earlier runs, before the commit, had
+reruns: 5 from `test_cache_tab`'s 80% test, which failed every time until it was updated for the
+rule, and a presets fixture that timed out. That timeout was a real gap: a stale plain presets
+read wasn't asked again, now fixed. `mypy --strict helab` (162) and `tests` (132), `pyright helab
+tests` and `git diff --check` are clean.
+
+**Proposed doc edit (AGENTS.md › Caching, after "Only helpers open it"):** "Answers name their
+store (`store_id`). `FolderCache.store_answer` keeps one store in use for presets and saved
+results; an answer from another store makes a local-lane identity probe ask the cache folder,
+and meanwhile nothing claims anything and writes wait. The folder's store is then the store in
+use: a store recreated at the cache folder while HeLab runs replaces the old one's presets and
+results state at once, whatever order helpers answer in. Writes (a result's guard, Make room,
+presets) name their store."
+
 ## Round 10: one store identity for presets and saved results (`ee84391`, 2026-10-23)
 
 Gauge's four findings all came from a store recreated at the cache folder while HeLab runs (the
