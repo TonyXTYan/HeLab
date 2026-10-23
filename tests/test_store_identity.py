@@ -62,6 +62,15 @@ def folder(cache: FolderCache, store: str) -> None:
     raise AssertionError("probes keep starting")
 
 
+def folder_fails(cache: FolderCache, times: int = 1) -> None:
+    """Identity probes out fail (the store couldn't be opened, say), ``times`` in a row at most."""
+    for _ in range(times):
+        out = probes(cache)
+        if not out:
+            return
+        send(cache, out[0], {"kind": "error", "message": "disk I/O error"})
+
+
 def presets_job(cache: FolderCache) -> IORequest:
     """A presets read in flight (as ``read_presets`` starts one)."""
     owner = cache.cache_admin("presets", rows=[], store="")
@@ -178,14 +187,15 @@ def nothing_of(cache: FolderCache, timeline: Timeline, store: str) -> None:
 @pytest.mark.parametrize("a_kind,b_kind", list(itertools.product(A_KINDS, B_KINDS)))
 @pytest.mark.parametrize("arrive", ["A then B", "B then A"])
 @pytest.mark.parametrize("asked", ["A asked first", "B asked first"])
+@pytest.mark.parametrize("first_probe", ["finds A", "fails"])
 def test_every_order_of_two_stores_answers_ends_on_the_store_the_folder_holds(
-        cache: FolderCache, start: str, a_kind: str, b_kind: str, arrive: str, asked: str) -> None:
+        cache: FolderCache, start: str, a_kind: str, b_kind: str, arrive: str, asked: str, first_probe: str) -> None:
     """The store is recreated (A → B) while HeLab runs. An answer of A's (each kind) and B's
     first answer (each kind), asked in either order and arriving in either order, after a fresh
     start or with A in use. The folder's first probe finds A still there (B's answer is from a
-    helper that opened it later, say), then a later answer of B's starts another probe, which
-    finds B. After each: the folder's store is in use, nothing of the other one stays, and B's
-    waiting result (its inventory) is kept once B is in use."""
+    helper that opened it later, say), or fails; then a later answer of B's starts another probe,
+    which finds B. After each: the store in use is the folder's (a failed probe changes none),
+    nothing of another store stays, nothing waits and quitting waits for nothing."""
     if start == "A in use":
         send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": A}, {"kind": "done"})
         assert cache._store == A
@@ -198,9 +208,18 @@ def test_every_order_of_two_stores_answers_ends_on_the_store_the_folder_holds(
         old = answer_of(cache, A, a_kind, "a")
     for answer in ((old, new) if arrive == "A then B" else (new, old)):
         answer()
-    folder(cache, A)
-    assert cache._store == A and not probes(cache) and not cache._probe_waiting
-    nothing_of(cache, timeline, B)
+    if first_probe == "fails":
+        in_use = cache._store
+        folder_fails(cache)
+        assert not probes(cache) and not cache._probe_waiting and not cache._probe_held
+        assert cache._store == in_use and "Presets" not in cache.quit_saves() and RUN not in cache.quit_saves()
+        if in_use == B:
+            return  # (B came first and is in use: a failed probe changes nothing; B's next answer counts.)
+        nothing_of(cache, timeline, B)
+    else:
+        folder(cache, A)
+        assert cache._store == A and not probes(cache) and not cache._probe_waiting
+        nothing_of(cache, timeline, B)
     # B's next answer: the folder is asked again, and holds B now.
     send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": B}, {"kind": "done"})
     folder(cache, B)
@@ -328,3 +347,98 @@ def test_views_hear_when_a_store_change_learned_through_results_makes_preset_nam
     assert not told  # (Waiting for the folder: nothing is said yet.)
     folder(cache, B)
     assert told and told[0] is False and not cache.presets_read and not cache.preset_records("arrangement")
+
+
+def owed_change_with_a_disagreement(cache: FolderCache) -> None:
+    """Presets read from A; the user saves a preset (its write named A, in flight); B answers it
+    (the helper opened B): the folder is asked."""
+    send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": A}, {"kind": "done"})
+    cache.set_presets([("arrangement", "", "desk", "{}")])
+    write = newest(cache, "cache_admin", "presets")
+    assert write.payload["params"]["store"] == A
+    send(cache, write, {"kind": "presets", "saved": [], "rows": [], "store": B}, {"kind": "done"})
+    assert probes(cache)
+
+
+def test_failed_probes_with_an_owed_change_end_quit_and_a_later_success_writes_it(cache: FolderCache) -> None:
+    """Gauge's round-12 repro 1: five probes fail in a row while a preset change is owed. Nothing
+    re-reads by itself and quitting waits for nothing: the change is said not saved (kept in RAM).
+    A deliberate read (the Presets menu) asks again; this time the folder says B, and the change
+    is written there."""
+    owed_change_with_a_disagreement(cache)
+    for attempt in range(5):
+        folder_fails(cache)
+        assert not probes(cache) and not [r for r in cache.service.pending if r.operation == "cache_admin"
+                                          and r.payload["action"] == "presets"]  # Nothing re-reads.
+        assert cache.quit_saves() == [] and not cache.presets_saving()
+        why = cache.preset_unsaved("arrangement", "", "desk")
+        assert why.startswith("couldn't be saved (the disk cache's store couldn't be confirmed")
+        assert cache.presets_note().startswith("⚠ Saved presets can't be read: the disk cache's store")
+        if attempt < 4:
+            cache.read_presets()  # Opening the Presets menu: tries again…
+            read = newest(cache, "cache_admin", "presets")
+            send(cache, read, {"kind": "presets", "saved": [], "rows": [], "store": B}, {"kind": "done"})
+            assert probes(cache)  # …which asks the folder once more (one probe, never a chain).
+    cache.read_presets()
+    send(cache, newest(cache, "cache_admin", "presets"), {"kind": "presets", "saved": [], "rows": [], "store": B},
+         {"kind": "done"})
+    folder(cache, B)
+    write = newest(cache, "cache_admin", "presets")
+    assert write.payload["params"]["store"] == B and [row["name"] for row in write.payload["params"]["rows"]] == [
+        "desk"]
+    saved = dict(write.payload["params"]["rows"][0])
+    send(cache, write, {"kind": "presets", "saved": [saved], "rows": [saved], "store": B}, {"kind": "done"})
+    assert not cache.presets_unsaved and cache.quit_saves() == [] and cache._store == B
+
+
+def test_a_failed_probe_ends_held_writes_not_saved(cache: FolderCache) -> None:
+    """Held result saves and Make room end as not saved (the store unknown); quit waits for none."""
+    send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": A}, {"kind": "done"})
+    cache._note_usage(1, [B, 1])
+    ended: list[tuple[str, str]] = []
+    cache.resultReady.connect(lambda request, event: ended.append((request.owner, event["kind"])))
+    assert cache.save_result("result-save:h", RUN, b"x", lookup="k1", family="f1", record={}, analysis_id="a",
+                             action="Plot", computed_at=1.0, guard=GUARD)
+    assert RUN in cache.quit_saves()
+    folder_fails(cache)
+    assert ("result-save:h", "error") in ended and cache.quit_saves() == []
+    assert not [r for r in cache.service.pending if r.operation == "result_save"]
+
+
+def test_cancelling_a_held_save_drops_it(cache: FolderCache) -> None:
+    """Gauge's repro 2b: ``cancel(owner)`` reaches a write held for the probe: it ends cancelled
+    and is never submitted."""
+    send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": A}, {"kind": "done"})
+    cache._note_usage(1, [B, 1])
+    ended: list[str] = []
+    cache.resultReady.connect(lambda request, event: ended.append(event["kind"]))
+    assert cache.save_result("result-save:c", RUN, b"x", lookup="k1", family="f1", record={}, analysis_id="a",
+                             action="Plot", computed_at=1.0, guard=GUARD)
+    cache.cancel("result-save:c")
+    assert ended == ["cancelled"] and not cache._probe_held and cache.quit_saves() == []
+    folder(cache, B)
+    assert not [r for r in cache.service.pending if r.operation == "result_save"]
+
+
+def test_shutting_down_during_a_hold_launches_nothing() -> None:
+    """Gauge's repro 2a: shutdown while writes are held. They end cancelled before the service
+    cancels the probe, whose end then submits nothing."""
+    service = IOService()
+    service.timer.stop()
+    service._dispatch = lambda: None  # type: ignore[method-assign]
+    cache = FolderCache(service)
+    service.folder_cache = cache
+    send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": A}, {"kind": "done"})
+    cache._note_usage(1, [B, 1])
+    assert cache.save_result("result-save:s", RUN, b"x", lookup="k1", family="f1", record={}, analysis_id="a",
+                             action="Plot", computed_at=1.0, guard=GUARD)
+    cache.set_presets([("arrangement", "", "desk", "{}")])
+    submitted: list[str] = []
+    real_submit = service.submit
+
+    def submit(*args: Any, **kwargs: Any) -> bool:
+        submitted.append(str(args[3]))
+        return real_submit(*args, **kwargs)
+    service.submit = submit  # type: ignore[method-assign]
+    service.shutdown()
+    assert submitted == [] and not cache._probe_held and not cache._probe_owner

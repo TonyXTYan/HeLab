@@ -45,6 +45,22 @@ MARKER_OPERATIONS = ("root_create", "root_reassign", "root_remove", "marker_save
 
 
 @dataclass
+class HeldWrite:
+    """A write naming its store, held while an identity probe is out (``FolderCache.store_answer``):
+    submitted once the folder has answered, ended as not saved if it couldn't, dropped by
+    ``FolderCache.cancel`` of its owner and by shutdown."""
+    owner: str
+    path: str
+    operation: str
+    payload: dict[str, Any]
+    blob: bytes | None = None
+
+    def request(self) -> IORequest:
+        """Its stand-in request, to end it with an event as a helper would."""
+        return IORequest(self.owner, 0, self.path, self.operation, self.payload, 0.0)
+
+
+@dataclass
 class FolderSnapshot:
     entries: tuple[dict[str, Any], ...]
     status: dict[str, Any]
@@ -285,7 +301,12 @@ class FolderCache(QObject):
         self._store = ""
         self._probe_owner = ""
         self._probe_seen: set[str] = set()
-        self._probe_held: list[Callable[[], None]] = []
+        self._probe_held: list[HeldWrite] = []
+        # Why the cache folder's store is unknown ("" once a probe has answered): the last probe
+        # failed. What waited is then stale, owed preset changes are said not saved, and nothing
+        # reads again by itself; the next answer naming a store, or a deliberate read, asks again.
+        self._store_unknown = ""
+        self._closing = False  # Shutting down: a probe ending now launches nothing.
         # Answers waiting for the probe (and their jobs' later events, in order), replayed once the
         # folder has answered; ``_replaying`` while they are.
         self._probe_waiting: list[tuple[IORequest, dict[str, Any]]] = []
@@ -1216,9 +1237,16 @@ class FolderCache(QObject):
           stale (a stale presets read is asked again). Then the held writes go, and the store's
           waiting results are asked for again (an inventory).
         - A store other than the probe's named while it was out is probed again once it answers: a
-          replacement meanwhile only starts another probe, so it converges. A probe that fails
-          changes nothing (what waited is judged against the store in use; the held writes go and
-          meet the folder themselves).
+          replacement meanwhile only starts another probe, so it converges.
+        - A probe that fails (or can't be asked) leaves the folder's store unknown: the store in use
+          stays, what waited is stale, held writes end not saved, owed preset changes stay in RAM
+          and are said not saved ("Saved presets can't be read: …"), and nothing is asked again by
+          itself, so quitting waits for none of it. The next answer naming another store, or a
+          deliberate read (the Presets menu, a plot's settings page, the presets window), asks the
+          folder again: one probe at a time, never a chain.
+        - Held writes keep their owner (``HeldWrite``): ``cancel`` of it ends one cancelled, and
+          shutdown ends them all before the service cancels the probe, whose end then launches
+          nothing.
         - Writes name their store, and the helper writes nothing in another: a result save the
           store its guard was taken in (``ResultGuard.store``), Make room for a result the store it
           waits in, a presets write the store whose names were read.
@@ -1274,18 +1302,36 @@ class FolderCache(QObject):
         return self.store_answer(event.get("store"))
 
     def _probe(self) -> None:
-        """Ask the cache folder which store it holds (``store_answer``)."""
-        if self._probe_owner or self.service.closed:
+        """Ask the cache folder which store it holds (``store_answer``); one probe at a time."""
+        if self._probe_owner or self.service.closed or self._closing:
             return
         self._probe_owner = self.cache_admin("identity")
         if self._probe_owner:
             self._probe_seen.clear()
             self.quitSavesChanged.emit()
+        else:
+            self._store_unknown = "HeLab's work queue is full"  # (As a failed probe: nothing re-reads.)
 
-    def _probe_answered(self, store: str) -> None:
-        """The cache folder holds ``store`` ("": the probe failed, nothing changes)."""
+    def _probe_answered(self, store: str, why: str = "") -> None:
+        """The cache folder holds ``store``, or (""), the probe failed (``why``): the folder's store
+        is unknown. What waited is stale then, held writes end not saved, owed preset changes are
+        said not saved, and nothing is asked again by itself (the next answer naming a store, or a
+        deliberate read, asks the folder again)."""
         self._probe_owner = ""
         seen, self._probe_seen = self._probe_seen, set()
+        if self._closing or self.service.closed:
+            # Shutting down: nothing waits for an answer any more, and nothing is launched.
+            self._probe_waiting.clear()
+            self._probe_waiting_owners.clear()
+            self._drop_held(None, {"kind": "cancelled"})
+            return
+        if not store:
+            self._store_unknown = why or "no answer"
+            logging.warning("Disk cache: which store the cache folder holds couldn't be confirmed (%s): answers "
+                            "from another store aren't taken and nothing is saved until it is asked again",
+                            self._store_unknown)
+        else:
+            self._store_unknown = ""
         if store and store != self._store:
             old, self._store = self._store, store
             logging.info("Disk cache: the cache folder holds store %s now (was %s): its saved results and "
@@ -1301,16 +1347,31 @@ class FolderCache(QObject):
                 self._on_event(producer, event)
         finally:
             self._replaying = False
-        held, self._probe_held = self._probe_held, []
-        for write in held:
-            write()
         if store:
+            held, self._probe_held = self._probe_held, []
+            for write in held:
+                if not self.service.submit(write.owner, 0, write.path, write.operation, write.payload,
+                                           priority=True, blob=write.blob):
+                    self.service.resultReady.emit(write.request(), {"kind": "error",
+                                                                    "message": "HeLab's work queue is full"})
             # The store's waiting results and usage: answers dropped while the probe was out may
             # have named some.
             self.restore_pending()
+        else:
+            message = f"the disk cache's store couldn't be confirmed ({self._store_unknown})"
+            self._drop_held(None, {"kind": "error", "message": message})
+            # Presets: as when the store can't be read. Owed changes are said not saved (kept in RAM,
+            # written by the next read that reaches the store), and nothing reads again by itself.
+            self.presets_error = message
+            if not self.presets_read:
+                self._presets_unread = message
+            for key, owed in self.presets_unsaved.items():
+                if owed in ("", PRESETS_WAIT_READ) and not self._preset_carried(key):
+                    self._presets_failed[key] = f"couldn't be saved ({message})"
         if self._presets_again:
             self._presets_again = False
-            self._read_presets()
+            if store:
+                self._read_presets()
         self._presets_settle()
         self.quitSavesChanged.emit()
         self.presetsChanged.emit()
@@ -1334,16 +1395,21 @@ class FolderCache(QObject):
     def _hold_or_submit(self, owner: str, path: str, operation: str, payload: dict[str, Any], *,
                         blob: bytes | None = None) -> bool:
         """Submit a write naming its store, or hold it while an identity probe is out (True: it will
-        be submitted). One that can't be queued then ends with an error, as a helper's would."""
+        be submitted, or end as a helper's would: not saved, or cancelled)."""
         if not self._probe_owner:
             return self.service.submit(owner, 0, path, operation, payload, priority=True, blob=blob)
-
-        def submit() -> None:
-            if not self.service.submit(owner, 0, path, operation, payload, priority=True, blob=blob):
-                request = IORequest(owner, 0, path, operation, payload, 0.0)
-                self.service.resultReady.emit(request, {"kind": "error", "message": "HeLab's work queue is full"})
-        self._probe_held.append(submit)
+        self._probe_held.append(HeldWrite(owner, path, operation, payload, blob))
         return True
+
+    def _drop_held(self, owner: str | None, end: dict[str, Any], operation: str | None = None,
+                   path: str | None = None) -> None:
+        """End held writes (of ``owner``, ``operation`` and ``path``; None: all) with ``end``, as
+        their helper would have."""
+        dropped = [write for write in self._probe_held if (owner is None or write.owner == owner)
+                   and (operation is None or write.operation == operation) and (path is None or write.path == path)]
+        self._probe_held = [write for write in self._probe_held if write not in dropped]
+        for write in dropped:
+            self.service.resultReady.emit(write.request(), end)
 
     # Presets (helab/views/plots/presets.py): the store's ``presets`` table, through helpers only.
     # Read at startup and whenever they could have changed (the Presets menu, a plot's settings
@@ -1526,7 +1592,7 @@ class FolderCache(QObject):
             # is): its changes are written again, to that one, when the job ends, and its read is
             # asked again (after the folder has answered).
             self._presets_stale.add(producer.owner)
-            if not self._preset_jobs.get(producer.owner):
+            if not self._preset_jobs.get(producer.owner) and not self._store_unknown:
                 self._presets_again = True  # (A write is written again, and so read, when it ends.)
             return
         for row in event.get("saved") or ():
@@ -1560,7 +1626,11 @@ class FolderCache(QObject):
         stale = producer.owner in self._presets_stale
         self._presets_stale.discard(producer.owner)
         left = [key for key in carried if self.presets_unsaved.get(key) == "" and not self._preset_carried(key)]
-        if stale:
+        if stale and self._store_unknown:
+            # Its store isn't known to be the folder's: not saved, and not written again by itself.
+            message = f"the disk cache's store couldn't be confirmed ({self._store_unknown})"
+            self._presets_failed.update(dict.fromkeys(left, f"couldn't be saved ({message})"))
+        elif stale:
             if left and self.presets_read:
                 self._write_presets(left)
             elif left:
@@ -2211,6 +2281,8 @@ class FolderCache(QObject):
                 self._cancel_job(job)
 
     def cancel(self, owner: str, operation: str | None = None, path: str | None = None) -> None:
+        # A write held for an identity probe ends cancelled, as a queued helper would.
+        self._drop_held(owner, {"kind": "cancelled"}, operation, path)
         for folder, (waiting, _) in list(self._deferred_saves.items()):
             if waiting == owner and operation in (None, "load") and path in (None, folder):
                 del self._deferred_saves[folder]
@@ -2270,6 +2342,12 @@ class FolderCache(QObject):
             self.service.promote(job.owner)
 
     def shutdown(self) -> None:
+        # Before the service cancels the identity probe: what it held is dropped, and its end
+        # launches nothing (``_probe_answered``).
+        self._closing = True
+        self._drop_held(None, {"kind": "cancelled"})
+        self._probe_waiting.clear()
+        self._probe_waiting_owners.clear()
         self._deferred_saves.clear()
         self._sweep_timer.stop()
         self._restore_timer.stop()
@@ -2812,7 +2890,8 @@ class FolderCache(QObject):
         kind = event["kind"]
         if producer.owner == self._probe_owner and kind in ("admin_result", "error", "cancelled"):
             # The cache folder said which store it holds (``store_answer``), or couldn't.
-            self._probe_answered(str(event.get("store") or "") if kind == "admin_result" else "")
+            self._probe_answered(str(event.get("store") or "") if kind == "admin_result" else "",
+                                 str(event.get("message") or kind))
         # Its store first (``store_answer``): from another one, nothing in it counts.
         in_use = self.store_answer(event["inventory"].get("store_id")) if kind == "inventory" else (
             self._answered_from(event))

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+import weakref
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -399,14 +400,15 @@ def emit(service: IOService, request: Any, event: dict[str, Any]) -> None:
     folder_answers(service, *([str(event["store"])] if event.get("store") else []))
 
 
-_made: dict[int, set[str]] = {}
+# The stores each session named, by its IOService (weakly: an id can be reused after it is gone).
+_made: "weakref.WeakKeyDictionary[IOService, set[str]]" = weakref.WeakKeyDictionary()
 
 
 def folder_answers(service: IOService, *stores: str) -> None:
     """The cache folder answers an identity probe (``FolderCache.store_answer``): it holds the
     store made last of those this session has named ("B" after "A", "T" after "S": these tests'
     stores are made in letter order)."""
-    named = _made.setdefault(id(service), set())
+    named = _made.setdefault(service, set())
     named.update(stores)
     for _ in range(10):
         probe = next((request for request in service.pending if request.operation == "cache_admin"
