@@ -4,6 +4,47 @@ Branch `agent/result-cache-r2` from `c3d4b50`; commits `c31ac10` (schema, report
 `ef486d3` (back end), `bcdc12d` (plots), `3e5a934` (Settings), plus this session folder. Measurements
 and evidence: [notes.md](notes.md).
 
+## Round 13: the unknown store is part of the rule (`0c95a11`, 2026-10-23)
+
+Gauge confirmed that round 12's fixes hold, that the probe's 60 s no-progress timeout frees quit,
+and both API choices. What was left: the unknown state wasn't part of the one rule. Now it is,
+inside `store_answer` (in its docstring):
+
+- **While the store is unknown, no answer counts, the store in use's included.** An owed preset
+  change stays owed, and a waited save is not saved. Before, a failed probe's replay still took
+  waited answers from the store in use. A's presets acknowledgement cleared an owed change, so a
+  later B confirmation dropped the user's preset, and a waited A `result_saved` showed as saved.
+- **Asking again.** Any presets or result answer naming a store, from whichever store, asks the
+  folder again with one probe (`_waits_for_folder`). Measurements such as counts and usage never
+  ask. Before, a deliberate read answered by A while the store was unknown asked nothing, left
+  the state set and cleared the note.
+- **Only a successful probe ends it.** If the folder holds the store in use, that's a recovery:
+  what waited counts and owed changes are written. If it holds another store, that's the change of
+  store.
+- **One failure transition** (`_store_not_confirmed`) covers both a failed probe and one that can't
+  be asked (queue full). The "Saved presets can't be read: …" note shows, owed changes are said not
+  saved, and held writes end. Nothing is replayed or retried from it (Gauge's P3).
+
+**Tests** (`tests/test_store_identity.py`, 1575):
+- The enumeration gains a presets acknowledgement carrying an owed change (13 kinds of A answer)
+  and a third first probe, "fails, then recovers". In that one, a deliberate read answered by the
+  store in use asks again and finds it, including when B came first at a fresh start (the "first
+  identity B" case). That makes 1560 cells.
+  - After a failure, no answer claims anything, and an owed change stays owed in RAM.
+  - After recovery, the unknown state and the note end, and the owed change is written to the
+    store in use.
+  - At the end, a change still owed is kept for B.
+- Gauge's repros:
+  - An old store's acknowledgement after a failed probe keeps the change owed, and B later gets it.
+  - The store in use's waited `result_saved` is not saved.
+  - A deliberate read answered by A while the store is unknown recovers.
+  - A probe that can't be asked shows the note.
+- All four repros, and 570 failure and recovery cells, fail on the round 12 code.
+
+**Checks at `0c95a11`:** the full suite (`-n 12 --reruns 5 --reruns-delay 1`) ran twice: 4305
+passed, 2 skipped, 2 xfailed, **no RERUN**. `mypy --strict helab` (162) and `tests` (132),
+`pyright helab tests` and `git diff --check` are clean.
+
 ## Round 12: failed probes and held writes (`ffeee5a`, 2026-10-23)
 
 Gauge found the rule sound when the folder answers (A → B → C converges, two HeLabs agree, no
