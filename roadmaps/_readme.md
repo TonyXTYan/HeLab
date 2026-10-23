@@ -169,7 +169,10 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
   folder; migrate the current status scan as its first provider
   ([plan](quality-control-and-repair.md)) (2026-10-14; revised 2026-10-15).
 - [ ] Save analysis presets and reopen analysis workspaces
-  ([plan](presets-and-workspaces.md)) (2026-10-08).
+  ([plan](presets-and-workspaces.md)) (2026-10-08). Stage 1 done (2026-10-23,
+  `agent/presets-reopen`): script and one-folder arrangement presets, plots
+  reopening at start, Settings → Cache › Presets…; the full workspace file is
+  still open.
 - [ ] Cache-only browsing: browse and analyse cached data while the source is
   unavailable; offline mode makes no network request
   ([plan](cache-only-browsing.md)) (2026-10-08; revised 2026-10-14).

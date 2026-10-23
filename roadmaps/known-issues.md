@@ -40,6 +40,11 @@ How to use it:
 
 ## Tests and CI
 
+- [ ] `test_presets_window.py::test_a_live_off_preset_turns_live_off_in_a_real_tab` reran once on
+  Ubuntu CI (2026-10-23, run 39814028933, its first CI run): "worker 'gw2' crashed" ("node down:
+  Not properly terminated"), no traceback and no faulthandler output, so a native crash or the
+  process killed. It passed on the rerun and in 8 local runs (macOS, `-n 4`). It builds the real
+  `HelabMainWindow` offscreen with two arrangement presets. Cause unknown.
 - [ ] `test_plot_settings_panel.py::test_activation_sources` reran once on macOS CI; it didn't
   fail in 60 local runs under load (2026-10-21). The Windows rerun was the web-view crash
   (fixed, below); the macOS rerun (`f9faefd`) was a teardown failure, cause unknown, and 160 local
@@ -66,6 +71,16 @@ happening. Counted over the last 12 CI runs from `gh api repos/TonyXTYan/HeLab/a
 (whose Windows logs include the test output; `gh run view --log` can return nothing).
 
 ## Fixed
+
+Landed in `dev/v0.0.6` from the Presets Reopen floor (merge `c204d4b`, 2026-10-23):
+
+- [x] Work started before a folder was found mismatched could land afterwards, clear the mismatch
+  and bring the old data back (found by the Presets Reopen review, 2026-10-22; it predates that
+  branch). Six kinds of work: an ordinary load; a memory check; a Live check (a `live_unchanged`
+  answer too); a held Live save; a check beside a cached read (it cleared the mismatch, then
+  failed, leaving no data and no warning); a RAM answer still queued (it handed the old data to a
+  tab). One fence fixes all six and the cached-read race of the same review (`b66bba6`; each test
+  in `tests/test_mismatch_fence.py` fails on `c3d4b50`).
 
 Landed in `dev/v0.0.6` from the Codebase Review floor's old-log follow-up (merge `62f0db7`, 2026-10-22):
 

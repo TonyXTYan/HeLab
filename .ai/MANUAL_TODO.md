@@ -218,6 +218,28 @@ real experiment data without deciding where its top should be.
   On a disposable NFS/AFP/WebDAV mount, confirm one short Disk cache off line
   with the mount type and full tooltip detail, while browsing still works.
 
+## Presets and reopened plots (added 2026-10-23)
+
+From `.ai/sessions/2026-10-22-claude-presets-reopen/handoff.md` ("What Tony should check on
+screen"):
+
+- [ ] A plot's Presets row fits the narrow Settings panel; Save / Apply / Delete; a second plot of
+  the same script lists the preset at once. After Apply, change a setting: its dot and
+  "Save N changes ▾" (Save to preset / Save as new).
+- [ ] Presets menu: save with plots in two tab groups and one floating; Apply after closing some
+  (Replace, then Add): the floating window's place and size, docked splits and the front tab.
+- [ ] Quit with plots open, restart: plots back in place, waiting until the folder is selected
+  (or running at once when its data is cached); the startup tab's own selection unchanged. With a
+  script not loaded: the Keep for later / Drop question.
+- [ ] A Live preset on a folder with data: Live starts only after the data shows; on a large
+  folder the large-folder question comes first. A preset of an unmounted folder: one notice,
+  plots waiting; mount and select it: they run.
+- [ ] Reset all settings' wording (presets kept); Settings → Cache › Presets…: the listing and
+  each verdict, Rename, Duplicate, Delete.
+- [ ] With Live on a folder whose cached data turns out not to match it: stop Live → Review… /
+  Load as it is now → start Live again: the mismatch clears with the new data and Live runs on
+  it, never the old shots.
+
 ## DLD front panel port (added 2026-10-20)
 
 Built and tested offscreen only, on `agent/dld-front-panel-port`
