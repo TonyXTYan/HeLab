@@ -400,6 +400,13 @@ class FolderCache(QObject):
         # was asked (monotonic), so an answer a removal made stale since is never taken as current.
         # Kept after its helper ends (the newest ``MAX_RESULT_OPS``): an event delivered late is still checked.
         self._result_ops: OrderedDict[str, tuple[str, float, str]] = OrderedDict()
+        # Result saves and Make room adoptions of results in flight, by owner: their folder. Quitting
+        # waits for them (``quit_saves``) until their helpers end.
+        self._result_writes: dict[str, str] = {}
+        # The store that saved-result answers and marks are of (its ``store_id``, as presets use), and
+        # stores replaced since (recreated at the cache folder): their answers say nothing of it.
+        self._results_store = ""
+        self._results_retired: set[str] = set()
         # Each folder's saved analysis results as last measured in the store (count, files' bytes and
         # the store's [store_id, writes] then, None after a removal), from listings, saves and Make
         # room: the row badge and Folder details read them, memory only. The newest MAX_ENTRIES.
@@ -1349,6 +1356,7 @@ class FolderCache(QObject):
             return
         if store and store != self._presets_store:
             self._new_presets_store(store)
+        self._results_store_seen(store)  # (Saved results' answers follow the same store.)
         for row in event.get("saved") or ():
             self._remember_preset(row)
         if "rows" in event:
@@ -1997,14 +2005,22 @@ class FolderCache(QObject):
 
     def quit_saves(self) -> list[str]:
         """Folders whose data is being saved to the disk cache, or will be: what quitting waits
-        for. A finished load's background save, and a save not yet started or still reading; and a
+        for. A finished load's background save, and a save not yet started or still reading; a
         folder's flags or constants the user chose, still being written (``folder_settings_saving``):
-        quitting would end that helper, and with it the user's choice."""
+        quitting would end that helper, and with it the user's choice; a plot's result being saved,
+        by its run or by Make room (``result_saving``); and presets being written."""
         writing = [self._finishing[owner] for owner in self._disk_cache_writers if owner in self._finishing]
         loading = [job.path for job in self.jobs.values() if job.operation == "load" and job.saves()]
         settings = [write[0] for write in (*self._pref_writes.values(), *self._constant_writes.values())]
         presets = [PRESETS_SAVING] if self.presets_saving() else []
-        return list(dict.fromkeys((*writing, *loading, *self._deferred_saves, *settings, *presets)))
+        results = list(self._result_writes.values())
+        return list(dict.fromkeys((*writing, *loading, *self._deferred_saves, *settings, *results, *presets)))
+
+    def result_saving(self, path: str) -> bool:
+        """A plot's result of the folder (or, for ``RESULTS_SAVING``, one of unknown folder) is being
+        saved, by its run or by Make room (``quit_saves``). Results waiting for Make room aren't:
+        they stay in the store for the next session, as datasets do."""
+        return path in self._result_writes.values()
 
     def folder_settings_saving(self, path: str) -> bool:
         """A write of the folder's flags or constants is queued or running (``quit_saves``)."""
@@ -2226,6 +2242,11 @@ class FolderCache(QObject):
             return ""
         self._admin[owner] = action
         self._started[owner] = time.monotonic()
+        if action == "adopt_result":
+            # Make room for a waiting result: it saves the result, so quitting waits for it too.
+            entry = self.pending_results.get(str(params.get("pending_id") or ""), {})
+            self._result_writes[owner] = str(entry.get("path") or "") or RESULTS_SAVING
+            self.quitSavesChanged.emit()
         return owner
 
     # Saved analysis results (result caching R2): reads and saves on the local lane, never of a
@@ -2272,15 +2293,24 @@ class FolderCache(QObject):
                                    priority=True, blob=packed):
             return False
         self._result_ops[owner] = (self.key(path), time.monotonic(), lookup)
+        self._result_writes[owner] = self.key(path)
+        self.quitSavesChanged.emit()
         return True
 
     def _on_result_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        if event["kind"] in ("done", "error", "cancelled") and self._result_writes.pop(producer.owner, None) is not None:
+            self.quitSavesChanged.emit()  # (Its helper has ended: the save is in the store, or never will be.)
         self._note_usage(event.get("usage"), event.get("usage_seq"))
         if "next_deadline" in event:
             # A save that replaced or refused a result retired its file; a waiting one expires.
             self._schedule_sweep(event["next_deadline"])
         path, started, _ = self._result_ops.get(producer.owner, ("", time.monotonic(), ""))
-        if (event["kind"] in ("result_found", "result_saved", "result_pending")
+        if (event["kind"] in ("result_found", "result_missing", "result_saved", "result_pending")
+                and not self._results_store_seen(event.get("store"))):
+            # From a store recreated at the cache folder since: what it found or saved isn't in the
+            # store in use, and its guard means nothing there.
+            event = self._replaced_store_result(event)
+        elif (event["kind"] in ("result_found", "result_saved", "result_pending")
                 and self._removed_after(started, "results", path)):
             # A Clear cached analysis (all, the root's, a purge) since it was asked: what it found or
             # saved is gone, and its guard, taken before, would never save. Never shown as current.
@@ -2338,6 +2368,8 @@ class FolderCache(QObject):
                 order = (str(seq[0]), int(seq[1]))
             except (KeyError, TypeError, ValueError, IndexError):
                 continue
+            if not self._results_store_seen(order[0]):
+                continue  # Measured in a store recreated since.
             key = self.key(path)
             if started is not None and self._removed_after(started, "results", key):
                 continue
@@ -2365,6 +2397,49 @@ class FolderCache(QObject):
         while len(self._evicted) > self.MAX_RESULT_OPS:
             self._evicted.popitem(last=False)
         self.resultsEvicted.emit(ids)
+
+    def _results_store_seen(self, store: object) -> bool:
+        """A helper answered from ``store`` (its ``store_id``; "" or none: not known). False if that
+        store was replaced since: its answer says nothing of the store in use. Another store
+        becomes the one in use, as at a fresh start: what the last one said of saved results
+        (plots' "saved in disk cache", folders' counts, results waiting for Make room) no longer
+        holds (``_results_store_replaced``)."""
+        if not isinstance(store, str) or not store:
+            return True
+        if store in self._results_retired:
+            return False
+        if store != self._results_store:
+            old, self._results_store = self._results_store, store
+            if old:
+                self._results_retired.add(old)
+                self._results_store_replaced(store)
+        return True
+
+    def _results_store_replaced(self, store: str) -> None:
+        """The store was recreated at the cache folder (now ``store``): the old one's saved results
+        and the results waiting there are gone with it. Plots say RAM only (``cacheRemoved``, as a
+        clear), rows drop their badge until the new store is listed."""
+        counted = [path for path, entry in self.result_counts.items() if entry[2] is None or entry[2][0] != store]
+        for path in counted:
+            del self.result_counts[path]
+        if counted:
+            self.resultCountsChanged.emit(None)
+        gone = {pending_id for pending_id, entry in self.pending_results.items() if entry.get("store") != store}
+        for pending_id in gone:
+            self.resultPendingAnswered.emit(pending_id, False, "")
+        if gone:
+            self._forget_pending(gone)
+            self.pendingSavesChanged.emit()
+        logging.info("Disk cache: another store answered (recreated?); saved analysis results of the old one dropped")
+        self.cacheRemoved.emit(None, ["results"])
+
+    def _replaced_store_result(self, event: dict[str, Any]) -> dict[str, Any]:
+        """An answer to a result read or save from a store replaced since: nothing found (and no
+        guard: a save of the run would check it against another store), or not saved."""
+        if event["kind"] in ("result_found", "result_missing"):
+            return {"kind": "result_missing", "stale": True}
+        return {"kind": "result_not_saved", "reason": "store_replaced", "bytes": int(event.get("bytes") or 0),
+                "budget": event.get("budget"), "message": "the disk cache was recreated before saving completed"}
 
     def _stale_result(self, event: dict[str, Any]) -> dict[str, Any]:
         """The answer to a result read or save that a removal made stale: nothing found (and no guard:
@@ -2682,7 +2757,7 @@ class FolderCache(QObject):
                 # Saved, unless a Clear cached analysis (all, the root's, a purge) of its folder came since
                 # Make room was asked, or another Make room evicted that very row (by its id; a newer
                 # copy has another): its acknowledgement then names a row that is gone.
-                saved_now = (bool(event.get("adopted"))
+                saved_now = (bool(event.get("adopted")) and self._results_store_seen(event.get("store"))
                              and str(event.get("result_id") or "") not in self._evicted
                              and not self._removed_after(started, "results", self.key(str(event.get("path") or ""))))
                 if isinstance(event.get("folder_results"), dict):
@@ -2714,6 +2789,8 @@ class FolderCache(QObject):
                     self._automatic_save_failed(constants_write[0], message)
                 else:
                     self._constants_not_saved(*constants_write[:2], message, constants_write[2])
+            if self._result_writes.pop(producer.owner, None) is not None:
+                self.quitSavesChanged.emit()  # (Make room for a result has ended.)
             if write is not None or constants_write is not None:
                 self.quitSavesChanged.emit()
             if producer.owner in self._preset_jobs:
@@ -2893,7 +2970,7 @@ class FolderCache(QObject):
         if producer.owner in self._admin:
             self._on_admin_event(producer, event)
             return
-        if producer.owner in self._result_ops:
+        if producer.owner in self._result_ops or producer.owner in self._result_writes:
             self._on_result_event(producer, event)
             return
         if producer.owner == self._subtree_writer:
@@ -3310,6 +3387,8 @@ UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 QUITTING = "HeLab is quitting"
 # ``quit_saves``' entry while presets are being written (it names folders otherwise).
 PRESETS_SAVING = "Presets"
+# quit_saves's entry for a result Make room saves whose folder isn't known here.
+RESULTS_SAVING = "Analysis results"
 # A preset changed before the store's names were read: written once they are.
 PRESETS_WAIT_READ = "waiting for the saved presets to be read"
 # A preset saved before the store's names were read, under a name the store already held.

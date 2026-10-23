@@ -6,7 +6,8 @@ same plot and settings), ``result_missing`` or ``error`` (never "nothing saved")
 guard a later save of the run must still see (``guard``: the results' generation and the folder's
 and its root's results epochs, taken now, when the run starts). The data goes to the helper's
 private folder (``artifact``), which the app's reader thread reads, so the GUI process never opens
-the store. ``result_save`` writes the packed data the app put in the private folder (``blob_file``)
+the store. Every answer from a store names it (``store``, its ``store_id``), so the app can
+tell an answer from a store since recreated at the cache folder. ``result_save`` writes the packed data the app put in the private folder (``blob_file``)
 as a result file and its row, within the disk budget, under that guard: ``result_saved`` or
 ``result_not_saved`` (its ``reason``). A folder without a disk cache (no data root, a pending
 duplicate, an unsupported mount) has nothing saved and saves nothing (``ram_only``).
@@ -40,7 +41,7 @@ def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lo
         if flags.failed:
             raise ValueError(f"The folder's settings couldn't be read: {flags.error}")
         if flags.value and flags.value.get("no_cache"):
-            send({"kind": "result_missing", "no_cache": True})
+            send({"kind": "result_missing", "no_cache": True, "store": store.store_id})
             return
         guard: ResultGuard | None
         try:
@@ -51,7 +52,7 @@ def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lo
         if found.failed:
             raise ValueError(found.error)
         if found.value is None:
-            missing: ResultMissingEvent = {"kind": "result_missing"}
+            missing: ResultMissingEvent = {"kind": "result_missing", "store": store.store_id}
             if guard is not None:
                 missing["guard"] = guard
             send(missing)
@@ -67,7 +68,7 @@ def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lo
                 pass  # (Only purges by age go by it.)
         event: ResultFoundEvent = {"kind": "result_found", "artifact": artifact, "exact": found.value.exact,
                                    "record": row["record"], "computed_at": row["computed_at"], "bytes": row["bytes"],
-                                   "lookup": row["lookup"], "result_id": row["result_id"]}
+                                   "lookup": row["lookup"], "result_id": row["result_id"], "store": store.store_id}
         if guard is not None:
             event["guard"] = guard
         send(event)
@@ -100,7 +101,8 @@ def result_save(path: str, cache_options: dict[str, Any] | None, blob_file: str,
                 budget_set_at=options.get("budget_set_at"), label=label)
         except SaveRejected as rejection:
             send({"kind": "result_not_saved", "reason": rejection.reason, "message": str(rejection),
-                  "bytes": len(packed), "budget": None, "next_deadline": _deadline(store), **_usage(store)})
+                  "bytes": len(packed), "budget": None, "store": store.store_id, "next_deadline": _deadline(store),
+                  **_usage(store)})
             return
         if not saved.saved and saved.pending_id:
             # Waits for the user's answer (Make room or Discard), with what Make room would remove.
@@ -111,16 +113,17 @@ def result_save(path: str, cache_options: dict[str, Any] | None, blob_file: str,
                 except (SaveRejected, StoreError):
                     room = None
             send({"kind": "result_pending", "pending_id": saved.pending_id, "path": path, "label": label,
-                  "bytes": saved.bytes, "budget": saved.budget, "room": room, "next_deadline": _deadline(store),
-                  **_usage(store)})
+                  "bytes": saved.bytes, "budget": saved.budget, "room": room, "store": store.store_id,
+                  "next_deadline": _deadline(store), **_usage(store)})
             return
         if not saved.saved:
             send({"kind": "result_not_saved", "reason": saved.reason, "message": "it doesn't fit the disk cache's budget",
-                  "bytes": saved.bytes, "budget": saved.budget, "next_deadline": _deadline(store), **_usage(store)})
+                  "bytes": saved.bytes, "budget": saved.budget, "store": store.store_id,
+                  "next_deadline": _deadline(store), **_usage(store)})
             return
         folder: FolderResultsField = ({} if saved.folder is None else
                                       {"folder_results": cast(ResultCountField, saved.folder.event())})
-        send({"kind": "result_saved", "bytes": saved.bytes, "result_id": saved.result_id,
+        send({"kind": "result_saved", "bytes": saved.bytes, "result_id": saved.result_id, "store": store.store_id,
               "next_deadline": _deadline(store), **folder, **_usage(store)})
     finally:
         store.close()

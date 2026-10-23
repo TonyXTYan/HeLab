@@ -100,6 +100,7 @@ class AdminResultFields(TypedDict, total=False):
     results: int  # saved results removed (R2)
     result_id: str  # an adopted result's saved row (R2)
     folder_results: dict[str, ResultCountField]  # an adoption's folders' saved results after it (R2)
+    store: str  # the store an adoption answered from (its ``store_id``)
 
 
 # Process and progress
@@ -544,6 +545,7 @@ class ResultFoundEvent(TypedDict):
     exact: bool
     lookup: NotRequired[str]  # The row's own key (an outdated one's differs from the one asked)
     result_id: NotRequired[str]  # The row's id (Make room's eviction names the rows it removed by it)
+    store: NotRequired[str]  # The store's ``store_id`` (a recreated store has another)
     record: Any
     computed_at: float
     bytes: int
@@ -555,6 +557,7 @@ class ResultMissingEvent(TypedDict):
     chose not to cache it."""
     kind: Literal["result_missing"]
     guard: NotRequired[ResultGuard]
+    store: NotRequired[str]  # The store's ``store_id`` (absent without a store: ``ram_only``)
     ram_only: NotRequired[bool]
     no_cache: NotRequired[bool]
 
@@ -563,6 +566,7 @@ class ResultSavedEvent(UsageFields):
     kind: Literal["result_saved"]
     bytes: int
     result_id: NotRequired[str]  # Its saved row's id (new for every save)
+    store: NotRequired[str]  # The store's ``store_id``
     folder_results: NotRequired[ResultCountField]  # The folder's saved results after it
     # The store's next cleanup deadline: a save that replaced a result retired its file.
     next_deadline: NotRequired[float | None]
@@ -578,6 +582,7 @@ class ResultPendingEvent(UsageFields):
     bytes: int
     budget: int | None
     room: dict[str, Any] | None
+    store: NotRequired[str]  # The store's ``store_id``: it waits there
     next_deadline: NotRequired[float | None]  # (Its expiry, an hour unanswered.)
 
 
@@ -588,6 +593,7 @@ class ResultNotSavedEvent(UsageFields):
     message: str
     bytes: int  # its file (0 when not known)
     budget: int | None
+    store: NotRequired[str]  # The store's ``store_id`` (absent without a store: ``ram_only``)
     next_deadline: NotRequired[float | None]  # A refused save retired its file: the sweep deletes it.
 
 

@@ -199,6 +199,7 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             except SaveRejected as rejection:
                 result.update({"adopted": False, "rejected": rejection.reason, "message": str(rejection)})
             else:
+                result["store"] = store.store_id  # (A store recreated since doesn't hold what it says.)
                 if taken.removal is not None:
                     send(_results_removed_event(taken.removal, evicted=True))
                 result.update({"adopted": taken.adopted, "path": taken.path, "bytes": taken.bytes,

@@ -1,9 +1,12 @@
 """Quitting waits for disk cache saves still running (roadmaps/live-monitoring.md).
 
-Live's new shots, a finished load's background save (``disk_cache_pending``) and a folder's
-flags or constants still being written, and presets being written, are saved before HeLab quits. This window names the folders, closes by itself when the saves end (each
-stops itself after the usual no-progress timeout), and offers Quit now, which skips them.
-Nothing is lost either way: the source files remain, and the next check reads what wasn't saved.
+Live's new shots, a finished load's background save (``disk_cache_pending``), a folder's flags
+or constants still being written, a plot's result being saved (its run's save, or Make room for
+it) and presets being written are saved before HeLab quits. This window names the folders,
+closes by itself when the saves end (each stops itself after the usual no-progress timeout), and
+offers Quit now, which skips them. Nothing is lost either way: the source files remain, the next
+check reads what wasn't saved, and a plot whose result wasn't saved computes it again. Results
+waiting for Make room aren't waited for: they stay in the disk cache for the next session.
 """
 from __future__ import annotations
 
@@ -64,6 +67,8 @@ class QuitSaveDialog(QDialog):
             return "reading its new shots"
         if self.cache.folder_settings_saving(path):
             return "saving its flags or constants"
+        if self.cache.result_saving(path):
+            return "saving a plot's result"
         return "waiting for its previous save"
 
     def refresh(self) -> None:
