@@ -28,6 +28,7 @@ from helab.analysis.live_feed import LiveFeed
 from helab.analysis.parameter_tree import build_tree, commit_pending_text, parameter_of, settings_widget, tree_values
 from helab.analysis import result_cache
 from helab.analysis.parameters import describe
+from helab.analysis.presets import PlotCheck, SavedPlot, ScriptPreset, ScriptRef, check_plot, is_waiting
 from helab.analysis.results import DISK_CACHED, RAM_ONLY, AnalysisContext, AnalysisResult
 from helab.analysis.runner import AnalysisRunner, get_analysis_runner
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
@@ -40,6 +41,8 @@ from helab.views.plots.cached_results import PENDING_NOTE, CachedRuns
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.pictures import ReleasedPlot, snapshot
 if TYPE_CHECKING:
+    from helab.views.plots.arrangement import FolderWait
+    from helab.views.plots.presets import PresetBar
     from helab.views.plots.workspace import PlotWorkspace
 
 
@@ -188,6 +191,15 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._reload_constants: Optional[Mapping[str, Mapping[str, float]]] = None
         if self.constant_keys:
             self._cache().constantsChanged.connect(self._constants_changed)
+        # Presets (helab/views/plots/presets.py): the settings page's Presets row, and the script
+        # preset last applied (its name and when it was saved), which an arrangement records.
+        self.presets: Optional[PresetBar] = None
+        self.preset_from: Tuple[str, float] = ("", 0.0)
+        # Reopened (at start, or from an arrangement preset): until its folder's data is found in
+        # RAM or the disk cache, the plot waits (``FolderWait``) and holds ``waiting_view``.
+        self._wait: Optional[FolderWait] = None
+        self._waiting_message: Optional[QLabel] = None
+        self.reopen_check: Optional[PlotCheck] = None  # What its saved settings gave when reopened
 
     @property
     def view(self) -> DatasetView:
@@ -198,9 +210,13 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def path(self) -> str:
         return self.follow.ran.identity.source_path
 
-    def start(self) -> None:
-        """Open the dock and its settings page, then run with the defaults."""
-        message = self._message(f"Running {self.name} on {self.view.key.short()}…")
+    def start(self, saved: Optional[SavedPlot] = None, wait: Optional[FolderWait] = None) -> None:
+        """Open the dock and its settings page, then run with the defaults. Reopened (``saved``,
+        with ``wait`` on its folder): with its saved settings (those that fit the script now;
+        ``reopen_check``), and it waits for its folder's data instead of running."""
+        waiting = saved is not None and wait is not None
+        message = self._message(f"Running {self.name} on {self.view.key.short()}…" if not waiting
+                                else f"Looking for {self.view.identity.name}'s data…")
         self.setup_dock_widget(message)
         try:
             self._open_settings()
@@ -210,7 +226,17 @@ class AnalysisInstance(LinkedAnalysisInstance):
             logging.exception("%s could not open its settings", self.name)
             message.setText(f"{self.name} failed: {error}")
             return
-        self.run()
+        if saved is None or wait is None:
+            self.run()
+            return
+        self.reopen_check = self.apply_saved(saved, "at the script's defaults")
+        self.preset_from = (saved.preset, saved.preset_saved_at)
+        self._waiting_message = message
+        self._wait = wait
+        wait.waiting = self.waiting
+        wait.found.connect(self.run_reopened)
+        wait.noted.connect(self._waiting_noted)
+        wait.look()
 
     def _open_settings(self) -> None:
         """The plot's settings page (its parameters, Drawing and Live) and its RAM budget entry."""
@@ -237,6 +263,10 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.rerun_button.clicked.connect(self.run)
         layout.addWidget(self.rerun_button)
         layout.addWidget(self.status_label)
+        if specs:
+            from helab.views.plots.presets import PresetBar
+            self.presets = PresetBar(self)
+            layout.insertWidget(1, self.presets)
         self.setup_param_tab(tab, self._title())
         if self.param_tab is not None and self.workspace is not None:
             self.workspace.panel_right_top_plot_settings.plotShown.connect(self._plot_shown)
@@ -262,10 +292,16 @@ class AnalysisInstance(LinkedAnalysisInstance):
 
     def run(self) -> None:
         """Run with the settings shown, on the newest data the plot has (what waits for it while
-        it follows Live, else its own); a run in flight is cancelled, its settings are old."""
+        it follows Live, else its own); a run in flight is cancelled, its settings are old. A
+        reopened plot still waiting for its folder's data looks for it again (RAM, then the disk
+        cache) instead: deliberately, so its data under another data root is taken too."""
         if self.is_closed:
             return
         commit_pending_text()  # Text being typed (e.g. mask circles) counts for a deliberate run.
+        if self.waiting():
+            assert self._wait is not None
+            self._wait.look(deliberate=True)
+            return
         if self.released is not None and not self.job_id:
             # Its data was released: drawn again from RAM or the disk cache, with these settings.
             if self._reload_owner:
@@ -594,6 +630,83 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 if parameter.value() == result.parameters.get(name) and parameter.value() != value:
                     parameter.setValue(value)
 
+    # Presets and reopening (helab/views/plots/presets.py, arrangement.py)
+
+    def script_ref(self) -> ScriptRef:
+        return ScriptRef.of(self.metadata.identity(), self.action, self.metadata.name)
+
+    def apply_saved(self, saved: SavedPlot | ScriptPreset, kept: str) -> PlotCheck:
+        """Put saved settings into the plot's settings: each that fits the script now (``check_plot``);
+        the others aren't applied, named in the Presets row's note (one line, the rest in its tooltip),
+        ``kept`` as they are ("at the script's defaults" for a plot just opened, "left as they were"
+        for an open one). An edit like any other: it reruns only as an edit would (a library
+        draws the plot again)."""
+        root = self.parameter_root
+        specs = self.script.parameters(self.action)
+        backends = self.script.backends(self.action)
+        check = check_plot(saved, self.metadata.identity(), specs, backends, live_specs(self.policy))
+        if root is None:
+            return check
+        for spec in specs:
+            if spec.name in check.values:
+                parameter_of(root, spec).setValue(check.values[spec.name])
+        if check.backend:
+            for spec in backend_specs(backends):
+                parameter_of(root, spec).setValue(check.backend)
+        for spec in live_specs(self.policy):
+            if spec.name in check.live:
+                parameter_of(root, spec).setValue(check.live[spec.name])
+        if self.presets is not None:
+            if isinstance(saved, ScriptPreset):
+                self.presets.set_note(f"Preset “{saved.name}”", check, kept)
+            else:  # Reopened: said only if a setting wasn't restored, or the script changed.
+                self.presets.set_note("Reopened", check, kept, quiet=True)
+        return check
+
+    def saved_plot(self) -> SavedPlot:
+        """The plot as an arrangement records it (its place is added by ``arrangement.capture``)."""
+        view = self.view
+        dock = self.dock_widget
+        open_, width = ((dock.settings.is_open, dock.settings.open_width) if isinstance(dock, AnalysisDock)
+                        else (False, 0))
+        commit_pending_text()
+        return SavedPlot(self.script_ref(), view.identity.source_path, view.identity.root_key, self.values(),
+                         self.backend(), self.live_values(), self.instance_id, f"{self.name} ({self.instance_id})",
+                         open_, width, preset=self.preset_from[0], preset_saved_at=self.preset_from[1])
+
+    def waiting(self) -> bool:
+        """Reopened and still waiting for its folder's data (no run yet)."""
+        return self._wait is not None and self.result is None and not self.job_id and is_waiting(self.follow.ran)
+
+    @pyqtSlot(object)
+    def run_reopened(self, view: DatasetView) -> None:
+        """The one place a reopened plot decides to run: its folder's data was found (in RAM or
+        the disk cache, ``FolderWait``), so it runs on it with its settings. (Result Cache, R2: a
+        result cached for exactly these settings and data can be shown here instead.)"""
+        if self.is_closed or not self.waiting():
+            return
+        self._end_wait()
+        self._submit(view)
+
+    @pyqtSlot(str)
+    def _waiting_noted(self, text: str) -> None:
+        message = self._waiting_message
+        if message is not None and not sip.isdeleted(message) and self.waiting():
+            message.setText(text)
+            self.status_label.setText(text)
+        self._show_follow()
+
+    def _end_wait(self) -> None:
+        wait, self._wait = self._wait, None
+        if wait is not None:
+            for signal, slot in ((wait.found, self.run_reopened), (wait.noted, self._waiting_noted)):
+                try:
+                    signal.disconnect(slot)
+                except TypeError:
+                    pass
+            wait.stop()
+        self._waiting_message = None
+
     # Constants (F0b)
 
     def constant_layers(self, path: Optional[str] = None) -> Dict[str, Dict[str, float]]:
@@ -738,8 +851,11 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def _show_follow(self) -> None:
         """The source line's Live state and error, the settings' input line and title."""
         following = self.follow.on and self.live() is not None
-        self.input_label.setText(f"Input: {self._shown_key().short()}"
-                                 + (" · following Live" if following else " (stays with this plot)"))
+        if self.waiting():
+            self.input_label.setText(f"Input: {self.view.identity.name} (waiting for its data)")
+        else:
+            self.input_label.setText(f"Input: {self._shown_key().short()}"
+                                     + (" · following Live" if following else " (stays with this plot)"))
         dock, plots = self.dock_widget, self.workspace
         if dock is None or plots is None or sip.isdeleted(dock):
             return
@@ -756,6 +872,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         return self.shown.input if self.shown is not None else self.view.key
 
     def _title(self) -> str:
+        if is_waiting(self._shown_view or self.view) and self.shown is None:
+            return f"{self.name} ({self.instance_id}) · {self.view.identity.name} · waiting for its data"
         return f"{self.name} ({self.instance_id}) · {self._shown_key().short()}"
 
     @staticmethod
@@ -1020,6 +1138,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def close(self) -> None:
         if self.is_closed:
             return
+        self._end_wait()
         self._follow_timer.stop()
         if self.job_id:
             self.runner.cancel(self.job_id)

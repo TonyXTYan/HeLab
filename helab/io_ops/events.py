@@ -264,6 +264,25 @@ class FolderConstantsEvent(TypedDict):
     session_only: NotRequired[dict[str, str]]
 
 
+class PresetRowFields(TypedDict):
+    """One preset as the store holds it (``CacheStore.read_presets``); ``record`` None: deleted."""
+    kind: str
+    scope: str
+    name: str
+    record: str | None
+    set_at: float
+
+
+class PresetsEvent(TypedDict):
+    """``cache_admin`` "presets": the rows it wrote (as saved now: a later choice may have won),
+    then every row, or why they couldn't be read (never "none saved")."""
+    kind: Literal["presets"]
+    saved: list[PresetRowFields]
+    rows: NotRequired[list[PresetRowFields]]
+    store: NotRequired[str]  # The store's ``store_id`` (a recreated store has another).
+    error: NotRequired[str]
+
+
 class CacheMismatchEvent(TypedDict):
     kind: Literal["cache_mismatch"]
     missing: list[int]
@@ -789,7 +808,7 @@ HelperEvent = Union[
     CacheWarningEvent, CacheSkippedEvent,
     EntriesEvent, ListedStatusEvent, ScanStatusEvent, MountsSeenEvent, SaveGuardEvent, ScanHistoryEvent,
     ScanHistorySavedEvent, ScanHistoryWarningEvent, ScanModeEvent, ScanCachedEvent, SubtreeCachedEvent,
-    SubtreeSavedEvent, SummarySaveFailedEvent, FolderPrefsEvent, FolderConstantsEvent, CacheMismatchEvent,
+    SubtreeSavedEvent, SummarySaveFailedEvent, FolderPrefsEvent, FolderConstantsEvent, PresetsEvent, CacheMismatchEvent,
     FolderIconEvent,
     LoadSourceEvent, ProgressEvent, FileStartedEvent, FileFinishedEvent, ShotEvent, ScanSummaryEvent,
     ShotsMissingEvent, TooLargeEvent, CachedLoadedEvent, UnchangedCachedLoadedEvent, UnchangedHeldLoadedEvent,
@@ -809,7 +828,7 @@ KINDS = frozenset({
     "done", "error", "paused", "resumed", "heartbeat", "drives", "resolved", "cache_warning", "cache_skipped",
     "entries", "status", "mounts_seen", "save_guard", "scan_history", "scan_history_saved",
     "scan_history_warning", "scan_mode", "scan_cached", "subtree_cached", "subtree_saved", "summary_save_failed",
-    "folder_prefs", "folder_constants", "cache_mismatch", "folder_icon",
+    "folder_prefs", "folder_constants", "presets", "cache_mismatch", "folder_icon",
     "load_source", "progress", "file_started", "file_finished", "shot", "scan_summary", "shots_missing",
     "too_large", "loaded", "live_unchanged",
     "cache_saved", "disk_cached", "cache_save_failed", "cache_full", "cache_approval", "removed", "inventory",

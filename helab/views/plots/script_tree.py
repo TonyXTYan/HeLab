@@ -4,21 +4,26 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING, Union
 
 from PyQt6 import sip
-from PyQt6.QtCore import Qt, pyqtSlot
+from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (QComboBox, QDockWidget, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMainWindow,
                              QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from helab.analysis.dataset_view import DatasetView
+from helab.analysis.presets import SavedPlot, ScriptRef, waiting_view
 from helab.scripts import dld, standard
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.scripts_manager import ScriptsManager
 from helab.views.plots.dock import AnalysisDock, DockTabCloser
 from helab.views.plots.instance import AnalysisInstance, LinkedAnalysisInstance
 if TYPE_CHECKING:
+    from helab.views.plots.arrangement import FolderWait
     from helab.views.plots.workspace import PlotWorkspace
+
+# ``_add_dock``'s default: tab the new plot with the shown one (``tab_target``).
+AUTO = "auto"
 
 
 class TreePanelWidget(QWidget):
@@ -28,7 +33,12 @@ class TreePanelWidget(QWidget):
     Groups are each script's metadata group: HeLab's bundled analyses ("Basic plots v1",
     ``helab.scripts.standard.group``; "DLD Front Panel Port", ``helab.scripts.dld.group``) and
     those of scripts loaded from a folder (``ScriptsManager``).
+
+    ``plotsChanged`` says when a plot opened or closed (the plots to reopen at start are recorded
+    then, helab/views/plots/arrangement.py).
     """
+
+    plotsChanged = pyqtSignal()
 
     def __init__(self, workspace: Optional[PlotWorkspace] = None,
                  parent: Any = None) -> None:
@@ -231,7 +241,68 @@ class TreePanelWidget(QWidget):
         self._add_dock(instance)
         return instance
 
-    def _add_dock(self, instance: LinkedAnalysisInstance) -> None:
+    def instances(self) -> List[AnalysisInstance]:
+        """The open plots (of dataset analyses), as opened."""
+        return [instance for instance in self._analysis_instances.values()
+                if isinstance(instance, AnalysisInstance) and not instance.is_closed]
+
+    def find_script(self, ref: ScriptRef) -> Union[Tuple[ScriptMetadata, DatasetAnalysis], str]:
+        """The loaded script ``ref`` names (by its analysis id) with its action, a new instance of
+        it, or why there is none (for the user: "its script isn't loaded …")."""
+        for group in self.script_manager.get_groups():
+            for metadata in self.script_manager.get_scripts_in_group(group):
+                if metadata.identity().analysis_id != ref.analysis_id:
+                    continue
+                script_class = self.script_manager.get_script(metadata.script_id)
+                try:
+                    script = script_class() if script_class is not None else None
+                    actions = script.get_actions() if script is not None else []
+                except Exception as error:
+                    logging.exception("%s could not be made", metadata.name)
+                    return f"its script failed: {error}"
+                if not isinstance(script, DatasetAnalysis):
+                    return "its script no longer plots a folder's data"
+                if ref.action not in actions:
+                    return f"its script has no “{ref.action}” now"
+                return metadata, script
+        return "its script isn't loaded (Load Scripts… its folder, then open it again)"
+
+    def reopen_plot(self, saved: SavedPlot, wait: FolderWait, *, keep_id: bool = False,
+                    place: bool = True) -> Union[AnalysisInstance, str]:
+        """Open ``saved`` again (at start, or from an arrangement preset): a plot of its script with
+        its saved settings, waiting for its folder's data (``wait``) instead of running. Its number
+        is its saved one if ``keep_id`` and free. Not ``place``: its dock isn't added to the plot
+        area yet (the caller places it, ``place_dock``). The plot, or why it couldn't open."""
+        plots = self.workspace
+        if plots is None:
+            return "no plot area"
+        found = self.find_script(saved.script)
+        if isinstance(found, str):
+            return found
+        metadata, script = found
+        if keep_id and saved.instance_id.isdigit() and saved.instance_id not in self._analysis_instances:
+            instance_id = saved.instance_id
+            self._instance_counter = max(self._instance_counter, int(instance_id))
+        else:
+            self._instance_counter += 1
+            instance_id = f"{self._instance_counter}"
+        try:
+            instance = AnalysisInstance(metadata, script, saved.script.action,
+                                        waiting_view(saved.path, saved.root_key), instance_id, plots)
+        except Exception as error:
+            logging.exception("%s could not open its plot", metadata.name)
+            return f"it failed: {error}"
+        self._analysis_instances[instance_id] = instance
+        instance.start(saved, wait)
+        if place:
+            self._add_dock(instance)
+        return instance
+
+    def place_dock(self, instance: LinkedAnalysisInstance, tab_with: Optional[QDockWidget]) -> None:
+        """Add a reopened plot's dock to the plot area: tabbed with ``tab_with``, else on its own."""
+        self._add_dock(instance, tab_with)
+
+    def _add_dock(self, instance: LinkedAnalysisInstance, tab_with: Union[Optional[QDockWidget], str] = AUTO) -> None:
         plots, dock = self.workspace, instance.dock_widget
         if plots is None or not isinstance(dock, AnalysisDock):
             return
@@ -240,7 +311,8 @@ class TreePanelWidget(QWidget):
         area = plots.middle_mainwindow
         settings.follow(area)
         closer = area.findChild(DockTabCloser) or DockTabCloser(area)
-        target = self.tab_target(area, plots.dock_widgets, settings.current_plot())
+        target = (self.tab_target(area, plots.dock_widgets, settings.current_plot()) if tab_with == AUTO
+                  else tab_with if isinstance(tab_with, QDockWidget) else None)
         area.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         # In a shown area Qt hides the new dock and shows it later, and it won't tab a plot
         # opened meanwhile with a hidden one: show it now.
@@ -252,6 +324,7 @@ class TreePanelWidget(QWidget):
         closer.watch(dock)
         plots.dock_widgets.append(dock)
         plots.update_placeholder_visibility()
+        self.plotsChanged.emit()
 
     @staticmethod
     def tab_target(area: QMainWindow, open_docks: List[QDockWidget],
@@ -274,7 +347,8 @@ class TreePanelWidget(QWidget):
 
     @pyqtSlot(str)
     def _forget_instance(self, instance_id: str) -> None:
-        self._analysis_instances.pop(instance_id, None)
+        if self._analysis_instances.pop(instance_id, None) is not None:
+            self.plotsChanged.emit()
 
     def create_button(self, label: str, callback: Callable[..., Any]) -> QPushButton:
         """Create a standardized action button for script items.

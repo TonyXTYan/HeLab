@@ -106,6 +106,9 @@ CREATE TABLE IF NOT EXISTS folder_prefs (
     path TEXT PRIMARY KEY, no_cache INTEGER NOT NULL DEFAULT 0, no_auto_load INTEGER NOT NULL DEFAULT 0,
     set_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS folder_constants (path TEXT PRIMARY KEY, record TEXT NOT NULL, set_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS presets (
+    kind TEXT NOT NULL, scope TEXT NOT NULL, name TEXT NOT NULL, record TEXT, set_at REAL NOT NULL,
+    PRIMARY KEY (kind, scope, name));
 CREATE TABLE IF NOT EXISTS pending_saves (
     pending_id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE,
     reason TEXT NOT NULL CHECK (reason IN ('over_budget', 'needs_approval')),
@@ -508,6 +511,7 @@ class CacheStore:
                 # no folder sets constants.)
                 self._raw_times = "raw_times" if _has_raw_times(self._conn) else "'[]'"
                 self._constants_table = _has_table(self._conn, "folder_constants")
+                self._presets_table = _has_table(self._conn, "presets")
                 # (Nor the results table: it then has no results saved, and saves none.)
                 self._results_table = _has_table(self._conn, "results")
                 self._pending_results = _has_table(self._conn, "pending_results")
@@ -966,6 +970,52 @@ class CacheStore:
                 return {"values": chosen, "set_at": set_at}
         except (sqlite3.Error, ValueError) as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
+
+    # Presets (roadmaps/presets-and-workspaces.md): the user's plot presets, one row each (``kind``
+    # "script", ``scope`` its script and action; or "arrangement", ``scope`` ""), its JSON
+    # ``record``, or NULL once deleted: the row stays, with its ``set_at``, so an older write from
+    # another HeLab can't bring it back. Keyed by no folder: nothing removes them (not Clear all,
+    # purges, making room, a data root's Clear cached data…, nor a re-key).
+
+    def read_presets(self) -> Read[list[dict[str, Any]]]:
+        """Every preset row, deleted ones too: ``{"kind", "scope", "name", "record" (None if
+        deleted), "set_at"}``. A read-only store (written by a newer HeLab) without the table has
+        none."""
+        if not self._presets_table:
+            return _found([])
+        try:
+            with self.transaction(write=False):
+                rows = self._conn.execute("SELECT kind, scope, name, record, set_at FROM presets").fetchall()
+        except (sqlite3.Error, StoreError) as exc:
+            return _error(f"Disk cache could not be read: {exc}")
+        return _found([{"kind": str(kind), "scope": str(scope), "name": str(name),
+                        "record": None if record is None else str(record), "set_at": float(set_at)}
+                       for kind, scope, name, record, set_at in rows])
+
+    def write_presets(self, rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        """Save these preset rows (a ``record`` of None deletes) in one transaction, each unless a
+        later choice (``set_at``, e.g. in another HeLab) is saved for it; the rows saved now."""
+        saved: list[dict[str, Any]] = []
+        try:
+            with self.transaction():
+                for row in rows:
+                    key = (str(row["kind"]), str(row["scope"]), str(row["name"]))
+                    if key[0] not in ("script", "arrangement") or not key[2]:
+                        raise ValueError(f"not a preset: {key}")
+                    record = None if row.get("record") is None else str(row["record"])
+                    set_at = float(row["set_at"])
+                    found = self._conn.execute("SELECT record, set_at FROM presets WHERE kind = ? AND scope = ? "
+                                               "AND name = ?", key).fetchone()
+                    if found is not None and float(found[1]) > set_at:
+                        record, set_at = found[0], float(found[1])  # A later choice stays.
+                    else:
+                        self._conn.execute("INSERT OR REPLACE INTO presets (kind, scope, name, record, set_at) "
+                                           "VALUES (?, ?, ?, ?, ?)", (*key, record, set_at))
+                    saved.append({"kind": key[0], "scope": key[1], "name": key[2], "record": record,
+                                  "set_at": set_at})
+        except (sqlite3.Error, ValueError, KeyError, TypeError) as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return saved
 
     def _meta(self) -> dict[str, Any]:
         return {key: json.loads(value) for key, value in self._conn.execute("SELECT key, value FROM meta")}
@@ -2417,27 +2467,31 @@ def _transient_io_error(exc: sqlite3.Error) -> bool:
 def _migrate(conn: sqlite3.Connection) -> None:
     """Bring a store made by an earlier HeLab of this layout up to date, on every writable open:
     the ``folder_constants`` table (F0b), ``datasets.raw_times`` (D7; ``[]``: no raw times
-    known) and the ``results`` table with its ``gen_results`` generation (result caching R2).
-    ``SCHEMA`` gives a new store all of them; a store created before one is never created
-    again, so without this it would lack it for good. Older HeLabs name the tables and columns
-    they use, so they keep working with these (they never read or clear results). Checked again
-    under the write lock: several helpers may open an old store at once, and only the first one
-    changes it."""
-    def missing() -> tuple[bool, bool, bool]:
+    known), the ``presets`` table and the ``results`` table with its ``gen_results`` generation
+    (result caching R2). ``SCHEMA`` gives a new store all of them; a store created before one is
+    never created again, so without this it would lack it for good. Older HeLabs name the tables
+    and columns they use, so they keep working with these (they never read or clear results).
+    Checked again under the write lock: several helpers may open an old store at once, and only
+    the first one changes it."""
+    def missing() -> tuple[bool, bool, bool, bool]:
         return (not _has_table(conn, "folder_constants"),
                 _has_table(conn, "datasets") and not _has_raw_times(conn),
+                not _has_table(conn, "presets"),
                 not _has_table(conn, "results") or not _has_table(conn, "pending_results") or conn.execute(
                     "SELECT 1 FROM meta WHERE key = 'gen_results'").fetchone() is None)
     if not any(missing()):
         return
     conn.execute("BEGIN IMMEDIATE")
     try:
-        constants, raw_times, results = missing()  # (Another helper may have added them meanwhile.)
+        constants, raw_times, presets, results = missing()  # (Another helper may have added them meanwhile.)
         if constants:
             conn.execute("CREATE TABLE IF NOT EXISTS folder_constants "
                          "(path TEXT PRIMARY KEY, record TEXT NOT NULL, set_at REAL NOT NULL)")
         if raw_times:
             conn.execute("ALTER TABLE datasets ADD COLUMN raw_times TEXT NOT NULL DEFAULT '[]'")
+        if presets:
+            conn.execute("CREATE TABLE IF NOT EXISTS presets (kind TEXT NOT NULL, scope TEXT NOT NULL, "
+                         "name TEXT NOT NULL, record TEXT, set_at REAL NOT NULL, PRIMARY KEY (kind, scope, name))")
         if results:
             for statement in RESULT_SCHEMA:
                 conn.execute(statement)
