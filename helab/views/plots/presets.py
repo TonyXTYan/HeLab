@@ -730,4 +730,3 @@ class ArrangementPresets(QObject):
         why = delete_arrangement(name)
         self.plots.notice(f"Deleted preset “{name}”{saved_note(why)}")
         return True
-
