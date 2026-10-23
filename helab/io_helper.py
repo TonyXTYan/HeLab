@@ -20,6 +20,7 @@ from helab.io_ops.icons import folder_icons
 from helab.io_ops.infra import Pause, SOURCE_GUARD, _end_trace, _guard, _isdir, _start_trace, emit
 from helab.io_ops.live import live_check
 from helab.io_ops.loading import load, read_cached
+from helab.io_ops.results import result_find, result_save
 from helab.io_ops.markers import (create_root, reassign_root, remove_root, save_marker_copy, verify_known_roots,
                                   verify_volumes)
 from helab.io_ops.save_held import save_held
@@ -30,7 +31,7 @@ from helab.io_ops.trace_check import trace_check
 
 # Operations that need the disk cache on.
 CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "volumes_verify",
-              "root_reassign", "root_remove")
+              "root_reassign", "root_remove", "result_find", "result_save")
 
 
 # Requests acting on the source folder they name (``path``, or an icon batch's ``paths``), which
@@ -105,6 +106,15 @@ def main() -> None:
             read_cached(request["path"], request["output"], cache_options=request.get("cache"),
                         limits=request.get("limits"), allow_large=bool(request.get("allow_large")),
                         verified_volumes=request.get("verified_volumes"))
+        elif operation == "result_find":
+            result_find(request["path"], request["output"], request.get("cache"), str(request["lookup"]),
+                        str(request.get("family") or ""), verified_volumes=request.get("verified_volumes"))
+        elif operation == "result_save":
+            result_save(request["path"], request.get("cache"), request["blob_file"], lookup=str(request["lookup"]),
+                        family=str(request.get("family") or ""), record=request["record"],
+                        analysis_id=str(request["analysis_id"]), action=str(request["action"]),
+                        computed_at=float(request["computed_at"]), guard=request["guard"],
+                        verified_volumes=request.get("verified_volumes"), label=str(request.get("label") or ""))
         elif operation == "invalidate":
             with stores._cache_store(request["cache"]["directory"], [request["path"]], local_lane=True) as store:
                 # Bumps the folder's epoch: a load started before cannot save it back.

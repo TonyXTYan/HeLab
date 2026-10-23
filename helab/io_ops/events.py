@@ -18,6 +18,12 @@ from typing import Any, Literal, NotRequired, Sequence, TypedDict, Union
 # Fields several events carry, spread into them by the helper (``**``).
 
 
+class StoreField(TypedDict, total=False):
+    """The store an answer came from (``stores._store_fields``): its ``store_id``, which
+    ``FolderCache.store_answer`` checks before anything else in the answer counts."""
+    store: str
+
+
 class UsageFields(TypedDict, total=False):
     """The store's live usage (``stores._usage``); absent if it couldn't be measured."""
     usage: int
@@ -97,6 +103,10 @@ class AdminResultFields(TypedDict, total=False):
     confirmed: bool
     budget: int
     recorded: bool
+    results: int  # saved results removed (R2)
+    result_id: str  # an adopted result's saved row (R2)
+    folder_results: dict[str, ResultCountField]  # an adoption's folders' saved results after it (R2)
+    store: str  # the store an adoption answered from (its ``store_id``)
 
 
 # Process and progress
@@ -175,6 +185,7 @@ class ListedStatusEvent(_StatusBase):
     cache_info: NotRequired[dict[str, Any]]
     data_root: NotRequired[DataRoot]
     saved_root: NotRequired[dict[str, Any]]
+    results: NotRequired[ResultCountField]  # The folder's saved analysis results (R2)
 
 
 class FolderSummary(_StatusBase):
@@ -493,12 +504,106 @@ class PendingSaveEvent(TypedDict):
 
 
 class RemovedEvent(TypedDict):
-    """What a removal did (``FolderCache.removed``); ``paths`` None: every path of those kinds."""
+    """What a removal did (``FolderCache.removed``); ``paths`` None: every path of those kinds.
+    Kind ``results`` (saved analysis results, R2): ``results`` removed, and for a data root's
+    Clear cached analysis its ``root`` UUID."""
     kind: Literal["removed"]
     kinds: list[str]
     paths: list[str] | None
     datasets: NotRequired[int]
     bytes: NotRequired[int]
+    results: NotRequired[int]
+    root: NotRequired[str | None]
+    # Saved results Make room removed for a waiting one, [folder, lookup, result_id] each: not a clear
+    # (no epoch moved; a newer copy of one of those keys has another result_id).
+    evicted: NotRequired[list[list[str]]]
+
+
+class ResultCountField(TypedDict):
+    """A folder's saved results (``CacheStore.ResultCount``): the row badge and Folder details. ``seq``
+    is the store's [store_id, writes] when counted; the newest wins."""
+    count: int
+    bytes: int
+    seq: list[Any]
+
+
+class ResultsField(TypedDict, total=False):
+    """A listing's own folder's saved results, when known (``ListedStatusEvent.results``)."""
+    results: ResultCountField
+
+
+class FolderResultsField(TypedDict, total=False):
+    """A save's folder's saved results after it (``ResultSavedEvent.folder_results``)."""
+    folder_results: ResultCountField
+
+
+class ResultGuard(TypedDict):
+    """A result save's guard (``CacheStore.start_result_job``), taken when its run started."""
+    generations: dict[str, int]
+    epochs: dict[str, int]
+    # The store it was taken in (its ``store_id``): a save with it writes nothing in another, such
+    # as one recreated at the cache folder since.
+    store: NotRequired[str]
+
+
+class ResultFoundEvent(TypedDict):
+    """A saved result for a run (``io_ops.results.result_find``): exact, or an outdated one of the
+    same plot and settings. Its data file is ``artifact`` in the helper's private folder."""
+    kind: Literal["result_found"]
+    artifact: str
+    exact: bool
+    lookup: NotRequired[str]  # The row's own key (an outdated one's differs from the one asked)
+    result_id: NotRequired[str]  # The row's id (Make room's eviction names the rows it removed by it)
+    store: NotRequired[str]  # The store's ``store_id`` (a recreated store has another)
+    record: Any
+    computed_at: float
+    bytes: int
+    guard: NotRequired[ResultGuard]
+
+
+class ResultMissingEvent(TypedDict):
+    """None saved for the run; ``ram_only``: the folder has no disk cache; ``no_cache``: the user
+    chose not to cache it."""
+    kind: Literal["result_missing"]
+    guard: NotRequired[ResultGuard]
+    store: NotRequired[str]  # The store's ``store_id`` (absent without a store: ``ram_only``)
+    ram_only: NotRequired[bool]
+    no_cache: NotRequired[bool]
+
+
+class ResultSavedEvent(UsageFields):
+    kind: Literal["result_saved"]
+    bytes: int
+    result_id: NotRequired[str]  # Its saved row's id (new for every save)
+    store: NotRequired[str]  # The store's ``store_id``
+    folder_results: NotRequired[ResultCountField]  # The folder's saved results after it
+    # The store's next cleanup deadline: a save that replaced a result retired its file.
+    next_deadline: NotRequired[float | None]
+
+
+class ResultPendingEvent(UsageFields):
+    """A result that doesn't fit the disk budget waits for the user's answer (Make room or Discard):
+    ``room`` is what Make room would remove (``CacheStore.result_room_plan``), None if unknown."""
+    kind: Literal["result_pending"]
+    pending_id: str
+    path: str
+    label: str
+    bytes: int
+    budget: int | None
+    room: dict[str, Any] | None
+    store: NotRequired[str]  # The store's ``store_id``: it waits there
+    next_deadline: NotRequired[float | None]  # (Its expiry, an hour unanswered.)
+
+
+class ResultNotSavedEvent(UsageFields):
+    """Why not: ``over_budget``, ``cleared`` (the guard), ``no_cache``, ``ram_only``."""
+    kind: Literal["result_not_saved"]
+    reason: str
+    message: str
+    bytes: int  # its file (0 when not known)
+    budget: int | None
+    store: NotRequired[str]  # The store's ``store_id`` (absent without a store: ``ram_only``)
+    next_deadline: NotRequired[float | None]  # A refused save retired its file: the sweep deletes it.
 
 
 class InventoryEvent(TypedDict):
@@ -730,6 +835,7 @@ HelperEvent = Union[
     RootFoundEvent, RootChangedEvent, RootDuplicateEvent, RootRekeyedEvent, RootConfirmedEvent, RootCreatedEvent,
     RootManualEvent, RootReassignedEvent, RootRemovedEvent, RootRemoveRefusedEvent, ClockSkewEvent, MarkerSaveEvent,
     MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
+    ResultFoundEvent, ResultMissingEvent, ResultSavedEvent, ResultNotSavedEvent, ResultPendingEvent,
 ]
 
 # Every kind a helper sends.
@@ -747,5 +853,6 @@ KINDS = frozenset({
     "root_found", "root_changed", "root_duplicate", "root_rekeyed", "root_confirmed", "root_created",
     "root_adopted", "root_manual", "root_reassigned", "root_removed", "root_remove_refused",
     "clock_skew", "marker_saved", "marker_save_exists", "marker_save_refused", "volumes_verified",
-    "roots_verified",
+    "roots_verified", "result_found", "result_missing", "result_saved", "result_not_saved",
+    "result_pending",
 })

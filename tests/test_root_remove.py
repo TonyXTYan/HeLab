@@ -169,7 +169,8 @@ def test_row_menu_and_delete_button_follow_whether_the_row_is_mounted(page: Data
     select(page, 0)
     items = menu_items(page)
     show = tab_module.show_label()
-    assert list(items) == [show, "Copy path", "Clear cached data…", "Forget location…", DELETE]
+    assert list(items) == [show, "Copy path", "Clear cached data…", "Clear cached analysis…", "Forget location…",
+                           DELETE]
     assert all(enabled for enabled, _ in items.values()) and "hidden" in items[show][1]
     assert page.delete_button.isEnabled() and page.forget_button.isEnabled()
     page.copy_selected()

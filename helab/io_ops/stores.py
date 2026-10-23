@@ -6,7 +6,7 @@ import os
 import sys
 from typing import Any, TYPE_CHECKING, cast
 
-from helab.io_ops.events import DataRootField, RemovedEvent, UsageFields
+from helab.io_ops.events import DataRootField, RemovedEvent, StoreField, UsageFields
 from helab.io_ops.infra import Emit, _cached_volume_id, _mounts
 
 if TYPE_CHECKING:
@@ -166,6 +166,11 @@ def _deadline(store: CacheStore) -> float | None:
         return None
 
 
+def _store_fields(store: CacheStore) -> StoreField:
+    """The store an answer comes from (its ``store_id``: ``FolderCache.store_answer``)."""
+    return {"store": store.store_id}
+
+
 def _usage(store: CacheStore) -> UsageFields:
     """The store's live usage and when it was measured, for the app's 80% pause; {} if unreadable."""
     from helab.utils.cache_store import StoreError
@@ -173,6 +178,18 @@ def _usage(store: CacheStore) -> UsageFields:
         return cast(UsageFields, store.measure_usage().event())
     except StoreError:
         return {}
+
+
+def _results_removed_event(removal: Any, *, evicted: bool = False) -> RemovedEvent:
+    """What a removal of saved results did (``CacheStore.remove_results``), kind ``results``;
+    ``evicted``: saved results Make room removed for a waiting one, named by (folder, lookup,
+    result_id): not a clear, so only reads and marks of those very rows are affected."""
+    event: RemovedEvent = {"kind": "removed", "kinds": ["results"],
+                           "paths": None if removal.paths is None else list(removal.paths),
+                           "results": removal.results, "bytes": removal.bytes, "root": removal.root}
+    if evicted:
+        event["evicted"] = [[folder, lookup, result_id] for folder, lookup, result_id in removal.evicted]
+    return event
 
 
 def _removed_event(removal: Any) -> RemovedEvent:

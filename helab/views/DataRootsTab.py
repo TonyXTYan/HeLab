@@ -35,7 +35,11 @@ DELETE_TEXT = ("Deletes {marker}. This folder and its subfolders use RAM only on
                "disk cache for it too.")
 CLEAR = "Clear cached data…"
 CLEAR_TOOLTIP = ("Clear what this computer cached below this data root (datasets and saved folder status). "
-                 "The .helab-root and folder flags stay.")
+                 "The .helab-root, folder flags and cached analysis stay.")
+# Saved analysis results below the root (result caching R2), apart from its cached data (Tony, 2026-10-22).
+CLEAR_RESULTS = "Clear cached analysis…"
+CLEAR_RESULTS_TOOLTIP = ("Clear the analysis results this computer saved below this data root (plots compute them "
+                         "again). Its cached data and the .helab-root stay.")
 REVIEW = "Review…"
 REVIEW_TOOLTIP = "Same folder or a copy? This location uses RAM only until answered"
 DETAIL_NONE = "Select a location to see its .helab-root's path and UUID"
@@ -126,6 +130,10 @@ class DataRootsTab(QWidget):
         self.clear_button.setToolTip(CLEAR_TOOLTIP)
         self.clear_button.clicked.connect(self.clear_selected)
         footer.addWidget(self.clear_button)
+        self.clear_results_button = QPushButton(CLEAR_RESULTS)
+        self.clear_results_button.setToolTip(CLEAR_RESULTS_TOOLTIP)
+        self.clear_results_button.clicked.connect(self.clear_results_selected)
+        footer.addWidget(self.clear_results_button)
         self.review_button = QPushButton(REVIEW)
         self.review_button.setToolTip(REVIEW_TOOLTIP)
         self.review_button.clicked.connect(self.review_selected)
@@ -208,6 +216,7 @@ class DataRootsTab(QWidget):
         menu.addSeparator()
         review = menu.addAction(REVIEW, self.review_selected) if self.review_button.isEnabled() else None
         clear = menu.addAction(CLEAR, self.clear_selected)
+        clear_results = menu.addAction(CLEAR_RESULTS, self.clear_results_selected)
         forget = menu.addAction(FORGET, self.forget_selected)
         delete = menu.addAction(DELETE, self.delete_selected)
         for action, enabled, tooltip in (
@@ -215,6 +224,7 @@ class DataRootsTab(QWidget):
                 (copy, row is not None, "The .helab-root file's path" if mounted else "The location"),
                 (review, True, REVIEW_TOOLTIP),
                 (clear, self.clear_button.isEnabled(), CLEAR_TOOLTIP),
+                (clear_results, self.clear_results_button.isEnabled(), CLEAR_RESULTS_TOOLTIP),
                 (forget, self.forget_button.isEnabled(), FORGET_TOOLTIP),
                 (delete, self.delete_button.isEnabled(), DELETE_TOOLTIP if mounted else NOT_MOUNTED_TOOLTIP)):
             if action is not None:
@@ -249,10 +259,28 @@ class DataRootsTab(QWidget):
                 f"({byte_size(cached['bytes'])})" if cached else "the cached data")
         if not self.confirm("Clear this data root's cached data?",
                             f"Clears {what} for data root “{row['label']}” on this computer. "
-                            "The .helab-root and folder flags stay.", "Clear"):
+                            "The .helab-root, folder flags and cached analysis stay.", "Clear"):
             return
         self._job = self.cache.cache_admin("clear_root", uuid=row["uuid"])
         self._job_name = "Clear cached data"
+        self.message = "" if self._job else "Disk cache queue full — try again"
+        self._update()
+
+    def clear_results_selected(self) -> None:
+        """Clear cached analysis: the results saved below this root, nothing else (asks first)."""
+        row = self.selected()
+        if row is None or self.cache is None or self._job:
+            return
+        cached = row.get("cached") or {}
+        count = int(cached.get("results", 0))
+        what = (f"{count:,} saved result{'' if count == 1 else 's'} ({byte_size(int(cached.get('result_bytes', 0)))})"
+                if count else "the saved analysis results")
+        if not self.confirm("Clear this data root's cached analysis?",
+                            f"Clears {what} for data root “{row['label']}” on this computer: plots compute them "
+                            "again. Its cached data, the .helab-root and folder flags stay.", "Clear"):
+            return
+        self._job = self.cache.cache_admin("clear_root_results", uuid=row["uuid"])
+        self._job_name = "Clear cached analysis"
         self.message = "" if self._job else "Disk cache queue full — try again"
         self._update()
 
@@ -318,7 +346,7 @@ class DataRootsTab(QWidget):
             item = QTreeWidgetItem([
                 row["label"], status if folder or row["decision"] != "confirmed" else NOT_MOUNTED,
                 f"{datetime.fromtimestamp(row['last_seen']):%Y-%m-%d %H:%M}",
-                byte_size(row["cached"]["bytes"]) if row.get("cached") else "—"])
+                byte_size(row["cached"]["bytes"]) if row.get("cached") and row["cached"]["folders"] else "—"])
             item.setData(self.LABEL, Qt.ItemDataRole.UserRole, row)
             item.setToolTip(self.LABEL, marker_path(folder) if folder
                             else f"{NOT_MOUNTED_TOOLTIP} · {row['location']}")
@@ -328,8 +356,12 @@ class DataRootsTab(QWidget):
             first = datetime.fromtimestamp(row["first_seen"])
             item.setToolTip(self.SEEN, f"First seen {first:%Y-%m-%d %H:%M}")
             cached = row.get("cached")
-            item.setToolTip(self.CACHED, f"{cached['folders']:,} folders cached below this data root on this "
-                            "computer" if cached else "Nothing cached below this data root on this computer")
+            results = int(cached.get("results", 0)) if cached else 0
+            item.setToolTip(self.CACHED, (f"{cached['folders']:,} folders cached below this data root on this "
+                                          "computer" if cached and cached["folders"] else
+                                          "No data cached below this data root on this computer")
+                            + (f"\nCached analysis: {results:,} saved result{'' if results == 1 else 's'} "
+                               f"({byte_size(int(cached.get('result_bytes', 0)))})" if cached and results else ""))
             self.list.addTopLevelItem(item)
         for column in range(len(self.COLUMNS)):
             self.list.resizeColumnToContents(column)
@@ -354,6 +386,7 @@ class DataRootsTab(QWidget):
         self.delete_button.setEnabled(idle and row is not None and bool(row["path"]))
         self.delete_button.setToolTip(DELETE_TOOLTIP if row is None or row["path"] else NOT_MOUNTED_TOOLTIP)
         self.clear_button.setEnabled(idle and row is not None)
+        self.clear_results_button.setEnabled(idle and row is not None)
         self.review_button.setEnabled(row is not None and row["decision"] == "pending")
         for line, text in zip((self.path_line, self.uuid_line), self.detail_lines(row)):
             if line.text() != text:

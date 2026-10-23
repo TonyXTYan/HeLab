@@ -36,6 +36,7 @@ RAM_BUDGET_SETTING = "ram_budget_steps"
 LIVE_INTERVAL_SETTING = "live_check_interval_seconds"
 LIVE_AUTOSAVE_SETTING = "live_autosave_shots"
 PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
+RESULT_REUSE_SETTING = "result_reuse"
 THREAD_STATUS_SETTING = "view_toggle_thread_status"
 LOG_KEEP_SETTING = "log_files_keep"
 # The plots that reopen at start (helab/views/plots/arrangement.py; presets are in the disk cache store).
@@ -73,6 +74,10 @@ SETTINGS: tuple[Setting, ...] = (
             "(Settings → Cache)."),
     Setting(PLOT_AUTO_RELOAD_SETTING, bool, True,
             "A plot released to free RAM reloads when it is shown again (Settings → Cache)."),
+    Setting(RESULT_REUSE_SETTING, bool, True,
+            "Plots that support it (Correlations, Release time) show their result saved in the disk cache "
+            "for the same data, script and settings instead of computing it again, and save new ones; off: "
+            "neither (Settings → Cache)."),
     Setting(THREAD_STATUS_SETTING, bool, True, "View › Toggle Thread Status Auto Pop-up."),
     Setting(LOG_KEEP_SETTING, int, 300,
             "Log files to keep, every session's helab-<pid>.log files and their rotated copies counted; "

@@ -7,10 +7,11 @@ import time
 from typing import Any, cast
 
 from helab.io_ops import stores
-from helab.io_ops.events import AdminResultFields, MoveCheckFields, PresetRowFields
+from helab.io_ops.events import AdminResultFields, MoveCheckFields, PresetRowFields, ResultCountField
 from helab.io_ops.infra import Emit, Heartbeat, emit
 from helab.io_ops.markers import _location_path, _root_rows
-from helab.io_ops.stores import _cache_info, _deadline, _removed_event, _usage
+from helab.io_ops.stores import (_cache_info, _deadline, _removed_event, _results_removed_event, _store_fields,
+                                 _usage)
 
 
 # Why a folder's constants weren't saved (``cache_admin`` "constants"; the app keeps them for the
@@ -20,7 +21,8 @@ NO_ROOT_CONSTANTS = "no .helab-root found here or above"
 UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
-                 "constants", "presets", "forget_root", "root_same", "clear_root")
+                 "constants", "presets", "forget_root", "root_same", "clear_root", "clear_results",
+                 "clear_root_results", "adopt_result", "discard_result", "identity")
 
 
 def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, **params: Any) -> None:
@@ -63,6 +65,9 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                     if entry["reason"] == "over_budget":
                         with contextlib.suppress(SaveRejected, StoreError):
                             entry["room"] = asdict(store.room_plan(entry["pending_id"], int(budget)))
+                for entry in inventory["pending_results"]:
+                    with contextlib.suppress(SaveRejected, StoreError):
+                        entry["room"] = asdict(store.result_room_plan(entry["pending_id"], int(budget)))
             inventory["roots"] = _root_rows(store, send)
             send({"kind": "inventory", "inventory": inventory})
         elif action == "sweep":
@@ -84,7 +89,14 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             send(_removed_event(store.remove(kinds)))
         elif action == "purge":
             cutoff = float(params["cutoff"])
-            if params["what"] == "datasets":
+            if params["what"] == "results":
+                # Saved analysis results not shown since ``cutoff`` (R2).
+                purged = store.remove_results(cutoff=cutoff)
+                send(_results_removed_event(purged))
+                result["removed"] = {"results": purged.results}
+                result["bytes"] = purged.bytes
+                removals = []
+            elif params["what"] == "datasets":
                 removals = [store.purge_datasets(cutoff)]
             elif params["what"] == "records":
                 removals = store.purge_records(cutoff, bool(params.get("include_failures")))
@@ -92,8 +104,9 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 raise ValueError(f"Unknown purge: {params['what']}")
             for removal in removals:
                 send(_removed_event(removal))
-            result["removed"] = {kind: len(removal.paths or ()) for removal in removals for kind in removal.kinds}
-            result["bytes"] = sum(removal.dataset_bytes for removal in removals)
+            if removals:
+                result["removed"] = {kind: len(removal.paths or ()) for removal in removals for kind in removal.kinds}
+                result["bytes"] = sum(removal.dataset_bytes for removal in removals)
         elif action == "trim":
             removal = store.trim(int(budget or params["budget"]), budget_set_at)
             send(_removed_event(removal))
@@ -170,8 +183,41 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             if path:
                 send({"kind": "root_changed", "path": path, "location": location, "reason": "forgotten"})
         elif action == "clear_root":
-            # Everything cached below one data root on this computer; roots, flags and marker stay.
+            # Everything cached below one data root on this computer but its saved results (Clear
+            # cached analysis, Tony 2026-10-22); roots, flags and marker stay.
             send(_removed_event(store.clear_root(str(params["uuid"]))))
+        elif action == "clear_root_results":
+            # A data root's Clear cached analysis: its saved results only (R2).
+            cleared = store.remove_results(root=str(params["uuid"]))
+            send(_results_removed_event(cleared))
+            result.update({"results": cleared.results, "bytes": cleared.bytes})
+        elif action == "adopt_result":
+            # A waiting result's Make room (R2): only other saved results make room, never cached data.
+            # It names the store it waits in: another (recreated since) doesn't have it.
+            try:
+                if params.get("store") and params["store"] != store.store_id:
+                    raise SaveRejected("gone", "This save waited in a disk cache recreated since")
+                taken = store.adopt_pending_result(params["pending_id"], budget=budget, budget_set_at=budget_set_at,
+                                                   make_room=bool(params.get("make_room")),
+                                                   expected_room=params.get("room_ids"))
+            except SaveRejected as rejection:
+                result.update({"adopted": False, "rejected": rejection.reason, "message": str(rejection)})
+            else:
+                if taken.removal is not None:
+                    send(_results_removed_event(taken.removal, evicted=True))
+                result.update({"adopted": taken.adopted, "path": taken.path, "bytes": taken.bytes,
+                               "room": None if taken.room is None else asdict(taken.room)})
+                if taken.adopted:
+                    result["result_id"] = taken.result_id
+                    result["folder_results"] = {folder: cast(ResultCountField, count.event())
+                                                for folder, count in taken.folders.items()}
+        elif action == "discard_result":
+            result["discarded"] = store.discard_pending_result(params["pending_id"])
+        elif action == "clear_results":
+            # The Cache tab's Clear cached analysis: every saved result; datasets and records stay.
+            cleared = store.remove_results()
+            send(_results_removed_event(cleared))
+            result.update({"results": cleared.results, "bytes": cleared.bytes})
         elif action == "root_same":
             # Same folder (D4): the pending location uses the root's cached data from now on.
             location, identifier = str(params["location"]), str(params["uuid"])
@@ -180,13 +226,15 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 found = store.root_at(location)
                 send({"kind": "root_confirmed", "location": location, "uuid": identifier,
                       "path": _location_path(store, location), "label": found[1] if found else ""})
+        elif action == "identity":
+            pass  # Which store is in the cache folder now: its ``store`` (FolderCache.store_answer's probe).
         elif action == "budget":
             if budget is not None and budget_set_at is not None:
                 # Lowering it (``fit``): not recorded if the data cached by now doesn't fit.
                 active = store.lower_budget(int(budget), float(budget_set_at), fit=bool(params.get("fit")))
                 result.update({"budget": active if active is not None else budget, "recorded": active is not None})
-        send({"kind": "admin_result", "action": action, **result, "next_deadline": _deadline(store),
-              **_usage(store)})
+        send({"kind": "admin_result", "action": action, **result, **_store_fields(store),
+              "next_deadline": _deadline(store), **_usage(store)})
 
 
 def cache_move_job(move: dict[str, Any], send: Emit = emit) -> None:

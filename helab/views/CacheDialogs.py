@@ -1,6 +1,7 @@
 """The disk cache's questions to the user, one at a time: a save that doesn't fit (Make room),
-an update to a cached folder over 80% of the budget (Save update), and the 80% warning that
-pauses automatic loads of new folders. See roadmaps/cache-storage-and-settings.md."""
+an update to a cached folder over 80% of the budget (Save update), an analysis result that doesn't
+fit (Make room or Discard, result caching R2), and the 80% warning that pauses automatic loads of
+new folders. See roadmaps/cache-storage-and-settings.md."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -34,6 +35,24 @@ def room_text(room: dict[str, Any] | None) -> str:
         when = f" not used since {day.day} {day:%b}"
     return (f"Make room removes cached data for {count} folder{'' if count == 1 else 's'} "
             f"({byte_size(int(room.get('bytes', 0)))}){when}, least recently used first.")
+
+
+def result_room_text(room: dict[str, Any] | None) -> str:
+    """What Make room removes for an analysis result: other saved results only, never cached data."""
+    if not room:
+        return ("Make room removes the least recently shown saved analysis results until this fits. "
+                "Cached data isn't touched.")
+    count = len(room.get("result_ids") or ())
+    if not count:
+        return "There is room now: Make room saves it without removing anything."
+    since = room.get("newest_last_used")
+    when = ""
+    if isinstance(since, (int, float)):
+        day = datetime.fromtimestamp(since)
+        when = f" not shown since {day.day} {day:%b}"
+    return (f"Make room removes {count} saved analysis result{'' if count == 1 else 's'} "
+            f"({byte_size(int(room.get('bytes', 0)))}){when}, least recently shown first. "
+            "Cached data isn't touched.")
 
 
 class CacheDialogs(QObject):
@@ -90,7 +109,7 @@ class CacheDialogs(QObject):
         kind = "too_large" if impossible else str(entry.get("reason", ""))
         if kind == "needs_approval":
             return kind
-        paths = sorted(room.get("paths") or ()) if isinstance(room, dict) else None
+        paths = sorted(room.get("paths") or room.get("result_ids") or ()) if isinstance(room, dict) else None
         return json.dumps([kind, paths, store_options().get("budget")])
 
     @staticmethod
@@ -120,7 +139,7 @@ class CacheDialogs(QObject):
             dialog.deleteLater()
 
     def _pending(self) -> list[dict[str, Any]]:
-        return sorted(self.cache.pending_saves.values(),
+        return sorted([*self.cache.pending_saves.values(), *self.cache.pending_results.values()],
                       key=lambda entry: float(entry.get("created_at") or 0))
 
     def next(self) -> None:
@@ -173,7 +192,22 @@ class CacheDialogs(QObject):
         usage = int(self.cache.disk_usage if self.cache.disk_usage is not None else entry.get("usage") or 0)
         box = QMessageBox(self.parent_widget)
         box.setIcon(QMessageBox.Icon.Question)
-        if kind == "needs_approval":
+        if entry.get("result"):
+            # An analysis result (R2): only other saved results make room for it.
+            label = str(entry.get("label") or "a plot")
+            box.setWindowTitle("Disk cache full")
+            box.setText(f"Not enough room in the disk cache to save {label}'s result for {_name(path)} "
+                        f"({byte_size(int(entry.get('bytes', 0)))}, {byte_size(usage)} of {byte_size(budget)} used).")
+            if kind == "too_large":
+                box.setInformativeText("Removing every other saved analysis result isn't enough. Free space in "
+                                       "Settings → Cache (Clear cached data, Remove old entries) or raise the budget. "
+                                       "The plot stays as it is.")
+                confirm = None
+            else:
+                box.setInformativeText(result_room_text(entry.get("room")) + "\nThe plot stays as it is either way.")
+                confirm = box.addButton("Make room", QMessageBox.ButtonRole.AcceptRole)
+            decline = box.addButton("Discard", QMessageBox.ButtonRole.RejectRole)
+        elif kind == "needs_approval":
             growth = max(0, int(entry.get("bytes", 0)) - int(entry.get("replaces", 0)))
             box.setWindowTitle("Save the cache update?")
             box.setText(f"{_name(path)} changed: save the update to the disk cache "
@@ -201,22 +235,25 @@ class CacheDialogs(QObject):
 
         def answer(clicked: QAbstractButton | None) -> None:
             # Closing the question any other way is "not now": nothing is removed.
+            result = bool(entry.get("result"))
             if confirm is not None and clicked is confirm:
                 room = entry.get("room")
-                self._answer(pending_id, question, "adopt", make_room=kind == "over_budget",
-                             room_paths=list(room.get("paths") or ()) if isinstance(room, dict) else None)
+                listed = "result_ids" if result else "paths"
+                self._answer(pending_id, question, "adopt_result" if result else "adopt",
+                             make_room=kind == "over_budget",
+                             room_paths=list(room.get(listed) or ()) if isinstance(room, dict) else None)
             else:
-                self._answer(pending_id, question, "discard")
+                self._answer(pending_id, question, "discard_result" if result else "discard")
         self._open(box, (pending_id, question), answer)
 
     def _answer(self, pending_id: str, question: str, action: str, *, make_room: bool = False,
                 room_paths: list[str] | None = None) -> None:
         params: dict[str, Any] = {"pending_id": pending_id}
-        if action == "adopt":
+        if action in ("adopt", "adopt_result"):
             params["make_room"] = make_room
             if make_room and room_paths is not None:
                 # Removes exactly what the question said, or nothing (then asked again).
-                params["room_paths"] = room_paths
+                params["room_ids" if action == "adopt_result" else "room_paths"] = room_paths
         self._answered[pending_id] = question
         self._failed.pop(pending_id, None)
         owner = self.cache.cache_admin(action, **params)
@@ -232,7 +269,7 @@ class CacheDialogs(QObject):
         pending_id, action = self._answers.pop(owner, ("", action))
         if not pending_id or not message:
             return
-        if action == "adopt":
+        if action in ("adopt", "adopt_result"):
             # Nothing was saved: ask again, saying why, so the user can retry.
             self._answered.pop(pending_id, None)
             self._failed[pending_id] = message

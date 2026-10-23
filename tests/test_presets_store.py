@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+import weakref
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -390,6 +391,33 @@ def answer(service: IOService, request: Any, *events: dict[str, Any]) -> None:
     for event in events:
         service.resultReady.emit(request, event)
     service.pending.remove(request)
+    folder_answers(service, *(str(event["store"]) for event in events if event.get("store")))
+
+
+def emit(service: IOService, request: Any, event: dict[str, Any]) -> None:
+    """One event of ``request``'s helper (its job goes on), then the cache folder answers a probe."""
+    service.resultReady.emit(request, event)
+    folder_answers(service, *([str(event["store"])] if event.get("store") else []))
+
+
+# The stores each session named, by its IOService (weakly: an id can be reused after it is gone).
+_made: "weakref.WeakKeyDictionary[IOService, set[str]]" = weakref.WeakKeyDictionary()
+
+
+def folder_answers(service: IOService, *stores: str) -> None:
+    """The cache folder answers an identity probe (``FolderCache.store_answer``): it holds the
+    store made last of those this session has named ("B" after "A", "T" after "S": these tests'
+    stores are made in letter order)."""
+    named = _made.setdefault(service, set())
+    named.update(stores)
+    for _ in range(10):
+        probe = next((request for request in service.pending if request.operation == "cache_admin"
+                      and request.payload["action"] == "identity"), None)
+        if probe is None or not named:
+            return
+        for event in ({"kind": "admin_result", "action": "identity", "store": max(named)}, {"kind": "done"}):
+            service.resultReady.emit(probe, event)
+        service.pending.remove(probe)
 
 
 def test_an_older_snapshot_landing_after_a_write_removes_nothing(service: IOService) -> None:
@@ -456,7 +484,7 @@ def test_a_late_answer_from_the_retired_store_acknowledges_nothing(service: IOSe
     answer(jobs, admin_job(jobs, 0), {"kind": "presets", "saved": [], "rows": [], "store": "B"}, {"kind": "done"})
     saved = row("p", "{}", cache.presets[(ARR, "", "p")]["set_at"])
     answer(jobs, to_a, {"kind": "presets", "saved": [saved], "rows": [saved], "store": "A"}, {"kind": "done"})
-    assert cache._presets_store == "B" and cache.preset_unsaved(ARR, "", "p") == ""  # Being written…
+    assert cache._store == "B" and cache.preset_unsaved(ARR, "", "p") == ""  # Being written…
     assert cache.quit_saves() == [PRESETS_SAVING]
     to_b = admin_job(jobs, 1)  # …again, to B.
     assert to_b is not to_a and to_b.payload["params"]["rows"] == [saved]
@@ -564,7 +592,7 @@ def recreated_with_two_writes(stores: Stores) -> tuple[IOService, FolderCache, l
 
 def assert_settled(service: IOService, cache: FolderCache, stores: Stores) -> None:
     assert not cache._preset_jobs and not preset_jobs(service)
-    assert not cache.presets_unsaved and cache.quit_saves() == [] and cache._presets_store == "B"
+    assert not cache.presets_unsaved and cache.quit_saves() == [] and cache._store == "B"
     assert cache.preset_records(ARR) == {("", "p"): '"second"'} and stores.held["B"]["p"]["record"] == '"second"'
 
 
@@ -574,9 +602,9 @@ def test_interleaved_answers_from_the_retired_and_the_current_store_leave_nothin
     other: B's answer settles p, A's changes nothing, and quitting waits for nothing."""
     stores = Stores()
     jobs, cache, (to_a, first_to_b, second_to_b) = recreated_with_two_writes(stores)
-    jobs.resultReady.emit(to_a, stores.answer("A", to_a))
+    emit(jobs, to_a, stores.answer("A", to_a))
     for request in (first_to_b, second_to_b):
-        jobs.resultReady.emit(request, stores.answer("B", request))
+        emit(jobs, request, stores.answer("B", request))
     assert not cache.presets_unsaved  # Settled by B's answers alone.
     for request in (to_a, first_to_b, second_to_b):
         answer(jobs, request, {"kind": "admin_result", "action": "presets"}, {"kind": "done"})
@@ -606,7 +634,7 @@ def test_every_order_of_the_three_writes_answers_settles_every_change(service: I
         for job, step in order:
             request = writes[job]
             if step == "presets":
-                jobs.resultReady.emit(request, stores.answer("A" if job == 0 else "B", request))
+                emit(jobs, request, stores.answer("A" if job == 0 else "B", request))
             else:
                 answer(jobs, request, {"kind": "done"})
             # Never shown as being saved without a job in flight to settle it.
@@ -825,7 +853,7 @@ def test_quit_waits_exactly_while_work_that_would_save_a_change_remains(service:
                     request = w1 if job == "w1" else r2
                     if isinstance(event, str):
                         event = stores.answer(event, request)
-                    jobs.resultReady.emit(request, event)
+                    emit(jobs, request, event)
                     if event["kind"] in ("done", "error"):
                         jobs.pending.remove(request)
                     check_quit(cache, case)

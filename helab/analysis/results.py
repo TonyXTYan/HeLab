@@ -1,11 +1,11 @@
 """An analysis run's input (``AnalysisContext``) and its record (``AnalysisResult``), kept in
-RAM only for now (result caching stage R1).
+RAM (result caching stage R1) and, for a script that supports it, saved in the disk cache and
+reused from it on an exact key match (R2: ``helab.analysis.result_cache``).
 
-Each record keeps what a later reuse needs (result caching rules 5 and 8), though nothing
-reuses it yet: the analysis's ID, version and file hash, the input's root key and
-signatures, the effective parameters (JSON values only) and the coverage: the TXY shots the
-run used, with their fingerprints (``Coverage``), so HeLab can tell what a later revision
-adds (``Coverage.diff``)."""
+Each record keeps what a reuse needs (result caching rules 5 and 8): the analysis's ID,
+version and file hash, the input's root key and signatures, the effective parameters (JSON
+values only) and the coverage: the TXY shots the run used, with their fingerprints
+(``Coverage``), so HeLab can tell what a later revision adds (``Coverage.diff``)."""
 from __future__ import annotations
 
 import threading
@@ -23,8 +23,12 @@ from helab.analysis.masks import mask_key
 from helab.analysis.physics import ResolvedConstants
 
 State = Literal["completed", "failed", "cancelled"]
-# Where a result is kept (result caching rule 2). R1 has only RAM.
+# Where a result is kept (result caching rule 2): in RAM only, or also in the disk cache (R2).
 RAM_ONLY = "ram"
+DISK_CACHED = "disk"
+# Where a result shown came from: this session's run, or the disk cache (R2).
+COMPUTED = ""
+FROM_DISK = "disk"
 
 
 class Cancelled(Exception):
@@ -113,6 +117,9 @@ class AnalysisContext:
     # The parameters not in use under ``parameters`` (``parameters.unused_parameters``: rows the
     # settings hide, e.g. a smoothing width with Smooth off): left out of the result's reuse key.
     unused: frozenset[str] = frozenset()
+    # A run whose completed result may be saved in the disk cache (result caching R2): the worker
+    # then packs its data (``DatasetAnalysis.cache_pack``) into ``AnalysisResult.packed``.
+    to_cache: bool = False
 
     @property
     def covered(self) -> Coverage:
@@ -154,6 +161,16 @@ class AnalysisResult:
     owner: str = ""  # the plot that asked for the run (``AnalysisContext.owner``)
     # The parameters the run didn't use (``AnalysisContext.unused``): not in ``reuse_key``.
     unused: frozenset[str] = frozenset()
+    # ``FROM_DISK``: read back from the disk cache (computed at ``finished_at``, maybe in an earlier
+    # session), not computed now; ``outdated`` then says what no longer matches the run asked for
+    # (the script, the data, the constants…; empty: an exact match).
+    source: str = COMPUTED
+    outdated: tuple[str, ...] = ()
+    # The data packed for the disk cache (``result_codec.pack``) by the worker, for a run with
+    # ``AnalysisContext.to_cache`` that may be saved (``DatasetAnalysis.cache_result``); None
+    # otherwise, or once handed to the save. ``packing_error``: why it couldn't be packed.
+    packed: bytes | None = field(default=None, compare=False, repr=False)
+    packing_error: str = ""
 
     @classmethod
     def of(cls, context: AnalysisContext, state: State, data: Any = None, error: str = "",
@@ -210,7 +227,15 @@ class AnalysisResult:
             lines.append(f"Constants: {record_text(self.resolved_constants, self.constant_keys or None)}")
         when = datetime.fromtimestamp(self.finished_at).strftime("%H:%M:%S") if self.finished_at else ""
         took = f" in {self.finished_at - self.started_at:.1f} s" if self.started_at and self.finished_at else ""
-        lines.append(f"Job {self.job_id} · {self.state} {when}{took} · kept in RAM only")
+        if self.source == FROM_DISK:
+            computed = datetime.fromtimestamp(self.finished_at).strftime("%Y-%m-%d %H:%M") if self.finished_at else "?"
+            # Where it is kept now too: a Clear cached analysis after it was shown leaves it in RAM only.
+            kept = "in the disk cache" if self.policy == DISK_CACHED else "kept in RAM only"
+            lines.append(f"From disk cache, computed {computed}{took} (job {self.job_id}) · {kept}"
+                         + (f" · outdated: {'; '.join(self.outdated)}" if self.outdated else ""))
+        else:
+            kept = "saved in the disk cache" if self.policy == DISK_CACHED else "kept in RAM only"
+            lines.append(f"Job {self.job_id} · {self.state} {when}{took} · {kept}")
         if self.error:
             lines.append(f"Error: {self.error}")
         return "\n".join(lines)

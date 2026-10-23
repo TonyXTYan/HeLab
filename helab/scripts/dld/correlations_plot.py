@@ -42,10 +42,11 @@ import numpy.typing as npt
 import pyqtgraph as pg
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
-from helab.analysis import trends
+from helab.analysis import result_types, trends
+from helab.analysis.result_codec import Declared
 from helab.analysis.constant_layers import constants_specs, describe_constants, resolve_for_run
 from helab.analysis.correlations import (Baseline, CacheKey, CorrelationResult, CorrelationSpec, InShot, PairCounts,
-                                         ShotEvents, correlate, linear_edges, radial_edges)
+                                         ShotEvents, correlate, linear_edges, peak_model, radial_edges)
 from helab.analysis.dataset_view import DatasetView, Events, txy
 from helab.analysis.display_units import WIDTH_DIGITS, length_text, number_text, time_text
 from helab.analysis.empty import empty_pane, empty_text
@@ -879,6 +880,41 @@ class Correlations(DatasetAnalysis):
                 "reuse": {"release_time": velocity["release_time"], "origin": velocity["origin"],
                           "view_range": velocity["view_range"], "bootstrap_skipped": data.live_skipped,
                           "shots_used": list(result.shots_used) if result is not None else []}}
+
+    # Disk-cached results (R2): pair counting and its shot bootstrap are the costliest run here.
+
+    def cache_supported(self, action_name: str) -> bool:
+        return True
+
+    def cache_types(self, action_name: str) -> List[Declared]:
+        return [CorrelationData, CorrelationResult, CorrelationSpec, *result_types.COMMON]
+
+    def cache_holds_state(self, action_name: str, owner: str) -> bool:
+        """A box, a detection or pair counts kept from the plot's earlier run: the next run may keep
+        them (a steady box and t_r, shots held), so a saved fresh plot's result isn't its."""
+        with _LOCK:
+            state = _STATES.get(owner)
+        return state is not None and (state.box is not None or state.detection is not None
+                                      or state.counts is not None)
+
+    def cache_result(self, action_name: str, result: AnalysisResult) -> bool:
+        """What a fresh plot would give: no box or detection kept from an earlier run, every shot
+        counted (a time budget that ran out leaves the rest to the next run), the bootstrap run."""
+        data = result.data
+        if not isinstance(data, CorrelationData) or data.box_kept or data.live_skipped:
+            return False
+        if "kept" in data.release_how or "kept" in data.origin_how:
+            return False
+        return data.result is None or data.result.complete
+
+    def cache_unpack(self, action_name: str, tree: Any, arrays: Mapping[str, Any]) -> Any:
+        """The saved data, with the g² peak model (its functions aren't saved) made again from its spec."""
+        data = super().cache_unpack(action_name, tree, arrays)
+        found = data.result if isinstance(data, CorrelationData) else None
+        if found is not None and found.fit is not None and result_types.unavailable_model(found.fit.model):
+            model = peak_model(found.spec, found.baseline_mode)
+            data = replace(data, result=replace(found, fit=replace(found.fit, model=model)))
+        return data
 
     def plot_closed(self, action_name: str, owner: str, path: str) -> None:
         """Drop the plot's pair counts, in-shot cache, box and detection."""

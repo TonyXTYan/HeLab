@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 
 from helab.io_ops import markers, metadata
-from helab.io_ops.events import HelperEvent, ListedStatusEvent, SavedRootField
+from helab.io_ops.events import HelperEvent, ListedStatusEvent, ResultCountField, ResultsField, SavedRootField
 from helab.io_ops.infra import Emit, Heartbeat, _is_dir, _lstat, _mounts, _scandir, emit
 from helab.io_ops.markers import _marker_temporary
 from helab.io_ops.metadata import _dataset_flags, _saved_folders, _send_guard
@@ -35,6 +35,19 @@ def _may_have_root(store: CacheStore | None, path: str) -> bool:
         return store.root_at(store._location_key(path)) is not None
     except StoreError:
         return True
+
+
+def _result_counts(store: CacheStore | None, paths: list[str]) -> dict[str, ResultCountField]:
+    """Each folder's saved analysis results (R2, the row badge), from the store's records alone;
+    left out when unknown (no key, a read error: the app keeps what it knew)."""
+    from helab.utils.cache_store import StoreError
+    if store is None:
+        return {}
+    try:
+        counts = store.result_counts(paths)
+    except StoreError:
+        return {}
+    return {path: cast(ResultCountField, count.event()) for path, count in counts.items()}
 
 
 def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = None) -> None:
@@ -87,8 +100,11 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                 return
             if store is not None:
                 saved = _saved_folders(store, [child["path"] for child in batch], send)
+                counts = _result_counts(store, [child["path"] for child in batch])
                 for child in batch:
                     child.update(saved.get(child["path"], {}))
+                    if child["path"] in counts:
+                        child["results"] = counts[child["path"]]
             send({"kind": "entries", "entries": batch})
             entries.extend(batch)
             batch = []
@@ -135,17 +151,23 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
                          for child in entries[start:start + 128]]
                 if store is not None:
                     saved = _saved_folders(store, [child["path"] for child in patch], send)
+                    counts = _result_counts(store, [child["path"] for child in patch])
                     for child in patch:
                         child.update(saved.get(child["path"], {}))
+                        if child["path"] in counts:
+                            child["results"] = counts[child["path"]]
                 send({"kind": "entries", "entries": patch, "replace": True})
         raw, txy = _shots(found)
         status, count = _classify(raw, txy, has_dirs)
         saved_root: SavedRootField = {} if root_saved is None else {"saved_root": root_saved}
+        own = _result_counts(store, [path]).get(path)
+        results: ResultsField = {} if own is None else {"results": own}
         report: ListedStatusEvent = {"kind": "status", "details": False, "status": status, "count": count,
                                      "empty": empty, "has_dirs": has_dirs, "scanned_at": listed_at,
                                      "raw": sorted(raw), "txy": sorted(txy),
                                      "files": file_kinds.files_summary(found, {}),
-                                     **_dataset_flags(store, path, send), **_data_root(store, path), **saved_root}
+                                     **_dataset_flags(store, path, send), **_data_root(store, path), **saved_root,
+                                     **results}
         # Only the cache needs it (its volume checks); without it a listing reads nothing more.
         if cache_options and (mounts := _mount_fingerprint()) is not None:
             send({"kind": "mounts_seen", "mounts": mounts})

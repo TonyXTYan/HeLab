@@ -12,9 +12,11 @@ import queue
 import threading
 import time
 import weakref
+from dataclasses import replace
 from types import MappingProxyType
 from typing import Any, Callable, Generic, Mapping, Optional, TypeVar
 
+from helab.analysis import result_codec
 from helab.analysis.dataset_view import DatasetView
 from helab.analysis.parameters import effective, unused_parameters
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, Coverage, RamResults, State
@@ -67,14 +69,24 @@ class AnalysisQueue:
                view: DatasetView, values: Optional[Mapping[str, Any]] = None,
                constants: Optional[Mapping[str, Mapping[str, float]]] = None, owner: str = "",
                live: bool = False) -> AnalysisContext:
+        """``prepare`` the run and ``enqueue`` it (GUI thread)."""
+        context = self.prepare(script, metadata, action, view, values, constants, owner=owner, live=live)
+        self.enqueue(script, context)
+        return context
+
+    def prepare(self, script: DatasetAnalysis, metadata: ScriptMetadata, action: str,
+                view: DatasetView, values: Optional[Mapping[str, Any]] = None,
+                constants: Optional[Mapping[str, Mapping[str, float]]] = None, owner: str = "",
+                live: bool = False, to_cache: bool = False) -> AnalysisContext:
         """Queue ``action`` on ``view`` with ``values`` validated against its declared parameters,
         and the lab and folder layers of the constants taken now (``constants``: {"lab": …,
         "folder": …}; GUI thread). An analysis that uses constants gets them resolved with its own
         values now too (``DatasetAnalysis.run_constants``), in its context and its result.
         The run's coverage is the shots the script says it uses (all of them if it can't say).
         ``owner``: the plot asking (``AnalysisContext.owner``); ``live``: a rerun following Live
-        (``AnalysisContext.live``).
-        Raises ``RuntimeError`` while the runner is stopping (until its worker has exited)."""
+        (``AnalysisContext.live``); ``to_cache``: pack its completed result for the disk cache
+        (``AnalysisContext.to_cache``). Queues nothing: ``enqueue`` runs it (a plot may first find
+        its result in the disk cache, result caching R2)."""
         parameters = effective(script.parameters(action), values)
         try:
             coverage = Coverage.of(view, script.covered_shots(action, parameters, view))
@@ -98,7 +110,13 @@ class AnalysisQueue:
         context = AnalysisContext(f"a{next(self._ids)}", action, view, parameters, metadata.identity(),
                                   unused=unused_parameters(script.parameters(action), parameters),
                                   coverage=coverage, constants=layers, resolved_constants=resolved,
-                                  constant_keys=keys if resolved is not None else (), owner=owner, live=live)
+                                  constant_keys=keys if resolved is not None else (), owner=owner, live=live,
+                                  to_cache=to_cache)
+        return context
+
+    def enqueue(self, script: DatasetAnalysis, context: AnalysisContext) -> None:
+        """Queue a prepared run. Raises ``RuntimeError`` while the runner is stopping (until its
+        worker has exited)."""
         with self._lock:
             if self._stopping:
                 raise RuntimeError("The analysis runner is stopping")
@@ -110,7 +128,6 @@ class AnalysisQueue:
                                                 daemon=True)
                 self._thread.start()
         self._queue.put((script, context))
-        return context
 
     def cancel(self, job_id: str) -> None:
         """Ask a queued or running job to stop; it ends as ``cancelled`` (cooperatively)."""
@@ -165,6 +182,20 @@ class AnalysisQueue:
             logging.exception("Analysis %s: its record of what the run found failed", context.analysis.short())
             return {}
 
+    @staticmethod
+    def _packed(script: DatasetAnalysis, result: AnalysisResult) -> AnalysisResult:
+        """``result`` with its data packed for the disk cache, if the script says it may be saved
+        (``cache_result``: what a plot keeping nothing would give); a script that fails to pack it
+        leaves it in RAM only, saying why."""
+        try:
+            if not script.cache_result(result.action, result):
+                return result
+            tree, arrays = script.cache_pack(result.action, result.data)
+            return replace(result, packed=result_codec.pack(tree, arrays))
+        except Exception as error:
+            logging.exception("Analysis %s: its result couldn't be packed for the disk cache", result.analysis.short())
+            return replace(result, packing_error=str(error) or type(error).__name__)
+
     def _run(self, script: DatasetAnalysis, context: AnalysisContext,
              on_started: Optional[Callable[[str], None]],
              on_finished: Optional[Callable[[AnalysisResult], None]]) -> None:
@@ -186,9 +217,11 @@ class AnalysisQueue:
                 logging.exception("Analysis %s failed", context.analysis.short())
                 result = AnalysisResult.of(context, "failed", error=str(error) or type(error).__name__,
                                            started_at=started)
+        if result.state == "completed" and context.to_cache:
+            result = self._packed(script, result)
         with self._lock:
             self._contexts.pop(context.job_id, None)
         if result.state == "completed":
-            self.results.add(result)
+            self.results.add(replace(result, packed=None) if result.packed is not None else result)
         if on_finished is not None:
             on_finished(result)

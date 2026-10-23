@@ -35,7 +35,8 @@ MOUNTED = ("\\\\no-such-server\\share\\run_1" if sys.platform == "win32"
 
 # Every handler ``main`` looks up in ``helab.io_helper``.
 HANDLERS = ("list_folder", "folder_icons", "scan", "save_scan_history", "save_subtrees", "live_check",
-            "save_held", "load", "read_cached", "cache_move_job", "cache_admin", "verify_known_roots",
+            "save_held", "load", "read_cached", "cache_move_job", "cache_admin", "result_find", "result_save",
+            "verify_known_roots",
             "verify_volumes", "trace_check", "create_root", "reassign_root", "remove_root", "save_marker_copy")
 
 
@@ -146,6 +147,14 @@ ROUTES: list[tuple[dict[str, Any], str, tuple[Any, ...], dict[str, Any]]] = [
       "allow_large": 1, "verified_volumes": [["/v", "dev"]]}, "read_cached", (PATH, OUTPUT),
      {"cache_options": CACHE, "limits": {"ram": 9}, "allow_large": True, "verified_volumes": [["/v", "dev"]]}),
     ({"operation": "cache_move", "move": {"to": OTHER}}, "cache_move_job", ({"to": OTHER},), {}),
+    ({"operation": "result_find", "path": PATH, "output": OUTPUT, "cache": CACHE, "lookup": "k", "family": "f",
+      "verified_volumes": [["/v", "dev"]]}, "result_find", (PATH, OUTPUT, CACHE, "k", "f"),
+     {"verified_volumes": [["/v", "dev"]]}),
+    ({"operation": "result_save", "path": PATH, "cache": CACHE, "blob_file": "/b", "lookup": "k", "family": "f",
+      "record": {"r": 1}, "analysis_id": "a", "action": "Plot", "computed_at": 5, "guard": {"g": 1}},
+     "result_save", (PATH, CACHE, "/b"),
+     {"lookup": "k", "family": "f", "record": {"r": 1}, "analysis_id": "a", "action": "Plot", "computed_at": 5.0,
+      "guard": {"g": 1}, "verified_volumes": None, "label": ""}),
     ({"operation": "cache_admin", "cache": CACHE, "action": "purge", "params": {"days": 30, "kinds": ["x"]}},
      "cache_admin", (CACHE, "purge"), {"days": 30, "kinds": ["x"]}),
     ({"operation": "cache_admin", "cache": CACHE, "action": "inventory"}, "cache_admin", (CACHE, "inventory"), {}),

@@ -39,6 +39,8 @@ from PyQt6 import sip
 from PyQt6.QtCore import Qt, pyqtSlot
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
+from helab.analysis import result_types
+from helab.analysis.result_codec import Declared
 from helab.analysis.constant_layers import (clean_layer, constants_specs, describe_constants, origin_text,
                                            resolve_for_run, value_and_origin)
 from helab.analysis.dataset_view import DatasetView, txy
@@ -547,6 +549,18 @@ class ReleaseTimePlot(DatasetAnalysis):
                 "constants": describe_constants(data.constants, CONSTANT_KEYS, every=True),
                 # A Live rerun's result (no bootstrap) is no reuse for a deliberate run's.
                 "reuse": {"bootstrap_skipped": data.live_skipped}}
+
+    # Disk-cached results (R2): the shot bootstrap repeats the detection n_boot times.
+
+    def cache_supported(self, action_name: str) -> bool:
+        return True
+
+    def cache_types(self, action_name: str) -> List[Declared]:
+        return [ReleaseData, *result_types.COMMON]
+
+    def cache_result(self, action_name: str, result: AnalysisResult) -> bool:
+        data = result.data
+        return isinstance(data, ReleaseData) and not data.live_skipped
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         values, view = context.parameters, context.view

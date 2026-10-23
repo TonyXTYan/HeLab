@@ -26,8 +26,9 @@ PURE = (
     *(f"helab.analysis.{name}" for name in (
         "bec", "bec_readout", "bootstrap", "budget_core", "constant_layers", "correlations",
         "dataset_view", "display_units", "estimates", "fits", "follow", "hotspots", "identity",
-        "masks", "orders", "parameters", "peaks", "physics", "presets", "profiles", "release", "results",
-        "runner_core", "selection", "spectrum", "stats", "trends", "velocity")),
+        "masks", "orders", "parameters", "peaks", "physics", "presets", "profiles", "release", "result_cache",
+        "result_codec", "result_types", "results", "runner_core", "selection", "spectrum", "stats", "trends",
+        "velocity")),
 )
 # Modules of helab.analysis that use Qt (signals, timers or drawing).
 QT = {"backends", "budget", "empty", "live_feed", "overlay", "panes", "parameter_tree", "plot_axes", "plot_text", "runner"}
