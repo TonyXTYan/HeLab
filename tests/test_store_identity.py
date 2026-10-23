@@ -122,6 +122,17 @@ def answer_of(cache: FolderCache, store: str, kind: str, tag: str) -> Answer:
             else {"adopted": False, "path": RUN, "bytes": 1, "room": {"ids": [f"new{tag}"]}}
         return lambda: send(cache, request, {"kind": "admin_result", "action": "adopt_result", **result,
                                              **usage(store)}, {"kind": "done"})
+    if kind == "presets_ack":
+        # The user's change, written to the store whose names are known: its answer acknowledges it.
+        # (At a fresh start, as if they were known: a write of its own, not behind a read.)
+        cache.presets_read = True
+        cache.set_presets([("arrangement", "", f"owed-{tag}", "{}")])
+        request = newest(cache, "cache_admin", "presets")
+
+        def acknowledge() -> None:
+            rows = [dict(row) for row in request.payload["params"]["rows"]]
+            send(cache, request, {"kind": "presets", "saved": rows, "rows": rows, "store": store}, {"kind": "done"})
+        return acknowledge
     if kind == "presets":
         request = presets_job(cache)
         row = {"kind": "arrangement", "scope": "", "name": f"from-{tag}", "record": "{}", "set_at": 1.0}
@@ -141,7 +152,8 @@ def answer_of(cache: FolderCache, store: str, kind: str, tag: str) -> Answer:
 
 
 A_KINDS = ("found", "missing", "saved", "not_saved", "pending", "adopted", "adopt_failed", "adopt_replanned",
-           "presets", "inventory", "counts", "usage")
+           "presets", "presets_ack", "inventory", "counts", "usage")
+OWED = ("arrangement", "", "owed-a")
 B_KINDS = ("presets", "missing", "not_saved", "inventory", "counts")
 
 
@@ -187,15 +199,18 @@ def nothing_of(cache: FolderCache, timeline: Timeline, store: str) -> None:
 @pytest.mark.parametrize("a_kind,b_kind", list(itertools.product(A_KINDS, B_KINDS)))
 @pytest.mark.parametrize("arrive", ["A then B", "B then A"])
 @pytest.mark.parametrize("asked", ["A asked first", "B asked first"])
-@pytest.mark.parametrize("first_probe", ["finds A", "fails"])
+@pytest.mark.parametrize("first_probe", ["finds A", "fails", "fails, then recovers"])
 def test_every_order_of_two_stores_answers_ends_on_the_store_the_folder_holds(
         cache: FolderCache, start: str, a_kind: str, b_kind: str, arrive: str, asked: str, first_probe: str) -> None:
     """The store is recreated (A → B) while HeLab runs. An answer of A's (each kind) and B's
     first answer (each kind), asked in either order and arriving in either order, after a fresh
     start or with A in use. The folder's first probe finds A still there (B's answer is from a
-    helper that opened it later, say), or fails; then a later answer of B's starts another probe,
+    helper that opened it later, say), or fails, and then a deliberate read answered by the store
+    in use asks again and finds it (a recovery); then a later answer of B's starts another probe,
     which finds B. After each: the store in use is the folder's (a failed probe changes none),
-    nothing of another store stays, nothing waits and quitting waits for nothing."""
+    nothing of another store stays, nothing waits and quitting waits for nothing. After a failure
+    nothing claims anything, the store in use's answers included, and a change owed then stays
+    owed (in RAM) until a store takes it: it is never lost."""
     if start == "A in use":
         send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": A}, {"kind": "done"})
         assert cache._store == A
@@ -208,23 +223,41 @@ def test_every_order_of_two_stores_answers_ends_on_the_store_the_folder_holds(
         old = answer_of(cache, A, a_kind, "a")
     for answer in ((old, new) if arrive == "A then B" else (new, old)):
         answer()
-    if first_probe == "fails":
+    if first_probe.startswith("fails"):
         in_use = cache._store
+        owed = OWED in cache.presets_unsaved
+        before = len(timeline.marks)
         folder_fails(cache)
         assert not probes(cache) and not cache._probe_waiting and not cache._probe_held
-        assert cache._store == in_use and "Presets" not in cache.quit_saves() and RUN not in cache.quit_saves()
+        assert cache._store == in_use and RUN not in cache.quit_saves()
+        assert "Presets" not in cache.quit_saves() or cache._preset_jobs  # (Only a job still in flight.)
+        assert not [mark for mark in timeline.marks[before:] if mark.startswith("claim")], timeline.marks
+        assert not owed or (OWED in cache.presets_unsaved and OWED in cache.presets)  # Still owed, in RAM.
+        if first_probe == "fails, then recovers":
+            # A deliberate read (the Presets menu), answered by the store in use: asked again, found.
+            send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": in_use},
+                 {"kind": "done"})
+            assert probes(cache)
+            folder(cache, in_use)
+            assert cache._store == in_use and not cache._store_unknown and not cache.presets_error
+            if owed:  # Written now, to the store in use.
+                write = newest(cache, "cache_admin", "presets")
+                assert write.payload["params"]["store"] == in_use
+                assert "owed-a" in [row["name"] for row in write.payload["params"]["rows"]]
         if in_use == B:
-            return  # (B came first and is in use: a failed probe changes nothing; B's next answer counts.)
+            return  # (B came first and is in use: B's next answer counts.)
         nothing_of(cache, timeline, B)
     else:
         folder(cache, A)
         assert cache._store == A and not probes(cache) and not cache._probe_waiting
         nothing_of(cache, timeline, B)
     # B's next answer: the folder is asked again, and holds B now.
+    owed = OWED in cache.presets_unsaved
     send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": B}, {"kind": "done"})
     folder(cache, B)
     assert cache._store == B and not probes(cache) and not cache._probe_waiting
     nothing_of(cache, timeline, A)
+    assert not owed or OWED in cache.presets  # A change still owed is kept for B, never lost.
 
 
 def test_answers_of_the_folders_store_that_waited_count_once_it_has_answered(cache: FolderCache) -> None:
@@ -442,3 +475,73 @@ def test_shutting_down_during_a_hold_launches_nothing() -> None:
     service.submit = submit  # type: ignore[method-assign]
     service.shutdown()
     assert submitted == [] and not cache._probe_held and not cache._probe_owner
+
+
+def test_after_a_failed_probe_the_old_stores_acknowledgement_never_clears_an_owed_change(cache: FolderCache) -> None:
+    """Gauge's round-13 repro 1: A in use; the user's change is written to A; B answers something
+    (the folder is asked) and A's acknowledgement waits; the probe fails. A's acknowledgement is
+    stale: the change stays owed (said not saved). Later B is confirmed: the change is written to B."""
+    send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": A}, {"kind": "done"})
+    cache.set_presets([("arrangement", "", "desk", "{}")])
+    to_a = newest(cache, "cache_admin", "presets")
+    answer_of(cache, B, "missing", "b")()
+    assert probes(cache)
+    rows = [dict(row) for row in to_a.payload["params"]["rows"]]
+    send(cache, to_a, {"kind": "presets", "saved": rows, "rows": rows, "store": A}, {"kind": "done"})
+    folder_fails(cache)
+    assert cache.preset_unsaved("arrangement", "", "desk").startswith("couldn't be saved")
+    assert cache.quit_saves() == []
+    cache.read_presets()  # The Presets menu.
+    send(cache, newest(cache, "cache_admin", "presets"), {"kind": "presets", "saved": [], "rows": [], "store": B},
+         {"kind": "done"})
+    folder(cache, B)
+    write = newest(cache, "cache_admin", "presets")
+    assert write.payload["params"]["store"] == B and [r["name"] for r in write.payload["params"]["rows"]] == ["desk"]
+
+
+def test_after_a_failed_probe_the_store_in_uses_saved_result_is_not_saved(cache: FolderCache) -> None:
+    """Repro 1b: a result save's answer from A (in use) that waited for a probe that failed: not
+    saved, never "saved in disk cache"."""
+    send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": A}, {"kind": "done"})
+    seen: list[str] = []
+    cache.resultReady.connect(lambda request, event: seen.append(str(event["kind"])))
+    saved = answer_of(cache, A, "saved", "a")
+    answer_of(cache, B, "missing", "b")()
+    saved()
+    folder_fails(cache)
+    assert "result_saved" not in seen and "result_not_saved" in seen
+
+
+def test_a_deliberate_read_answered_by_the_store_in_use_while_unknown_recovers(cache: FolderCache) -> None:
+    """Repro 1c: with the store unknown, a deliberate read answered by A (in use) asks the folder;
+    it holds A: the unknown state ends, the note clears and the owed change is written to A."""
+    send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": A}, {"kind": "done"})
+    answer_of(cache, B, "missing", "b")()
+    folder_fails(cache)
+    cache.set_presets([("arrangement", "", "desk", "{}")])  # Owed (written to A: its answer asks the folder).
+    write = newest(cache, "cache_admin", "presets")
+    assert cache.presets_note().startswith("⚠ Saved presets can't be read")
+    rows = [dict(row) for row in write.payload["params"]["rows"]]
+    send(cache, write, {"kind": "presets", "saved": rows, "rows": rows, "store": A}, {"kind": "done"})
+    assert probes(cache) and ("arrangement", "", "desk") in cache.presets_unsaved  # (Not taken yet.)
+    folder(cache, A)
+    assert not cache._store_unknown and cache.presets_note() == "" and not cache.presets_unsaved
+
+
+def test_a_probe_that_cant_be_asked_fails_the_same_way(cache: FolderCache, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Finding 2: the queue is full when the folder must be asked: the same failure state as a
+    failed probe ("Saved presets can't be read: …", owed changes said not saved), no retry."""
+    send(cache, presets_job(cache), {"kind": "presets", "saved": [], "rows": [], "store": A}, {"kind": "done"})
+    cache.set_presets([("arrangement", "", "desk", "{}")])
+    to_a = newest(cache, "cache_admin", "presets")
+    admin = cache.cache_admin
+    monkeypatch.setattr(cache, "cache_admin", lambda action, **params: "" if action == "identity"
+                        else admin(action, **params))
+    rows = [dict(row) for row in to_a.payload["params"]["rows"]]
+    send(cache, to_a, {"kind": "presets", "saved": rows, "rows": rows, "store": B}, {"kind": "done"})
+    assert not probes(cache) and cache._store_unknown == "HeLab's work queue is full"
+    assert cache.presets_note() == ("⚠ Saved presets can't be read: the disk cache's store couldn't be confirmed "
+                                    "(HeLab's work queue is full)")
+    assert cache.preset_unsaved("arrangement", "", "desk").startswith("couldn't be saved")
+    assert cache.quit_saves() == [] and not [r for r in cache.service.pending if r.operation == "cache_admin"
+                                             and r.payload["action"] == "presets"]

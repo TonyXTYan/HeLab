@@ -1238,12 +1238,16 @@ class FolderCache(QObject):
           waiting results are asked for again (an inventory).
         - A store other than the probe's named while it was out is probed again once it answers: a
           replacement meanwhile only starts another probe, so it converges.
-        - A probe that fails (or can't be asked) leaves the folder's store unknown: the store in use
-          stays, what waited is stale, held writes end not saved, owed preset changes stay in RAM
-          and are said not saved ("Saved presets can't be read: …"), and nothing is asked again by
-          itself, so quitting waits for none of it. The next answer naming another store, or a
-          deliberate read (the Presets menu, a plot's settings page, the presets window), asks the
-          folder again: one probe at a time, never a chain.
+        - A probe that fails, or can't be asked, leaves the folder's store unknown (one transition,
+          ``_store_not_confirmed``). Until a probe succeeds, no answer counts, the store in use's
+          included: what waited is stale, held writes end not saved, owed preset changes stay in
+          RAM and are said not saved ("Saved presets can't be read: …"), and nothing is asked again
+          by itself, so quitting waits for none of it. The next presets or result answer naming a
+          store, whichever (a deliberate read: the Presets menu, a plot's settings page, the presets
+          window; a plot's lookup), asks the folder again: one probe at a time, never a chain.
+          Measurements (counts, usage) never ask. Only a successful probe ends it: the store in use
+          again is a recovery (what waited counts, owed changes are written), another store the
+          change of store above.
         - Held writes keep their owner (``HeldWrite``): ``cancel`` of it ends one cancelled, and
           shutdown ends them all before the service cancels the probe, whose end then launches
           nothing.
@@ -1260,6 +1264,8 @@ class FolderCache(QObject):
             if store != self._store:
                 self._probe_seen.add(store)
             return False
+        if self._store_unknown:
+            return False  # (Nothing counts, the store in use's included, until a probe succeeds.)
         if self._replaying:
             return store == self._store  # (Waited for the probe, which opened the folder after it.)
         if not self._store:
@@ -1282,10 +1288,10 @@ class FolderCache(QObject):
         store = event["inventory"].get("store_id") if event["kind"] == "inventory" else event.get("store")
         store = store if isinstance(store, str) else ""
         if not self._probe_owner:
-            if not (store and self._store and store != self._store):
+            if not (store and ((self._store and store != self._store) or self._store_unknown)):
                 return False
-            logging.info("Disk cache: an answer came from store %s, not %s in use: asking the cache folder",
-                         store, self._store)
+            logging.info("Disk cache: an answer came from store %s (%s in use%s): asking the cache folder", store,
+                         self._store, ", unconfirmed" if self._store_unknown else "")
             self._probe()
             if not self._probe_owner:
                 return False  # (Couldn't ask: judged now, as from another store.)
@@ -1309,15 +1315,19 @@ class FolderCache(QObject):
         if self._probe_owner:
             self._probe_seen.clear()
             self.quitSavesChanged.emit()
-        else:
-            self._store_unknown = "HeLab's work queue is full"  # (As a failed probe: nothing re-reads.)
+            return
+        # Not asked: as a failed probe (nothing waited and nothing is held, since none was out).
+        self._store_not_confirmed("HeLab's work queue is full")
+        self._presets_settle()
+        self.quitSavesChanged.emit()
+        self.presetsChanged.emit()
 
     def _probe_answered(self, store: str, why: str = "") -> None:
-        """The cache folder holds ``store``, or (""), the probe failed (``why``): the folder's store
-        is unknown. What waited is stale then, held writes end not saved, owed preset changes are
-        said not saved, and nothing is asked again by itself (the next answer naming a store, or a
-        deliberate read, asks the folder again)."""
+        """The cache folder holds ``store`` (after an unknown store: a recovery if it is the one in
+        use), or (""), the probe failed (``why``): ``_store_not_confirmed``. Then the answers that
+        waited are judged, and held writes go (or ended already)."""
         self._probe_owner = ""
+        recovered = bool(store) and bool(self._store_unknown)
         seen, self._probe_seen = self._probe_seen, set()
         if self._closing or self.service.closed:
             # Shutting down: nothing waits for an answer any more, and nothing is launched.
@@ -1326,12 +1336,9 @@ class FolderCache(QObject):
             self._drop_held(None, {"kind": "cancelled"})
             return
         if not store:
-            self._store_unknown = why or "no answer"
-            logging.warning("Disk cache: which store the cache folder holds couldn't be confirmed (%s): answers "
-                            "from another store aren't taken and nothing is saved until it is asked again",
-                            self._store_unknown)
+            self._store_not_confirmed(why or "no answer")
         else:
-            self._store_unknown = ""
+            self._store_unknown = ""  # (The same store: a recovery; owed changes are written below.)
         if store and store != self._store:
             old, self._store = self._store, store
             logging.info("Disk cache: the cache folder holds store %s now (was %s): its saved results and "
@@ -1357,17 +1364,8 @@ class FolderCache(QObject):
             # The store's waiting results and usage: answers dropped while the probe was out may
             # have named some.
             self.restore_pending()
-        else:
-            message = f"the disk cache's store couldn't be confirmed ({self._store_unknown})"
-            self._drop_held(None, {"kind": "error", "message": message})
-            # Presets: as when the store can't be read. Owed changes are said not saved (kept in RAM,
-            # written by the next read that reaches the store), and nothing reads again by itself.
-            self.presets_error = message
-            if not self.presets_read:
-                self._presets_unread = message
-            for key, owed in self.presets_unsaved.items():
-                if owed in ("", PRESETS_WAIT_READ) and not self._preset_carried(key):
-                    self._presets_failed[key] = f"couldn't be saved ({message})"
+        if recovered and any(not self._preset_carried(key) for key in self.presets_unsaved):
+            self._presets_again = True  # Changes owed while the store was unknown: written now.
         if self._presets_again:
             self._presets_again = False
             if store:
@@ -1377,6 +1375,24 @@ class FolderCache(QObject):
         self.presetsChanged.emit()
         if store and any(other != self._store for other in seen):
             self._probe()
+
+    def _store_not_confirmed(self, why: str) -> None:
+        """The one failure transition (a probe failed, or couldn't be asked): the cache folder's store
+        is unknown. Until a probe succeeds no answer counts, the store in use's included; held writes
+        end not saved; presets are as when the store can't be read: owed changes stay in RAM and are
+        said not saved (written by the next read that reaches the store), and nothing is asked again
+        by itself."""
+        self._store_unknown = why
+        message = f"the disk cache's store couldn't be confirmed ({why})"
+        logging.warning("Disk cache: which store the cache folder holds couldn't be confirmed (%s): no answer is "
+                        "taken and nothing is saved until it is asked again", why)
+        self._drop_held(None, {"kind": "error", "message": message})
+        self.presets_error = message
+        if not self.presets_read:
+            self._presets_unread = message
+        for key, owed in self.presets_unsaved.items():
+            if owed in ("", PRESETS_WAIT_READ) and not self._preset_carried(key):
+                self._presets_failed[key] = f"couldn't be saved ({message})"
 
     def _store_changed(self, replaced: bool) -> None:
         """Another store is in use (``store_answer``): presets start afresh; if it ``replaced`` one,
