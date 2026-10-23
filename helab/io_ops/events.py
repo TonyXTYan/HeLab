@@ -18,6 +18,14 @@ from typing import Any, Literal, NotRequired, Sequence, TypedDict, Union
 # Fields several events carry, spread into them by the helper (``**``).
 
 
+class StoreField(TypedDict, total=False):
+    """The store an answer came from (``stores._store_fields``): its ``store_id`` and when it was
+    made, together its identity (``FolderCache.store_answer``: a store recreated at the cache
+    folder sorts after the one it replaced)."""
+    store: str
+    store_created: float
+
+
 class UsageFields(TypedDict, total=False):
     """The store's live usage (``stores._usage``); absent if it couldn't be measured."""
     usage: int
@@ -101,6 +109,7 @@ class AdminResultFields(TypedDict, total=False):
     result_id: str  # an adopted result's saved row (R2)
     folder_results: dict[str, ResultCountField]  # an adoption's folders' saved results after it (R2)
     store: str  # the store an adoption answered from (its ``store_id``)
+    store_created: float  # … and when it was made
 
 
 # Process and progress
@@ -281,6 +290,7 @@ class PresetsEvent(TypedDict):
     saved: list[PresetRowFields]
     rows: NotRequired[list[PresetRowFields]]
     store: NotRequired[str]  # The store's ``store_id`` (a recreated store has another).
+    store_created: NotRequired[float]  # … and when it was made (``StoreField``)
     error: NotRequired[str]
 
 
@@ -519,6 +529,7 @@ class ResultCountField(TypedDict):
     count: int
     bytes: int
     seq: list[Any]
+    store_created: NotRequired[float]  # The store's ``created_at``: with seq's store_id, its identity
 
 
 class ResultsField(TypedDict, total=False):
@@ -535,6 +546,9 @@ class ResultGuard(TypedDict):
     """A result save's guard (``CacheStore.start_result_job``), taken when its run started."""
     generations: dict[str, int]
     epochs: dict[str, int]
+    # The store it was taken in (its ``store_id``): a save with it writes nothing in another, such
+    # as one recreated at the cache folder since.
+    store: NotRequired[str]
 
 
 class ResultFoundEvent(TypedDict):
@@ -546,6 +560,7 @@ class ResultFoundEvent(TypedDict):
     lookup: NotRequired[str]  # The row's own key (an outdated one's differs from the one asked)
     result_id: NotRequired[str]  # The row's id (Make room's eviction names the rows it removed by it)
     store: NotRequired[str]  # The store's ``store_id`` (a recreated store has another)
+    store_created: NotRequired[float]
     record: Any
     computed_at: float
     bytes: int
@@ -558,6 +573,7 @@ class ResultMissingEvent(TypedDict):
     kind: Literal["result_missing"]
     guard: NotRequired[ResultGuard]
     store: NotRequired[str]  # The store's ``store_id`` (absent without a store: ``ram_only``)
+    store_created: NotRequired[float]
     ram_only: NotRequired[bool]
     no_cache: NotRequired[bool]
 
@@ -567,6 +583,7 @@ class ResultSavedEvent(UsageFields):
     bytes: int
     result_id: NotRequired[str]  # Its saved row's id (new for every save)
     store: NotRequired[str]  # The store's ``store_id``
+    store_created: NotRequired[float]
     folder_results: NotRequired[ResultCountField]  # The folder's saved results after it
     # The store's next cleanup deadline: a save that replaced a result retired its file.
     next_deadline: NotRequired[float | None]
@@ -583,6 +600,7 @@ class ResultPendingEvent(UsageFields):
     budget: int | None
     room: dict[str, Any] | None
     store: NotRequired[str]  # The store's ``store_id``: it waits there
+    store_created: NotRequired[float]
     next_deadline: NotRequired[float | None]  # (Its expiry, an hour unanswered.)
 
 
@@ -594,6 +612,7 @@ class ResultNotSavedEvent(UsageFields):
     bytes: int  # its file (0 when not known)
     budget: int | None
     store: NotRequired[str]  # The store's ``store_id`` (absent without a store: ``ram_only``)
+    store_created: NotRequired[float]
     next_deadline: NotRequired[float | None]  # A refused save retired its file: the sweep deletes it.
 
 

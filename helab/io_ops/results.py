@@ -20,11 +20,11 @@ from typing import Any, cast
 from helab.io_ops.events import (FolderResultsField, ResultCountField, ResultFoundEvent, ResultGuard,
                                  ResultMissingEvent)
 from helab.io_ops.infra import Emit, emit
-from helab.io_ops.stores import _deadline, _store_or_off, _usage
+from helab.io_ops.stores import _deadline, _store_fields, _store_or_off, _usage
 
 
-def _guard_fields(guard: Any) -> ResultGuard:
-    return {"generations": dict(guard.generations), "epochs": dict(guard.epochs)}
+def _guard_fields(guard: Any, store: Any) -> ResultGuard:
+    return {"generations": dict(guard.generations), "epochs": dict(guard.epochs), "store": store.store_id}
 
 
 def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lookup: str, family: str = "",
@@ -41,18 +41,20 @@ def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lo
         if flags.failed:
             raise ValueError(f"The folder's settings couldn't be read: {flags.error}")
         if flags.value and flags.value.get("no_cache"):
-            send({"kind": "result_missing", "no_cache": True, "store": store.store_id})
+            send({"kind": "result_missing", "no_cache": True, "store": store.store_id,
+                  "store_created": store.created_at})
             return
         guard: ResultGuard | None
         try:
-            guard = _guard_fields(store.start_result_job(path))
+            guard = _guard_fields(store.start_result_job(path), store)
         except StoreReadOnly:
             guard = None  # (Read, never saved: a newer HeLab's store.)
         found = store.find_result(path, lookup, family)
         if found.failed:
             raise ValueError(found.error)
         if found.value is None:
-            missing: ResultMissingEvent = {"kind": "result_missing", "store": store.store_id}
+            missing: ResultMissingEvent = {"kind": "result_missing", "store": store.store_id,
+                                           "store_created": store.created_at}
             if guard is not None:
                 missing["guard"] = guard
             send(missing)
@@ -68,7 +70,8 @@ def result_find(path: str, output: str, cache_options: dict[str, Any] | None, lo
                 pass  # (Only purges by age go by it.)
         event: ResultFoundEvent = {"kind": "result_found", "artifact": artifact, "exact": found.value.exact,
                                    "record": row["record"], "computed_at": row["computed_at"], "bytes": row["bytes"],
-                                   "lookup": row["lookup"], "result_id": row["result_id"], "store": store.store_id}
+                                   "lookup": row["lookup"], "result_id": row["result_id"], "store": store.store_id,
+                                   "store_created": store.created_at}
         if guard is not None:
             event["guard"] = guard
         send(event)
@@ -91,6 +94,13 @@ def result_save(path: str, cache_options: dict[str, Any] | None, blob_file: str,
     try:
         with open(blob_file, "rb") as handle:
             packed = handle.read()
+        if guard.get("store") and guard["store"] != store.store_id:
+            # Its guard was taken in another store (since recreated at the cache folder): its
+            # generations and epochs mean nothing here, so it writes nothing.
+            send({"kind": "result_not_saved", "reason": "store_replaced", "bytes": len(packed), "budget": None,
+                  "message": "the disk cache was recreated before saving completed", "store": store.store_id,
+                  "store_created": store.created_at})
+            return
         file = store.write_result_file(packed)
         options = cache_options or {}
         try:
@@ -101,7 +111,7 @@ def result_save(path: str, cache_options: dict[str, Any] | None, blob_file: str,
                 budget_set_at=options.get("budget_set_at"), label=label)
         except SaveRejected as rejection:
             send({"kind": "result_not_saved", "reason": rejection.reason, "message": str(rejection),
-                  "bytes": len(packed), "budget": None, "store": store.store_id, "next_deadline": _deadline(store),
+                  "bytes": len(packed), "budget": None, **_store_fields(store), "next_deadline": _deadline(store),
                   **_usage(store)})
             return
         if not saved.saved and saved.pending_id:
@@ -113,17 +123,17 @@ def result_save(path: str, cache_options: dict[str, Any] | None, blob_file: str,
                 except (SaveRejected, StoreError):
                     room = None
             send({"kind": "result_pending", "pending_id": saved.pending_id, "path": path, "label": label,
-                  "bytes": saved.bytes, "budget": saved.budget, "room": room, "store": store.store_id,
+                  "bytes": saved.bytes, "budget": saved.budget, "room": room, **_store_fields(store),
                   "next_deadline": _deadline(store), **_usage(store)})
             return
         if not saved.saved:
             send({"kind": "result_not_saved", "reason": saved.reason, "message": "it doesn't fit the disk cache's budget",
-                  "bytes": saved.bytes, "budget": saved.budget, "store": store.store_id,
+                  "bytes": saved.bytes, "budget": saved.budget, **_store_fields(store),
                   "next_deadline": _deadline(store), **_usage(store)})
             return
         folder: FolderResultsField = ({} if saved.folder is None else
                                       {"folder_results": cast(ResultCountField, saved.folder.event())})
-        send({"kind": "result_saved", "bytes": saved.bytes, "result_id": saved.result_id, "store": store.store_id,
+        send({"kind": "result_saved", "bytes": saved.bytes, "result_id": saved.result_id, **_store_fields(store),
               "next_deadline": _deadline(store), **folder, **_usage(store)})
     finally:
         store.close()

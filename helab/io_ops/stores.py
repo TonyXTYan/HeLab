@@ -6,7 +6,7 @@ import os
 import sys
 from typing import Any, TYPE_CHECKING, cast
 
-from helab.io_ops.events import DataRootField, RemovedEvent, UsageFields
+from helab.io_ops.events import DataRootField, RemovedEvent, StoreField, UsageFields
 from helab.io_ops.infra import Emit, _cached_volume_id, _mounts
 
 if TYPE_CHECKING:
@@ -164,6 +164,11 @@ def _deadline(store: CacheStore) -> float | None:
         return store.next_deadline()
     except StoreError:
         return None
+
+
+def _store_fields(store: CacheStore) -> StoreField:
+    """The store an answer comes from: its identity (``store_id``, ``created_at``)."""
+    return {"store": store.store_id, "store_created": store.created_at}
 
 
 def _usage(store: CacheStore) -> UsageFields:

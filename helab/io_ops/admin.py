@@ -10,7 +10,8 @@ from helab.io_ops import stores
 from helab.io_ops.events import AdminResultFields, MoveCheckFields, PresetRowFields, ResultCountField
 from helab.io_ops.infra import Emit, Heartbeat, emit
 from helab.io_ops.markers import _location_path, _root_rows
-from helab.io_ops.stores import _cache_info, _deadline, _removed_event, _results_removed_event, _usage
+from helab.io_ops.stores import (_cache_info, _deadline, _removed_event, _results_removed_event, _store_fields,
+                                 _usage)
 
 
 # Why a folder's constants weren't saved (``cache_admin`` "constants"; the app keeps them for the
@@ -165,10 +166,11 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             written = cast(list[PresetRowFields], store.write_presets(rows) if rows else [])
             stored = store.read_presets()
             if stored.failed:
-                send({"kind": "presets", "saved": written, "error": stored.error, "store": store.store_id})
+                send({"kind": "presets", "saved": written, "error": stored.error, "store": store.store_id,
+                      "store_created": store.created_at})
             else:
                 send({"kind": "presets", "saved": written, "rows": cast(list[PresetRowFields], stored.value or []),
-                      "store": store.store_id})
+                      "store": store.store_id, "store_created": store.created_at})
         elif action == "clear_prefs":
             cleared_at = time.time()
             send({"kind": "prefs_cleared", "paths": store.clear_prefs(cleared_at), "set_at": cleared_at})
@@ -192,14 +194,16 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             result.update({"results": cleared.results, "bytes": cleared.bytes})
         elif action == "adopt_result":
             # A waiting result's Make room (R2): only other saved results make room, never cached data.
+            # It names the store it waits in: another (recreated since) doesn't have it.
             try:
+                if params.get("store") and params["store"] != store.store_id:
+                    raise SaveRejected("gone", "This save waited in a disk cache recreated since")
                 taken = store.adopt_pending_result(params["pending_id"], budget=budget, budget_set_at=budget_set_at,
                                                    make_room=bool(params.get("make_room")),
                                                    expected_room=params.get("room_ids"))
             except SaveRejected as rejection:
                 result.update({"adopted": False, "rejected": rejection.reason, "message": str(rejection)})
             else:
-                result["store"] = store.store_id  # (A store recreated since doesn't hold what it says.)
                 if taken.removal is not None:
                     send(_results_removed_event(taken.removal, evicted=True))
                 result.update({"adopted": taken.adopted, "path": taken.path, "bytes": taken.bytes,
@@ -228,8 +232,8 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 # Lowering it (``fit``): not recorded if the data cached by now doesn't fit.
                 active = store.lower_budget(int(budget), float(budget_set_at), fit=bool(params.get("fit")))
                 result.update({"budget": active if active is not None else budget, "recorded": active is not None})
-        send({"kind": "admin_result", "action": action, **result, "next_deadline": _deadline(store),
-              **_usage(store)})
+        send({"kind": "admin_result", "action": action, **result, **_store_fields(store),
+              "next_deadline": _deadline(store), **_usage(store)})
 
 
 def cache_move_job(move: dict[str, Any], send: Emit = emit) -> None:

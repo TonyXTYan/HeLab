@@ -456,7 +456,7 @@ def test_a_late_answer_from_the_retired_store_acknowledges_nothing(service: IOSe
     answer(jobs, admin_job(jobs, 0), {"kind": "presets", "saved": [], "rows": [], "store": "B"}, {"kind": "done"})
     saved = row("p", "{}", cache.presets[(ARR, "", "p")]["set_at"])
     answer(jobs, to_a, {"kind": "presets", "saved": [saved], "rows": [saved], "store": "A"}, {"kind": "done"})
-    assert cache._presets_store == "B" and cache.preset_unsaved(ARR, "", "p") == ""  # Being written…
+    assert cache._store[1] == "B" and cache.preset_unsaved(ARR, "", "p") == ""  # Being written…
     assert cache.quit_saves() == [PRESETS_SAVING]
     to_b = admin_job(jobs, 1)  # …again, to B.
     assert to_b is not to_a and to_b.payload["params"]["rows"] == [saved]
@@ -564,7 +564,7 @@ def recreated_with_two_writes(stores: Stores) -> tuple[IOService, FolderCache, l
 
 def assert_settled(service: IOService, cache: FolderCache, stores: Stores) -> None:
     assert not cache._preset_jobs and not preset_jobs(service)
-    assert not cache.presets_unsaved and cache.quit_saves() == [] and cache._presets_store == "B"
+    assert not cache.presets_unsaved and cache.quit_saves() == [] and cache._store[1] == "B"
     assert cache.preset_records(ARR) == {("", "p"): '"second"'} and stores.held["B"]["p"]["record"] == '"second"'
 
 

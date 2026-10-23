@@ -52,7 +52,7 @@ def fresh_presets(qtbot: QtBot) -> Iterator[None]:
     store.presets_unsaved.clear()
     store.presets_conflicts.clear()
     store._presets_unknown.clear()
-    store.presets_read, store.presets_error, store._presets_store = False, "", ""
+    store.presets_read, store.presets_error, store._store = False, "", (0.0, "")
     # As after startup: the store's presets read (a test of the time before says so).
     store.read_presets()
     qtbot.waitUntil(lambda: store.presets_read and not store._preset_jobs, timeout=30_000)

@@ -302,9 +302,11 @@ class ResultCount:
     bytes: int
     store_id: str
     writes: int
+    store_created: float = 0.0  # The store's ``created_at`` (its identity, with ``store_id``)
 
     def event(self) -> dict[str, Any]:
-        return {"count": self.count, "bytes": self.bytes, "seq": [self.store_id, self.writes]}
+        return {"count": self.count, "bytes": self.bytes, "seq": [self.store_id, self.writes],
+                "store_created": self.store_created}
 
 
 @dataclass(frozen=True)
@@ -518,6 +520,9 @@ class CacheStore:
                 meta = self._meta()
                 self.layout_version = int(meta["layout_version"])
                 self.store_id = str(meta["store_id"])
+                # When the store was made: with ``store_id``, its identity, which orders a store
+                # recreated at the cache folder after the one it replaced (FolderCache.store_answer).
+                self.created_at = float(meta.get("created_at") or 0.0)
                 break
             except sqlite3.Error as exc:
                 if conn is not None:
@@ -1914,7 +1919,7 @@ class CacheStore:
     def _folder_results(self, keys: Sequence[str]) -> dict[str, ResultCount]:
         """Each folder's saved results (count and files' bytes; zero if none), as of this
         transaction's write count (``seq``), for the folder row's badge (inside a transaction)."""
-        counts = {key: ResultCount(0, 0, self.store_id, self._writes()) for key in keys}
+        counts = {key: ResultCount(0, 0, self.store_id, self._writes(), self.created_at) for key in keys}
         if not self._results_table:
             return counts
         stored = list(counts)
@@ -1923,7 +1928,8 @@ class CacheStore:
             for key, count, size in self._conn.execute(
                     f"SELECT path, COUNT(*), COALESCE(SUM(bytes), 0) FROM results "
                     f"WHERE path IN ({','.join('?' * len(chunk))}) GROUP BY path", chunk):
-                counts[str(key)] = ResultCount(int(count), int(size), self.store_id, counts[str(key)].writes)
+                counts[str(key)] = ResultCount(int(count), int(size), self.store_id, counts[str(key)].writes,
+                                               self.created_at)
         return counts
 
     def result_counts(self, paths: Sequence[str]) -> dict[str, ResultCount]:
@@ -2283,7 +2289,8 @@ class CacheStore:
         retired_bytes = sum(self._size_or_zero(file) for file in retired)
         orphans = [name for name in self._listed_files() if name not in known]
         return {
-            "layout_version": self.layout_version, "store_id": self.store_id, "read_only": self.read_only,
+            "layout_version": self.layout_version, "store_id": self.store_id, "store_created": self.created_at,
+            "read_only": self.read_only,
             "root": self.root, "usage": live, "budget": budget, "records_bytes": records_bytes,
             "datasets": {"count": len(dataset_ages), "bytes": sum(size for _, size in dataset_ages),
                          "ram_bytes": ram_bytes,

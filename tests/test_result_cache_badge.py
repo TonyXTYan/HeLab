@@ -63,7 +63,8 @@ def test_a_folder_without_a_data_root_sends_no_count(tmp_path: Path) -> None:
 
 
 def counts(count: int, size: int, writes: int, store: str = "s") -> dict[str, Any]:
-    return {"count": count, "bytes": size, "seq": [store, writes]}
+    """A count measured in ``store`` ("other": one made later, as a store recreated at the cache folder)."""
+    return {"count": count, "bytes": size, "seq": [store, writes], "store_created": 2.0 if store == "other" else 1.0}
 
 
 def test_folder_cache_keeps_the_newest_measurement_and_drops_counts_with_a_clear(
