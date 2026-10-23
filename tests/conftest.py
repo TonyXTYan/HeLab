@@ -263,6 +263,20 @@ def default_constants() -> None:
 
 
 @pytest.fixture(autouse=True)
+def no_quitting_cache() -> Iterator[None]:
+    """A main window closed while saves were pending waits in its quit window, with the app-wide
+    FolderCache ``quitting``; deleted with its test, it never quits, and the worker's next test got
+    that cache, which refuses presets, flags and constants (a presets test then hung on the warning
+    it showed). It is shut down at teardown, so the next test gets a new one."""
+    yield
+    from helab.utils import io_service
+    service = io_service._service
+    cache = service.folder_cache if service is not None else None
+    if service is not None and cache is not None and cache.quitting:
+        service.shutdown()  # (Once closed, nothing.)
+
+
+@pytest.fixture(autouse=True)
 def no_selection_settle(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests select folders back to back and expect their loads at once; the wait for the
     selection to settle (Finish, Cancel) has its own tests, which set ``SETTLE_MAX`` again."""

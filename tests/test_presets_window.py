@@ -3,7 +3,7 @@ they close) and come back at the next start; the Presets menu lists the saved ar
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
 
 import pytest
 from PyQt6 import QtWebEngineWidgets  # noqa: F401  (before any QApplication: the main window)
@@ -17,6 +17,9 @@ from helab.utils.settings_store import app_settings
 from helab.views.plots.arrangement import FolderWait
 from helab.views.plots.instance import AnalysisInstance
 from helab.views.plots.presets import preset_store, write_arrangement
+
+if TYPE_CHECKING:
+    from helab.views.HelabMainWindow import HelabMainWindow
 
 PATH = "/helab-test-nowhere/run"  # Never read: reopened plots don't touch their folder.
 
@@ -35,6 +38,14 @@ def fresh_presets(qtbot: QtBot) -> Iterator[None]:
     qtbot.waitUntil(lambda: store.service.closed or not store._preset_jobs, timeout=30_000)
 
 
+def quit_window(qtbot: QtBot, window: HelabMainWindow) -> None:
+    """Close the window as quitting does, and wait until it has quit: with a preset still being
+    written, its quit window waits for the save. A window left waiting (deleted with the test) left
+    the app's FolderCache quitting for the worker's next test, which then refused its presets."""
+    window.close()
+    qtbot.waitUntil(lambda: window._closing, timeout=30_000)
+
+
 def test_plots_open_at_quit_reopen_at_the_next_start(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     from helab.views.HelabMainWindow import HelabMainWindow
     monkeypatch.setattr("helab.views.plots.arrangement.store_options", lambda: {})
@@ -45,7 +56,7 @@ def test_plots_open_at_quit_reopen_at_the_next_start(qtbot: QtBot, monkeypatch: 
     ref = ScriptRef("helab.counts_per_shot", "Plot", "", "", "Counts per shot")
     made = scripts.reopen_plot(SavedPlot(ref, PATH), FolderWait(cache, PATH))
     assert isinstance(made, AnalysisInstance) and made.waiting()
-    window.close()
+    quit_window(qtbot, window)
     assert made.is_closed
     [saved] = parse(read_setting(app_settings(), OPEN_PLOTS_SETTING)).plots
     assert saved.script.analysis_id == "helab.counts_per_shot" and saved.path == PATH
@@ -55,7 +66,7 @@ def test_plots_open_at_quit_reopen_at_the_next_start(qtbot: QtBot, monkeypatch: 
     qtbot.waitUntil(lambda: bool(again.panel_right_bottom_script_selector.instances()), timeout=10_000)
     [instance] = again.panel_right_bottom_script_selector.instances()
     assert instance.path == PATH and instance.waiting() and instance.metadata.analysis_id == "helab.counts_per_shot"
-    again.close()
+    quit_window(qtbot, again)
 
 
 def test_the_presets_menu_lists_saved_arrangements(qtbot: QtBot) -> None:
@@ -69,7 +80,7 @@ def test_the_presets_menu_lists_saved_arrangements(qtbot: QtBot) -> None:
     texts = [action.text() for action in window.menu_presets.actions() if not action.isSeparator()]
     assert texts[:2] == ["Save Folder and Plots as Preset…", "Morning run"]
     assert window.menu_presets.title() == "Presets"
-    window.close()
+    quit_window(qtbot, window)
 
 
 def test_applying_a_live_preset_in_a_real_tab_starts_live_once_listed(
@@ -92,7 +103,7 @@ def test_applying_a_live_preset_in_a_real_tab_starts_live_once_listed(
     assert explorer.live is None  # Not before the folder is listed.
     qtbot.waitUntil(lambda: explorer.live is not None, timeout=30_000)
     assert explorer.live is not None and explorer.live.path == folder
-    window.close()
+    quit_window(qtbot, window)
 
 
 def test_a_live_off_preset_turns_live_off_in_a_real_tab(qtbot: QtBot, tmp_path: Path) -> None:
@@ -113,4 +124,4 @@ def test_a_live_off_preset_turns_live_off_in_a_real_tab(qtbot: QtBot, tmp_path: 
     qtbot.waitUntil(lambda: explorer.live is not None, timeout=30_000)
     window.arrangement_presets.apply("off")
     assert explorer.live is None
-    window.close()
+    quit_window(qtbot, window)
