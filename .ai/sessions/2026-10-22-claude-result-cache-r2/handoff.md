@@ -4,6 +4,43 @@ Branch `agent/result-cache-r2` from `c3d4b50`; commits `c31ac10` (schema, report
 `ef486d3` (back end), `bcdc12d` (plots), `3e5a934` (Settings), plus this session folder. Measurements
 and evidence: [notes.md](notes.md).
 
+## Merged with `dev/v0.0.6` (Presets Reopen, 2026-10-23)
+
+`7daa133` commits CoCo's session notes. `29429fb` merges `dev/v0.0.6` at `c204d4b`. `8cb7886` fixes the
+reopen seam. None of them is pushed.
+
+Conflicts, both sides kept:
+
+| File | Resolution |
+|---|---|
+| `helab/utils/cache_store.py` | The open records `_presets_table` beside `_results_table` / `_pending_results`; `_migrate` checks four things (constants, raw times, presets, results) and adds the presets table and `RESULT_SCHEMA` + `gen_results` as needed; docstring names all of them. |
+| `helab/io_ops/admin.py` | Imports `PresetRowFields` and `ResultCountField`; `ADMIN_ACTIONS` has `presets` and `clear_results`, `clear_root_results`, `adopt_result`, `discard_result`. |
+| `helab/views/plots/instance.py` | Imports both: presets (`PlotCheck`, `SavedPlot`, …) and `DISK_CACHED`, `RAM_ONLY`, `AnalysisContext`. |
+| `tests/test_headless_imports.py` | `presets` beside `result_cache`, `result_codec`, `result_types` in the Qt-free list. |
+
+`events.py`, `CacheTab.py` (the Presets row sits below Folder preferences, after the Cached analysis
+row and the reuse check box), `folder_cache.py`, `SettingsDialog.py` and `settings_defaults.py` merged
+without conflicts. No remover names the `presets` table. `test_no_removal_of_results_touches_presets`
+checks that Make room, Clear cached analysis (all, a root's, a folder's), a purge by age, Clear all and
+a root's Clear cached data… all keep presets.
+
+**The seam (`8cb7886`).** `AnalysisInstance.run_reopened` is where a plot reopened at start, or opened
+from an arrangement preset, runs once `FolderWait` finds its data. It called a plain `_submit(view)`,
+which never looked up or saved a result. It now submits as the user's first run does
+(`one_off=True`): an exact saved match shows without computing, and a new result is saved.
+`test_a_reopened_plot_shows_its_exact_saved_result_without_computing` (real helpers, reopened through
+`TreePanelWidget.reopen_plot` and `FolderWait.found`) fails before the fix. A reopened plot whose data
+is already in RAM still goes through `run_reopened`; a plot opened when no saved record exists goes
+through `run()` as before.
+
+**Tony's answers (via CoCo):** Make room keeps its order (least recently shown first), with no extra
+skip for results used this session or on screen. The presets inspector stays as built.
+
+**Checks at `8cb7886`:** full suite (`-n 12 --reruns 5 --reruns-delay 1`) 2727 passed, 2 skipped,
+2 xfailed, **no RERUN** (the 2 warnings are the existing pyqtgraph/NumPy deprecation in
+`test_t_spectrum`). `mypy --strict helab` (162 files) and `tests` (130), `pyright helab tests` and
+`git diff --check` are clean.
+
 ## What it does
 
 A completed one-off run (the plot's first run, Rerun, a reload; never Live's reruns) of a plot that
@@ -132,8 +169,8 @@ computing") and never saves (no guard).
 - No `settings_defaults.py` rows.
 
 **For the Presets Reopen floor** ("find a cached result for this plot's run"): nothing to call. A
-reopened plot's first run goes through `AnalysisInstance.run()` → `_submit(..., one_off=True)`, which
-looks itself up; an exact match shows without computing. A Qt-free key for other uses:
+reopened plot runs through `AnalysisInstance.run_reopened` → `_submit(view, one_off=True)` (fixed at
+the merge, `8cb7886`), which looks itself up; an exact match shows without computing. A Qt-free key for other uses:
 `result_cache.lookup_key(context)` with `AnalysisQueue.prepare(...)`.
 
 ## What Tony should check on screen
@@ -427,6 +464,7 @@ order already puts them last: showing an exact match and saving both set `last_u
 from earlier sessions that nobody showed since go first. A shown plot keeps its result in RAM either
 way (its record then says "kept in RAM only"). Skipping them would make Make room fail ("only
 Discard") more often exactly when this session's work filled the budget. Easy to add if Tony wants it.
+*Tony (2026-10-23, via CoCo): keep this order, no extra skip.*
 
 **The table now** (replaces round 4's; tests in `tests/test_result_lifecycle.py`, store cells in
 `tests/test_result_cache_store.py`; the Clear, Purge and Discard columns are unchanged):
