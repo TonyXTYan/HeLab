@@ -23,6 +23,9 @@ from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QGuiApplicati
 from PyQt6.QtWidgets import QMainWindow, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QMenu, QApplication, QInputDialog, QProgressBar, QToolButton, QMessageBox
 
+from helab.views.plots.arrangement import PlotReopen
+from helab.views.plots.presets import ArrangementPresets
+from helab.views.PresetsInspector import set_script_finder
 from helab.views.plots.script_tree import TreePanelWidget
 from helab.views.plots.workspace import PlotWorkspace
 from helab.resources.icons import ToolIcons
@@ -142,12 +145,21 @@ class HelabMainWindow(QMainWindow):
         self.roots_button.clicked.connect(lambda: self.review_root(None))
         cache.rootDuplicatesChanged.connect(self._update_roots_button)
         self.plots.setup_ram_budget(cache, app_settings())
+        # The plots open last time reopen at start (Settings → General), after the first tab
+        # opens; recorded as plots open and close, and at quit. Presets of a folder and its plots.
+        self.plot_reopen = PlotReopen(self.plots, self.panel_right_bottom_script_selector)
+        self.arrangement_presets = ArrangementPresets(self.plots, self.panel_right_bottom_script_selector,
+                                                      self.current_explorer, self, cache)
+        self.menu_presets.aboutToShow.connect(lambda: self.arrangement_presets.fill_menu(self.menu_presets))
+        self.arrangement_presets.fill_menu(self.menu_presets, read=False)  # (It has asked for them.)
+        set_script_finder(self.panel_right_bottom_script_selector.find_script)  # Settings → Cache › Presets…
 
         # Create Left Panel (File Tree View)
         self.tab_widget.currentChanged.connect(self.on_current_tab_changed)
 
         # Delay the execution of add_new_folder_explorer_tab until the GUI is loaded
         QTimer.singleShot(10, self.add_new_folder_explorer_tab)
+        QTimer.singleShot(30, self.plot_reopen.restore)
         QTimer.singleShot(50, self.update_tool_enabled_state)
         # QTimer.singleShot(20, self.on_folder_explorer_selection_changed)
         # Initial discovery is owned by the explorer; avoid duplicate refreshes.
@@ -459,6 +471,11 @@ class HelabMainWindow(QMainWindow):
 
 
         
+        # Presets of a folder and its plots (helab/views/plots/presets.py), filled as it shows.
+        menu_presets = self.menu_bar.addMenu("Presets")
+        assert menu_presets is not None
+        self.menu_presets: QMenu = menu_presets
+
         menu_debug = self.menu_bar.addMenu('Debug')
         if menu_debug is not None:
             debug_action_2 = QAction('Draw a line in debug console', self)
@@ -1456,6 +1473,7 @@ class HelabMainWindow(QMainWindow):
                 a0.ignore()
             return
         self._closing = True
+        self.plot_reopen.quit()  # The open plots are recorded before they close.
         self.plots.close_plots()
         self.plots.detach()  # The RAM budget, then the Settings panel.
         if not self._cache_dialogs_detached:

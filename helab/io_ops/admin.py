@@ -7,7 +7,7 @@ import time
 from typing import Any, cast
 
 from helab.io_ops import stores
-from helab.io_ops.events import AdminResultFields, MoveCheckFields
+from helab.io_ops.events import AdminResultFields, MoveCheckFields, PresetRowFields
 from helab.io_ops.infra import Emit, Heartbeat, emit
 from helab.io_ops.markers import _location_path, _root_rows
 from helab.io_ops.stores import _cache_info, _deadline, _removed_event, _usage
@@ -20,7 +20,7 @@ NO_ROOT_CONSTANTS = "no .helab-root found here or above"
 UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
-                 "constants", "forget_root", "root_same", "clear_root")
+                 "constants", "presets", "forget_root", "root_same", "clear_root")
 
 
 def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, **params: Any) -> None:
@@ -144,6 +144,19 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 send({"kind": "folder_constants", "folders": {}, "session_only": {path: reason}})
             else:
                 send({"kind": "folder_constants", "folders": {path: saved_constants}})
+        elif action == "presets":
+            # The user's presets: write these rows (newest choice wins each), then read them all.
+            # (Only a read when there's nothing to write: a read-only store still answers it.) Only
+            # to the store they were meant for: in another (one recreated since), whose names the
+            # app hasn't seen, they could replace a preset unasked; it reads that one instead.
+            rows = list(params.get("rows") or ()) if params.get("store") == store.store_id else []
+            written = cast(list[PresetRowFields], store.write_presets(rows) if rows else [])
+            stored = store.read_presets()
+            if stored.failed:
+                send({"kind": "presets", "saved": written, "error": stored.error, "store": store.store_id})
+            else:
+                send({"kind": "presets", "saved": written, "rows": cast(list[PresetRowFields], stored.value or []),
+                      "store": store.store_id})
         elif action == "clear_prefs":
             cleared_at = time.time()
             send({"kind": "prefs_cleared", "paths": store.clear_prefs(cleared_at), "set_at": cleared_at})

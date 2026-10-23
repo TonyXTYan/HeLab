@@ -1,7 +1,7 @@
 """Quitting waits for disk cache saves still running (roadmaps/live-monitoring.md).
 
 Live's new shots, a finished load's background save (``disk_cache_pending``) and a folder's
-flags or constants still being written are saved before HeLab quits. This window names the folders, closes by itself when the saves end (each
+flags or constants still being written, and presets being written, are saved before HeLab quits. This window names the folders, closes by itself when the saves end (each
 stops itself after the usual no-progress timeout), and offers Quit now, which skips them.
 Nothing is lost either way: the source files remain, and the next check reads what wasn't saved.
 """
@@ -12,7 +12,7 @@ import os
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
-from helab.utils.folder_cache import FolderCache
+from helab.utils.folder_cache import PRESETS_SAVING, FolderCache
 
 QUIT_NOW_TOOLTIP = ("Quit without waiting. The folders' TXY files stay where they are: the next check of "
                     "each reads the shots that weren't saved.")
@@ -56,6 +56,8 @@ class QuitSaveDialog(QDialog):
         self._show(cache.quit_saves())
 
     def state(self, path: str) -> str:
+        if path == PRESETS_SAVING and self.cache.presets_saving():
+            return "saving"
         if self.cache.disk_cache_saving(path):
             return "writing the disk cache"
         if ("load", self.cache.key(path)) in self.cache.jobs:
@@ -74,9 +76,10 @@ class QuitSaveDialog(QDialog):
             self._end(skipped=False)
 
     def _show(self, paths: list[str]) -> None:
-        count = len(paths)
-        self.label.setText(f"Saving {count:,} folder{'' if count == 1 else 's'} to the disk cache before "
-                           "HeLab quits:")
+        count = len([path for path in paths if path != PRESETS_SAVING])  # (Presets: their own entry.)
+        saving = " and ".join(filter(None, (f"{count:,} folder{'' if count == 1 else 's'}" if count else "",
+                                            "presets" if PRESETS_SAVING in paths else "")))
+        self.label.setText(f"Saving {saving} to the disk cache before HeLab quits:")
         self.folders.clear()
         for path in paths:
             name = os.path.basename(path.rstrip("/\\")) or path

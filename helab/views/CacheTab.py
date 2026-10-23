@@ -183,6 +183,21 @@ class CacheTab(QWidget):
         prefs.addWidget(self.prefs_button)
         layout.addLayout(prefs)
 
+        # Presets (helab/views/PresetsInspector.py): the user's too, kept by Clear all and purges.
+        presets = QHBoxLayout()
+        presets.addWidget(QLabel("Presets"))
+        self.presets_label = QLabel()
+        presets.addWidget(self.presets_label, 1)
+        self.presets_button = QPushButton("Presets…")
+        self.presets_button.setToolTip("The saved presets of plots and of folders with their plots: their values, "
+                                       "whether they fit the installed scripts; rename, duplicate or delete one")
+        self.presets_button.clicked.connect(self.show_presets)
+        presets.addWidget(self.presets_button)
+        layout.addLayout(presets)
+        from helab.views.PresetsInspector import show_summary
+        self.presets_store = show_summary(self.presets_label, cache)
+        self.presets_window: QWidget | None = None
+
         # Live (roadmaps/live-monitoring.md): new shots wait in RAM, then the folder is saved.
         live = QHBoxLayout()
         live.addWidget(QLabel("Live: save to the disk cache every"))
@@ -365,6 +380,11 @@ class CacheTab(QWidget):
         else:
             return
         self._update()
+
+    def show_presets(self) -> None:
+        """Presets…: the presets window (one at a time)."""
+        from helab.views.PresetsInspector import open_inspector
+        self.presets_window = open_inspector(self.presets_store, self, self.presets_window)
 
     def clear_prefs(self) -> None:
         inventory = self.inventory

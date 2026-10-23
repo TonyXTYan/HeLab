@@ -38,6 +38,9 @@ LIVE_AUTOSAVE_SETTING = "live_autosave_shots"
 PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
 THREAD_STATUS_SETTING = "view_toggle_thread_status"
 LOG_KEEP_SETTING = "log_files_keep"
+# The plots that reopen at start (helab/views/plots/arrangement.py; presets are in the disk cache store).
+REOPEN_PLOTS_SETTING = "reopen_plots_at_start"
+OPEN_PLOTS_SETTING = "open_plots"
 
 SETTINGS: tuple[Setting, ...] = (
     Setting(DIR_TEMPS_SETTING, str, "",
@@ -75,6 +78,13 @@ SETTINGS: tuple[Setting, ...] = (
             "Log files to keep, every session's helab-<pid>.log files and their rotated copies counted; "
             "at startup the oldest beyond it are deleted, never a running HeLab's, 1 to 100,000 "
             "(Settings → General)."),
+    # The plots that reopen at start (keep these rows together).
+    Setting(REOPEN_PLOTS_SETTING, bool, True,
+            "Reopen the plots open when HeLab last quit; each reruns on its folder's data in RAM or the disk "
+            "cache, never reading the folder itself (Settings → General)."),
+    Setting(OPEN_PLOTS_SETTING, str, "",
+            "The plots open when HeLab last quit (or last opened or closed a plot), with their settings and "
+            "places: an arrangement record (helab.analysis.presets, JSON). Unset: none."),
 )
 
 # Keys under a prefix: Settings → Lab parameters saves only the lab constants the user set,
