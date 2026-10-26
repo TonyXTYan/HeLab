@@ -49,6 +49,21 @@ def test_location_matching_ignores_case_on_smb_and_windows_volumes(
         assert local.key("C:\\data\\Run") == f"root://{identifier}/Run"
 
 
+def test_a_views_root_key_is_the_stores_for_names_that_need_quoting(tmp_path: Path) -> None:
+    """C-15: the store percent-quotes each part of a folder's path below its root; a view's
+    ``root_key`` does the same, so the two spellings of one folder are one key."""
+    from helab.analysis.dataset_view import root_key
+    identifier = str(uuid.uuid4())
+    share = tmp_path / "share"
+    paths = resolver([Mount("//host/share", str(share), "smbfs", True)],
+                     [RootLocation("smb://host/share", identifier)])
+    for relative in ("run 1", "2026-10-26 runs/run 1", "a%b/c#d"):
+        folder = str(share / relative)
+        assert paths.key(folder) == root_key(str(share), identifier, folder)
+    assert root_key(str(share), identifier, str(share / "run 1")) == f"root://{identifier}/run%201"
+    assert root_key(str(share), identifier, str(share)) == f"root://{identifier}"
+
+
 def test_nested_markers_nearest_wins_and_store_uses_root_keys(tmp_path: Path) -> None:
     outer = tmp_path / "share"
     inner = outer / "data"

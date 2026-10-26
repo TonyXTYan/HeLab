@@ -33,6 +33,7 @@ import weakref
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from urllib.parse import quote
 
 import numpy as np
 import numpy.typing as npt
@@ -190,9 +191,14 @@ def _frozen(shots: dict[int, Events]) -> Mapping[int, Events]:
 
 
 def root_key(folder: str, identifier: str, path: str) -> str:
-    """``root://<uuid>/<relative>``, as the store keys folders below a data root."""
+    """``root://<uuid>/<relative>``, exactly as the store keys folders below a data root: each part
+    of the relative path percent-quoted (``cache_paths``: ``run 1`` is ``run%201``; codebase review
+    2, C-15). Records saved before used the raw parts, so a folder whose name needs quoting doesn't
+    match its old arrangement or reopen record (Tony, 2026-10-26: no backward compatibility)."""
     relative = os.path.relpath(path, folder).replace(os.sep, "/")
-    return f"root://{identifier}" + ("" if relative == "." else "/" + relative)
+    if relative == ".":
+        return f"root://{identifier}"
+    return f"root://{identifier}/" + "/".join(quote(part, safe="") for part in relative.split("/"))
 
 
 def _wall_time(monotonic: Any) -> float | None:
