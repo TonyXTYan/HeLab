@@ -360,3 +360,10 @@ def test_a_windows_mapped_drive_gets_a_hint_and_keys_offline_once_unmapped(monke
     other = Mount("\\\\lab-server\\Other", "Z:\\", "smb", True)
     paths, _ = stores._offline_mounts(cast(Any, hinted), [system, other], LocalVolumes([]))
     assert paths.key("Z:\\2026") == "smb://lab-server/other/2026"
+    # Review rounds 1–3 on Windows: a share once mounted at a folder of the system drive is still
+    # hinted (C: is transparent); a drive attached now wins over hints below it, whatever it is.
+    folders = Hints({"C:\\shares\\lab": "smb://lab-server/labdata", "D:\\lab\\old": "smb://old-server/old"})
+    disk = Mount("D:\\", "D:\\", "local")
+    paths, _ = stores._offline_mounts(cast(Any, folders), [system, disk], LocalVolumes([]))
+    assert paths.key("C:\\shares\\lab\\run") == "smb://lab-server/labdata/run"
+    assert not paths.key("D:\\lab\\old\\run").startswith("smb://old-server")

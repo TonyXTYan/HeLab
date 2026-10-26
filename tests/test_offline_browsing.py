@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
+import sys
 from typing import Any, Callable, Iterator, cast
 
 import numpy as np
@@ -577,6 +578,12 @@ def test_a_save_asked_for_before_going_offline_still_runs_after_the_load_it_wait
         service.shutdown()
 
 
+# Mount paths below are POSIX ones (/, /tmp, /srv): on Windows "/" is no system volume. Windows' own rules
+# run on every OS in tests/test_saved_listings.py (test_a_windows_mapped_drive_…).
+POSIX_MOUNTS = pytest.mark.skipif(sys.platform == "win32", reason="POSIX mount paths; Windows rules tested apart")
+
+
+@POSIX_MOUNTS
 def test_a_volume_or_share_mounted_above_a_hint_wins_over_it() -> None:
     """P2: a share mounted at /Volumes/lab now owns /Volumes/lab/subdir, even if a share was mounted
     at subdir last time; a system mount above (a tmpfs /tmp) doesn't take a hint's place."""
@@ -595,6 +602,7 @@ def test_a_volume_or_share_mounted_above_a_hint_wins_over_it() -> None:
     assert paths.key("/tmp/shares/data/run") == "smb://server/data/run"
 
 
+@POSIX_MOUNTS
 @pytest.mark.parametrize("known", [True, False])
 def test_a_disk_mounted_anywhere_wins_over_a_hint_below_it(known: bool) -> None:
     """Vernier, review round 2: a disk at a custom mount point (/srv/lab) is a volume too, known by
@@ -650,6 +658,7 @@ def test_work_online_cancels_a_saved_listing_in_flight_and_lists_the_folder_anew
         service.shutdown()
 
 
+@POSIX_MOUNTS
 @pytest.mark.parametrize("current", [
     ("new-server:/export", "nfs4"),  # psutil: no "remote" option, no volume ID, no /dev source (round 3).
     ("sshfs#lab@new-server:/data", "fuse.sshfs"),

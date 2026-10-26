@@ -33,6 +33,13 @@ Commits on the branch:
 | `60237d8` | C3 plan and the draft tests |
 | `1574127` | D1: mount hints, so unmounted folders keep their cache key offline |
 | `445bd23` | C3: Work Offline (the gate, `saved_list`, model, explorer, main window, four other windows, tests) |
+| `02386d7`, `3b2223f` | This handoff |
+| `1dfeba3` | Merge of `dev/v0.0.6` at `3eb0fbf` (Quick Fixes 2) |
+| `dfc7879` | The mount-hint test with Windows' own share spelling (CI 40272585640's Windows failure) |
+| `046c3c2` | Review round 1: 1 P1 and 4 P2, with tests |
+| `a30f671` | Review round 2: a disk mounted anywhere wins over a hint |
+| `1a13d1b` | Review round 3: any mount above a hint wins unless transparent |
+| `276e571` | Review round 4's record (no finding) and its platform probe |
 
 Checks at `445bd23`:
 - Full suite (`-n 4 --reruns 5 --reruns-delay 1`): 4382 passed, 2 skipped, **no RERUN**.
@@ -109,7 +116,13 @@ missing.
 - **Writing:** source helpers record the share or volume (`smb://server/share`, `vol://<id>`) at
   each source path's mount, never the system volume's, and only when it changed (best effort).
 - **Reading:** an offline request (`"offline"` in its cache options, from `store_options()`) adds
-  them back in `_cache_store` at mount paths nothing is mounted at now. A mount there now wins.
+  them back in `_cache_store` (`_offline_mounts`).
+  - A hint is used only when nothing is mounted at its path or above it now, apart from
+    transparent mounts.
+  - **Transparent** (`_transparent_mount`): the system volume (`fixed_mount`) and pseudo filesystems
+    (`TRANSPARENT_FILESYSTEMS`: tmpfs, devtmpfs, devfs, overlay, proc, sysfs…).
+  - **Any other current mount wins** over the hint, whatever its filesystem: a disk, a share, NFS,
+    FUSE, autofs or anything unknown. The folder there is that mount's own (review rounds 1–3).
 
 ### The gate (C3)
 
@@ -221,21 +234,68 @@ share, restart, browse and plot.
 12. **Log:** one INFO line "Work Offline on: cached data only", then a "Working offline: no …" line
     once per refused operation kind.
 
-## Review round 1 (Vernier)
+## Review (Vernier, Codex: four rounds) and CI
 
-Fixed, each with a test that fails without it: see `notes.md` › "Review round 1 fixes".
-- **P1:** a finished ordinary load's source-reading cache write stops on going offline, saying why.
-- **P2:**
-  - saves asked for before the switch keep their authorization;
-  - a current volume or share containing a hint's path wins over the hint;
-  - Work Online cancels offline listings in flight;
-  - newer listings win inside the write transaction.
+Findings, reproducers and probes are in `review-findings.md` and the `review-probe-*.py` files
+beside it. Every fix has a test that fails without it. Details: `notes.md`, "Review round 1 fixes"
+to "Review round 3 fix".
 
-Also:
-- The tests deny real source calls (`deny_source`).
-- The window test relists two tabs.
-- Proposed AGENTS.md addition: "Work Offline stops a finished load's cache write, which re-reads
-  the folder; its data stays in RAM and its next online load saves it."
+**Round 1 (`3b2223f`): 1 P1 and 4 P2, fixed in `046c3c2`.**
+- **P1:** a finished ordinary load's cache write, which re-reads the folder, now stops when Work
+  Offline starts, saying why. Its data stays in RAM; saves the user asked for go on.
+- **P2:** saves asked for before the switch keep their authorization.
+- **P2:** a current mount containing a hint's path wins over the hint.
+- **P2:** Work Online cancels offline listings in flight.
+- **P2:** "newer listing wins" is decided inside the write transaction.
+- **Tests:** `deny_source` denies the real source calls offline, and the window test relists two
+  tabs.
+
+**Round 2 (`046c3c2`): round 1 confirmed fixed, including P1 through a real helper. One P2 fixed in
+`a30f671`:** a disk mounted at a custom path (ext4 at `/srv/lab`) now wins over a hint below it.
+
+**Round 3 (`a30f671`): one P2 fixed in `1a13d1b`.** An NFS4 mount at a custom path (`remote=False`
+from psutil) still missed. As CoCo asked, the rule is inverted: any current mount wins unless
+transparent.
+
+**Round 4 (`1a13d1b`): no finding; the review is complete.**
+- Vernier's platform probe (`review-probe-round4-platform.py`) checked macOS (firmlinks, devfs,
+  autofs maps, `/System/Volumes/*`), Windows (C: or D: as the system drive, mapped drives) and
+  other filesystem types.
+- Acceptance probes: 81 passed. Full suite: 4428 passed, no RERUN.
+- autofs stays non-transparent on purpose: a map blocks a stale nested share hint.
+
+**CI:**
+- **40272585640 (`3b2223f`):** macOS and Ubuntu passed. Windows failed one test in all 6 attempts:
+  the mount-hint test gave a share macOS's `user@host` source, which Windows treats as WebDAV.
+  Fixed in `dfc7879`; D1 itself is fine on Windows.
+- **40279097363 (`276e571`):** builds passed on all three OSes.
+  - **macOS:** 4428 passed, 2 skipped, **1 RERUN**:
+    `test_folder_summary.py::test_disk_cache_summary_tracks_shared_save_completion[cache_saved]`.
+    Its reason: the second tab's cache line read "Cached data loaded · Cached just now · Freshness
+    unknown" instead of the same line without " · Freshness unknown".
+    - It passed on its retry, and 12 local runs of the file under `-n 4` never failed.
+    - This branch doesn't touch it. Proposed as a known-issues entry (a timing race: the second
+      tab's row has no folder modified time yet).
+  - **Ubuntu:** 4426 passed, 4 skipped, no RERUN.
+  - **Windows:** 7 failed, 4401 passed, 18 skipped, 35 reruns. Every rerun was one of the 7 failing
+    tests, each retried 5 times:
+    - `test_a_volume_or_share_mounted_above_a_hint_wins_over_it`;
+    - `test_a_disk_mounted_anywhere_wins_over_a_hint_below_it[True|False]`;
+    - `test_any_mount_at_a_custom_path_wins_over_a_hint_below_it_unless_transparent[nfs4|fuse|cifs|autofs]`.
+  - **Cause: the tests, not the code.**
+    - The 7 tests build POSIX mounts (`/`, `/tmp`, `/srv/lab`). On a Windows runner `/` isn't the
+      system drive (`fixed_mount` there is `SystemDrive`), so the fake `/` mount counted as a
+      current mount above every hint.
+    - Both Windows hint tests passed, including `dfc7879`'s.
+  - **Fix (tests only, the commit after `276e571`):**
+    - The 7 tests are marked POSIX-only (`POSIX_MOUNTS`).
+    - The Windows-logic test (`test_a_windows_mapped_drive_…`, Windows rules on every OS) now also
+      checks the inverted rule: a share hinted at a folder of the system drive (`C:\shares\lab`)
+      stays usable offline, and a drive attached now (`D:`) wins over a hint below it.
+    - Local full suite: 4428 passed, 2 skipped, no RERUN.
+
+Proposed AGENTS.md addition: "Work Offline stops a finished load's cache write, which re-reads the
+folder; its data stays in RAM and its next online load saves it."
 
 ## Open points and caveats
 
