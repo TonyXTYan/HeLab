@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from PyQt6 import sip
 from PyQt6.QtCore import QByteArray, QObject, QSettings, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QDockWidget, QMainWindow, QMessageBox
 
 from helab.analysis.dataset_view import DatasetView, view_of
@@ -318,7 +319,9 @@ def open_arrangement(scripts: TreePanelWidget, cache: FolderCache, arrangement: 
             continue
         dock.setObjectName(saved.dock_name or DOCK_NAME.format(len(opened)))
         if saved.settings_width:
-            dock.settings.open_width = saved.settings_width
+            screen = QGuiApplication.primaryScreen()
+            widest = screen.availableGeometry().width() if screen is not None else saved.settings_width
+            dock.settings.open_width = max(dock.settings.MIN_WIDTH, min(saved.settings_width, widest))
         if saved.settings_open:
             dock.set_settings_open(True)
         first = None if saved.floating else firsts.get(saved.group)

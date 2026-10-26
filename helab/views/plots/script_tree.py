@@ -280,7 +280,7 @@ class TreePanelWidget(QWidget):
         if isinstance(found, str):
             return found
         metadata, script = found
-        if keep_id and saved.instance_id.isdigit() and saved.instance_id not in self._analysis_instances:
+        if keep_id and saved.instance_id.isdecimal() and saved.instance_id not in self._analysis_instances:
             instance_id = saved.instance_id
             self._instance_counter = max(self._instance_counter, int(instance_id))
         else:
@@ -294,6 +294,11 @@ class TreePanelWidget(QWidget):
             return f"it failed: {error}"
         self._analysis_instances[instance_id] = instance
         instance.start(saved, wait)
+        if instance.open_error:
+            # Without its settings page it would be recorded with none: it couldn't reopen (kept).
+            del self._analysis_instances[instance_id]
+            instance.close()
+            return f"it failed: {instance.open_error}"
         if place:
             self._add_dock(instance)
         return instance

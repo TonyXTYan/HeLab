@@ -717,6 +717,41 @@ def test_the_not_reopened_question_closes_as_keep(qtbot: QtBot, cache: FolderCac
     assert reopen.kept == [kept]
 
 
+def test_a_plot_whose_settings_fail_to_open_isnt_reopened_but_kept(
+        qtbot: QtBot, cache: FolderCache, windows: Windows, monkeypatch: pytest.MonkeyPatch) -> None:
+    """C-22: a reopened plot whose settings page failed to open was still returned, with no
+    settings, and the next record saved it so: its settings lost for good. It couldn't reopen."""
+    window = new_window(qtbot, cache, windows)
+    saved = full(window, ScriptRef("tests.counted", "Plot", "1", "", "Counted"), folder("run"), bins=7)
+
+    def broken(self: Counted, action_name: str) -> tuple[int, int]:
+        raise RuntimeError("no size today")
+    with monkeypatch.context() as patch:
+        patch.setattr(Counted, "minimum_size", broken)  # (Asked only as its settings page opens.)
+        made = window.scripts.reopen_plot(saved, FolderWait(cache, folder("run")))
+    assert made == "it failed: no size today" and window.scripts.instances() == []
+    reopen = PlotReopen(window.plots, window.scripts)
+    reopen.kept = [saved]
+    reopen.record()
+    assert parse(read_setting(app_settings(), OPEN_PLOTS_SETTING)).plots[0].values["bins"] == 7
+
+
+def test_a_reopened_plots_odd_number_and_width_are_taken_safely(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """C-22: a saved number of digits ``int`` can't read ("²") aborted the whole reopen, and a
+    settings width had no upper bound."""
+    window = new_window(qtbot, cache, windows)
+    saved = full(window, ScriptRef("tests.counted", "Plot", "1", "", "Counted"), folder("run"))
+    made = window.scripts.reopen_plot(dataclass_replace(saved, instance_id="²"), FolderWait(cache, folder("run")),
+                                      keep_id=True)
+    assert isinstance(made, AnalysisInstance) and made.instance_id.isdecimal()
+    opened, _ = open_arrangement(window.scripts, cache, Arrangement((dataclass_replace(saved, settings_width=10**9),)))
+    screen = QApplication.primaryScreen()
+    assert screen is not None
+    dock = cast(AnalysisDock, opened[0][0].dock_widget)
+    assert dock.settings.open_width <= screen.availableGeometry().width()
+
+
 def test_reopen_runs_from_ram_without_any_request(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
     window = new_window(qtbot, cache, windows)
     entry = load_through_the_cache(cache, folder("ram"), range(1, 4), "v1", allow_missing=False)

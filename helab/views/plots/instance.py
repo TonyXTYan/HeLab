@@ -200,6 +200,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._wait: Optional[FolderWait] = None
         self._waiting_message: Optional[QLabel] = None
         self.reopen_check: Optional[PlotCheck] = None  # What its saved settings gave when reopened
+        self.open_error = ""  # Why its settings page couldn't open ("": it did)
 
     @property
     def view(self) -> DatasetView:
@@ -225,6 +226,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             # Qt slot the exception would abort the app).
             logging.exception("%s could not open its settings", self.name)
             message.setText(f"{self.name} failed: {error}")
+            self.open_error = str(error) or type(error).__name__
             return
         if saved is None or wait is None:
             self.run()
