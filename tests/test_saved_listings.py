@@ -261,3 +261,33 @@ def test_the_cache_tab_shows_and_clears_folder_listings(
         assert admin_request(service, "clear").payload["params"] == {"kinds": ["listings"]}
     finally:
         service.shutdown()
+
+
+# Mount hints (cache-only browsing D1): a folder on a share that is no longer mounted keeps its key
+# offline, through the share last seen at its mount path.
+
+@pytest.mark.no_auto_data_root
+def test_an_unmounted_shares_listing_is_found_offline_through_its_mount_hint(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.utils.cache_paths import Mount, current_mounts
+    from helab.utils.data_roots import new_marker
+    share = tmp_path / "Volumes" / "lab-data"
+    share.parent.mkdir()
+    data_folder(share)
+    _, marker = new_marker(str(share))
+    (share / ".helab-root").write_bytes(marker)
+    mounted = [*current_mounts(), Mount("//operator@server.example/LabData", str(share), "smbfs", True)]
+    monkeypatch.setattr(stores, "_mounts", lambda reason: mounted)
+    cache = options(tmp_path)
+    listed(str(share), cache)
+    with CacheStore(cache["directory"], root_mode=True) as store:
+        assert store.mount_hints() == {str(share): "smb://server.example/labdata"}
+    # Unmounted: only an offline request keys it, through the hint.
+    monkeypatch.setattr(stores, "_mounts", lambda reason: current_mounts())
+    assert saved_listing(str(share), cache).missing
+    found = saved_listing(str(share), {**cache, "offline": True}).value
+    assert found is not None and found["names"] == ["run_a", "run_b"]
+    # Another share mounted at that path now wins: the hint is not used for it.
+    other = [*current_mounts(), Mount("//server.example/Other", str(share), "smbfs", True)]
+    monkeypatch.setattr(stores, "_mounts", lambda reason: other)
+    assert saved_listing(str(share), {**cache, "offline": True}).missing

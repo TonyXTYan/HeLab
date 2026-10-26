@@ -127,6 +127,12 @@ CREATE TABLE IF NOT EXISTS datasets (
 CREATE INDEX IF NOT EXISTS datasets_last_used ON datasets (last_used);
 """ + "".join(f"{statement};\n" for statement in RESULT_SCHEMA)
 
+# Cache-only browsing (D1): the share or volume last seen at each mount path, as its location's top
+# (``smb://server/share`` or ``vol://<id>``), recorded by source helpers. Only offline requests use
+# them, and only for a mount path nothing is mounted at now, so a folder on an unmounted share keeps
+# its cache key.
+MOUNT_HINTS_SCHEMA = ("CREATE TABLE IF NOT EXISTS mount_hints "
+                      "(mount_path TEXT PRIMARY KEY, location TEXT NOT NULL, seen_at REAL NOT NULL);\n")
 ROOT_SCHEMA = """
 CREATE TABLE IF NOT EXISTS roots (
     location TEXT PRIMARY KEY, uuid TEXT NOT NULL, kind TEXT NOT NULL,
@@ -137,7 +143,7 @@ CREATE INDEX IF NOT EXISTS roots_uuid ON roots (uuid);
 CREATE TABLE IF NOT EXISTS root_volumes (
     mount_path TEXT NOT NULL, mount_source TEXT NOT NULL, volume_id TEXT NOT NULL,
     seen_at REAL NOT NULL, PRIMARY KEY (mount_path, mount_source));
-"""
+""" + MOUNT_HINTS_SCHEMA
 
 
 def _root_epoch(key: str) -> str | None:
@@ -521,6 +527,7 @@ class CacheStore:
                 self._results_table = _has_table(self._conn, "results")
                 # (Nor the listings table: no folder was listed for offline browsing.)
                 self._listings_table = _has_table(self._conn, "listings")
+                self._mount_hints_table = _has_table(self._conn, "mount_hints")
                 self._pending_results = _has_table(self._conn, "pending_results")
                 meta = self._meta()
                 self.layout_version = int(meta["layout_version"])
@@ -649,6 +656,24 @@ class CacheStore:
         except sqlite3.Error as exc:
             raise StoreError(f"Data-root volumes could not be read: {exc}") from exc
         return [(str(path), str(source), str(identifier)) for path, source, identifier in rows]
+
+    def mount_hints(self) -> dict[str, str]:
+        """The share or volume last seen at each mount path (location tops), for offline keys; {}
+        for a read-only store from before them."""
+        if not self._mount_hints_table:
+            return {}
+        try:
+            rows = self._conn.execute("SELECT mount_path, location FROM mount_hints").fetchall()
+        except sqlite3.Error as exc:
+            raise StoreError(f"Mount hints could not be read: {exc}") from exc
+        return {str(path): str(location) for path, location in rows}
+
+    def record_mount_hint(self, mount_path: str, location: str) -> None:
+        with self.transaction():
+            self._conn.execute(
+                "INSERT INTO mount_hints (mount_path, location, seen_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(mount_path) DO UPDATE SET location=excluded.location, seen_at=excluded.seen_at",
+                (mount_path, location, time.time()))
 
     def record_volume(self, mount_path: str, mount_source: str, identifier: str) -> None:
         with self.transaction():
@@ -2493,25 +2518,26 @@ def _migrate(conn: sqlite3.Connection) -> None:
     """Bring a store made by an earlier HeLab of this layout up to date, on every writable open:
     the ``folder_constants`` table (F0b), ``datasets.raw_times`` (D7; ``[]``: no raw times
     known), the ``presets`` table and the ``results`` table with its ``gen_results`` generation
-    (result caching R2), and the ``listings`` table with its ``gen_listings`` generation (cache-only
-    browsing C2). ``SCHEMA`` gives a new store all of them; a store created before one is
+    (result caching R2), and the ``listings`` table with its ``gen_listings`` generation and the
+    ``mount_hints`` table (cache-only browsing C2, D1). ``SCHEMA`` gives a new store all of them; a store created before one is
     never created again, so without this it would lack it for good. Older HeLabs name the tables
     and columns they use, so they keep working with these (they never read or clear results).
     Checked again under the write lock: several helpers may open an old store at once, and only
     the first one changes it."""
-    def missing() -> tuple[bool, bool, bool, bool, bool]:
+    def missing() -> tuple[bool, bool, bool, bool, bool, bool]:
         return (not _has_table(conn, "folder_constants"),
                 _has_table(conn, "datasets") and not _has_raw_times(conn),
                 not _has_table(conn, "presets"),
                 not _has_table(conn, "results") or not _has_table(conn, "pending_results") or conn.execute(
                     "SELECT 1 FROM meta WHERE key = 'gen_results'").fetchone() is None,
                 not _has_table(conn, "listings") or conn.execute(
-                    "SELECT 1 FROM meta WHERE key = 'gen_listings'").fetchone() is None)
+                    "SELECT 1 FROM meta WHERE key = 'gen_listings'").fetchone() is None,
+                not _has_table(conn, "mount_hints"))
     if not any(missing()):
         return
     conn.execute("BEGIN IMMEDIATE")
     try:
-        constants, raw_times, presets, results, listings = missing()  # (Another helper may have added them meanwhile.)
+        constants, raw_times, presets, results, listings, hints = missing()  # (Another helper may have added them meanwhile.)
         if constants:
             conn.execute("CREATE TABLE IF NOT EXISTS folder_constants "
                          "(path TEXT PRIMARY KEY, record TEXT NOT NULL, set_at REAL NOT NULL)")
@@ -2529,6 +2555,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
                          "(path TEXT PRIMARY KEY, record TEXT NOT NULL, saved_at REAL NOT NULL)")
             conn.execute("CREATE INDEX IF NOT EXISTS listings_saved_at ON listings (saved_at)")
             conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('gen_listings', '0')")
+        if hints:
+            conn.execute(MOUNT_HINTS_SCHEMA)
         conn.execute("COMMIT")
     except BaseException:
         conn.execute("ROLLBACK")
