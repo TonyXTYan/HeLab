@@ -696,6 +696,27 @@ def test_a_waiting_reopened_plot_never_runs_on_a_live_revision_by_itself(
     assert made.waiting() and not made.job_id and made.result is None
 
 
+def test_the_not_reopened_question_closes_as_keep(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """C-20: "Plots not reopened" had no escape button, so Esc, the title bar's close and quit's
+    ``close()`` left it up. Closing it is Keep for later (the default): the plots stay kept."""
+    window = new_window(qtbot, cache, windows)
+    reopen = PlotReopen(window.plots, window.scripts)
+    kept = SavedPlot(ScriptRef("tests.missing", "Plot", "1", "", "Missing"), folder("run"))
+    reopen.kept = [kept]
+    reopen.ask(["Missing (not loaded)"])
+    box = reopen._question
+    assert box is not None and box.isVisible()
+    qtbot.keyClick(box, Qt.Key.Key_Escape)  # type: ignore[no-untyped-call]
+    qtbot.waitUntil(lambda: sip.isdeleted(box) or not box.isVisible(), timeout=5_000)
+    assert reopen._question is None and reopen.kept == [kept]
+    reopen.ask(["Missing (not loaded)"])
+    again = reopen._question
+    assert again is not None
+    reopen.quit()
+    assert sip.isdeleted(again) or not again.isVisible()
+    assert reopen.kept == [kept]
+
+
 def test_reopen_runs_from_ram_without_any_request(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
     window = new_window(qtbot, cache, windows)
     entry = load_through_the_cache(cache, folder("ram"), range(1, 4), "v1", allow_missing=False)

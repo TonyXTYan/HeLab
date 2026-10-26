@@ -418,6 +418,7 @@ class PlotReopen(QObject):
         keep = box.addButton("Keep for later", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("Drop", QMessageBox.ButtonRole.DestructiveRole)
         box.setDefaultButton(keep)
+        box.setEscapeButton(keep)  # Esc, the title bar's close and quit's close(): kept, as unanswered.
         # Not modal: the window stays usable at start (``open()`` would make it window-modal).
         box.setWindowModality(Qt.WindowModality.NonModal)
         box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
