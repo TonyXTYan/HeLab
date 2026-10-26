@@ -18,8 +18,8 @@ from helab.utils.io_service import IOService
 from helab.utils.time_format import clock as stopwatch, relative_age
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderExplorer import (
-    AMBER, AUTO_LOAD_OFF, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, LOAD_ORIGINS, REFUSED_TOOLTIP,
-    LOAD_SPINNER, FolderExplorer,
+    AMBER, AUTO_LOAD_OFF, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP,
+    LOAD_SPINNER, FolderExplorer, load_origin,
 )
 from helab.views.explorer_text import large_text
 
@@ -379,7 +379,7 @@ class FolderDetailsPanel(QScrollArea):
                     "Load time: running time, without queued or paused time" if took is not None else "",
                     "The folder was not modified since the disk cache; nothing was read"
                     if meta.get("unchanged") else ""))))
-        origin = LOAD_ORIGINS.get(explorer.load_source) if opened else None
+        origin = load_origin(explorer.load_source, explorer.load_counts) if opened else None
         if origin:
             rows["source"] = (origin, "\n".join(filter(None, (
                 explorer.load_cache_reason, " · ".join(explorer.load_count_details), explorer.load_cache_warning))))

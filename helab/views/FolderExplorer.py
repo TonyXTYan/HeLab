@@ -7,7 +7,7 @@ import logging
 import math
 import os
 import time
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Mapping
 
 import numpy as np
 import numpy.typing as npt
@@ -35,8 +35,19 @@ from helab.views.explorer_live import LiveController, LiveSession
 from helab.views.explorer_text import large_text, plural
 
 # Where a load's data came from, as the cache summary and Folder details name it.
-LOAD_ORIGINS = {"disk": "disk cache", "files": "TXY files", "merged": "disk cache + new TXY files",
-                "updated": "memory + new TXY files", "memory": "memory"}
+LOAD_ORIGINS = {"disk": "disk cache", "files": "TXY files", "memory": "memory"}
+
+
+def load_origin(source: str, counts: Mapping[str, int]) -> str:
+    """Where the shown data came from ("" if unknown). A merged or updated load names what it
+    reused and how many TXY files it read (``load_counts``): "disk cache + 2 TXY files read",
+    "memory + disk cache + 1 TXY file read", or "disk cache" / "memory" when it read none."""
+    if source not in ("merged", "updated"):
+        return LOAD_ORIGINS.get(source, "")
+    parts = ["disk cache"] if source == "merged" else ["memory", *(["disk cache"] if counts.get("reused_disk") else [])]
+    if read := counts.get("read", 0):
+        parts.append(f"{read:,} TXY file{'' if read == 1 else 's'} read")
+    return " + ".join(parts)
 # A folder without cached data that wasn't loaded automatically: the disk cache is 80% full.
 AUTO_LOAD_PAUSED = "Auto-load paused — disk cache 80% full"
 AUTO_LOAD_PAUSED_TOOLTIP = ("Load this folder now. Automatic loading of folders without cached data is paused "
@@ -1840,7 +1851,7 @@ class FolderExplorer(QWidget):
         elif cache.disk_cached(path) and freshness.value:
             text += f" · {freshness.value}"
         self.folder_cache_label.setText(text)
-        origin = LOAD_ORIGINS.get(self.load_source)
+        origin = load_origin(self.load_source, self.load_counts)
         details = self.load_count_details if current else []
         exact = (datetime.fromtimestamp(saved_at).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
                  if isinstance(saved_at, (int, float)) else "")
