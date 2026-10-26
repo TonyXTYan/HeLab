@@ -57,7 +57,7 @@ class Lab:
         self.view = folder_view(tmp_path)
         self.answers: list[tuple[str, bool]] = []
         self.held: list[tuple[IORequest, dict[str, Any]]] = []
-        cache.resultPendingAnswered.connect(lambda pending_id, done, _: self.answers.append((pending_id, done)))
+        cache.resultPendingAnswered.connect(lambda pending_id, done, _, why: self.answers.append((pending_id, done)))
 
     def plot(self, scale: int, *, wait: bool = True) -> tuple[AnalysisInstance, Noisy]:
         script = Noisy(scale)
@@ -280,7 +280,7 @@ def test_waiting_x_clear_drops_the_question(lab: Lab, what: str) -> None:
     instance, pending_id = lab.waiting(1)
     lab.removal(what)
     assert pending_id not in lab.cache.pending_results and lab.store_rows() == (0, 0)
-    assert (pending_id, False) in lab.answers and "discarded" in instance.status_label.text()
+    assert (pending_id, False) in lab.answers and "its cached analysis was cleared" in instance.status_label.text()
 
 
 def test_waiting_x_purge_of_its_folder_drops_the_question(lab: Lab) -> None:
@@ -290,7 +290,7 @@ def test_waiting_x_purge_of_its_folder_drops_the_question(lab: Lab) -> None:
     lab.removal("purge")  # Takes Scale 1 and moves the folder's epoch: the waiting one's guard breaks.
     assert pending_id not in lab.cache.pending_results and lab.store_rows() == (0, 0)
     assert (pending_id, False) in lab.answers
-    lab.qtbot.waitUntil(lambda: "discarded" in instance.status_label.text(), timeout=WAIT)
+    lab.qtbot.waitUntil(lambda: "its cached analysis was cleared" in instance.status_label.text(), timeout=WAIT)
 
 
 def test_waiting_x_discard(lab: Lab) -> None:

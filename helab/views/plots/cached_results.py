@@ -49,6 +49,8 @@ from helab.utils.number_format import byte_size
 from helab.utils.settings_defaults import RESULT_REUSE_SETTING, read_setting
 from helab.utils.settings_store import app_settings
 
+from helab.utils.folder_cache import (PENDING_CLEARED, PENDING_DISCARDED, PENDING_EXPIRED, PENDING_STORE)
+
 if TYPE_CHECKING:
     from PyQt6.QtCore import QSettings
 
@@ -56,8 +58,16 @@ if TYPE_CHECKING:
     from helab.utils.folder_cache import FolderCache
 
 
-# The plot's status while its result waits for the user's answer (replaced once answered).
+# The plot's status while its result waits for the user's answer (replaced once answered), and
+# what it says when that result wasn't saved, by why (Tony, 2026-10-26: an expired or recreated
+# one says what happened, not "discarded").
 PENDING_NOTE = "not saved yet: the disk cache is full (Make room or Discard)"
+NOT_SAVED_NOTES = {
+    PENDING_DISCARDED: "not saved in the disk cache (discarded)",
+    PENDING_EXPIRED: "not saved (expired): it waited over an hour for Make room",
+    PENDING_STORE: "not saved: the disk cache was recreated",
+    PENDING_CLEARED: "not saved: its cached analysis was cleared",
+}
 # How long a lookup its folder's unverified volume refused waits for this session's volume
 # verification before the plot computes (Tony, 2026-10-26), and how long, from the refusal, its
 # save (or a refused save) waits on for it before the result is left unsaved.
@@ -338,10 +348,10 @@ class CachedRuns(QObject):
                 if not self._closed():
                     self._evicted(job_id)
 
-    @pyqtSlot(str, bool, str)
-    def _pending_answered(self, pending_id: str, saved: bool, result_id: str) -> None:
+    @pyqtSlot(str, bool, str, str)
+    def _pending_answered(self, pending_id: str, saved: bool, result_id: str, reason: str) -> None:
         """The user answered a result that didn't fit (Make room: saved, as row ``result_id``;
-        Discard), or it expired."""
+        Discard), or it went otherwise (``reason``: expired, its store recreated, cleared)."""
         waiting = self._waiting.pop(pending_id, None)
         if waiting is None or self._closed():
             return
@@ -351,7 +361,7 @@ class CachedRuns(QObject):
         if saved:
             self._saved(replace(result, policy=DISK_CACHED), size)
         else:
-            self._note("not saved in the disk cache (discarded)")
+            self._note(NOT_SAVED_NOTES.get(reason, "not saved in the disk cache"))
 
     @pyqtSlot(object, object)
     def _cache_removed(self, paths: Any, kinds: Any) -> None:

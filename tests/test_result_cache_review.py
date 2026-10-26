@@ -204,7 +204,7 @@ def test_make_room_evicting_a_result_of_the_same_folder_saves_the_new_one(
     [entry] = cache.pending_results.values()
     assert entry["room"]["possible"] and len(entry["room"]["result_ids"]) == 1
     answers: list[bool] = []
-    cache.resultPendingAnswered.connect(lambda pending_id, done, _: answers.append(done))
+    cache.resultPendingAnswered.connect(lambda pending_id, done, _, why: answers.append(done))
     make_room_button(dialogs).click()
     qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
     assert answers == [True] and results_saved() == 1

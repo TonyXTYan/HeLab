@@ -183,8 +183,8 @@ class FolderCache(QObject):
     # Pending saves (waiting for Make room / Save update) were added or answered.
     pendingSavesChanged = pyqtSignal()
     # A saved analysis result that waited for the user (R2) was saved (True) or not (False): its
-    # pending_id, and saved, its row's result_id ("" if not).
-    resultPendingAnswered = pyqtSignal(str, bool, str)
+    # pending_id, and saved, its row's result_id ("" if not); not saved, why (``PENDING_*``).
+    resultPendingAnswered = pyqtSignal(str, bool, str, str)
     # Make room evicted saved results: their result_ids (a newer copy of one of those keys has another).
     resultsEvicted = pyqtSignal(object)
     # Folders' saved analysis results (the row badge) changed: their keys, or None (every folder, or
@@ -2814,7 +2814,7 @@ class FolderCache(QObject):
             self.resultCountsChanged.emit(None)
         gone = {pending_id for pending_id, entry in self.pending_results.items() if entry.get("store") != store}
         for pending_id in gone:
-            self.resultPendingAnswered.emit(pending_id, False, "")
+            self.resultPendingAnswered.emit(pending_id, False, "", PENDING_STORE)
         if gone:
             self._forget_pending(gone)
             self.pendingSavesChanged.emit()
@@ -2938,7 +2938,7 @@ class FolderCache(QObject):
             gone = {pending_id for pending_id, entry in self.pending_results.items()
                     if keys is None or self.key(str(entry.get("path", ""))) in keys}
             for pending_id in gone:
-                self.resultPendingAnswered.emit(pending_id, False, "")
+                self.resultPendingAnswered.emit(pending_id, False, "", PENDING_CLEARED)
             self._forget_pending(gone)
         if "datasets" in kinds:
             # The store drops the folders' pending saves with their data.
@@ -3168,12 +3168,14 @@ class FolderCache(QObject):
                 if isinstance(event.get("folder_results"), dict):
                     self._note_result_counts(event["folder_results"], started)
                 self.resultPendingAnswered.emit(pending_id, saved_now,
-                                                str(event.get("result_id") or "") if saved_now else "")
+                                                str(event.get("result_id") or "") if saved_now else "",
+                                                "" if saved_now else PENDING_DISCARDED
+                                                if action == "discard_result" else PENDING_NOT_SAVED)
             self.pendingSavesChanged.emit()
         elif kind == "swept":
             expired: set[str] = {str(pending_id) for pending_id in event.get("expired_ids") or ()}
             for pending_id in expired & set(self.pending_results):
-                self.resultPendingAnswered.emit(pending_id, False, "")
+                self.resultPendingAnswered.emit(pending_id, False, "", PENDING_EXPIRED)
             self._forget_pending(expired)
             logging.info("Disk cache cleanup: %s", event)
         elif kind in ("error", "cancelled"):
@@ -3808,6 +3810,11 @@ NO_ROOT_CONSTANTS = "no .helab-root found here or above"
 UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 # Why a folder's flags or constants chosen while HeLab quits aren't saved.
 QUITTING = "HeLab is quitting"
+# Why a saved analysis result that waited for Make room wasn't saved (``resultPendingAnswered``):
+# the user's Discard; it expired (``cache_store.PENDING_MAX_AGE``, an hour); the store was recreated;
+# its cached analysis was cleared (all, the root's, a purge); Make room didn't save it.
+PENDING_DISCARDED, PENDING_EXPIRED, PENDING_STORE, PENDING_CLEARED, PENDING_NOT_SAVED = (
+    "discarded", "expired", "store", "cleared", "not_saved")
 # ``quit_saves``' entry while presets are being written (it names folders otherwise).
 PRESETS_SAVING = "Presets"
 # Why presets and saved results weren't taken while the cache folder's store was unknown (a failed

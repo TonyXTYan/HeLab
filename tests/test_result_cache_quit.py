@@ -192,3 +192,48 @@ def test_a_store_is_free_only_once_the_app_wide_services_helpers_have_exited(
         forget(request)
     qtbot.waitUntil(lambda: store_free(cache.service), timeout=WAIT)
     close(window)
+
+
+def test_a_waiting_result_that_goes_says_why(frozen: FolderCache) -> None:
+    """C-2 (Tony, 2026-10-26): a waiting result that expired, or whose store was recreated, isn't
+    said to be discarded: resultPendingAnswered carries why."""
+    from helab.utils.folder_cache import PENDING_DISCARDED, PENDING_EXPIRED, PENDING_STORE
+    cache = frozen
+    reasons: list[tuple[str, bool, str]] = []
+    cache.resultPendingAnswered.connect(lambda pending_id, saved, _, why: reasons.append((pending_id, saved, why)))
+
+    def waiting(pending_id: str) -> None:
+        request = save(cache, f"result-save:{pending_id}")
+        answer(cache, request, {"kind": "result_pending", "pending_id": pending_id, "path": RUN, "label": "Costly",
+                                "bytes": 6, "budget": 10, "room": None, "store": "A"}, {"kind": "done"})
+        assert pending_id in cache.pending_results
+    waiting("p1")
+    assert cache.cache_admin("sweep")
+    answer(cache, job(cache, "cache_admin", "sweep"),
+           {"kind": "swept", "expired_ids": ["p1"], "next_deadline": None, "store": "A"}, {"kind": "done"})
+    waiting("p2")
+    assert cache.cache_admin("discard_result", pending_id="p2")
+    answer(cache, job(cache, "cache_admin", "discard_result"),
+           {"kind": "admin_result", "action": "discard_result", "adopted": False, "path": RUN, "store": "A"},
+           {"kind": "done"})
+    waiting("p3")
+    cache._results_store_replaced("B")
+    assert reasons == [("p1", False, PENDING_EXPIRED), ("p2", False, PENDING_DISCARDED), ("p3", False, PENDING_STORE)]
+
+
+def test_the_plot_words_each_reason(qtbot: QtBot, cache: FolderCache, tmp_path: Path,
+                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.utils.folder_cache import PENDING_CLEARED, PENDING_DISCARDED, PENDING_EXPIRED, PENDING_STORE
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    plot = open_plot(window, qtbot, folder_view(tmp_path), Costly())
+    qtbot.waitUntil(lambda: settled(plot), timeout=WAIT)
+    link = plot._cached_runs()
+    shown = cast(AnalysisResult, plot.shown)
+    for why, text in ((PENDING_EXPIRED, "not saved (expired): it waited over an hour for Make room"),
+                      (PENDING_STORE, "not saved: the disk cache was recreated"),
+                      (PENDING_CLEARED, "not saved: its cached analysis was cleared"),
+                      (PENDING_DISCARDED, "not saved in the disk cache (discarded)")):
+        link._waiting[why] = (shown, 6)
+        cache.resultPendingAnswered.emit(why, False, "", why)
+        assert plot.status_label.text().endswith(f"⚠ {text}"), (why, plot.status_label.text())
+    close(window)

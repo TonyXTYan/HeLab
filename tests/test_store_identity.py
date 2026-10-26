@@ -166,7 +166,7 @@ class Timeline:
         self.marks: list[str] = []
         self.owner_store: dict[str, str] = {}
         cache.resultReady.connect(self._result)
-        cache.resultPendingAnswered.connect(lambda pending_id, saved, result_id: self.marks.append(
+        cache.resultPendingAnswered.connect(lambda pending_id, saved, result_id, why: self.marks.append(
             f"claim {result_id[1]}" if saved and result_id else ""))
         cache.cacheRemoved.connect(lambda paths, kinds: self.marks.append(
             "dropped" if paths is None and "results" in kinds else ""))
