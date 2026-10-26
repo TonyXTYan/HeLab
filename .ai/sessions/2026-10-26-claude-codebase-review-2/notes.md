@@ -86,4 +86,38 @@ Read `roadmaps/known-issues.md`.
 
 ## Findings
 
-(Sextant's findings, as they come: fixed + commit / declined + why / needs Tony / held for Cache Only.)
+Outcomes: fixed + commit / declined + why / needs Tony / held for Cache Only.
+
+### Batch 1 (C-1 … C-6)
+
+- **C-1 (low): fixed, `5d495e4`.** `CachedRuns` treated an `unverified` refusal as a failed read.
+  Now:
+  - the lookup is asked again once `volumesVerified` fires (once), and the run waits with its guard
+    still taken before it computes, so the fence rule is unchanged;
+  - a refused save is asked again with its guard and packed bytes (the request's own `blob` object,
+    no copy);
+  - one asked before a verification that ran meanwhile is asked again at once (a verification
+    counter);
+  - after `VERIFY_WAIT` (15 s) without verification, both go on as before. The timer is one per
+    plot, started by the first refusal, so a later refusal may wait less.
+
+  No new wording: the status stays "Looking in the disk cache…". The 15 s constant is my choice
+  (bounded, so a verification that errors never leaves a plot waiting). Tony may want another.
+  Tests: `tests/test_result_cache_unverified.py`, 4 of 5 fail on the old code; the fifth pins the
+  fallback.
+- **C-2 (low, wording): needs Tony.** "not saved in the disk cache (discarded)" also shows for an
+  expired or store-replaced waiting result. Question: carry a reason with
+  `resultPendingAnswered` and word the note "(expired)" / "(the disk cache was recreated)"?
+  The signal is sent from `folder_cache.py` (Cache Only), so the fix spans both floors.
+- **C-3 (quality): fixed, `5d495e4`.** `finished` calls `forget()` for a failed or cancelled run.
+  Test: `test_a_failed_run_cancels_its_lookup_still_out`, a holds-state script whose run starts
+  beside the lookup.
+- **C-4 (low): needs Tony.** Waiting results expire after an hour (`PENDING_MAX_AGE`), though
+  AGENTS.md and the roadmap say they stay for the next session. Question: should the docs say "for
+  an hour", or should waiting results get a longer age? `cache_store.py` is Cache Only's.
+- **C-5 (quality): held for Cache Only.** Drop `remove_results`'s unused `paths` / `_stored_keys`
+  branch and its `by_path` epoch bookkeeping (`cache_store.py:1955–2006`), or keep it with a test.
+  Proposed change: remove the parameters and the branch; run `tests/test_result_store.py` and
+  `test_result_lifecycle.py`.
+- **C-6 (doc): handoff.** Move the `cache_move.verify` item to Fixed (`9d90156`). Job 2 above found
+  the same, plus the `roots_verify` item (`778641a`).
