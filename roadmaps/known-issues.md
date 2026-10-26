@@ -30,18 +30,10 @@ How to use it:
   the folder mismatched, or its cache is cleared), the tab keeps its arrays and later
   plots on screen; a load finding missing shots clears them. Clear the analysis view
   or mark it stale, once plotting exists (Tony, 2026-10-14).
-- [ ] `roots_verify` is missing from `io_helper.CACHE_ONLY`, though `IOService.CACHE_OPERATIONS`
-  lists it: sent without a cache it would fail with a vague `KeyError`. `FolderCache` always
-  sends one, so it can't happen today (2026-10-21).
 - [ ] With a server clock more than 2 s off ours, a change in the same mtime step right after a
   listing (FAT and some shares keep 2 s) isn't seen by the quick check until the folder's next
   change (the next shot) or a Retry / Refresh (R-1's residual, agreed with the reviewer)
   (2026-10-22).
-- [ ] `cache_move.verify` doesn't check saved results' files: they are copied with the cache
-  folder but not verified. Add `SELECT file, bytes FROM results` beside datasets (Result Cache R2,
-  2026-10-23).
-- [ ] A folder whose data root is forgotten while HeLab runs keeps its last saved-result count in
-  memory, hidden, until a listing says otherwise (Result Cache R2, 2026-10-23).
 - [ ] An identity probe (`cache_admin identity`) waits its turn in the local lane (2 processes).
   Behind long local work it starts late, and only its no-progress timeout is capped, so quitting
   waits that long (Quit now skips it) (Result Cache R2, 2026-10-23).
@@ -54,12 +46,14 @@ How to use it:
   runs passed. CI now prints rerun reasons: read them at its next rerun (2026-10-22). No rerun
   in the 23 CI runs to 2026-10-23; a frameless Qt exception there now names where the event
   loop ran (`e326fdf`).
-- [ ] `test_live_plots.py::test_a_following_scatter_updates_its_page_in_place` reran on
-  Ubuntu CI (2026-10-22, run 39731793369): teardown error "Exceptions caught in Qt event loop:
-  TypeError: 'NoneType' object is not callable", again in run 39880474971 (2 of 23 Ubuntu jobs).
-  No traceback, so raised by Qt from C. Not reproduced (12 module runs and 11 full suites in a
-  Linux container, Quick Fixes 2026-10-23). Such an exception now gets a note naming the code
-  that was running Qt's event loop (`e326fdf`): read it in the next rerun's reasons.
+  No rerun in the 36 test jobs since 2026-10-23 (Quick Fixes 2). Its macOS teardown failure
+  (`f9faefd`) may have been the same message-handler race as the scatter test's, which
+  `--no-qt-log` removes (`cd2b0c3`); keep it open a while longer.
+- [ ] `test_result_cache_quit.py::test_an_old_stores_answer_never_says_saved_in_the_recreated_one`
+  reran once on Windows CI (2026-10-26, run 40270085653, job 121400850933): WinError 32 deleting
+  `store-v3\records.sqlite`, although the test now waits for every helper's confirmed exit
+  (`cache_busy()`, `8195fc7`) first. Cause unknown: a handle Windows hadn't released yet, or
+  another process (indexer, antivirus).
 
 Tony (2026-10-22): note these, no fixes for now; raise them again only if they keep
 happening. Counted over the last 12 CI runs from `gh api repos/TonyXTYan/HeLab/actions/jobs/<id>/logs`
@@ -68,6 +62,20 @@ Fixes floor (2026-10-23) fixed four (below). A "worker crashed" on CI with no tr
 CI's 120 s timeout, whose stacks `faulthandler_timeout` now prints.
 
 ## Fixed
+
+Landed in `dev/v0.0.6` from the Quick Fixes 2 floor (fast-forward to `3eb0fbf`, 2026-10-26;
+notes: `.ai/sessions/2026-10-26-claude-quick-fixes-2/notes.md`):
+
+- [x] `cache_move.verify` didn't check saved results' files (`results`, `pending_results`): a copy
+  missing or truncating one passed (`9d90156`).
+- [x] `roots_verify` was missing from `io_helper.CACHE_ONLY` (a vague `KeyError` without a cache);
+  a test keeps it in step with `IOService.CACHE_OPERATIONS` (`778641a`).
+- [x] A folder whose data root was forgotten or replaced while HeLab ran kept its saved-result
+  count in RAM (`28fbc18`).
+- [x] `test_live_plots.py::test_a_following_scatter_updates_its_page_in_place` reran at teardown
+  on Ubuntu ("'NoneType' object is not callable", then "… not QMessageLogContext"): pytest-qt's
+  per-test message-handler swap raced with a Qt message from another thread; Qt log capture is
+  off (`--no-qt-log`, `cd2b0c3`).
 
 Landed in `dev/v0.0.6` from the Windows Store Test floor (fast-forward to `8a4049d`, 2026-10-26;
 notes: `.ai/sessions/2026-10-26-claude-windows-store-test/notes.md`):

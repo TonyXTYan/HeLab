@@ -49,8 +49,9 @@ still to choose (Tony, with the coordinator's proposal).
   (2026-10-13). Step 1 done: the macOS zip holds only `HeLab.app` with its
   symlinks (275 MiB instead of 2152 MiB, checked on the PR #5 build).
 
-- [ ] Finish the status-message audit: verify load-phase labels for `merged`/
+- [x] Finish the status-message audit: verify load-phase labels for `merged`/
   `updated` sources ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#status-messages)) (2026-10-08).
+  Done 2026-10-26 (Quick Fixes 2: `8de9ea6`, `93fb3dd`; Tony agreed the new labels).
 
 - [ ] Data roots follow-ups: smaller items (Remove .helab-root… in the tree,
   every location in the duplicates window, NFS/AFP caching, label rename)
