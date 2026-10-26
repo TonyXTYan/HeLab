@@ -666,7 +666,7 @@ def test_an_automatic_load_waits_for_the_selection_to_settle_only_while_loads_ar
     assert ("load", a) in cache.jobs and not explorer.settling  # Idle: at once.
     start_load(cache, a)
     complete_load(cache, a)
-    explorer._auto_load_at -= FolderExplorer.SETTLE_SECONDS  # A while later.
+    explorer._auto_load_at -= FolderExplorer.SELECTION_SETTLE_SECONDS  # A while later.
     select(explorer, b)
     assert ("load", b) in cache.jobs and not explorer.settling
     cache._observe_cache(c, {"disk_cached": True, "cache_info": {"saved_at": time.time(), "signature": "v1"}})
@@ -730,7 +730,7 @@ def test_a_status_update_during_the_settle_wait_keeps_its_deadline(
     assert explorer.settling and ("load", b) not in cache.jobs
     if loads == "idle":
         complete_load(cache, a)
-        explorer._auto_load_at -= FolderExplorer.SETTLE_SECONDS
+        explorer._auto_load_at -= FolderExplorer.SELECTION_SETTLE_SECONDS
         assert explorer.settle_seconds(b) == 0.0  # Selected now, B would load at once.
     qtbot.wait(100)  # Part of the wait passes: a restarted timer would have more time left.
     before = explorer._dwell.remainingTime()

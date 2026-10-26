@@ -179,7 +179,7 @@ class FolderExplorer(QWidget):
     # Finish and Cancel modes: while loads are busy (running, queued or stopping, or one started
     # moments ago), an automatic load waits until the selection has stayed this long, plus
     # SETTLE_STEP for each queued I/O task, at most SETTLE_MAX seconds; when idle it starts at once.
-    SETTLE_SECONDS = 0.3
+    SELECTION_SETTLE_SECONDS = 0.3
     SETTLE_STEP = 0.1
     SETTLE_MAX = 1.0
     MAX_BACKGROUND_LOADS = 8
@@ -1008,14 +1008,14 @@ class FolderExplorer(QWidget):
 
     def settle_seconds(self, path: str) -> float:
         """How long an automatic load of ``path`` waits for the selection to settle: 0 when no load
-        is running, queued or stopping and none started in the last SETTLE_SECONDS; otherwise
-        SETTLE_SECONDS plus SETTLE_STEP per queued I/O task (not this folder's own), at most SETTLE_MAX."""
+        is running, queued or stopping and none started in the last SELECTION_SETTLE_SECONDS; otherwise
+        SELECTION_SETTLE_SECONDS plus SETTLE_STEP per queued I/O task (not this folder's own), at most SETTLE_MAX."""
         service = self.model.service
         if not (service.load_busy() or service.load_stopping()
-                or time.monotonic() - self._auto_load_at < self.SETTLE_SECONDS):
+                or time.monotonic() - self._auto_load_at < self.SELECTION_SETTLE_SECONDS):
             return 0.0
         queued = sum(1 for request in service.pending if request.path != path)
-        return min(self.SETTLE_MAX, self.SETTLE_SECONDS + self.SETTLE_STEP * queued)
+        return min(self.SETTLE_MAX, self.SELECTION_SETTLE_SECONDS + self.SETTLE_STEP * queued)
 
     def _show_offline(self, path: str, explicit: bool) -> bool:
         """Working offline, a folder's data shows from RAM, else from one cached read, never from
