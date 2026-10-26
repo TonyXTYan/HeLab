@@ -21,20 +21,16 @@ from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 
 
 class AnalysisRunner(QObject):
-    """The app's analysis runner: an ``AnalysisQueue`` (``core``) whose job starts and ends are
-    Qt signals. They are emitted on the worker thread, as the core calls them, and Qt delivers
+    """The app's analysis runner: an ``AnalysisQueue`` (``core``) whose job ends are a Qt
+    signal. They are emitted on the worker thread, as the core calls them, and Qt delivers
     them to receivers on the GUI thread."""
-    # (job_id) when a job starts computing; (AnalysisResult) when it ends, however it ends.
-    started = pyqtSignal(str)
+    # (AnalysisResult) when a job ends, however it ends.
     finished = pyqtSignal(object)
 
     def __init__(self, results: Optional[RamResults] = None, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
-        self.core = AnalysisQueue(results, self._started, self._finished)
+        self.core = AnalysisQueue(results, None, self._finished)
         self.results = self.core.results
-
-    def _started(self, job_id: str) -> None:
-        self.started.emit(job_id)
 
     def _finished(self, result: AnalysisResult) -> None:
         self.finished.emit(result)

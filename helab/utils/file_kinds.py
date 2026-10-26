@@ -19,8 +19,6 @@ class FileKind:
     loaded: bool
     # Its total size is measured (one stat per file). Unmeasured kinds save no ``bytes``.
     sized: bool
-    # Estimated bytes in RAM per byte on disk; 1.0 overestimates TXY (about 0.69x), the safe side.
-    ram_per_byte: float = 1.0
 
 
 RAW = FileKind("raw", re.compile(r"^d(\d+)\.txt$"), loaded=False, sized=False)

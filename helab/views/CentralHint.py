@@ -37,10 +37,9 @@ class ClickableLabel(QLabel):
 
 
 class CentralHint(QWidget):
-    """A hint line, an optional second line and a usage tip (``TIPS``, every ``TIP_SECONDS``).
+    """A hint line and a usage tip (``TIPS``, every ``TIP_SECONDS``).
 
-    Callers set text only; the layout stays centred whatever is shown. Further
-    widgets can be added with ``add_widget`` without changing the hint.
+    Callers set text only; the layout stays centred whatever is shown.
     """
 
     def __init__(self, hint: str = "", parent: QWidget | None = None) -> None:
@@ -48,17 +47,13 @@ class CentralHint(QWidget):
         self._layout = QVBoxLayout(self)
         self._layout.addStretch(1)
         self.hint = QLabel(hint)
-        self.extra = QLabel()
-        for label in (self.hint, self.extra):
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setWordWrap(True)
-            self._layout.addWidget(label)
-        self.extra.setEnabled(False)  # Dimmed, secondary to the hint.
-        self.extra.hide()
+        self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hint.setWordWrap(True)
+        self._layout.addWidget(self.hint)
         self.tip = ClickableLabel()
         self.tip.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.tip.setWordWrap(True)
-        self.tip.setStyleSheet("color: #888;")  # Dimmed like ``extra``, but enabled: it takes clicks.
+        self.tip.setStyleSheet("color: #888;")  # Dimmed, but enabled: it takes clicks.
         self.tip.setToolTip("Click for another tip")
         self.tip.setCursor(Qt.CursorShape.PointingHandCursor)
         self.tip.clicked.connect(self._next_tip_clicked)
@@ -78,10 +73,6 @@ class CentralHint(QWidget):
         self.hint.setText(text)
         self.hint.setToolTip(tooltip)
 
-    def set_extra(self, text: str) -> None:
-        self.extra.setText(text)
-        self.extra.setVisible(bool(text))
-
     def next_tip(self) -> None:
         """The next usage tip, in a shuffled order. The timer moves on only while the hint is
         on screen, so a tip isn't skipped unseen behind a plot."""
@@ -92,10 +83,6 @@ class CentralHint(QWidget):
     def _next_tip_clicked(self) -> None:
         self.next_tip()
         self.tip_timer.start()  # A full interval to read it.
-
-    def add_widget(self, widget: QWidget) -> None:
-        """Add a widget under the hint lines, above the bottom stretch."""
-        self._layout.insertWidget(self._layout.count() - 1, widget)
 
     def text(self) -> str:
         return self.hint.text()

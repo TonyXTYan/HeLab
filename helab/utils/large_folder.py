@@ -1,7 +1,7 @@
 """The large-folder check: how much RAM a load would take, and whether it may start.
 
-The estimate is the loaded kinds' size on disk, unscaled (``FileKind.ram_per_byte``; TXY
-takes about 0.69x of it in RAM, so it errs on the safe side). Above the RAM budget or 10%
+The estimate is the loaded kinds' size on disk, unscaled (TXY takes about 0.69x of it in
+RAM, so it errs on the safe side). Above the RAM budget or 10%
 of RAM a load needs the user's yes; above 30% of RAM it is refused. Imported by isolated
 helpers: nothing here may start Qt. See roadmaps/cache-storage-and-settings.md.
 """

@@ -134,7 +134,6 @@ BIMODAL, BIMODAL_SLICE = "Bimodal TF² + Gaussian", "Bimodal TF^3/2 + Gaussian"
 BOSE, BOSE_SLICE = "Bose g_5/2 thermal", "Bose g_2 thermal (slice)"
 BIMODAL_BOSE, BIMODAL_BOSE_SLICE = "Bimodal TF² + Bose g_5/2", "Bimodal TF^3/2 + Bose g_2"
 BIMODALS = (BIMODAL, BIMODAL_SLICE, BIMODAL_BOSE, BIMODAL_BOSE_SLICE)
-BOSES = (BOSE, BOSE_SLICE)
 # Each bimodal TF + Bose choice's free-z thermal partner (``fit_axis`` fits both).
 BIMODAL_BOSES = {BIMODAL_BOSE: BOSE, BIMODAL_BOSE_SLICE: BOSE_SLICE}
 T_MODELS = (GAUSSIAN, ARRIVAL, BOSE, BOSE_SLICE, BIMODAL, BIMODAL_SLICE, BIMODAL_BOSE, BIMODAL_BOSE_SLICE)

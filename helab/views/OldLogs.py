@@ -24,7 +24,6 @@ class OldLogs(QObject):
     """Tidies the log folder of the app folder ``folder`` once, at startup (``start``)."""
 
     scanned = pyqtSignal(int)  # The bytes of logs left after the count rule (from the thread).
-    trimmed = pyqtSignal(int)  # The bytes left after Delete (from the thread).
 
     def __init__(self, folder: str, parent: QWidget) -> None:
         super().__init__(parent)
@@ -41,7 +40,7 @@ class OldLogs(QObject):
         """Delete the oldest log files beyond ``keep``, then ask if the rest pass ``ASK_BYTES``."""
         self._run(lambda: self._emit(self.scanned, app_log.tidy_logs(self.folder, keep)), "old-logs")
 
-    def _run(self, work: Callable[[], None], name: str) -> None:
+    def _run(self, work: Callable[[], object], name: str) -> None:
         def run() -> None:
             try:
                 work()
@@ -75,4 +74,4 @@ class OldLogs(QObject):
     def _answered(self, button: QAbstractButton) -> None:
         self.box = None
         if button is self.delete_button:
-            self._run(lambda: self._emit(self.trimmed, app_log.trim_logs(self.folder)), "old-logs-delete")
+            self._run(lambda: app_log.trim_logs(self.folder), "old-logs-delete")
