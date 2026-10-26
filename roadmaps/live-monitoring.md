@@ -105,6 +105,12 @@ Codex review); the architecture summary is in AGENTS.md.
   check level's sample of held fingerprints match; otherwise Live stops and the
   folder is listed as mismatched. A single shot rewritten in place outside the
   sample stays under the write-once assumption, as for ordinary loads.
+  A local folder without a `.helab-root` has its device node as Live identity
+  (`io_ops/identity.py`, `fstype:source`), not its volume ID as data roots use: a
+  disk swapped at the same node keeps the identity, and only the sampled stats
+  can catch it (Codebase Review 2, C-16; noted, not changed).
+- Notifications (Shot trends' Notify during Live, Live stopping on an error) show
+  once per key, i.e. once per shot, with no per-minute cap (Tony, 2026-10-26).
 - A new file is read only when settled by age and unchanged since the previous
   check (metadata only, by Tony's decision: its content isn't checked). A writer
   paused longer than the settle age is read unfinished; a shot Live read in the

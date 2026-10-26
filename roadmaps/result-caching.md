@@ -77,6 +77,10 @@ Each stage is one or more reviewable code slices.
 
 ## Open decisions
 
+- Decided (2026-10-26, Tony): a result waiting for Make room lasts 1 h
+  (`PENDING_MAX_AGE`, like waiting dataset saves) and the plot says why when it
+  expires. A lookup on a drive not yet verified this session computes at 15 s and
+  its save waits up to 120 s for verification.
 - Decided (2026-10-23): `store-v3` `results` + `pending_results` tables and
   `results/` `.npz` files, owned by helpers; no separate budget.
 - Coalescing rule for Auto-update cache (every N revisions, time, or both).

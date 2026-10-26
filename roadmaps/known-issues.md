@@ -40,9 +40,20 @@ How to use it:
 - [ ] Mixed versions: an older HeLab's Clear all and root clear don't remove saved listings or
   bump `gen_listings`, and its re-key leaves them at the old key; the next listing re-saves them,
   so harmless (cache-only, 2026-10-26).
+- [ ] Windows cache moves on a venv install (unsure, not seen): a venv's `python.exe` is a
+  redirector that runs the real interpreter as a child; killing it (`_reap`) ends the child only
+  through its job object, so the child may hold files a moment after `wait()` returns, and a move's
+  rename could hit WinError 32 now and then (lab PCs, CI). The move's verify and recovery catch it,
+  but the user sees a failed move. Frozen builds don't have this (Codebase Review 2, 2026-10-26).
 
 ## Tests and CI
 
+- [ ] `test_store_identity.py::test_a_store_in_the_folder_whatever_its_age_ends_quit` failed all
+  6 attempts in 2 of 3 local full runs on Ground at `797cd02` (macOS, `-n 12`; 2026-10-26):
+  `waitUntil` timed out in 30 s at line 317, waiting for `presets_read`, no preset jobs and
+  `store_free(service)`. CI (`-n 4`) and the floor's runs passed. Suspect: `store_free` also counts
+  the app-wide IOService (`5607182`), which under more workers can stay busy past 30 s with
+  another test's helpers. Not yet investigated.
 - [ ] `test_folder_summary.py::test_disk_cache_summary_tracks_shared_save_completion[cache_saved]`
   reran once on macOS CI (2026-10-26, run 40279097363, `276e571`): `assert 'Cached data loaded ·
   Cached just now · Freshness unknown' == 'Cached data loaded · Cached just now'` (line 413). Likely
@@ -57,11 +68,6 @@ How to use it:
   No rerun in the 36 test jobs since 2026-10-23 (Quick Fixes 2). Its macOS teardown failure
   (`f9faefd`) may have been the same message-handler race as the scatter test's, which
   `--no-qt-log` removes (`cd2b0c3`); keep it open a while longer.
-- [ ] `test_result_cache_quit.py::test_an_old_stores_answer_never_says_saved_in_the_recreated_one`
-  reran once on Windows CI (2026-10-26, run 40270085653, job 121400850933): WinError 32 deleting
-  `store-v3\records.sqlite`, although the test now waits for every helper's confirmed exit
-  (`cache_busy()`, `8195fc7`) first. Cause unknown: a handle Windows hadn't released yet, or
-  another process (indexer, antivirus).
 
 Tony (2026-10-22): note these, no fixes for now; raise them again only if they keep
 happening. Counted over the last 12 CI runs from `gh api repos/TonyXTYan/HeLab/actions/jobs/<id>/logs`
@@ -70,6 +76,16 @@ Fixes floor (2026-10-23) fixed four (below). A "worker crashed" on CI with no tr
 CI's 120 s timeout, whose stacks `faulthandler_timeout` now prints.
 
 ## Fixed
+
+Landed in `dev/v0.0.6` from the Codebase Review 2 floor (merge `7327808` at `9e88874`, then
+fast-forward to `797cd02`, 2026-10-26; findings, notes and handoff:
+`.ai/sessions/2026-10-26-claude-codebase-review-2/`; 31 findings, none blocker or high):
+
+- [x] `test_result_cache_quit.py::test_an_old_stores_answer_never_says_saved_in_the_recreated_one`'s
+  remaining Windows rerun (run 40270085653, WinError 32 after `cache_busy()`): a plot's Presets row
+  reads presets through the app-wide IOService, whose preset, identity and inventory helpers opened
+  the test's store uncounted. `store_free()` also counts the app-wide service (`5607182`).
+- [x] An arrangement preset's dock layout could put plots in other plots' places (C-17, C-18).
 
 Landed in `dev/v0.0.6` from the Quick Fixes 2 floor (fast-forward to `3eb0fbf`, 2026-10-26;
 notes: `.ai/sessions/2026-10-26-claude-quick-fixes-2/notes.md`):

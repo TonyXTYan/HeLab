@@ -678,7 +678,7 @@ Notes from finished sessions:
   `close_all_caches` went with the old caches. `load_cache_param` stays for the helpers'
   options until S5. `helab/scripts/dev/` is now `dev/plotting-prototypes/` with a README;
   the prototypes no longer run (they import `LoadFolderToRamWorker`). `SynchronisedDict`
-  stays: the Dash server uses it. Checked offscreen: the main window and Settings open, and
+  stays: the Dash server uses it (no longer, by Codebase Review 2's check, 2026-10-26). Checked offscreen: the main window and Settings open, and
   the Cache tab shows one row. The old `status_cache/` and `os_file_system_cache/` folders
   stay on disk until S5 deletes them.
 - **S4:** `helab/utils/cache_store.py` (`CacheStore`), not yet used by any helper. Reads
@@ -755,7 +755,7 @@ Notes from finished sessions:
   `cache_admin` actions with `params`; `FolderCache` has `cache_admin()`, `removed()`,
   `pending_saves`, the sweep timer and the signals `cacheRemoved`, `pendingSavesChanged` and
   `cacheAdminResult` that S7's tab and dialogs use. Choices made here:
-  - The budget is bytes, default 8 GiB (`DISK_BUDGET_SETTING`, read at startup and after
+  - The budget is bytes, default 8 GB (`DISK_BUDGET_SETTING`, read at startup and after
     Settings; S7 adds the control). It travels in `store_options()`.
   - Live usage counts the records database by its pages in use (`page_count × page_size`),
     not the WAL file, whose size changes with checkpoints rather than with the records.
@@ -866,7 +866,7 @@ Notes from finished sessions:
   - At startup, after the sweep, an inventory restores saves still waiting from an earlier session
     (otherwise they would expire unasked) and the usage for the 80% pause; it is retried if the
     queue is full.
-  - Sizes are binary units shown as "GB" (the budget's 8 GB is 8 GiB), as the status bar already did.
+  - Sizes are binary units shown as "GB" (the budget's 8 GB is 8 GB), as the status bar already did.
   - The RAM budget is saved as steps (`ram_budget_steps`) and counts every dataset held in RAM
     once, including ones only a tab still shows (e.g. invalidated); lowering it drops unshown datasets at
     once and the status bar says what was dropped. The main status bar shows one-time notices
