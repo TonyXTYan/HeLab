@@ -21,9 +21,10 @@ from helab.resources.icons import CHECK_COLOR, LOAD_COLOR, StatusIcons
 from helab.utils.io_service import IORequest
 from helab.utils import large_folder
 from helab.utils.colours import AMBER as AMBER  # Shared; the views import it from here too.
-from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, OFFLINE_TOOLTIP, PENDING_ROOT_TOOLTIP, PENDING_SUMMARY, PLACE_ROOT_ACTION,
-                                      PLACE_ROOT_TOOLTIP, REVIEW_ROOT_TOOLTIP, Dataset, pending_root_text,
-                                      marker_path, store_options)
+from helab.utils import folder_cache
+from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, OFFLINE_TOOLTIP, PENDING_ROOT_TOOLTIP, PENDING_SUMMARY,
+                                      PLACE_ROOT_ACTION, PLACE_ROOT_TOOLTIP, REVIEW_ROOT_TOOLTIP, Dataset,
+                                      pending_root_text, marker_path)
 from helab.utils.number_format import byte_size
 from helab.utils.constants import DEFAULT_LOAD_MODE
 from helab.utils.load_clock import LoadClock
@@ -737,7 +738,7 @@ class FolderExplorer(QWidget):
         self._full_check_paths.discard(path)
         # The user's answer in the mismatched-folders window (``MissingShotsWindow``).
         allow_missing = self.model.cache.take_allow_missing(path)
-        return {"cache": store_options(), "signature": node.signature if node else "",
+        return {"cache": folder_cache.store_options(), "signature": node.signature if node else "",
                 "no_cache": self.model.cache.folder_prefs(path)["no_cache"], "full_check": full_check,
                 # Its cached read runs now: the check counts those shots as held (see io_ops.loading.load).
                 "cache_base": self.model.cache.has_request(self.model.owner, "cached", path),
@@ -1097,7 +1098,7 @@ class FolderExplorer(QWidget):
         self._cache_read_path = path
         self._auto_load_at = time.monotonic()
         return cache.submit(self.model.owner, self.model.generation, path, "cached",
-                            {"cache": store_options(), "verified_volumes": cache.verified_volumes(),
+                            {"cache": folder_cache.store_options(), "verified_volumes": cache.verified_volumes(),
                              **self._large_payload(path, deliberate)}, priority=True)
 
     def _volumes_verified(self) -> None:
@@ -1697,7 +1698,7 @@ class FolderExplorer(QWidget):
                                   "Load" if (paused or off) and not self.load_error else "Retry")
         self.retry_button.setEnabled(bool(self.load_error) or paused or offer_large or off or live_error
                                      or not self.model.refresh_pending(retry_path))
-        self.no_auto_load_button.setVisible(large is not None and not off and idle and bool(store_options()))
+        self.no_auto_load_button.setVisible(large is not None and not off and idle and bool(folder_cache.store_options()))
         mismatched = path in self.model.cache.mismatched
         self.review_button.setVisible(mismatched and idle)
         self.root_review_button.setVisible(self.model.cache.pending_root(path) is not None and not mismatched)
@@ -2168,7 +2169,7 @@ class FolderExplorer(QWidget):
     def place_root_state(self, path: str) -> tuple[bool, str]:
         """Whether Place .helab-root here… is offered for this folder, and its tooltip (memory only)."""
         cache = self.model.cache
-        if not store_options():
+        if not folder_cache.store_options():
             return False, "The disk cache is off for this session"
         if cache.offline:
             return False, OFFLINE_TOOLTIP
@@ -2184,14 +2185,14 @@ class FolderExplorer(QWidget):
         """Right-click › Place .helab-root here…: confirm (with the checks' warnings), then write the
         marker in the chosen folder, or adopt the one there. Whether it was submitted."""
         from helab.views.DataRootDialogs import ask_place_root
-        if self.closed or not store_options() or self.model.cache.offline:
+        if self.closed or not folder_cache.store_options() or self.model.cache.offline:
             return False
         target = ask_place_root(self, self.model.cache, path)
         if target is None:
             return False
         # The folder right-clicked is listed again too when the marker went to its drive's top.
         return self.model.cache.submit(self.model.owner, self.model.generation, target, "root_create",
-                                       {"cache": store_options(), "clicked": path}, priority=True)
+                                       {"cache": folder_cache.store_options(), "clicked": path}, priority=True)
 
     def _review_root(self) -> None:
         if (pending := self.model.cache.pending_root(self.selected_path_globally)) is not None:
@@ -2350,7 +2351,7 @@ class FolderExplorer(QWidget):
         self.model.cache.cancel(self.model.owner, "load")
         self.load_error = ""
         if not self.model.cache.submit(self.model.owner, self.model.generation, path, "invalidate",
-                                         {"cache": store_options()}, priority=True):
+                                         {"cache": folder_cache.store_options()}, priority=True):
             self.load_error = "Cache request queue full — Retry"
         self.loadStateChanged.emit()
 

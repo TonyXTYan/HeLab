@@ -143,7 +143,6 @@ def page(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
         admin.append((action, params))
         return f"job-{len(admin)}"
     monkeypatch.setattr(cache, "cache_admin", cache_admin)
-    monkeypatch.setattr(tab_module, "store_options", lambda: options(tmp_path))
     monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: options(tmp_path))
     settings = DataRootsTab(cache)
     qtbot.addWidget(settings)

@@ -265,7 +265,7 @@ def test_settings_lists_roots_and_forgets_a_location_after_asking(
         jobs.append((action, params))
         return f"job-{len(jobs)}"
     monkeypatch.setattr(cache, "cache_admin", admin)
-    monkeypatch.setattr("helab.views.DataRootsTab.store_options", lambda: {"directory": str(tmp_path)})
+    monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: {"directory": str(tmp_path)})
     page = DataRootsTab(cache)
     qtbot.addWidget(page)
     assert jobs == [("inventory", {})]
@@ -567,7 +567,7 @@ def test_settings_review_opens_the_duplicates_window_at_a_pending_row(
     service = frozen_service(monkeypatch)
     cache = FolderCache(service)
     monkeypatch.setattr(cache, "cache_admin", lambda action, **params: "job")
-    monkeypatch.setattr("helab.views.DataRootsTab.store_options", lambda: {"directory": str(tmp_path)})
+    monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: {"directory": str(tmp_path)})
     page = DataRootsTab(cache)
     qtbot.addWidget(page)
     rows = [{"location": loc, "uuid": str(uuid.uuid4()), "kind": "smb", "label": "run", "first_seen": 1.0e9,

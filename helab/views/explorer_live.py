@@ -16,7 +16,8 @@ import weakref
 from PyQt6.QtCore import QTimer
 
 from helab.utils import events
-from helab.utils.folder_cache import Dataset, store_options
+from helab.utils import folder_cache
+from helab.utils.folder_cache import Dataset
 from helab.utils.io_service import IORequest
 from helab.utils.time_format import relative_age
 from helab.views.explorer_text import large_text, plural
@@ -299,7 +300,7 @@ class LiveController:
         summary line ("" if they can); ``LIVE_BLOCKED`` explains each in the tooltip."""
         cache = self.explorer.model.cache
         path = session.path
-        if not store_options():
+        if not folder_cache.store_options():
             return "disk cache off"
         if cache.folder_prefs(path)["no_cache"]:
             return "Don't cache"
@@ -318,7 +319,7 @@ class LiveController:
             return False
         cache = self.explorer.model.cache
         # Saved from RAM: the folder is listed and its files checked, none read (``io_ops.save_held.save_held``).
-        payload = {"cache": store_options(), "signature": "", "no_cache": False, "check_level": cache.check_level,
+        payload = {"cache": folder_cache.store_options(), "signature": "", "no_cache": False, "check_level": cache.check_level,
                    "limits": cache.large_limits(), "deliberate": False, "allow_large": False,
                    "prefer_base": session.dataset.signature, "save_memory": True,
                    "identity": session.identity, "identity_root": session.identity_root,

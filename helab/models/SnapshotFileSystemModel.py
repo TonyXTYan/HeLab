@@ -22,7 +22,8 @@ from helab.models.StatusReport import StatusReport
 from helab.resources.icons import StatusIcons
 from helab.utils.io_service import IORequest, IOService, get_io_service
 from helab.utils.number_format import byte_size
-from helab.utils.folder_cache import SCANS, analysis_cached_text, data_root_text, get_folder_cache, store_options
+from helab.utils import folder_cache
+from helab.utils.folder_cache import SCANS, analysis_cached_text, data_root_text, get_folder_cache
 from helab.utils.time_format import relative_age
 from helab.utils.cache_freshness import CacheFreshness, cache_freshness, data_as_of, metadata_date
 
@@ -124,7 +125,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache = get_folder_cache(self.service)
         style = QApplication.style()
         self._folder_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon) if style else QIcon()
-        self._cache_options: dict[str, Any] = store_options()
+        self._cache_options: dict[str, Any] = folder_cache.store_options()
         self.owner = uuid4().hex
         self.generation = 0
         self.root: FolderNode | None = None

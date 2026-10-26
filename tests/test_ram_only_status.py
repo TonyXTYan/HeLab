@@ -142,7 +142,7 @@ def tab(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
     """A tab on the RAM-only folder's parent, whose store is the test's own."""
     IconsInitUtil.initialise_icons()
     folder, options = ram_only
-    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.store_options", lambda: options)
+    monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: options)
     service = frozen_service(monkeypatch)
     data_folder(folder.parent / "other")
     root = str(folder.parent)

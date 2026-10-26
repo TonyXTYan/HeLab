@@ -26,7 +26,8 @@ from helab.utils.constants import (
     read_disk_budget, cache_dir_refused, read_live_autosave, read_plot_auto_reload, read_ram_budget_steps, ram_step_bytes, ram_step_range,
     total_ram,
 )
-from helab.utils.folder_cache import FolderCache, store_options
+from helab.utils import folder_cache
+from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import byte_size
 from helab.utils.settings_defaults import RESULT_REUSE_SETTING, read_setting
 from helab.utils.time_format import relative_age
@@ -102,7 +103,7 @@ class CacheTab(QWidget):
         super().__init__(parent)
         self.cache = cache
         self.settings = settings
-        self.enabled = bool(cache is not None and store_options())
+        self.enabled = bool(cache is not None and folder_cache.store_options())
         self.inventory: dict[str, Any] | None = None
         self._inventory_owner = ""
         self._job = ""
@@ -125,7 +126,7 @@ class CacheTab(QWidget):
         location.addWidget(self.location_label, 1)
         self.open_button = QPushButton("Open")
         self.open_button.clicked.connect(lambda: QDesktopServices.openUrl(
-            QUrl.fromLocalFile(str(store_options().get("directory", "")))))
+            QUrl.fromLocalFile(str(folder_cache.store_options().get("directory", "")))))
         location.addWidget(self.open_button)
         self.show_location(refresh=False)
         layout.addLayout(location)
@@ -326,7 +327,7 @@ class CacheTab(QWidget):
 
     def show_location(self, *, refresh: bool = True) -> None:
         """Where the disk cache is now (it can move while Settings is open)."""
-        root = str(store_options().get("directory", ""))
+        root = str(folder_cache.store_options().get("directory", ""))
         self.location_label.setText(root or "Off for this session")
         self.location_label.setToolTip("\n".join(filter(None, (
             root, cache_dir_refused(), "Move it with Change… on the General tab."))))
@@ -558,7 +559,7 @@ class CacheTab(QWidget):
         self.results_button.setEnabled(False)
         self.refresh_button.setEnabled(self.enabled and not self.busy and not self._inventory_owner)
         self.disk_budget.setEnabled(not self.applying)
-        status = ("Off for this session" if not store_options() else
+        status = ("Off for this session" if not folder_cache.store_options() else
                   "Changing the disk budget…" if self._budget_job else f"{self._job_label}…" if self.busy else "Checking…" if self._inventory_owner and inventory is None
                   else "")
         if inventory is None:
@@ -568,7 +569,7 @@ class CacheTab(QWidget):
             self.checked_label.setText(self.message or status)
             self._show_estimates()
             return
-        budget = int(store_options().get("budget") or read_disk_budget(self.settings))
+        budget = int(folder_cache.store_options().get("budget") or read_disk_budget(self.settings))
         usage = int(inventory["usage"])
         extras = []
         if inventory["retired"]["bytes"]:
@@ -629,7 +630,7 @@ class CacheTab(QWidget):
         budget = self.disk_budget_bytes()
         # Compared with the budget in effect (the store's), not the saved setting, which
         # "Reset all settings…" may already have changed.
-        saved = int(store_options().get("budget") or read_disk_budget(self.settings))
+        saved = int(folder_cache.store_options().get("budget") or read_disk_budget(self.settings))
         if self.applying:
             return False
         if budget == saved or not self.enabled or self.cache is None:

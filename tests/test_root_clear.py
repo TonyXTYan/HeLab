@@ -132,7 +132,7 @@ def page(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
         jobs.append((action, params))
         return f"job-{len(jobs)}"
     monkeypatch.setattr(cache, "cache_admin", admin)
-    monkeypatch.setattr(tab_module, "store_options", lambda: {"directory": str(tmp_path)})
+    monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: {"directory": str(tmp_path)})
     settings = DataRootsTab(cache)
     qtbot.addWidget(settings)
     rows = [{"location": "smb://server/dld_output", "uuid": A, "kind": "smb", "label": "dld_output",

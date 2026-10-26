@@ -282,7 +282,7 @@ def test_file_menu_places_a_root_in_the_current_tabs_selected_folder(
     assert not main_window.place_root_in_current_tab() and not asked
     explorer.model.cache._root_gone(selected)
     # The disk cache off for this session.
-    monkeypatch.setattr("helab.views.FolderExplorer.store_options", lambda: {})
+    monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: {})
     assert shown()[1:] == (False, f"{selected}\nThe disk cache is off for this session")
     # No folder tab.
     monkeypatch.setattr(main_window.tab_widget, "currentWidget", lambda: None)

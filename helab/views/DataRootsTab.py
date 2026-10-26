@@ -15,7 +15,8 @@ from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
                              QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
-from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache, marker_path, store_options
+from helab.utils import folder_cache
+from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache, marker_path
 from helab.utils.number_format import byte_size
 from helab.utils.io_service import IORequest
 
@@ -77,7 +78,7 @@ class DataRootsTab(QWidget):
     def __init__(self, cache: FolderCache | None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.cache = cache
-        self.enabled = bool(cache is not None and store_options())
+        self.enabled = bool(cache is not None and folder_cache.store_options())
         self.roots: list[dict[str, Any]] | None = None
         self.message = ""
         self._inventory_owner = ""
