@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QMen
 from pytestqt.qtbot import QtBot
 
 from helab.analysis.backends import BACKEND, backend_specs
-from helab.analysis.dataset_view import DatasetView
+from helab.analysis.dataset_view import DatasetView, root_key, view_of
 from helab.analysis.follow import DELAY, EVERY, FOLLOW, live_specs
 from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
@@ -664,6 +664,23 @@ def test_reopened_plots_keep_every_bundled_scripts_settings_library_and_live_gro
         assert instance.backend() == backend and instance.live_values() == live
         assert instance.waiting() and not instance.follow.on  # Follow Live off: pinned.
         assert bar(instance).note.text() == ""  # Everything restored: nothing to say.
+
+
+def test_a_waiting_reopened_plot_never_runs_on_a_live_revision_by_itself(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """C-19: a reopened plot recorded under one data root, still waiting, whose folder's tab
+    starts Live under another: the Live feed's revision (and Live ending) ran it at once, outside
+    ``run_reopened`` and past ``FolderWait``'s other-root rule. It looks for its data instead."""
+    window = new_window(qtbot, cache, windows)
+    path, top = folder("run"), FolderCache.key("/data/root")
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    made = window.scripts.reopen_plot(full(window, ref, path), FolderWait(cache, path, root_key(top, "old", path)))
+    assert isinstance(made, AnalysisInstance) and made.waiting()
+    cache.data_roots[top] = ("new", "root")
+    made._revised(view_of(dataset("run", range(1, 4)), cache.root_of(path)))
+    made._live_ended(path)
+    qtbot.wait(100)
+    assert made.waiting() and not made.job_id and made.result is None
 
 
 def test_reopen_runs_from_ram_without_any_request(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:

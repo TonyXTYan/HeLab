@@ -689,6 +689,15 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._end_wait()
         self._submit(view, one_off=True)
 
+    def _look_again(self) -> bool:
+        """Still waiting as reopened: its folder's data is looked for again (``FolderWait``, under its
+        rules), never taken from Live here: only ``run_reopened`` runs it. True if so."""
+        if not self.waiting():
+            return False
+        assert self._wait is not None
+        self._wait.look()
+        return True
+
     @pyqtSlot(str)
     def _waiting_noted(self, text: str) -> None:
         message = self._waiting_message
@@ -780,6 +789,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def _revised(self, view: DatasetView) -> None:
         if self.is_closed or view.identity.source_path != self.path:
             return  # Plots of other folders stay put.
+        if self._look_again():
+            return
         self.follow.live_on()
         if self.follow.offer(view):
             self._follow_next()
@@ -788,7 +799,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
     @pyqtSlot(str)
     def _live_ended(self, path: str) -> None:
         """Live stopped for the plot's folder: shots held back run once more, at once."""
-        if not self.is_closed and path == self.path:
+        if not self.is_closed and path == self.path and not self._look_again():
             self.follow.live_ended()
             self._follow_timer.stop()
             self._follow_next()
