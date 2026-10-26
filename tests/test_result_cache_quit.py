@@ -144,7 +144,9 @@ def test_an_old_stores_answer_never_says_saved_in_the_recreated_one(
     monkeypatch.setattr(cache, "_on_result_event", holding)
     script = Costly()
     second = open_plot(window, qtbot, folder_view(tmp_path), script)
-    qtbot.waitUntil(lambda: bool(held) and held[0][0] not in cache.service.pending, timeout=WAIT)
+    # The lookup sends result_found with the store still open: delete it only once no helper has it
+    # open, every exit confirmed, as a cache move does (Windows refuses to delete an open file).
+    qtbot.waitUntil(lambda: bool(held) and not cache.service.cache_busy(), timeout=WAIT)
     assert held[0][1]["exact"] and held[0][1]["store"]
     directory = store_options()["directory"]
     shutil.rmtree(directory)
