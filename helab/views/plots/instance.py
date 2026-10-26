@@ -37,7 +37,7 @@ from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache, sto
 from helab.utils.io_service import IORequest, get_io_service
 from helab.utils.number_format import byte_size
 from helab.utils.ram_buffers import Buffers, arrays_in, buffers
-from helab.views.plots.cached_results import PENDING_NOTE, CachedRuns
+from helab.views.plots.cached_results import PENDING_NOTE, VERIFY_NOTE, CachedRuns
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.pictures import ReleasedPlot, snapshot
 if TYPE_CHECKING:
@@ -322,6 +322,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
     # what the disk cache said of the last run (not saved, couldn't be read) for the status line.
     _cache_note = ""
     _cache_status = ""
+    # The amber line's note when the last run's result couldn't be saved because its drive
+    # couldn't be checked (``CachedRuns``' ``warn``); a new run or a save clears it.
+    _save_note = ""
 
     def _cancel_run(self) -> None:
         """Cancel the run in flight, or its disk-cache lookup."""
@@ -334,7 +337,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self._cached_link = CachedRuns(self._cache(), self.script, self.action, self.name,
                                            found=self._cached_found, run=self._cached_run, saved=self._cached_saved,
                                            note=self._cached_status, closed=lambda: self.is_closed,
-                                           removed=self._cached_removed, evicted=self._cached_evicted)
+                                           removed=self._cached_removed, evicted=self._cached_evicted,
+                                           notice=self._cached_notice, warn=self._cached_warning)
         return self._cached_link
 
     def _submit(self, view: DatasetView, values: Optional[Dict[str, Any]] = None, *, reloading: bool = False,
@@ -371,6 +375,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 self.status_label.setText(str(error))
                 return
         self._cache_status = ""
+        self._save_note = ""
         self.job_id, self._job_view = context.job_id, view
         self._runs.append(context.job_id)
         self.follow.start(view)
@@ -423,8 +428,10 @@ class AnalysisInstance(LinkedAnalysisInstance):
 
     def _cached_saved(self, result: AnalysisResult, size: int) -> None:
         """The run's result is now in the disk cache: its record says so; a large one is said."""
-        if self._cache_status == PENDING_NOTE:
-            self._cached_status("")  # Saved after Make room: the question is answered.
+        if self._cache_status in (PENDING_NOTE, VERIFY_NOTE):
+            self._cached_status("")  # Saved after Make room, or once its drive was checked.
+        if self._save_note:
+            self._cached_warning("")
         if size > result_cache.LARGE_RESULT_BYTES and self.workspace is not None:
             self.workspace.notice(f"Saved {self.name} ({self.view.identity.name}) in the disk cache: {byte_size(size)}")
         shown = self.shown
@@ -458,6 +465,17 @@ class AnalysisInstance(LinkedAnalysisInstance):
         shown = self.shown
         if shown is not None and shown.job_id == job_id:
             self._cached_removed(None)
+
+    def _cached_notice(self, text: str) -> None:
+        """What the disk cache says of the run in the status bar (a one-time notice)."""
+        if self.workspace is not None and not self.is_closed:
+            self.workspace.notice(text)
+
+    def _cached_warning(self, text: str) -> None:
+        """The disk cache's note in the plot's amber line ("" clears it)."""
+        self._save_note = text
+        if not self.is_closed:
+            self._show_follow()
 
     def _cached_status(self, text: str) -> None:
         """What the disk cache said of the run (not saved, couldn't be read, waiting for an answer): on
@@ -876,7 +894,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         dock.setProperty("plotFollow", self.follow_text())
         dock.setProperty("plotFollowing", following)
         dock.setProperty("plotError", " · ".join(filter(None, (self.error or self._reload_note,
-                                                               self._constants_note, self._cache_note))))
+                                                               self._constants_note, self._cache_note,
+                                                               self._save_note))))
         plots.update_plot_source(dock)
         if self.param_tab is not None:
             plots.panel_right_top_plot_settings.set_title(dock, self._title())
