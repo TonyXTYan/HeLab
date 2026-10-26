@@ -437,12 +437,7 @@ class PlotReopen(QObject):
             self.record()
 
     def _cache(self) -> FolderCache:
-        budget = self.plots.ram_budget
-        if budget is not None:
-            return budget.cache
-        from helab.utils.folder_cache import get_folder_cache
-        from helab.utils.io_service import get_io_service
-        return get_folder_cache(get_io_service())
+        return self.plots.folder_cache()
 
     @pyqtSlot()
     def record(self) -> None:

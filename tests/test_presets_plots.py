@@ -1670,3 +1670,18 @@ def test_the_menu_says_no_presets_saved_only_after_a_successful_read(
     assert texts() == ["Save Folder and Plots as Preset…", "Reading saved presets…"]
     store.presets_error = "disk I/O error"
     assert texts() == ["Save Folder and Plots as Preset…", "⚠ Saved presets can't be read: disk I/O error"]
+
+
+def test_the_cache_tabs_presets_line_lets_go_of_the_store_with_its_label(qtbot: QtBot) -> None:
+    """C-23: each Cache tab built connected its Presets line to the app's lasting FolderCache and
+    never disconnected: the connections piled up per Settings shown."""
+    from PyQt6.QtCore import QEvent
+    from helab.views.PresetsInspector import show_summary
+    store = preset_store()
+    before = store.receivers(store.presetsChanged)
+    label = QLabel()
+    show_summary(label, store)
+    assert store.receivers(store.presetsChanged) == before + 1
+    label.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    assert store.receivers(store.presetsChanged) == before

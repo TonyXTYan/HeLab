@@ -68,6 +68,14 @@ class PlotWorkspace:
         """A one-time notice in the window's status bar."""
         self._notice(text)
 
+    def folder_cache(self) -> FolderCache:
+        """The FolderCache the plots use: the RAM budget's, else the app's."""
+        if self.ram_budget is not None:
+            return self.ram_budget.cache
+        from helab.utils.folder_cache import get_folder_cache
+        from helab.utils.io_service import get_io_service
+        return get_folder_cache(get_io_service())
+
     def detach(self) -> None:
         """The window is closing (after ``close_plots``): the RAM budget and the Settings panel
         stop following the cache and the app."""

@@ -25,7 +25,7 @@ that fit apply, the others stay as they are (a new plot's: the script's defaults
 a script preset is applied to: its current values). A record saved by another version of the
 script applies the same way, and says so (``PlotCheck.notes``).
 
-No Qt, no I/O: the Qt side is ``helab/views/plots/presets.py`` and ``reopen.py``.
+No Qt, no I/O: the Qt side is ``helab/views/plots/presets.py`` and ``arrangement.py``.
 """
 from __future__ import annotations
 
