@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, TYPE_CHECKING, cast
+from typing import Any, TYPE_CHECKING
 
 from helab.io_ops import listings, markers, metadata
 from helab.io_ops.events import HelperEvent, ListedStatusEvent, ResultCountField, ResultsField, SavedRootField
@@ -47,7 +47,7 @@ def _result_counts(store: CacheStore | None, paths: list[str]) -> dict[str, Resu
         counts = store.result_counts(paths)
     except StoreError:
         return {}
-    return {path: cast(ResultCountField, count.event()) for path, count in counts.items()}
+    return {path: count.event() for path, count in counts.items()}
 
 
 def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = None) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import os
 import sys
-from typing import Any, Iterable, TYPE_CHECKING, cast
+from typing import Any, Iterable, TYPE_CHECKING
 
 from helab.io_ops.events import DataRootField, RemovedEvent, StoreField, UsageFields
 from helab.io_ops.infra import Emit, _cached_volume_id, _mounts
@@ -264,7 +264,7 @@ def _usage(store: CacheStore) -> UsageFields:
     """The store's live usage and when it was measured, for the app's 80% pause; {} if unreadable."""
     from helab.utils.cache_store import StoreError
     try:
-        return cast(UsageFields, store.measure_usage().event())
+        return store.measure_usage().event()
     except StoreError:
         return {}
 

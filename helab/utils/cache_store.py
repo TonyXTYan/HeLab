@@ -25,6 +25,8 @@ from typing import (Any, Callable, Generator, Generic, Iterable, Literal, Mappin
                     TypedDict, cast)
 import uuid
 
+from helab.io_ops.events import PresetRowFields, ResultCountField, UsageFields
+
 LAYOUT_VERSION = 3
 STORE_DIRNAME = "store-v3"
 ROOT_LAYOUT_VERSION = LAYOUT_VERSION
@@ -311,7 +313,7 @@ class ResultCount:
     store_id: str
     writes: int
 
-    def event(self) -> dict[str, Any]:
+    def event(self) -> ResultCountField:
         return {"count": self.count, "bytes": self.bytes, "seq": [self.store_id, self.writes]}
 
 
@@ -363,7 +365,7 @@ class Usage:
     store_id: str
     writes: int
 
-    def event(self) -> dict[str, Any]:
+    def event(self) -> UsageFields:
         """For a helper event: ``usage`` and ``usage_seq`` (``FolderCache._note_usage``)."""
         return {"usage": self.bytes, "usage_seq": [self.store_id, self.writes]}
 
@@ -1017,7 +1019,7 @@ class CacheStore:
     # another HeLab can't bring it back. Keyed by no folder: nothing removes them (not Clear all,
     # purges, making room, a data root's Clear cached data…, nor a re-key).
 
-    def read_presets(self) -> Read[list[dict[str, Any]]]:
+    def read_presets(self) -> Read[list[PresetRowFields]]:
         """Every preset row, deleted ones too: ``{"kind", "scope", "name", "record" (None if
         deleted), "set_at"}``. A read-only store (written by a newer HeLab) without the table has
         none."""
@@ -1032,10 +1034,10 @@ class CacheStore:
                         "record": None if record is None else str(record), "set_at": float(set_at)}
                        for kind, scope, name, record, set_at in rows])
 
-    def write_presets(self, rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    def write_presets(self, rows: Sequence[Mapping[str, Any]]) -> list[PresetRowFields]:
         """Save these preset rows (a ``record`` of None deletes) in one transaction, each unless a
         later choice (``set_at``, e.g. in another HeLab) is saved for it; the rows saved now."""
-        saved: list[dict[str, Any]] = []
+        saved: list[PresetRowFields] = []
         try:
             with self.transaction():
                 for row in rows:

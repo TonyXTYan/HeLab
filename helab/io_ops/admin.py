@@ -4,10 +4,10 @@ from __future__ import annotations
 import contextlib
 import os
 import time
-from typing import Any, cast
+from typing import Any
 
 from helab.io_ops import stores
-from helab.io_ops.events import AdminResultFields, PresetRowFields, ResultCountField
+from helab.io_ops.events import AdminResultFields
 from helab.io_ops.infra import Emit, Heartbeat, emit
 from helab.io_ops.markers import _location_path, _root_rows
 from helab.io_ops.stores import (_cache_info, _deadline, _removed_event, _results_removed_event, _store_fields,
@@ -164,12 +164,12 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             # to the store they were meant for: in another (one recreated since), whose names the
             # app hasn't seen, they could replace a preset unasked; it reads that one instead.
             rows = list(params.get("rows") or ()) if params.get("store") == store.store_id else []
-            written = cast(list[PresetRowFields], store.write_presets(rows) if rows else [])
+            written = store.write_presets(rows) if rows else []
             stored = store.read_presets()
             if stored.failed:
                 send({"kind": "presets", "saved": written, "error": stored.error, "store": store.store_id})
             else:
-                send({"kind": "presets", "saved": written, "rows": cast(list[PresetRowFields], stored.value or []),
+                send({"kind": "presets", "saved": written, "rows": stored.value or [],
                       "store": store.store_id})
         elif action == "clear_prefs":
             cleared_at = time.time()
@@ -210,7 +210,7 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                                "room": None if taken.room is None else asdict(taken.room)})
                 if taken.adopted:
                     result["result_id"] = taken.result_id
-                    result["folder_results"] = {folder: cast(ResultCountField, count.event())
+                    result["folder_results"] = {folder: count.event()
                                                 for folder, count in taken.folders.items()}
         elif action == "discard_result":
             result["discarded"] = store.discard_pending_result(params["pending_id"])

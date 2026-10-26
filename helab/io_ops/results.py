@@ -15,9 +15,9 @@ duplicate, an unsupported mount) has nothing saved and saves nothing (``ram_only
 from __future__ import annotations
 
 import os
-from typing import Any, cast
+from typing import Any
 
-from helab.io_ops.events import (FolderResultsField, ResultCountField, ResultFoundEvent, ResultGuard,
+from helab.io_ops.events import (FolderResultsField, ResultFoundEvent, ResultGuard,
                                  ResultMissingEvent)
 from helab.io_ops.infra import Emit, emit
 from helab.io_ops.stores import _deadline, _store_fields, _store_or_off, _usage
@@ -128,7 +128,7 @@ def result_save(path: str, cache_options: dict[str, Any] | None, blob_file: str,
                   "next_deadline": _deadline(store), **_usage(store)})
             return
         folder: FolderResultsField = ({} if saved.folder is None else
-                                      {"folder_results": cast(ResultCountField, saved.folder.event())})
+                                      {"folder_results": saved.folder.event()})
         send({"kind": "result_saved", "bytes": saved.bytes, "result_id": saved.result_id, **_store_fields(store),
               "next_deadline": _deadline(store), **folder, **_usage(store)})
     finally:
