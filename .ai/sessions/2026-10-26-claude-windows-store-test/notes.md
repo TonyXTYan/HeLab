@@ -112,3 +112,15 @@ module stamp inside the test and are unaffected.
   reruns ran the step past 20 min). The cause: expectations stamped at import ("1h ago") against
   ages taken at run time ("2h ago"). The test now freezes `time.time` at the moment the
   expectations were stamped. (`<commit>`, Tallow, 2026-10-26)
+
+## CI (run 40263152153 at `5a63fd5`): green
+
+| OS (py3.13) | Tests | RERUN | Run Tests step |
+|---|---|---|---|
+| macOS | 4307 passed, 2 skipped, 2 xfailed | 0 | 3 min 30 s |
+| Ubuntu | 4305 passed, 4 skipped, 2 xfailed | 0 | 4 min 42 s |
+| Windows | 4287 passed, 18 skipped, 2 xfailed | 0 | 9 min 47 s (pytest 584 s; step limit 20 min) |
+
+All three builds passed. On Windows the store test and `test_row_tooltip` passed on their first
+attempts. The earlier cancelled run (40260907064) hit the step limit only because of the
+tooltip's 10 failing reruns.
