@@ -6,11 +6,9 @@ can attach here later without touching it.
 - ``notify(kind, message, ...)`` records an ``Event``, gives it to every hook (``add_hook``)
   and, for an event that asks for it (``desktop=True``), shows a desktop notification.
 - **Once per key:** an event with a ``key`` (a shot's path, number and fingerprint) is
-  delivered once; the same key again is ignored (the last ``SEEN_LIMIT`` keys are kept).
-- **Rate limit:** desktop notifications of one kind and ``rate_key`` (a folder) come at most
-  once per ``RATE_SECONDS``. One that comes sooner is counted, not shown, and the next one
-  shown says how many were held back. Hooks get every event, held back or not
-  (``Event.shown`` says which).
+  delivered once; the same key again is ignored (the last ``SEEN_LIMIT`` keys are kept). No
+  time limit (Tony, 2026-10-26): each shot's notification shows, a typical shot being ~30 s
+  apart. Hooks get every event (``Event.shown`` says whether it asked for a notification).
 - **Delivery** (``DesktopNotifier``): ``QSystemTrayIcon.showMessage`` where the system has a
   tray that shows messages, else the main window's status bar (``set_status_sink``) and the
   log. No new dependency.
@@ -24,7 +22,6 @@ GUI thread only: plots call it from ``render``/``update``, never from ``compute`
 from __future__ import annotations
 
 import logging
-import math
 import time
 import weakref
 from collections import OrderedDict
@@ -35,7 +32,6 @@ from typing import Any, Callable, Mapping, Optional, Protocol
 LOW_COUNTS = "low_counts"  # a shot below a plot's low-count rule(s), during Live (Shot trends)
 LIVE_ERROR = "live_error"  # Live stopped checking a folder on an error (LiveController._live_halt)
 CLOCK_SKEW = "clock_skew"  # a folder's files dated ahead of this computer's clock (ClockSkewWarning)
-RATE_SECONDS = 60.0  # proposed, for Tony: one desktop notification a minute per kind and folder
 SEEN_LIMIT = 4096
 HISTORY_LIMIT = 256
 
@@ -48,7 +44,7 @@ class Event:
     data: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     at: float = 0.0  # wall-clock time
     desktop: bool = False  # it asked for a desktop notification
-    shown: bool = False  # … and got one (not held back by the rate limit)
+    shown: bool = False  # … and it was shown (delivered, or its delivery failed and was logged)
 
 
 Hook = Callable[[Event], None]
@@ -143,14 +139,11 @@ class DesktopNotifier:
 
 
 class EventHub:
-    def __init__(self, notifier: Optional[Notifier] = None, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, notifier: Optional[Notifier] = None) -> None:
         self.desktop = DesktopNotifier()
         self.notifier: Notifier = notifier if notifier is not None else self.desktop
-        self.clock = clock
         self._hooks: list[Hook] = []
         self._seen: OrderedDict[Any, None] = OrderedDict()
-        self._last_shown: dict[tuple[str, str], float] = {}
-        self._held: dict[tuple[str, str], int] = {}
         self.history: list[Event] = []  # the newest ``HISTORY_LIMIT`` events, for a later log view
         self._feeds: weakref.WeakSet[Any] = weakref.WeakSet()
 
@@ -195,32 +188,21 @@ class EventHub:
         return key in self._seen
 
     def notify(self, kind: str, message: str, *, title: str = "HeLab", key: Any = None, desktop: bool = False,
-               rate_key: str = "", **data: Any) -> Optional[Event]:
-        """Record an event and give it to the hooks; with ``desktop``, show it unless the rate
-        limit holds it back. None when ``key`` was delivered before (nothing happens)."""
+               **data: Any) -> Optional[Event]:
+        """Record an event and give it to the hooks; with ``desktop``, show it. None when ``key``
+        was delivered before (nothing happens)."""
         if key is not None:
             if key in self._seen:
                 return None
             self._seen[key] = None
             while len(self._seen) > SEEN_LIMIT:
                 self._seen.popitem(last=False)
-        shown = False
         if desktop:
-            rate = (kind, rate_key)
-            now = self.clock()
-            if now - self._last_shown.get(rate, -math.inf) >= RATE_SECONDS:
-                held = self._held.pop(rate, 0)
-                text = message + (f" ({held:,} more since the last notification)" if held else "")
-                self._last_shown[rate] = now
-                shown = True
-                try:
-                    data = {**data, "delivered": self.notifier.deliver(title, text)}
-                except Exception:
-                    logging.exception("Notification failed: %s", text)
-            else:
-                self._held[rate] = self._held.get(rate, 0) + 1
-                logging.info("%s (held back: one notification per %g s)", message, RATE_SECONDS)
-        event = Event(kind, message, title, MappingProxyType(dict(data)), time.time(), desktop, shown)
+            try:
+                data = {**data, "delivered": self.notifier.deliver(title, message)}
+            except Exception:
+                logging.exception("Notification failed: %s", message)
+        event = Event(kind, message, title, MappingProxyType(dict(data)), time.time(), desktop, desktop)
         self.history.append(event)
         del self.history[:-HISTORY_LIMIT]
         for hook in list(self._hooks):
@@ -242,11 +224,11 @@ def hub() -> EventHub:
     return _hub
 
 
-def reset(notifier: Optional[Notifier] = None, clock: Callable[[], float] = time.monotonic) -> EventHub:
-    """A fresh hub (tests: with a fake notifier and clock); the Live feeds stay registered."""
+def reset(notifier: Optional[Notifier] = None) -> EventHub:
+    """A fresh hub (tests: with a fake notifier); the Live feeds stay registered."""
     global _hub
     feeds = list(_hub._feeds) if _hub is not None else []
-    _hub = EventHub(notifier, clock)
+    _hub = EventHub(notifier)
     for feed in feeds:
         _hub.watch_feed(feed)
     return _hub

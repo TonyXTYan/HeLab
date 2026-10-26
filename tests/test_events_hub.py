@@ -1,7 +1,7 @@
-"""The event hub (``helab/utils/events.py``): once per key, the rate limit per kind and folder
-with the held-back count, hooks, and delivery by tray, status bar or log.
+"""The event hub (``helab/utils/events.py``): once per key, with no time limit (Tony,
+2026-10-26: no per-minute cap), hooks, and delivery by tray, status bar or log.
 
-Each test makes its own ``EventHub`` with a fake notifier and clock, so the app's hub is never
+Each test makes its own ``EventHub`` with a fake notifier, so the app's hub is never
 touched (tests of the module-level ``hub``/``notify``/``reset`` patch ``events._hub``). No real
 desktop notification is shown: the tray class is a fake wherever a tray is available.
 """
@@ -32,27 +32,19 @@ class FakeNotifier:
         return "fake"
 
 
-class Clock:
-    def __init__(self) -> None:
-        self.now = 1000.0
-
-    def __call__(self) -> float:
-        return self.now
-
-
-def make_hub() -> tuple[events.EventHub, FakeNotifier, Clock]:
-    fake, clock = FakeNotifier(), Clock()
-    return events.EventHub(fake, clock), fake, clock
+def make_hub() -> tuple[events.EventHub, FakeNotifier]:
+    fake = FakeNotifier()
+    return events.EventHub(fake), fake
 
 
 def low(hub: events.EventHub, message: str, folder: str = FOLDER, **options: Any) -> Optional[events.Event]:
-    return hub.notify(events.LOW_COUNTS, message, desktop=True, rate_key=folder, **options)
+    return hub.notify(events.LOW_COUNTS, message, desktop=True, path=folder, **options)
 
 
 # Once per key
 
 def test_a_keyed_event_is_delivered_once() -> None:
-    hub, fake, _ = make_hub()
+    hub, fake = make_hub()
     hooked: list[events.Event] = []
     hub.add_hook(hooked.append)
     key = (FOLDER, 6, (1234, 5678))
@@ -67,19 +59,17 @@ def test_a_keyed_event_is_delivered_once() -> None:
     assert len(hooked) == 4 and fake.sent == []  # None asked for a desktop notification.
 
 
-def test_a_keyed_desktop_event_seen_before_is_neither_shown_nor_counted() -> None:
-    hub, fake, clock = make_hub()
+def test_a_keyed_desktop_event_seen_before_is_not_shown_again() -> None:
+    hub, fake = make_hub()
     assert low(hub, "Shot 6", key="shot-6") is not None
-    clock.now += 10
-    assert low(hub, "Shot 6", key="shot-6") is None  # Not held back either: it never happened.
-    clock.now += 60
+    assert low(hub, "Shot 6", key="shot-6") is None  # It never happened.
     assert low(hub, "Shot 7", key="shot-7") is not None
     assert [message for _, message in fake.sent] == ["Shot 6", "Shot 7"]
 
 
 def test_only_the_newest_keys_are_remembered(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(events, "SEEN_LIMIT", 3)
-    hub, _, _ = make_hub()
+    hub, _ = make_hub()
     for key in range(4):
         assert hub.notify("custom", f"key {key}", key=key) is not None
     assert not hub.seen(0) and all(hub.seen(key) for key in (1, 2, 3))
@@ -90,121 +80,53 @@ def test_only_the_newest_keys_are_remembered(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_history_keeps_the_newest_events(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(events, "HISTORY_LIMIT", 2)
-    hub, _, _ = make_hub()
+    hub, _ = make_hub()
     for n in range(5):
         hub.notify("custom", f"event {n}")
     assert [event.message for event in hub.history] == ["event 3", "event 4"]
 
 
-# Rate limit
+# No time limit (Tony, 2026-10-26: a notification per shot; shots are ~30 s apart)
 
-def test_one_desktop_notification_a_minute_per_kind_and_folder() -> None:
-    hub, fake, clock = make_hub()
-    start = clock.now
-    first = low(hub, "Shot 6")
-    assert first is not None and first.shown and first.desktop
-    clock.now = start + events.RATE_SECONDS - 0.1
-    held = low(hub, "Shot 7")
-    assert held is not None and held.desktop and not held.shown
-    clock.now = start + events.RATE_SECONDS  # Exactly a minute after the last one shown: shown.
-    shown = low(hub, "Shot 8")
-    assert shown is not None and shown.shown
-    assert [message for _, message in fake.sent] == ["Shot 6", "Shot 8 (1 more since the last notification)"]
-    # The hooks' event keeps the plain message; only the notification counts the held ones.
-    assert shown.message == "Shot 8"
-    # The minute runs from the last one shown, and the count starts again.
-    clock.now += events.RATE_SECONDS - 1
-    held_again = low(hub, "Shot 9")
-    assert held_again is not None and not held_again.shown
-    clock.now += 1
-    low(hub, "Shot 10")
-    assert fake.sent[-1][1] == "Shot 10 (1 more since the last notification)"
-    clock.now += events.RATE_SECONDS
-    low(hub, "Shot 11")
-    assert fake.sent[-1][1] == "Shot 11"  # Nothing held since the last one.
+def test_every_desktop_event_is_shown_however_close_together() -> None:
+    hub, fake = make_hub()
+    shown = [low(hub, f"Shot {shot}", key=("run", shot)) for shot in range(6, 11)]
+    assert all(event is not None and event.shown and event.desktop for event in shown)
+    assert [message for _, message in fake.sent] == [f"Shot {shot}" for shot in range(6, 11)]
+    assert not hasattr(events, "RATE_SECONDS")
 
 
-def test_the_held_back_count_is_grouped_in_thousands() -> None:
-    hub, fake, clock = make_hub()
-    low(hub, "Shot 1")
-    for shot in range(2, 1236):
-        low(hub, f"Shot {shot}")
-    clock.now += events.RATE_SECONDS
-    low(hub, "Shot 1236")
-    assert fake.sent[-1][1] == "Shot 1236 (1,234 more since the last notification)"
-
-
-def test_other_folders_and_kinds_are_not_limited_by_each_other() -> None:
-    hub, fake, clock = make_hub()
-    start = clock.now
-    assert (shown := low(hub, "A 1")) is not None and shown.shown
-    assert (shown := low(hub, "B 1", folder=OTHER)) is not None and shown.shown
-    error = hub.notify(events.LIVE_ERROR, "Live stopped", desktop=True, rate_key=FOLDER)
-    assert error is not None and error.shown  # Another kind, same folder.
-    clock.now = start + 5
-    assert (held := low(hub, "A 2")) is not None and not held.shown
-    assert (held := low(hub, "A 3")) is not None and not held.shown
-    assert (held := low(hub, "B 2", folder=OTHER)) is not None and not held.shown
-    # Events without a folder share one rate of their own.
-    assert (shown := low(hub, "no folder 1", folder="")) is not None and shown.shown
-    assert (held := low(hub, "no folder 2", folder="")) is not None and not held.shown
-    clock.now = start + events.RATE_SECONDS
-    low(hub, "B 3", folder=OTHER)
-    low(hub, "A 4")
-    hub.notify(events.LIVE_ERROR, "Live stopped again", desktop=True, rate_key=FOLDER)
-    assert [message for _, message in fake.sent] == [
-        "A 1", "B 1", "Live stopped", "no folder 1",
-        "B 3 (1 more since the last notification)",
-        "A 4 (2 more since the last notification)",
-        "Live stopped again"]  # Held-back counts never cross folders or kinds.
-
-
-def test_events_without_desktop_neither_use_nor_reset_the_rate() -> None:
-    hub, fake, clock = make_hub()
-    start = clock.now
-    low(hub, "Shot 1")
-    for n in range(3):
-        quiet = hub.notify(events.LOW_COUNTS, f"quiet {n}", rate_key=FOLDER)
-        assert quiet is not None and not quiet.desktop and not quiet.shown
-    clock.now = start + 1
-    assert (held := low(hub, "Shot 2")) is not None and not held.shown
-    clock.now = start + events.RATE_SECONDS
-    low(hub, "Shot 3")
-    # Only the held desktop event is counted; the quiet ones never asked for a notification.
-    assert [message for _, message in fake.sent] == ["Shot 1", "Shot 3 (1 more since the last notification)"]
-
-
-def test_the_hub_uses_a_monotonic_clock_by_default() -> None:
-    hub = events.EventHub(FakeNotifier())
-    assert hub.clock is time.monotonic
+def test_events_without_desktop_are_not_shown() -> None:
+    hub, fake = make_hub()
+    quiet = hub.notify(events.LOW_COUNTS, "quiet", path=FOLDER)
+    assert quiet is not None and not quiet.desktop and not quiet.shown and fake.sent == []
 
 
 # Hooks
 
-def test_hooks_get_every_event_shown_or_held_back() -> None:
-    hub, fake, clock = make_hub()
+def test_hooks_get_every_event() -> None:
+    hub, fake = make_hub()
     hooked: list[events.Event] = []
     remove = hub.add_hook(hooked.append)
     before = time.time()
-    low(hub, "Shot 6", title="HeLab: low counts", shot=6)
-    clock.now += 1
-    low(hub, "Shot 7", title="HeLab: low counts", shot=7)
+    hub.notify(events.LOW_COUNTS, "Shot 6", title="HeLab: low counts", desktop=True, shot=6)
+    hub.notify(events.LOW_COUNTS, "Shot 7", title="HeLab: low counts", desktop=True, shot=7)
     hub.notify(events.LIVE_ERROR, "Live stopped", path=FOLDER)
     after = time.time()
     assert [(event.kind, event.message, event.desktop, event.shown) for event in hooked] == [
         (events.LOW_COUNTS, "Shot 6", True, True),
-        (events.LOW_COUNTS, "Shot 7", True, False),
+        (events.LOW_COUNTS, "Shot 7", True, True),
         (events.LIVE_ERROR, "Live stopped", False, False)]
-    shown, held, error = hooked
-    assert shown.title == held.title == "HeLab: low counts" and error.title == "HeLab"
+    shown, second, error = hooked
+    assert shown.title == second.title == "HeLab: low counts" and error.title == "HeLab"
     # The notifier's answer is recorded only for an event it delivered.
     assert dict(shown.data) == {"shot": 6, "delivered": "fake"}
-    assert dict(held.data) == {"shot": 7} and dict(error.data) == {"path": FOLDER}
+    assert dict(second.data) == {"shot": 7, "delivered": "fake"} and dict(error.data) == {"path": FOLDER}
     assert isinstance(shown.data, MappingProxyType)
     with pytest.raises(TypeError):
         shown.data["shot"] = 8  # type: ignore[index]
     assert all(before <= event.at <= after for event in hooked)  # Wall-clock time.
-    assert hooked == hub.history and fake.sent == [("HeLab: low counts", "Shot 6")]
+    assert hooked == hub.history and fake.sent == [("HeLab: low counts", "Shot 6"), ("HeLab: low counts", "Shot 7")]
     remove()
     remove()  # Removing twice is harmless.
     hub.notify("custom", "after removal")
@@ -213,7 +135,7 @@ def test_hooks_get_every_event_shown_or_held_back() -> None:
 
 def test_a_hook_that_raises_stops_neither_the_others_nor_the_notification(
         caplog: pytest.LogCaptureFixture) -> None:
-    hub, fake, _ = make_hub()
+    hub, fake = make_hub()
     calls: list[str] = []
 
     def broken(event: events.Event) -> None:
@@ -231,7 +153,7 @@ def test_a_hook_that_raises_stops_neither_the_others_nor_the_notification(
 
 
 def test_a_hook_may_remove_itself_while_called() -> None:
-    hub, _, _ = make_hub()
+    hub, _ = make_hub()
     calls: list[str] = []
     removers: list[Callable[[], None]] = []
 
@@ -246,19 +168,16 @@ def test_a_hook_may_remove_itself_while_called() -> None:
     assert calls == ["first", "other first", "other second"]
 
 
-def test_a_notifier_that_raises_is_logged_and_still_uses_the_minute(caplog: pytest.LogCaptureFixture) -> None:
+def test_a_notifier_that_raises_is_logged(caplog: pytest.LogCaptureFixture) -> None:
     class Broken:
         def deliver(self, title: str, message: str) -> str:
             raise OSError("no notification service")
 
-    clock = Clock()
-    hub = events.EventHub(Broken(), clock)
+    hub = events.EventHub(Broken())
     with caplog.at_level(logging.ERROR):
         event = low(hub, "Shot 6")
     assert event is not None and event.shown and "delivered" not in event.data
     assert any(record.getMessage() == "Notification failed: Shot 6" for record in caplog.records)
-    clock.now += 1
-    assert (held := low(hub, "Shot 7")) is not None and not held.shown
 
 
 # The app's hub
@@ -268,12 +187,12 @@ def test_the_module_functions_use_one_hub(monkeypatch: pytest.MonkeyPatch) -> No
     made = events.hub()
     assert events.hub() is made and isinstance(made.notifier, events.DesktopNotifier)
     assert made.notifier is made.desktop
-    fake, clock = FakeNotifier(), Clock()
-    fresh = events.reset(fake, clock)
+    fake = FakeNotifier()
+    fresh = events.reset(fake)
     assert events.hub() is fresh is not made
-    event = events.notify(events.LOW_COUNTS, "Shot 6", desktop=True, rate_key=FOLDER, key="k")
+    event = events.notify(events.LOW_COUNTS, "Shot 6", desktop=True, path=FOLDER, key="k")
     assert event is not None and event.shown and fake.sent == [("HeLab", "Shot 6")]
-    assert events.notify(events.LOW_COUNTS, "Shot 6", desktop=True, rate_key=FOLDER, key="k") is None
+    assert events.notify(events.LOW_COUNTS, "Shot 6", desktop=True, path=FOLDER, key="k") is None
 
 
 class Signal:
@@ -314,7 +233,7 @@ class GoneFeed:
 
 
 def test_live_feeds_say_which_folders_live_watches(monkeypatch: pytest.MonkeyPatch) -> None:
-    hub, _, _ = make_hub()
+    hub, _ = make_hub()
     hidden: list[bool] = []
     monkeypatch.setattr(hub.desktop, "hide", lambda: hidden.append(True))
     first, second = Feed(FOLDER), Feed(OTHER)
@@ -331,7 +250,7 @@ def test_live_feeds_say_which_folders_live_watches(monkeypatch: pytest.MonkeyPat
 
 def test_a_feed_without_an_ended_signal_is_watched_and_one_gone_counts_as_not_live(
         monkeypatch: pytest.MonkeyPatch) -> None:
-    hub, _, _ = make_hub()
+    hub, _ = make_hub()
     hidden: list[bool] = []
     monkeypatch.setattr(hub.desktop, "hide", lambda: hidden.append(True))
 
@@ -346,7 +265,7 @@ def test_a_feed_without_an_ended_signal_is_watched_and_one_gone_counts_as_not_li
     assert hidden == []  # Live still watches FOLDER.
     # A feed that raises when asked: Live is taken to watch nothing. (Alone here: the feeds are a
     # WeakSet, so with another feed that watches a folder it depends on which is asked first.)
-    other, _, _ = make_hub()
+    other, _ = make_hub()
     monkeypatch.setattr(other.desktop, "hide", lambda: hidden.append(True))
     gone = GoneFeed()
     other.watch_feed(gone)
@@ -358,7 +277,7 @@ def test_a_reset_hub_keeps_the_live_feeds(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(events, "_hub", None)
     feed = Feed(FOLDER)
     events.hub().watch_feed(feed)
-    fresh = events.reset(FakeNotifier(), Clock())
+    fresh = events.reset(FakeNotifier())
     assert fresh.is_live(FOLDER) and feed in set(fresh._feeds)
 
 
@@ -509,19 +428,13 @@ def test_hiding_without_a_tray_does_nothing() -> None:
     assert desktop._tray is None
 
 
-def test_a_hub_without_a_tray_tells_the_status_bar_with_the_held_back_count(
-        tray: type[FakeTray]) -> None:
+def test_a_hub_without_a_tray_tells_the_status_bar(tray: type[FakeTray]) -> None:
     tray.available = False
-    clock = Clock()
-    hub = events.EventHub(clock=clock)
+    hub = events.EventHub()
     sink: list[str] = []
     hub.desktop.set_status_sink(sink.append)
     first = low(hub, "Shot 6", title="HeLab: low counts")
-    clock.now += 1
-    low(hub, "Shot 7", title="HeLab: low counts")
-    clock.now += events.RATE_SECONDS
-    last = low(hub, "Shot 8", title="HeLab: low counts")
+    last = low(hub, "Shot 7", title="HeLab: low counts")
     assert first is not None and first.data["delivered"] == "status"
     assert last is not None and last.data["delivered"] == "status"
-    assert sink == ["HeLab: low counts: Shot 6",
-                    "HeLab: low counts: Shot 8 (1 more since the last notification)"]
+    assert sink == ["HeLab: low counts: Shot 6", "HeLab: low counts: Shot 7"]

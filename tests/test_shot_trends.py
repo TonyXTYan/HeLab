@@ -359,20 +359,12 @@ class FakeNotifier:
         return "fake"
 
 
-class Clock:
-    def __init__(self) -> None:
-        self.now = 1000.0
-
-    def __call__(self) -> float:
-        return self.now
-
-
 @pytest.fixture
-def notifier() -> Iterator[tuple[FakeNotifier, Clock]]:
-    """A hub with a fake notifier and clock; Live feeds the test made stop watching at its end."""
-    fake, clock = FakeNotifier(), Clock()
-    events.reset(fake, clock)
-    yield fake, clock
+def notifier() -> Iterator[FakeNotifier]:
+    """A hub with a fake notifier; Live feeds the test made stop watching at its end."""
+    fake = FakeNotifier()
+    events.reset(fake)
+    yield fake
     for feed in list(events.hub()._feeds):
         for path in list(feed.paths()):
             feed.stop(path)
@@ -389,8 +381,8 @@ def live_views(low_last: bool = True, path: str = PATH) -> tuple[DatasetView, Da
     return first, revise(first, dataset({**shots, 6: newest}, path))
 
 
-def test_a_low_newest_shot_live_added_notifies_once(qtbot: QtBot, notifier: tuple[FakeNotifier, Clock]) -> None:
-    fake, _ = notifier
+def test_a_low_newest_shot_live_added_notifies_once(qtbot: QtBot, notifier: FakeNotifier) -> None:
+    fake = notifier
     feed = LiveFeed()
     first, later = live_views(path=PATH)
     # Live doesn't watch the folder: a newer revision drawn notifies nothing.
@@ -425,8 +417,9 @@ def test_a_low_newest_shot_live_added_notifies_once(qtbot: QtBot, notifier: tupl
     assert len(fake.sent) == 1
 
 
-def test_low_count_notifications_are_rate_limited_per_folder(notifier: tuple[FakeNotifier, Clock]) -> None:
-    fake, clock = notifier
+def test_each_low_shot_notifies_with_no_time_limit(notifier: FakeNotifier) -> None:
+    """Tony, 2026-10-26: once per shot, no per-minute cap (a shot comes every ~30 s)."""
+    fake = notifier
     feed = LiveFeed()
     path = "/data/root/run_rate"
     feed._latest[path] = cast(DatasetView, None)  # Live watches the folder (its views aren't needed).
@@ -439,18 +432,14 @@ def test_low_count_notifications_are_rate_limited_per_folder(notifier: tuple[Fak
         shots[shot] = shot_events(shot, 10)
         view = revise(view, dataset(dict(shots), path))
         shot_trends.notify_low(result_of(view, NOTIFY, owner="rate"))
-        clock.now += 10
-    assert len(fake.sent) == 1 and [event.shown for event in hooked] == [True, False, False]
-    clock.now += 60
-    shots[9] = shot_events(9, 10)
-    shot_trends.notify_low(result_of(revise(view, dataset(dict(shots), path)), NOTIFY, owner="rate"))
-    assert len(fake.sent) == 2 and fake.sent[1][1].endswith("(2 more since the last notification)")
+    assert len(fake.sent) == 3 and [event.shown for event in hooked] == [True, True, True]
+    assert all("more since the last" not in message for _, message in fake.sent)
     remove()
     assert events.hub().history[-1].data["delivered"] == "fake"
     feed.stop(path)
 
 
-def test_events_without_a_tray_go_to_the_status_sink_and_the_log(notifier: tuple[FakeNotifier, Clock]) -> None:
+def test_events_without_a_tray_go_to_the_status_sink_and_the_log(notifier: FakeNotifier) -> None:
     desktop = events.DesktopNotifier()
     shown: list[str] = []
 
@@ -475,7 +464,7 @@ def test_events_without_a_tray_go_to_the_status_sink_and_the_log(notifier: tuple
     assert hub.notify("custom", "x") is not None and len(failing) == 1  # A broken hook breaks nothing.
 
 
-def test_live_errors_go_through_the_event_hub(notifier: tuple[FakeNotifier, Clock]) -> None:
+def test_live_errors_go_through_the_event_hub(notifier: FakeNotifier) -> None:
     hooked: list[events.Event] = []
     events.hub().add_hook(hooked.append)
     stopped: list[bool] = []
@@ -486,7 +475,7 @@ def test_live_errors_go_through_the_event_hub(notifier: tuple[FakeNotifier, Cloc
     assert session.error == "the drive went away" and stopped == [True]
     (event,) = hooked
     assert event.kind == events.LIVE_ERROR and event.data["path"] == PATH and not event.desktop
-    assert notifier[0].sent == []  # Recorded for hooks only: no desktop notification.
+    assert notifier.sent == []  # Recorded for hooks only: no desktop notification.
 
 
 # A plot following Live
@@ -527,8 +516,8 @@ def window(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> Iterator[Window]:
 
 
 def test_a_plot_following_live_notifies_once_for_a_low_new_shot(
-        window: Window, qtbot: QtBot, notifier: tuple[FakeNotifier, Clock]) -> None:
-    fake, _ = notifier
+        window: Window, qtbot: QtBot, notifier: FakeNotifier) -> None:
+    fake = notifier
     path = "/data/root/run_window"
     shots = {shot: shot_events(shot, 400) for shot in range(1, 6)}
     window.view = window.plots.live_feed.publish(dataset(dict(shots), path))
@@ -566,7 +555,7 @@ def test_registration_and_live_policy() -> None:
         "Notify during Live is on but no low-count rule is: nothing is notified"]
 
 
-def test_the_tray_icon_goes_when_live_watches_no_folder(notifier: tuple[FakeNotifier, Clock]) -> None:
+def test_the_tray_icon_goes_when_live_watches_no_folder(notifier: FakeNotifier) -> None:
     hidden: list[bool] = []
 
     class Tray:
@@ -599,9 +588,9 @@ def test_constants_show_only_with_temperatures() -> None:
     assert SCRIPT.constant_keys("Plot") == shot_trends.CONSTANT_KEYS
 
 
-def test_a_reset_hub_skips_feeds_whose_qt_object_is_gone(notifier: tuple[FakeNotifier, Clock]) -> None:
+def test_a_reset_hub_skips_feeds_whose_qt_object_is_gone(notifier: FakeNotifier) -> None:
     """A window that closed leaves its LiveFeed's wrapper behind: a fresh hub doesn't watch it."""
     gone = LiveFeed()
     sip.delete(gone)
-    hub = events.reset(*notifier)
+    hub = events.reset(notifier)
     assert gone not in set(hub._feeds) and not hub.is_live(PATH)

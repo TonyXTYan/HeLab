@@ -105,7 +105,7 @@ LOW_PERCENT = ParameterSpec("low_percent", "Fraction", "float", 50.0, (1.0, 100.
                             when=(LOW_RELATIVE.name, "True"), tip="Proposed 50 %.")
 NOTIFY = ParameterSpec("notify_low", "Notify during Live", "bool", False, group=LOW_GROUP,
                        tip="While Live adds shots to this plot's folder, a desktop notification when the newest "
-                           "shot is low by the rules on (once per shot, at most one a minute per folder). Never "
+                           "shot is low by the rules on (once per shot). Never "
                            "for shots already shown, nor outside Live.")
 # The constants only the temperatures use: shown while Temperatures is on.
 CONSTANTS = [replace(spec, when=(TEMPERATURES.name, "True")) if spec.when is None else spec
@@ -419,7 +419,7 @@ def notify_low(result: AnalysisResult) -> Optional[events.Event]:
         return None
     key, message = alert
     return events.notify(events.LOW_COUNTS, message, title="HeLab: low counts", key=key, desktop=True,
-                         rate_key=path, path=path, shot=int(data.shots[-1]), count=int(data.counts[-1]))
+                         path=path, shot=int(data.shots[-1]), count=int(data.counts[-1]))
 
 
 # Drawing
