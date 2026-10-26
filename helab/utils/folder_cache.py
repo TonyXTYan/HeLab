@@ -1864,7 +1864,8 @@ class FolderCache(QObject):
             return False
         if self.has_request(owner, operation, path):
             return True
-        if self.offline and operation not in IOService.OFFLINE_OPERATIONS:
+        if (self.offline and operation not in IOService.OFFLINE_OPERATIONS
+                and not (operation == "load" and payload.get("save") and payload.get("before_offline"))):
             return self._offline_submit(owner, generation, path, operation, payload, priority)
         request = IORequest(owner, generation, path, operation, payload,
                             self.service.NO_PROGRESS_TIMEOUT if timeout is None else timeout)
@@ -2014,11 +2015,25 @@ class FolderCache(QObject):
             return
         _offline = on
         if on:
+            # Saves the user asked for that wait for another load keep their authorization: they
+            # start offline once that load ends (``submit``, ``IOService.submit``).
+            for _, payload in self._deferred_saves.values():
+                payload["before_offline"] = True
             for job in list(self.jobs.values()):
                 stand_in = IORequest(job.owner, 0, job.path, job.operation, job.payload, 0.0)
                 if not IOService.finishes_offline(stand_in) and not job.saves():
                     self._cancel_job(job)
             self._subtree_pending.clear()
+        else:
+            # Saved listings still being read, or replayed to tabs, and answers still to deliver end
+            # now: a Refresh just after would otherwise join them and show saved names as current
+            # (Vernier, review round 1). Tabs list those folders again.
+            for job in [job for job in self.jobs.values() if job.payload.get("offline")]:
+                self._cancel_job(job)
+            for request in [r for r in self._deliveries if r.payload.get("offline")]:
+                self._deliveries.remove(request)
+                request.cancelled.set()
+                self.resultReady.emit(request, {"kind": "cancelled", "offline": True})
         self.service.set_offline(on)
         logging.info("Work Offline %s", "on: cached data only" if on else "off")
         if not on:
@@ -2051,7 +2066,7 @@ class FolderCache(QObject):
                 self._producers.pop(job.owner)
                 return False
             return True
-        request = IORequest(owner, generation, path, operation, payload, 0.0)
+        request = IORequest(owner, generation, path, operation, {**payload, "offline": True}, 0.0)
         self._deliveries.append(request)
 
         def answer() -> None:

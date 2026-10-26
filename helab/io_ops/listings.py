@@ -81,15 +81,18 @@ def save_listing(store: CacheStore | None, guard: SaveGuard | None, path: str, n
         return "skipped"
     record = listing_record(names, status)
     try:
+        # A first look without the write lock: most listings are unchanged and write nothing.
         saved = valid_listing(store.read_record("listings", path).value)
         if saved and (saved["listed_at"] > record["listed_at"]
                       or _same(saved, record) and record["listed_at"] - saved["listed_at"] < REFRESH_SECONDS):
             return "unchanged"
+        # Decided again under the write lock: another helper may have saved a newer one since.
         with store.waiting(WRITE_WAIT):
-            store.save_record("listings", path, record, guard, saved_at=record["listed_at"])
+            written = store.save_listing(path, record, guard, same=lambda other: _same(other, record),
+                                         refresh_seconds=REFRESH_SECONDS)
     except Exception:  # SaveRejected (cleared meanwhile), StoreError (busy, failing), a re-keyed folder.
         return "skipped"
-    return "saved"
+    return "saved" if written else "unchanged"
 
 
 def read_listing(store: CacheStore, path: str) -> Read[dict[str, Any]]:

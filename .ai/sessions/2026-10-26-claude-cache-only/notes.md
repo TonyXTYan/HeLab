@@ -159,3 +159,66 @@ no hint was recorded (`{}`).
 **Checks.** Full suite: 4417 passed, 2 skipped, no RERUN.
 
 Not pushed: it is folded into the push after Vernier's review.
+
+## Review round 1 fixes (Vernier, `review-findings.md`), 2026-10-26
+
+Each finding has a test that fails without its fix. Checked by setting aside `helab/` alone: the five
+new tests failed, plus the failing-save test, whose patch target `CacheStore.save_listing` didn't
+exist before. All pass with the fixes.
+
+**P1. A finished ordinary load's cache-write tail kept reading the folder after Work Offline.**
+- Fix: `IOService.set_offline` now also stops completed loads that aren't saves the user asked
+  for. The tail ends `cancelled` with `OFFLINE_SAVE_STOPPED` ("Not cached: Work Offline stopped the
+  save (it reads the folder); saved by its next load").
+- FolderCache's finishing-writer path records it as a failed cache save: `saveEnded` "failed", off
+  `quit_saves`.
+- The data stays in RAM. Going offline never waits on a volume that may be gone.
+- Test: `test_going_offline_stops_a_finished_loads_cache_write_which_reads_the_folder`. It also
+  checks that a Live save's tail goes on.
+
+**P2. A save asked for before the switch, but waiting for another load, was refused.**
+- Fix: `FolderCache.set_offline(True)` marks waiting saves (`_deferred_saves`) `before_offline`.
+  `FolderCache.submit` and `IOService.submit` let a `load` with `save` and `before_offline` through;
+  the helper already exempts saves.
+- New saves asked for offline are still refused.
+- Test: `test_a_save_asked_for_before_going_offline_still_runs_after_the_load_it_waited_for`.
+
+**P2. A stale nested hint beat a current containing mount.**
+- Fix: `_offline_mounts` skips a hint at or below a current volume or share mount
+  (`stores._volume_mount`: remote, SMB, below a `MOUNT_TOPS` folder, or a Windows drive other than
+  the system's).
+- Ordinary system mounts above a hint, such as a tmpfs `/tmp` or the system volume, don't count:
+  otherwise every hint under `/tmp` or `/` would be ignored. This is narrower than "any non-system
+  mount" on purpose.
+- Test: `test_a_volume_or_share_mounted_above_a_hint_wins_over_it`.
+
+**P2. An offline listing in flight absorbed Work Online's Refresh.**
+- Fix: `FolderCache.set_offline(False)` cancels offline jobs (`payload["offline"]`) and their
+  replays and answers still in `_deliveries`. Offline answers now carry `offline` in their
+  payload.
+- The model treats a `cancelled` of an offline request like Refresh's own cancel: the row is
+  released with no error.
+- Test: `test_work_online_cancels_a_saved_listing_in_flight_and_lists_the_folder_anew`. It sends
+  the old listing's late events and checks they change nothing.
+
+**P2. "Newer listing wins" was decided outside the write transaction.**
+- Fix: `CacheStore.save_listing` compares (newer `listed_at`, or unchanged and under an hour old)
+  and writes in one write transaction. `listings.save_listing` keeps its lock-free first look
+  only as a shortcut.
+- Test: `test_two_helpers_listing_at_once_never_let_the_older_listing_win`. The older helper's
+  first look sees nothing (as if it read before the newer saved), and it still doesn't overwrite.
+
+**Seams strengthened:**
+- `deny_source`: patches `os.scandir`, `os.stat`, `os.lstat`, `os.listdir` and `open` for the source
+  tree. The offline restart fixture arms it after the online session, so every in-process helper
+  call offline that reaches the source fails, and a final check lists any tried.
+- The window test opens a second tab and checks that Work Online relists both tabs' folders from
+  the source.
+- The in-flight switch is tested as above.
+
+**Vernier's probe** (`review-probe-round1.py`) now prints an online `list` at Refresh, then stops:
+it removes the old `saved_list` request from the queue itself, and going online has already
+cancelled and removed it.
+
+**Checks.** Full suite: 4422 passed, 2 skipped, **no RERUN**. mypy --strict on `helab/` and `tests/`
+clean; pyright 0 errors.

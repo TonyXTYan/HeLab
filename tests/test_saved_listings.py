@@ -135,6 +135,32 @@ def test_an_older_listing_never_replaces_a_newer_one(tmp_path: Path) -> None:
     assert saved(cache, path)[0] == newer
 
 
+def test_two_helpers_listing_at_once_never_let_the_older_listing_win(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Vernier, review round 1: "newer wins" is decided under the write lock. Here the older helper
+    looked before the newer one saved (its first look, without the lock, saw nothing), then saves."""
+    source = tmp_path / "source"
+    data_folder(source)
+    cache, path = options(tmp_path), str(source)
+    events = listed(path, cache)
+    status = next(event for event in events if event["kind"] == "status")
+    with stores._cache_store(cache["directory"], [path]) as store:
+        store.remove(("listings",), [path])
+        older_guard = listing_guard(store, path)
+        newer = {**status, "scanned_at": 2000.0}
+        assert save_listing(store, listing_guard(store, path), path, ["run_a", "run_b", "run_new"], newer) == "saved"
+        real_read = CacheStore.read_record
+
+        def stale(self: CacheStore, kind: Any, folder: str) -> Any:
+            return cache_store._missing() if kind == "listings" else real_read(self, kind, folder)
+        monkeypatch.setattr(CacheStore, "read_record", stale)
+        older = {**status, "scanned_at": 1000.0}
+        assert save_listing(store, older_guard, path, ["run_a"], older) == "unchanged"
+        monkeypatch.setattr(CacheStore, "read_record", real_read)
+        record = read_listing(store, path).value
+    assert record is not None and record["listed_at"] == 2000.0 and record["names"] == ["run_a", "run_b", "run_new"]
+
+
 @pytest.mark.parametrize("cleared", ["listings", "folder", "root"])
 def test_a_clear_after_the_listing_started_makes_its_save_a_no_op(tmp_path: Path, cleared: str) -> None:
     source = tmp_path / "source"
@@ -186,7 +212,7 @@ def test_a_failing_save_never_fails_the_listing(tmp_path: Path, monkeypatch: pyt
 
     def fail(*args: object, **kwargs: object) -> None:
         raise cache_store.StoreError("disk full")
-    monkeypatch.setattr(CacheStore, "save_record", fail)
+    monkeypatch.setattr(CacheStore, "save_listing", fail)
     events = listed(str(source), options(tmp_path))
     assert next(event for event in events if event["kind"] == "status")["count"] == 2
 

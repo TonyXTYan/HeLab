@@ -1163,6 +1163,32 @@ class CacheStore:
         """Save (or with None, delete) one record, if ``guard`` still holds."""
         self.save_records(kind, {path: record}, guard, saved_at=saved_at)
 
+    def save_listing(self, path: str, record: Mapping[str, Any], guard: SaveGuard, *,
+                     same: Callable[[Mapping[str, Any]], bool], refresh_seconds: float) -> bool:
+        """Save a folder's listing (``io_ops.listings``) if ``guard`` holds and, in the same write
+        transaction, the saved one is neither newer (``listed_at``) nor ``same`` and under
+        ``refresh_seconds`` older: two helpers listing a folder at once never let the older
+        observation replace the newer (Vernier, review round 1). Whether it was written."""
+        listed_at = float(record["listed_at"])
+        try:
+            with self.transaction():
+                key = self._path_key(path)
+                self._check(guard, "listings", key)
+                row = self._conn.execute("SELECT record FROM listings WHERE path = ?", (key,)).fetchone()
+                try:
+                    saved = json.loads(row[0]) if row is not None else None
+                except ValueError:
+                    saved = None  # Unreadable: replaced.
+                if isinstance(saved, dict) and isinstance(saved.get("listed_at"), (int, float)):
+                    if float(saved["listed_at"]) > listed_at or (
+                            same(saved) and listed_at - float(saved["listed_at"]) < refresh_seconds):
+                        return False
+                self._conn.execute("INSERT OR REPLACE INTO listings (path, record, saved_at) VALUES (?, ?, ?)",
+                                   (key, _dumps(record), listed_at))
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return True
+
     def save_records(self, kind: Kind, records: Mapping[str, Mapping[str, Any] | None], guard: SaveGuard, *,
                      saved_at: float | None = None) -> None:
         """Save a batch in one transaction: all of it, or (on a rejection or error) none."""

@@ -768,8 +768,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             node.error = ""
             self.changed(node)
             return
-        if kind == "cancelled" and request.payload.get("refresh_cancelled"):
-            # Refresh discards optional automatic work without presenting a failure.
+        if kind == "cancelled" and (request.payload.get("refresh_cancelled") or request.payload.get("offline")):
+            # Refresh discards optional automatic work without presenting a failure; so does Work
+            # Online a saved listing or offline answer not delivered yet (its folder is listed anew).
             if owns_tree:
                 self._release_row(node)
             node.error = ""

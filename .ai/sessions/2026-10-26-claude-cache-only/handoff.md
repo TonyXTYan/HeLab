@@ -221,6 +221,22 @@ share, restart, browse and plot.
 12. **Log:** one INFO line "Work Offline on: cached data only", then a "Working offline: no …" line
     once per refused operation kind.
 
+## Review round 1 (Vernier)
+
+Fixed, each with a test that fails without it: see `notes.md` › "Review round 1 fixes".
+- **P1:** a finished ordinary load's source-reading cache write stops on going offline, saying why.
+- **P2:**
+  - saves asked for before the switch keep their authorization;
+  - a current volume or share containing a hint's path wins over the hint;
+  - Work Online cancels offline listings in flight;
+  - newer listings win inside the write transaction.
+
+Also:
+- The tests deny real source calls (`deny_source`).
+- The window test relists two tabs.
+- Proposed AGENTS.md addition: "Work Offline stops a finished load's cache write, which re-reads
+  the folder; its data stays in RAM and its next online load saves it."
+
 ## Open points and caveats
 
 - **Offline with the disk cache off** (the cache folder refused, or `DISK_CACHE_ENABLED` false):

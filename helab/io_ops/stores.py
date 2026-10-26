@@ -208,17 +208,38 @@ def _record_mount_hints(store: CacheStore, mounts: list[Mount], paths: CachePath
                 store.record_mount_hint(mount_path, top)
 
 
+def _volume_mount(mount: Mount) -> bool:
+    """A mount someone attached, whose folders are that volume's or share's own: a share, a remote
+    mount, a volume under a mount top (``/Volumes``…), a Windows drive other than the system's.
+    Never the system volume, nor a system mount such as a tmpfs ``/tmp``."""
+    from helab.utils import cache_paths
+    from helab.utils.cache_paths import _inside, _normal
+    from helab.utils.data_roots import fixed_mount
+    from helab.io_ops.infra import MOUNT_TOPS
+    if fixed_mount(mount):
+        return False
+    if mount.remote or cache_paths._smb_source(mount.source, mount.fstype) is not None:
+        return True
+    if sys.platform == "win32":
+        return True
+    return any(_inside(_normal(mount.path), _normal(top)) and _normal(mount.path) != _normal(top)
+               for top in MOUNT_TOPS)
+
+
 def _offline_mounts(store: CacheStore, mounts: list[Mount],
                     volumes: LocalVolumes) -> tuple[CachePaths, LocalVolumes]:
     """The mount table and local volumes with the hinted shares and volumes added back at mount
-    paths nothing is mounted at now (offline keys, never source I/O). A mount there now wins."""
-    from helab.utils.cache_paths import CachePaths, Mount, _normal
+    paths nothing is mounted at now (offline keys, never source I/O). A volume or share mounted at
+    the hint's path or above it now wins (``_volume_mount``): the folder there is its own, not the
+    hinted one's (Vernier, review round 1)."""
+    from helab.utils.cache_paths import CachePaths, Mount, _inside, _normal
     from helab.utils.data_roots import LocalVolumes
     mounted = {_normal(mount.path) for mount in mounts}
+    attached = [_normal(mount.path) for mount in mounts if _volume_mount(mount)]
     shares: list[Mount] = []
     local = list(volumes.volumes)
     for mount_path, top in store.mount_hints().items():
-        if _normal(mount_path) in mounted:
+        if _normal(mount_path) in mounted or any(_inside(_normal(mount_path), above) for above in attached):
             continue
         if top.startswith("smb://"):
             shares.append(Mount(top, mount_path, "smbfs", True))

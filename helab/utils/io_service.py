@@ -258,7 +258,8 @@ class IOService(QObject):
         """Queue a helper; ``timeout`` is seconds without progress (``math.inf``: none). ``arrays`` and
         ``blob``: data from this process the helper reads from its private folder
         (``IORequest.arrays``, ``IORequest.blob``)."""
-        if self.closed or self.offline_refuses(operation):
+        if self.closed or (self.offline_refuses(operation) and not (
+                operation == "load" and (payload or {}).get("save") and (payload or {}).get("before_offline"))):
             return False
         if any((r.owner, r.generation, r.path, r.operation) == (owner, generation, path, operation)
                for r in (*self.active, *self.pending)):
@@ -442,10 +443,15 @@ class IOService(QObject):
             logging.info("Working offline: no %s (source folders aren't read)", self.NOUNS.get(operation, operation))
         return True
 
+    # Why a finished load's disk-cache write stopped when Work Offline started: it reads the folder's
+    # files (the shots it reused from RAM), so it can't go on; its data stays in RAM.
+    OFFLINE_SAVE_STOPPED = "Not cached: Work Offline stopped the save (it reads the folder); saved by its next load"
+
     @classmethod
     def finishes_offline(cls, request: IORequest) -> bool:
-        """Work that goes on when Work Offline starts: what it allows, and saves already asked for
-        (Live's stop-save among them; ``submit`` refuses new ones)."""
+        """Work that goes on when Work Offline starts: what it allows, and saves the user asked for
+        before it started (Live's stop-save, saves waiting for another load: ``before_offline``);
+        ``submit`` refuses new ones. A finished ordinary load's cache write is no such save."""
         return request.operation in cls.OFFLINE_OPERATIONS or (
             request.operation == "load" and bool(request.payload.get("save")))
 
@@ -460,9 +466,13 @@ class IOService(QObject):
             self.pending.remove(request)
             request.cancelled.set()
             self.resultReady.emit(request, {"kind": "cancelled"})
-        for request in [r for r in self.active if not self.finishes_offline(r) and not r.completed]:
+        for request in [r for r in self.active if not self.finishes_offline(r)]:
+            # A load that delivered its data may still read the folder for its cache write: it
+            # stops too, and says so (Vernier, review round 1: going offline never waits on a
+            # volume that may be gone).
             self._retire(request)
-            self.resultReady.emit(request, {"kind": "cancelled"})
+            self.resultReady.emit(request, {"kind": "cancelled", "message": self.OFFLINE_SAVE_STOPPED}
+                                  if request.completed else {"kind": "cancelled"})
         self.activityChanged.emit()
 
     def _start(self, request: IORequest, lane: str) -> None:

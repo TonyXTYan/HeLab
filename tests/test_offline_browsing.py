@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, cast
 
 import numpy as np
 import pytest
@@ -56,6 +56,34 @@ def no_source_io(monkeypatch: pytest.MonkeyPatch) -> list[IORequest]:
             started.append(request)
     monkeypatch.setattr(IOService, "_start", start)
     return started
+
+
+def deny_source(monkeypatch: pytest.MonkeyPatch, folder: Path) -> list[str]:
+    """Deny the real source calls inside ``folder`` in this process (helpers run here in these tests):
+    a listing, stat, open or read of it fails the test at once; the calls tried, for a final check."""
+    import builtins
+    import os
+    tried: list[str] = []
+    top = os.path.normcase(os.path.abspath(folder))
+
+    def inside(path: Any) -> bool:
+        try:
+            target = str(os.path.normcase(os.path.abspath(os.fspath(path))))
+        except TypeError:
+            return False  # (A file descriptor.)
+        return target == top or target.startswith(top + os.sep)
+
+    def denied(name: str, real: Callable[..., Any]) -> Callable[..., Any]:
+        def call(path: Any = ".", *args: Any, **kwargs: Any) -> Any:
+            if inside(path):
+                tried.append(f"{name} {path}")
+                raise AssertionError(f"Source call offline: {name} {path}")
+            return real(path, *args, **kwargs)
+        return call
+    for name in ("scandir", "stat", "lstat", "listdir"):
+        monkeypatch.setattr(os, name, denied(name, getattr(os, name)))
+    monkeypatch.setattr(builtins, "open", denied("open", builtins.open))
+    return tried
 
 
 def frozen_service(monkeypatch: pytest.MonkeyPatch) -> IOService:
@@ -123,11 +151,13 @@ def offline_restart(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator
     data = experiment(tmp_path)
     browse_online(tmp_path, data)
     shutil.rmtree(data)
+    tried = deny_source(monkeypatch, data)
     service = frozen_service(monkeypatch)
     cache = get_folder_cache(service)
     cache.set_offline(True)
     yield service, cache, data
     service.shutdown()
+    assert not tried, f"Source calls offline: {tried}"
 
 
 def list_saved(qtbot: QtBot, service: IOService, folder: Path) -> None:
@@ -456,7 +486,6 @@ def test_the_window_starts_offline_when_asked_last_time_and_work_online_relists_
     from helab.views.HelabMainWindow import HelabMainWindow
     data = experiment(tmp_path)
     browse_online(tmp_path, data)
-    shutil.rmtree(data)
     app_settings().setValue(WORK_OFFLINE_SETTING, True)
     window = HelabMainWindow()
     qtbot.addWidget(window)
@@ -468,6 +497,12 @@ def test_the_window_starts_offline_when_asked_last_time_and_work_online_relists_
     assert isinstance(explorer, FolderExplorer)
     qtbot.waitUntil(lambda: explorer.model.rootPath() == str(tmp_path), timeout=10_000)
     qtbot.waitUntil(lambda: str(data) in explorer.model.nodes, timeout=10_000)
+    # A second tab, offline too, at a folder below.
+    window.add_new_folder_explorer_tab(str(data), str(data), str(data))
+    qtbot.waitUntil(lambda: window.tab_widget.count() == 2)
+    second = window.tab_widget.widget(1)
+    assert isinstance(second, FolderExplorer)
+    qtbot.waitUntil(lambda: second.model.root is not None and second.model.root.loaded, timeout=10_000)
     assert {r.operation for r in no_source_io} <= IOService.OFFLINE_OPERATIONS
     window._update_live_action()
     assert not window.action_tab_refresh.isEnabled() and not window.action_tab_rescan.isEnabled()
@@ -475,9 +510,116 @@ def test_the_window_starts_offline_when_asked_last_time_and_work_online_relists_
     window.set_work_offline(False)
     assert not cache.offline and not read_setting(app_settings(), WORK_OFFLINE_SETTING, typed=True)
     assert window.offline_button.isHidden() and window.action_tab_refresh.isEnabled()
-    # Work Online lists the tab's folders again (D8).
-    qtbot.waitUntil(lambda: any(r.operation == "list" for r in no_source_io), timeout=10_000)
+    # Work Online lists every tab's folders again from the source (D8).
+    qtbot.waitUntil(lambda: {str(tmp_path), str(data)} <= {r.path for r in no_source_io if r.operation == "list"},
+                    timeout=10_000)
     window.set_work_offline(True)
     assert cache.offline and read_setting(app_settings(), WORK_OFFLINE_SETTING, typed=True)
     window._quit_now = True
     window.close()
+
+
+# Review round 1 (Vernier, review-findings.md): each fails without its fix.
+
+def test_going_offline_stops_a_finished_loads_cache_write_which_reads_the_folder(
+        qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """P1: a load that delivered its data may still read the folder's files for its cache write
+    (the shots it reused from RAM): it stops, saying why; a save the user asked for goes on."""
+    service = frozen_service(monkeypatch)
+    cache = get_folder_cache(service)
+    try:
+        ordinary, saving = str(tmp_path / "run_1"), str(tmp_path / "run_2")
+        assert cache.submit("tab", 0, ordinary, "load", {})
+        assert cache.save("live", saving, {})
+        ended: list[tuple[str, str]] = []
+        cache.saveEnded.connect(lambda folder, outcome: ended.append((folder, outcome)))
+        requests = {}
+        for path in (ordinary, saving):
+            request = next(r for r in service.pending if r.path == path)
+            service.pending.remove(request)
+            service.active.append(request)
+            service.resultReady.emit(request, {"kind": "shot", "shot": 1, "array": np.ones((1, 3))})
+            service.resultReady.emit(request, {"kind": "loaded", "signature": "s", "files": 1, "rows": 1,
+                                               "bytes": 24, "problematic": [], "disk_cache_pending": True})
+            request.completed = True  # (As the service marks a load that sent ``loaded``.)
+            requests[path] = request
+        assert sorted(cache.quit_saves()) == [ordinary, saving]
+        cache.set_offline(True)
+        assert requests[ordinary].cancelled.is_set() and requests[ordinary] not in service.active
+        assert not requests[saving].cancelled.is_set() and requests[saving] in service.active
+        assert ended == [(ordinary, "failed")] and cache.quit_saves() == [saving]
+        assert cache.cache_status(ordinary).error == IOService.OFFLINE_SAVE_STOPPED
+        assert cache.dataset(ordinary, "s") is not None  # Its data stays in RAM.
+    finally:
+        service.active.clear()
+        service.shutdown()
+
+
+def test_a_save_asked_for_before_going_offline_still_runs_after_the_load_it_waited_for(
+        qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """P2: Live's stop-save waiting for another load of the folder keeps its authorization; a save
+    asked for once offline is refused."""
+    service = frozen_service(monkeypatch)
+    cache = get_folder_cache(service)
+    try:
+        path = str(tmp_path / "run")
+        assert cache.submit("other-tab", 0, path, "load", {})
+        assert cache.save("live-stop-save", path, {}) and path in cache._deferred_saves
+        events: list[str] = []
+        cache.resultReady.connect(lambda request, event: events.append(event["kind"])
+                                  if request.owner == "live-stop-save" else None)
+        cache.set_offline(True)  # Cancels the other tab's load: the save it waited for starts.
+        qtbot.waitUntil(lambda: any(r.operation == "load" and r.payload.get("save") for r in service.pending))
+        assert "offline" not in events and cache.quit_saves() == [path]
+        assert cache.save("later", str(tmp_path / "other"), {})  # Asked for offline: answered offline.
+        assert not any(r.path == str(tmp_path / "other") for r in service.pending)
+    finally:
+        service.shutdown()
+
+
+def test_a_volume_or_share_mounted_above_a_hint_wins_over_it() -> None:
+    """P2: a share mounted at /Volumes/lab now owns /Volumes/lab/subdir, even if a share was mounted
+    at subdir last time; a system mount above (a tmpfs /tmp) doesn't take a hint's place."""
+    from helab.io_ops import stores
+    from helab.utils.cache_paths import Mount
+    from helab.utils.data_roots import LocalVolumes
+
+    class Hints:
+        def mount_hints(self) -> dict[str, str]:
+            return {"/Volumes/lab/subdir": "smb://old-server/old-share", "/tmp/shares/data": "smb://server/data"}
+    system = Mount("/dev/disk3s1", "/", "apfs")
+    lab = Mount("//new-server/lab", "/Volumes/lab", "smbfs", True)
+    tmp = Mount("tmpfs", "/tmp", "tmpfs")
+    paths, _ = stores._offline_mounts(cast(Any, Hints()), [system, lab, tmp], LocalVolumes([]))
+    assert paths.key("/Volumes/lab/subdir/run") == "smb://new-server/lab/subdir/run"
+    assert paths.key("/tmp/shares/data/run") == "smb://server/data/run"
+
+
+def test_work_online_cancels_a_saved_listing_in_flight_and_lists_the_folder_anew(
+        qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """P2: an offline listing still running when Work Online starts never answers its tab's Refresh:
+    it is cancelled quietly, and the folder is listed from the source."""
+    from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
+    service = frozen_service(monkeypatch)
+    cache = get_folder_cache(service)
+    model = SnapshotFileSystemModel(service=service)
+    try:
+        cache.set_offline(True)
+        path = str(tmp_path / "data")
+        model.setRootPath(path)
+        before = next(r for r in service.pending if r.operation == "saved_list")
+        cache.set_offline(False)
+        model.refresh()
+        assert [r.operation for r in service.pending if r.path == path] == ["list"]
+        assert before.cancelled.is_set()
+        assert model.root is not None and model.root.state != "cancelled" and not model.root.error
+        # Its answer, late, is dropped.
+        service.resultReady.emit(before, {"kind": "entries", "entries": [{"path": path + "/stale", "name": "stale"}]})
+        service.resultReady.emit(before, {"kind": "status", "offline": True, "listed": True, "listed_at": 1000.0,
+                                          "details": False, "empty": False, "has_dirs": True})
+        service.resultReady.emit(before, {"kind": "done"})
+        qtbot.wait(50)
+        assert model.root.offline_listed_at is None and not model.root.children
+    finally:
+        model.close_cleanup()
+        service.shutdown()
