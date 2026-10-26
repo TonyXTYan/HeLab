@@ -945,10 +945,30 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                       else "running" if job and job.state == "started" else "queued")
 
     def _shared_snapshot_changed(self, path: str) -> None:
+        """Another tab's listing or check finished, or a load changed the folder's snapshot. A
+        snapshot in RAM shows here without I/O, also while this tab refreshes (``apply_snapshot``);
+        one a load found outdated, or none (cleared), asks for a check, which Refresh holds back."""
         if path in self.nodes and not any(self.cache.has_request(self.owner, operation, path) for operation in SCANS):
+            if self.apply_snapshot(path):
+                return
             snapshot = self.cache.snapshot(path)
             self.request_scan(path, force=bool(snapshot and snapshot.checked_at == 0
                                                and not self.cache.scan_history(path)["blocked"]), automatic=True)
+
+    def apply_snapshot(self, path: str) -> bool:
+        """Show the folder's snapshot in RAM on its row, as its listing or status check would, with
+        no source I/O (``FolderCache.replay_snapshot``). Whether there was one to show."""
+        node = self.nodes.get(path)
+        if self.closed or node is None:
+            return False
+        listing_only = path in self.cache.listing_notifications
+        metadata_only = not listing_only and path in self.cache.metadata_notifications
+        if not self.cache.replay_snapshot(self.owner, self.generation, path,
+                                          metadata_only=metadata_only, listing_only=listing_only):
+            return False
+        node.error = ""
+        node.scan_skipped = False
+        return True
 
     def _cache_removed(self, paths: list[str] | None, kinds: list[str]) -> None:
         """Saved results removed from the disk cache stop showing; what this tab checked

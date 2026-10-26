@@ -1972,6 +1972,25 @@ class FolderCache(QObject):
             return False
         return True
 
+    def replay_snapshot(self, owner: str, generation: int, path: str, *, metadata_only: bool = False,
+                        listing_only: bool = False) -> bool:
+        """Apply the folder's snapshot in RAM to a tab as its listing (or, ``metadata_only``, its
+        status check) would: no helper and never a revalidating check, however old the snapshot.
+        Another tab's finished result reaches a refreshing tab this way. Whether there was one to
+        apply: not for a snapshot a load found outdated (``checked_at`` 0), nor a names-only one
+        for a status check."""
+        path = self.key(path)
+        operation = "scan" if metadata_only else "list"
+        snapshot = self.snapshots.get(path)
+        if (self.service.closed or snapshot is None or snapshot.checked_at == 0
+                or metadata_only and not snapshot.status.get("details")):
+            return False
+        if not self.has_request(owner, operation, path):
+            # ``applied``: memory only, so Refresh's cancelling of automatic work leaves it.
+            self._replay(IORequest(owner, generation, path, operation, {
+                "applied": True, "metadata_only": metadata_only, "listing_only": listing_only}, 0.0), snapshot)
+        return True
+
     def _deliver(self, request: IORequest, event: dict[str, Any]) -> None:
         self._deliveries.append(request)
 
@@ -2225,7 +2244,7 @@ class FolderCache(QObject):
         cancelled = []
         for request in tuple(self.requests(owner)):
             if (request.operation in SCANS and not request.payload.get("listing_only")
-                    and not request.payload.get("scan_manual") and (
+                    and not request.payload.get("scan_manual") and not request.payload.get("applied") and (
                     request.payload.get("automatic") or request.payload.get("revalidate")
                     or request.operation in ("scan", "details"))):
                 request.payload["refresh_cancelled"] = True
