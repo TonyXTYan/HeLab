@@ -37,7 +37,6 @@ LIVE_INTERVAL_SETTING = "live_check_interval_seconds"
 LIVE_AUTOSAVE_SETTING = "live_autosave_shots"
 PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
 RESULT_REUSE_SETTING = "result_reuse"
-THREAD_STATUS_SETTING = "view_toggle_thread_status"
 # File › Work Offline (cache-only browsing): remembered across restarts (Tony, 2026-10-26: D2).
 WORK_OFFLINE_SETTING = "work_offline"
 LOG_KEEP_SETTING = "log_files_keep"
@@ -80,7 +79,6 @@ SETTINGS: tuple[Setting, ...] = (
             "Plots that support it (Correlations, Release time) show their result saved in the disk cache "
             "for the same data, script and settings instead of computing it again, and save new ones; off: "
             "neither (Settings → Cache)."),
-    Setting(THREAD_STATUS_SETTING, bool, True, "View › Toggle Thread Status Auto Pop-up."),
     Setting(WORK_OFFLINE_SETTING, bool, False,
             "File › Work Offline: browse and analyse cached data only, reading no source folder and no "
             "server, until turned off (also at the next start)."),
@@ -108,7 +106,8 @@ PREFIXES: tuple[Setting, ...] = (
 
 # Keys older HeLabs saved, now only removed when settings are saved (the example_* pair: Settings →
 # General's placeholders, removed by Tony's decision, 2026-10-22).
-RETIRED = ("simultaneous_folder_scans", "simultaneous_folder_loads", "example_checkbox", "example_text")
+RETIRED = ("simultaneous_folder_scans", "simultaneous_folder_loads", "example_checkbox", "example_text",
+           "view_toggle_thread_status")  # (View › Toggle Thread Status Auto Pop-up: did nothing; Tony, 2026-10-26.)
 
 _BY_KEY = {setting.key: setting for setting in SETTINGS}
 

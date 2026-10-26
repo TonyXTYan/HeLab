@@ -528,3 +528,15 @@ def test_help_menu_shows_the_log_folder(main_window: HelabMainWindow, monkeypatc
     folder = app_log.log_folder(app_folder())
     assert [url.toLocalFile() for url in opened] == [QUrl.fromLocalFile(folder).toLocalFile()]
     assert Path(folder).is_dir() and Path(folder).parent == Path(app_folder())
+
+
+def test_the_view_menu_has_no_thread_status_item_and_its_setting_is_retired(main_window: HelabMainWindow) -> None:
+    """C-10 (Tony, 2026-10-26): View › "Toggle Thread Status Auto Pop-up" read and wrote a setting
+    nothing else used: it is gone, and its key is retired (removed when Settings saves)."""
+    from helab.utils.settings_defaults import RETIRED, SETTINGS
+    bar = main_window.menuBar()
+    assert bar is not None
+    texts = [action.text() for menu in bar.findChildren(QMenu) for action in menu.actions()]
+    assert "Toggle Thread Status Auto Pop-up" not in texts and "Toggle Status Bar" in texts
+    assert "view_toggle_thread_status" in RETIRED
+    assert all(row.key != "view_toggle_thread_status" for row in SETTINGS)

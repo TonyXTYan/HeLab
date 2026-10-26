@@ -37,7 +37,7 @@ from helab.utils.constants import (
 )
 from helab.utils.number_format import byte_size, fnum
 from helab.utils.settings_defaults import (
-    AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, THREAD_STATUS_SETTING, WORK_OFFLINE_SETTING, read_setting)
+    AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, WORK_OFFLINE_SETTING, read_setting)
 from helab.utils.settings_store import app_settings
 from helab.views.CacheDialogs import CacheDialogs
 from helab.views.ClockSkewWarning import ClockSkewWarning
@@ -440,12 +440,6 @@ class HelabMainWindow(QMainWindow):
             menu_view.addAction(self.view_toggle_status_bar)
 
             settings = app_settings()
-            self.view_toggle_thread_status = QAction('Toggle Thread Status Auto Pop-up', self)
-            self.view_toggle_thread_status.setCheckable(True)
-            self.view_toggle_thread_status.setChecked(read_setting(settings, THREAD_STATUS_SETTING, typed=True))
-            self.view_toggle_thread_status.triggered.connect(lambda checked: settings.setValue(THREAD_STATUS_SETTING, checked))
-            menu_view.addAction(self.view_toggle_thread_status)
-
             menu_view.addSeparator()
 
             self.view_toggle_auto_scan_visible = QAction('Automatically Check Folder Status in View', self)
