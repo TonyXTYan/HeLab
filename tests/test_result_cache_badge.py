@@ -17,7 +17,7 @@ from pytestqt.qtbot import QtBot
 from helab.io_ops.browse import list_folder
 from helab.resources.icons import IconsInitUtil, StatusIcons
 from helab.utils.folder_cache import FolderCache, analysis_cached_text
-from helab.utils.io_service import IOService
+from helab.utils.io_service import IORequest, IOService
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from test_folder_flags import frozen, make_explorer, select
 from test_result_cache_plots import (WAIT, Costly, cache, close, folder_view, make_window,  # noqa: F401
@@ -115,6 +115,33 @@ def test_folder_cache_keeps_the_newest_measurement_and_drops_counts_with_a_clear
     assert cache.analysis_cached("/r/a") is None and analysis_cached_text(cache, "/r/a") == ""
     cache.remember_prefs("/r/a", {"no_cache": False, "no_auto_load": False, "set_at": 2.0})
     assert cache.analysis_cached("/r/a") == (1, 700)
+
+
+@pytest.mark.parametrize("how", ["forgotten", "replaced", "unseen"])
+def test_a_root_that_goes_drops_the_counts_of_the_folders_it_held(monkeypatch: pytest.MonkeyPatch, how: str) -> None:
+    """Forgotten (Settings → Data roots), replaced by another marker, or gone where this session saw
+    none: the old root's counts go, not a nested root's, until a listing measures them again."""
+    service, cache = frozen(monkeypatch)
+    try:
+        monkeypatch.setattr(cache, "result_cache_off", lambda path: "")
+        root, run = FolderCache.key("/r"), FolderCache.key(os.path.join("/r", "inner"))
+        held, nested = os.path.join(root, "a"), os.path.join(run, "b")
+        if how != "unseen":
+            cache._root_seen(root, "outer-uuid", "outer")
+        cache._root_seen(run, "inner-uuid", "inner")
+        cache._note_result_counts({path: counts(1, 100, 10) for path in (root, held, run, nested)})
+        changed: list[Any] = []
+        cache.resultCountsChanged.connect(changed.append)
+        event: dict[str, Any] = {"kind": "root_changed", "path": root, "location": "vol://test/r", "reason": how}
+        if how == "replaced":
+            event.update(uuid="new-uuid", label="new")
+        service.resultReady.emit(IORequest("probe", 0, root, "list", {}, 60), event)
+        assert [path for path in (root, held, run, nested) if cache.analysis_cached(path)] == [run, nested]
+        assert changed == [[root, held]]
+        cache._note_result_counts({held: counts(2, 200, 11)})  # The next listing's measurement.
+        assert cache.analysis_cached(held) == (2, 200)
+    finally:
+        service.shutdown()
 
 
 def test_the_row_shows_report_with_a_tooltip_line_and_folder_details_says_it(

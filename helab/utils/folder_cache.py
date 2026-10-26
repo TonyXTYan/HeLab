@@ -579,6 +579,7 @@ class FolderCache(QObject):
         known = self.data_roots.get(path)
         if known is not None and known[0] != identifier:
             self._root_constants_gone(path)  # Another root at this folder now (any event saying so).
+            self._root_results_gone(path)
         if known != (identifier, label) or cleared:
             self.data_roots[path] = (identifier, label)
             self.dataRootsChanged.emit(path)
@@ -652,6 +653,7 @@ class FolderCache(QObject):
     def _root_gone(self, path: str) -> None:
         if path in self.data_roots:
             self._root_constants_gone(path)
+            self._root_results_gone(path)
         if self.data_roots.pop(path, None) is not None:
             self.dataRootsChanged.emit(path)
 
@@ -1165,22 +1167,32 @@ class FolderCache(QObject):
         so the next listing's answer (none: no record) stands, whatever its ``set_at``. Folders
         inside a nested root below ``path`` keep theirs (their root is unchanged), and so do
         this session's unsaved choices (RAM only, or a write still running): the user's."""
-        prefix = path.rstrip("/\\") + os.sep
-
-        def below(folder: str) -> bool:
-            if folder != path and not folder.startswith(prefix):
-                return False
-            nearest = self.root_of(folder)
-            return nearest is None or not nearest[0].startswith(prefix)
         writing = {write[0] for write in self._constant_writes.values()}
-        for folder in [folder for folder in self._confirmed_constants if below(folder)]:
+        for folder in [folder for folder in self._confirmed_constants if self._root_holds(path, folder)]:
             del self._confirmed_constants[folder]
-        for folder in [folder for folder in self.folder_constant_records if below(folder)
+        for folder in [folder for folder in self.folder_constant_records if self._root_holds(path, folder)
                        and folder not in self._session_constants and folder not in writing]:
             before = self.folder_constants(folder)
             del self.folder_constant_records[folder]
             if before:
                 self.constantsChanged.emit(folder)
+
+    def _root_results_gone(self, path: str) -> None:
+        """Beside :meth:`_root_constants_gone`: the old root's saved-result counts no longer apply to
+        the folders it held (not those inside a nested root below), until a listing measures them."""
+        gone = [folder for folder in self.result_counts if self._root_holds(path, folder)]
+        for folder in gone:
+            del self.result_counts[folder]
+        if gone:
+            self.resultCountsChanged.emit(gone)
+
+    def _root_holds(self, path: str, folder: str) -> bool:
+        """Whether the data root at ``path`` holds ``folder``: at or below it, not inside a nested root."""
+        prefix = path.rstrip("/\\") + os.sep
+        if folder != path and not folder.startswith(prefix):
+            return False
+        nearest = self.root_of(folder)
+        return nearest is None or not nearest[0].startswith(prefix)
 
     def _automatic_save_failed(self, folder: str, message: str) -> None:
         """An automatic save of session-only values failed: they stay in RAM (still "RAM only",
@@ -3108,6 +3120,7 @@ class FolderCache(QObject):
                 # A root this session hadn't seen at that folder: what RAM holds there came from
                 # whichever root was nearest, gone too. (A known one: ``_root_seen``/``_root_gone``.)
                 self._root_constants_gone(str(event["path"]))
+                self._root_results_gone(str(event["path"]))
             if event.get("location"):
                 self._duplicate_settled(str(event["location"]))  # Forgotten, removed or replaced.
             if "uuid" in event:
