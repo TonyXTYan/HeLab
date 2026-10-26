@@ -43,3 +43,20 @@ Vernier's validation in the review copy: 4416 passed, no RERUN; mypy strict on h
 - It doesn't deny the underlying source filesystem or network calls, and it misses completed helper tails and deferred saves that already exist.
 - The test named `relists_every_tab` opens only one tab and waits until its offline listing has finished.
 - Not tested: an in-flight listing across the online/offline switch, a nested current mount against a hint, and concurrent listings' ordering.
+
+## Round 2 (3b2223f..046c3c2, 2026-10-26)
+
+The round-1 P1 and all five round-1 scenarios are fixed. Vernier checked:
+- the adapted probe (`review-probe-round2.py`);
+- P1 through a real helper behind `HELAB_TEST_READ_GATE`;
+- a reopened plot offline with the source deleted and `deny_source` armed;
+- 65 store-identity combinations offline.
+
+Additional acceptance probes: 67 passed, 1 failed (below). Full suite: 4422 passed, no RERUN. mypy and pyright are clean.
+
+**P2 (blocker for landing). `helab/io_ops/stores.py:225–226` (`_volume_mount`; used at :238–245): real volumes mounted at custom paths are treated like system mounts.**
+- Scenario: `/dev/sdb1` (ext4, `remote=False`, with a known current volume ID new-disk) is mounted at `/srv/lab`. The store has an old SMB hint for `/srv/lab/subdir` → `smb://old-server/old-share`.
+- `_volume_mount` returns False because `/srv/lab` is outside `MOUNT_TOPS`. So the old nested SMB hint is injected and wins by longest prefix.
+- `/srv/lab/subdir/run` resolves to `root://old-root/run`, not `root://new-root/subdir/run`.
+- Keeping hints under a tmpfs `/tmp` is fine. Tell genuine current volumes (including verified or supplied `LocalVolumes`) apart from system and pseudo filesystems, instead of judging only by the mountpoint's directory.
+- Failing reproducer: `review-probe-round2-acceptance.py`, lines 47–56 (in this folder; it loads the project conftest through its own conftest in `/private/tmp/helab-review-r2-tests/`).

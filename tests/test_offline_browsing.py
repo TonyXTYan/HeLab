@@ -595,6 +595,31 @@ def test_a_volume_or_share_mounted_above_a_hint_wins_over_it() -> None:
     assert paths.key("/tmp/shares/data/run") == "smb://server/data/run"
 
 
+@pytest.mark.parametrize("known", [True, False])
+def test_a_disk_mounted_anywhere_wins_over_a_hint_below_it(known: bool) -> None:
+    """Vernier, review round 2: a disk at a custom mount point (/srv/lab) is a volume too, known by
+    its volume ID now or by its block device; the old share hinted at /srv/lab/subdir doesn't take
+    its folders. A pseudo filesystem's hints below stay."""
+    from helab.io_ops import stores
+    from helab.utils.cache_paths import Mount
+    from helab.utils.data_roots import DataRoots, LocalVolumes, RootLocation
+
+    class Hints:
+        def mount_hints(self) -> dict[str, str]:
+            return {"/srv/lab/subdir": "smb://old-server/old-share", "/run/user/1000/share": "smb://server/data"}
+    disk = Mount("/dev/sdb1" if not known else "LABDISK", "/srv/lab", "ext4")
+    pseudo = Mount("tmpfs", "/run/user/1000", "tmpfs")
+    volumes = LocalVolumes([(disk, "new-disk")] if known else [])
+    paths, local = stores._offline_mounts(cast(Any, Hints()), [Mount("/dev/sda1", "/", "ext4"), disk, pseudo],
+                                          volumes)
+    assert paths.key("/srv/lab/subdir/run") == "/srv/lab/subdir/run"  # Not the old share's.
+    assert paths.key("/run/user/1000/share/run") == "smb://server/data/run"
+    if known:
+        roots = [RootLocation("smb://old-server/old-share", "old-root"), RootLocation("vol://new-disk", "new-root")]
+        resolver = DataRoots(paths, roots, local_location=local.location, local_source=local.source)
+        assert resolver.key("/srv/lab/subdir/run") == "root://new-root/subdir/run"
+
+
 def test_work_online_cancels_a_saved_listing_in_flight_and_lists_the_folder_anew(
         qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """P2: an offline listing still running when Work Online starts never answers its tab's Refresh:

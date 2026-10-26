@@ -208,10 +208,12 @@ def _record_mount_hints(store: CacheStore, mounts: list[Mount], paths: CachePath
                 store.record_mount_hint(mount_path, top)
 
 
-def _volume_mount(mount: Mount) -> bool:
-    """A mount someone attached, whose folders are that volume's or share's own: a share, a remote
-    mount, a volume under a mount top (``/Volumes``…), a Windows drive other than the system's.
-    Never the system volume, nor a system mount such as a tmpfs ``/tmp``."""
+def _volume_mount(mount: Mount, volumes: LocalVolumes) -> bool:
+    """A volume or share attached now, whose folders are its own, wherever it is mounted: a share,
+    a remote mount, a volume with a known ID now (``volumes``), a block device's filesystem
+    (``/dev/…``: a disk at ``/srv/lab`` too; Vernier, review round 2), a Windows drive other than
+    the system's, or anything below a mount top (``/Volumes``…). Never the system volume, nor a
+    pseudo filesystem such as a tmpfs ``/tmp``, whose hints below stay usable."""
     from helab.utils import cache_paths
     from helab.utils.cache_paths import _inside, _normal
     from helab.utils.data_roots import fixed_mount
@@ -219,6 +221,10 @@ def _volume_mount(mount: Mount) -> bool:
     if fixed_mount(mount):
         return False
     if mount.remote or cache_paths._smb_source(mount.source, mount.fstype) is not None:
+        return True
+    if any(_normal(known.path) == _normal(mount.path) for known, _ in volumes.volumes):
+        return True
+    if mount.source.startswith("/dev/"):
         return True
     if sys.platform == "win32":
         return True
@@ -235,7 +241,7 @@ def _offline_mounts(store: CacheStore, mounts: list[Mount],
     from helab.utils.cache_paths import CachePaths, Mount, _inside, _normal
     from helab.utils.data_roots import LocalVolumes
     mounted = {_normal(mount.path) for mount in mounts}
-    attached = [_normal(mount.path) for mount in mounts if _volume_mount(mount)]
+    attached = [_normal(mount.path) for mount in mounts if _volume_mount(mount, volumes)]
     shares: list[Mount] = []
     local = list(volumes.volumes)
     for mount_path, top in store.mount_hints().items():

@@ -222,3 +222,25 @@ cancelled and removed it.
 
 **Checks.** Full suite: 4422 passed, 2 skipped, **no RERUN**. mypy --strict on `helab/` and `tests/`
 clean; pyright 0 errors.
+
+## Review round 2 fix (Vernier), 2026-10-26
+
+**P2. A disk mounted at a custom path didn't override an old nested hint.**
+- Scenario: ext4 `/dev/sdb1` at `/srv/lab` was judged by its directory, so an old share hinted at
+  `/srv/lab/subdir` still won.
+- Fix: `stores._volume_mount(mount, volumes)` now decides by what the mount is, not where it is.
+- **Counts as a volume** (its mount wins over hints at or below it):
+  - a share or remote mount;
+  - a mount with a volume ID this request has (`LocalVolumes`, supplied or verified);
+  - a block device's filesystem (source `/dev/…`);
+  - a Windows drive other than the system's;
+  - anything below a mount top.
+- **Never counts:** the system volume, or a pseudo filesystem such as tmpfs, whose hints below stay
+  usable.
+- Test: `test_a_disk_mounted_anywhere_wins_over_a_hint_below_it[True|False]`. It covers a known
+  volume ID, and separately a `/dev` source alone; a tmpfs hint below `/run/user/1000` stays. With
+  the known ID it checks Vernier's reproducer key, `root://new-root/subdir/run`. Both cases fail
+  without the fix.
+
+**Checks.** Full suite: 4424 passed, 2 skipped, **no RERUN**. mypy --strict on `helab/` and `tests/`
+clean; pyright 0 errors.
