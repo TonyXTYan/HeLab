@@ -15,6 +15,7 @@ from typing import Any, Callable, Iterator
 import pytest
 from pytestqt.qtbot import QtBot
 
+from conftest import store_free
 from helab.utils.cache_store import CacheStore
 from helab.utils.folder_cache import FolderCache, get_folder_cache, store_options
 from helab.utils.io_service import IORequest, IOService
@@ -313,7 +314,8 @@ def test_a_store_in_the_folder_whatever_its_age_ends_quit(qtbot: QtBot, monkeypa
     try:
         cache = get_folder_cache(service)
         cache.read_presets()
-        qtbot.waitUntil(lambda: cache.presets_read and not cache._preset_jobs, timeout=30_000)
+        qtbot.waitUntil(lambda: cache.presets_read and not cache._preset_jobs and store_free(service),
+                        timeout=30_000)  # (Windows deletes no open file.)
         first = cache._store
         directory = store_options()["directory"]
         shutil.rmtree(directory)

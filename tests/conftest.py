@@ -8,7 +8,7 @@ import traceback
 import uuid
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 
 # Run Qt headless (offscreen) by default so tests don't pop up windows.
 # Set HELAB_SHOW_GUI=1 to force a real, visible display (e.g. when a test
@@ -58,6 +58,9 @@ os.environ["HELAB_SETTLE_SECONDS"] = "0"
 
 
 import pytest  # noqa: E402  (after the environment above is set)
+
+if TYPE_CHECKING:
+    from helab.utils.io_service import IOService
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -124,6 +127,17 @@ def delete_left_widgets(test: str, *, fail: bool = True) -> None:
         if fail:
             pytest.fail(f"{test} left {len(alive)} web view(s) alive: close or delete its plots",
                         pytrace=False)
+
+
+def store_free(*services: "IOService") -> bool:
+    """Whether no helper of these IOServices, nor of the app-wide one, has the disk cache open (every
+    exit confirmed): only then may a test delete the store, which Windows refuses while a helper has
+    it open (WinError 32). A plot's Presets row reads presets through the app-wide FolderCache,
+    whatever cache the test gave the plot, and its timers keep starting helpers in later tests, on
+    the store of the test running then."""
+    from helab.utils import io_service
+    app = io_service._service
+    return not any(service.cache_busy() for service in (*services, app) if service is not None)
 
 
 @pytest.fixture(autouse=True)
