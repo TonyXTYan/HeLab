@@ -476,7 +476,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     if in_memory or (from_disk and not cached):
         parts = [f"{len(in_memory)} shots from {held_from}"] if in_memory else []
         parts += [f"{len(from_disk)} shots from disk cache"] if from_disk else []
-        cache_reason = f"Reused {', '.join(parts)}; read {read} new or changed TXY files"
+        cache_reason = f"Reused {', '.join(parts)}" + (
+            f"; {read} new or changed TXY file{'' if read == 1 else 's'} to read" if read else "")
     elif cached:
         cache_reason = ""
     source = "updated" if in_memory else "disk" if cached else "merged" if reused else "files"
@@ -511,7 +512,11 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
 
     for i, (shot, filename) in enumerate(files):
         Pause.checkpoint(send)
-        send({"kind": "file_started", "filename": filename})
+        # Only a file read is announced (the file being read, its per-file timeouts); a reused
+        # shot counts in the progress events alone.
+        reading = shot not in in_memory and shot not in reused and not cached
+        if reading:
+            send({"kind": "file_started", "filename": filename})
         try:
             array = None
             if shot in in_memory:
@@ -549,7 +554,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                 load_counts["reused_disk"] += int(shot in from_disk)
         except (OSError, ValueError, pd.errors.ParserError):
             problematic.append(shot)
-        send({"kind": "file_finished", "filename": filename})
+        if reading:
+            send({"kind": "file_finished", "filename": filename})
         now = time.monotonic()
         if now - last_progress >= 0.1 or i + 1 == len(files):
             send({"kind": "progress", "progress": (i + 1 + len(young)) / (len(files) + len(young)),

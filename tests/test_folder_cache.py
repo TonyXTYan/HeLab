@@ -1065,7 +1065,7 @@ def test_changed_folder_reads_only_new_or_modified_txy_files(
     load(str(source), str(output), events.append, options, allow_missing=True)
     assert sorted(read) == ["d_txy_forc2.txt", "d_txy_forc5.txt"]
     assert next(event for event in events if event["kind"] == "load_source") == {"kind": "load_source", "source": "merged",
-                         "cache_reason": "Reused 2 shots from disk cache; read 2 new or changed TXY files"}
+                         "cache_reason": "Reused 2 shots from disk cache; 2 new or changed TXY files to read"}
     assert loaded_event(events)["source"] == "merged"
     assert loaded_event(events)["problematic"] == [4]
     assert loaded_event(events)["load_counts"] == {
@@ -1120,7 +1120,7 @@ def test_load_skips_shots_already_in_memory_and_completes_disk_cache(
         "reused_memory": 2, "reused_disk": 0, "new": 0, "modified": 1, "removed": 0,
         "read": 1, "new_loaded": 0, "modified_loaded": 1,
     }
-    assert loaded["cache_reason"] == "Reused 2 shots from memory; read 1 new or changed TXY files"
+    assert loaded["cache_reason"] == "Reused 2 shots from memory; 1 new or changed TXY file to read"
     assert events[-1] == {"kind": "disk_cached", "disk_cached": True}
     saved = saved_dataset(options, str(source))
     assert saved is not None and sorted(saved[1]) == [1, 2, 3]

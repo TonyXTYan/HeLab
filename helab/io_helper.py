@@ -30,9 +30,10 @@ from helab.io_ops.stores import _deadline, _removed_event, _usage
 from helab.io_ops.trace_check import trace_check
 
 
-# Operations that need the disk cache on.
-CACHE_ONLY = ("cached", "saved_list", "invalidate", "subtree_save", "scan_history", "cache_admin", "volumes_verify",
-              "root_reassign", "root_remove", "result_find", "result_save")
+# Operations that need the disk cache on: the app's ``IOService.CACHE_OPERATIONS`` and the two marker
+# writes that update its ``roots`` (tests/test_helper_dispatch.py checks they agree).
+CACHE_ONLY = ("cached", "saved_list", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify",
+              "volumes_verify", "root_reassign", "root_remove", "result_find", "result_save")
 
 
 # Requests acting on the source folder they name (``path``, or an icon batch's ``paths``), which

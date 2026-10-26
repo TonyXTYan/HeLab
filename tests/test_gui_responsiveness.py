@@ -702,7 +702,8 @@ def test_load_progress_counts_cached_files_and_reports_unreadable_files(
     events: list[Any] = []
     load(str(source), str(output), events.append, options if reuse == "disk" else None, memory)
     progress = [event for event in events if event["kind"] == "progress"]
-    expected_files = [str(source / f"d_txy_forc{shot}.txt") for shot in (1, 2)]
+    # Only files read are announced: none from the cache, the unheld one from memory.
+    expected_files = [str(source / f"d_txy_forc{shot}.txt") for shot in {"files": (1, 2), "disk": (), "memory": (2,)}[reuse]]
     assert [event["filename"] for event in events if event["kind"] == "file_started"] == expected_files
     assert [event["filename"] for event in events if event["kind"] == "file_finished"] == expected_files
     # The time estimate counts only bytes actually read: none from the cache, the unheld file from memory.
