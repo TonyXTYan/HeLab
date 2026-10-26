@@ -26,8 +26,9 @@ SETTLE_SECONDS = float(os.environ.get("HELAB_SETTLE_SECONDS", "5"))
 
 # A folder modified this close to when its listing began (either way: the server's clock may differ
 # a little from ours) may change again within the same mtime step (FAT and some shares keep 2 s),
-# which a later stat wouldn't see: its mtime isn't kept for the quick check (``_quick_mtime``), as
-# Live's isn't (``live.RACY_SECONDS``). Tests, with no settle age, have no margin either.
+# which a later stat wouldn't see: its mtime isn't kept for the quick check (``_quick_mtime``), nor
+# compared by Live's next check (``live``, which reads this one). Tests, with no settle age, have no
+# margin either.
 RACY_SECONDS = min(2.0, SETTLE_SECONDS)
 
 

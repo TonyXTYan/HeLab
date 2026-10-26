@@ -16,11 +16,6 @@ from helab.utils import file_kinds
 from helab.utils.time_format import span
 
 
-# A folder modified this close to a check (or later: another computer's clock) may change again
-# within the same timestamp tick, which the next check's stat wouldn't see: that check lists it.
-RACY_SECONDS = 2.0
-
-
 def _stop_if_ahead(path: str, files: list[tuple[int, int, int]], send: Emit) -> None:
     """New files dated in the future (another computer's clock ahead of ours) are never settled, so
     Live would wait for them for as long as the clocks differ: the check fails instead, as an error
@@ -80,7 +75,10 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
         folder = _stat(path, "live: folder")
     except FileNotFoundError:
         raise OSError("Folder not found — is its drive connected?") from None
-    racy = abs(time.time() - folder.st_mtime) < RACY_SECONDS
+    # A folder modified this close to the check (or later: another computer's clock) may change again
+    # within the same timestamp tick, which the next check's stat wouldn't see: that check lists it.
+    # One margin with the quick check's (``fingerprints.RACY_SECONDS``, codebase review 2, C-12).
+    racy = abs(time.time() - folder.st_mtime) < fingerprints.RACY_SECONDS
     held = {int(shot): (int(size), int(modified)) for shot, size, modified in memory}
     rereadable = {int(shot) for shot in recent or ()} & set(held)
 

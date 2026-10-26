@@ -283,12 +283,19 @@ def test_files_still_being_written_are_counted_and_left_for_later(
     assert [event["shot"] for event in events if event["kind"] == "shot"] == [3]
 
 
-def test_a_recently_modified_folder_is_listed_again(folder: Path, tmp_path: Path) -> None:
+def test_a_recently_modified_folder_is_listed_again(
+        monkeypatch: pytest.MonkeyPatch, folder: Path, tmp_path: Path) -> None:
+    """Within the margin the quick check uses too (``fingerprints.RACY_SECONDS``, one constant since
+    codebase review 2's C-12; tests, with no settle age, have none unless set)."""
+    monkeypatch.setattr(fingerprints, "RACY_SECONDS", 2.0)
     memory = held(folder, tmp_path)
     now = time.time()
     os.utime(folder, (now, now))
     result = last(check(folder, tmp_path, memory), "live_unchanged")
     assert result["live_listed"] and result["live_since"] is None  # Within RACY_SECONDS.
+    monkeypatch.setattr(fingerprints, "RACY_SECONDS", 0.0)  # (The same margin, set to none: compared.)
+    again = last(check(folder, tmp_path, memory), "live_unchanged")
+    assert again["live_since"] is not None
 
 
 def test_unreadable_new_files_are_kept_known_and_not_read_again(
