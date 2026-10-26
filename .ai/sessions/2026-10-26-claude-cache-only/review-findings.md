@@ -72,3 +72,23 @@ Round 2's custom ext4 fix is correct. The 68 acceptance probes pass, the 5 round
 - Reproducer: `review-probe-round3-nfs.py` (synthetic mounts only).
 
 **CoCo:** this is the third adjacent case in this one function, so fix the rule rather than the case. Invert it: any current mount at or above a hint's path wins, except an explicit short list of transparent ones: the system volume, and pseudo filesystems such as tmpfs, devtmpfs and overlay, if they are needed.
+
+## Round 4, delta check (a30f671..1a13d1b, 2026-10-26): review complete, no blocker
+
+**The inverted rule fixes the last wrong-root case.** The adapted NFS reproducer now gets `UnresolvedRemotePath`, and the five round-1 probes still hold.
+
+Platform review:
+- **macOS:**
+  - `/` and `/System/Volumes/Data` stay transparent through `fixed_mount`, and devfs is listed.
+  - Hints below the Data volume's physical path keep working, as do `/Volumes` and `/Users` spellings.
+  - VM, Preboot and Update are separate mounts and don't affect hints elsewhere.
+  - autofs stays non-transparent on purpose: a map at `/System/Volumes/Data/home` or at a custom path blocks a stale nested share hint. Neither all of `/System/Volumes/*` nor all of autofs needs to be transparent.
+  - References: Apple's firmlinks (WWDC 2019 session 710) and `auto_master`.
+- **Windows:** tested with C: and with D: as SystemDrive, case-insensitive paths, an absent mapped-drive hint, a different share mapped now, and a volume mounted under a system-drive folder. Hints on the system drive stay usable, and current non-system mounts win.
+- **Other filesystems:** tmpfs under `/tmp` and `/run/user` stays transparent. Current NFS, FUSE, CIFS, autofs and unknown mounts win. An exact current mount path beats a hint whatever its filesystem.
+
+Validation at `1a13d1b`:
+- Full suite: 4428 passed, 2 skipped, no RERUN.
+- Acceptance probes plus the platform matrix (`review-probe-round4-platform.py`): 81 passed.
+
+No P1, P2 or P3 finding. Still manual: real-volume unmount and remount, and the on-screen checks.
