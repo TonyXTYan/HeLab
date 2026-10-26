@@ -596,6 +596,21 @@ found it removable with low to medium risk. The only visible change is one Debug
   to `dev/plotting-prototypes/` as unmaintained reference, not loaded by the app.
 - Docs: AGENTS.md's Threading, Caching and "earlier `HelabFileSystemModel`" paragraphs.
 
+## Saved listings and mount hints (cache-only browsing, 2026-10-26)
+
+What [cache-only browsing](cache-only-browsing.md) adds to the store:
+
+- **`listings`** (a record kind like `folder_summaries`: `path` = `root://` key, `record`, `saved_at`;
+  `gen_listings` in `meta`): a folder's subfolder names and own counts, written by `list` helpers
+  below data roots, read only offline. About 450 B per folder (4.5 MB per 10k folders). Settings →
+  Cache › Folder listings (Clear…); removed by Clear all, purges by age and a root's Clear cached
+  data…; moved by a nested root's re-key. Not counted toward the disk budget beyond `records.sqlite`.
+- **`mount_hints`** (`mount_path`, `location`, `seen_at`, in `ROOT_SCHEMA`): where each share or
+  volume was mounted, so an unmounted path keys offline; any current non-transparent mount at or
+  above the path wins.
+- Both are added to older stores by `_migrate`. An older HeLab's Clear all, root clear and re-key
+  don't touch listings (the next listing re-saves them).
+
 ## Saved analysis results (result caching R2, 2026-10-23)
 
 The result cache's own rules are in [result caching](result-caching.md); what it adds here:

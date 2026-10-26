@@ -15,7 +15,7 @@ from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
                              QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
-from helab.utils.folder_cache import FolderCache, marker_path, store_options
+from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache, marker_path, store_options
 from helab.utils.number_format import byte_size
 from helab.utils.io_service import IORequest
 
@@ -143,6 +143,7 @@ class DataRootsTab(QWidget):
             cache.cacheAdminResult.connect(self._on_result)
             cache.cacheAdminDone.connect(self._on_done)
             cache.resultReady.connect(self._on_remove)
+            cache.offlineChanged.connect(self._offline_changed)
         self._update()
         self.refresh()
 
@@ -151,7 +152,16 @@ class DataRootsTab(QWidget):
             self.cache.cacheAdminResult.disconnect(self._on_result)
             self.cache.cacheAdminDone.disconnect(self._on_done)
             self.cache.resultReady.disconnect(self._on_remove)
+            self.cache.offlineChanged.disconnect(self._offline_changed)
             self.cache = None
+
+    @property
+    def offline(self) -> bool:
+        """Work Offline: Show in Finder and Delete .helab-root… would reach the folder (D6)."""
+        return self.cache is not None and self.cache.offline
+
+    def _offline_changed(self, _offline: bool) -> None:
+        self._update()
 
     def _confirm(self, title: str, text: str, verb: str) -> bool:
         box = QMessageBox(QMessageBox.Icon.Question, title, text, parent=self)
@@ -220,13 +230,15 @@ class DataRootsTab(QWidget):
         forget = menu.addAction(FORGET, self.forget_selected)
         delete = menu.addAction(DELETE, self.delete_selected)
         for action, enabled, tooltip in (
-                (show, mounted, show_tooltip() if mounted else NOT_MOUNTED_TOOLTIP),
+                (show, mounted and not self.offline, OFFLINE_TOOLTIP if self.offline else
+                 show_tooltip() if mounted else NOT_MOUNTED_TOOLTIP),
                 (copy, row is not None, "The .helab-root file's path" if mounted else "The location"),
                 (review, True, REVIEW_TOOLTIP),
                 (clear, self.clear_button.isEnabled(), CLEAR_TOOLTIP),
                 (clear_results, self.clear_results_button.isEnabled(), CLEAR_RESULTS_TOOLTIP),
                 (forget, self.forget_button.isEnabled(), FORGET_TOOLTIP),
-                (delete, self.delete_button.isEnabled(), DELETE_TOOLTIP if mounted else NOT_MOUNTED_TOOLTIP)):
+                (delete, self.delete_button.isEnabled(), OFFLINE_TOOLTIP if self.offline else
+                 DELETE_TOOLTIP if mounted else NOT_MOUNTED_TOOLTIP)):
             if action is not None:
                 action.setEnabled(enabled)
                 action.setToolTip(tooltip)
@@ -235,7 +247,7 @@ class DataRootsTab(QWidget):
     def show_selected(self) -> bool:
         """Reveal the row's marker in the file manager, without waiting or touching the folder."""
         row = self.selected()
-        if row is None or not row["path"]:
+        if row is None or not row["path"] or self.offline:
             return False
         marker = marker_path(row["path"])
         command = show_command(marker)
@@ -286,7 +298,7 @@ class DataRootsTab(QWidget):
 
     def delete_selected(self) -> None:
         row = self.selected()
-        if row is None or not row["path"] or self.cache is None or self._job:
+        if row is None or not row["path"] or self.cache is None or self._job or self.offline:
             return
         if not self.confirm("Delete this .helab-root?", DELETE_TEXT.format(marker=marker_path(row["path"])),
                             "Delete"):
@@ -383,8 +395,9 @@ class DataRootsTab(QWidget):
         self.refresh_button.setEnabled(self.enabled and not self._inventory_owner)
         row = self.selected()
         self.forget_button.setEnabled(idle and row is not None)
-        self.delete_button.setEnabled(idle and row is not None and bool(row["path"]))
-        self.delete_button.setToolTip(DELETE_TOOLTIP if row is None or row["path"] else NOT_MOUNTED_TOOLTIP)
+        self.delete_button.setEnabled(idle and row is not None and bool(row["path"]) and not self.offline)
+        self.delete_button.setToolTip(OFFLINE_TOOLTIP if self.offline else
+                                      DELETE_TOOLTIP if row is None or row["path"] else NOT_MOUNTED_TOOLTIP)
         self.clear_button.setEnabled(idle and row is not None)
         self.clear_results_button.setEnabled(idle and row is not None)
         self.review_button.setEnabled(row is not None and row["decision"] == "pending")

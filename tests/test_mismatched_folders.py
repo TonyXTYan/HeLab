@@ -278,3 +278,29 @@ def test_review_shows_the_window_with_that_folder_selected(qtbot: QtBot, monkeyp
     assert window.isVisible() and window.selected_paths() == ["/data/run1"]
     assert window.load_button.isEnabled()
     service.shutdown()
+
+
+def test_working_offline_load_as_it_is_now_is_off(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Work Offline (cache-only browsing, D6): Load as it is now reads the folder."""
+    from helab.utils import folder_cache
+    from helab.utils.folder_cache import OFFLINE_TOOLTIP
+    service, cache = frozen(monkeypatch)
+    window = MissingShotsWindow(cache)
+    qtbot.addWidget(window)
+    found(cache, "/data/run1", missing=3)
+    window.refresh()
+    item = window.tree.topLevelItem(0)
+    assert item is not None
+    window.tree.setCurrentItem(item)
+    requested: list[list[str]] = []
+    window.loadRequested.connect(requested.append)
+    try:
+        cache.set_offline(True)
+        assert not window.load_button.isEnabled() and window.load_button.toolTip() == OFFLINE_TOOLTIP
+        assert window.skip_button.isEnabled()
+        window._load()
+        assert not requested
+        cache.set_offline(False)
+        assert window.load_button.isEnabled()
+    finally:
+        folder_cache._offline = False

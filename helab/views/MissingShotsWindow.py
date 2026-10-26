@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from helab.utils.folder_cache import FolderCache
+from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache
 
 INTRO = ("TXY files are written once and never deleted, so shots missing from a folder HeLab cached mean "
          "another folder may have been moved to that path, or files were deleted or renamed. Nothing was "
@@ -70,6 +70,7 @@ class MissingShotsWindow(QDialog):
 
     def __init__(self, cache: FolderCache, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._cache = cache
         self.cache = cache
         # Closed by the user: folders found later don't open it again until the next warning.
         self.dismissed = False
@@ -123,6 +124,8 @@ class MissingShotsWindow(QDialog):
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.timeout.connect(self.refresh)
         cache.mismatchesChanged.connect(self._schedule_refresh)
+        # Work Offline: Load as it is now reads the folder (D6).
+        cache.offlineChanged.connect(self._offline_changed)
         cache.mismatchFound.connect(self._found)
         cache.mismatchWarning.connect(self._warning)
         self.refresh()
@@ -170,7 +173,7 @@ class MissingShotsWindow(QDialog):
 
     def _load(self) -> None:
         paths = self.selected_paths()
-        if paths:
+        if paths and not self._cache.offline:
             self.loadRequested.emit(paths)
 
     def refresh(self) -> None:
@@ -209,7 +212,11 @@ class MissingShotsWindow(QDialog):
             self.tree.resizeColumnToContents(column)
         self._update_buttons()
 
+    def _offline_changed(self, _offline: bool) -> None:
+        self._update_buttons()
+
     def _update_buttons(self) -> None:
         any_selected = bool(self.tree.selectedItems())
-        self.load_button.setEnabled(any_selected)
+        self.load_button.setEnabled(any_selected and not self._cache.offline)
+        self.load_button.setToolTip(OFFLINE_TOOLTIP if self._cache.offline else LOAD_TIP)
         self.skip_button.setEnabled(any_selected)

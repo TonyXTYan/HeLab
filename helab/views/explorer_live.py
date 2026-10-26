@@ -85,6 +85,9 @@ class LiveSession:
     # recently that changes is read again, not a mismatch (``LiveController.LIVE_REREAD_SECONDS``).
     read_at: dict[int, float] = field(default_factory=dict)
 
+# Work Offline: Live reads the folder, so it is off (cache-only browsing).
+OFFLINE_LIVE = "Live is off while working offline"
+
 
 class LiveController:
     """Live (roadmaps/live-monitoring.md) for one ``FolderExplorer``: the selected folder's data,
@@ -141,6 +144,8 @@ class LiveController:
         dataset = explorer.displayed_dataset
         if explorer.closed:
             return "This tab is closing"
+        if explorer.model.cache.offline:
+            return OFFLINE_LIVE
         if path in explorer.model.cache.mismatched:
             return f"{name}'s cached data doesn't match the folder: Review… it first"
         if ((explorer.loading and explorer._load_path == path)

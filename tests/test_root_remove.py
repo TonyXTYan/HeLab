@@ -261,3 +261,37 @@ def test_a_refused_delete_names_the_file(page: DataRootsTab) -> None:
     assert alerts == [f"HeLab can't delete {marker} (Permission denied). Delete it by hand "
                       f"({tab_module.show_label()} finds it), then Refresh this list."]
     assert page.message == f"Could not delete {marker}" and not page._job
+
+
+def test_working_offline_show_and_delete_are_off_and_nothing_is_launched(
+        page: DataRootsTab, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Work Offline (cache-only browsing, D6): revealing the marker would start a file manager on the
+    share, and deleting it writes there."""
+    from helab.utils import folder_cache
+    from helab.utils.folder_cache import OFFLINE_TOOLTIP
+    launched: list[str] = []
+
+    def launch(program: str, arguments: list[str]) -> bool:
+        launched.append(program)
+        return True
+
+    def open_folder(folder: str) -> bool:
+        launched.append(folder)
+        return True
+    page.launch, page.open_folder = launch, open_folder
+    select(page, 0)
+    assert page.cache is not None
+    try:
+        page.cache.set_offline(True)
+        assert not page.delete_button.isEnabled() and page.delete_button.toolTip() == OFFLINE_TOOLTIP
+        actions = {action.text(): action for action in page.context_menu().actions()}
+        assert not actions[tab_module.show_label()].isEnabled() and not actions[tab_module.DELETE].isEnabled()
+        assert actions[tab_module.show_label()].toolTip() == OFFLINE_TOOLTIP
+        assert not page.show_selected() and not launched
+        page.delete_selected()  # Asks nothing and writes nothing.
+        assert not page._remove_job
+        page.cache.set_offline(False)
+        assert page.delete_button.isEnabled()
+        assert {action.text(): action for action in page.context_menu().actions()}[tab_module.show_label()].isEnabled()
+    finally:
+        folder_cache._offline = False

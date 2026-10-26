@@ -253,11 +253,11 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 
     def open_seeded(root: str, source_paths: list[str] | None = None, *,
                     local_lane: bool = False, allow_unrooted: bool = False,
-                    verified_volumes: list[list[str]] | None = None) -> CacheStore:
+                    verified_volumes: list[list[str]] | None = None, offline: bool = False) -> CacheStore:
         for source in source_paths or ():
             seed(root, source)
         return original(root, source_paths, local_lane=local_lane, allow_unrooted=allow_unrooted,
-                        verified_volumes=verified_volumes)
+                        verified_volumes=verified_volumes, offline=offline)
 
     monkeypatch.setattr(stores, "_cache_store", open_seeded)
     yield

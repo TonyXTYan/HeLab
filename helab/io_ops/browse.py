@@ -5,7 +5,7 @@ import os
 import time
 from typing import Any, TYPE_CHECKING, cast
 
-from helab.io_ops import markers, metadata
+from helab.io_ops import listings, markers, metadata
 from helab.io_ops.events import HelperEvent, ListedStatusEvent, ResultCountField, ResultsField, SavedRootField
 from helab.io_ops.infra import Emit, Heartbeat, _is_dir, _lstat, _mounts, _scandir, emit
 from helab.io_ops.markers import _marker_temporary
@@ -57,8 +57,9 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
     Each subfolder's saved summary, scan history and cache flags are read from the
     local cache, never the source, so saved badges appear with the names.
     The ``details`` scan (step 2) adds the signature and dates. A listing writes
-    only root-discovery metadata; a failed listing's history is saved later by
-    the app, with the guard this sends first.
+    only root-discovery metadata and, once it has sent its status, the folder's
+    saved listing (``io_ops.listings``, for browsing it offline; best effort); a
+    failed listing's history is saved later by the app, with the guard this sends first.
 
     The folder's own marker is looked up (one lstat) and reconciled before the
     scandir, so the names stream with the right root's saved results. A marker
@@ -88,6 +89,7 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
             _send_guard(store, path, send)
         except StoreError:
             pass
+        listing_guard = listings.listing_guard(store, path)
         _, root_saved = metadata._send_saved(store, path, send)
         before_key = store._path_key(path) if store is not None else ""
         found: dict[str, set[int]] = {}
@@ -172,6 +174,9 @@ def list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | No
         if cache_options and (mounts := _mount_fingerprint()) is not None:
             send({"kind": "mounts_seen", "mounts": mounts})
         send(report)
+        # After the status, so the tab never waits for it; a re-keyed folder's guard no longer
+        # covers it (skipped: its next listing saves it).
+        listings.save_listing(store, listing_guard, path, (child["name"] for child in entries), report)
     finally:
         if store is not None:
             store.close()

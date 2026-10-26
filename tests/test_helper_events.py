@@ -43,6 +43,7 @@ GUI_KINDS = {
     "started",  # Its helper started.
     "cancelled",  # Cancelled before or while it ran.
     "exit",  # Its helper exited (the reader thread's last event).
+    "offline",  # Work Offline answered a source request without a helper (``FolderCache._offline_submit``).
 }
 
 

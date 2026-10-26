@@ -284,3 +284,26 @@ def test_a_marker_left_half_replaced_is_not_listed_as_data(tmp_path: Path) -> No
     scanned: list[Any] = []
     scan(str(empty), scanned.append)
     assert next(event for event in scanned if event["kind"] == "status")["empty"] is True
+
+
+def test_working_offline_its_a_copy_is_off(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, cache: FolderCache) -> None:
+    """Work Offline (cache-only browsing, D6): It's a copy… writes a new marker in the folder."""
+    from helab.utils import folder_cache
+    from helab.utils.folder_cache import OFFLINE_TOOLTIP
+    window = RootDuplicatesWindow(cache)
+    qtbot.addWidget(window)
+    sighting(cache)
+    item = window.tree.topLevelItem(0)
+    assert item is not None
+    window.tree.setCurrentItem(item)
+    try:
+        cache.set_offline(True)
+        assert not window.copy_button.isEnabled() and window.copy_button.toolTip() == OFFLINE_TOOLTIP
+        assert window.same_button.isEnabled()  # (Same folder is a disk cache write.)
+        window.choose_keep = lambda entry: pytest.fail("asked which side keeps the data")
+        window.copy()
+        assert ("root_reassign", SECOND) not in cache.jobs
+        cache.set_offline(False)
+        assert window.copy_button.isEnabled()
+    finally:
+        folder_cache._offline = False

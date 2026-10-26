@@ -140,7 +140,7 @@ def test_clear_asks_first_runs_once_and_refreshes(
         assert title == expected[0] and expected[1] in text and expected[2] in text
         request = admin_request(service, "clear")
         assert request.payload["params"] == {
-            "kinds": ["datasets", "summaries", "histories", "subtrees"] if kind == "all" else [kind]}
+            "kinds": ["datasets", "summaries", "histories", "subtrees", "listings"] if kind == "all" else [kind]}
         # While it runs, nothing else can start.
         assert tab.busy and not tab.clear_all_button.isEnabled() and not tab.refresh_button.isEnabled()
         tab.clear(["datasets"])

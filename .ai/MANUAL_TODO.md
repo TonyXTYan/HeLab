@@ -240,6 +240,33 @@ screen"):
   Load as it is now → start Live again: the mismatch clears with the new data and Live runs on
   it, never the old shots.
 
+## Work Offline (cache-only browsing, added 2026-10-26)
+
+From `.ai/sessions/2026-10-26-claude-cache-only/handoff.md` ("On-screen checks"), on the Mac and
+on a lab PC:
+
+- [ ] Online, browse a data root two levels down and load a folder. File › Work Offline: the check
+  mark and the status-bar "Offline · cached data only"; Refresh and Check folder status greyed
+  with the reason; Live greyed ("Live is off while working offline").
+- [ ] The tree: counts and status icons; a folder never expanded online has no arrow ("Not listed
+  while online"); tooltips end "Offline: showing saved results from …"; icons stay generic.
+- [ ] Select the loaded folder: data at once, "not checked (offline)", third line "Offline · cached
+  data only · listed …". A folder never loaded: "Data not kept (offline)…" and "No cached data
+  (offline)"; nothing spins.
+- [ ] A plot on the loaded folder runs; a saved Correlations or Release time result shows from the
+  disk cache.
+- [ ] Right-click: Retry / Refresh, Check folder status, Open in File Manager, Place .helab-root
+  here… greyed with the reason; Folder constants… and Clear loaded data cache work. Settings →
+  Data roots: Show in Finder and Delete .helab-root… greyed, Clear cached data… works; Settings →
+  Cache: the Folder listings row counts folders, Clear… asks first.
+- [ ] Quit and start: HeLab starts offline at the last data root.
+- [ ] **Real volume:** unmount the lab share, restart offline and repeat the tree, selection and
+  plot checks; the paths are the share's usual `/Volumes/…` (Windows: the mapped drive) paths.
+- [ ] Status-bar button › Yes (Work Online): every tab relists, the selection is checked
+  ("Checking for changes…"), the controls come back, the setting is off at the next start.
+- [ ] The log: one INFO "Work Offline on: cached data only", then one "Working offline: no …" line
+  per refused operation kind.
+
 ## Saved analysis results (result cache R2, added 2026-10-23)
 
 From `.ai/sessions/2026-10-22-claude-result-cache-r2/handoff.md` ("What Tony should check on

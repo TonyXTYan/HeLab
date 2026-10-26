@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QButtonGroup, QDialog, QDialogBu
                              QMessageBox, QPushButton, QRadioButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                              QWidget)
 
-from helab.utils.folder_cache import FolderCache
+from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache
 from helab.utils.io_service import IORequest
 
 TITLE = "Same folder or a copy?"
@@ -150,6 +150,8 @@ class RootDuplicatesWindow(QDialog):
         cache.rootDuplicatesChanged.connect(self.refresh)
         cache.rootDuplicateFound.connect(self._found)
         cache.resultReady.connect(self._result)
+        # Work Offline: It's a copy… writes a marker in the folder (D6).
+        cache.offlineChanged.connect(self._offline_changed)
         # Replaceable in tests: It's a copy…'s choice of the location keeping the data.
         self.choose_keep = self._choose_keep
         self.refresh()
@@ -200,7 +202,7 @@ class RootDuplicatesWindow(QDialog):
     def copy(self) -> None:
         location = self.selected()
         entry = self.cache.root_duplicates.get(location or "")
-        if location is None or entry is None:
+        if location is None or entry is None or self.cache.offline:
             return
         keep = self.choose_keep(entry)
         if keep and not self.cache.reassign_root(self.owner, 0, location, keep):
@@ -240,7 +242,13 @@ class RootDuplicatesWindow(QDialog):
             self.tree.resizeColumnToContents(column)
         self._update_buttons()
 
+    def _offline_changed(self, _offline: bool) -> None:
+        self._update_buttons()
+
     def _update_buttons(self) -> None:
         chosen = self.selected() is not None
         for button in (self.same_button, self.copy_button, self.later_button, self.snooze_button):
             button.setEnabled(chosen)
+        if self.cache.offline:
+            self.copy_button.setEnabled(False)
+        self.copy_button.setToolTip(OFFLINE_TOOLTIP if self.cache.offline else COPY_TIP)
