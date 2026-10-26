@@ -284,4 +284,14 @@ Other structural notes:
 
 ## CI
 
-(Filled in after the push.)
+The branch was pushed once at `253888d`, giving CI run 40278222710: **success**. The Python 3.13
+tests and builds passed on every OS (the compatibility matrices are skipped on branch pushes).
+Test logs were read from `gh api repos/TonyXTYan/HeLab/actions/jobs/<id>/logs`:
+
+| OS | Job | Result | RERUN |
+|---|---|---|---|
+| Windows | 121425551136 | 4334 passed, 18 skipped, 2 xfailed (14:08) | none |
+| macOS | 121425551244 | 4354 passed, 2 skipped, 2 xfailed (8:06) | none |
+| Ubuntu | 121425551270 | 4352 passed, 4 skipped, 2 xfailed (4:31) | none |
+
+This includes the Windows store test of job 1, which passed without a rerun.
