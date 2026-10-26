@@ -307,3 +307,143 @@ No GUI-process `os.path` / `scandir` call touches source folders (grep of `helab
 Commit `9c75340`. `FolderCache.replay_snapshot` applies a snapshot in RAM to a tab with no helper
 and no revalidation, whatever its age, marked `applied` so Refresh doesn't cancel it. The model's
 `apply_snapshot` uses it for other tabs' results. C3's offline listings reuse the same event path.
+
+## C3 plan: the `saved_list` operation and the gate's API (drafted 2026-10-26, after C2)
+
+This is written before Tony's answers on D1, D2 and D8. The names are placeholders where D2 names
+the control.
+
+### `saved_list`: a tab's listing, offline
+
+**Request.** In offline mode, a tab's `request_scan(path)` reaches `FolderCache.submit(…, "list")`
+as today.
+
+- `FolderCache` rewrites the helper operation to `saved_list`.
+  - The shared job stays keyed `("list", path)`, and its subscribers' requests keep operation
+    `list`, so the model's request bookkeeping is unchanged.
+  - The job's payload gains `listing_only: True` and `offline: True`.
+  - `IOService.submit` gets `operation="saved_list"`, a `LOCAL_OPERATIONS` and `CACHE_OPERATIONS`
+    entry: the local lane, never paused, never waiting for source work.
+- The payload carries the cache options with `"offline": True` (for D1's mount hints) and
+  `verified_volumes`.
+- In `io_helper.py`, `saved_list` joins `CACHE_ONLY` and dispatches to
+  `io_ops.listings.saved_list_folder`.
+  - It does **not** join `SOURCE_OPERATIONS`.
+  - Wait for Quick Fixes 2 to land: it changes `io_helper.CACHE_ONLY` and the dispatch.
+
+**Helper** (`io_ops.listings.saved_list_folder(path, send, cache_options, verified_volumes)`):
+
+1. Open the store in the local lane (`_open_store(local_lane=True, …)`). A volume not yet verified
+   raises `VolumeUnverified`, and the app retries the listing on `volumesVerified`, as for cached
+   reads.
+2. Read the folder's listing with `read_listing`, then send, in this order:
+   - **`data_root`** for the folder: `stores._data_root`, already used by `list`.
+   - **`scan_cached`**: the folder's own saved summary (`metadata._send_saved`, as `list` sends
+     it).
+     - With no summary, it carries one built from the listing's counts (`status`, `count`,
+       `raw_count`, `txy_count`, `empty`, `has_dirs`, `files`, `scanned_at` = `listed_at`,
+       `signature` ""), so the model's `_restore_summary` shows the counts as saved results
+       (`cached_report`).
+     - It also carries `subtree_cached`, plus the folder's `disk_cached` / `cache_info` /
+       `results` flags.
+   - **`entries`**: one per saved name (`path` = `os.path.join(path, name)`), each with its saved
+     records from `metadata._saved_folders` and `_result_counts`, exactly as `list` sends them.
+     Batches of 128.
+   - **`status`**: a new `OfflineListingEvent`, shown below.
+3. With no listing row (missing), send `status` with `listed: false`, no entries.
+4. A read error ends in `error` with the store's message. The tab shows its usual error row; it is
+   not a scan failure, since `FolderCache` doesn't record history for offline jobs.
+
+The new event type, in `helab/io_ops/events.py`:
+
+```python
+class OfflineListingEvent(TypedDict):
+    """A saved listing's status of its folder (cache-only browsing): no shot lists, counts only."""
+    kind: Literal["status"]
+    details: Literal[False]
+    offline: Literal[True]
+    listed: bool                 # False: never listed while online (no saved listing)
+    listed_at: float | None      # When the saved listing was made
+    empty: bool | None
+    has_dirs: bool | None
+    # `kind` stays "status": it joins HelperEvent, with tests/test_helper_events.py updated.
+```
+
+**In the app:**
+
+- **`FolderCache._on_event`** for an offline `list` job does three things differently:
+  - It **stores no `FolderSnapshot`**: saved data is never offered to other tabs as a fresh
+    listing.
+  - It records no scan outcome or history.
+  - It emits no `snapshotChanged`.
+
+  So C1's replay path never sees offline listings, and a tab listing the same folder runs its own
+  `saved_list` (a 24 µs read). Subscribers get the events as they come.
+- **The model** treats the request as `listing_only` (already: no `_apply_status`, no
+  `statusReady`, no automatic load, no details). It applies the summary through the existing
+  `scan_cached` and `entries` branches. On `status` with `offline` it sets
+  `node.offline_listed_at` (new field), and on `listed: false` it sets
+  `node.offline_unlisted = True`.
+  - **Rows not listed while online:** no expand arrow (`hasChildren` false); the tooltip says
+    "Not listed while online".
+  - **Rows with a saved listing:** the tooltip's Subfolders line adds "listed <date>"; the hint
+    line is "Offline: showing saved results from <date>".
+- **`done`** prunes children not in the listing, as today, so a saved listing is authoritative
+  for the tab while offline. A folder deleted since remains in the saved names, which is honest:
+  it is what was last seen.
+
+**Above data roots** (no row and no key: e.g. `/Volumes` or `C:\`). `saved_list_folder` answers
+`listed: false` plus entries for the known data roots below the path. They come from
+`store.root_locations()` turned into source paths through the hints (D1), keeping only the
+step-by-step path down. Each such entry carries `{"root_path": true}`.
+
+### Gate API
+
+- **`IOService`:**
+  - `offline: bool` and `OFFLINE_OPERATIONS` (the allowed list in §5).
+  - `submit` refuses any other operation while offline: returns False and logs one INFO line per
+    operation per session.
+  - `set_offline(on)` cancels running and queued requests whose operation isn't allowed (§2),
+    except loads with `save` already started.
+- **`FolderCache`:**
+  - `offline` (read-only property), `set_offline(on)` (calls the service's, cancels shared jobs as
+    §2 says, emits `offlineChanged(bool)`), and `store_options()` adding `"offline": True`.
+  - `submit` rewrites `list` → `saved_list` and refuses the rest of §5 by delivering
+    `{"kind": "offline", "operation": op}` and then `{"kind": "done", "offline": True}` to the
+    subscriber. `submit` returns True (accepted, answered), so callers never show "Scan queue
+    full".
+  - `_shared_snapshot_changed` / `replay_snapshot` are unchanged: offline jobs make no snapshots.
+- **The model** handles `offline` events: the row stays idle with no error, and the tooltip hint
+  is as above.
+- **The explorer:**
+  - Selection while offline calls only `_show_cached` (RAM, else one `cached` read), never
+    `_load_to_ram_cache`.
+  - The summary's third line says `Offline · cached <saved_at> · not checked`, or
+    `No cached data (offline)`.
+- **Live:** `start_live` refuses with "Live is off while working offline".
+- **The main window:** the File menu toggle, the status-bar button, the start-up offline path
+  (D10), and Work Online (D8).
+- **Helper seam:**
+  - `io_helper.main` refuses `SOURCE_OPERATIONS`, `resolve` and `roots_verify` when
+    `request["cache"].get("offline")`.
+  - Tests arm `no_source_io` (draft below), which fails the test if any source operation reaches
+    `IOService._start` while offline.
+
+### C3 tests (draft)
+
+The draft is `tests/test_offline_browsing.py.disabled`, not collected (`.disabled`, AGENTS.md), so
+strict mypy doesn't check calls to API that doesn't exist yet. At C3 it is renamed to `.py` and
+made to pass. xfail would be collected, and mypy would fail on the missing methods. It covers:
+
+- the seam;
+- the gate, for every operation;
+- entering offline, cancelling source work;
+- navigation on saved listings, folders never listed, and paths above data roots;
+- selection showing cached data only;
+- no cached data, and data evicted from RAM;
+- the disabled controls;
+- icons;
+- plots (one-off run and reopened plot) on cached data;
+- the Settings tabs;
+- a restart with the source folder deleted;
+- Work Online (D8 pending).
